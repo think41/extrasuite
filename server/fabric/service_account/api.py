@@ -33,7 +33,8 @@ class ServiceAccountStatus(BaseModel):
 
     exists: bool
     email: str | None = None
-    created_at: str | None = None
+    display_name: str | None = None
+    description: str | None = None  # Contains owner email and creation date for traceability
 
 
 class ServiceAccountDownload(BaseModel):
@@ -243,12 +244,17 @@ async def download_service_account(
             sa_email = existing["email"]
         except HttpError as e:
             if e.resp.status == 404:
-                # Create new service account
+                # Create new service account with traceability metadata
+                # displayName: Short name visible in GCP Console (max 100 chars)
+                # description: Detailed info for audit (max 256 chars)
+                created_at = datetime.now(UTC).strftime("%Y-%m-%d %H:%M UTC")
                 service_account_body = {
                     "accountId": account_id,
                     "serviceAccount": {
-                        "displayName": f"AI EA for {user_name}",
-                        "description": f"AI Executive Assistant for {user_email}. Created via Fabric portal.",
+                        "displayName": f"AI EA for {user_name}"[:100],
+                        "description": f"Owner: {user_email} | Created: {created_at} | Via: Fabric Portal"[
+                            :256
+                        ],
                     },
                 }
 
@@ -328,7 +334,8 @@ async def get_status(
             return ServiceAccountStatus(
                 exists=True,
                 email=sa["email"],
-                created_at=sa.get("displayName"),  # We store creation info in description
+                display_name=sa.get("displayName"),
+                description=sa.get("description"),  # Contains owner info for traceability
             )
         except HttpError as e:
             if e.resp.status == 404:
