@@ -76,3 +76,8 @@ credentials/
 # Logs
 *.log
 logs/
+
+# Database
+*.db
+*.sqlite
+*.sqlite3

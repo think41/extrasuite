@@ -11,8 +11,9 @@ from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import FileResponse
 from fastapi.staticfiles import StaticFiles
 
-from fabric import auth, health, service_account
+from fabric import auth, health, service_account, token_exchange
 from fabric.config import get_settings
+from fabric.database import close_db, init_db
 
 
 @asynccontextmanager
@@ -21,7 +22,15 @@ async def lifespan(_app: FastAPI):
     settings = get_settings()
     print(f"Starting Fabric server on port {settings.port}")
     print(f"Environment: {settings.environment}")
+
+    # Initialize database
+    await init_db()
+    print("Database initialized")
+
     yield
+
+    # Close database connections
+    await close_db()
     print("Shutting down Fabric server")
 
 
@@ -52,6 +61,7 @@ def create_app() -> FastAPI:
     app.include_router(health.router, prefix="/api")
     app.include_router(auth.router, prefix="/api")
     app.include_router(service_account.router, prefix="/api")
+    app.include_router(token_exchange.router, prefix="/api")
 
     # Serve static files in production
     static_dir = Path(__file__).parent.parent.parent / "static"

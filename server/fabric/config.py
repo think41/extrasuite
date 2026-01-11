@@ -34,6 +34,9 @@ class Settings(BaseSettings):
     # Google Cloud Project (for creating service accounts)
     google_cloud_project: str = ""
 
+    # Database
+    database_url: str = "sqlite+aiosqlite:///./fabric.db"
+
     @property
     def allowed_origins_list(self) -> list[str]:
         """Parse allowed origins from comma-separated string."""
