@@ -386,6 +386,69 @@ function App() {
                 </li>
               </ol>
             </div>
+
+            {/* CLI Authentication Section */}
+            <div className="mt-8 bg-white rounded-lg shadow-sm p-6">
+              <h3 className="text-lg font-semibold text-gray-900 mb-4">
+                CLI Authentication (Recommended)
+              </h3>
+              <p className="text-gray-600 mb-4">
+                For better security, use the CLI-based authentication flow. This stores short-lived tokens (1 hour) instead of permanent credentials.
+              </p>
+
+              <div className="bg-gray-50 rounded-lg p-4 mb-4">
+                <h4 className="font-medium text-gray-900 mb-2">Quick Start</h4>
+                <ol className="list-decimal list-inside space-y-2 text-sm text-gray-600">
+                  <li>Download the CLI auth script from the <a href="https://github.com/think41/fabric/tree/main/cli" className="text-indigo-600 hover:underline">Fabric CLI repository</a></li>
+                  <li>Run: <code className="bg-gray-200 px-1 rounded">python fabric_auth.py</code></li>
+                  <li>Your browser will open for authentication</li>
+                  <li>Token saved to <code className="bg-gray-200 px-1 rounded">~/.config/fabric/token.json</code></li>
+                </ol>
+              </div>
+
+              <div className="bg-indigo-50 border border-indigo-200 rounded-lg p-4">
+                <h4 className="font-medium text-indigo-900 mb-2">Security Benefits</h4>
+                <ul className="space-y-1 text-sm text-indigo-800">
+                  <li>• Tokens expire automatically after 1 hour</li>
+                  <li>• No permanent credentials stored on your laptop</li>
+                  <li>• OAuth credentials stored securely on the server</li>
+                  <li>• Easy re-authentication when tokens expire</li>
+                </ul>
+              </div>
+            </div>
+
+            {/* Using with Google Sheets */}
+            <div className="mt-8 bg-white rounded-lg shadow-sm p-6">
+              <h3 className="text-lg font-semibold text-gray-900 mb-4">
+                Using with Google Sheets
+              </h3>
+              <p className="text-gray-600 mb-4">
+                Once authenticated, you can use the token with any Google Sheets library. Here's an example with Python's gspread:
+              </p>
+
+              <pre className="bg-gray-900 text-gray-100 p-4 rounded-lg overflow-x-auto text-sm mb-4">
+{`# Install: pip install gspread google-auth
+from fabric_auth import get_token
+import gspread
+from google.oauth2.credentials import Credentials
+
+# Get token (authenticates if needed)
+token = get_token()
+
+# Use with gspread
+credentials = Credentials(token=token)
+gc = gspread.authorize(credentials)
+
+# Open your spreadsheet (must be shared with your EA email)
+sheet = gc.open_by_url("https://docs.google.com/spreadsheets/d/...")
+print(sheet.sheet1.get_all_values())`}
+              </pre>
+
+              <p className="text-sm text-gray-500">
+                Note: You must share your spreadsheet with your service account email first.
+                Find your EA email in <code className="bg-gray-100 px-1 rounded">~/.config/fabric/token.json</code> after authenticating.
+              </p>
+            </div>
           </div>
         )}
       </main>
