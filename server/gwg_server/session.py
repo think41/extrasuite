@@ -1,6 +1,6 @@
 """Session management for Google Workspace Gateway authentication.
 
-Provides cookie-based session management backed by Bigtable.
+Provides cookie-based session management backed by Firestore.
 Sessions allow users to refresh tokens without re-authenticating.
 """
 

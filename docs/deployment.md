@@ -13,28 +13,17 @@ This guide covers deploying the GWG server to Google Cloud Run.
 ```bash
 gcloud services enable \
   run.googleapis.com \
-  bigtable.googleapis.com \
-  bigtableadmin.googleapis.com \
+  firestore.googleapis.com \
   iam.googleapis.com \
   iamcredentials.googleapis.com \
   containerregistry.googleapis.com
 ```
 
-## Step 2: Create Bigtable Instance
+## Step 2: Create Firestore Database
 
 ```bash
-# Create Bigtable instance (1 node for dev, scale up for production)
-gcloud bigtable instances create gwg-auth \
-  --display-name="GWG Auth" \
-  --cluster-config=id=gwg-auth-c1,zone=us-central1-a,nodes=1
-
-# Create tables
-cbt -project=$PROJECT_ID -instance=gwg-auth createtable sessions
-cbt -project=$PROJECT_ID -instance=gwg-auth createfamily sessions data
-
-cbt -project=$PROJECT_ID -instance=gwg-auth createtable users
-cbt -project=$PROJECT_ID -instance=gwg-auth createfamily users oauth
-cbt -project=$PROJECT_ID -instance=gwg-auth createfamily users metadata
+# Create Firestore database (collections are created automatically on first use)
+gcloud firestore databases create --location=asia-south1
 ```
 
 ## Step 3: Create OAuth 2.0 Credentials
@@ -54,10 +43,10 @@ cbt -project=$PROJECT_ID -instance=gwg-auth createfamily users metadata
 gcloud iam service-accounts create gwg-server \
   --display-name="GWG Server"
 
-# Grant Bigtable access
+# Grant Firestore access
 gcloud projects add-iam-policy-binding $PROJECT_ID \
   --member="serviceAccount:gwg-server@$PROJECT_ID.iam.gserviceaccount.com" \
-  --role="roles/bigtable.user"
+  --role="roles/datastore.user"
 
 # Grant service account admin (for creating user SAs)
 gcloud projects add-iam-policy-binding $PROJECT_ID \
@@ -90,7 +79,6 @@ gcloud run deploy gwg-server \
   --allow-unauthenticated \
   --set-env-vars="ENVIRONMENT=production" \
   --set-env-vars="GOOGLE_CLOUD_PROJECT=$PROJECT_ID" \
-  --set-env-vars="BIGTABLE_INSTANCE=gwg-auth" \
   --set-secrets="SECRET_KEY=gwg-secret-key:latest" \
   --set-secrets="GOOGLE_CLIENT_ID=gwg-client-id:latest" \
   --set-secrets="GOOGLE_CLIENT_SECRET=gwg-client-secret:latest"
@@ -154,8 +142,7 @@ curl https://your-cloud-run-url/api/health
 2. **Set up Cloud Monitoring** alerts for errors
 3. **Enable Cloud Audit Logs** for compliance
 4. **Use a custom domain** with managed SSL
-5. **Scale Bigtable** based on usage patterns
-6. **Set minimum instances** to reduce cold starts:
+5. **Set minimum instances** to reduce cold starts:
    ```bash
    gcloud run services update gwg-server --min-instances=1
    ```

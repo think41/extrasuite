@@ -6,22 +6,23 @@ This document lists all IAM permissions required by the Google Workspace Gateway
 
 The service account running the GWG server needs the following roles:
 
-### 1. Bigtable Access
+### 1. Firestore Access
 
-**Role:** `roles/bigtable.user`
+**Role:** `roles/datastore.user`
 
-**Purpose:** Read and write session data and user credentials in Bigtable.
+**Purpose:** Read and write session data and user credentials in Firestore.
 
 **Permissions included:**
-- `bigtable.tables.get`
-- `bigtable.tables.readRows`
-- `bigtable.tables.mutateRows`
+- `datastore.entities.create`
+- `datastore.entities.get`
+- `datastore.entities.update`
+- `datastore.entities.delete`
 
 **Grant command:**
 ```bash
 gcloud projects add-iam-policy-binding $PROJECT_ID \
   --member="serviceAccount:gwg-server@$PROJECT_ID.iam.gserviceaccount.com" \
-  --role="roles/bigtable.user"
+  --role="roles/datastore.user"
 ```
 
 ### 2. Service Account Administration
@@ -89,7 +90,7 @@ This allows users to use tools like `gcloud` to generate tokens independently if
 ### Server OAuth Scopes
 
 The server uses Application Default Credentials with:
-- `https://www.googleapis.com/auth/cloud-platform` - For IAM and Bigtable operations
+- `https://www.googleapis.com/auth/cloud-platform` - For IAM and Firestore operations
 
 ### User OAuth Scopes (during authentication)
 
@@ -130,7 +131,7 @@ For production environments:
 
 | Role | Resource | Purpose |
 |------|----------|---------|
-| `roles/bigtable.user` | Project | Read/write Bigtable |
+| `roles/datastore.user` | Project | Read/write Firestore |
 | `roles/iam.serviceAccountAdmin` | Project | Create user SAs |
 | `roles/iam.serviceAccountTokenCreator` | Project | Impersonate user SAs |
 | `roles/secretmanager.secretAccessor` | Specific secrets | Read OAuth config |

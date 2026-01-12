@@ -151,7 +151,7 @@ async def _handle_cli_callback(
         _store_oauth_credentials,
     )
 
-    # Store OAuth credentials in Bigtable
+    # Store OAuth credentials in Firestore
     try:
         _store_oauth_credentials(user_email, credentials)
     except Exception as e:
@@ -166,7 +166,7 @@ async def _handle_cli_callback(
         logger.error(f"Failed to setup service account: {e}")
         return _cli_error_response(f"Failed to setup service account: {e}", cli_redirect)
 
-    # Update SA email in Bigtable
+    # Update SA email in Firestore
     with contextlib.suppress(Exception):
         update_service_account_email(user_email, sa_email)
 

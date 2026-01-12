@@ -25,7 +25,7 @@ The project consists of two packages:
 1. Receive auth request at `/api/token/auth?port=<port>`
 2. If user has valid session, refresh token and redirect
 3. Otherwise, redirect to Google OAuth
-4. On callback, store OAuth credentials in Bigtable
+4. On callback, store OAuth credentials in Firestore
 5. Create/retrieve user's service account
 6. Impersonate SA to generate short-lived token
 7. Redirect to `http://localhost:<port>/on-authentication?token=...`
@@ -67,7 +67,7 @@ docker-compose --profile dev up dev-server   # Development
 ### Server
 - `server/gwg_server/main.py` - FastAPI app entry point
 - `server/gwg_server/config.py` - Pydantic settings from environment
-- `server/gwg_server/database.py` - Bigtable-backed storage
+- `server/gwg_server/database.py` - Firestore-backed storage
 - `server/gwg_server/session.py` - Session management
 - `server/gwg_server/auth/api.py` - OAuth callback handler
 - `server/gwg_server/token_exchange/api.py` - Token exchange API
@@ -86,30 +86,23 @@ docker-compose --profile dev up dev-server   # Development
 Copy `server/.env.template` to `server/.env` and configure:
 - `GOOGLE_CLIENT_ID` / `GOOGLE_CLIENT_SECRET` - OAuth credentials
 - `GOOGLE_CLOUD_PROJECT` - GCP project for service account creation
-- `BIGTABLE_INSTANCE` - Bigtable instance name (default: `gwg-auth`)
 - `SECRET_KEY` - For signing state tokens
 
-Server uses Application Default Credentials (ADC) for service account management and Bigtable access.
+Server uses Application Default Credentials (ADC) for service account management and Firestore access.
 
-## Bigtable Setup
+## Firestore Setup
 
+Firestore collections are created automatically on first use. No manual setup required.
+
+Enable the Firestore API and create a database:
 ```bash
-# Create instance
-gcloud bigtable instances create gwg-auth \
-  --display-name="GWG Auth" \
-  --cluster-config=id=gwg-auth-c1,zone=us-central1-a,nodes=1
-
-# Create tables
-cbt -project=<project> -instance=gwg-auth createtable sessions
-cbt -project=<project> -instance=gwg-auth createfamily sessions data
-cbt -project=<project> -instance=gwg-auth createtable users
-cbt -project=<project> -instance=gwg-auth createfamily users oauth
-cbt -project=<project> -instance=gwg-auth createfamily users metadata
+gcloud services enable firestore.googleapis.com --project=<project>
+gcloud firestore databases create --location=asia-south1 --project=<project>
 ```
 
 ## Token Storage
 
-- **Server-side:** OAuth refresh tokens and sessions in Bigtable
+- **Server-side:** OAuth refresh tokens and sessions in Firestore
 - **Client-side:** Short-lived SA tokens in `~/.config/google-workspace-gateway/token.json`
 
 ## Package Names

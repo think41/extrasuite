@@ -3,7 +3,7 @@
 This module implements the Google Workspace Gateway Token Exchange flow:
 1. CLI opens browser to /api/token/auth?port=<port>
 2. User authenticates via Google OAuth (cloud-platform scope)
-3. GWG stores OAuth credentials in Bigtable
+3. GWG stores OAuth credentials in Firestore
 4. GWG looks up or creates user's service account
 5. GWG impersonates SA to get short-lived token
 6. Browser redirects to localhost:{port}/on-authentication with token
@@ -197,7 +197,7 @@ def _try_refresh_token(
 
 
 def _store_oauth_credentials(email: str, credentials: Credentials) -> None:
-    """Store or update OAuth credentials in Bigtable."""
+    """Store or update OAuth credentials in Firestore."""
     from gwg_server.auth.api import CLI_SCOPES
 
     scopes = list(credentials.scopes) if credentials.scopes else CLI_SCOPES

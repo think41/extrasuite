@@ -14,7 +14,7 @@ dependencies = [
     "google-auth-oauthlib>=1.2.0",
     "google-auth-httplib2>=0.2.0",
     "google-api-python-client>=2.150.0",
-    "google-cloud-bigtable>=2.26.0",
+    "google-cloud-firestore>=2.19.0",
     "loguru>=0.7.0",
 ]
 

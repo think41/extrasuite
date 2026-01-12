@@ -41,7 +41,7 @@ Google Workspace Gateway (GWG) lets CLI applications obtain short-lived service 
 │  - Service Account creation (IAM API)                      │
 │  - OAuth for user authentication                           │
 │  - SA token impersonation                                  │
-│  - Bigtable for credential storage                         │
+│  - Firestore for credential storage                        │
 └─────────────────────────────────────────────────────────────┘
 ```
 
@@ -91,7 +91,7 @@ google-workspace-gateway/
 │   ├── gwg_server/
 │   │   ├── main.py           # FastAPI app
 │   │   ├── config.py         # Settings
-│   │   ├── database.py       # Bigtable storage
+│   │   ├── database.py       # Firestore storage
 │   │   ├── auth/             # OAuth handlers
 │   │   └── token_exchange/   # Token exchange API
 │   └── Dockerfile.dev
@@ -112,7 +112,7 @@ See [docs/deployment.md](docs/deployment.md) for Cloud Run deployment instructio
 
 1. Google Cloud Project with billing enabled
 2. OAuth 2.0 credentials (Web application type)
-3. Bigtable instance for credential storage
+3. Firestore database for credential storage
 4. Required IAM permissions (see [docs/iam-permissions.md](docs/iam-permissions.md))
 
 ### Quick Deploy
@@ -174,7 +174,7 @@ uv run ruff check .
 | `GOOGLE_CLOUD_PROJECT` | Yes | - | GCP project for service accounts |
 | `SECRET_KEY` | Yes | - | Key for signing state tokens |
 | `GOOGLE_REDIRECT_URI` | No | `http://localhost:8001/api/auth/callback` | OAuth redirect URI |
-| `BIGTABLE_INSTANCE` | No | `gwg-auth` | Bigtable instance name |
+| `FIRESTORE_DATABASE` | No | `(default)` | Firestore database name |
 | `ENVIRONMENT` | No | `development` | `development` or `production` |
 
 ## Security
@@ -182,7 +182,7 @@ uv run ruff check .
 - **Short-lived tokens**: Service account tokens expire after 1 hour
 - **Localhost redirects only**: CLI callbacks restricted to localhost
 - **OAuth state tokens**: CSRF protection with time-limited state (10 min)
-- **Server-side credential storage**: Refresh tokens stored securely in Bigtable
+- **Server-side credential storage**: Refresh tokens stored securely in Firestore
 - **No private keys**: Service account keys are never downloaded
 
 ## License

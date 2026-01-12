@@ -30,11 +30,11 @@ class Settings(BaseSettings):
     google_client_secret: str = ""
     google_redirect_uri: str = "http://localhost:8001/api/auth/callback"
 
-    # Google Cloud Project (for creating service accounts and Bigtable)
+    # Google Cloud Project (for creating service accounts and Firestore)
     google_cloud_project: str = ""
 
-    # Bigtable
-    bigtable_instance: str = "gwg-auth"
+    # Firestore database name (use "(default)" for the default database)
+    firestore_database: str = "(default)"
 
     @property
     def allowed_origins_list(self) -> list[str]:
