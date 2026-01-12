@@ -4,51 +4,73 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 ## Project Overview
 
-Fabric is Think41 Technologies' headless authentication service for AI CLI tools. It enables employees to obtain short-lived service account tokens for interacting with Google Docs/Sheets. This is a **headless API** - there is no web UI.
+Google Workspace Gateway (GWG) is a headless authentication service for CLI tools accessing Google Workspace APIs. It enables users to obtain short-lived service account tokens for interacting with Google Sheets, Docs, and Drive.
+
+The project consists of two packages:
+1. **Client Library** (`google-workspace-gateway`) - PyPI package for CLI tools
+2. **Server** (`gwg-server`) - FastAPI server for Cloud Run deployment
 
 ## Architecture
 
-**Single entry point:** `cli/fabric_auth.py` → `get_token()`
+**Client Flow:**
+1. CLI creates `GoogleWorkspaceGateway(server_url="...")` instance
+2. Calls `gateway.get_token()` to get a valid access token
+3. If cached token exists and is valid, return it
+4. Otherwise, start localhost callback server and open browser
+5. User authenticates via Google OAuth on the server
+6. Server redirects to localhost with short-lived token (1 hour)
+7. CLI saves token to `~/.config/google-workspace-gateway/token.json`
 
-**Flow:**
-1. CLI calls `get_token()` to get a valid access token
-2. If cached token exists and is valid, return it
-3. Otherwise, start localhost callback server
-4. Open browser to `/api/token/auth?port=<port>` (server constructs localhost URL)
-5. User authenticates via Google OAuth
-6. Server creates/retrieves service account and impersonates it
-7. Server redirects to `http://localhost:<port>/on-authentication` with short-lived token (1 hour)
-8. CLI saves token to `~/.config/fabric/token.json` and returns it
+**Server Flow:**
+1. Receive auth request at `/api/token/auth?port=<port>`
+2. If user has valid session, refresh token and redirect
+3. Otherwise, redirect to Google OAuth
+4. On callback, store OAuth credentials in Bigtable
+5. Create/retrieve user's service account
+6. Impersonate SA to generate short-lived token
+7. Redirect to `http://localhost:<port>/on-authentication?token=...`
 
 ## Development Commands
+
+### Client Library
+```bash
+cd client
+uv sync
+uv run python -c "from google_workspace_gateway import GoogleWorkspaceGateway; print('OK')"
+uv run ruff check .
+```
 
 ### Server (FastAPI)
 ```bash
 cd server
-uv sync                                          # Install dependencies
-uv run uvicorn fabric.main:app --reload --port 8001  # Run dev server
-uv run pytest tests/ -v                          # Run tests
-uv run ruff check .                              # Lint
-uv run ruff format .                             # Format
+uv sync
+uv run uvicorn gwg_server.main:app --reload --port 8001
+uv run pytest tests/ -v
+uv run ruff check .
+uv run ruff format .
 ```
 
 ### Docker
 ```bash
-docker build -t fabric:latest .
-docker-compose up -d fabric              # Production
-docker-compose --profile dev up dev-server  # Development
+docker build -t gwg-server:latest .
+docker-compose up -d gwg-server              # Production
+docker-compose --profile dev up dev-server   # Development
 ```
 
 ## Key Files
 
-- `cli/fabric_auth.py` - **Entry point** - `get_token()` function
-- `cli/example_gsheet.py` - Example usage with gspread
-- `server/fabric/main.py` - FastAPI app entry point
-- `server/fabric/auth/api.py` - OAuth callback handler
-- `server/fabric/token_exchange/api.py` - Token exchange API (`/api/token/auth`)
-- `server/fabric/config.py` - Pydantic settings from environment
-- `server/fabric/database.py` - Bigtable-backed storage for OAuth credentials and sessions
-- `server/fabric/session.py` - Session management with Bigtable backend
+### Client Library
+- `client/src/google_workspace_gateway/__init__.py` - Package exports
+- `client/src/google_workspace_gateway/gateway.py` - `GoogleWorkspaceGateway` class
+- `client/examples/` - Usage examples
+
+### Server
+- `server/gwg_server/main.py` - FastAPI app entry point
+- `server/gwg_server/config.py` - Pydantic settings from environment
+- `server/gwg_server/database.py` - Bigtable-backed storage
+- `server/gwg_server/session.py` - Session management
+- `server/gwg_server/auth/api.py` - OAuth callback handler
+- `server/gwg_server/token_exchange/api.py` - Token exchange API
 
 ## API Endpoints
 
@@ -63,47 +85,36 @@ docker-compose --profile dev up dev-server  # Development
 
 Copy `server/.env.template` to `server/.env` and configure:
 - `GOOGLE_CLIENT_ID` / `GOOGLE_CLIENT_SECRET` - OAuth credentials
-- `GOOGLE_CLOUD_PROJECT` - GCP project for service account creation and Bigtable
-- `BIGTABLE_INSTANCE` - Bigtable instance name (default: `fabric-auth`)
+- `GOOGLE_CLOUD_PROJECT` - GCP project for service account creation
+- `BIGTABLE_INSTANCE` - Bigtable instance name (default: `gwg-auth`)
 - `SECRET_KEY` - For signing state tokens
 
 Server uses Application Default Credentials (ADC) for service account management and Bigtable access.
 
 ## Bigtable Setup
 
-Create the Bigtable instance and tables:
 ```bash
-# Enable APIs
-gcloud services enable bigtable.googleapis.com bigtableadmin.googleapis.com
-
-# Create instance (one node for dev, scale up for production)
-gcloud bigtable instances create fabric-auth \
-  --display-name="Fabric Auth" \
-  --cluster-config=id=fabric-auth-c1,zone=us-central1-a,nodes=1
+# Create instance
+gcloud bigtable instances create gwg-auth \
+  --display-name="GWG Auth" \
+  --cluster-config=id=gwg-auth-c1,zone=us-central1-a,nodes=1
 
 # Create tables
-cbt -project=<project> -instance=fabric-auth createtable sessions
-cbt -project=<project> -instance=fabric-auth createfamily sessions data
-cbt -project=<project> -instance=fabric-auth createtable users
-cbt -project=<project> -instance=fabric-auth createfamily users oauth
-cbt -project=<project> -instance=fabric-auth createfamily users metadata
+cbt -project=<project> -instance=gwg-auth createtable sessions
+cbt -project=<project> -instance=gwg-auth createfamily sessions data
+cbt -project=<project> -instance=gwg-auth createtable users
+cbt -project=<project> -instance=gwg-auth createfamily users oauth
+cbt -project=<project> -instance=gwg-auth createfamily users metadata
 ```
-
-## Service Account Traceability
-
-Service accounts are created with metadata for audit:
-- `displayName`: "AI EA for {user_name}"
-- `description`: "Owner: {email} | Created: {timestamp} | Via: Fabric"
 
 ## Token Storage
 
-- **Server-side:** OAuth refresh tokens and sessions stored in Bigtable
-  - `sessions` table: session_id -> email mapping (for HTTP sessions)
-  - `users` table: email -> OAuth credentials + service account info
-- **Client-side:** Short-lived SA tokens cached in `~/.config/fabric/token.json`
+- **Server-side:** OAuth refresh tokens and sessions in Bigtable
+- **Client-side:** Short-lived SA tokens in `~/.config/google-workspace-gateway/token.json`
 
-## Session-Based Token Refresh
+## Package Names
 
-When a user has a valid browser session (30-day cookie), subsequent CLI auth requests
-will automatically refresh the SA token using stored OAuth credentials, without
-requiring the user to re-authenticate via Google OAuth.
+| Package | PyPI/Import Name | Directory |
+|---------|------------------|-----------|
+| Client | `google-workspace-gateway` / `google_workspace_gateway` | `client/` |
+| Server | `gwg-server` / `gwg_server` | `server/` |

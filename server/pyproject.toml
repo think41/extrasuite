@@ -1,7 +1,7 @@
 [project]
-name = "fabric"
-version = "0.1.0"
-description = "Fabric - Headless CLI authentication service for AI Executive Assistant"
+name = "gwg-server"
+version = "1.0.0"
+description = "Google Workspace Gateway Server - Headless CLI authentication service for Google Workspace APIs"
 readme = "README.md"
 requires-python = ">=3.12"
 dependencies = [
@@ -33,7 +33,7 @@ build-backend = "hatchling.build"
 [tool.ruff]
 target-version = "py312"
 line-length = 100
-src = ["fabric", "tests"]
+src = ["gwg_server", "tests"]
 
 [tool.ruff.lint]
 select = [
@@ -54,7 +54,7 @@ ignore = [
 ]
 
 [tool.ruff.lint.isort]
-known-first-party = ["fabric"]
+known-first-party = ["gwg_server"]
 
 [tool.ruff.format]
 quote-style = "double"

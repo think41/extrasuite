@@ -15,7 +15,7 @@ from google.auth.transport import requests as google_requests
 from google.oauth2 import id_token
 from google_auth_oauthlib.flow import Flow
 
-from fabric.config import Settings, get_settings
+from gwg_server.config import Settings, get_settings
 
 router = APIRouter(prefix="/auth", tags=["auth"])
 
@@ -85,7 +85,7 @@ async def google_callback(
     settings: Settings = Depends(get_settings),
 ):
     """Handle Google OAuth callback for CLI flow."""
-    from fabric.logging import logger
+    from gwg_server.logging import logger
 
     # Verify state token
     if state not in _oauth_states:
@@ -142,10 +142,10 @@ async def _handle_cli_callback(
     settings: Settings,
 ) -> RedirectResponse | HTMLResponse:
     """Handle CLI OAuth callback - exchange for SA token and redirect to localhost."""
-    from fabric.database import update_service_account_email
-    from fabric.logging import logger
-    from fabric.session import create_user_session
-    from fabric.token_exchange.api import (
+    from gwg_server.database import update_service_account_email
+    from gwg_server.logging import logger
+    from gwg_server.session import create_user_session
+    from gwg_server.token_exchange.api import (
         _get_or_create_service_account,
         _impersonate_service_account,
         _store_oauth_credentials,

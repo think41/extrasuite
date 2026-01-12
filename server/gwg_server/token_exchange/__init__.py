@@ -1,5 +1,5 @@
 """Token exchange module for CLI authentication flow."""
 
-from fabric.token_exchange.api import router
+from gwg_server.token_exchange.api import router
 
 __all__ = ["router"]

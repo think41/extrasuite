@@ -1,7 +1,7 @@
-"""Fabric - Think41 AI Executive Assistant API.
+"""Google Workspace Gateway Server.
 
 Headless API server for CLI authentication and service account token exchange.
-Entry point: CLI calls get_token() from cli/fabric_auth.py
+Entry point: CLI creates GoogleWorkspaceGateway instance and calls get_token()
 """
 
 import secrets
@@ -11,10 +11,10 @@ from fastapi import FastAPI, Request
 from fastapi.middleware.cors import CORSMiddleware
 from starlette.middleware.base import BaseHTTPMiddleware
 
-from fabric import auth, health, token_exchange
-from fabric.config import get_settings
-from fabric.database import close_db, init_db
-from fabric.logging import (
+from gwg_server import auth, health, token_exchange
+from gwg_server.config import get_settings
+from gwg_server.database import close_db, init_db
+from gwg_server.logging import (
     clear_user_context,
     logger,
     request_id_ctx,
@@ -61,7 +61,7 @@ async def lifespan(_app: FastAPI):
         log_level="DEBUG" if settings.debug else "INFO",
     )
 
-    logger.info(f"Starting Fabric server on port {settings.port}")
+    logger.info(f"Starting GWG server on port {settings.port}")
     logger.info(f"Environment: {settings.environment}")
 
     # Initialize database (sync)
@@ -72,7 +72,7 @@ async def lifespan(_app: FastAPI):
 
     # Close database connections (sync)
     close_db()
-    logger.info("Shutting down Fabric server")
+    logger.info("Shutting down GWG server")
 
 
 def create_app() -> FastAPI:
@@ -80,9 +80,9 @@ def create_app() -> FastAPI:
     settings = get_settings()
 
     app = FastAPI(
-        title="Fabric",
-        description="Headless CLI authentication service for AI Executive Assistant",
-        version="0.1.0",
+        title="Google Workspace Gateway",
+        description="Headless CLI authentication service for Google Workspace APIs",
+        version="1.0.0",
         lifespan=lifespan,
         docs_url="/api/docs" if not settings.is_production else None,
         redoc_url="/api/redoc" if not settings.is_production else None,
@@ -110,9 +110,9 @@ def create_app() -> FastAPI:
     @app.get("/")
     async def root():
         return {
-            "service": "fabric",
-            "version": "0.1.0",
-            "description": "Fabric API - Headless CLI authentication service",
+            "service": "gwg-server",
+            "version": "1.0.0",
+            "description": "Google Workspace Gateway - Headless CLI authentication service",
             "docs": "/api/docs" if not settings.is_production else None,
         }
 
@@ -128,7 +128,7 @@ if __name__ == "__main__":
 
     settings = get_settings()
     uvicorn.run(
-        "fabric.main:app",
+        "gwg_server.main:app",
         host="0.0.0.0",
         port=settings.port,
         reload=not settings.is_production,

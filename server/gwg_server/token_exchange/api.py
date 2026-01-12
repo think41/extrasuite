@@ -1,11 +1,11 @@
 """Token exchange API for CLI authentication flow.
 
-This module implements the Fabric Token Exchange flow:
+This module implements the Google Workspace Gateway Token Exchange flow:
 1. CLI opens browser to /api/token/auth?port=<port>
 2. User authenticates via Google OAuth (cloud-platform scope)
-3. Fabric stores OAuth credentials in Bigtable
-4. Fabric looks up or creates user's service account
-5. Fabric impersonates SA to get short-lived token
+3. GWG stores OAuth credentials in Bigtable
+4. GWG looks up or creates user's service account
+5. GWG impersonates SA to get short-lived token
 6. Browser redirects to localhost:{port}/on-authentication with token
 
 Note: The actual OAuth callback is handled by /api/auth/callback (unified endpoint).
@@ -24,8 +24,8 @@ from google.oauth2.credentials import Credentials
 from googleapiclient.discovery import build
 from googleapiclient.errors import HttpError
 
-from fabric.config import Settings, get_settings
-from fabric.database import (
+from gwg_server.config import Settings, get_settings
+from gwg_server.database import (
     get_user_credentials,
     store_user_credentials,
 )
@@ -107,8 +107,8 @@ async def start_token_auth(
     Otherwise, this endpoint creates a state token and redirects to Google OAuth.
     The callback is handled by /api/auth/callback (unified for web and CLI).
     """
-    from fabric.logging import logger
-    from fabric.session import get_session_email
+    from gwg_server.logging import logger
+    from gwg_server.session import get_session_email
 
     # Build the redirect URL - always localhost with fixed path
     cli_redirect = build_cli_redirect_url(port)
@@ -126,7 +126,7 @@ async def start_token_auth(
             logger.warning(f"Token refresh failed for {email}: {e}, falling back to OAuth")
 
     # No valid session or refresh failed, start OAuth flow
-    from fabric.auth.api import CLI_SCOPES, create_cli_auth_state, create_oauth_flow
+    from gwg_server.auth.api import CLI_SCOPES, create_cli_auth_state, create_oauth_flow
 
     # Create state token with CLI redirect info
     state = create_cli_auth_state(cli_redirect=cli_redirect)
@@ -198,7 +198,7 @@ def _try_refresh_token(
 
 def _store_oauth_credentials(email: str, credentials: Credentials) -> None:
     """Store or update OAuth credentials in Bigtable."""
-    from fabric.auth.api import CLI_SCOPES
+    from gwg_server.auth.api import CLI_SCOPES
 
     scopes = list(credentials.scopes) if credentials.scopes else CLI_SCOPES
     store_user_credentials(
@@ -252,7 +252,7 @@ def _get_or_create_service_account(settings: Settings, user_email: str, user_nam
         "accountId": account_id,
         "serviceAccount": {
             "displayName": f"AI EA for {user_name}"[:100],
-            "description": f"Owner: {user_email} | Created: {created_at} | Via: Fabric"[:256],
+            "description": f"Owner: {user_email} | Created: {created_at} | Via: GWG"[:256],
         },
     }
 

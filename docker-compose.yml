@@ -2,7 +2,7 @@ version: '3.8'
 
 services:
   # Production service
-  fabric:
+  gwg-server:
     build:
       context: .
       dockerfile: Dockerfile
@@ -16,6 +16,7 @@ services:
       - GOOGLE_CLIENT_SECRET=${GOOGLE_CLIENT_SECRET}
       - GOOGLE_REDIRECT_URI=${GOOGLE_REDIRECT_URI:-http://localhost:8001/api/auth/callback}
       - GOOGLE_CLOUD_PROJECT=${GOOGLE_CLOUD_PROJECT}
+      - BIGTABLE_INSTANCE=${BIGTABLE_INSTANCE:-gwg-auth}
     healthcheck:
       test: ["CMD", "curl", "-f", "http://localhost:8001/api/health"]
       interval: 30s
@@ -39,8 +40,9 @@ services:
       - GOOGLE_CLIENT_SECRET=${GOOGLE_CLIENT_SECRET}
       - GOOGLE_REDIRECT_URI=http://localhost:8001/api/auth/callback
       - GOOGLE_CLOUD_PROJECT=${GOOGLE_CLOUD_PROJECT}
+      - BIGTABLE_INSTANCE=${BIGTABLE_INSTANCE:-gwg-auth}
     volumes:
       - ./server:/app
-    command: uv run uvicorn fabric.main:app --host 0.0.0.0 --port 8001 --reload
+    command: uv run uvicorn gwg_server.main:app --host 0.0.0.0 --port 8001 --reload
     profiles:
       - dev

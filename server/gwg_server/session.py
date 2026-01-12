@@ -1,4 +1,4 @@
-"""Session management for Fabric authentication.
+"""Session management for Google Workspace Gateway authentication.
 
 Provides cookie-based session management backed by Bigtable.
 Sessions allow users to refresh tokens without re-authenticating.
@@ -9,10 +9,10 @@ from datetime import UTC, datetime, timedelta
 
 from fastapi import Request, Response
 
-from fabric.database import create_session, delete_session, get_session
+from gwg_server.database import create_session, delete_session, get_session
 
 # Session configuration
-SESSION_COOKIE_NAME = "fabric_session"
+SESSION_COOKIE_NAME = "gwg_session"
 SESSION_MAX_AGE = timedelta(days=30)  # Sessions last 30 days
 
 

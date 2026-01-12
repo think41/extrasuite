@@ -26,7 +26,7 @@ from datetime import UTC, datetime
 from google.cloud import bigtable
 from google.cloud.bigtable import row_filters
 
-from fabric.config import get_settings
+from gwg_server.config import get_settings
 
 # Column families
 SESSIONS_CF = "data"
@@ -270,7 +270,7 @@ def init_db():
     For Bigtable, we just verify connectivity by getting the instance.
     Tables are created via gcloud/cbt commands, not at runtime.
     """
-    from fabric.logging import logger
+    from gwg_server.logging import logger
 
     try:
         instance = _get_instance()

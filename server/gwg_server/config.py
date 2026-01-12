@@ -34,7 +34,7 @@ class Settings(BaseSettings):
     google_cloud_project: str = ""
 
     # Bigtable
-    bigtable_instance: str = "fabric-auth"
+    bigtable_instance: str = "gwg-auth"
 
     @property
     def allowed_origins_list(self) -> list[str]:

@@ -1,1 +1,1 @@
-"""Fabric tests."""
+"""GWG Server tests."""

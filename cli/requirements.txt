@@ -1,7 +1,0 @@
-# Fabric CLI Dependencies
-# No external dependencies required for basic authentication (fabric_auth.py)
-# Standard library only: http.server, json, urllib, webbrowser, socket, threading
-
-# For Google Sheets integration (example_gsheet.py):
-gspread>=6.0.0
-google-auth>=2.0.0

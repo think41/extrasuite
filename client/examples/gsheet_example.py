@@ -1,46 +1,48 @@
 #!/usr/bin/env python3
-"""Example: Using Fabric authentication with Google Sheets.
+"""Example: Using Google Workspace Gateway with Google Sheets.
 
-This script demonstrates how to integrate Fabric authentication
+This script demonstrates how to integrate Google Workspace Gateway
 with the gspread library to access Google Sheets.
 
 Prerequisites:
-    pip install gspread
+    pip install gspread google-auth
 
 Usage:
-    python example_gsheet.py <spreadsheet_url>
+    python gsheet_example.py --server https://your-gwg-server.example.com <spreadsheet_url>
 """
 
+import argparse
 import sys
 
-# Import the fabric authentication module
-from fabric_auth import get_token
+from google_workspace_gateway import GoogleWorkspaceGateway
 
 # Try to import gspread
 try:
     import gspread
     from google.oauth2.credentials import Credentials
 except ImportError:
-    print("Error: gspread is required. Install with: pip install gspread")
+    print("Error: gspread and google-auth are required.")
+    print("Install with: pip install gspread google-auth")
     sys.exit(1)
 
 
-def get_gspread_client(fabric_server: str = "http://localhost:8001") -> gspread.Client:
-    """Get an authenticated gspread client using Fabric token exchange.
+def get_gspread_client(server_url: str) -> gspread.Client:
+    """Get an authenticated gspread client using Google Workspace Gateway.
 
     This function:
-    1. Gets a valid SA token from Fabric (authenticating if needed)
+    1. Gets a valid SA token from the gateway (authenticating if needed)
     2. Creates OAuth2 credentials from the token
     3. Returns an authenticated gspread client
 
     Args:
-        fabric_server: URL of the Fabric server
+        server_url: URL of the Google Workspace Gateway server
 
     Returns:
         Authenticated gspread.Client
     """
-    # Get token from Fabric (will authenticate if needed)
-    token = get_token(fabric_server)
+    # Create gateway and get token
+    gateway = GoogleWorkspaceGateway(server_url=server_url)
+    token = gateway.get_token()
 
     # Create credentials from the access token
     # Note: This is a short-lived token (1 hour), no refresh token
@@ -52,22 +54,28 @@ def get_gspread_client(fabric_server: str = "http://localhost:8001") -> gspread.
 
 def main():
     """Main entry point."""
-    if len(sys.argv) < 2:
-        print("Usage: python example_gsheet.py <spreadsheet_url>")
-        print("\nExample:")
-        print("  python example_gsheet.py https://docs.google.com/spreadsheets/d/abc123/edit")
-        sys.exit(1)
-
-    spreadsheet_url = sys.argv[1]
+    parser = argparse.ArgumentParser(
+        description="Access Google Sheets using Google Workspace Gateway"
+    )
+    parser.add_argument(
+        "--server",
+        required=True,
+        help="Google Workspace Gateway server URL",
+    )
+    parser.add_argument(
+        "spreadsheet_url",
+        help="URL of the Google Spreadsheet to access",
+    )
+    args = parser.parse_args()
 
     try:
         # Get authenticated client
         print("Getting authenticated gspread client...")
-        gc = get_gspread_client()
+        gc = get_gspread_client(args.server)
 
         # Open the spreadsheet
-        print(f"Opening spreadsheet: {spreadsheet_url}")
-        spreadsheet = gc.open_by_url(spreadsheet_url)
+        print(f"Opening spreadsheet: {args.spreadsheet_url}")
+        spreadsheet = gc.open_by_url(args.spreadsheet_url)
 
         # Print some info
         print(f"\nSpreadsheet: {spreadsheet.title}")
@@ -86,7 +94,7 @@ def main():
     except gspread.exceptions.SpreadsheetNotFound:
         print("\nError: Spreadsheet not found.")
         print("Make sure the spreadsheet is shared with your service account email.")
-        print("You can find your SA email in ~/.config/fabric/token.json")
+        print("Check ~/.config/google-workspace-gateway/token.json for your SA email.")
         sys.exit(1)
     except gspread.exceptions.APIError as e:
         print(f"\nAPI Error: {e}")
