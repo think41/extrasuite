@@ -8,33 +8,31 @@ This module implements the Google Workspace Gateway Token Exchange flow:
 5. GWG impersonates SA to get short-lived token
 6. Browser redirects to localhost:{port}/on-authentication with token
 
-Note: The actual OAuth callback is handled by /api/auth/callback (unified endpoint).
-This module provides the /api/token/auth entry point and helper functions.
+Note: The actual OAuth callback is handled by /api/auth/callback.
+This module provides the /api/token/auth entry point.
 """
 
-import re
-from datetime import UTC, datetime
 from urllib.parse import urlencode
 
-from fastapi import APIRouter, Depends, HTTPException, Query, Request
+from fastapi import APIRouter, Depends, Query, Request
 from fastapi.responses import RedirectResponse
-from google.auth import impersonated_credentials
+from google.auth.exceptions import RefreshError
 from google.auth.transport import requests as google_requests
 from google.oauth2.credentials import Credentials
-from googleapiclient.discovery import build
-from googleapiclient.errors import HttpError
 
 from gwg_server.config import Settings, get_settings
 from gwg_server.database import Database, get_database
+from gwg_server.logging import (
+    audit_auth_started,
+    audit_token_refresh,
+    audit_token_refresh_failed,
+    logger,
+)
+from gwg_server.oauth import CLI_SCOPES, create_cli_auth_state, create_oauth_flow
+from gwg_server.service_account import impersonate_service_account
+from gwg_server.session import get_session_email_if_valid
 
 router = APIRouter(prefix="/token", tags=["token-exchange"])
-
-# Scopes for the impersonated SA token (what the CLI can do)
-SA_TOKEN_SCOPES = [
-    "https://www.googleapis.com/auth/spreadsheets",
-    "https://www.googleapis.com/auth/drive.readonly",
-    "https://www.googleapis.com/auth/documents.readonly",
-]
 
 # Valid port range for CLI callback
 MIN_PORT = 1024
@@ -44,44 +42,6 @@ MAX_PORT = 65535
 def build_cli_redirect_url(port: int) -> str:
     """Build CLI redirect URL from port - always localhost."""
     return f"http://localhost:{port}/on-authentication"
-
-
-def sanitize_email_for_account_id(email: str) -> str:
-    """Convert email to valid service account ID.
-
-    Service account IDs must:
-    - Be 6-30 characters
-    - Start with a letter
-    - Contain only lowercase letters, numbers, and hyphens
-    """
-    # Take part before @
-    local_part = email.split("@")[0].lower()
-
-    # Replace invalid characters with hyphens
-    account_id = re.sub(r"[^a-z0-9]", "-", local_part)
-
-    # Remove consecutive hyphens
-    account_id = re.sub(r"-+", "-", account_id)
-
-    # Remove leading/trailing hyphens
-    account_id = account_id.strip("-")
-
-    # Ensure it starts with a letter
-    if account_id and not account_id[0].isalpha():
-        account_id = "ea-" + account_id
-
-    # Prefix with ea- (executive assistant) for clarity
-    if not account_id.startswith("ea-"):
-        account_id = "ea-" + account_id
-
-    # Truncate to 30 characters max
-    account_id = account_id[:30].rstrip("-")
-
-    # Ensure minimum length of 6
-    if len(account_id) < 6:
-        account_id = account_id + "-user"
-
-    return account_id
 
 
 @router.get("/auth")
@@ -103,33 +63,31 @@ async def start_token_auth(
     will be refreshed without requiring re-authentication.
 
     Otherwise, this endpoint creates a state token and redirects to Google OAuth.
-    The callback is handled by /api/auth/callback (unified for web and CLI).
+    The callback is handled by /api/auth/callback.
     """
-    from gwg_server.logging import logger
-    from gwg_server.session import get_session_email
-
     # Build the redirect URL - always localhost with fixed path
     cli_redirect = build_cli_redirect_url(port)
 
     # Check if user has a valid session with stored credentials
-    email = get_session_email(request, db)
+    email = get_session_email_if_valid(request, db)
     if email:
-        logger.info(f"Found existing session for {email}, attempting token refresh")
-        try:
-            redirect_response = _try_refresh_token(db, email, cli_redirect, settings)
-            if redirect_response:
-                logger.info(f"Successfully refreshed token for {email}")
-                return redirect_response
-        except Exception as e:
-            logger.warning(f"Token refresh failed for {email}: {e}, falling back to OAuth")
+        logger.info("Found existing session, attempting token refresh", extra={"email": email})
+        audit_auth_started(email, port)
+
+        redirect_response = _try_refresh_token(db, email, cli_redirect, settings)
+        if redirect_response:
+            return redirect_response
+
+        # Refresh failed, fall through to OAuth flow
+        logger.info("Token refresh failed, starting OAuth flow", extra={"email": email})
 
     # No valid session or refresh failed, start OAuth flow
-    from gwg_server.google_auth import CLI_SCOPES, create_cli_auth_state, create_oauth_flow
+    audit_auth_started(None, port)
 
-    # Create state token with CLI redirect info
-    state = create_cli_auth_state(cli_redirect=cli_redirect)
+    # Create state token with CLI redirect info (stored in Firestore)
+    state = create_cli_auth_state(db, cli_redirect=cli_redirect)
 
-    # Create OAuth flow with CLI scopes, using the unified callback
+    # Create OAuth flow with CLI scopes
     flow = create_oauth_flow(settings, CLI_SCOPES)
 
     authorization_url, _ = flow.authorization_url(
@@ -152,11 +110,13 @@ def _try_refresh_token(
     # Get stored credentials
     user_creds = db.get_user_credentials(email)
     if not user_creds or not user_creds.refresh_token:
+        audit_token_refresh_failed(email, "no_stored_credentials")
         return None
 
     # Get service account email
     sa_email = user_creds.service_account_email
     if not sa_email:
+        audit_token_refresh_failed(email, "no_service_account")
         return None
 
     # Create OAuth credentials from stored tokens
@@ -170,19 +130,41 @@ def _try_refresh_token(
     )
 
     # Refresh the credentials if needed
-    if credentials.expired:
-        credentials.refresh(google_requests.Request())
-        # Update stored credentials with new access token
-        db.store_user_credentials(
-            email=email,
-            access_token=credentials.token,
-            refresh_token=credentials.refresh_token,
-            scopes=user_creds.scopes,
-            service_account_email=sa_email,
+    try:
+        if credentials.expired or not credentials.valid:
+            credentials.refresh(google_requests.Request())
+            # Update stored credentials with new access token
+            db.store_user_credentials(
+                email=email,
+                access_token=credentials.token,
+                refresh_token=credentials.refresh_token,
+                scopes=user_creds.scopes,
+                service_account_email=sa_email,
+            )
+    except RefreshError as e:
+        # Token was revoked or expired - user needs to re-authenticate
+        logger.warning(
+            "OAuth refresh token revoked or expired",
+            extra={"email": email, "error": str(e)},
         )
+        audit_token_refresh_failed(email, "refresh_token_revoked")
+        return None
+    except Exception:
+        logger.exception("Failed to refresh OAuth credentials")
+        audit_token_refresh_failed(email, "refresh_failed")
+        return None
 
     # Impersonate SA to get short-lived token
-    sa_token, expires_in = _impersonate_service_account(credentials, sa_email)
+    try:
+        sa_token, expires_in = impersonate_service_account(credentials, sa_email)
+    except RefreshError:
+        logger.exception("Impersonation failed - credentials may be revoked")
+        audit_token_refresh_failed(email, "impersonation_credentials_revoked")
+        return None
+    except Exception:
+        logger.exception("Failed to impersonate service account")
+        audit_token_refresh_failed(email, "impersonation_failed")
+        return None
 
     # Redirect to CLI with token
     params = {
@@ -191,133 +173,6 @@ def _try_refresh_token(
         "service_account": sa_email,
     }
     redirect_url = f"{cli_redirect}?{urlencode(params)}"
+
+    audit_token_refresh(email, sa_email)
     return RedirectResponse(url=redirect_url)
-
-
-def _store_oauth_credentials(db: Database, email: str, credentials: Credentials) -> None:
-    """Store or update OAuth credentials in Firestore."""
-    from gwg_server.google_auth import CLI_SCOPES
-
-    scopes = list(credentials.scopes) if credentials.scopes else CLI_SCOPES
-    db.store_user_credentials(
-        email=email,
-        access_token=credentials.token,
-        refresh_token=credentials.refresh_token,
-        scopes=scopes,
-    )
-
-
-def _get_or_create_service_account(settings: Settings, user_email: str, user_name: str) -> str:
-    """Look up or create service account for user."""
-    if not settings.google_cloud_project:
-        raise HTTPException(
-            status_code=500,
-            detail="Google Cloud project not configured.",
-        )
-
-    project_id = settings.google_cloud_project
-    account_id = sanitize_email_for_account_id(user_email)
-    sa_email = f"{account_id}@{project_id}.iam.gserviceaccount.com"
-
-    # Use Application Default Credentials to manage service accounts
-    import google.auth
-
-    try:
-        admin_creds, _ = google.auth.default(
-            scopes=["https://www.googleapis.com/auth/cloud-platform"]
-        )
-        iam_service = build("iam", "v1", credentials=admin_creds)
-    except Exception as e:
-        raise HTTPException(
-            status_code=500,
-            detail=f"Failed to initialize IAM service: {e}",
-        ) from None
-
-    # Check if SA exists
-    try:
-        iam_service.projects().serviceAccounts().get(
-            name=f"projects/{project_id}/serviceAccounts/{sa_email}"
-        ).execute()
-        # SA exists
-        return sa_email
-    except HttpError as e:
-        if e.resp.status != 404:
-            raise
-
-    # Create new service account with metadata
-    created_at = datetime.now(UTC).strftime("%Y-%m-%d %H:%M UTC")
-    service_account_body = {
-        "accountId": account_id,
-        "serviceAccount": {
-            "displayName": f"AI EA for {user_name}"[:100],
-            "description": f"Owner: {user_email} | Created: {created_at} | Via: GWG"[:256],
-        },
-    }
-
-    try:
-        created = (
-            iam_service.projects()
-            .serviceAccounts()
-            .create(name=f"projects/{project_id}", body=service_account_body)
-            .execute()
-        )
-        sa_email = created["email"]
-    except Exception as e:
-        raise HTTPException(
-            status_code=500,
-            detail=f"Failed to create service account: {e}",
-        ) from None
-
-    # Grant user permission to impersonate this SA (for future use)
-    # This enables the user to use the SA even without going through Fabric
-    try:
-        policy = (
-            iam_service.projects()
-            .serviceAccounts()
-            .getIamPolicy(resource=f"projects/{project_id}/serviceAccounts/{sa_email}")
-            .execute()
-        )
-
-        # Add serviceAccountTokenCreator role for the user
-        binding = {
-            "role": "roles/iam.serviceAccountTokenCreator",
-            "members": [f"user:{user_email}"],
-        }
-
-        if "bindings" not in policy:
-            policy["bindings"] = []
-        policy["bindings"].append(binding)
-
-        iam_service.projects().serviceAccounts().setIamPolicy(
-            resource=f"projects/{project_id}/serviceAccounts/{sa_email}",
-            body={"policy": policy},
-        ).execute()
-    except Exception:
-        # Non-critical - user can still use Fabric to get tokens
-        pass
-
-    return sa_email
-
-
-def _impersonate_service_account(
-    source_credentials: Credentials, target_sa_email: str
-) -> tuple[str, int]:
-    """Impersonate service account and return short-lived access token."""
-    # Create impersonated credentials
-    target_credentials = impersonated_credentials.Credentials(
-        source_credentials=source_credentials,
-        target_principal=target_sa_email,
-        target_scopes=SA_TOKEN_SCOPES,
-        lifetime=3600,  # 1 hour
-    )
-
-    # Refresh to get the token
-    target_credentials.refresh(google_requests.Request())
-
-    if not target_credentials.token:
-        raise ValueError("Failed to get impersonated token")
-
-    # Calculate expires_in (token is valid for 1 hour)
-    expires_in = 3600
-
-    return target_credentials.token, expires_in

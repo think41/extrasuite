@@ -1,73 +1,75 @@
-"""Session management for Google Workspace Gateway authentication.
+"""Session management using starlette's signed cookie sessions.
 
-Provides cookie-based session management backed by Firestore.
-Sessions allow users to refresh tokens without re-authenticating.
+Uses starlette's SessionMiddleware for secure, signed cookies.
+The cookie stores only the user's email - credentials are looked up from Firestore.
+
+This is stateless session management - no server-side session storage needed.
 """
 
-import secrets
-from datetime import UTC, datetime, timedelta
+from datetime import timedelta
 
-from fastapi import Request, Response
+from fastapi import Request
 
 from gwg_server.database import Database
 
 # Session configuration
 SESSION_COOKIE_NAME = "gwg_session"
-SESSION_MAX_AGE = timedelta(days=30)  # Sessions last 30 days
+SESSION_MAX_AGE = timedelta(days=30)
+SESSION_EMAIL_KEY = "email"
 
 
-def get_session_id(request: Request) -> str | None:
-    """Get session ID from request cookie."""
-    return request.cookies.get(SESSION_COOKIE_NAME)
-
-
-def get_session_email(request: Request, db: Database) -> str | None:
-    """Get the email associated with the current session.
+def get_session_email(request: Request) -> str | None:
+    """Get the email from the session cookie.
 
     Returns None if no valid session exists.
     """
-    session_id = get_session_id(request)
-    if not session_id:
-        return None
-
-    session = db.get_session(session_id)
-    if not session:
-        return None
-
-    # Check if session is expired (30 days)
-    if session.created_at and datetime.now(UTC) - session.created_at > SESSION_MAX_AGE:
-        # Session expired, delete it
-        db.delete_session(session_id)
-        return None
-
-    return session.email
+    return request.session.get(SESSION_EMAIL_KEY)
 
 
-def create_user_session(response: Response, email: str, db: Database) -> str:
-    """Create a new session for the user and set the cookie.
+def get_session_email_if_valid(request: Request, db: Database) -> str | None:
+    """Get the email from session if user has valid credentials in Firestore.
 
-    Returns the session ID.
+    Returns None if:
+    - No session exists
+    - User has no credentials in Firestore
+    - User's refresh token is missing
     """
-    session_id = secrets.token_urlsafe(32)
-    db.create_session(session_id, email)
+    email = get_session_email(request)
+    if not email:
+        return None
 
-    # Set secure cookie
-    response.set_cookie(
-        key=SESSION_COOKIE_NAME,
-        value=session_id,
-        max_age=int(SESSION_MAX_AGE.total_seconds()),
-        httponly=True,
-        samesite="lax",
-        # secure=True should be set in production
-    )
+    # Validate that user has credentials in Firestore
+    user_creds = db.get_user_credentials(email)
+    if not user_creds or not user_creds.refresh_token:
+        return None
 
-    return session_id
+    return email
 
 
-def clear_session(request: Request, response: Response, db: Database) -> None:
-    """Clear the current session."""
-    session_id = get_session_id(request)
-    if session_id:
-        db.delete_session(session_id)
+def set_session_email(request: Request, email: str) -> None:
+    """Set the email in the session cookie."""
+    request.session[SESSION_EMAIL_KEY] = email
 
-    response.delete_cookie(SESSION_COOKIE_NAME)
+
+def clear_session(request: Request) -> None:
+    """Clear the session."""
+    request.session.clear()
+
+
+def get_session_middleware_config(secret_key: str, is_production: bool) -> dict:
+    """Get configuration for starlette's SessionMiddleware.
+
+    Args:
+        secret_key: Secret key for signing cookies
+        is_production: Whether running in production (enables secure flag)
+
+    Returns:
+        Dict of kwargs for SessionMiddleware
+    """
+    return {
+        "secret_key": secret_key,
+        "session_cookie": SESSION_COOKIE_NAME,
+        "max_age": int(SESSION_MAX_AGE.total_seconds()),
+        "same_site": "lax",
+        "https_only": is_production,
+    }

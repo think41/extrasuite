@@ -1,14 +1,10 @@
 """Database layer using Google Cloud Firestore.
 
 Stores two types of data:
-1. Sessions: session_id -> email (for HTTP session management)
-2. Users: email -> OAuth credentials + service account info
+1. Users: email -> OAuth credentials + service account info
+2. OAuth States: state_token -> cli_redirect + created_at (for OAuth flow)
 
 Collections structure:
-- sessions: Document ID = session_id
-  - email: User email associated with session
-  - created_at: Session creation timestamp
-
 - users: Document ID = email (with "/" replaced by "__")
   - access_token: OAuth access token
   - refresh_token: OAuth refresh token
@@ -16,13 +12,23 @@ Collections structure:
   - service_account_email: Associated service account
   - created_at: Record creation timestamp
   - updated_at: Last update timestamp
+
+- oauth_states: Document ID = state_token
+  - cli_redirect: Redirect URL for CLI
+  - created_at: State creation timestamp (TTL: 10 minutes)
+
+Note: Sessions are handled via starlette's signed cookies (stateless).
+The cookie stores the user email, which is validated against the users collection.
 """
 
 from dataclasses import dataclass
-from datetime import UTC, datetime
+from datetime import UTC, datetime, timedelta
 
 from fastapi import Request
 from google.cloud import firestore
+
+# OAuth state TTL
+OAUTH_STATE_TTL = timedelta(minutes=10)
 
 
 @dataclass
@@ -39,12 +45,12 @@ class UserCredentials:
 
 
 @dataclass
-class Session:
-    """User session data."""
+class OAuthState:
+    """OAuth state for CSRF protection."""
 
-    session_id: str
-    email: str
-    created_at: datetime | None = None
+    state: str
+    cli_redirect: str
+    created_at: datetime
 
 
 class Database:
@@ -69,7 +75,7 @@ class Database:
 
     def verify_connection(self) -> None:
         """Verify database connectivity by attempting a read."""
-        self._client.collection("sessions").limit(1).get()
+        self._client.collection("users").limit(1).get()
 
     @staticmethod
     def _email_to_doc_id(email: str) -> str:
@@ -77,39 +83,60 @@ class Database:
         return email.replace("/", "__")
 
     # =========================================================================
-    # Session Management
+    # OAuth State Management (for CSRF protection during OAuth flow)
     # =========================================================================
 
-    def create_session(self, session_id: str, email: str) -> Session:
-        """Create a new session."""
+    def create_oauth_state(self, state: str, cli_redirect: str) -> OAuthState:
+        """Create a new OAuth state token."""
         now = datetime.now(UTC)
-        doc_ref = self._client.collection("sessions").document(session_id)
-        doc_ref.set({"email": email, "created_at": now})
-        return Session(session_id=session_id, email=email, created_at=now)
+        doc_ref = self._client.collection("oauth_states").document(state)
+        doc_ref.set({"cli_redirect": cli_redirect, "created_at": now})
+        return OAuthState(state=state, cli_redirect=cli_redirect, created_at=now)
 
-    def get_session(self, session_id: str) -> Session | None:
-        """Get session by ID."""
-        doc_ref = self._client.collection("sessions").document(session_id)
+    def get_oauth_state(self, state: str) -> OAuthState | None:
+        """Get OAuth state by token. Returns None if not found or expired."""
+        doc_ref = self._client.collection("oauth_states").document(state)
         doc = doc_ref.get()
 
         if not doc.exists:
             return None
 
         data = doc.to_dict()
-        email = data.get("email")
-        if not email:
+        cli_redirect = data.get("cli_redirect")
+        created_at = data.get("created_at")
+
+        if not cli_redirect or not created_at:
             return None
 
-        return Session(
-            session_id=session_id,
-            email=email,
-            created_at=data.get("created_at"),
+        # Check if state is expired
+        if datetime.now(UTC) - created_at > OAUTH_STATE_TTL:
+            # Clean up expired state
+            doc_ref.delete()
+            return None
+
+        return OAuthState(state=state, cli_redirect=cli_redirect, created_at=created_at)
+
+    def delete_oauth_state(self, state: str) -> None:
+        """Delete an OAuth state token (consume it)."""
+        doc_ref = self._client.collection("oauth_states").document(state)
+        doc_ref.delete()
+
+    def cleanup_expired_oauth_states(self) -> int:
+        """Clean up expired OAuth states. Returns count of deleted states."""
+        cutoff = datetime.now(UTC) - OAUTH_STATE_TTL
+        expired_docs = (
+            self._client.collection("oauth_states")
+            .where("created_at", "<", cutoff)
+            .limit(100)  # Batch size to avoid timeout
+            .get()
         )
 
-    def delete_session(self, session_id: str) -> None:
-        """Delete a session."""
-        doc_ref = self._client.collection("sessions").document(session_id)
-        doc_ref.delete()
+        count = 0
+        for doc in expired_docs:
+            doc.reference.delete()
+            count += 1
+
+        return count
 
     # =========================================================================
     # User Credentials Management

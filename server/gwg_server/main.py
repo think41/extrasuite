@@ -8,46 +8,51 @@ import secrets
 from contextlib import asynccontextmanager
 
 from fastapi import FastAPI, Request
-from fastapi.middleware.cors import CORSMiddleware
 from starlette.middleware.base import BaseHTTPMiddleware
+from starlette.middleware.sessions import SessionMiddleware
 
 from gwg_server import google_auth, health, token_exchange
 from gwg_server.config import get_settings
 from gwg_server.database import Database
 from gwg_server.logging import (
-    clear_user_context,
+    clear_request_context,
     logger,
-    request_id_ctx,
+    set_request_context,
     setup_logging,
 )
+from gwg_server.session import get_session_middleware_config
 
 
 class LoggingMiddleware(BaseHTTPMiddleware):
-    """Middleware to add request ID and user context to logs."""
+    """Middleware to add request ID and logging context."""
 
     async def dispatch(self, request: Request, call_next):
         # Generate unique request ID
         request_id = secrets.token_hex(8)
-        request_id_ctx.set(request_id)
+        set_request_context(request_id=request_id)
 
         # Log request
         logger.info(
-            f"{request.method} {request.url.path}",
+            "Request started",
             extra={"method": request.method, "path": request.url.path},
         )
 
         try:
             response = await call_next(request)
             logger.info(
-                f"{request.method} {request.url.path} -> {response.status_code}",
-                extra={"status_code": response.status_code},
+                "Request completed",
+                extra={
+                    "method": request.method,
+                    "path": request.url.path,
+                    "status_code": response.status_code,
+                },
             )
             return response
-        except Exception as e:
-            logger.exception(f"Request failed: {e}")
+        except Exception:
+            logger.exception("Request failed")
             raise
         finally:
-            clear_user_context()
+            clear_request_context()
 
 
 @asynccontextmanager
@@ -61,8 +66,10 @@ async def lifespan(app: FastAPI):
         log_level="DEBUG" if settings.debug else "INFO",
     )
 
-    logger.info(f"Starting GWG server on port {settings.port}")
-    logger.info(f"Environment: {settings.environment}")
+    logger.info(
+        "Starting GWG server",
+        extra={"port": settings.port, "environment": settings.environment},
+    )
 
     # Initialize database and store in app.state for dependency injection
     database = Database(
@@ -97,14 +104,9 @@ def create_app() -> FastAPI:
     # Logging middleware (must be added first to wrap everything)
     app.add_middleware(LoggingMiddleware)
 
-    # CORS middleware
-    app.add_middleware(
-        CORSMiddleware,
-        allow_origins=settings.allowed_origins_list,
-        allow_credentials=True,
-        allow_methods=["*"],
-        allow_headers=["*"],
-    )
+    # Session middleware for signed cookie sessions
+    session_config = get_session_middleware_config(settings.secret_key, settings.is_production)
+    app.add_middleware(SessionMiddleware, **session_config)
 
     # Register API routers
     app.include_router(health.router, prefix="/api")

@@ -4,106 +4,53 @@ Handles CLI authentication flow via token exchange.
 Entry point: /api/token/auth redirects here after Google OAuth.
 """
 
-import contextlib
-import secrets
-from datetime import UTC, datetime, timedelta
 from urllib.parse import urlencode
 
-from fastapi import APIRouter, Depends, HTTPException
+from fastapi import APIRouter, Depends, HTTPException, Request
 from fastapi.responses import HTMLResponse, RedirectResponse
+from google.auth.exceptions import RefreshError
 from google.auth.transport import requests as google_requests
 from google.oauth2 import id_token
-from google_auth_oauthlib.flow import Flow
 
 from gwg_server.config import Settings, get_settings
+from gwg_server.credentials import store_oauth_credentials
 from gwg_server.database import Database, get_database
+from gwg_server.logging import (
+    audit_auth_failed,
+    audit_auth_success,
+    audit_oauth_state_invalid,
+    audit_service_account_created,
+    logger,
+)
+from gwg_server.oauth import CLI_SCOPES, create_oauth_flow
+from gwg_server.service_account import get_or_create_service_account, impersonate_service_account
+from gwg_server.session import set_session_email
 
 router = APIRouter(prefix="/auth", tags=["auth"])
 
 
-# OAuth scopes for CLI login (includes cloud-platform for SA impersonation)
-CLI_SCOPES = [
-    "openid",
-    "https://www.googleapis.com/auth/userinfo.email",
-    "https://www.googleapis.com/auth/userinfo.profile",
-    "https://www.googleapis.com/auth/cloud-platform",
-]
-
-# In-memory state storage for OAuth flow
-# Note: State tokens are short-lived (10 min) and only used during OAuth redirect
-_oauth_states: dict[str, dict] = {}
-
-
-def create_oauth_flow(settings: Settings, scopes: list[str]) -> Flow:
-    """Create Google OAuth flow with specified scopes."""
-    if not settings.google_client_id or not settings.google_client_secret:
-        raise HTTPException(
-            status_code=500,
-            detail="Google OAuth not configured. Set GOOGLE_CLIENT_ID and GOOGLE_CLIENT_SECRET.",
-        )
-
-    client_config = {
-        "web": {
-            "client_id": settings.google_client_id,
-            "client_secret": settings.google_client_secret,
-            "auth_uri": "https://accounts.google.com/o/oauth2/auth",
-            "token_uri": "https://oauth2.googleapis.com/token",
-            "redirect_uris": [settings.google_redirect_uri],
-        }
-    }
-
-    flow = Flow.from_client_config(
-        client_config,
-        scopes=scopes,
-        redirect_uri=settings.google_redirect_uri,
-    )
-    return flow
-
-
-def _cleanup_old_states() -> None:
-    """Remove expired states (older than 10 minutes)."""
-    cutoff = datetime.now(UTC) - timedelta(minutes=10)
-    for old_state in list(_oauth_states.keys()):
-        if _oauth_states[old_state]["created_at"] < cutoff:
-            del _oauth_states[old_state]
-
-
-def create_cli_auth_state(cli_redirect: str) -> str:
-    """Create and store a new OAuth state token for CLI flow."""
-    state = secrets.token_urlsafe(32)
-    _oauth_states[state] = {
-        "created_at": datetime.now(UTC),
-        "cli_redirect": cli_redirect,
-    }
-    _cleanup_old_states()
-    return state
-
-
 @router.get("/callback", response_model=None)
 async def google_callback(
+    request: Request,
     code: str,
     state: str,
     settings: Settings = Depends(get_settings),
     db: Database = Depends(get_database),
 ):
     """Handle Google OAuth callback for CLI flow."""
-    from gwg_server.logging import logger
+    # Verify state token from Firestore
+    oauth_state = db.get_oauth_state(state)
+    if not oauth_state:
+        audit_oauth_state_invalid(state, "not_found_or_expired")
+        raise HTTPException(status_code=400, detail="Invalid or expired state token")
 
-    # Verify state token
-    if state not in _oauth_states:
-        logger.warning("Invalid state token received")
-        raise HTTPException(status_code=400, detail="Invalid state token")
+    # Consume the state token (one-time use)
+    db.delete_oauth_state(state)
 
-    state_data = _oauth_states.pop(state)
-
-    # Check state expiry (10 minutes)
-    if datetime.now(UTC) - state_data["created_at"] > timedelta(minutes=10):
-        logger.warning("Expired state token received")
-        raise HTTPException(status_code=400, detail="State token expired")
-
-    cli_redirect = state_data.get("cli_redirect")
+    cli_redirect = oauth_state.cli_redirect
     if not cli_redirect:
-        raise HTTPException(status_code=400, detail="Missing CLI redirect")
+        audit_oauth_state_invalid(state, "missing_redirect")
+        raise HTTPException(status_code=400, detail="Invalid state: missing redirect")
 
     # Create OAuth flow with CLI scopes
     flow = create_oauth_flow(settings, CLI_SCOPES)
@@ -111,9 +58,10 @@ async def google_callback(
     # Exchange code for tokens
     try:
         flow.fetch_token(code=code)
-    except Exception as e:
-        logger.error(f"Failed to fetch token: {e}")
-        return _cli_error_response(f"Failed to fetch token: {e}", cli_redirect)
+    except Exception:
+        logger.exception("Failed to exchange OAuth code for token")
+        audit_auth_failed(None, "token_exchange_failed")
+        return _cli_error_response(cli_redirect)
 
     # Get credentials and verify ID token
     credentials = flow.credentials
@@ -123,20 +71,24 @@ async def google_callback(
             google_requests.Request(),
             settings.google_client_id,
         )
-    except Exception as e:
-        logger.error(f"Failed to verify token: {e}")
-        return _cli_error_response(f"Failed to verify token: {e}", cli_redirect)
+    except Exception:
+        logger.exception("Failed to verify OAuth ID token")
+        audit_auth_failed(None, "token_verification_failed")
+        return _cli_error_response(cli_redirect)
 
     user_email = id_info.get("email", "")
     user_name = id_info.get("name", "")
 
-    logger.info(f"OAuth callback successful for user: {user_email}")
+    logger.info("OAuth callback successful", extra={"email": user_email})
 
     # Handle CLI flow - token exchange
-    return await _handle_cli_callback(credentials, user_email, user_name, cli_redirect, settings, db)
+    return _handle_cli_callback(
+        request, credentials, user_email, user_name, cli_redirect, settings, db
+    )
 
 
-async def _handle_cli_callback(
+def _handle_cli_callback(
+    request: Request,
     credentials,
     user_email: str,
     user_name: str,
@@ -145,40 +97,46 @@ async def _handle_cli_callback(
     db: Database,
 ) -> RedirectResponse | HTMLResponse:
     """Handle CLI OAuth callback - exchange for SA token and redirect to localhost."""
-    from gwg_server.logging import logger
-    from gwg_server.session import create_user_session
-    from gwg_server.token_exchange import (
-        _get_or_create_service_account,
-        _impersonate_service_account,
-        _store_oauth_credentials,
-    )
-
     # Store OAuth credentials in Firestore
     try:
-        _store_oauth_credentials(db, user_email, credentials)
-    except Exception as e:
-        logger.error(f"Failed to store credentials: {e}")
-        return _cli_error_response(f"Failed to store credentials: {e}", cli_redirect)
+        store_oauth_credentials(db, user_email, credentials)
+    except Exception:
+        logger.exception("Failed to store OAuth credentials")
+        audit_auth_failed(user_email, "credential_storage_failed")
+        return _cli_error_response(cli_redirect)
 
     # Look up or create service account
     try:
-        sa_email = _get_or_create_service_account(settings, user_email, user_name)
-        logger.info(f"Service account for {user_email}: {sa_email}")
-    except Exception as e:
-        logger.error(f"Failed to setup service account: {e}")
-        return _cli_error_response(f"Failed to setup service account: {e}", cli_redirect)
+        sa_email, created = get_or_create_service_account(settings, user_email, user_name)
+        if created:
+            audit_service_account_created(user_email, sa_email)
+        logger.info("Service account ready", extra={"email": user_email, "sa": sa_email})
+    except Exception:
+        logger.exception("Failed to setup service account")
+        audit_auth_failed(user_email, "service_account_setup_failed")
+        return _cli_error_response(cli_redirect)
 
     # Update SA email in Firestore
-    with contextlib.suppress(Exception):
+    try:
         db.update_service_account_email(user_email, sa_email)
+    except Exception:
+        # Log but continue - non-critical, we can update next time
+        logger.warning(
+            "Failed to update service account email in database",
+            extra={"email": user_email, "sa": sa_email},
+        )
 
     # Impersonate SA to get short-lived token
     try:
-        sa_token, expires_in = _impersonate_service_account(credentials, sa_email)
-        logger.info(f"Successfully impersonated SA {sa_email}")
-    except Exception as e:
-        logger.error(f"Failed to get SA token: {e}")
-        return _cli_error_response(f"Failed to get SA token: {e}", cli_redirect)
+        sa_token, expires_in = impersonate_service_account(credentials, sa_email)
+    except RefreshError:
+        logger.exception("OAuth credentials expired or revoked during impersonation")
+        audit_auth_failed(user_email, "credentials_revoked")
+        return _cli_error_response(cli_redirect)
+    except Exception:
+        logger.exception("Failed to impersonate service account")
+        audit_auth_failed(user_email, "impersonation_failed")
+        return _cli_error_response(cli_redirect)
 
     # Create redirect response with token
     params = {
@@ -189,35 +147,32 @@ async def _handle_cli_callback(
     redirect_url = f"{cli_redirect}?{urlencode(params)}"
     response = RedirectResponse(url=redirect_url)
 
-    # Create a session for the user so they don't need to re-authenticate
-    try:
-        create_user_session(response, user_email, db)
-        logger.info(f"Created session for {user_email}")
-    except Exception as e:
-        logger.warning(f"Failed to create session: {e}")
-        # Non-critical, continue without session
+    # Set session cookie so user doesn't need to re-authenticate
+    set_session_email(request, user_email)
 
+    audit_auth_success(user_email, sa_email)
     return response
 
 
-def _cli_error_response(error: str, redirect: str | None) -> RedirectResponse | HTMLResponse:
+def _cli_error_response(redirect: str) -> RedirectResponse | HTMLResponse:
     """Create error response for CLI flow.
 
-    The redirect URL was already validated when the state was created,
-    so we can trust it here. It will always be a localhost URL.
+    Security: Does not include internal error details in the response.
+    Errors are logged server-side for debugging.
     """
     if redirect:
-        params = {"error": error}
+        # Redirect to CLI with generic error
+        params = {"error": "authentication_failed"}
         return RedirectResponse(url=f"{redirect}?{urlencode(params)}")
     else:
         return HTMLResponse(
-            content=f"""
+            content="""
             <html>
             <head><title>Authentication Error</title></head>
             <body style="font-family: sans-serif; padding: 40px;">
                 <h1>Authentication Error</h1>
-                <p style="color: red;">{error}</p>
-                <p>Please close this window and try again.</p>
+                <p>Authentication failed. Please close this window and try again.</p>
+                <p>If the problem persists, contact support.</p>
             </body>
             </html>
             """,
