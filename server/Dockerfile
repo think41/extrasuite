@@ -33,11 +33,13 @@ RUN useradd --create-home --shell /bin/bash appuser
 
 WORKDIR /app
 
-# Copy virtual environment from builder
+# Copy virtual environment and source from builder
 COPY --from=builder /app/.venv /app/.venv
+COPY --from=builder /app/gwg_server /app/gwg_server
 
 # Set environment
 ENV PATH="/app/.venv/bin:$PATH"
+ENV PYTHONPATH="/app"
 ENV PORT=8080
 ENV ENVIRONMENT=production
 ENV PYTHONUNBUFFERED=1
