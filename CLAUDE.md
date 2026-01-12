@@ -52,9 +52,9 @@ uv run ruff format .
 
 ### Docker
 ```bash
+cd server
 docker build -t gwg-server:latest .
-docker-compose up -d gwg-server              # Production
-docker-compose --profile dev up dev-server   # Development
+docker run -p 8080:8080 --env-file .env gwg-server:latest
 ```
 
 ## Key Files

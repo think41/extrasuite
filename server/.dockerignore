@@ -1,0 +1,38 @@
+# Virtual environments
+.venv/
+venv/
+__pycache__/
+*.pyc
+*.pyo
+
+# Testing
+.pytest_cache/
+.coverage
+htmlcov/
+tests/
+
+# IDE
+.vscode/
+.idea/
+
+# Git
+.git/
+.gitignore
+
+# Environment files
+.env
+.env.*
+!.env.template
+
+# Build artifacts
+*.egg-info/
+dist/
+build/
+
+# Docker
+Dockerfile*
+.dockerignore
+
+# Misc
+*.md
+!README.md
