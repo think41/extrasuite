@@ -6,7 +6,8 @@ Entry point: CLI creates GoogleWorkspaceGateway instance and calls get_token()
 
 from contextlib import asynccontextmanager
 
-from fastapi import FastAPI
+from fastapi import FastAPI, Request
+from fastapi.responses import JSONResponse
 from loguru import logger
 from slowapi.errors import RateLimitExceeded
 from starlette.middleware.sessions import SessionMiddleware
@@ -15,6 +16,18 @@ from gwg_server import google_auth, health, token_exchange
 from gwg_server.config import get_settings
 from gwg_server.database import Database
 from gwg_server.rate_limit import limiter, rate_limit_exceeded_handler
+
+
+async def unhandled_exception_handler(request: Request, exc: Exception) -> JSONResponse:
+    """Global handler for unhandled exceptions."""
+    logger.exception(
+        "Unhandled exception",
+        extra={"path": request.url.path, "error": str(exc)},
+    )
+    return JSONResponse(
+        status_code=500,
+        content={"detail": "Internal server error"},
+    )
 
 
 @asynccontextmanager
@@ -51,9 +64,12 @@ def create_app() -> FastAPI:
         openapi_url="/api/openapi.json" if not settings.is_production else None,
     )
 
+    # Exception handlers
+    app.add_exception_handler(Exception, unhandled_exception_handler)
+    app.add_exception_handler(RateLimitExceeded, rate_limit_exceeded_handler)
+
     # Rate limiting
     app.state.limiter = limiter
-    app.add_exception_handler(RateLimitExceeded, rate_limit_exceeded_handler)
 
     # Session middleware for signed cookie sessions
     app.add_middleware(

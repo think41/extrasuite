@@ -7,7 +7,6 @@ import re
 from datetime import UTC, datetime
 
 import google.auth
-from fastapi import HTTPException
 from google.auth import impersonated_credentials
 from google.auth.transport import requests as google_requests
 from google.oauth2.credentials import Credentials
@@ -64,28 +63,24 @@ def get_or_create_service_account(
 
     Returns:
         Tuple of (service_account_email, was_created)
+
+    Raises:
+        ValueError: If Google Cloud project is not configured
+        google.auth.exceptions.DefaultCredentialsError: If ADC not available
+        googleapiclient.errors.HttpError: If IAM API calls fail
     """
     if not settings.google_cloud_project:
-        raise HTTPException(
-            status_code=500,
-            detail="Google Cloud project not configured.",
-        )
+        raise ValueError("Google Cloud project not configured")
 
     project_id = settings.google_cloud_project
     account_id = sanitize_email_for_account_id(user_email)
     sa_email = f"{account_id}@{project_id}.iam.gserviceaccount.com"
 
     # Use Application Default Credentials to manage service accounts
-    try:
-        admin_creds, _ = google.auth.default(
-            scopes=["https://www.googleapis.com/auth/cloud-platform"]
-        )
-        iam_service = build("iam", "v1", credentials=admin_creds)
-    except Exception as e:
-        raise HTTPException(
-            status_code=500,
-            detail=f"Failed to initialize IAM service: {e}",
-        ) from None
+    admin_creds, _ = google.auth.default(
+        scopes=["https://www.googleapis.com/auth/cloud-platform"]
+    )
+    iam_service = build("iam", "v1", credentials=admin_creds)
 
     # Check if SA exists
     try:
@@ -108,19 +103,13 @@ def get_or_create_service_account(
         },
     }
 
-    try:
-        created = (
-            iam_service.projects()
-            .serviceAccounts()
-            .create(name=f"projects/{project_id}", body=service_account_body)
-            .execute()
-        )
-        sa_email = created["email"]
-    except Exception as e:
-        raise HTTPException(
-            status_code=500,
-            detail=f"Failed to create service account: {e}",
-        ) from None
+    created = (
+        iam_service.projects()
+        .serviceAccounts()
+        .create(name=f"projects/{project_id}", body=service_account_body)
+        .execute()
+    )
+    sa_email = created["email"]
 
     # Grant user permission to impersonate this SA (for future use)
     # This enables the user to use the SA even without going through GWG

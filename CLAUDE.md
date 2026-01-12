@@ -138,6 +138,21 @@ gcloud firestore fields ttls update updated_at \
 
 This ensures refresh tokens don't persist indefinitely.
 
+## Exception Handling
+
+The server uses centralized exception handling via FastAPI's `add_exception_handler`. Follow these principles:
+
+1. **Don't catch exceptions just to re-raise as HTTPException(500)** - Let exceptions propagate to the global handler which logs them and returns a safe error response
+
+2. **Only catch exceptions when you can:**
+   - Handle them meaningfully (e.g., return `None` to trigger re-auth flow)
+   - Add context that would otherwise be missing, then re-raise
+   - Handle specific cases (e.g., `HttpError` with status 404 vs other errors)
+
+3. **For non-critical operations**, catch and log but continue (e.g., updating optional metadata)
+
+4. **Use domain exceptions** (`ValueError`, `RefreshError`) rather than `HTTPException` in business logic modules
+
 ## Known Limitations
 
 ### Service Account Quota
