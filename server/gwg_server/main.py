@@ -22,7 +22,6 @@ from gwg_server.logging import (
     setup_logging,
 )
 from gwg_server.rate_limit import limiter, rate_limit_exceeded_handler
-from gwg_server.session import get_session_middleware_config
 
 
 class LoggingMiddleware(BaseHTTPMiddleware):
@@ -110,8 +109,14 @@ def create_app() -> FastAPI:
     app.add_middleware(LoggingMiddleware)
 
     # Session middleware for signed cookie sessions
-    session_config = get_session_middleware_config(settings.secret_key, settings.is_production)
-    app.add_middleware(SessionMiddleware, **session_config)
+    app.add_middleware(
+        SessionMiddleware,
+        secret_key=settings.secret_key,
+        session_cookie="gwg_session",
+        max_age=30 * 24 * 60 * 60,  # 30 days in seconds
+        same_site="lax",
+        https_only=settings.is_production,
+    )
 
     # Register API routers
     app.include_router(health.router, prefix="/api")

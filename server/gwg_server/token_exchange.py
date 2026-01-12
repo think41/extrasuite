@@ -31,7 +31,6 @@ from gwg_server.logging import (
 from gwg_server.oauth import CLI_SCOPES, create_cli_auth_state, create_oauth_flow
 from gwg_server.rate_limit import limiter
 from gwg_server.service_account import impersonate_service_account
-from gwg_server.session import get_session_email_if_valid
 
 router = APIRouter(prefix="/token", tags=["token-exchange"])
 
@@ -43,6 +42,22 @@ MAX_PORT = 65535
 def build_cli_redirect_url(port: int) -> str:
     """Build CLI redirect URL from port - always localhost."""
     return f"http://localhost:{port}/on-authentication"
+
+
+async def _get_session_email_if_valid(request: Request, db: Database) -> str | None:
+    """Get email from session if user has valid credentials in Firestore.
+
+    Returns None if no session exists, user has no credentials, or refresh token is missing.
+    """
+    email = request.session.get("email")
+    if not email:
+        return None
+
+    user_creds = await db.get_user_credentials(email)
+    if not user_creds or not user_creds.refresh_token:
+        return None
+
+    return email
 
 
 @router.get("/auth")
@@ -71,7 +86,7 @@ async def start_token_auth(
     cli_redirect = build_cli_redirect_url(port)
 
     # Check if user has a valid session with stored credentials
-    email = await get_session_email_if_valid(request, db)
+    email = await _get_session_email_if_valid(request, db)
     if email:
         logger.info("Found existing session, attempting token refresh", extra={"email": email})
         audit_auth_started(email, port)

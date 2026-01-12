@@ -25,7 +25,6 @@ from gwg_server.logging import (
 from gwg_server.oauth import CLI_SCOPES, create_oauth_flow
 from gwg_server.rate_limit import limiter
 from gwg_server.service_account import get_or_create_service_account, impersonate_service_account
-from gwg_server.session import set_session_email
 
 router = APIRouter(prefix="/auth", tags=["auth"])
 
@@ -164,7 +163,7 @@ async def _handle_cli_callback(
     response = RedirectResponse(url=redirect_url)
 
     # Set session cookie so user doesn't need to re-authenticate
-    set_session_email(request, user_email)
+    request.session["email"] = user_email
 
     audit_auth_success(user_email, sa_email)
     return response
