@@ -16,6 +16,7 @@ from google.oauth2 import id_token
 from google_auth_oauthlib.flow import Flow
 
 from gwg_server.config import Settings, get_settings
+from gwg_server.database import Database, get_database
 
 router = APIRouter(prefix="/auth", tags=["auth"])
 
@@ -83,6 +84,7 @@ async def google_callback(
     code: str,
     state: str,
     settings: Settings = Depends(get_settings),
+    db: Database = Depends(get_database),
 ):
     """Handle Google OAuth callback for CLI flow."""
     from gwg_server.logging import logger
@@ -131,7 +133,7 @@ async def google_callback(
     logger.info(f"OAuth callback successful for user: {user_email}")
 
     # Handle CLI flow - token exchange
-    return await _handle_cli_callback(credentials, user_email, user_name, cli_redirect, settings)
+    return await _handle_cli_callback(credentials, user_email, user_name, cli_redirect, settings, db)
 
 
 async def _handle_cli_callback(
@@ -140,9 +142,9 @@ async def _handle_cli_callback(
     user_name: str,
     cli_redirect: str,
     settings: Settings,
+    db: Database,
 ) -> RedirectResponse | HTMLResponse:
     """Handle CLI OAuth callback - exchange for SA token and redirect to localhost."""
-    from gwg_server.database import update_service_account_email
     from gwg_server.logging import logger
     from gwg_server.session import create_user_session
     from gwg_server.token_exchange.api import (
@@ -153,7 +155,7 @@ async def _handle_cli_callback(
 
     # Store OAuth credentials in Firestore
     try:
-        _store_oauth_credentials(user_email, credentials)
+        _store_oauth_credentials(db, user_email, credentials)
     except Exception as e:
         logger.error(f"Failed to store credentials: {e}")
         return _cli_error_response(f"Failed to store credentials: {e}", cli_redirect)
@@ -168,7 +170,7 @@ async def _handle_cli_callback(
 
     # Update SA email in Firestore
     with contextlib.suppress(Exception):
-        update_service_account_email(user_email, sa_email)
+        db.update_service_account_email(user_email, sa_email)
 
     # Impersonate SA to get short-lived token
     try:
@@ -189,7 +191,7 @@ async def _handle_cli_callback(
 
     # Create a session for the user so they don't need to re-authenticate
     try:
-        create_user_session(response, user_email)
+        create_user_session(response, user_email, db)
         logger.info(f"Created session for {user_email}")
     except Exception as e:
         logger.warning(f"Failed to create session: {e}")

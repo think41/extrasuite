@@ -13,7 +13,7 @@ from starlette.middleware.base import BaseHTTPMiddleware
 
 from gwg_server import auth, health, token_exchange
 from gwg_server.config import get_settings
-from gwg_server.database import close_db, init_db
+from gwg_server.database import Database
 from gwg_server.logging import (
     clear_user_context,
     logger,
@@ -51,7 +51,7 @@ class LoggingMiddleware(BaseHTTPMiddleware):
 
 
 @asynccontextmanager
-async def lifespan(_app: FastAPI):
+async def lifespan(app: FastAPI):
     """Application lifespan handler."""
     settings = get_settings()
 
@@ -64,14 +64,19 @@ async def lifespan(_app: FastAPI):
     logger.info(f"Starting GWG server on port {settings.port}")
     logger.info(f"Environment: {settings.environment}")
 
-    # Initialize database (sync)
-    init_db()
+    # Initialize database and store in app.state for dependency injection
+    database = Database(
+        project=settings.google_cloud_project,
+        database=settings.firestore_database,
+    )
+    database.verify_connection()
+    app.state.database = database
     logger.info("Database initialized")
 
     yield
 
-    # Close database connections (sync)
-    close_db()
+    # Close database connection
+    database.close()
     logger.info("Shutting down GWG server")
 
 

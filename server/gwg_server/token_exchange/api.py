@@ -25,10 +25,7 @@ from googleapiclient.discovery import build
 from googleapiclient.errors import HttpError
 
 from gwg_server.config import Settings, get_settings
-from gwg_server.database import (
-    get_user_credentials,
-    store_user_credentials,
-)
+from gwg_server.database import Database, get_database
 
 router = APIRouter(prefix="/token", tags=["token-exchange"])
 
@@ -92,6 +89,7 @@ async def start_token_auth(
     request: Request,
     port: int = Query(..., description="CLI localhost callback port", ge=MIN_PORT, le=MAX_PORT),
     settings: Settings = Depends(get_settings),
+    db: Database = Depends(get_database),
 ) -> RedirectResponse:
     """Start OAuth flow for CLI token exchange.
 
@@ -114,11 +112,11 @@ async def start_token_auth(
     cli_redirect = build_cli_redirect_url(port)
 
     # Check if user has a valid session with stored credentials
-    email = get_session_email(request)
+    email = get_session_email(request, db)
     if email:
         logger.info(f"Found existing session for {email}, attempting token refresh")
         try:
-            redirect_response = _try_refresh_token(email, cli_redirect, settings)
+            redirect_response = _try_refresh_token(db, email, cli_redirect, settings)
             if redirect_response:
                 logger.info(f"Successfully refreshed token for {email}")
                 return redirect_response
@@ -145,14 +143,14 @@ async def start_token_auth(
 
 
 def _try_refresh_token(
-    email: str, cli_redirect: str, settings: Settings
+    db: Database, email: str, cli_redirect: str, settings: Settings
 ) -> RedirectResponse | None:
     """Try to refresh the token using stored OAuth credentials.
 
     Returns a RedirectResponse with the new token if successful, None otherwise.
     """
     # Get stored credentials
-    user_creds = get_user_credentials(email)
+    user_creds = db.get_user_credentials(email)
     if not user_creds or not user_creds.refresh_token:
         return None
 
@@ -175,7 +173,7 @@ def _try_refresh_token(
     if credentials.expired:
         credentials.refresh(google_requests.Request())
         # Update stored credentials with new access token
-        store_user_credentials(
+        db.store_user_credentials(
             email=email,
             access_token=credentials.token,
             refresh_token=credentials.refresh_token,
@@ -196,12 +194,12 @@ def _try_refresh_token(
     return RedirectResponse(url=redirect_url)
 
 
-def _store_oauth_credentials(email: str, credentials: Credentials) -> None:
+def _store_oauth_credentials(db: Database, email: str, credentials: Credentials) -> None:
     """Store or update OAuth credentials in Firestore."""
     from gwg_server.auth.api import CLI_SCOPES
 
     scopes = list(credentials.scopes) if credentials.scopes else CLI_SCOPES
-    store_user_credentials(
+    db.store_user_credentials(
         email=email,
         access_token=credentials.token,
         refresh_token=credentials.refresh_token,

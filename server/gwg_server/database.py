@@ -18,16 +18,11 @@ Collections structure:
   - updated_at: Last update timestamp
 """
 
-import contextlib
 from dataclasses import dataclass
 from datetime import UTC, datetime
 
+from fastapi import Request
 from google.cloud import firestore
-
-from gwg_server.config import get_settings
-
-# Firestore client instance (singleton)
-_db: firestore.Client | None = None
 
 
 @dataclass
@@ -52,194 +47,162 @@ class Session:
     created_at: datetime | None = None
 
 
-def _get_db() -> firestore.Client:
-    """Get or create Firestore client."""
-    global _db
-    if _db is None:
-        settings = get_settings()
-        _db = firestore.Client(
-            project=settings.google_cloud_project,
-            database=settings.firestore_database,
+class Database:
+    """Firestore database client for GWG.
+
+    This class encapsulates all database operations and manages the Firestore
+    client lifecycle. Use dependency injection to provide instances to handlers.
+    """
+
+    def __init__(self, project: str, database: str = "(default)"):
+        """Initialize database with project and database name.
+
+        Args:
+            project: Google Cloud project ID
+            database: Firestore database name (defaults to "(default)")
+        """
+        self._client = firestore.Client(project=project, database=database)
+
+    def close(self) -> None:
+        """Close the database connection."""
+        self._client.close()
+
+    def verify_connection(self) -> None:
+        """Verify database connectivity by attempting a read."""
+        self._client.collection("sessions").limit(1).get()
+
+    @staticmethod
+    def _email_to_doc_id(email: str) -> str:
+        """Convert email to valid Firestore document ID."""
+        return email.replace("/", "__")
+
+    # =========================================================================
+    # Session Management
+    # =========================================================================
+
+    def create_session(self, session_id: str, email: str) -> Session:
+        """Create a new session."""
+        now = datetime.now(UTC)
+        doc_ref = self._client.collection("sessions").document(session_id)
+        doc_ref.set({"email": email, "created_at": now})
+        return Session(session_id=session_id, email=email, created_at=now)
+
+    def get_session(self, session_id: str) -> Session | None:
+        """Get session by ID."""
+        doc_ref = self._client.collection("sessions").document(session_id)
+        doc = doc_ref.get()
+
+        if not doc.exists:
+            return None
+
+        data = doc.to_dict()
+        email = data.get("email")
+        if not email:
+            return None
+
+        return Session(
+            session_id=session_id,
+            email=email,
+            created_at=data.get("created_at"),
         )
-    return _db
+
+    def delete_session(self, session_id: str) -> None:
+        """Delete a session."""
+        doc_ref = self._client.collection("sessions").document(session_id)
+        doc_ref.delete()
+
+    # =========================================================================
+    # User Credentials Management
+    # =========================================================================
+
+    def store_user_credentials(
+        self,
+        email: str,
+        access_token: str,
+        refresh_token: str,
+        scopes: list[str],
+        service_account_email: str | None = None,
+    ) -> UserCredentials:
+        """Store or update user OAuth credentials."""
+        doc_id = self._email_to_doc_id(email)
+        doc_ref = self._client.collection("users").document(doc_id)
+
+        now = datetime.now(UTC)
+
+        # Check if document exists to preserve created_at
+        existing_doc = doc_ref.get()
+        created_at = now
+        if existing_doc.exists:
+            existing_data = existing_doc.to_dict()
+            created_at = existing_data.get("created_at", now)
+
+        data = {
+            "email": email,
+            "access_token": access_token,
+            "refresh_token": refresh_token,
+            "scopes": scopes,
+            "created_at": created_at,
+            "updated_at": now,
+        }
+
+        if service_account_email:
+            data["service_account_email"] = service_account_email
+
+        doc_ref.set(data)
+
+        return UserCredentials(
+            email=email,
+            access_token=access_token,
+            refresh_token=refresh_token,
+            scopes=scopes,
+            service_account_email=service_account_email,
+            created_at=created_at,
+            updated_at=now,
+        )
+
+    def get_user_credentials(self, email: str) -> UserCredentials | None:
+        """Get user credentials by email."""
+        doc_id = self._email_to_doc_id(email)
+        doc_ref = self._client.collection("users").document(doc_id)
+        doc = doc_ref.get()
+
+        if not doc.exists:
+            return None
+
+        data = doc.to_dict()
+        access_token = data.get("access_token")
+        refresh_token = data.get("refresh_token")
+
+        if not access_token or not refresh_token:
+            return None
+
+        return UserCredentials(
+            email=data.get("email", email),
+            access_token=access_token,
+            refresh_token=refresh_token,
+            scopes=data.get("scopes", []),
+            service_account_email=data.get("service_account_email"),
+            created_at=data.get("created_at"),
+            updated_at=data.get("updated_at"),
+        )
+
+    def update_service_account_email(self, email: str, service_account_email: str) -> None:
+        """Update the service account email for a user."""
+        doc_id = self._email_to_doc_id(email)
+        doc_ref = self._client.collection("users").document(doc_id)
+
+        now = datetime.now(UTC)
+        doc_ref.update({"service_account_email": service_account_email, "updated_at": now})
 
 
-def _email_to_doc_id(email: str) -> str:
-    """Convert email to valid Firestore document ID.
+def get_database(request: Request) -> Database:
+    """FastAPI dependency to get the database instance.
 
-    Firestore document IDs cannot contain "/", so we replace it.
+    The database is stored in app.state during application lifespan.
+
+    Usage:
+        @router.get("/example")
+        async def example(db: Database = Depends(get_database)):
+            ...
     """
-    return email.replace("/", "__")
-
-
-def _doc_id_to_email(doc_id: str) -> str:
-    """Convert Firestore document ID back to email."""
-    return doc_id.replace("__", "/")
-
-
-# ============================================================================
-# Session Management
-# ============================================================================
-
-
-def create_session(session_id: str, email: str) -> Session:
-    """Create a new session in Firestore."""
-    db = _get_db()
-    now = datetime.now(UTC)
-
-    doc_ref = db.collection("sessions").document(session_id)
-    doc_ref.set({"email": email, "created_at": now})
-
-    return Session(session_id=session_id, email=email, created_at=now)
-
-
-def get_session(session_id: str) -> Session | None:
-    """Get session by ID from Firestore."""
-    db = _get_db()
-    doc_ref = db.collection("sessions").document(session_id)
-    doc = doc_ref.get()
-
-    if not doc.exists:
-        return None
-
-    data = doc.to_dict()
-    email = data.get("email")
-    if not email:
-        return None
-
-    created_at = data.get("created_at")
-    if created_at and hasattr(created_at, "replace"):
-        # Firestore returns datetime objects with tzinfo
-        pass
-    elif created_at:
-        with contextlib.suppress(ValueError):
-            created_at = datetime.fromisoformat(str(created_at))
-
-    return Session(session_id=session_id, email=email, created_at=created_at)
-
-
-def delete_session(session_id: str) -> None:
-    """Delete a session from Firestore."""
-    db = _get_db()
-    doc_ref = db.collection("sessions").document(session_id)
-    doc_ref.delete()
-
-
-# ============================================================================
-# User Credentials Management
-# ============================================================================
-
-
-def store_user_credentials(
-    email: str,
-    access_token: str,
-    refresh_token: str,
-    scopes: list[str],
-    service_account_email: str | None = None,
-) -> UserCredentials:
-    """Store or update user OAuth credentials in Firestore."""
-    db = _get_db()
-    doc_id = _email_to_doc_id(email)
-    doc_ref = db.collection("users").document(doc_id)
-
-    now = datetime.now(UTC)
-
-    # Check if document exists to preserve created_at
-    existing_doc = doc_ref.get()
-    created_at = now
-    if existing_doc.exists:
-        existing_data = existing_doc.to_dict()
-        created_at = existing_data.get("created_at", now)
-
-    data = {
-        "email": email,
-        "access_token": access_token,
-        "refresh_token": refresh_token,
-        "scopes": scopes,
-        "created_at": created_at,
-        "updated_at": now,
-    }
-
-    if service_account_email:
-        data["service_account_email"] = service_account_email
-
-    doc_ref.set(data)
-
-    return UserCredentials(
-        email=email,
-        access_token=access_token,
-        refresh_token=refresh_token,
-        scopes=scopes,
-        service_account_email=service_account_email,
-        created_at=created_at,
-        updated_at=now,
-    )
-
-
-def get_user_credentials(email: str) -> UserCredentials | None:
-    """Get user credentials by email from Firestore."""
-    db = _get_db()
-    doc_id = _email_to_doc_id(email)
-    doc_ref = db.collection("users").document(doc_id)
-    doc = doc_ref.get()
-
-    if not doc.exists:
-        return None
-
-    data = doc.to_dict()
-    access_token = data.get("access_token")
-    refresh_token = data.get("refresh_token")
-
-    if not access_token or not refresh_token:
-        return None
-
-    return UserCredentials(
-        email=data.get("email", email),
-        access_token=access_token,
-        refresh_token=refresh_token,
-        scopes=data.get("scopes", []),
-        service_account_email=data.get("service_account_email"),
-        created_at=data.get("created_at"),
-        updated_at=data.get("updated_at"),
-    )
-
-
-def update_service_account_email(email: str, service_account_email: str) -> None:
-    """Update the service account email for a user."""
-    db = _get_db()
-    doc_id = _email_to_doc_id(email)
-    doc_ref = db.collection("users").document(doc_id)
-
-    now = datetime.now(UTC)
-    doc_ref.update({"service_account_email": service_account_email, "updated_at": now})
-
-
-# ============================================================================
-# Database Lifecycle
-# ============================================================================
-
-
-def init_db():
-    """Initialize database connection.
-
-    For Firestore, we verify connectivity by attempting to access a collection.
-    Collections and documents are created automatically on first write.
-    """
-    from gwg_server.logging import logger
-
-    try:
-        db = _get_db()
-        # Simple read to verify connectivity (will return empty if no data)
-        db.collection("sessions").limit(1).get()
-        logger.info("Firestore connection verified")
-    except Exception as e:
-        logger.error(f"Failed to connect to Firestore: {e}")
-        raise
-
-
-def close_db():
-    """Close database connections."""
-    global _db
-    if _db:
-        _db.close()
-        _db = None
+    return request.app.state.database
