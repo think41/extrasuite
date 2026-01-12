@@ -1,10 +1,13 @@
-"""Database configuration and models for OAuth credential storage."""
+"""Database configuration and models for OAuth credential storage.
+
+Uses synchronous SQLAlchemy with SQLite for simplicity.
+Database operations are infrequent (OAuth storage/retrieval only).
+"""
 
 from datetime import UTC, datetime
 
-from sqlalchemy import Column, DateTime, String, Text
-from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker, create_async_engine
-from sqlalchemy.orm import DeclarativeBase
+from sqlalchemy import Column, DateTime, String, Text, create_engine
+from sqlalchemy.orm import DeclarativeBase, Session, sessionmaker
 
 from fabric.config import get_settings
 
@@ -41,57 +44,60 @@ class UserOAuthCredential(Base):
     )
 
 
-# Database engine (async)
-_async_engine = None
-_async_session_factory = None
+# Database engine and session factory
+_engine = None
+_session_factory = None
 
 
 def get_database_url() -> str:
     """Get database URL from settings."""
     settings = get_settings()
-    return getattr(settings, "database_url", "sqlite+aiosqlite:///./fabric.db")
+    # Use sync SQLite URL (not aiosqlite)
+    url = getattr(settings, "database_url", "sqlite:///./fabric.db")
+    # Convert async URL to sync if needed
+    return url.replace("sqlite+aiosqlite:", "sqlite:")
 
 
-async def get_async_engine():
-    """Get or create async database engine."""
-    global _async_engine
-    if _async_engine is None:
-        _async_engine = create_async_engine(
+def get_engine():
+    """Get or create database engine."""
+    global _engine
+    if _engine is None:
+        _engine = create_engine(
             get_database_url(),
             echo=get_settings().debug,
         )
-    return _async_engine
+    return _engine
 
 
-async def get_session_factory():
-    """Get or create async session factory."""
-    global _async_session_factory
-    if _async_session_factory is None:
-        engine = await get_async_engine()
-        _async_session_factory = async_sessionmaker(
-            engine, class_=AsyncSession, expire_on_commit=False
-        )
-    return _async_session_factory
+def get_session_factory():
+    """Get or create session factory."""
+    global _session_factory
+    if _session_factory is None:
+        engine = get_engine()
+        _session_factory = sessionmaker(bind=engine)
+    return _session_factory
 
 
-async def get_db() -> AsyncSession:
-    """Dependency to get database session."""
-    factory = await get_session_factory()
-    async with factory() as session:
+def get_db() -> Session:
+    """Get a database session."""
+    factory = get_session_factory()
+    session = factory()
+    try:
         yield session
+    finally:
+        session.close()
 
 
-async def init_db():
+def init_db():
     """Initialize database tables."""
-    engine = await get_async_engine()
-    async with engine.begin() as conn:
-        await conn.run_sync(Base.metadata.create_all)
+    engine = get_engine()
+    Base.metadata.create_all(engine)
 
 
-async def close_db():
+def close_db():
     """Close database connections."""
-    global _async_engine, _async_session_factory
-    if _async_engine:
-        await _async_engine.dispose()
-        _async_engine = None
-        _async_session_factory = None
+    global _engine, _session_factory
+    if _engine:
+        _engine.dispose()
+        _engine = None
+        _session_factory = None

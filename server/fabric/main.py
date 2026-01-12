@@ -23,14 +23,14 @@ async def lifespan(_app: FastAPI):
     print(f"Starting Fabric server on port {settings.port}")
     print(f"Environment: {settings.environment}")
 
-    # Initialize database
-    await init_db()
+    # Initialize database (sync)
+    init_db()
     print("Database initialized")
 
     yield
 
-    # Close database connections
-    await close_db()
+    # Close database connections (sync)
+    close_db()
     print("Shutting down Fabric server")
 
 

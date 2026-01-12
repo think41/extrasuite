@@ -25,8 +25,7 @@ from google_auth_oauthlib.flow import Flow
 from googleapiclient.discovery import build
 from googleapiclient.errors import HttpError
 from pydantic import BaseModel
-from sqlalchemy import select
-from sqlalchemy.ext.asyncio import AsyncSession
+from sqlalchemy.orm import Session
 
 from fabric.config import Settings, get_settings
 from fabric.database import UserOAuthCredential, get_db
@@ -186,7 +185,7 @@ async def token_callback(
     code: str,
     state: str,
     settings: Settings = Depends(get_settings),
-    db: AsyncSession = Depends(get_db),
+    db: Session = Depends(get_db),
 ) -> RedirectResponse:
     """Handle OAuth callback and redirect to CLI with token.
 
@@ -235,13 +234,13 @@ async def token_callback(
 
     # Store OAuth credentials in database
     try:
-        await _store_oauth_credentials(db, user_email, credentials)
+        _store_oauth_credentials(db, user_email, credentials)
     except Exception as e:
         return _error_response(f"Failed to store credentials: {e}", cli_redirect)
 
     # Look up or create service account
     try:
-        sa_email = await _get_or_create_service_account(
+        sa_email = _get_or_create_service_account(
             settings, user_email, id_info.get("name", user_email)
         )
     except Exception as e:
@@ -249,19 +248,18 @@ async def token_callback(
 
     # Update SA email in database
     try:
-        result = await db.execute(
-            select(UserOAuthCredential).where(UserOAuthCredential.email == user_email)
-        )
-        oauth_record = result.scalar_one_or_none()
+        oauth_record = db.query(UserOAuthCredential).filter(
+            UserOAuthCredential.email == user_email
+        ).first()
         if oauth_record:
             oauth_record.service_account_email = sa_email
-            await db.commit()
+            db.commit()
     except Exception:
         pass  # Non-critical, continue
 
     # Impersonate SA to get short-lived token
     try:
-        sa_token, expires_in = await _impersonate_service_account(credentials, sa_email)
+        sa_token, expires_in = _impersonate_service_account(credentials, sa_email)
     except Exception as e:
         return _error_response(f"Failed to get SA token: {e}", cli_redirect)
 
@@ -297,10 +295,9 @@ def _error_response(error: str, redirect: str | None) -> RedirectResponse | HTML
         )
 
 
-async def _store_oauth_credentials(db: AsyncSession, email: str, credentials: Credentials) -> None:
+def _store_oauth_credentials(db: Session, email: str, credentials: Credentials) -> None:
     """Store or update OAuth credentials in database."""
-    result = await db.execute(select(UserOAuthCredential).where(UserOAuthCredential.email == email))
-    oauth_record = result.scalar_one_or_none()
+    oauth_record = db.query(UserOAuthCredential).filter(UserOAuthCredential.email == email).first()
 
     scopes_json = json.dumps(list(credentials.scopes) if credentials.scopes else OAUTH_SCOPES)
 
@@ -320,10 +317,10 @@ async def _store_oauth_credentials(db: AsyncSession, email: str, credentials: Cr
         )
         db.add(oauth_record)
 
-    await db.commit()
+    db.commit()
 
 
-async def _get_or_create_service_account(
+def _get_or_create_service_account(
     settings: Settings, user_email: str, user_name: str
 ) -> str:
     """Look up or create service account for user."""
@@ -420,7 +417,7 @@ async def _get_or_create_service_account(
     return sa_email
 
 
-async def _impersonate_service_account(
+def _impersonate_service_account(
     source_credentials: Credentials, target_sa_email: str
 ) -> tuple[str, int]:
     """Impersonate service account and return short-lived access token."""

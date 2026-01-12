@@ -18,7 +18,6 @@ dependencies = [
     "google-api-python-client>=2.150.0",
     "itsdangerous>=2.2.0",
     "sqlalchemy>=2.0.0",
-    "aiosqlite>=0.20.0",
 ]
 
 [project.optional-dependencies]
