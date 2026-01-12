@@ -7,7 +7,6 @@ from datetime import UTC, datetime, timedelta
 
 from fastapi import APIRouter, Depends, HTTPException
 from fastapi.responses import JSONResponse
-from google.oauth2 import service_account
 from googleapiclient.discovery import build
 from googleapiclient.errors import HttpError
 from pydantic import BaseModel
@@ -58,12 +57,12 @@ def get_iam_service(settings: Settings):
             detail="Google Cloud project not configured. Set GOOGLE_CLOUD_PROJECT.",
         )
 
-    # Use application default credentials or service account from env
+    # Use Application Default Credentials
+    import google.auth
+
     try:
-        # This will use GOOGLE_APPLICATION_CREDENTIALS environment variable
-        credentials = service_account.Credentials.from_service_account_file(
-            "credentials/admin-service-account.json",
-            scopes=["https://www.googleapis.com/auth/cloud-platform"],
+        credentials, _ = google.auth.default(
+            scopes=["https://www.googleapis.com/auth/cloud-platform"]
         )
         return build("iam", "v1", credentials=credentials)
     except Exception as e:

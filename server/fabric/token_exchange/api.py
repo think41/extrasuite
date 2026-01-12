@@ -248,9 +248,9 @@ async def token_callback(
 
     # Update SA email in database
     try:
-        oauth_record = db.query(UserOAuthCredential).filter(
-            UserOAuthCredential.email == user_email
-        ).first()
+        oauth_record = (
+            db.query(UserOAuthCredential).filter(UserOAuthCredential.email == user_email).first()
+        )
         if oauth_record:
             oauth_record.service_account_email = sa_email
             db.commit()
@@ -320,9 +320,7 @@ def _store_oauth_credentials(db: Session, email: str, credentials: Credentials) 
     db.commit()
 
 
-def _get_or_create_service_account(
-    settings: Settings, user_email: str, user_name: str
-) -> str:
+def _get_or_create_service_account(settings: Settings, user_email: str, user_name: str) -> str:
     """Look up or create service account for user."""
     if not settings.google_cloud_project:
         raise HTTPException(
@@ -334,13 +332,12 @@ def _get_or_create_service_account(
     account_id = sanitize_email_for_account_id(user_email)
     sa_email = f"{account_id}@{project_id}.iam.gserviceaccount.com"
 
-    # Use admin credentials to manage service accounts
-    from google.oauth2 import service_account as sa_module
+    # Use Application Default Credentials to manage service accounts
+    import google.auth
 
     try:
-        admin_creds = sa_module.Credentials.from_service_account_file(
-            "credentials/admin-service-account.json",
-            scopes=["https://www.googleapis.com/auth/cloud-platform"],
+        admin_creds, _ = google.auth.default(
+            scopes=["https://www.googleapis.com/auth/cloud-platform"]
         )
         iam_service = build("iam", "v1", credentials=admin_creds)
     except Exception as e:
