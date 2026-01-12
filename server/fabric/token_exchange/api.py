@@ -1,34 +1,34 @@
 """Token exchange API for CLI authentication flow.
 
 This module implements the Fabric Token Exchange flow:
-1. CLI opens browser to /api/token/auth?redirect=http://localhost:<port>/callback
+1. CLI opens browser to /api/token/auth?port=<port>
 2. User authenticates via Google OAuth (cloud-platform scope)
-3. Fabric stores OAuth credentials server-side
+3. Fabric stores OAuth credentials in Bigtable
 4. Fabric looks up or creates user's service account
 5. Fabric impersonates SA to get short-lived token
-6. Browser redirects to CLI localhost with token
+6. Browser redirects to localhost:{port}/on-authentication with token
 
 Note: The actual OAuth callback is handled by /api/auth/callback (unified endpoint).
 This module provides the /api/token/auth entry point and helper functions.
 """
 
-import json
 import re
 from datetime import UTC, datetime
-from urllib.parse import urlparse
+from urllib.parse import urlencode
 
-from fastapi import APIRouter, Depends, HTTPException, Query
+from fastapi import APIRouter, Depends, HTTPException, Query, Request
 from fastapi.responses import RedirectResponse
 from google.auth import impersonated_credentials
 from google.auth.transport import requests as google_requests
 from google.oauth2.credentials import Credentials
 from googleapiclient.discovery import build
 from googleapiclient.errors import HttpError
-from pydantic import BaseModel
-from sqlalchemy.orm import Session
 
 from fabric.config import Settings, get_settings
-from fabric.database import UserOAuthCredential
+from fabric.database import (
+    get_user_credentials,
+    store_user_credentials,
+)
 
 router = APIRouter(prefix="/token", tags=["token-exchange"])
 
@@ -39,14 +39,14 @@ SA_TOKEN_SCOPES = [
     "https://www.googleapis.com/auth/documents.readonly",
 ]
 
+# Valid port range for CLI callback
+MIN_PORT = 1024
+MAX_PORT = 65535
 
-class TokenResponse(BaseModel):
-    """Response containing the short-lived SA token."""
 
-    access_token: str
-    expires_in: int
-    token_type: str = "Bearer"
-    service_account_email: str
+def build_cli_redirect_url(port: int) -> str:
+    """Build CLI redirect URL from port - always localhost."""
+    return f"http://localhost:{port}/on-authentication"
 
 
 def sanitize_email_for_account_id(email: str) -> str:
@@ -87,42 +87,49 @@ def sanitize_email_for_account_id(email: str) -> str:
     return account_id
 
 
-def validate_redirect_uri(redirect_uri: str) -> bool:
-    """Validate that redirect URI is a localhost URL (for CLI security)."""
-    try:
-        parsed = urlparse(redirect_uri)
-        # Only allow localhost redirects for CLI
-        if parsed.hostname not in ("localhost", "127.0.0.1"):
-            return False
-        return parsed.scheme in ("http", "https")
-    except Exception:
-        return False
-
-
 @router.get("/auth")
 async def start_token_auth(
-    redirect: str = Query(..., description="CLI localhost callback URL"),
+    request: Request,
+    port: int = Query(..., description="CLI localhost callback port", ge=MIN_PORT, le=MAX_PORT),
     settings: Settings = Depends(get_settings),
 ) -> RedirectResponse:
     """Start OAuth flow for CLI token exchange.
 
-    The CLI should call this with a redirect parameter pointing to its localhost server.
-    Example: /api/token/auth?redirect=http://localhost:8085/on-authentication
+    The CLI should call this with a port parameter for its localhost server.
+    Example: /api/token/auth?port=8085
 
-    This endpoint creates a state token and redirects to Google OAuth.
+    The server will always redirect to http://localhost:{port}/on-authentication
+    to prevent open redirect vulnerabilities.
+
+    If the user has a valid session with stored OAuth credentials, the token
+    will be refreshed without requiring re-authentication.
+
+    Otherwise, this endpoint creates a state token and redirects to Google OAuth.
     The callback is handled by /api/auth/callback (unified for web and CLI).
     """
+    from fabric.logging import logger
+    from fabric.session import get_session_email
+
+    # Build the redirect URL - always localhost with fixed path
+    cli_redirect = build_cli_redirect_url(port)
+
+    # Check if user has a valid session with stored credentials
+    email = get_session_email(request)
+    if email:
+        logger.info(f"Found existing session for {email}, attempting token refresh")
+        try:
+            redirect_response = _try_refresh_token(email, cli_redirect, settings)
+            if redirect_response:
+                logger.info(f"Successfully refreshed token for {email}")
+                return redirect_response
+        except Exception as e:
+            logger.warning(f"Token refresh failed for {email}: {e}, falling back to OAuth")
+
+    # No valid session or refresh failed, start OAuth flow
     from fabric.auth.api import CLI_SCOPES, create_cli_auth_state, create_oauth_flow
 
-    # Validate redirect URI (must be localhost for CLI)
-    if not validate_redirect_uri(redirect):
-        raise HTTPException(
-            status_code=400,
-            detail="Invalid redirect URI. Must be a localhost URL.",
-        )
-
     # Create state token with CLI redirect info
-    state = create_cli_auth_state(cli_redirect=redirect)
+    state = create_cli_auth_state(cli_redirect=cli_redirect)
 
     # Create OAuth flow with CLI scopes, using the unified callback
     flow = create_oauth_flow(settings, CLI_SCOPES)
@@ -137,31 +144,69 @@ async def start_token_auth(
     return RedirectResponse(url=authorization_url)
 
 
-def _store_oauth_credentials(db: Session, email: str, credentials: Credentials) -> None:
-    """Store or update OAuth credentials in database."""
-    from fabric.auth.api import CLI_SCOPES
+def _try_refresh_token(
+    email: str, cli_redirect: str, settings: Settings
+) -> RedirectResponse | None:
+    """Try to refresh the token using stored OAuth credentials.
 
-    oauth_record = db.query(UserOAuthCredential).filter(UserOAuthCredential.email == email).first()
+    Returns a RedirectResponse with the new token if successful, None otherwise.
+    """
+    # Get stored credentials
+    user_creds = get_user_credentials(email)
+    if not user_creds or not user_creds.refresh_token:
+        return None
 
-    scopes_json = json.dumps(list(credentials.scopes) if credentials.scopes else CLI_SCOPES)
+    # Get service account email
+    sa_email = user_creds.service_account_email
+    if not sa_email:
+        return None
 
-    if oauth_record:
-        # Update existing
-        oauth_record.access_token = credentials.token
-        oauth_record.refresh_token = credentials.refresh_token
-        oauth_record.scopes = scopes_json
-        oauth_record.updated_at = datetime.now(UTC)
-    else:
-        # Create new
-        oauth_record = UserOAuthCredential(
+    # Create OAuth credentials from stored tokens
+    credentials = Credentials(
+        token=user_creds.access_token,
+        refresh_token=user_creds.refresh_token,
+        token_uri="https://oauth2.googleapis.com/token",
+        client_id=settings.google_client_id,
+        client_secret=settings.google_client_secret,
+        scopes=user_creds.scopes,
+    )
+
+    # Refresh the credentials if needed
+    if credentials.expired:
+        credentials.refresh(google_requests.Request())
+        # Update stored credentials with new access token
+        store_user_credentials(
             email=email,
             access_token=credentials.token,
             refresh_token=credentials.refresh_token,
-            scopes=scopes_json,
+            scopes=user_creds.scopes,
+            service_account_email=sa_email,
         )
-        db.add(oauth_record)
 
-    db.commit()
+    # Impersonate SA to get short-lived token
+    sa_token, expires_in = _impersonate_service_account(credentials, sa_email)
+
+    # Redirect to CLI with token
+    params = {
+        "token": sa_token,
+        "expires_in": str(expires_in),
+        "service_account": sa_email,
+    }
+    redirect_url = f"{cli_redirect}?{urlencode(params)}"
+    return RedirectResponse(url=redirect_url)
+
+
+def _store_oauth_credentials(email: str, credentials: Credentials) -> None:
+    """Store or update OAuth credentials in Bigtable."""
+    from fabric.auth.api import CLI_SCOPES
+
+    scopes = list(credentials.scopes) if credentials.scopes else CLI_SCOPES
+    store_user_credentials(
+        email=email,
+        access_token=credentials.token,
+        refresh_token=credentials.refresh_token,
+        scopes=scopes,
+    )
 
 
 def _get_or_create_service_account(settings: Settings, user_email: str, user_name: str) -> str:
@@ -207,9 +252,7 @@ def _get_or_create_service_account(settings: Settings, user_email: str, user_nam
         "accountId": account_id,
         "serviceAccount": {
             "displayName": f"AI EA for {user_name}"[:100],
-            "description": f"Owner: {user_email} | Created: {created_at} | Via: Fabric"[
-                :256
-            ],
+            "description": f"Owner: {user_email} | Created: {created_at} | Via: Fabric"[:256],
         },
     }
 

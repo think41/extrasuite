@@ -141,11 +141,10 @@ def authenticate(fabric_server: str) -> dict:
     """Run the authentication flow and return token data."""
     # Find available port
     port = find_free_port()
-    callback_path = "/on-authentication"
-    redirect_uri = f"http://localhost:{port}{callback_path}"
 
-    # Build auth URL
-    auth_url = f"{fabric_server}/api/token/auth?redirect={urllib.parse.quote(redirect_uri)}"
+    # Build auth URL - server only needs the port, constructs localhost URL itself
+    # This prevents open redirect vulnerabilities
+    auth_url = f"{fabric_server}/api/token/auth?port={port}"
 
     # Token holder for callback
     token_holder = {}

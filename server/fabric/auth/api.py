@@ -4,6 +4,7 @@ Handles CLI authentication flow via token exchange.
 Entry point: /api/token/auth redirects here after Google OAuth.
 """
 
+import contextlib
 import secrets
 from datetime import UTC, datetime, timedelta
 from urllib.parse import urlencode
@@ -13,10 +14,8 @@ from fastapi.responses import HTMLResponse, RedirectResponse
 from google.auth.transport import requests as google_requests
 from google.oauth2 import id_token
 from google_auth_oauthlib.flow import Flow
-from sqlalchemy.orm import Session
 
 from fabric.config import Settings, get_settings
-from fabric.database import get_db
 
 router = APIRouter(prefix="/auth", tags=["auth"])
 
@@ -29,8 +28,8 @@ CLI_SCOPES = [
     "https://www.googleapis.com/auth/cloud-platform",
 ]
 
-# In-memory state storage for OAuth flow (use Redis in production)
-# Format: {state: {"created_at": datetime, "cli_redirect": str}}
+# In-memory state storage for OAuth flow
+# Note: State tokens are short-lived (10 min) and only used during OAuth redirect
 _oauth_states: dict[str, dict] = {}
 
 
@@ -84,7 +83,6 @@ async def google_callback(
     code: str,
     state: str,
     settings: Settings = Depends(get_settings),
-    db: Session = Depends(get_db),
 ):
     """Handle Google OAuth callback for CLI flow."""
     from fabric.logging import logger
@@ -133,9 +131,7 @@ async def google_callback(
     logger.info(f"OAuth callback successful for user: {user_email}")
 
     # Handle CLI flow - token exchange
-    return await _handle_cli_callback(
-        credentials, user_email, user_name, cli_redirect, settings, db
-    )
+    return await _handle_cli_callback(credentials, user_email, user_name, cli_redirect, settings)
 
 
 async def _handle_cli_callback(
@@ -144,19 +140,20 @@ async def _handle_cli_callback(
     user_name: str,
     cli_redirect: str,
     settings: Settings,
-    db: Session,
 ) -> RedirectResponse | HTMLResponse:
     """Handle CLI OAuth callback - exchange for SA token and redirect to localhost."""
+    from fabric.database import update_service_account_email
     from fabric.logging import logger
+    from fabric.session import create_user_session
     from fabric.token_exchange.api import (
         _get_or_create_service_account,
         _impersonate_service_account,
         _store_oauth_credentials,
     )
 
-    # Store OAuth credentials in database
+    # Store OAuth credentials in Bigtable
     try:
-        _store_oauth_credentials(db, user_email, credentials)
+        _store_oauth_credentials(user_email, credentials)
     except Exception as e:
         logger.error(f"Failed to store credentials: {e}")
         return _cli_error_response(f"Failed to store credentials: {e}", cli_redirect)
@@ -169,18 +166,9 @@ async def _handle_cli_callback(
         logger.error(f"Failed to setup service account: {e}")
         return _cli_error_response(f"Failed to setup service account: {e}", cli_redirect)
 
-    # Update SA email in database
-    try:
-        from fabric.database import UserOAuthCredential
-
-        oauth_record = (
-            db.query(UserOAuthCredential).filter(UserOAuthCredential.email == user_email).first()
-        )
-        if oauth_record:
-            oauth_record.service_account_email = sa_email
-            db.commit()
-    except Exception:
-        pass  # Non-critical, continue
+    # Update SA email in Bigtable
+    with contextlib.suppress(Exception):
+        update_service_account_email(user_email, sa_email)
 
     # Impersonate SA to get short-lived token
     try:
@@ -190,21 +178,33 @@ async def _handle_cli_callback(
         logger.error(f"Failed to get SA token: {e}")
         return _cli_error_response(f"Failed to get SA token: {e}", cli_redirect)
 
-    # Redirect to CLI with token
+    # Create redirect response with token
     params = {
         "token": sa_token,
         "expires_in": str(expires_in),
         "service_account": sa_email,
     }
     redirect_url = f"{cli_redirect}?{urlencode(params)}"
-    return RedirectResponse(url=redirect_url)
+    response = RedirectResponse(url=redirect_url)
+
+    # Create a session for the user so they don't need to re-authenticate
+    try:
+        create_user_session(response, user_email)
+        logger.info(f"Created session for {user_email}")
+    except Exception as e:
+        logger.warning(f"Failed to create session: {e}")
+        # Non-critical, continue without session
+
+    return response
 
 
 def _cli_error_response(error: str, redirect: str | None) -> RedirectResponse | HTMLResponse:
-    """Create error response for CLI flow."""
-    from fabric.token_exchange.api import validate_redirect_uri
+    """Create error response for CLI flow.
 
-    if redirect and validate_redirect_uri(redirect):
+    The redirect URL was already validated when the state was created,
+    so we can trust it here. It will always be a localhost URL.
+    """
+    if redirect:
         params = {"error": error}
         return RedirectResponse(url=f"{redirect}?{urlencode(params)}")
     else:

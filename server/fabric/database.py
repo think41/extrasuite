@@ -1,103 +1,297 @@
-"""Database configuration and models for OAuth credential storage.
+"""Database layer using Google Cloud Bigtable.
 
-Uses synchronous SQLAlchemy with SQLite for simplicity.
-Database operations are infrequent (OAuth storage/retrieval only).
+Stores two types of data:
+1. Sessions: session_id -> email (for HTTP session management)
+2. Users: email -> OAuth credentials + service account info
+
+Tables structure:
+- sessions: Row key = session_id, Column family = data
+  - data:email - User email associated with session
+  - data:created_at - Session creation timestamp
+
+- users: Row key = email, Column family = oauth, metadata
+  - oauth:access_token - OAuth access token
+  - oauth:refresh_token - OAuth refresh token
+  - oauth:scopes - JSON array of scopes
+  - metadata:service_account_email - Associated service account
+  - metadata:created_at - Record creation timestamp
+  - metadata:updated_at - Last update timestamp
 """
 
+import contextlib
+import json
+from dataclasses import dataclass
 from datetime import UTC, datetime
 
-from sqlalchemy import Column, DateTime, String, Text, create_engine
-from sqlalchemy.orm import DeclarativeBase, Session, sessionmaker
+from google.cloud import bigtable
+from google.cloud.bigtable import row_filters
 
 from fabric.config import get_settings
 
+# Column families
+SESSIONS_CF = "data"
+USERS_OAUTH_CF = "oauth"
+USERS_METADATA_CF = "metadata"
 
-class Base(DeclarativeBase):
-    """Base class for SQLAlchemy models."""
+# Bigtable client instance (singleton)
+_client: bigtable.Client | None = None
+_instance: bigtable.instance.Instance | None = None
 
-    pass
+
+@dataclass
+class UserCredentials:
+    """User OAuth credentials and service account info."""
+
+    email: str
+    access_token: str
+    refresh_token: str
+    scopes: list[str]
+    service_account_email: str | None = None
+    created_at: datetime | None = None
+    updated_at: datetime | None = None
 
 
-class UserOAuthCredential(Base):
-    """Store OAuth credentials for users (server-side only)."""
+@dataclass
+class Session:
+    """User session data."""
 
-    __tablename__ = "user_oauth_credentials"
+    session_id: str
+    email: str
+    created_at: datetime | None = None
 
-    # Primary key is the user's email
-    email = Column(String(255), primary_key=True)
 
-    # OAuth tokens
-    access_token = Column(Text, nullable=False)
-    refresh_token = Column(Text, nullable=False)
-    token_uri = Column(String(255), default="https://oauth2.googleapis.com/token")
+def _get_client() -> bigtable.Client:
+    """Get or create Bigtable client."""
+    global _client
+    if _client is None:
+        settings = get_settings()
+        _client = bigtable.Client(project=settings.google_cloud_project, admin=False)
+    return _client
 
-    # Scopes granted
-    scopes = Column(Text, nullable=False)  # JSON array of scopes
 
-    # Service account mapping
-    service_account_email = Column(String(255), nullable=True)
+def _get_instance() -> bigtable.instance.Instance:
+    """Get or create Bigtable instance reference."""
+    global _instance
+    if _instance is None:
+        settings = get_settings()
+        client = _get_client()
+        _instance = client.instance(settings.bigtable_instance)
+    return _instance
+
+
+def _get_sessions_table():
+    """Get sessions table reference."""
+    instance = _get_instance()
+    return instance.table("sessions")
+
+
+def _get_users_table():
+    """Get users table reference."""
+    instance = _get_instance()
+    return instance.table("users")
+
+
+def _decode_cell(row, column_family: str, column: str) -> str | None:
+    """Decode a cell value from a Bigtable row."""
+    try:
+        cells = row.cells.get(column_family, {}).get(column.encode(), [])
+        if cells:
+            return cells[0].value.decode("utf-8")
+    except (KeyError, IndexError, AttributeError):
+        pass
+    return None
+
+
+# ============================================================================
+# Session Management
+# ============================================================================
+
+
+def create_session(session_id: str, email: str) -> Session:
+    """Create a new session in Bigtable."""
+    table = _get_sessions_table()
+    row_key = session_id.encode("utf-8")
+    row = table.direct_row(row_key)
+
+    now = datetime.now(UTC).isoformat()
+    row.set_cell(SESSIONS_CF, "email", email.encode("utf-8"))
+    row.set_cell(SESSIONS_CF, "created_at", now.encode("utf-8"))
+    row.commit()
+
+    return Session(session_id=session_id, email=email, created_at=datetime.now(UTC))
+
+
+def get_session(session_id: str) -> Session | None:
+    """Get session by ID from Bigtable."""
+    table = _get_sessions_table()
+    row_key = session_id.encode("utf-8")
+
+    # Read only the data column family
+    row = table.read_row(row_key, filter_=row_filters.FamilyNameRegexFilter(SESSIONS_CF))
+
+    if row is None:
+        return None
+
+    email = _decode_cell(row, SESSIONS_CF, "email")
+    if not email:
+        return None
+
+    created_at_str = _decode_cell(row, SESSIONS_CF, "created_at")
+    created_at = None
+    if created_at_str:
+        with contextlib.suppress(ValueError):
+            created_at = datetime.fromisoformat(created_at_str)
+
+    return Session(session_id=session_id, email=email, created_at=created_at)
+
+
+def delete_session(session_id: str) -> None:
+    """Delete a session from Bigtable."""
+    table = _get_sessions_table()
+    row_key = session_id.encode("utf-8")
+    row = table.direct_row(row_key)
+    row.delete()
+    row.commit()
+
+
+# ============================================================================
+# User Credentials Management
+# ============================================================================
+
+
+def store_user_credentials(
+    email: str,
+    access_token: str,
+    refresh_token: str,
+    scopes: list[str],
+    service_account_email: str | None = None,
+) -> UserCredentials:
+    """Store or update user OAuth credentials in Bigtable."""
+    table = _get_users_table()
+    row_key = email.encode("utf-8")
+    row = table.direct_row(row_key)
+
+    now = datetime.now(UTC).isoformat()
+
+    # OAuth credentials
+    row.set_cell(USERS_OAUTH_CF, "access_token", access_token.encode("utf-8"))
+    row.set_cell(USERS_OAUTH_CF, "refresh_token", refresh_token.encode("utf-8"))
+    row.set_cell(USERS_OAUTH_CF, "scopes", json.dumps(scopes).encode("utf-8"))
 
     # Metadata
-    created_at = Column(DateTime, default=lambda: datetime.now(UTC))
-    updated_at = Column(
-        DateTime, default=lambda: datetime.now(UTC), onupdate=lambda: datetime.now(UTC)
+    if service_account_email:
+        row.set_cell(
+            USERS_METADATA_CF, "service_account_email", service_account_email.encode("utf-8")
+        )
+    row.set_cell(USERS_METADATA_CF, "updated_at", now.encode("utf-8"))
+
+    # Check if this is a new record to set created_at
+    existing = get_user_credentials(email)
+    if existing is None:
+        row.set_cell(USERS_METADATA_CF, "created_at", now.encode("utf-8"))
+
+    row.commit()
+
+    return UserCredentials(
+        email=email,
+        access_token=access_token,
+        refresh_token=refresh_token,
+        scopes=scopes,
+        service_account_email=service_account_email,
+        updated_at=datetime.now(UTC),
     )
 
 
-# Database engine and session factory
-_engine = None
-_session_factory = None
+def get_user_credentials(email: str) -> UserCredentials | None:
+    """Get user credentials by email from Bigtable."""
+    table = _get_users_table()
+    row_key = email.encode("utf-8")
+
+    row = table.read_row(row_key)
+    if row is None:
+        return None
+
+    access_token = _decode_cell(row, USERS_OAUTH_CF, "access_token")
+    refresh_token = _decode_cell(row, USERS_OAUTH_CF, "refresh_token")
+    scopes_json = _decode_cell(row, USERS_OAUTH_CF, "scopes")
+    service_account_email = _decode_cell(row, USERS_METADATA_CF, "service_account_email")
+    created_at_str = _decode_cell(row, USERS_METADATA_CF, "created_at")
+    updated_at_str = _decode_cell(row, USERS_METADATA_CF, "updated_at")
+
+    if not access_token or not refresh_token:
+        return None
+
+    scopes = []
+    if scopes_json:
+        with contextlib.suppress(json.JSONDecodeError):
+            scopes = json.loads(scopes_json)
+
+    created_at = None
+    if created_at_str:
+        with contextlib.suppress(ValueError):
+            created_at = datetime.fromisoformat(created_at_str)
+
+    updated_at = None
+    if updated_at_str:
+        with contextlib.suppress(ValueError):
+            updated_at = datetime.fromisoformat(updated_at_str)
+
+    return UserCredentials(
+        email=email,
+        access_token=access_token,
+        refresh_token=refresh_token,
+        scopes=scopes,
+        service_account_email=service_account_email,
+        created_at=created_at,
+        updated_at=updated_at,
+    )
 
 
-def get_database_url() -> str:
-    """Get database URL from settings."""
-    settings = get_settings()
-    # Use sync SQLite URL (not aiosqlite)
-    url = getattr(settings, "database_url", "sqlite:///./fabric.db")
-    # Convert async URL to sync if needed
-    return url.replace("sqlite+aiosqlite:", "sqlite:")
+def update_service_account_email(email: str, service_account_email: str) -> None:
+    """Update the service account email for a user."""
+    table = _get_users_table()
+    row_key = email.encode("utf-8")
+    row = table.direct_row(row_key)
+
+    now = datetime.now(UTC).isoformat()
+    row.set_cell(USERS_METADATA_CF, "service_account_email", service_account_email.encode("utf-8"))
+    row.set_cell(USERS_METADATA_CF, "updated_at", now.encode("utf-8"))
+    row.commit()
 
 
-def get_engine():
-    """Get or create database engine."""
-    global _engine
-    if _engine is None:
-        _engine = create_engine(
-            get_database_url(),
-            echo=get_settings().debug,
-        )
-    return _engine
-
-
-def get_session_factory():
-    """Get or create session factory."""
-    global _session_factory
-    if _session_factory is None:
-        engine = get_engine()
-        _session_factory = sessionmaker(bind=engine)
-    return _session_factory
-
-
-def get_db() -> Session:
-    """Get a database session."""
-    factory = get_session_factory()
-    session = factory()
-    try:
-        yield session
-    finally:
-        session.close()
+# ============================================================================
+# Database Lifecycle
+# ============================================================================
 
 
 def init_db():
-    """Initialize database tables."""
-    engine = get_engine()
-    Base.metadata.create_all(engine)
+    """Initialize database connection.
+
+    For Bigtable, we just verify connectivity by getting the instance.
+    Tables are created via gcloud/cbt commands, not at runtime.
+    """
+    from fabric.logging import logger
+
+    try:
+        instance = _get_instance()
+        # Verify we can access the tables
+        sessions_table = instance.table("sessions")
+        users_table = instance.table("users")
+
+        # Simple read to verify connectivity (will return None if no data)
+        sessions_table.read_row(b"__connectivity_check__")
+        users_table.read_row(b"__connectivity_check__")
+
+        logger.info("Bigtable connection verified")
+    except Exception as e:
+        logger.error(f"Failed to connect to Bigtable: {e}")
+        raise
 
 
 def close_db():
     """Close database connections."""
-    global _engine, _session_factory
-    if _engine:
-        _engine.dispose()
-        _engine = None
-        _session_factory = None
+    global _client, _instance
+    if _client:
+        _client.close()
+        _client = None
+        _instance = None

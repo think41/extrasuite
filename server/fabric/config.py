@@ -30,11 +30,11 @@ class Settings(BaseSettings):
     google_client_secret: str = ""
     google_redirect_uri: str = "http://localhost:8001/api/auth/callback"
 
-    # Google Cloud Project (for creating service accounts)
+    # Google Cloud Project (for creating service accounts and Bigtable)
     google_cloud_project: str = ""
 
-    # Database
-    database_url: str = "sqlite+aiosqlite:///./fabric.db"
+    # Bigtable
+    bigtable_instance: str = "fabric-auth"
 
     @property
     def allowed_origins_list(self) -> list[str]:
