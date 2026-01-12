@@ -4,7 +4,21 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 ## Project Overview
 
-Fabric is Think41 Technologies' AI Executive Assistant portal. It enables employees to self-provision Google service accounts that can interact with Google Docs/Sheets via CLI tools (`gdocs`, `gsheets`). The service accounts have no default permissions - employees explicitly share documents with their EA's email.
+Fabric is Think41 Technologies' headless authentication service for AI CLI tools. It enables employees to obtain short-lived service account tokens for interacting with Google Docs/Sheets. This is a **headless API** - there is no web UI.
+
+## Architecture
+
+**Single entry point:** `cli/fabric_auth.py` → `get_token()`
+
+**Flow:**
+1. CLI calls `get_token()` to get a valid access token
+2. If cached token exists and is valid, return it
+3. Otherwise, start localhost callback server
+4. Open browser to `/api/token/auth?redirect=http://localhost:<port>/callback`
+5. User authenticates via Google OAuth
+6. Server creates/retrieves service account and impersonates it
+7. Server redirects to localhost with short-lived token (1 hour)
+8. CLI saves token to `~/.config/fabric/token.json` and returns it
 
 ## Development Commands
 
@@ -18,14 +32,6 @@ uv run ruff check .                              # Lint
 uv run ruff format .                             # Format
 ```
 
-### Client (React)
-```bash
-cd client
-npm install        # Install dependencies
-npm run dev        # Run dev server on port 5174
-npm run build      # Production build
-```
-
 ### Docker
 ```bash
 docker build -t fabric:latest .
@@ -33,44 +39,41 @@ docker-compose up -d fabric              # Production
 docker-compose --profile dev up dev-server  # Development
 ```
 
-## Architecture
-
-**Two-service monorepo:**
-- `server/` - FastAPI backend (port 8001)
-- `client/` - React + TypeScript + Vite frontend (port 5174)
-
-**Key flow:**
-1. User authenticates via Google OAuth (`/api/auth/google`)
-2. Portal generates ephemeral magic token (`/api/service-account/init`)
-3. User runs OS-specific curl command in terminal
-4. Command hits one-time download endpoint (`/api/service-account/download/{token}`)
-5. Service account created in GCP, credentials saved to `~/.fabric/credentials.json`
-
-**Stateless design:** No database. State lives in:
-- GCP (service accounts with traceability in `description` field)
-- Signed session cookies (24h expiry)
-- In-memory magic tokens (5min expiry, single-use)
-
 ## Key Files
 
-- `server/fabric/main.py` - FastAPI app, serves static files in production
-- `server/fabric/auth/api.py` - Google OAuth with signed cookie sessions
-- `server/fabric/service_account/api.py` - Magic token generation and SA creation
+- `cli/fabric_auth.py` - **Entry point** - `get_token()` function
+- `cli/example_gsheet.py` - Example usage with gspread
+- `server/fabric/main.py` - FastAPI app entry point
+- `server/fabric/auth/api.py` - OAuth callback handler
+- `server/fabric/token_exchange/api.py` - Token exchange API (`/api/token/auth`)
 - `server/fabric/config.py` - Pydantic settings from environment
-- `client/src/App.tsx` - Full portal UI (login, dashboard, instructions)
-- `Dockerfile` - Multi-stage build combining client and server
+- `server/fabric/database.py` - SQLAlchemy models for OAuth credential storage
+
+## API Endpoints
+
+| Method | Endpoint | Description |
+|--------|----------|-------------|
+| GET | `/api/token/auth?redirect=<url>` | CLI entry point - starts OAuth |
+| GET | `/api/auth/callback` | OAuth callback - exchanges code for token |
+| GET | `/api/health` | Health check |
+| GET | `/api/health/ready` | Readiness check |
 
 ## Environment Setup
 
 Copy `server/.env.template` to `server/.env` and configure:
 - `GOOGLE_CLIENT_ID` / `GOOGLE_CLIENT_SECRET` - OAuth credentials
 - `GOOGLE_CLOUD_PROJECT` - GCP project for service account creation
-- `SECRET_KEY` - For signing session cookies
+- `SECRET_KEY` - For signing state tokens
 
-Admin service account JSON goes in `server/credentials/admin-service-account.json` (needs `roles/iam.serviceAccountAdmin`).
+Server uses Application Default Credentials (ADC) for service account management.
 
-## Traceability
+## Service Account Traceability
 
 Service accounts are created with metadata for audit:
 - `displayName`: "AI EA for {user_name}"
-- `description`: "Owner: {email} | Created: {timestamp} | Via: Fabric Portal"
+- `description`: "Owner: {email} | Created: {timestamp} | Via: Fabric"
+
+## Token Storage
+
+- **Server-side:** OAuth refresh tokens stored in SQLite (`fabric.db`)
+- **Client-side:** Short-lived SA tokens cached in `~/.config/fabric/token.json`

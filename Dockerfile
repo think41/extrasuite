@@ -1,24 +1,6 @@
-# Multi-stage Dockerfile for Fabric
-# Combines React frontend and FastAPI backend into a single container
+# Dockerfile for Fabric API Server
+# Headless CLI authentication service
 
-# =============================================================================
-# Stage 1: Build the React frontend
-# =============================================================================
-FROM node:20-slim AS client-build
-
-WORKDIR /app/client
-
-# Install dependencies first (for better caching)
-COPY client/package.json client/package-lock.json ./
-RUN npm ci
-
-# Copy source and build
-COPY client/ ./
-RUN npm run build
-
-# =============================================================================
-# Stage 2: Python runtime with FastAPI
-# =============================================================================
 FROM python:3.12-slim AS runtime
 
 # Install system dependencies
@@ -37,12 +19,6 @@ RUN uv sync --frozen --no-dev
 
 # Copy server source code
 COPY server/fabric ./fabric
-
-# Copy built React frontend to static directory
-COPY --from=client-build /app/client/dist ./static
-
-# Create credentials directory (will be mounted as volume in production)
-RUN mkdir -p credentials
 
 # Environment variables
 ENV PORT=8001

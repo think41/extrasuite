@@ -21,10 +21,9 @@ class Settings(BaseSettings):
 
     # Security
     secret_key: str = "change-me-in-production"
-    magic_token_expiry: int = 300  # 5 minutes
 
-    # CORS
-    allowed_origins: str = "http://localhost:5174"
+    # CORS (not strictly needed for headless API, but useful for health checks)
+    allowed_origins: str = "http://localhost:8001"
 
     # Google OAuth
     google_client_id: str = ""

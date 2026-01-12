@@ -1,6 +1,6 @@
 # Fabric Server
 
-FastAPI backend for the Fabric AI Executive Assistant Portal.
+FastAPI backend for the Fabric CLI authentication service.
 
 ## Development
 
@@ -12,7 +12,7 @@ uv sync
 uv run uvicorn fabric.main:app --reload --port 8001
 
 # Run tests
-uv run pytest
+uv run pytest tests/ -v
 
 # Lint
 uv run ruff check .
@@ -23,12 +23,27 @@ uv run ruff format .
 
 ## API Endpoints
 
-- `GET /api/health` - Health check
-- `GET /api/health/ready` - Readiness check
-- `GET /api/auth/google` - Initiate Google OAuth
-- `GET /api/auth/callback` - OAuth callback
-- `GET /api/auth/me` - Get current user
-- `POST /api/auth/logout` - Logout
-- `POST /api/service-account/init` - Initialize service account creation
-- `GET /api/service-account/download/{token}` - Download credentials
-- `GET /api/service-account/status` - Check service account status
+| Method | Endpoint | Description |
+|--------|----------|-------------|
+| GET | `/api/token/auth?redirect=<url>` | CLI entry point - starts OAuth flow |
+| GET | `/api/auth/callback` | OAuth callback - exchanges code for SA token |
+| GET | `/api/health` | Health check |
+| GET | `/api/health/ready` | Readiness check |
+
+## Environment Variables
+
+See `.env.template` for required configuration:
+
+- `SECRET_KEY` - For signing OAuth state tokens
+- `GOOGLE_CLIENT_ID` - Google OAuth client ID
+- `GOOGLE_CLIENT_SECRET` - Google OAuth client secret
+- `GOOGLE_REDIRECT_URI` - OAuth callback URL
+- `GOOGLE_CLOUD_PROJECT` - GCP project for service account creation
+
+## Database
+
+Uses SQLite (`fabric.db`) to store:
+- User OAuth credentials (refresh tokens)
+- Service account email mappings
+
+The database is created automatically on first run.

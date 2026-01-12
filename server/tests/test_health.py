@@ -31,4 +31,4 @@ def test_root_endpoint():
     assert response.status_code == 200
     data = response.json()
     assert data["service"] == "fabric"
-    assert data["status"] == "running"
+    assert data["version"] == "0.1.0"

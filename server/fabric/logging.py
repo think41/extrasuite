@@ -21,7 +21,7 @@ def get_user_context() -> dict[str, Any]:
     }
 
 
-def format_record(record: dict) -> str:
+def format_record(_record: dict) -> str:
     """Format log record with user context."""
     user_email = user_email_ctx.get()
     request_id = request_id_ctx.get()

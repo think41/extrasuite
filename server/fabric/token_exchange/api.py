@@ -207,7 +207,7 @@ def _get_or_create_service_account(settings: Settings, user_email: str, user_nam
         "accountId": account_id,
         "serviceAccount": {
             "displayName": f"AI EA for {user_name}"[:100],
-            "description": f"Owner: {user_email} | Created: {created_at} | Via: Fabric Portal"[
+            "description": f"Owner: {user_email} | Created: {created_at} | Via: Fabric"[
                 :256
             ],
         },

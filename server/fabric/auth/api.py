@@ -1,21 +1,18 @@
 """Google OAuth authentication API endpoints.
 
-Handles both web login (session cookie) and CLI login (token exchange) flows
-using a unified callback endpoint.
+Handles CLI authentication flow via token exchange.
+Entry point: /api/token/auth redirects here after Google OAuth.
 """
 
 import secrets
 from datetime import UTC, datetime, timedelta
-from typing import Annotated
 from urllib.parse import urlencode
 
-from fastapi import APIRouter, Cookie, Depends, HTTPException, Response
+from fastapi import APIRouter, Depends, HTTPException
 from fastapi.responses import HTMLResponse, RedirectResponse
 from google.auth.transport import requests as google_requests
 from google.oauth2 import id_token
 from google_auth_oauthlib.flow import Flow
-from itsdangerous import BadSignature, SignatureExpired, URLSafeTimedSerializer
-from pydantic import BaseModel
 from sqlalchemy.orm import Session
 
 from fabric.config import Settings, get_settings
@@ -23,32 +20,6 @@ from fabric.database import get_db
 
 router = APIRouter(prefix="/auth", tags=["auth"])
 
-
-class UserInfo(BaseModel):
-    """User information from Google OAuth."""
-
-    email: str
-    name: str
-    picture: str | None = None
-    hd: str | None = None  # Hosted domain (for Workspace accounts)
-
-
-class SessionData(BaseModel):
-    """Session data stored in signed cookie."""
-
-    email: str
-    name: str
-    picture: str | None = None
-    hd: str | None = None
-    created_at: str
-
-
-# OAuth scopes for web login (basic profile)
-WEB_SCOPES = [
-    "openid",
-    "https://www.googleapis.com/auth/userinfo.email",
-    "https://www.googleapis.com/auth/userinfo.profile",
-]
 
 # OAuth scopes for CLI login (includes cloud-platform for SA impersonation)
 CLI_SCOPES = [
@@ -59,13 +30,8 @@ CLI_SCOPES = [
 ]
 
 # In-memory state storage for OAuth flow (use Redis in production)
-# Format: {state: {"created_at": datetime, "flow_type": "web"|"cli", "cli_redirect": str|None}}
+# Format: {state: {"created_at": datetime, "cli_redirect": str}}
 _oauth_states: dict[str, dict] = {}
-
-
-def get_serializer(settings: Settings) -> URLSafeTimedSerializer:
-    """Get serializer for signing session cookies."""
-    return URLSafeTimedSerializer(settings.secret_key)
 
 
 def create_oauth_flow(settings: Settings, scopes: list[str]) -> Flow:
@@ -94,41 +60,6 @@ def create_oauth_flow(settings: Settings, scopes: list[str]) -> Flow:
     return flow
 
 
-def get_current_user(
-    session: Annotated[str | None, Cookie(alias="fabric_session")] = None,
-    settings: Settings = Depends(get_settings),
-) -> SessionData:
-    """Get current user from session cookie."""
-    if not session:
-        raise HTTPException(status_code=401, detail="Not authenticated")
-
-    serializer = get_serializer(settings)
-    try:
-        # Session expires after 24 hours
-        data = serializer.loads(session, max_age=86400)
-        return SessionData(**data)
-    except SignatureExpired:
-        raise HTTPException(status_code=401, detail="Session expired") from None
-    except BadSignature:
-        raise HTTPException(status_code=401, detail="Invalid session") from None
-
-
-def get_optional_user(
-    session: Annotated[str | None, Cookie(alias="fabric_session")] = None,
-    settings: Settings = Depends(get_settings),
-) -> SessionData | None:
-    """Get current user if authenticated, None otherwise."""
-    if not session:
-        return None
-
-    serializer = get_serializer(settings)
-    try:
-        data = serializer.loads(session, max_age=86400)
-        return SessionData(**data)
-    except (SignatureExpired, BadSignature):
-        return None
-
-
 def _cleanup_old_states() -> None:
     """Remove expired states (older than 10 minutes)."""
     cutoff = datetime.now(UTC) - timedelta(minutes=10)
@@ -137,32 +68,15 @@ def _cleanup_old_states() -> None:
             del _oauth_states[old_state]
 
 
-def _create_state(flow_type: str, cli_redirect: str | None = None) -> str:
-    """Create and store a new OAuth state token."""
+def create_cli_auth_state(cli_redirect: str) -> str:
+    """Create and store a new OAuth state token for CLI flow."""
     state = secrets.token_urlsafe(32)
     _oauth_states[state] = {
         "created_at": datetime.now(UTC),
-        "flow_type": flow_type,
         "cli_redirect": cli_redirect,
     }
     _cleanup_old_states()
     return state
-
-
-@router.get("/google")
-async def google_login(settings: Settings = Depends(get_settings)) -> RedirectResponse:
-    """Initiate Google OAuth login flow for web."""
-    flow = create_oauth_flow(settings, WEB_SCOPES)
-    state = _create_state(flow_type="web")
-
-    authorization_url, _ = flow.authorization_url(
-        access_type="offline",
-        include_granted_scopes="true",
-        state=state,
-        prompt="consent",
-    )
-
-    return RedirectResponse(url=authorization_url)
 
 
 @router.get("/callback", response_model=None)
@@ -172,7 +86,7 @@ async def google_callback(
     settings: Settings = Depends(get_settings),
     db: Session = Depends(get_db),
 ):
-    """Handle Google OAuth callback for both web and CLI flows."""
+    """Handle Google OAuth callback for CLI flow."""
     from fabric.logging import logger
 
     # Verify state token
@@ -187,21 +101,19 @@ async def google_callback(
         logger.warning("Expired state token received")
         raise HTTPException(status_code=400, detail="State token expired")
 
-    flow_type = state_data.get("flow_type", "web")
     cli_redirect = state_data.get("cli_redirect")
+    if not cli_redirect:
+        raise HTTPException(status_code=400, detail="Missing CLI redirect")
 
-    # Use appropriate scopes based on flow type
-    scopes = CLI_SCOPES if flow_type == "cli" else WEB_SCOPES
-    flow = create_oauth_flow(settings, scopes)
+    # Create OAuth flow with CLI scopes
+    flow = create_oauth_flow(settings, CLI_SCOPES)
 
     # Exchange code for tokens
     try:
         flow.fetch_token(code=code)
     except Exception as e:
         logger.error(f"Failed to fetch token: {e}")
-        if flow_type == "cli" and cli_redirect:
-            return _cli_error_response(f"Failed to fetch token: {e}", cli_redirect)
-        raise HTTPException(status_code=400, detail=f"Failed to fetch token: {e}") from None
+        return _cli_error_response(f"Failed to fetch token: {e}", cli_redirect)
 
     # Get credentials and verify ID token
     credentials = flow.credentials
@@ -213,52 +125,17 @@ async def google_callback(
         )
     except Exception as e:
         logger.error(f"Failed to verify token: {e}")
-        if flow_type == "cli" and cli_redirect:
-            return _cli_error_response(f"Failed to verify token: {e}", cli_redirect)
-        raise HTTPException(status_code=400, detail=f"Failed to verify token: {e}") from None
+        return _cli_error_response(f"Failed to verify token: {e}", cli_redirect)
 
     user_email = id_info.get("email", "")
     user_name = id_info.get("name", "")
 
-    logger.info(f"OAuth callback successful for user: {user_email}, flow: {flow_type}")
+    logger.info(f"OAuth callback successful for user: {user_email}")
 
     # Handle CLI flow - token exchange
-    if flow_type == "cli":
-        return await _handle_cli_callback(
-            credentials, user_email, user_name, cli_redirect, settings, db
-        )
-
-    # Handle web flow - session cookie
-    return _handle_web_callback(id_info, settings)
-
-
-def _handle_web_callback(id_info: dict, settings: Settings) -> RedirectResponse:
-    """Handle web OAuth callback - create session and redirect to frontend."""
-    session_data = SessionData(
-        email=id_info.get("email", ""),
-        name=id_info.get("name", ""),
-        picture=id_info.get("picture"),
-        hd=id_info.get("hd"),
-        created_at=datetime.now(UTC).isoformat(),
+    return await _handle_cli_callback(
+        credentials, user_email, user_name, cli_redirect, settings, db
     )
-
-    # Sign session data
-    serializer = get_serializer(settings)
-    signed_session = serializer.dumps(session_data.model_dump())
-
-    # Redirect to frontend with session cookie
-    frontend_url = settings.allowed_origins_list[0] if settings.allowed_origins_list else "/"
-    response = RedirectResponse(url=frontend_url)
-    response.set_cookie(
-        key="fabric_session",
-        value=signed_session,
-        httponly=True,
-        secure=settings.is_production,
-        samesite="lax",
-        max_age=86400,  # 24 hours
-    )
-
-    return response
 
 
 async def _handle_cli_callback(
@@ -344,27 +221,3 @@ def _cli_error_response(error: str, redirect: str | None) -> RedirectResponse | 
             """,
             status_code=400,
         )
-
-
-# Export for use by token_exchange module
-def create_cli_auth_state(cli_redirect: str) -> str:
-    """Create OAuth state for CLI flow (used by token_exchange module)."""
-    return _create_state(flow_type="cli", cli_redirect=cli_redirect)
-
-
-@router.get("/me")
-async def get_me(user: SessionData = Depends(get_current_user)) -> UserInfo:
-    """Get current authenticated user info."""
-    return UserInfo(
-        email=user.email,
-        name=user.name,
-        picture=user.picture,
-        hd=user.hd,
-    )
-
-
-@router.post("/logout")
-async def logout(response: Response) -> dict:
-    """Logout current user by clearing session cookie."""
-    response.delete_cookie(key="fabric_session")
-    return {"status": "logged_out"}
