@@ -3,35 +3,93 @@
 Main FastAPI application entry point.
 """
 
+import secrets
 from contextlib import asynccontextmanager
 from pathlib import Path
 
-from fastapi import FastAPI
+from fastapi import FastAPI, Request
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import FileResponse
 from fastapi.staticfiles import StaticFiles
+from starlette.middleware.base import BaseHTTPMiddleware
 
 from fabric import auth, health, service_account, token_exchange
 from fabric.config import get_settings
 from fabric.database import close_db, init_db
+from fabric.logging import (
+    clear_user_context,
+    logger,
+    request_id_ctx,
+    set_user_context,
+    setup_logging,
+)
+
+
+class LoggingMiddleware(BaseHTTPMiddleware):
+    """Middleware to add request ID and user context to logs."""
+
+    async def dispatch(self, request: Request, call_next):
+        # Generate unique request ID
+        request_id = secrets.token_hex(8)
+        request_id_ctx.set(request_id)
+
+        # Try to extract user from session cookie (if present)
+        session_cookie = request.cookies.get("fabric_session")
+        if session_cookie:
+            try:
+                from fabric.auth.api import get_serializer
+                from fabric.config import get_settings
+
+                settings = get_settings()
+                serializer = get_serializer(settings)
+                data = serializer.loads(session_cookie, max_age=86400)
+                set_user_context(email=data.get("email"), name=data.get("name"))
+            except Exception:
+                pass  # Invalid/expired session, continue without user context
+
+        # Log request
+        logger.info(
+            f"{request.method} {request.url.path}",
+            extra={"method": request.method, "path": request.url.path},
+        )
+
+        try:
+            response = await call_next(request)
+            logger.info(
+                f"{request.method} {request.url.path} -> {response.status_code}",
+                extra={"status_code": response.status_code},
+            )
+            return response
+        except Exception as e:
+            logger.exception(f"Request failed: {e}")
+            raise
+        finally:
+            clear_user_context()
 
 
 @asynccontextmanager
 async def lifespan(_app: FastAPI):
     """Application lifespan handler."""
     settings = get_settings()
-    print(f"Starting Fabric server on port {settings.port}")
-    print(f"Environment: {settings.environment}")
+
+    # Setup logging
+    setup_logging(
+        json_logs=settings.is_production,
+        log_level="DEBUG" if settings.debug else "INFO",
+    )
+
+    logger.info(f"Starting Fabric server on port {settings.port}")
+    logger.info(f"Environment: {settings.environment}")
 
     # Initialize database (sync)
     init_db()
-    print("Database initialized")
+    logger.info("Database initialized")
 
     yield
 
     # Close database connections (sync)
     close_db()
-    print("Shutting down Fabric server")
+    logger.info("Shutting down Fabric server")
 
 
 def create_app() -> FastAPI:
@@ -47,6 +105,9 @@ def create_app() -> FastAPI:
         redoc_url="/api/redoc" if not settings.is_production else None,
         openapi_url="/api/openapi.json" if not settings.is_production else None,
     )
+
+    # Logging middleware (must be added first to wrap everything)
+    app.add_middleware(LoggingMiddleware)
 
     # CORS middleware
     app.add_middleware(

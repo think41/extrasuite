@@ -7,38 +7,30 @@ This module implements the Fabric Token Exchange flow:
 4. Fabric looks up or creates user's service account
 5. Fabric impersonates SA to get short-lived token
 6. Browser redirects to CLI localhost with token
+
+Note: The actual OAuth callback is handled by /api/auth/callback (unified endpoint).
+This module provides the /api/token/auth entry point and helper functions.
 """
 
 import json
 import re
-import secrets
-from datetime import UTC, datetime, timedelta
-from urllib.parse import urlencode, urlparse
+from datetime import UTC, datetime
+from urllib.parse import urlparse
 
 from fastapi import APIRouter, Depends, HTTPException, Query
-from fastapi.responses import HTMLResponse, RedirectResponse
+from fastapi.responses import RedirectResponse
 from google.auth import impersonated_credentials
 from google.auth.transport import requests as google_requests
-from google.oauth2 import id_token
 from google.oauth2.credentials import Credentials
-from google_auth_oauthlib.flow import Flow
 from googleapiclient.discovery import build
 from googleapiclient.errors import HttpError
 from pydantic import BaseModel
 from sqlalchemy.orm import Session
 
 from fabric.config import Settings, get_settings
-from fabric.database import UserOAuthCredential, get_db
+from fabric.database import UserOAuthCredential
 
 router = APIRouter(prefix="/token", tags=["token-exchange"])
-
-# Scopes needed for impersonation
-OAUTH_SCOPES = [
-    "openid",
-    "https://www.googleapis.com/auth/userinfo.email",
-    "https://www.googleapis.com/auth/userinfo.profile",
-    "https://www.googleapis.com/auth/cloud-platform",
-]
 
 # Scopes for the impersonated SA token (what the CLI can do)
 SA_TOKEN_SCOPES = [
@@ -46,9 +38,6 @@ SA_TOKEN_SCOPES = [
     "https://www.googleapis.com/auth/drive.readonly",
     "https://www.googleapis.com/auth/documents.readonly",
 ]
-
-# In-memory state storage for OAuth flow (use Redis in production)
-_oauth_states: dict[str, dict] = {}
 
 
 class TokenResponse(BaseModel):
@@ -58,32 +47,6 @@ class TokenResponse(BaseModel):
     expires_in: int
     token_type: str = "Bearer"
     service_account_email: str
-
-
-def create_token_oauth_flow(settings: Settings, redirect_uri: str) -> Flow:
-    """Create Google OAuth flow for token exchange."""
-    if not settings.google_client_id or not settings.google_client_secret:
-        raise HTTPException(
-            status_code=500,
-            detail="Google OAuth not configured. Set GOOGLE_CLIENT_ID and GOOGLE_CLIENT_SECRET.",
-        )
-
-    client_config = {
-        "web": {
-            "client_id": settings.google_client_id,
-            "client_secret": settings.google_client_secret,
-            "auth_uri": "https://accounts.google.com/o/oauth2/auth",
-            "token_uri": "https://oauth2.googleapis.com/token",
-            "redirect_uris": [redirect_uri],
-        }
-    }
-
-    flow = Flow.from_client_config(
-        client_config,
-        scopes=OAUTH_SCOPES,
-        redirect_uri=redirect_uri,
-    )
-    return flow
 
 
 def sanitize_email_for_account_id(email: str) -> str:
@@ -145,7 +108,12 @@ async def start_token_auth(
 
     The CLI should call this with a redirect parameter pointing to its localhost server.
     Example: /api/token/auth?redirect=http://localhost:8085/on-authentication
+
+    This endpoint creates a state token and redirects to Google OAuth.
+    The callback is handled by /api/auth/callback (unified for web and CLI).
     """
+    from fabric.auth.api import CLI_SCOPES, create_cli_auth_state, create_oauth_flow
+
     # Validate redirect URI (must be localhost for CLI)
     if not validate_redirect_uri(redirect):
         raise HTTPException(
@@ -153,22 +121,11 @@ async def start_token_auth(
             detail="Invalid redirect URI. Must be a localhost URL.",
         )
 
-    # Create OAuth flow with our callback
-    callback_uri = f"{settings.google_redirect_uri.rsplit('/', 1)[0]}/token/callback"
-    flow = create_token_oauth_flow(settings, callback_uri)
+    # Create state token with CLI redirect info
+    state = create_cli_auth_state(cli_redirect=redirect)
 
-    # Generate state token with redirect info
-    state = secrets.token_urlsafe(32)
-    _oauth_states[state] = {
-        "redirect": redirect,
-        "created_at": datetime.now(UTC),
-    }
-
-    # Clean up old states (older than 10 minutes)
-    cutoff = datetime.now(UTC) - timedelta(minutes=10)
-    for old_state in list(_oauth_states.keys()):
-        if _oauth_states[old_state]["created_at"] < cutoff:
-            del _oauth_states[old_state]
+    # Create OAuth flow with CLI scopes, using the unified callback
+    flow = create_oauth_flow(settings, CLI_SCOPES)
 
     authorization_url, _ = flow.authorization_url(
         access_type="offline",
@@ -180,126 +137,13 @@ async def start_token_auth(
     return RedirectResponse(url=authorization_url)
 
 
-@router.get("/callback")
-async def token_callback(
-    code: str,
-    state: str,
-    settings: Settings = Depends(get_settings),
-    db: Session = Depends(get_db),
-) -> RedirectResponse:
-    """Handle OAuth callback and redirect to CLI with token.
-
-    This endpoint:
-    1. Exchanges the auth code for tokens
-    2. Stores OAuth credentials in database
-    3. Looks up or creates user's service account
-    4. Impersonates SA to get short-lived token
-    5. Redirects to CLI localhost with token
-    """
-    # Verify state token
-    if state not in _oauth_states:
-        return _error_response("Invalid state token", None)
-
-    state_data = _oauth_states.pop(state)
-
-    # Check state expiry
-    if datetime.now(UTC) - state_data["created_at"] > timedelta(minutes=10):
-        return _error_response("State token expired", state_data["redirect"])
-
-    cli_redirect = state_data["redirect"]
-
-    # Exchange code for tokens
-    callback_uri = f"{settings.google_redirect_uri.rsplit('/', 1)[0]}/token/callback"
-    flow = create_token_oauth_flow(settings, callback_uri)
-    try:
-        flow.fetch_token(code=code)
-    except Exception as e:
-        return _error_response(f"Failed to fetch token: {e}", cli_redirect)
-
-    credentials = flow.credentials
-
-    # Verify ID token and get user info
-    try:
-        id_info = id_token.verify_oauth2_token(
-            credentials.id_token,
-            google_requests.Request(),
-            settings.google_client_id,
-        )
-    except Exception as e:
-        return _error_response(f"Failed to verify token: {e}", cli_redirect)
-
-    user_email = id_info.get("email", "")
-    if not user_email:
-        return _error_response("No email in token", cli_redirect)
-
-    # Store OAuth credentials in database
-    try:
-        _store_oauth_credentials(db, user_email, credentials)
-    except Exception as e:
-        return _error_response(f"Failed to store credentials: {e}", cli_redirect)
-
-    # Look up or create service account
-    try:
-        sa_email = _get_or_create_service_account(
-            settings, user_email, id_info.get("name", user_email)
-        )
-    except Exception as e:
-        return _error_response(f"Failed to setup service account: {e}", cli_redirect)
-
-    # Update SA email in database
-    try:
-        oauth_record = (
-            db.query(UserOAuthCredential).filter(UserOAuthCredential.email == user_email).first()
-        )
-        if oauth_record:
-            oauth_record.service_account_email = sa_email
-            db.commit()
-    except Exception:
-        pass  # Non-critical, continue
-
-    # Impersonate SA to get short-lived token
-    try:
-        sa_token, expires_in = _impersonate_service_account(credentials, sa_email)
-    except Exception as e:
-        return _error_response(f"Failed to get SA token: {e}", cli_redirect)
-
-    # Redirect to CLI with token
-    params = {
-        "token": sa_token,
-        "expires_in": str(expires_in),
-        "service_account": sa_email,
-    }
-    redirect_url = f"{cli_redirect}?{urlencode(params)}"
-    return RedirectResponse(url=redirect_url)
-
-
-def _error_response(error: str, redirect: str | None) -> RedirectResponse | HTMLResponse:
-    """Create error response - redirect with error or HTML page."""
-    if redirect and validate_redirect_uri(redirect):
-        params = {"error": error}
-        return RedirectResponse(url=f"{redirect}?{urlencode(params)}")
-    else:
-        # Show error page if no valid redirect
-        return HTMLResponse(
-            content=f"""
-            <html>
-            <head><title>Authentication Error</title></head>
-            <body style="font-family: sans-serif; padding: 40px;">
-                <h1>Authentication Error</h1>
-                <p style="color: red;">{error}</p>
-                <p>Please close this window and try again.</p>
-            </body>
-            </html>
-            """,
-            status_code=400,
-        )
-
-
 def _store_oauth_credentials(db: Session, email: str, credentials: Credentials) -> None:
     """Store or update OAuth credentials in database."""
+    from fabric.auth.api import CLI_SCOPES
+
     oauth_record = db.query(UserOAuthCredential).filter(UserOAuthCredential.email == email).first()
 
-    scopes_json = json.dumps(list(credentials.scopes) if credentials.scopes else OAUTH_SCOPES)
+    scopes_json = json.dumps(list(credentials.scopes) if credentials.scopes else CLI_SCOPES)
 
     if oauth_record:
         # Update existing
