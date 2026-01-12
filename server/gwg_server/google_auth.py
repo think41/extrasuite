@@ -13,7 +13,6 @@ from google.auth.transport import requests as google_requests
 from google.oauth2 import id_token
 
 from gwg_server.config import Settings, get_settings
-from gwg_server.credentials import store_oauth_credentials
 from gwg_server.database import Database, get_database
 from gwg_server.logging import (
     audit_auth_failed,
@@ -114,7 +113,13 @@ async def _handle_cli_callback(
     """Handle CLI OAuth callback - exchange for SA token and redirect to localhost."""
     # Store OAuth credentials in Firestore
     try:
-        await store_oauth_credentials(db, user_email, credentials)
+        scopes = list(credentials.scopes) if credentials.scopes else CLI_SCOPES
+        await db.store_user_credentials(
+            email=user_email,
+            access_token=credentials.token,
+            refresh_token=credentials.refresh_token,
+            scopes=scopes,
+        )
     except Exception:
         logger.exception("Failed to store OAuth credentials")
         audit_auth_failed(user_email, "credential_storage_failed")
