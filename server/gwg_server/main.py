@@ -11,7 +11,7 @@ from fastapi import FastAPI, Request
 from fastapi.middleware.cors import CORSMiddleware
 from starlette.middleware.base import BaseHTTPMiddleware
 
-from gwg_server import auth, health, token_exchange
+from gwg_server import google_auth, health, token_exchange
 from gwg_server.config import get_settings
 from gwg_server.database import Database
 from gwg_server.logging import (
@@ -108,7 +108,7 @@ def create_app() -> FastAPI:
 
     # Register API routers
     app.include_router(health.router, prefix="/api")
-    app.include_router(auth.router, prefix="/api")
+    app.include_router(google_auth.router, prefix="/api")
     app.include_router(token_exchange.router, prefix="/api")
 
     # Root endpoint

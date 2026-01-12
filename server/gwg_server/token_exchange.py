@@ -124,7 +124,7 @@ async def start_token_auth(
             logger.warning(f"Token refresh failed for {email}: {e}, falling back to OAuth")
 
     # No valid session or refresh failed, start OAuth flow
-    from gwg_server.auth.api import CLI_SCOPES, create_cli_auth_state, create_oauth_flow
+    from gwg_server.google_auth import CLI_SCOPES, create_cli_auth_state, create_oauth_flow
 
     # Create state token with CLI redirect info
     state = create_cli_auth_state(cli_redirect=cli_redirect)
@@ -196,7 +196,7 @@ def _try_refresh_token(
 
 def _store_oauth_credentials(db: Database, email: str, credentials: Credentials) -> None:
     """Store or update OAuth credentials in Firestore."""
-    from gwg_server.auth.api import CLI_SCOPES
+    from gwg_server.google_auth import CLI_SCOPES
 
     scopes = list(credentials.scopes) if credentials.scopes else CLI_SCOPES
     db.store_user_credentials(

@@ -147,7 +147,7 @@ async def _handle_cli_callback(
     """Handle CLI OAuth callback - exchange for SA token and redirect to localhost."""
     from gwg_server.logging import logger
     from gwg_server.session import create_user_session
-    from gwg_server.token_exchange.api import (
+    from gwg_server.token_exchange import (
         _get_or_create_service_account,
         _impersonate_service_account,
         _store_oauth_credentials,
