@@ -1,0 +1,15 @@
+{
+	"python.defaultInterpreterPath": "${workspaceFolder}/server/.venv/bin/python",
+	"python.analysis.extraPaths": [
+		"${workspaceFolder}/client/src",
+		"${workspaceFolder}/server"
+	],
+	"[python]": {
+		"editor.defaultFormatter": "charliermarsh.ruff",
+		"editor.formatOnSave": true,
+		"editor.codeActionsOnSave": {
+			"source.fixAll": "explicit",
+			"source.organizeImports": "explicit"
+		}
+	}
+}
