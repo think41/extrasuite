@@ -136,6 +136,33 @@ curl https://your-cloud-run-url/api/health
 # Should return: {"status":"healthy","service":"gwg-server"}
 ```
 
+## Optional Configuration
+
+### Restrict Email Domains
+
+To allow only specific email domains to authenticate:
+
+```bash
+gcloud run services update gwg-server \
+  --region=us-central1 \
+  --set-env-vars="ALLOWED_EMAIL_DOMAINS=example.com,company.org"
+```
+
+If not set, all email domains are allowed.
+
+### Configure Credential Expiry (TTL Policy)
+
+To automatically expire user credentials after a period of inactivity, configure a Firestore TTL policy on the `users` collection:
+
+```bash
+gcloud firestore fields ttls update updated_at \
+  --collection-group=users \
+  --enable-ttl \
+  --project=$PROJECT_ID
+```
+
+This ensures refresh tokens don't persist indefinitely. Users will need to re-authenticate after credentials expire.
+
 ## Production Recommendations
 
 1. **Enable Cloud Armor** for DDoS protection

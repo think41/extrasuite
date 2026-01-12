@@ -23,13 +23,20 @@ from gwg_server.logging import (
     logger,
 )
 from gwg_server.oauth import CLI_SCOPES, create_oauth_flow
+from gwg_server.rate_limit import limiter
 from gwg_server.service_account import get_or_create_service_account, impersonate_service_account
 from gwg_server.session import set_session_email
 
 router = APIRouter(prefix="/auth", tags=["auth"])
 
 
+def _is_email_domain_allowed(email: str, settings: Settings) -> bool:
+    """Check if email domain is allowed."""
+    return settings.is_email_domain_allowed(email)
+
+
 @router.get("/callback", response_model=None)
+@limiter.limit("10/minute")
 async def google_callback(
     request: Request,
     code: str,
@@ -39,13 +46,13 @@ async def google_callback(
 ):
     """Handle Google OAuth callback for CLI flow."""
     # Verify state token from Firestore
-    oauth_state = db.get_oauth_state(state)
+    oauth_state = await db.get_oauth_state(state)
     if not oauth_state:
         audit_oauth_state_invalid(state, "not_found_or_expired")
         raise HTTPException(status_code=400, detail="Invalid or expired state token")
 
     # Consume the state token (one-time use)
-    db.delete_oauth_state(state)
+    await db.delete_oauth_state(state)
 
     cli_redirect = oauth_state.cli_redirect
     if not cli_redirect:
@@ -79,15 +86,24 @@ async def google_callback(
     user_email = id_info.get("email", "")
     user_name = id_info.get("name", "")
 
+    # Validate email domain against allowlist
+    if not _is_email_domain_allowed(user_email, settings):
+        logger.warning(
+            "Email domain not allowed",
+            extra={"email": user_email, "allowed_domains": settings.get_allowed_domains()},
+        )
+        audit_auth_failed(user_email, "domain_not_allowed")
+        return _cli_error_response(cli_redirect)
+
     logger.info("OAuth callback successful", extra={"email": user_email})
 
     # Handle CLI flow - token exchange
-    return _handle_cli_callback(
+    return await _handle_cli_callback(
         request, credentials, user_email, user_name, cli_redirect, settings, db
     )
 
 
-def _handle_cli_callback(
+async def _handle_cli_callback(
     request: Request,
     credentials,
     user_email: str,
@@ -99,7 +115,7 @@ def _handle_cli_callback(
     """Handle CLI OAuth callback - exchange for SA token and redirect to localhost."""
     # Store OAuth credentials in Firestore
     try:
-        store_oauth_credentials(db, user_email, credentials)
+        await store_oauth_credentials(db, user_email, credentials)
     except Exception:
         logger.exception("Failed to store OAuth credentials")
         audit_auth_failed(user_email, "credential_storage_failed")
@@ -118,7 +134,7 @@ def _handle_cli_callback(
 
     # Update SA email in Firestore
     try:
-        db.update_service_account_email(user_email, sa_email)
+        await db.update_service_account_email(user_email, sa_email)
     except Exception:
         # Log but continue - non-critical, we can update next time
         logger.warning(

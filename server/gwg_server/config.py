@@ -47,10 +47,40 @@ class Settings(BaseSettings):
     # Firestore database name
     firestore_database: str = "(default)"
 
+    # Email domain allowlist (comma-separated, e.g., "example.com,foo.org")
+    # If empty, all domains are allowed
+    allowed_email_domains: str = ""
+
     @property
     def is_production(self) -> bool:
         """Check if running in production environment."""
         return self.environment == "production"
+
+    def get_allowed_domains(self) -> list[str]:
+        """Get list of allowed email domains.
+
+        Returns empty list if no domain restriction is configured.
+        """
+        if not self.allowed_email_domains:
+            return []
+        return [d.strip().lower() for d in self.allowed_email_domains.split(",") if d.strip()]
+
+    def is_email_domain_allowed(self, email: str) -> bool:
+        """Check if an email's domain is in the allowlist.
+
+        Returns True if:
+        - No domain restriction is configured (allowlist is empty)
+        - Email domain matches one of the allowed domains
+        """
+        allowed = self.get_allowed_domains()
+        if not allowed:
+            return True  # No restriction
+
+        if "@" not in email:
+            return False
+
+        domain = email.split("@")[-1].lower()
+        return domain in allowed
 
     @model_validator(mode="after")
     def validate_required_settings(self) -> "Settings":

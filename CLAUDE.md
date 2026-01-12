@@ -67,10 +67,12 @@ docker-compose --profile dev up dev-server   # Development
 ### Server
 - `server/gwg_server/main.py` - FastAPI app entry point
 - `server/gwg_server/config.py` - Pydantic settings from environment
-- `server/gwg_server/database.py` - Firestore-backed storage
+- `server/gwg_server/database.py` - Async Firestore storage
 - `server/gwg_server/session.py` - Session management
-- `server/gwg_server/auth/api.py` - OAuth callback handler
-- `server/gwg_server/token_exchange/api.py` - Token exchange API
+- `server/gwg_server/google_auth.py` - OAuth callback handler
+- `server/gwg_server/token_exchange.py` - Token exchange API
+- `server/gwg_server/service_account.py` - SA creation and impersonation
+- `server/gwg_server/rate_limit.py` - Rate limiting configuration
 
 ## API Endpoints
 
@@ -111,3 +113,38 @@ gcloud firestore databases create --location=asia-south1 --project=<project>
 |---------|------------------|-----------|
 | Client | `google-workspace-gateway` / `google_workspace_gateway` | `client/` |
 | Server | `gwg-server` / `gwg_server` | `server/` |
+
+## Security Configuration
+
+### Email Domain Allowlist
+
+Restrict authentication to specific email domains by setting:
+```bash
+ALLOWED_EMAIL_DOMAINS=example.com,company.org
+```
+
+If not set, all domains are allowed.
+
+### Firestore TTL Policy
+
+To automatically expire user credentials after 7 days of inactivity, configure a TTL policy on the `users` collection:
+
+```bash
+gcloud firestore fields ttls update updated_at \
+  --collection-group=users \
+  --enable-ttl \
+  --project=<project>
+```
+
+This ensures refresh tokens don't persist indefinitely.
+
+## Known Limitations
+
+### Service Account Quota
+
+GWG creates one service account per user. GCP projects have a quota of 100 service accounts by default (can be increased to ~200).
+
+For deployments expecting more users:
+- Monitor SA count: `gcloud iam service-accounts list --project=<project> | wc -l`
+- Request quota increase via GCP console
+- Consider implementing SA pooling for high-scale deployments

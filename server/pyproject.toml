@@ -17,6 +17,7 @@ dependencies = [
     "google-cloud-firestore>=2.19.0",
     "loguru>=0.7.0",
     "itsdangerous>=2.1.0",
+    "slowapi>=0.1.9",
 ]
 
 [project.optional-dependencies]

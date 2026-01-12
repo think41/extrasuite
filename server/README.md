@@ -1,6 +1,6 @@
-# Fabric Server
+# GWG Server
 
-FastAPI backend for the Fabric CLI authentication service.
+FastAPI backend for Google Workspace Gateway - secure OAuth token exchange for CLI tools.
 
 ## Development
 
@@ -9,7 +9,7 @@ FastAPI backend for the Fabric CLI authentication service.
 uv sync
 
 # Run server
-uv run uvicorn fabric.main:app --reload --port 8001
+uv run uvicorn gwg_server.main:app --reload --port 8001
 
 # Run tests
 uv run pytest tests/ -v
@@ -25,7 +25,7 @@ uv run ruff format .
 
 | Method | Endpoint | Description |
 |--------|----------|-------------|
-| GET | `/api/token/auth?redirect=<url>` | CLI entry point - starts OAuth flow |
+| GET | `/api/token/auth?port=<port>` | CLI entry point - starts OAuth flow |
 | GET | `/api/auth/callback` | OAuth callback - exchanges code for SA token |
 | GET | `/api/health` | Health check |
 | GET | `/api/health/ready` | Readiness check |
@@ -34,16 +34,21 @@ uv run ruff format .
 
 See `.env.template` for required configuration:
 
-- `SECRET_KEY` - For signing OAuth state tokens
-- `GOOGLE_CLIENT_ID` - Google OAuth client ID
-- `GOOGLE_CLIENT_SECRET` - Google OAuth client secret
-- `GOOGLE_REDIRECT_URI` - OAuth callback URL
-- `GOOGLE_CLOUD_PROJECT` - GCP project for service account creation
+| Variable | Required | Description |
+|----------|----------|-------------|
+| `SECRET_KEY` | Yes (production) | For signing OAuth state tokens |
+| `GOOGLE_CLIENT_ID` | Yes | Google OAuth client ID |
+| `GOOGLE_CLIENT_SECRET` | Yes | Google OAuth client secret |
+| `GOOGLE_CLOUD_PROJECT` | Yes | GCP project for service account creation |
+| `GOOGLE_REDIRECT_URI` | No | OAuth callback URL (default: localhost:8001) |
+| `ALLOWED_EMAIL_DOMAINS` | No | Comma-separated list of allowed email domains |
+| `FIRESTORE_DATABASE` | No | Firestore database name (default: `(default)`) |
 
 ## Database
 
-Uses SQLite (`fabric.db`) to store:
+Uses Firestore to store:
 - User OAuth credentials (refresh tokens)
 - Service account email mappings
+- OAuth state tokens (CSRF protection)
 
-The database is created automatically on first run.
+Collections are created automatically on first use.

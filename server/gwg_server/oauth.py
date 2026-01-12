@@ -54,8 +54,8 @@ def create_oauth_flow(settings: Settings, scopes: list[str]) -> Flow:
     return flow
 
 
-def create_cli_auth_state(db: Database, cli_redirect: str) -> str:
+async def create_cli_auth_state(db: Database, cli_redirect: str) -> str:
     """Create and store a new OAuth state token for CLI flow in Firestore."""
     state = secrets.token_urlsafe(32)
-    db.create_oauth_state(state, cli_redirect)
+    await db.create_oauth_state(state, cli_redirect)
     return state

@@ -8,6 +8,7 @@ import secrets
 from contextlib import asynccontextmanager
 
 from fastapi import FastAPI, Request
+from slowapi.errors import RateLimitExceeded
 from starlette.middleware.base import BaseHTTPMiddleware
 from starlette.middleware.sessions import SessionMiddleware
 
@@ -20,6 +21,7 @@ from gwg_server.logging import (
     set_request_context,
     setup_logging,
 )
+from gwg_server.rate_limit import limiter, rate_limit_exceeded_handler
 from gwg_server.session import get_session_middleware_config
 
 
@@ -76,14 +78,13 @@ async def lifespan(app: FastAPI):
         project=settings.google_cloud_project,
         database=settings.firestore_database,
     )
-    database.verify_connection()
     app.state.database = database
     logger.info("Database initialized")
 
     yield
 
     # Close database connection
-    database.close()
+    await database.close()
     logger.info("Shutting down GWG server")
 
 
@@ -100,6 +101,10 @@ def create_app() -> FastAPI:
         redoc_url="/api/redoc" if not settings.is_production else None,
         openapi_url="/api/openapi.json" if not settings.is_production else None,
     )
+
+    # Rate limiting
+    app.state.limiter = limiter
+    app.add_exception_handler(RateLimitExceeded, rate_limit_exceeded_handler)
 
     # Logging middleware (must be added first to wrap everything)
     app.add_middleware(LoggingMiddleware)

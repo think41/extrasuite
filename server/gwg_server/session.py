@@ -26,7 +26,7 @@ def get_session_email(request: Request) -> str | None:
     return request.session.get(SESSION_EMAIL_KEY)
 
 
-def get_session_email_if_valid(request: Request, db: Database) -> str | None:
+async def get_session_email_if_valid(request: Request, db: Database) -> str | None:
     """Get the email from session if user has valid credentials in Firestore.
 
     Returns None if:
@@ -39,7 +39,7 @@ def get_session_email_if_valid(request: Request, db: Database) -> str | None:
         return None
 
     # Validate that user has credentials in Firestore
-    user_creds = db.get_user_credentials(email)
+    user_creds = await db.get_user_credentials(email)
     if not user_creds or not user_creds.refresh_token:
         return None
 

@@ -89,11 +89,13 @@ google-workspace-gateway/
 │
 ├── server/                    # FastAPI server (Cloud Run)
 │   ├── gwg_server/
-│   │   ├── main.py           # FastAPI app
-│   │   ├── config.py         # Settings
-│   │   ├── database.py       # Firestore storage
-│   │   ├── auth/             # OAuth handlers
-│   │   └── token_exchange/   # Token exchange API
+│   │   ├── main.py           # FastAPI app entry point
+│   │   ├── config.py         # Pydantic settings
+│   │   ├── database.py       # Async Firestore storage
+│   │   ├── google_auth.py    # OAuth callback handler
+│   │   ├── token_exchange.py # Token exchange API
+│   │   ├── session.py        # Session management
+│   │   └── service_account.py # SA creation/impersonation
 │   └── Dockerfile.dev
 │
 ├── docs/                      # Documentation
@@ -175,6 +177,7 @@ uv run ruff check .
 | `SECRET_KEY` | Yes | - | Key for signing state tokens |
 | `GOOGLE_REDIRECT_URI` | No | `http://localhost:8001/api/auth/callback` | OAuth redirect URI |
 | `FIRESTORE_DATABASE` | No | `(default)` | Firestore database name |
+| `ALLOWED_EMAIL_DOMAINS` | No | - | Comma-separated list of allowed email domains |
 | `ENVIRONMENT` | No | `development` | `development` or `production` |
 
 ## Security

@@ -29,6 +29,7 @@ from gwg_server.logging import (
     logger,
 )
 from gwg_server.oauth import CLI_SCOPES, create_cli_auth_state, create_oauth_flow
+from gwg_server.rate_limit import limiter
 from gwg_server.service_account import impersonate_service_account
 from gwg_server.session import get_session_email_if_valid
 
@@ -45,6 +46,7 @@ def build_cli_redirect_url(port: int) -> str:
 
 
 @router.get("/auth")
+@limiter.limit("10/minute")
 async def start_token_auth(
     request: Request,
     port: int = Query(..., description="CLI localhost callback port", ge=MIN_PORT, le=MAX_PORT),
@@ -69,12 +71,12 @@ async def start_token_auth(
     cli_redirect = build_cli_redirect_url(port)
 
     # Check if user has a valid session with stored credentials
-    email = get_session_email_if_valid(request, db)
+    email = await get_session_email_if_valid(request, db)
     if email:
         logger.info("Found existing session, attempting token refresh", extra={"email": email})
         audit_auth_started(email, port)
 
-        redirect_response = _try_refresh_token(db, email, cli_redirect, settings)
+        redirect_response = await _try_refresh_token(db, email, cli_redirect, settings)
         if redirect_response:
             return redirect_response
 
@@ -85,7 +87,7 @@ async def start_token_auth(
     audit_auth_started(None, port)
 
     # Create state token with CLI redirect info (stored in Firestore)
-    state = create_cli_auth_state(db, cli_redirect=cli_redirect)
+    state = await create_cli_auth_state(db, cli_redirect=cli_redirect)
 
     # Create OAuth flow with CLI scopes
     flow = create_oauth_flow(settings, CLI_SCOPES)
@@ -100,7 +102,7 @@ async def start_token_auth(
     return RedirectResponse(url=authorization_url)
 
 
-def _try_refresh_token(
+async def _try_refresh_token(
     db: Database, email: str, cli_redirect: str, settings: Settings
 ) -> RedirectResponse | None:
     """Try to refresh the token using stored OAuth credentials.
@@ -108,7 +110,7 @@ def _try_refresh_token(
     Returns a RedirectResponse with the new token if successful, None otherwise.
     """
     # Get stored credentials
-    user_creds = db.get_user_credentials(email)
+    user_creds = await db.get_user_credentials(email)
     if not user_creds or not user_creds.refresh_token:
         audit_token_refresh_failed(email, "no_stored_credentials")
         return None
@@ -134,7 +136,7 @@ def _try_refresh_token(
         if credentials.expired or not credentials.valid:
             credentials.refresh(google_requests.Request())
             # Update stored credentials with new access token
-            db.store_user_credentials(
+            await db.store_user_credentials(
                 email=email,
                 access_token=credentials.token,
                 refresh_token=credentials.refresh_token,
