@@ -19,15 +19,10 @@ from fastapi.responses import RedirectResponse
 from google.auth.exceptions import RefreshError
 from google.auth.transport import requests as google_requests
 from google.oauth2.credentials import Credentials
+from loguru import logger
 
 from gwg_server.config import Settings, get_settings
 from gwg_server.database import Database, get_database
-from gwg_server.logging import (
-    audit_auth_started,
-    audit_token_refresh,
-    audit_token_refresh_failed,
-    logger,
-)
 from gwg_server.oauth import CLI_SCOPES, create_cli_auth_state, create_oauth_flow
 from gwg_server.rate_limit import limiter
 from gwg_server.service_account import impersonate_service_account
@@ -88,8 +83,7 @@ async def start_token_auth(
     # Check if user has a valid session with stored credentials
     email = await _get_session_email_if_valid(request, db)
     if email:
-        logger.info("Found existing session, attempting token refresh", extra={"email": email})
-        audit_auth_started(email, port)
+        logger.info("Attempting token refresh", extra={"email": email, "cli_port": port})
 
         redirect_response = await _try_refresh_token(db, email, cli_redirect, settings)
         if redirect_response:
@@ -99,7 +93,7 @@ async def start_token_auth(
         logger.info("Token refresh failed, starting OAuth flow", extra={"email": email})
 
     # No valid session or refresh failed, start OAuth flow
-    audit_auth_started(None, port)
+    logger.info("Starting OAuth flow", extra={"cli_port": port})
 
     # Create state token with CLI redirect info (stored in Firestore)
     state = await create_cli_auth_state(db, cli_redirect=cli_redirect)
@@ -127,13 +121,13 @@ async def _try_refresh_token(
     # Get stored credentials
     user_creds = await db.get_user_credentials(email)
     if not user_creds or not user_creds.refresh_token:
-        audit_token_refresh_failed(email, "no_stored_credentials")
+        logger.warning("No stored credentials", extra={"email": email})
         return None
 
     # Get service account email
     sa_email = user_creds.service_account_email
     if not sa_email:
-        audit_token_refresh_failed(email, "no_service_account")
+        logger.warning("No service account for user", extra={"email": email})
         return None
 
     # Create OAuth credentials from stored tokens
@@ -160,27 +154,20 @@ async def _try_refresh_token(
             )
     except RefreshError as e:
         # Token was revoked or expired - user needs to re-authenticate
-        logger.warning(
-            "OAuth refresh token revoked or expired",
-            extra={"email": email, "error": str(e)},
-        )
-        audit_token_refresh_failed(email, "refresh_token_revoked")
+        logger.warning("OAuth refresh token revoked or expired", extra={"email": email, "error": str(e)})
         return None
     except Exception:
-        logger.exception("Failed to refresh OAuth credentials")
-        audit_token_refresh_failed(email, "refresh_failed")
+        logger.exception("Failed to refresh OAuth credentials", extra={"email": email})
         return None
 
     # Impersonate SA to get short-lived token
     try:
         sa_token, expires_in = impersonate_service_account(credentials, sa_email)
     except RefreshError:
-        logger.exception("Impersonation failed - credentials may be revoked")
-        audit_token_refresh_failed(email, "impersonation_credentials_revoked")
+        logger.exception("Impersonation failed - credentials may be revoked", extra={"email": email})
         return None
     except Exception:
-        logger.exception("Failed to impersonate service account")
-        audit_token_refresh_failed(email, "impersonation_failed")
+        logger.exception("Failed to impersonate service account", extra={"email": email})
         return None
 
     # Redirect to CLI with token
@@ -191,5 +178,5 @@ async def _try_refresh_token(
     }
     redirect_url = f"{cli_redirect}?{urlencode(params)}"
 
-    audit_token_refresh(email, sa_email)
+    logger.info("Token refreshed", extra={"email": email, "service_account": sa_email})
     return RedirectResponse(url=redirect_url)

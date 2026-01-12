@@ -11,16 +11,10 @@ from fastapi.responses import HTMLResponse, RedirectResponse
 from google.auth.exceptions import RefreshError
 from google.auth.transport import requests as google_requests
 from google.oauth2 import id_token
+from loguru import logger
 
 from gwg_server.config import Settings, get_settings
 from gwg_server.database import Database, get_database
-from gwg_server.logging import (
-    audit_auth_failed,
-    audit_auth_success,
-    audit_oauth_state_invalid,
-    audit_service_account_created,
-    logger,
-)
 from gwg_server.oauth import CLI_SCOPES, create_oauth_flow
 from gwg_server.rate_limit import limiter
 from gwg_server.service_account import get_or_create_service_account, impersonate_service_account
@@ -46,7 +40,7 @@ async def google_callback(
     # Verify state token from Firestore
     oauth_state = await db.get_oauth_state(state)
     if not oauth_state:
-        audit_oauth_state_invalid(state, "not_found_or_expired")
+        logger.warning("Invalid OAuth state", extra={"state_prefix": state[:8], "reason": "not_found_or_expired"})
         raise HTTPException(status_code=400, detail="Invalid or expired state token")
 
     # Consume the state token (one-time use)
@@ -54,7 +48,7 @@ async def google_callback(
 
     cli_redirect = oauth_state.cli_redirect
     if not cli_redirect:
-        audit_oauth_state_invalid(state, "missing_redirect")
+        logger.warning("Invalid OAuth state", extra={"state_prefix": state[:8], "reason": "missing_redirect"})
         raise HTTPException(status_code=400, detail="Invalid state: missing redirect")
 
     # Create OAuth flow with CLI scopes
@@ -65,7 +59,6 @@ async def google_callback(
         flow.fetch_token(code=code)
     except Exception:
         logger.exception("Failed to exchange OAuth code for token")
-        audit_auth_failed(None, "token_exchange_failed")
         return _cli_error_response(cli_redirect)
 
     # Get credentials and verify ID token
@@ -78,7 +71,6 @@ async def google_callback(
         )
     except Exception:
         logger.exception("Failed to verify OAuth ID token")
-        audit_auth_failed(None, "token_verification_failed")
         return _cli_error_response(cli_redirect)
 
     user_email = id_info.get("email", "")
@@ -90,7 +82,6 @@ async def google_callback(
             "Email domain not allowed",
             extra={"email": user_email, "allowed_domains": settings.get_allowed_domains()},
         )
-        audit_auth_failed(user_email, "domain_not_allowed")
         return _cli_error_response(cli_redirect)
 
     logger.info("OAuth callback successful", extra={"email": user_email})
@@ -121,19 +112,16 @@ async def _handle_cli_callback(
             scopes=scopes,
         )
     except Exception:
-        logger.exception("Failed to store OAuth credentials")
-        audit_auth_failed(user_email, "credential_storage_failed")
+        logger.exception("Failed to store OAuth credentials", extra={"email": user_email})
         return _cli_error_response(cli_redirect)
 
     # Look up or create service account
     try:
         sa_email, created = get_or_create_service_account(settings, user_email, user_name)
         if created:
-            audit_service_account_created(user_email, sa_email)
-        logger.info("Service account ready", extra={"email": user_email, "sa": sa_email})
+            logger.info("Service account created", extra={"email": user_email, "service_account": sa_email})
     except Exception:
-        logger.exception("Failed to setup service account")
-        audit_auth_failed(user_email, "service_account_setup_failed")
+        logger.exception("Failed to setup service account", extra={"email": user_email})
         return _cli_error_response(cli_redirect)
 
     # Update SA email in Firestore
@@ -150,12 +138,10 @@ async def _handle_cli_callback(
     try:
         sa_token, expires_in = impersonate_service_account(credentials, sa_email)
     except RefreshError:
-        logger.exception("OAuth credentials expired or revoked during impersonation")
-        audit_auth_failed(user_email, "credentials_revoked")
+        logger.exception("OAuth credentials expired or revoked", extra={"email": user_email})
         return _cli_error_response(cli_redirect)
     except Exception:
-        logger.exception("Failed to impersonate service account")
-        audit_auth_failed(user_email, "impersonation_failed")
+        logger.exception("Failed to impersonate service account", extra={"email": user_email})
         return _cli_error_response(cli_redirect)
 
     # Create redirect response with token
@@ -170,7 +156,7 @@ async def _handle_cli_callback(
     # Set session cookie so user doesn't need to re-authenticate
     request.session["email"] = user_email
 
-    audit_auth_success(user_email, sa_email)
+    logger.info("Auth successful", extra={"email": user_email, "service_account": sa_email})
     return response
 
 

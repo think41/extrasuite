@@ -13,9 +13,9 @@ from google.auth.transport import requests as google_requests
 from google.oauth2.credentials import Credentials
 from googleapiclient.discovery import build
 from googleapiclient.errors import HttpError
+from loguru import logger
 
 from gwg_server.config import Settings
-from gwg_server.logging import logger
 from gwg_server.oauth import SA_TOKEN_SCOPES
 
 
