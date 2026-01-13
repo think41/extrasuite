@@ -117,6 +117,8 @@ See [docs/deployment.md](docs/deployment.md) for Cloud Run deployment instructio
 3. Firestore database for credential storage
 4. Required IAM permissions (see [docs/iam-permissions.md](docs/iam-permissions.md))
 
+**Note:** End users do not need any GCP project access or IAM roles. See [End-User Permissions](docs/iam-permissions.md#end-user-permissions-important) for details.
+
 ### Quick Deploy
 
 ```bash

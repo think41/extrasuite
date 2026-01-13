@@ -75,6 +75,51 @@ gcloud secrets add-iam-policy-binding $SECRET_NAME \
   --role="roles/secretmanager.secretAccessor"
 ```
 
+## End-User Permissions (Important!)
+
+**End users do NOT need any GCP project access or IAM roles to use GWG.**
+
+This is a common point of confusion. Here's why users don't need project membership:
+
+### How It Works
+
+1. **User authenticates** via Google OAuth (requests `cloud-platform` scope)
+2. **Server creates a service account** for the user using its own credentials (ADC)
+3. **Server grants IAM binding** directly to the user's email address:
+   ```
+   user:john@example.com → roles/iam.serviceAccountTokenCreator
+   ```
+   This binding is on the specific service account, not the project.
+4. **Server impersonates the SA** using the user's OAuth credentials to generate a token
+
+### Key Insight
+
+In GCP IAM, you can grant permissions to **any Google account** (`user:email@domain.com`), even if they're not a member of the project. The permission is scoped to a specific service account resource.
+
+### What End Users Need
+
+| Requirement | Needed? | Notes |
+|-------------|---------|-------|
+| GCP Project membership | **No** | IAM bindings work with any Google account |
+| GCP Console access | **No** | Users never interact with GCP directly |
+| Any project-level IAM roles | **No** | Permissions are per-SA, granted automatically |
+| Google Workspace account | **Yes** | For OAuth authentication |
+
+### For Organization Rollout
+
+To enable all employees (e.g., `all@example.com`) to use GWG:
+
+1. **Configure domain allowlist** on the server:
+   ```bash
+   ALLOWED_EMAIL_DOMAINS=example.com
+   ```
+
+2. **Grant server permissions** (see sections above)
+
+3. **Share Google Workspace resources** with the created service accounts (e.g., share a Google Sheet with `ea-john@project.iam.gserviceaccount.com`)
+
+That's it. No IAM configuration needed for the user group.
+
 ## User Service Account Permissions
 
 When GWG creates a service account for a user, it also grants the user permission to impersonate it:
