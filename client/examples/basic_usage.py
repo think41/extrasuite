@@ -28,7 +28,7 @@ def main():
     # Get a token (will open browser if not cached)
     token = gateway.get_token()
 
-    print(f"\nToken obtained successfully!")
+    print("\nToken obtained successfully!")
     print(f"Token (first 50 chars): {token[:50]}...")
 
 

@@ -40,7 +40,10 @@ async def google_callback(
     # Verify state token from Firestore
     oauth_state = await db.get_oauth_state(state)
     if not oauth_state:
-        logger.warning("Invalid OAuth state", extra={"state_prefix": state[:8], "reason": "not_found_or_expired"})
+        logger.warning(
+            "Invalid OAuth state",
+            extra={"state_prefix": state[:8], "reason": "not_found_or_expired"},
+        )
         raise HTTPException(status_code=400, detail="Invalid or expired state token")
 
     # Consume the state token (one-time use)
@@ -48,7 +51,9 @@ async def google_callback(
 
     cli_redirect = oauth_state.cli_redirect
     if not cli_redirect:
-        logger.warning("Invalid OAuth state", extra={"state_prefix": state[:8], "reason": "missing_redirect"})
+        logger.warning(
+            "Invalid OAuth state", extra={"state_prefix": state[:8], "reason": "missing_redirect"}
+        )
         raise HTTPException(status_code=400, detail="Invalid state: missing redirect")
 
     # Create OAuth flow with CLI scopes
@@ -120,7 +125,9 @@ async def _handle_cli_callback(
     try:
         sa_email, created = get_or_create_service_account(settings, user_email, user_name)
         if created:
-            logger.info("Service account created", extra={"email": user_email, "service_account": sa_email})
+            logger.info(
+                "Service account created", extra={"email": user_email, "service_account": sa_email}
+            )
     except Exception:
         logger.exception("Failed to setup service account", extra={"email": user_email})
         return _cli_error_response(cli_redirect)

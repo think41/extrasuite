@@ -1,0 +1,19 @@
+repos:
+  - repo: https://github.com/astral-sh/ruff-pre-commit
+    rev: v0.7.0
+    hooks:
+      - id: ruff
+        args: [--fix]
+        files: ^server/
+      - id: ruff-format
+        files: ^server/
+
+  - repo: local
+    hooks:
+      - id: pyright
+        name: pyright
+        entry: bash -c 'cd server && uv run pyright'
+        language: system
+        types: [python]
+        files: ^server/
+        pass_filenames: false

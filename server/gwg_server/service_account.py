@@ -77,9 +77,7 @@ def get_or_create_service_account(
     sa_email = f"{account_id}@{project_id}.iam.gserviceaccount.com"
 
     # Use Application Default Credentials to manage service accounts
-    admin_creds, _ = google.auth.default(
-        scopes=["https://www.googleapis.com/auth/cloud-platform"]
-    )
+    admin_creds, _ = google.auth.default(scopes=["https://www.googleapis.com/auth/cloud-platform"])
     iam_service = build("iam", "v1", credentials=admin_creds)
 
     # Check if SA exists
