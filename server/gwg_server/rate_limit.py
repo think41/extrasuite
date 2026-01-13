@@ -2,6 +2,10 @@
 
 This module provides rate limiting for API endpoints using slowapi.
 Uses per-instance memory storage (suitable for single-instance deployments).
+
+Note: This is a separate module to avoid circular imports. The `limiter` instance
+is imported by both main.py and route modules (google_auth.py, token_exchange.py).
+Moving it to main.py would cause circular dependencies since main.py imports those routes.
 """
 
 from fastapi import Request
