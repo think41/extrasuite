@@ -8,14 +8,13 @@ from fastapi import Request
 from fastapi.responses import JSONResponse
 from loguru import logger
 from slowapi import Limiter
-from slowapi.errors import RateLimitExceeded
 from slowapi.util import get_remote_address
 
 # Rate limiter with per-instance memory storage
 limiter = Limiter(key_func=get_remote_address)
 
 
-def rate_limit_exceeded_handler(request: Request, _exc: RateLimitExceeded):
+def rate_limit_exceeded_handler(request: Request, _exc: Exception) -> JSONResponse:
     """Handle rate limit exceeded errors."""
     logger.warning(
         "Rate limit exceeded",

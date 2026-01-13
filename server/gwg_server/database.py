@@ -26,7 +26,7 @@ from dataclasses import dataclass
 from datetime import UTC, datetime, timedelta
 
 from fastapi import Request
-from google.cloud.firestore_v1 import AsyncClient
+from google.cloud.firestore_v1 import AsyncClient, AsyncQuery, DocumentSnapshot
 
 # OAuth state TTL
 OAUTH_STATE_TTL = timedelta(minutes=10)
@@ -94,7 +94,7 @@ class Database:
         now = datetime.now(UTC)
         doc_ref = self._client.collection("oauth_states").document(state)
 
-        async def _create():
+        async def _create() -> None:
             await doc_ref.set({"cli_redirect": cli_redirect, "created_at": now})
 
         await asyncio.wait_for(_create(), timeout=self._timeout)
@@ -104,7 +104,7 @@ class Database:
         """Get OAuth state by token. Returns None if not found or expired."""
         doc_ref = self._client.collection("oauth_states").document(state)
 
-        async def _get():
+        async def _get() -> DocumentSnapshot:
             return await doc_ref.get()
 
         doc = await asyncio.wait_for(_get(), timeout=self._timeout)
@@ -113,6 +113,9 @@ class Database:
             return None
 
         data = doc.to_dict()
+        if data is None:
+            return None
+
         cli_redirect = data.get("cli_redirect")
         created_at = data.get("created_at")
 
@@ -136,7 +139,7 @@ class Database:
         """Clean up expired OAuth states. Returns count of deleted states."""
         cutoff = datetime.now(UTC) - OAUTH_STATE_TTL
 
-        async def _query():
+        async def _query() -> AsyncQuery:
             return (
                 self._client.collection("oauth_states")
                 .where("created_at", "<", cutoff)
@@ -176,7 +179,8 @@ class Database:
         created_at = now
         if existing_doc.exists:
             existing_data = existing_doc.to_dict()
-            created_at = existing_data.get("created_at", now)
+            if existing_data is not None:
+                created_at = existing_data.get("created_at", now)
 
         data = {
             "email": email,
@@ -212,6 +216,9 @@ class Database:
             return None
 
         data = doc.to_dict()
+        if data is None:
+            return None
+
         access_token = data.get("access_token")
         refresh_token = data.get("refresh_token")
 

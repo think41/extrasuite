@@ -72,8 +72,10 @@ def create_app() -> FastAPI:
     app.state.limiter = limiter
 
     # Session middleware for signed cookie sessions
+    # Note: type: ignore needed because Starlette's _MiddlewareFactory Protocol
+    # doesn't properly type class-based middleware (only function factories)
     app.add_middleware(
-        SessionMiddleware,
+        SessionMiddleware,  # type: ignore[arg-type]
         secret_key=settings.secret_key,
         session_cookie="gwg_session",
         max_age=30 * 24 * 60 * 60,  # 30 days in seconds

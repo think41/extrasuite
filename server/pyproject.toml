@@ -26,6 +26,7 @@ dev = [
     "pytest-asyncio>=0.24.0",
     "pytest-cov>=5.0.0",
     "ruff>=0.7.0",
+    "ty>=0.0.1a7",
 ]
 
 [build-system]
