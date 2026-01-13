@@ -156,23 +156,31 @@ async def _try_refresh_token(
     except RefreshError as e:
         # Token was revoked or expired - user needs to re-authenticate
         logger.warning(
-            "OAuth refresh token revoked or expired", extra={"email": email, "error": str(e)}
+            "OAuth refresh token revoked or expired",
+            extra={"email": email, "error": str(e)},
         )
         return None
     except Exception:
-        logger.exception("Failed to refresh OAuth credentials", extra={"email": email})
+        logger.exception(
+            "Failed to refresh OAuth credentials",
+            extra={"email": email},
+        )
         return None
 
     # Impersonate SA to get short-lived token
     try:
         sa_token, expires_in = impersonate_service_account(credentials, sa_email)
-    except RefreshError:
+    except RefreshError as e:
         logger.exception(
-            "Impersonation failed - credentials may be revoked", extra={"email": email}
+            "Impersonation failed - credentials may be revoked or IAM denied",
+            extra={"email": email, "service_account": sa_email, "error": str(e)},
         )
         return None
     except Exception:
-        logger.exception("Failed to impersonate service account", extra={"email": email})
+        logger.exception(
+            "Failed to impersonate service account",
+            extra={"email": email, "service_account": sa_email},
+        )
         return None
 
     # Redirect to CLI with token

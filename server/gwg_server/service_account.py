@@ -86,6 +86,7 @@ def get_or_create_service_account(
             name=f"projects/{project_id}/serviceAccounts/{sa_email}"
         ).execute()
         # SA exists
+        _grant_impersonation_permission(iam_service, project_id, sa_email, user_email)
         return sa_email, False
     except HttpError as e:
         if e.resp.status != 404:
@@ -131,23 +132,38 @@ def _grant_impersonation_permission(
             .execute()
         )
 
-        # Add serviceAccountTokenCreator role for the user
-        binding = {
-            "role": "roles/iam.serviceAccountTokenCreator",
-            "members": [f"user:{user_email}"],
-        }
+        member = f"user:{user_email}"
+        role = "roles/iam.serviceAccountTokenCreator"
 
         if "bindings" not in policy:
             policy["bindings"] = []
-        policy["bindings"].append(binding)
+
+        # Reuse existing binding if present; otherwise add one.
+        binding = next((b for b in policy["bindings"] if b.get("role") == role), None)
+        if binding:
+            members = set(binding.get("members", []))
+            if member in members:
+                logger.info(
+                    "Impersonation permission already granted",
+                    extra={"user_email": user_email, "sa_email": sa_email},
+                )
+                return
+            members.add(member)
+            binding["members"] = sorted(members)
+        else:
+            policy["bindings"].append({"role": role, "members": [member]})
 
         iam_service.projects().serviceAccounts().setIamPolicy(
             resource=f"projects/{project_id}/serviceAccounts/{sa_email}",
             body={"policy": policy},
         ).execute()
+        logger.info(
+            "Granted impersonation permission",
+            extra={"user_email": user_email, "sa_email": sa_email},
+        )
     except Exception:
         # Non-critical - user can still use GWG to get tokens
-        logger.warning(
+        logger.exception(
             "Failed to grant impersonation permission",
             extra={"user_email": user_email, "sa_email": sa_email},
         )
