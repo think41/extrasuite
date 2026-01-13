@@ -26,7 +26,7 @@ dev = [
     "pytest-asyncio>=0.24.0",
     "pytest-cov>=5.0.0",
     "ruff>=0.7.0",
-    "ty>=0.0.1a7",
+    "pyright>=1.1.408",
 ]
 
 [build-system]
@@ -72,7 +72,3 @@ testpaths = ["tests"]
 python_files = "test_*.py"
 python_functions = "test_*"
 
-[dependency-groups]
-dev = [
-    "pyright>=1.1.408",
-]
