@@ -143,8 +143,11 @@ async def _handle_cli_callback(
         )
 
     # Impersonate SA to get short-lived token
+    # If SA was just created, retry on permission errors (IAM propagation delay)
     try:
-        sa_token, expires_in = impersonate_service_account(credentials, sa_email)
+        sa_token, expires_in = impersonate_service_account(
+            credentials, sa_email, retry_on_permission_denied=created
+        )
     except RefreshError:
         logger.exception("OAuth credentials expired or revoked", extra={"email": user_email})
         return _cli_error_response(cli_redirect)
