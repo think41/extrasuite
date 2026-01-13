@@ -64,8 +64,9 @@ async def google_callback(
     # Get credentials and verify ID token
     credentials = flow.credentials
     try:
+        # id_token attribute exists at runtime but isn't in type stubs
         id_info = id_token.verify_oauth2_token(
-            credentials.id_token,
+            credentials.id_token,  # type: ignore[union-attr]
             google_requests.Request(),
             settings.google_client_id,
         )

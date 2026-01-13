@@ -145,10 +145,11 @@ async def _try_refresh_token(
         if credentials.expired or not credentials.valid:
             credentials.refresh(google_requests.Request())
             # Update stored credentials with new access token
+            # Use original refresh_token since it's already validated above
             await db.store_user_credentials(
                 email=email,
                 access_token=credentials.token,
-                refresh_token=credentials.refresh_token,
+                refresh_token=user_creds.refresh_token,
                 scopes=user_creds.scopes,
                 service_account_email=sa_email,
             )
