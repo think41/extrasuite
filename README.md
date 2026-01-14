@@ -1,10 +1,10 @@
-# Google Workspace Gateway
+# ExtraSuite
 
 Secure OAuth token exchange for CLI tools accessing Google Workspace APIs (Sheets, Docs, Drive).
 
 ## What is this?
 
-Google Workspace Gateway (GWG) lets CLI applications obtain short-lived service account tokens to access Google Workspace APIs. Instead of distributing service account keys, users authenticate once via browser, and the gateway handles token management securely.
+ExtraSuite lets CLI applications obtain short-lived service account tokens to access Google Workspace APIs. Instead of distributing service account keys, users authenticate once via browser, and the server handles token management securely.
 
 **Key Benefits:**
 - **No service account keys** - Tokens are short-lived (1 hour) and never stored locally
@@ -18,8 +18,8 @@ Google Workspace Gateway (GWG) lets CLI applications obtain short-lived service 
 ┌─────────────────────────────────────────────────────────────┐
 │                    CLI Tool (Python)                        │
 │  ┌─────────────────────────────────────────────────────┐   │
-│  │    GoogleWorkspaceGateway.get_token()               │   │
-│  │    - Loads cached token from ~/.config/gwg/         │   │
+│  │    ExtraSuiteClient.get_token()                     │   │
+│  │    - Loads cached token from ~/.config/extrasuite/  │   │
 │  │    - If expired, opens browser for OAuth            │   │
 │  │    - Returns short-lived SA token                   │   │
 │  └─────────────────────────────────────────────────────┘   │
@@ -27,7 +27,7 @@ Google Workspace Gateway (GWG) lets CLI applications obtain short-lived service 
                               │
                               ▼
 ┌─────────────────────────────────────────────────────────────┐
-│                    GWG Server (Cloud Run)                   │
+│                ExtraSuite Server (Cloud Run)                │
 │  ┌─────────────────────────────────────────────────────┐   │
 │  │  /api/token/auth     - CLI entry point (→ Google)   │   │
 │  │  /api/auth/callback  - OAuth callback (→ CLI)       │   │
@@ -50,21 +50,21 @@ Google Workspace Gateway (GWG) lets CLI applications obtain short-lived service 
 ### Install the Client Library
 
 ```bash
-pip install google-workspace-gateway
+pip install extrasuite-client
 ```
 
 ### Use in Your Code
 
 ```python
-from google_workspace_gateway import GoogleWorkspaceGateway
+from extrasuite_client import ExtraSuiteClient
 
-# Create gateway client (server_url is required)
-gateway = GoogleWorkspaceGateway(
-    server_url="https://your-gwg-server.example.com"
+# Create client (server_url is required)
+client = ExtraSuiteClient(
+    server_url="https://your-extrasuite-server.example.com"
 )
 
 # Get a token - opens browser for authentication if needed
-token = gateway.get_token()
+token = client.get_token()
 
 # Use the token with Google APIs
 import gspread
@@ -78,32 +78,29 @@ sheet = gc.open("My Spreadsheet").sheet1
 ## Project Structure
 
 ```
-google-workspace-gateway/
-├── client/                    # Python client library (PyPI)
-│   ├── src/google_workspace_gateway/
+extrasuite/
+├── extrasuite-client/             # Python client library (PyPI)
+│   ├── src/extrasuite_client/
 │   │   ├── __init__.py
-│   │   └── gateway.py         # GoogleWorkspaceGateway class
+│   │   └── gateway.py             # ExtraSuiteClient class
 │   └── examples/
-│       ├── basic_usage.py
-│       └── gsheet_example.py
+│       └── basic_usage.py
 │
-├── server/                    # FastAPI server (Cloud Run)
-│   ├── gwg_server/
-│   │   ├── main.py           # FastAPI app entry point
-│   │   ├── config.py         # Pydantic settings
-│   │   ├── database.py       # Async Firestore storage
-│   │   ├── google_auth.py    # OAuth callback handler
-│   │   ├── token_exchange.py # Token exchange API
-│   │   ├── session.py        # Session management
-│   │   └── service_account.py # SA creation/impersonation
-│   └── Dockerfile.dev
+├── extrasuite-server/             # FastAPI server (Cloud Run)
+│   ├── extrasuite_server/
+│   │   ├── main.py               # FastAPI app entry point
+│   │   ├── config.py             # Pydantic settings
+│   │   ├── database.py           # Async Firestore storage
+│   │   ├── google_auth.py        # OAuth callback handler
+│   │   ├── token_exchange.py     # Token exchange API
+│   │   └── service_account.py    # SA creation/impersonation
+│   └── Dockerfile
 │
-├── docs/                      # Documentation
-│   ├── deployment.md         # Cloud Run deployment guide
-│   └── iam-permissions.md    # Required IAM permissions
+├── docs/                          # Documentation
+│   ├── deployment.md             # Cloud Run deployment guide
+│   └── iam-permissions.md        # Required IAM permissions
 │
-├── Dockerfile                 # Production container
-└── docker-compose.yml         # Local development
+└── LICENSE
 ```
 
 ## Deploying the Server
@@ -123,12 +120,12 @@ See [docs/deployment.md](docs/deployment.md) for Cloud Run deployment instructio
 
 ```bash
 # Build and push container
-docker build -t gcr.io/$PROJECT_ID/gwg-server:latest .
-docker push gcr.io/$PROJECT_ID/gwg-server:latest
+docker build -t gcr.io/$PROJECT_ID/extrasuite-server:latest .
+docker push gcr.io/$PROJECT_ID/extrasuite-server:latest
 
 # Deploy to Cloud Run
-gcloud run deploy gwg-server \
-  --image=gcr.io/$PROJECT_ID/gwg-server:latest \
+gcloud run deploy extrasuite-server \
+  --image=gcr.io/$PROJECT_ID/extrasuite-server:latest \
   --region=us-central1 \
   --allow-unauthenticated \
   --set-env-vars="GOOGLE_CLIENT_ID=$CLIENT_ID,GOOGLE_CLIENT_SECRET=$CLIENT_SECRET,GOOGLE_CLOUD_PROJECT=$PROJECT_ID"
@@ -139,21 +136,15 @@ gcloud run deploy gwg-server \
 ### Server Development
 
 ```bash
-cd server
+cd extrasuite-server
 uv sync
-uv run uvicorn gwg_server.main:app --reload --port 8001
-```
-
-### Docker Development
-
-```bash
-docker-compose --profile dev up dev-server
+uv run uvicorn extrasuite_server.main:app --reload --port 8001
 ```
 
 ### Run Tests
 
 ```bash
-cd server
+cd extrasuite-server
 uv run pytest tests/ -v
 uv run ruff check .
 ```

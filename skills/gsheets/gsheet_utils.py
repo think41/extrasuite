@@ -2,7 +2,7 @@
 Google Sheets Utility Library
 
 Functions that extend gspread with capabilities it doesn't have:
-- open_sheet(): Simplified auth with URL using Google Workspace Gateway
+- open_sheet(): Simplified auth with URL using ExtraSuite
 - get_shape(): Get first/last rows for LLM to assess table structure
 - has_table(): Check if worksheet has a table
 - convert_to_table(): Create a table via batchUpdate API (auto-removes banded ranges)
@@ -21,24 +21,24 @@ from pathlib import Path
 import gspread
 from google.oauth2.credentials import Credentials
 
-from gateway import GoogleWorkspaceGateway
+from gateway import ExtraSuiteClient
 
 
-GWG_SERVER_URL = "https://gwg-server-jrq7d3fexa-el.a.run.app"
-TOKEN_CACHE_PATH = Path.home() / ".config" / "google-workspace-gateway" / "token.json"
+EXTRASUITE_SERVER_URL = "https://extrasuite-server-jrq7d3fexa-el.a.run.app"
+TOKEN_CACHE_PATH = Path.home() / ".config" / "extrasuite" / "token.json"
 
 
 def _get_gspread_client():
-    """Get an authenticated gspread client using Google Workspace Gateway."""
-    gateway = GoogleWorkspaceGateway(server_url=GWG_SERVER_URL)
-    access_token = gateway.get_token()
+    """Get an authenticated gspread client using ExtraSuite."""
+    client = ExtraSuiteClient(server_url=EXTRASUITE_SERVER_URL)
+    access_token = client.get_token()
     creds = Credentials(token=access_token)
     return gspread.authorize(creds)
 
 
 def open_sheet(url):
     """
-    Open a spreadsheet by URL with automatic authentication via Google Workspace Gateway.
+    Open a spreadsheet by URL with automatic authentication via ExtraSuite.
 
     Args:
         url: Full Google Sheets URL
@@ -327,7 +327,7 @@ def get_service_account_email():
     """
     Get the service account email for sharing instructions.
 
-    Reads from the cached token file created by Google Workspace Gateway.
+    Reads from the cached token file created by ExtraSuite.
     Returns None if no token is cached.
     """
     if not TOKEN_CACHE_PATH.exists():

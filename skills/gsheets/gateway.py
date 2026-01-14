@@ -1,4 +1,4 @@
-"""Google Workspace Gateway client implementation."""
+"""ExtraSuite client implementation."""
 
 from __future__ import annotations
 
@@ -14,28 +14,28 @@ from pathlib import Path
 from typing import Any
 
 
-class GoogleWorkspaceGateway:
+class ExtraSuiteClient:
     """Client for obtaining Google service account tokens via OAuth.
 
     This class handles the complete OAuth flow for obtaining short-lived
-    service account tokens from a Google Workspace Gateway server.
+    service account tokens from an ExtraSuite server.
 
     Args:
-        server_url: URL of the Google Workspace Gateway server.
+        server_url: URL of the ExtraSuite server.
             Must be configured - there is no default.
         token_cache_path: Path to cache tokens. Defaults to
-            ~/.config/google-workspace-gateway/token.json
+            ~/.config/extrasuite/token.json
         callback_timeout: Timeout in seconds for OAuth callback.
             Defaults to 120 seconds.
 
     Example:
-        gateway = GoogleWorkspaceGateway(
-            server_url="https://your-gwg-server.example.com"
+        client = ExtraSuiteClient(
+            server_url="https://your-extrasuite-server.example.com"
         )
-        token = gateway.get_token()
+        token = client.get_token()
     """
 
-    DEFAULT_CACHE_PATH = Path.home() / ".config" / "google-workspace-gateway" / "token.json"
+    DEFAULT_CACHE_PATH = Path.home() / ".config" / "extrasuite" / "token.json"
     DEFAULT_CALLBACK_TIMEOUT = 120
 
     def __init__(
@@ -44,10 +44,10 @@ class GoogleWorkspaceGateway:
         token_cache_path: str | Path | None = None,
         callback_timeout: int | None = None,
     ) -> None:
-        """Initialize the gateway client.
+        """Initialize the ExtraSuite client.
 
         Args:
-            server_url: URL of the Google Workspace Gateway server (required).
+            server_url: URL of the ExtraSuite server (required).
             token_cache_path: Path to cache tokens.
             callback_timeout: Timeout for OAuth callback in seconds.
         """
@@ -289,12 +289,12 @@ def main() -> int:
     import argparse
 
     parser = argparse.ArgumentParser(
-        description="Authenticate with Google Workspace Gateway to get service account token"
+        description="Authenticate with ExtraSuite to get service account token"
     )
     parser.add_argument(
         "--server",
         required=True,
-        help="Google Workspace Gateway server URL",
+        help="ExtraSuite server URL",
     )
     parser.add_argument(
         "--force",
@@ -310,8 +310,8 @@ def main() -> int:
     args = parser.parse_args()
 
     try:
-        gateway = GoogleWorkspaceGateway(server_url=args.server)
-        token = gateway.get_token(force_refresh=args.force)
+        client = ExtraSuiteClient(server_url=args.server)
+        token = client.get_token(force_refresh=args.force)
         if args.show_token:
             print(f"\nAccess Token:\n{token}")
         return 0

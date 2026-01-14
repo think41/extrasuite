@@ -1,25 +1,25 @@
-# google-workspace-gateway
+# extrasuite-client
 
-Python client library for [Google Workspace Gateway](https://github.com/anthropics/google-workspace-gateway) - secure OAuth token exchange for CLI tools.
+Python client library for [ExtraSuite](https://github.com/anthropics/extrasuite) - secure OAuth token exchange for CLI tools.
 
 ## Installation
 
 ```bash
-pip install google-workspace-gateway
+pip install extrasuite-client
 ```
 
 ## Quick Start
 
 ```python
-from google_workspace_gateway import GoogleWorkspaceGateway
+from extrasuite_client import ExtraSuiteClient
 
-# Create gateway client (server_url is required)
-gateway = GoogleWorkspaceGateway(
-    server_url="https://your-gwg-server.example.com"
+# Create client (server_url is required)
+client = ExtraSuiteClient(
+    server_url="https://your-extrasuite-server.example.com"
 )
 
 # Get a token - opens browser for authentication if needed
-token = gateway.get_token()
+token = client.get_token()
 
 # Use the token with Google APIs
 import gspread
@@ -32,19 +32,19 @@ sheet = gc.open("My Spreadsheet").sheet1
 
 ## Configuration
 
-The `GoogleWorkspaceGateway` class accepts the following parameters:
+The `ExtraSuiteClient` class accepts the following parameters:
 
 | Parameter | Required | Default | Description |
 |-----------|----------|---------|-------------|
-| `server_url` | Yes | - | URL of the Google Workspace Gateway server |
-| `token_cache_path` | No | `~/.config/google-workspace-gateway/token.json` | Path to cache tokens |
+| `server_url` | Yes | - | URL of the ExtraSuite server |
+| `token_cache_path` | No | `~/.config/extrasuite/token.json` | Path to cache tokens |
 | `callback_timeout` | No | `120` | OAuth callback timeout in seconds |
 
 ## How It Works
 
 1. When you call `get_token()`, the client first checks for a cached token
 2. If no valid cached token exists, it starts a local HTTP server
-3. Opens your browser to the Google Workspace Gateway server for OAuth
+3. Opens your browser to the ExtraSuite server for OAuth
 4. After authentication, the server redirects back to your local server with a token
 5. The token is cached for subsequent calls
 
@@ -55,7 +55,6 @@ Tokens are short-lived (1 hour) and automatically refreshed when expired.
 See the [examples/](examples/) directory for complete examples:
 
 - `basic_usage.py` - Simple token retrieval
-- `gsheet_example.py` - Using with Google Sheets via gspread
 
 ## Requirements
 

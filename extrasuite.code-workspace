@@ -1,12 +1,12 @@
 {
 	"folders": [
 		{
-			"name": "client",
-			"path": "client"
+			"name": "extrasuite-client",
+			"path": "extrasuite-client"
 		},
 		{
-			"name": "server",
-			"path": "server"
+			"name": "extrasuite-server",
+			"path": "extrasuite-server"
 		},
 		{
 			"name": "root",

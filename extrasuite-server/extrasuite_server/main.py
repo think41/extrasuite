@@ -1,7 +1,7 @@
-"""Google Workspace Gateway Server.
+"""ExtraSuite Server.
 
 Headless API server for CLI authentication and service account token exchange.
-Entry point: CLI creates GoogleWorkspaceGateway instance and calls get_token()
+Entry point: CLI creates ExtraSuiteClient instance and calls get_token()
 """
 
 from contextlib import asynccontextmanager
@@ -12,10 +12,10 @@ from loguru import logger
 from slowapi.errors import RateLimitExceeded
 from starlette.middleware.sessions import SessionMiddleware
 
-from gwg_server import google_auth, health, token_exchange
-from gwg_server.config import get_settings
-from gwg_server.database import Database
-from gwg_server.rate_limit import limiter, rate_limit_exceeded_handler
+from extrasuite_server import google_auth, health, token_exchange
+from extrasuite_server.config import get_settings
+from extrasuite_server.database import Database
+from extrasuite_server.rate_limit import limiter, rate_limit_exceeded_handler
 
 
 async def unhandled_exception_handler(request: Request, exc: Exception) -> JSONResponse:
@@ -35,7 +35,7 @@ async def lifespan(app: FastAPI):
     """Application lifespan handler."""
     settings = get_settings()
 
-    logger.info(f"Starting GWG server on port {settings.port}")
+    logger.info(f"Starting ExtraSuite server on port {settings.port}")
 
     # Initialize database and store in app.state for dependency injection
     database = Database(
@@ -47,7 +47,7 @@ async def lifespan(app: FastAPI):
     yield
 
     await database.close()
-    logger.info("Shutting down GWG server")
+    logger.info("Shutting down ExtraSuite server")
 
 
 def create_app() -> FastAPI:
@@ -55,7 +55,7 @@ def create_app() -> FastAPI:
     settings = get_settings()
 
     app = FastAPI(
-        title="Google Workspace Gateway",
+        title="ExtraSuite",
         description="Headless CLI authentication service for Google Workspace APIs",
         version="1.0.0",
         lifespan=lifespan,
@@ -77,7 +77,7 @@ def create_app() -> FastAPI:
     app.add_middleware(
         SessionMiddleware,  # type: ignore[arg-type]
         secret_key=settings.secret_key,
-        session_cookie="gwg_session",
+        session_cookie="extrasuite_session",
         max_age=30 * 24 * 60 * 60,  # 30 days in seconds
         same_site="lax",
         https_only=settings.is_production,
@@ -91,9 +91,9 @@ def create_app() -> FastAPI:
     @app.get("/")
     async def root():
         return {
-            "service": "gwg-server",
+            "service": "extrasuite-server",
             "version": "1.0.0",
-            "description": "Google Workspace Gateway - Headless CLI authentication service",
+            "description": "ExtraSuite - Headless CLI authentication service",
             "docs": "/api/docs" if not settings.is_production else None,
         }
 
@@ -108,7 +108,7 @@ if __name__ == "__main__":
 
     settings = get_settings()
     uvicorn.run(
-        "gwg_server.main:app",
+        "extrasuite_server.main:app",
         host="0.0.0.0",
         port=settings.port,
         reload=not settings.is_production,

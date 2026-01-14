@@ -1,10 +1,10 @@
 # IAM Permissions Reference
 
-This document lists all IAM permissions required by the Google Workspace Gateway server.
+This document lists all IAM permissions required by the ExtraSuite server.
 
 ## Cloud Run Service Account Permissions
 
-The service account running the GWG server needs the following roles:
+The service account running the ExtraSuite server needs the following roles:
 
 ### 1. Firestore Access
 
@@ -21,7 +21,7 @@ The service account running the GWG server needs the following roles:
 **Grant command:**
 ```bash
 gcloud projects add-iam-policy-binding $PROJECT_ID \
-  --member="serviceAccount:gwg-server@$PROJECT_ID.iam.gserviceaccount.com" \
+  --member="serviceAccount:extrasuite-server@$PROJECT_ID.iam.gserviceaccount.com" \
   --role="roles/datastore.user"
 ```
 
@@ -41,7 +41,7 @@ gcloud projects add-iam-policy-binding $PROJECT_ID \
 **Grant command:**
 ```bash
 gcloud projects add-iam-policy-binding $PROJECT_ID \
-  --member="serviceAccount:gwg-server@$PROJECT_ID.iam.gserviceaccount.com" \
+  --member="serviceAccount:extrasuite-server@$PROJECT_ID.iam.gserviceaccount.com" \
   --role="roles/iam.serviceAccountAdmin"
 ```
 
@@ -58,7 +58,7 @@ gcloud projects add-iam-policy-binding $PROJECT_ID \
 **Grant command:**
 ```bash
 gcloud projects add-iam-policy-binding $PROJECT_ID \
-  --member="serviceAccount:gwg-server@$PROJECT_ID.iam.gserviceaccount.com" \
+  --member="serviceAccount:extrasuite-server@$PROJECT_ID.iam.gserviceaccount.com" \
   --role="roles/iam.serviceAccountTokenCreator"
 ```
 
@@ -71,13 +71,13 @@ gcloud projects add-iam-policy-binding $PROJECT_ID \
 **Grant command (per secret):**
 ```bash
 gcloud secrets add-iam-policy-binding $SECRET_NAME \
-  --member="serviceAccount:gwg-server@$PROJECT_ID.iam.gserviceaccount.com" \
+  --member="serviceAccount:extrasuite-server@$PROJECT_ID.iam.gserviceaccount.com" \
   --role="roles/secretmanager.secretAccessor"
 ```
 
 ## End-User Permissions (Important!)
 
-**End users do NOT need any GCP project access or IAM roles to use GWG.**
+**End users do NOT need any GCP project access or IAM roles to use ExtraSuite.**
 
 This is a common point of confusion. Here's why users don't need project membership:
 
@@ -107,7 +107,7 @@ In GCP IAM, you can grant permissions to **any Google account** (`user:email@dom
 
 ### For Organization Rollout
 
-To enable all employees (e.g., `all@example.com`) to use GWG:
+To enable all employees (e.g., `all@example.com`) to use ExtraSuite:
 
 1. **Configure domain allowlist** on the server:
    ```bash
@@ -122,7 +122,7 @@ That's it. No IAM configuration needed for the user group.
 
 ## User Service Account Permissions
 
-When GWG creates a service account for a user, it also grants the user permission to impersonate it:
+When ExtraSuite creates a service account for a user, it also grants the user permission to impersonate it:
 
 **Role granted to user:** `roles/iam.serviceAccountTokenCreator`
 
@@ -156,14 +156,14 @@ The short-lived tokens include:
 
 For production environments:
 
-1. **Use separate projects** for GWG infrastructure and user service accounts if needed for compliance
+1. **Use separate projects** for ExtraSuite infrastructure and user service accounts if needed for compliance
 
 2. **Restrict token creator scope** to specific service accounts if possible:
    ```bash
    # Instead of project-level, grant on specific SA
    gcloud iam service-accounts add-iam-policy-binding \
      ea-username@$PROJECT_ID.iam.gserviceaccount.com \
-     --member="serviceAccount:gwg-server@$PROJECT_ID.iam.gserviceaccount.com" \
+     --member="serviceAccount:extrasuite-server@$PROJECT_ID.iam.gserviceaccount.com" \
      --role="roles/iam.serviceAccountTokenCreator"
    ```
 

@@ -16,8 +16,8 @@ from googleapiclient.discovery import build
 from googleapiclient.errors import HttpError
 from loguru import logger
 
-from gwg_server.config import Settings
-from gwg_server.oauth import SA_TOKEN_SCOPES
+from extrasuite_server.config import Settings
+from extrasuite_server.oauth import SA_TOKEN_SCOPES
 
 # Delay after SA creation to allow GCP propagation (seconds)
 SA_PROPAGATION_DELAY = 3.0
@@ -107,7 +107,7 @@ def get_or_create_service_account(
         "accountId": account_id,
         "serviceAccount": {
             "displayName": f"AI EA for {user_name}"[:100],
-            "description": f"Owner: {user_email} | Created: {created_at} | Via: GWG"[:256],
+            "description": f"Owner: {user_email} | Created: {created_at} | Via: ExtraSuite"[:256],
         },
     }
 
@@ -128,7 +128,7 @@ def get_or_create_service_account(
     time.sleep(SA_PROPAGATION_DELAY)
 
     # Grant user permission to impersonate this SA (for future use)
-    # This enables the user to use the SA even without going through GWG
+    # This enables the user to use the SA even without going through ExtraSuite
     _grant_impersonation_permission(iam_service, project_id, sa_email, user_email)
 
     return sa_email, True

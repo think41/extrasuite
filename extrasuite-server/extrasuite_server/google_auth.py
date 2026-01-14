@@ -13,11 +13,14 @@ from google.auth.transport import requests as google_requests
 from google.oauth2 import id_token
 from loguru import logger
 
-from gwg_server.config import Settings, get_settings
-from gwg_server.database import Database, get_database
-from gwg_server.oauth import CLI_SCOPES, create_oauth_flow
-from gwg_server.rate_limit import limiter
-from gwg_server.service_account import get_or_create_service_account, impersonate_service_account
+from extrasuite_server.config import Settings, get_settings
+from extrasuite_server.database import Database, get_database
+from extrasuite_server.oauth import CLI_SCOPES, create_oauth_flow
+from extrasuite_server.rate_limit import limiter
+from extrasuite_server.service_account import (
+    get_or_create_service_account,
+    impersonate_service_account,
+)
 
 router = APIRouter(prefix="/auth", tags=["auth"])
 

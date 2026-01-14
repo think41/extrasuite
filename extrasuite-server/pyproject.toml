@@ -1,7 +1,7 @@
 [project]
-name = "gwg-server"
+name = "extrasuite-server"
 version = "1.0.0"
-description = "Google Workspace Gateway Server - Headless CLI authentication service for Google Workspace APIs"
+description = "ExtraSuite Server - Headless CLI authentication service for Google Workspace APIs"
 readme = "README.md"
 requires-python = ">=3.12"
 dependencies = [
@@ -37,7 +37,7 @@ build-backend = "hatchling.build"
 [tool.ruff]
 target-version = "py312"
 line-length = 100
-src = ["gwg_server", "tests"]
+src = ["extrasuite_server", "tests"]
 
 [tool.ruff.lint]
 select = [
@@ -59,7 +59,7 @@ ignore = [
 ]
 
 [tool.ruff.lint.isort]
-known-first-party = ["gwg_server"]
+known-first-party = ["extrasuite_server"]
 
 [tool.ruff.format]
 quote-style = "double"

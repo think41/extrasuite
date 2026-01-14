@@ -2,7 +2,7 @@
 
 from fastapi import APIRouter
 
-from gwg_server.config import get_settings
+from extrasuite_server.config import get_settings
 
 router = APIRouter(prefix="/health", tags=["health"])
 
@@ -10,7 +10,7 @@ router = APIRouter(prefix="/health", tags=["health"])
 @router.get("")
 async def health_check() -> dict:
     """Basic health check endpoint."""
-    return {"status": "healthy", "service": "gwg-server"}
+    return {"status": "healthy", "service": "extrasuite-server"}
 
 
 @router.get("/ready")
@@ -19,6 +19,6 @@ async def readiness_check() -> dict:
     settings = get_settings()
     return {
         "status": "ready",
-        "service": "gwg-server",
+        "service": "extrasuite-server",
         "environment": settings.environment,
     }

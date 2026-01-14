@@ -24,11 +24,11 @@ import gspread
 from google.oauth2.credentials import Credentials
 from gspread.exceptions import SpreadsheetNotFound, APIError
 
-from gateway import GoogleWorkspaceGateway
+from gateway import ExtraSuiteClient
 
 
-GWG_SERVER_URL = "https://gwg-server-jrq7d3fexa-el.a.run.app"
-TOKEN_CACHE_PATH = Path.home() / ".config" / "google-workspace-gateway" / "token.json"
+EXTRASUITE_SERVER_URL = "https://extrasuite-server-jrq7d3fexa-el.a.run.app"
+TOKEN_CACHE_PATH = Path.home() / ".config" / "extrasuite" / "token.json"
 
 
 def get_service_account_email():
@@ -71,10 +71,10 @@ def main():
         print(error, file=sys.stderr)
         sys.exit(5)
 
-    # Authenticate via Google Workspace Gateway
+    # Authenticate via ExtraSuite
     try:
-        gateway = GoogleWorkspaceGateway(server_url=GWG_SERVER_URL)
-        access_token = gateway.get_token()
+        client = ExtraSuiteClient(server_url=EXTRASUITE_SERVER_URL)
+        access_token = client.get_token()
     except Exception as e:
         print(f"""Authentication failed.
 
@@ -82,7 +82,7 @@ Error: {e}
 
 Please try again. If the problem persists, check:
 - Your internet connection
-- The gateway server is accessible: {GWG_SERVER_URL}""", file=sys.stderr)
+- The ExtraSuite server is accessible: {EXTRASUITE_SERVER_URL}""", file=sys.stderr)
         sys.exit(1)
 
     client_email = get_service_account_email() or "your service account"
@@ -159,7 +159,7 @@ Then run this command again.""", file=sys.stderr)
             print(f"""Google Sheets API is not enabled for the service account's project.
 
 This is a server-side configuration issue. Please contact the administrator
-of the Google Workspace Gateway server.""", file=sys.stderr)
+of the ExtraSuite server.""", file=sys.stderr)
             sys.exit(3)
 
         elif status_code == 403 or "403" in error_str:

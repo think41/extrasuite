@@ -9,8 +9,8 @@ import secrets
 from fastapi import HTTPException
 from google_auth_oauthlib.flow import Flow
 
-from gwg_server.config import Settings
-from gwg_server.database import Database
+from extrasuite_server.config import Settings
+from extrasuite_server.database import Database
 
 # OAuth scopes for CLI login (includes cloud-platform for SA impersonation)
 CLI_SCOPES = [

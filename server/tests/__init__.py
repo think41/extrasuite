@@ -1,1 +1,0 @@
-"""GWG Server tests."""

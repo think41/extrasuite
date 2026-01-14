@@ -1,6 +1,6 @@
-# GWG Server
+# ExtraSuite Server
 
-FastAPI backend for Google Workspace Gateway - secure OAuth token exchange for CLI tools.
+FastAPI backend for ExtraSuite - secure OAuth token exchange for CLI tools.
 
 ## Development
 
@@ -9,7 +9,7 @@ FastAPI backend for Google Workspace Gateway - secure OAuth token exchange for C
 uv sync
 
 # Run server
-uv run uvicorn gwg_server.main:app --reload --port 8001
+uv run uvicorn extrasuite_server.main:app --reload --port 8001
 
 # Run tests
 uv run pytest tests/ -v

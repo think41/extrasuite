@@ -230,6 +230,60 @@ wheels = [
 ]
 
 [[package]]
+name = "extrasuite-server"
+version = "1.0.0"
+source = { editable = "." }
+dependencies = [
+    { name = "fastapi" },
+    { name = "google-api-python-client" },
+    { name = "google-auth" },
+    { name = "google-auth-httplib2" },
+    { name = "google-auth-oauthlib" },
+    { name = "google-cloud-firestore" },
+    { name = "itsdangerous" },
+    { name = "loguru" },
+    { name = "pydantic" },
+    { name = "pydantic-settings" },
+    { name = "python-dotenv" },
+    { name = "slowapi" },
+    { name = "uvicorn", extra = ["standard"] },
+]
+
+[package.optional-dependencies]
+dev = [
+    { name = "pre-commit" },
+    { name = "pyright" },
+    { name = "pytest" },
+    { name = "pytest-asyncio" },
+    { name = "pytest-cov" },
+    { name = "ruff" },
+]
+
+[package.metadata]
+requires-dist = [
+    { name = "fastapi", specifier = ">=0.115.0" },
+    { name = "google-api-python-client", specifier = ">=2.150.0" },
+    { name = "google-auth", specifier = ">=2.35.0" },
+    { name = "google-auth-httplib2", specifier = ">=0.2.0" },
+    { name = "google-auth-oauthlib", specifier = ">=1.2.0" },
+    { name = "google-cloud-firestore", specifier = ">=2.19.0" },
+    { name = "itsdangerous", specifier = ">=2.1.0" },
+    { name = "loguru", specifier = ">=0.7.0" },
+    { name = "pre-commit", marker = "extra == 'dev'", specifier = ">=4.0.0" },
+    { name = "pydantic", specifier = ">=2.9.0" },
+    { name = "pydantic-settings", specifier = ">=2.6.0" },
+    { name = "pyright", marker = "extra == 'dev'", specifier = ">=1.1.408" },
+    { name = "pytest", marker = "extra == 'dev'", specifier = ">=8.3.0" },
+    { name = "pytest-asyncio", marker = "extra == 'dev'", specifier = ">=0.24.0" },
+    { name = "pytest-cov", marker = "extra == 'dev'", specifier = ">=5.0.0" },
+    { name = "python-dotenv", specifier = ">=1.0.0" },
+    { name = "ruff", marker = "extra == 'dev'", specifier = ">=0.7.0" },
+    { name = "slowapi", specifier = ">=0.1.9" },
+    { name = "uvicorn", extras = ["standard"], specifier = ">=0.32.0" },
+]
+provides-extras = ["dev"]
+
+[[package]]
 name = "fastapi"
 version = "0.128.0"
 source = { registry = "https://pypi.org/simple" }
@@ -425,60 +479,6 @@ sdist = { url = "https://files.pythonhosted.org/packages/3f/46/e9f19d5be65e8423f
 wheels = [
     { url = "https://files.pythonhosted.org/packages/8c/cc/27ba60ad5a5f2067963e6a858743500df408eb5855e98be778eaef8c9b02/grpcio_status-1.76.0-py3-none-any.whl", hash = "sha256:380568794055a8efbbd8871162df92012e0228a5f6dffaf57f2a00c534103b18", size = 14425, upload-time = "2025-10-21T16:28:40.853Z" },
 ]
-
-[[package]]
-name = "gwg-server"
-version = "1.0.0"
-source = { editable = "." }
-dependencies = [
-    { name = "fastapi" },
-    { name = "google-api-python-client" },
-    { name = "google-auth" },
-    { name = "google-auth-httplib2" },
-    { name = "google-auth-oauthlib" },
-    { name = "google-cloud-firestore" },
-    { name = "itsdangerous" },
-    { name = "loguru" },
-    { name = "pydantic" },
-    { name = "pydantic-settings" },
-    { name = "python-dotenv" },
-    { name = "slowapi" },
-    { name = "uvicorn", extra = ["standard"] },
-]
-
-[package.optional-dependencies]
-dev = [
-    { name = "pre-commit" },
-    { name = "pyright" },
-    { name = "pytest" },
-    { name = "pytest-asyncio" },
-    { name = "pytest-cov" },
-    { name = "ruff" },
-]
-
-[package.metadata]
-requires-dist = [
-    { name = "fastapi", specifier = ">=0.115.0" },
-    { name = "google-api-python-client", specifier = ">=2.150.0" },
-    { name = "google-auth", specifier = ">=2.35.0" },
-    { name = "google-auth-httplib2", specifier = ">=0.2.0" },
-    { name = "google-auth-oauthlib", specifier = ">=1.2.0" },
-    { name = "google-cloud-firestore", specifier = ">=2.19.0" },
-    { name = "itsdangerous", specifier = ">=2.1.0" },
-    { name = "loguru", specifier = ">=0.7.0" },
-    { name = "pre-commit", marker = "extra == 'dev'", specifier = ">=4.0.0" },
-    { name = "pydantic", specifier = ">=2.9.0" },
-    { name = "pydantic-settings", specifier = ">=2.6.0" },
-    { name = "pyright", marker = "extra == 'dev'", specifier = ">=1.1.408" },
-    { name = "pytest", marker = "extra == 'dev'", specifier = ">=8.3.0" },
-    { name = "pytest-asyncio", marker = "extra == 'dev'", specifier = ">=0.24.0" },
-    { name = "pytest-cov", marker = "extra == 'dev'", specifier = ">=5.0.0" },
-    { name = "python-dotenv", specifier = ">=1.0.0" },
-    { name = "ruff", marker = "extra == 'dev'", specifier = ">=0.7.0" },
-    { name = "slowapi", specifier = ">=0.1.9" },
-    { name = "uvicorn", extras = ["standard"], specifier = ">=0.32.0" },
-]
-provides-extras = ["dev"]
 
 [[package]]
 name = "h11"

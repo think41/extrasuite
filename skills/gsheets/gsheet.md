@@ -19,7 +19,7 @@ Creates virtual environment and installs dependencies. On failure, provides setu
 ```bash
 ~/.claude/skills/gsheets/venv/bin/python ~/.claude/skills/gsheets/verify_access.py <spreadsheet_url>
 ```
-Authenticates via Google Workspace Gateway (opens browser if needed) and confirms access to the sheet. On failure, provides sharing instructions with the service account email.
+Authenticates via ExtraSuite (opens browser if needed) and confirms access to the sheet. On failure, provides sharing instructions with the service account email.
 
 **Step 3: Execute your code**
 ```bash
@@ -85,7 +85,7 @@ These functions extend gspread with capabilities it doesn't have:
 
 ### open_sheet(url)
 
-Open spreadsheet with automatic authentication via Google Workspace Gateway:
+Open spreadsheet with automatic authentication via ExtraSuite:
 
 ```python
 from gsheet_utils import open_sheet

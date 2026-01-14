@@ -58,7 +58,7 @@ class OAuthState:
 
 
 class Database:
-    """Async Firestore database client for GWG.
+    """Async Firestore database client for ExtraSuite.
 
     This class encapsulates all database operations and manages the Firestore
     client lifecycle. Use dependency injection to provide instances to handlers.

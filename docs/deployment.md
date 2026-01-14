@@ -1,6 +1,6 @@
-# Deploying Google Workspace Gateway to Cloud Run
+# Deploying ExtraSuite to Cloud Run
 
-This guide covers deploying the GWG server to Google Cloud Run.
+This guide covers deploying the ExtraSuite server to Google Cloud Run.
 
 ## Prerequisites
 
@@ -40,22 +40,22 @@ gcloud firestore databases create --location=asia-south1
 
 ```bash
 # Create service account
-gcloud iam service-accounts create gwg-server \
-  --display-name="GWG Server"
+gcloud iam service-accounts create extrasuite-server \
+  --display-name="ExtraSuite Server"
 
 # Grant Firestore access
 gcloud projects add-iam-policy-binding $PROJECT_ID \
-  --member="serviceAccount:gwg-server@$PROJECT_ID.iam.gserviceaccount.com" \
+  --member="serviceAccount:extrasuite-server@$PROJECT_ID.iam.gserviceaccount.com" \
   --role="roles/datastore.user"
 
 # Grant service account admin (for creating user SAs)
 gcloud projects add-iam-policy-binding $PROJECT_ID \
-  --member="serviceAccount:gwg-server@$PROJECT_ID.iam.gserviceaccount.com" \
+  --member="serviceAccount:extrasuite-server@$PROJECT_ID.iam.gserviceaccount.com" \
   --role="roles/iam.serviceAccountAdmin"
 
 # Grant token creator (for impersonation)
 gcloud projects add-iam-policy-binding $PROJECT_ID \
-  --member="serviceAccount:gwg-server@$PROJECT_ID.iam.gserviceaccount.com" \
+  --member="serviceAccount:extrasuite-server@$PROJECT_ID.iam.gserviceaccount.com" \
   --role="roles/iam.serviceAccountTokenCreator"
 ```
 
@@ -63,25 +63,25 @@ gcloud projects add-iam-policy-binding $PROJECT_ID \
 
 ```bash
 # Build the image
-docker build -t gcr.io/$PROJECT_ID/gwg-server:latest .
+docker build -t gcr.io/$PROJECT_ID/extrasuite-server:latest .
 
 # Push to Container Registry
-docker push gcr.io/$PROJECT_ID/gwg-server:latest
+docker push gcr.io/$PROJECT_ID/extrasuite-server:latest
 ```
 
 ## Step 6: Deploy to Cloud Run
 
 ```bash
-gcloud run deploy gwg-server \
-  --image=gcr.io/$PROJECT_ID/gwg-server:latest \
-  --service-account=gwg-server@$PROJECT_ID.iam.gserviceaccount.com \
+gcloud run deploy extrasuite-server \
+  --image=gcr.io/$PROJECT_ID/extrasuite-server:latest \
+  --service-account=extrasuite-server@$PROJECT_ID.iam.gserviceaccount.com \
   --region=us-central1 \
   --allow-unauthenticated \
   --set-env-vars="ENVIRONMENT=production" \
   --set-env-vars="GOOGLE_CLOUD_PROJECT=$PROJECT_ID" \
-  --set-secrets="SECRET_KEY=gwg-secret-key:latest" \
-  --set-secrets="GOOGLE_CLIENT_ID=gwg-client-id:latest" \
-  --set-secrets="GOOGLE_CLIENT_SECRET=gwg-client-secret:latest"
+  --set-secrets="SECRET_KEY=extrasuite-secret-key:latest" \
+  --set-secrets="GOOGLE_CLIENT_ID=extrasuite-client-id:latest" \
+  --set-secrets="GOOGLE_CLIENT_SECRET=extrasuite-client-secret:latest"
 ```
 
 ## Step 7: Update OAuth Redirect URI
@@ -89,7 +89,7 @@ gcloud run deploy gwg-server \
 After deployment, get your Cloud Run URL:
 
 ```bash
-gcloud run services describe gwg-server --region=us-central1 --format='value(status.url)'
+gcloud run services describe extrasuite-server --region=us-central1 --format='value(status.url)'
 ```
 
 Update your OAuth credentials in Google Cloud Console to include:
@@ -98,7 +98,7 @@ Update your OAuth credentials in Google Cloud Console to include:
 Then update the environment variable:
 
 ```bash
-gcloud run services update gwg-server \
+gcloud run services update extrasuite-server \
   --region=us-central1 \
   --set-env-vars="GOOGLE_REDIRECT_URI=https://your-cloud-run-url/api/auth/callback"
 ```
@@ -107,21 +107,21 @@ gcloud run services update gwg-server \
 
 ```bash
 # Create secrets
-echo -n "your-oauth-client-id" | gcloud secrets create gwg-client-id --data-file=-
-echo -n "your-oauth-client-secret" | gcloud secrets create gwg-client-secret --data-file=-
-echo -n "$(openssl rand -base64 32)" | gcloud secrets create gwg-secret-key --data-file=-
+echo -n "your-oauth-client-id" | gcloud secrets create extrasuite-client-id --data-file=-
+echo -n "your-oauth-client-secret" | gcloud secrets create extrasuite-client-secret --data-file=-
+echo -n "$(openssl rand -base64 32)" | gcloud secrets create extrasuite-secret-key --data-file=-
 
 # Grant Cloud Run access to secrets
-gcloud secrets add-iam-policy-binding gwg-client-id \
-  --member="serviceAccount:gwg-server@$PROJECT_ID.iam.gserviceaccount.com" \
+gcloud secrets add-iam-policy-binding extrasuite-client-id \
+  --member="serviceAccount:extrasuite-server@$PROJECT_ID.iam.gserviceaccount.com" \
   --role="roles/secretmanager.secretAccessor"
 
-gcloud secrets add-iam-policy-binding gwg-client-secret \
-  --member="serviceAccount:gwg-server@$PROJECT_ID.iam.gserviceaccount.com" \
+gcloud secrets add-iam-policy-binding extrasuite-client-secret \
+  --member="serviceAccount:extrasuite-server@$PROJECT_ID.iam.gserviceaccount.com" \
   --role="roles/secretmanager.secretAccessor"
 
-gcloud secrets add-iam-policy-binding gwg-secret-key \
-  --member="serviceAccount:gwg-server@$PROJECT_ID.iam.gserviceaccount.com" \
+gcloud secrets add-iam-policy-binding extrasuite-secret-key \
+  --member="serviceAccount:extrasuite-server@$PROJECT_ID.iam.gserviceaccount.com" \
   --role="roles/secretmanager.secretAccessor"
 ```
 
@@ -133,7 +133,7 @@ Test the deployment:
 # Health check
 curl https://your-cloud-run-url/api/health
 
-# Should return: {"status":"healthy","service":"gwg-server"}
+# Should return: {"status":"healthy","service":"extrasuite-server"}
 ```
 
 ## Optional Configuration
@@ -143,7 +143,7 @@ curl https://your-cloud-run-url/api/health
 To allow only specific email domains to authenticate:
 
 ```bash
-gcloud run services update gwg-server \
+gcloud run services update extrasuite-server \
   --region=us-central1 \
   --set-env-vars="ALLOWED_EMAIL_DOMAINS=example.com,company.org"
 ```
@@ -171,5 +171,5 @@ This ensures refresh tokens don't persist indefinitely. Users will need to re-au
 4. **Use a custom domain** with managed SSL
 5. **Set minimum instances** to reduce cold starts:
    ```bash
-   gcloud run services update gwg-server --min-instances=1
+   gcloud run services update extrasuite-server --min-instances=1
    ```
