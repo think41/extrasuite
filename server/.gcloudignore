@@ -30,5 +30,4 @@ build/
 # Credentials (local dev only)
 credentials/
 
-# Lock file not needed for build (dependencies in Dockerfile)
-uv.lock
+# Keep uv.lock - needed by Dockerfile for reproducible builds

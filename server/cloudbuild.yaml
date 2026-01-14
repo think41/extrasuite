@@ -32,7 +32,7 @@ steps:
       - '--platform=managed'
       - '--allow-unauthenticated'
       - '--set-secrets=GOOGLE_CLIENT_ID=gwg-google-client-id:latest,GOOGLE_CLIENT_SECRET=gwg-google-client-secret:latest,SECRET_KEY=gwg-secret-key:latest'
-      - '--set-env-vars=ENVIRONMENT=production,GOOGLE_CLOUD_PROJECT=$PROJECT_ID,GOOGLE_REDIRECT_URI=https://gwg-server-jrq7d3fexa-el.a.run.app/api/auth/callback,ALLOWED_EMAIL_DOMAINS=think41.com,recruit41.com,mindlap.dev'
+      - '--set-env-vars=^::^ENVIRONMENT=production::GOOGLE_CLOUD_PROJECT=$PROJECT_ID::GOOGLE_REDIRECT_URI=https://gwg-server-jrq7d3fexa-el.a.run.app/api/auth/callback::ALLOWED_EMAIL_DOMAINS=think41.com,recruit41.com,mindlap.dev'
 
 images:
   - 'gcr.io/$PROJECT_ID/gwg-server:$COMMIT_SHA'
