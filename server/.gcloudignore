@@ -1,0 +1,34 @@
+# Virtual environments
+.venv/
+venv/
+__pycache__/
+*.pyc
+*.pyo
+
+# Testing
+.pytest_cache/
+.coverage
+htmlcov/
+
+# IDE
+.vscode/
+.idea/
+
+# Ruff cache
+.ruff_cache/
+
+# Environment files (keep .env.template for reference)
+.env
+.env.*
+!.env.template
+
+# Build artifacts
+*.egg-info/
+dist/
+build/
+
+# Credentials (local dev only)
+credentials/
+
+# Lock file not needed for build (dependencies in Dockerfile)
+uv.lock
