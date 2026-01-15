@@ -32,6 +32,7 @@ class Settings(BaseSettings):
     port: int = 8001
     environment: str = "development"
     debug: bool = False
+    log_level: str = "INFO"
 
     # Security - must be set via environment variable
     secret_key: str = ""
@@ -127,6 +128,16 @@ class Settings(BaseSettings):
         if not 1 <= v <= 65535:
             raise ValueError("port must be between 1 and 65535")
         return v
+
+    @field_validator("log_level")
+    @classmethod
+    def validate_log_level(cls, v: str) -> str:
+        """Validate log level is a known value."""
+        allowed = {"DEBUG", "INFO", "WARNING", "ERROR", "CRITICAL"}
+        v_upper = v.upper()
+        if v_upper not in allowed:
+            raise ValueError(f"log_level must be one of: {allowed}")
+        return v_upper
 
 
 @lru_cache

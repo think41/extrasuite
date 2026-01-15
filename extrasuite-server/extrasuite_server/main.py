@@ -15,6 +15,7 @@ from starlette.middleware.sessions import SessionMiddleware
 from extrasuite_server import google_auth, health, token_exchange
 from extrasuite_server.config import get_settings
 from extrasuite_server.database import Database
+from extrasuite_server.logging import configure_logging
 from extrasuite_server.rate_limit import limiter, rate_limit_exceeded_handler
 
 
@@ -53,6 +54,12 @@ async def lifespan(app: FastAPI):
 def create_app() -> FastAPI:
     """Create and configure the FastAPI application."""
     settings = get_settings()
+
+    # Configure structured JSON logging for Cloud Logging
+    configure_logging(
+        is_production=settings.is_production,
+        log_level=settings.log_level,
+    )
 
     app = FastAPI(
         title="ExtraSuite",
