@@ -156,8 +156,17 @@ async def start_token_auth(
 
     # Check if user has a valid session with stored SA
     email = request.session.get("email")
+    logger.info("Session check", extra={"email": email, "has_session": email is not None})
     if email:
         user_creds = await db.get_user_credentials(email)
+        logger.info(
+            "Firestore lookup",
+            extra={
+                "email": email,
+                "found": user_creds is not None,
+                "has_sa": user_creds.service_account_email if user_creds else None,
+            },
+        )
         if user_creds and user_creds.service_account_email:
             logger.info("Session found, generating token", extra={"email": email, "cli_port": port})
             redirect_response = await _try_generate_token(db, email, cli_redirect, settings)
