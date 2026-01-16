@@ -7,82 +7,102 @@
     <script src="https://cdn.tailwindcss.com"></script>
 </head>
 <body class="bg-gray-50 min-h-screen">
-    <div class="max-w-4xl mx-auto px-4 py-16">
+    <div class="max-w-3xl mx-auto px-4 py-16">
         <header class="mb-12">
             <h1 class="text-4xl font-bold text-gray-900 mb-2">ExtraSuite</h1>
             <p class="text-lg text-gray-600">Internal Authentication Service</p>
         </header>
 
         <main>
-            <!-- User Service Account Section (shown when logged in) -->
-            <div id="user-section" class="hidden bg-white rounded-lg shadow-sm border border-gray-200 p-8 mb-8">
-                <section class="mb-6">
-                    <h2 class="text-xl font-semibold text-gray-800 mb-4">Your AI Assistant</h2>
-                    <p class="text-gray-700 mb-4">
-                        You are logged in as <strong id="user-email"></strong>
-                    </p>
-                    <div class="bg-blue-50 border border-blue-200 rounded-lg p-4 mb-4">
-                        <p class="text-blue-800 font-medium mb-2">Your Service Account:</p>
-                        <code id="service-account-email" class="block bg-blue-100 px-3 py-2 rounded text-blue-900 font-mono text-sm break-all"></code>
-                    </div>
-                    <div class="bg-gray-50 border border-gray-200 rounded-lg p-4">
-                        <p class="text-gray-700 mb-2"><strong>How to use:</strong></p>
-                        <p class="text-gray-600">
-                            Share your Google documents, sheets, or presentations with <strong id="service-account-copy" class="text-blue-600"></strong>.
-                            Then ask Claude / Codex to read or update the document using ExtraSuite.
-                        </p>
-                    </div>
-                </section>
+            <!-- Loading state -->
+            <div id="loading-section" class="bg-white rounded-lg shadow-sm border border-gray-200 p-8 mb-8">
+                <p class="text-gray-500">Loading...</p>
             </div>
 
-            <!-- About Section -->
-            <div class="bg-white rounded-lg shadow-sm border border-gray-200 p-8 mb-8">
+            <!-- Unauthenticated view -->
+            <div id="login-section" class="hidden bg-white rounded-lg shadow-sm border border-gray-200 p-8 mb-8">
                 <section class="mb-8">
                     <h2 class="text-xl font-semibold text-gray-800 mb-4">About</h2>
                     <p class="text-gray-700 mb-4">
                         ExtraSuite is a headless authentication service that enables CLI tools and LLM agents to securely access Google Workspace APIs (Sheets, Docs, Drive). It handles OAuth authentication and generates short-lived service account tokens, so developers don't need to manage credentials manually.
                     </p>
-                    <p class="text-gray-700">
-                        This service is for <strong>internal use only</strong> by employees of think41.com, recruit41.com, and mindlap.dev. Unauthorized access is prohibited.
-                    </p>
+                    <div class="bg-amber-50 border border-amber-200 rounded-lg p-4">
+                        <p class="text-amber-800">
+                            This service is for <strong>internal use only</strong> by employees of think41.com, recruit41.com, and mindlap.dev. Unauthorized access is prohibited.
+                        </p>
+                    </div>
                 </section>
 
-                <section class="mb-8">
-                    <h2 class="text-xl font-semibold text-gray-800 mb-4">Documentation</h2>
-                    <p class="text-gray-700">
-                        For setup instructions, API documentation, and usage examples, visit the GitHub repository:
+                <section>
+                    <h2 class="text-xl font-semibold text-gray-800 mb-4">Employee Login</h2>
+                    <p class="text-gray-700 mb-4">
+                        Sign in with your company Google account to view your AI assistant details.
                     </p>
-                    <a href="https://github.com/think41/extrasuite"
-                       class="inline-block mt-4 px-6 py-3 bg-gray-900 text-white rounded-lg hover:bg-gray-700 transition-colors">
-                        View on GitHub
+                    <a href="/api/token/auth?port=9999"
+                       class="inline-block px-6 py-3 bg-gray-900 text-white rounded-lg hover:bg-gray-700 transition-colors">
+                        Sign in with Google
                     </a>
+                    <p class="text-sm text-gray-500 mt-3">
+                        Note: After signing in, you'll be redirected back to this page.
+                    </p>
                 </section>
             </div>
 
-            <!-- All Users Section -->
-            <div id="users-section" class="bg-white rounded-lg shadow-sm border border-gray-200 p-8 mb-8">
-                <section>
-                    <h2 class="text-xl font-semibold text-gray-800 mb-4">User Directory</h2>
-                    <p class="text-gray-600 mb-4">
-                        This directory shows all employees and their AI assistant service accounts.
-                        If you see a document shared with or modified by a service account, you can identify which employee's assistant made the change.
-                    </p>
-                    <div id="users-loading" class="text-gray-500 py-4">Loading users...</div>
-                    <div id="users-table-container" class="hidden overflow-x-auto">
-                        <table class="min-w-full divide-y divide-gray-200">
-                            <thead class="bg-gray-50">
-                                <tr>
-                                    <th class="px-4 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">Employee</th>
-                                    <th class="px-4 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">Service Account</th>
-                                </tr>
-                            </thead>
-                            <tbody id="users-table-body" class="bg-white divide-y divide-gray-200">
-                            </tbody>
-                        </table>
-                    </div>
-                    <div id="users-empty" class="hidden text-gray-500 py-4">No users have authenticated yet.</div>
-                    <div id="users-error" class="hidden text-red-500 py-4">Failed to load users.</div>
-                </section>
+            <!-- Authenticated view -->
+            <div id="user-section" class="hidden">
+                <div class="bg-white rounded-lg shadow-sm border border-gray-200 p-8 mb-8">
+                    <section class="mb-8">
+                        <h2 class="text-xl font-semibold text-gray-800 mb-4">Welcome</h2>
+                        <p class="text-gray-700">
+                            You are logged in as <strong id="user-email" class="text-blue-600"></strong>
+                        </p>
+                    </section>
+
+                    <section class="mb-8">
+                        <h2 class="text-xl font-semibold text-gray-800 mb-4">Your AI Assistant</h2>
+                        <div class="bg-blue-50 border border-blue-200 rounded-lg p-4 mb-4">
+                            <p class="text-blue-800 font-medium mb-2">Your Service Account:</p>
+                            <code id="service-account-email" class="block bg-blue-100 px-3 py-2 rounded text-blue-900 font-mono text-sm break-all"></code>
+                        </div>
+                        <div class="bg-gray-50 border border-gray-200 rounded-lg p-4">
+                            <p class="text-gray-700 mb-2"><strong>How to use:</strong></p>
+                            <p class="text-gray-600">
+                                Share your Google documents, sheets, or presentations with <strong id="service-account-copy" class="text-blue-600"></strong>.
+                                Then ask Claude / Codex to read or update the document.
+                            </p>
+                        </div>
+                    </section>
+
+                    <section class="mb-8">
+                        <h2 class="text-xl font-semibold text-gray-800 mb-4">Install the Skill</h2>
+                        <p class="text-gray-700 mb-4">
+                            To enable Claude Code or other AI assistants to access Google Workspace, install the ExtraSuite skill:
+                        </p>
+                        <div class="bg-gray-900 rounded-lg p-4 mb-4">
+                            <code class="text-green-400 font-mono text-sm">
+                                pip install extrasuite-client
+                            </code>
+                        </div>
+                        <p class="text-gray-700 mb-4">
+                            For detailed setup instructions, visit the GitHub repository:
+                        </p>
+                        <a href="https://github.com/think41/extrasuite"
+                           class="inline-block px-6 py-3 bg-gray-900 text-white rounded-lg hover:bg-gray-700 transition-colors">
+                            View on GitHub
+                        </a>
+                    </section>
+
+                    <section>
+                        <h2 class="text-xl font-semibold text-gray-800 mb-4">User Directory</h2>
+                        <p class="text-gray-700 mb-4">
+                            View the mapping of employees to their AI assistant service accounts. This helps identify who made changes via their AI assistant.
+                        </p>
+                        <a href="/users"
+                           class="inline-block px-6 py-3 border border-gray-300 text-gray-700 rounded-lg hover:bg-gray-50 transition-colors">
+                            View User Directory
+                        </a>
+                    </section>
+                </div>
             </div>
         </main>
 
@@ -96,67 +116,31 @@
     </div>
 
     <script>
-        // Fetch current user info
-        async function loadCurrentUser() {
+        async function checkAuth() {
             try {
                 const response = await fetch('/api/users/me');
-                const data = await response.json();
 
-                if (data.authenticated && data.service_account_email) {
+                document.getElementById('loading-section').classList.add('hidden');
+
+                if (response.ok) {
+                    const data = await response.json();
                     document.getElementById('user-section').classList.remove('hidden');
                     document.getElementById('user-email').textContent = data.email;
-                    document.getElementById('service-account-email').textContent = data.service_account_email;
-                    document.getElementById('service-account-copy').textContent = data.service_account_email;
-                }
-            } catch (error) {
-                console.error('Failed to load current user:', error);
-            }
-        }
-
-        // Fetch all users
-        async function loadAllUsers() {
-            try {
-                const response = await fetch('/api/users');
-                const data = await response.json();
-
-                document.getElementById('users-loading').classList.add('hidden');
-
-                if (data.users && data.users.length > 0) {
-                    const tbody = document.getElementById('users-table-body');
-                    tbody.innerHTML = '';
-
-                    data.users.forEach(user => {
-                        const row = document.createElement('tr');
-                        row.innerHTML = `
-                            <td class="px-4 py-3 whitespace-nowrap text-sm text-gray-900">${escapeHtml(user.email)}</td>
-                            <td class="px-4 py-3 whitespace-nowrap text-sm font-mono text-gray-600">${escapeHtml(user.service_account_email)}</td>
-                        `;
-                        tbody.appendChild(row);
-                    });
-
-                    document.getElementById('users-table-container').classList.remove('hidden');
+                    if (data.service_account_email) {
+                        document.getElementById('service-account-email').textContent = data.service_account_email;
+                        document.getElementById('service-account-copy').textContent = data.service_account_email;
+                    }
                 } else {
-                    document.getElementById('users-empty').classList.remove('hidden');
+                    document.getElementById('login-section').classList.remove('hidden');
                 }
             } catch (error) {
-                console.error('Failed to load users:', error);
-                document.getElementById('users-loading').classList.add('hidden');
-                document.getElementById('users-error').classList.remove('hidden');
+                console.error('Failed to check auth:', error);
+                document.getElementById('loading-section').classList.add('hidden');
+                document.getElementById('login-section').classList.remove('hidden');
             }
         }
 
-        // Helper to escape HTML
-        function escapeHtml(text) {
-            const div = document.createElement('div');
-            div.textContent = text;
-            return div.innerHTML;
-        }
-
-        // Load data on page load
-        document.addEventListener('DOMContentLoaded', () => {
-            loadCurrentUser();
-            loadAllUsers();
-        });
+        document.addEventListener('DOMContentLoaded', checkAuth);
     </script>
 </body>
 </html>
