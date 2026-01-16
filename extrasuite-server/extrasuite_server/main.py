@@ -5,9 +5,10 @@ Entry point: CLI creates ExtraSuiteClient instance and calls get_token()
 """
 
 from contextlib import asynccontextmanager
+from pathlib import Path
 
 from fastapi import FastAPI, Request
-from fastapi.responses import JSONResponse
+from fastapi.responses import FileResponse, JSONResponse
 from loguru import logger
 from slowapi.errors import RateLimitExceeded
 from slowapi.util import get_remote_address
@@ -105,14 +106,24 @@ def create_app() -> FastAPI:
     # Register API router (all endpoints consolidated)
     app.include_router(api.router, prefix="/api")
 
+    # Static pages directory
+    static_dir = Path(__file__).parent / "static"
+
     @app.get("/")
-    async def root():
-        return {
-            "service": "extrasuite-server",
-            "version": "1.0.0",
-            "description": "ExtraSuite - Headless CLI authentication service",
-            "docs": "/api/docs" if not settings.is_production else None,
-        }
+    async def home():
+        return FileResponse(static_dir / "index.html", media_type="text/html")
+
+    @app.get("/privacy")
+    async def privacy():
+        return FileResponse(static_dir / "privacy.html", media_type="text/html")
+
+    @app.get("/terms")
+    async def terms():
+        return FileResponse(static_dir / "terms.html", media_type="text/html")
+
+    @app.get("/robots.txt")
+    async def robots():
+        return FileResponse(static_dir / "robots.txt", media_type="text/plain")
 
     return app
 
