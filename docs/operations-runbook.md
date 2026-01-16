@@ -116,6 +116,23 @@ dig extrasuite.think41.com CNAME +short
 
 **Note:** HTTP works immediately (redirects to HTTPS), but HTTPS requires the certificate.
 
+### 7. IAM Policy Binding Fails Without --condition=None
+
+**Symptom:**
+```
+ERROR: Adding a binding without specifying a condition to a policy containing conditions is prohibited
+```
+
+**Cause:** The project has existing IAM bindings with conditions. gcloud requires explicit `--condition=None` when adding unconditional bindings.
+
+**Solution:** Add `--condition=None` to the command:
+```bash
+gcloud projects add-iam-policy-binding $PROJECT_ID \
+  --member="serviceAccount:sa@project.iam.gserviceaccount.com" \
+  --role="roles/some.role" \
+  --condition=None
+```
+
 ## CI/CD Configuration
 
 ### Cloud Build Trigger
@@ -261,7 +278,8 @@ gcloud logging read 'resource.type="cloud_run_revision" AND jsonPayload.message:
 ### Health Check
 
 ```bash
-curl https://extrasuite-565218627358.asia-southeast1.run.app/api/health
+# Use custom domain (Cloud Run URL may return 404 when domain mapping is configured)
+curl https://extrasuite.think41.com/api/health
 # Expected: {"status":"healthy","service":"extrasuite-server"}
 ```
 

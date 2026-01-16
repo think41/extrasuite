@@ -89,8 +89,11 @@ gcloud iam service-accounts add-iam-policy-binding \
 # Grant permission to write build logs
 gcloud projects add-iam-policy-binding $PROJECT_ID \
   --member="serviceAccount:extrasuite-cloudbuild@$PROJECT_ID.iam.gserviceaccount.com" \
-  --role="roles/logging.logWriter"
+  --role="roles/logging.logWriter" \
+  --condition=None
 ```
+
+**Note:** The `--condition=None` flag is required if the project has existing IAM bindings with conditions.
 
 ### Configure Build Trigger
 
