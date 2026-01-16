@@ -116,9 +116,49 @@ dig extrasuite.think41.com CNAME +short
 
 **Note:** HTTP works immediately (redirects to HTTPS), but HTTPS requires the certificate.
 
+## CI/CD Configuration
+
+### Cloud Build Trigger
+
+Automatic deployments are configured via Cloud Build:
+
+| Setting | Value |
+|---------|-------|
+| Trigger Name | `extrasuite-deploy-main` |
+| Repository | `think41/extrasuite` |
+| Branch | `^main$` |
+| Config File | `extrasuite-server/cloudbuild.yaml` |
+| Service Account | `extrasuite-cloudbuild@thinker41.iam.gserviceaccount.com` |
+
+**How it works:** Push to `main` branch triggers automatic build and deployment to Cloud Run.
+
+### Cloud Build Service Account Permissions
+
+The `extrasuite-cloudbuild` service account has least-privilege permissions:
+
+| Role | Resource | Purpose |
+|------|----------|---------|
+| `roles/storage.admin` | Project | Push images to GCR |
+| `roles/run.developer` | Project | Deploy to Cloud Run |
+| `roles/logging.logWriter` | Project | Write build logs |
+| `roles/iam.serviceAccountUser` | Runtime SA | Act as `extrasuite-server` |
+
+### View Build Status
+
+```bash
+# List recent builds
+gcloud builds list --project=thinker41 --limit=5
+
+# View specific build logs
+gcloud builds log BUILD_ID --project=thinker41
+
+# Stream logs for running build
+gcloud builds log BUILD_ID --project=thinker41 --stream
+```
+
 ## Deployment Commands
 
-### Full Redeployment
+### Full Redeployment (Manual)
 
 ```bash
 # Set variables

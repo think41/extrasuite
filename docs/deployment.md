@@ -59,7 +59,60 @@ gcloud projects add-iam-policy-binding $PROJECT_ID \
   --role="roles/iam.serviceAccountTokenCreator"
 ```
 
-## Step 5: Build and Push Docker Image
+## Step 5: Create Cloud Build Service Account (for CI/CD)
+
+Create a dedicated service account for Cloud Build with least privileges:
+
+```bash
+# Create the Cloud Build service account
+gcloud iam service-accounts create extrasuite-cloudbuild \
+  --display-name="ExtraSuite Cloud Build"
+
+# Grant permission to push images to Container Registry
+# (GCR uses the artifacts.$PROJECT_ID.appspot.com bucket)
+gsutil iam ch \
+  serviceAccount:extrasuite-cloudbuild@$PROJECT_ID.iam.gserviceaccount.com:objectAdmin \
+  gs://artifacts.$PROJECT_ID.appspot.com
+
+# Grant permission to deploy to Cloud Run
+gcloud projects add-iam-policy-binding $PROJECT_ID \
+  --member="serviceAccount:extrasuite-cloudbuild@$PROJECT_ID.iam.gserviceaccount.com" \
+  --role="roles/run.developer"
+
+# Grant permission to act as the runtime service account during deployment
+gcloud iam service-accounts add-iam-policy-binding \
+  extrasuite-server@$PROJECT_ID.iam.gserviceaccount.com \
+  --member="serviceAccount:extrasuite-cloudbuild@$PROJECT_ID.iam.gserviceaccount.com" \
+  --role="roles/iam.serviceAccountUser"
+
+# Grant permission to write build logs
+gcloud projects add-iam-policy-binding $PROJECT_ID \
+  --member="serviceAccount:extrasuite-cloudbuild@$PROJECT_ID.iam.gserviceaccount.com" \
+  --role="roles/logging.logWriter"
+```
+
+### Configure Build Trigger
+
+After creating the service account, configure a Cloud Build trigger:
+
+1. Go to [Cloud Build Triggers](https://console.cloud.google.com/cloud-build/triggers)
+2. Click **Create Trigger**
+3. Configure the trigger:
+   - **Event:** Push to branch (e.g., `^main$`)
+   - **Source:** Your repository
+   - **Configuration:** Cloud Build configuration file
+   - **Location:** `extrasuite-server/cloudbuild.yaml`
+   - **Service account:** `extrasuite-cloudbuild@$PROJECT_ID.iam.gserviceaccount.com`
+4. Optionally override substitution variables:
+   - `_REGION`: Target Cloud Run region
+   - `_SERVICE_NAME`: Cloud Run service name
+   - `_REDIRECT_URI`: OAuth callback URL
+   - `_ALLOWED_DOMAINS`: Allowed email domains
+   - `_DOMAIN_ABBREVIATIONS`: Domain to abbreviation mapping
+
+## Step 6: Build and Push Docker Image (Manual)
+
+For manual deployments without Cloud Build:
 
 ```bash
 # Build the image
@@ -69,7 +122,9 @@ docker build -t gcr.io/$PROJECT_ID/extrasuite-server:latest .
 docker push gcr.io/$PROJECT_ID/extrasuite-server:latest
 ```
 
-## Step 6: Deploy to Cloud Run
+## Step 7: Deploy to Cloud Run (Manual)
+
+For manual deployments:
 
 ```bash
 gcloud run deploy extrasuite-server \
@@ -85,7 +140,7 @@ gcloud run deploy extrasuite-server \
   --set-secrets="GOOGLE_CLIENT_SECRET=extrasuite-client-secret:latest"
 ```
 
-## Step 7: Update OAuth Redirect URI
+## Step 8: Update OAuth Redirect URI
 
 After deployment, get your Cloud Run URL:
 
@@ -104,7 +159,7 @@ gcloud run services update extrasuite-server \
   --set-env-vars="GOOGLE_REDIRECT_URI=https://your-cloud-run-url/api/auth/callback"
 ```
 
-## Step 8: Store Secrets in Secret Manager
+## Step 9: Store Secrets in Secret Manager
 
 ```bash
 # Create secrets
