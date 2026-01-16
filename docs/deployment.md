@@ -23,7 +23,7 @@ gcloud services enable \
 
 ```bash
 # Create Firestore database (collections are created automatically on first use)
-gcloud firestore databases create --location=asia-south1
+gcloud firestore databases create --location=asia-southeast1
 ```
 
 ## Step 3: Create OAuth 2.0 Credentials
@@ -75,10 +75,11 @@ docker push gcr.io/$PROJECT_ID/extrasuite-server:latest
 gcloud run deploy extrasuite-server \
   --image=gcr.io/$PROJECT_ID/extrasuite-server:latest \
   --service-account=extrasuite-server@$PROJECT_ID.iam.gserviceaccount.com \
-  --region=us-central1 \
+  --region=asia-southeast1 \
   --allow-unauthenticated \
   --set-env-vars="ENVIRONMENT=production" \
   --set-env-vars="GOOGLE_CLOUD_PROJECT=$PROJECT_ID" \
+  --set-env-vars="DOMAIN_ABBREVIATIONS={\"example.com\":\"ex\",\"company.org\":\"co\"}" \
   --set-secrets="SECRET_KEY=extrasuite-secret-key:latest" \
   --set-secrets="GOOGLE_CLIENT_ID=extrasuite-client-id:latest" \
   --set-secrets="GOOGLE_CLIENT_SECRET=extrasuite-client-secret:latest"
@@ -89,7 +90,7 @@ gcloud run deploy extrasuite-server \
 After deployment, get your Cloud Run URL:
 
 ```bash
-gcloud run services describe extrasuite-server --region=us-central1 --format='value(status.url)'
+gcloud run services describe extrasuite-server --region=asia-southeast1 --format='value(status.url)'
 ```
 
 Update your OAuth credentials in Google Cloud Console to include:
@@ -99,7 +100,7 @@ Then update the environment variable:
 
 ```bash
 gcloud run services update extrasuite-server \
-  --region=us-central1 \
+  --region=asia-southeast1 \
   --set-env-vars="GOOGLE_REDIRECT_URI=https://your-cloud-run-url/api/auth/callback"
 ```
 
@@ -144,11 +145,25 @@ To allow only specific email domains to authenticate:
 
 ```bash
 gcloud run services update extrasuite-server \
-  --region=us-central1 \
+  --region=asia-southeast1 \
   --set-env-vars="ALLOWED_EMAIL_DOMAINS=example.com,company.org"
 ```
 
 If not set, all email domains are allowed.
+
+### Configure Domain Abbreviations
+
+Service accounts are named using the user's email local part plus a domain abbreviation (e.g., `john-ex@project.iam.gserviceaccount.com` for `john@example.com` with abbreviation `ex`).
+
+Configure domain abbreviations as a JSON object:
+
+```bash
+gcloud run services update extrasuite-server \
+  --region=asia-southeast1 \
+  --set-env-vars='DOMAIN_ABBREVIATIONS={"example.com":"ex","company.org":"co"}'
+```
+
+If a domain is not in the mapping, a 4-character hash of the domain is used as fallback.
 
 ### Configure Credential Expiry (TTL Policy)
 

@@ -83,14 +83,16 @@ This is a common point of confusion. Here's why users don't need project members
 
 ### How It Works
 
-1. **User authenticates** via Google OAuth (requests `cloud-platform` scope)
+1. **User authenticates** via Google OAuth (only `openid` and `userinfo.email` scopes)
 2. **Server creates a service account** for the user using its own credentials (ADC)
 3. **Server grants IAM binding** directly to the user's email address:
    ```
    user:john@example.com → roles/iam.serviceAccountTokenCreator
    ```
    This binding is on the specific service account, not the project.
-4. **Server impersonates the SA** using the user's OAuth credentials to generate a token
+4. **Server impersonates the SA** using its own ADC (not user credentials) to generate a token
+
+**Key change:** The server uses its own Application Default Credentials (as Cloud Run's service account) to impersonate user service accounts. Users only need to prove their identity - they don't need any GCP permissions.
 
 ### Key Insight
 
@@ -116,13 +118,13 @@ To enable all employees (e.g., `all@example.com`) to use ExtraSuite:
 
 2. **Grant server permissions** (see sections above)
 
-3. **Share Google Workspace resources** with the created service accounts (e.g., share a Google Sheet with `ea-john@project.iam.gserviceaccount.com`)
+3. **Share Google Workspace resources** with the created service accounts (e.g., share a Google Sheet with `john-ex@project.iam.gserviceaccount.com` where `ex` is the domain abbreviation)
 
 That's it. No IAM configuration needed for the user group.
 
 ## User Service Account Permissions
 
-When ExtraSuite creates a service account for a user, it also grants the user permission to impersonate it:
+When ExtraSuite creates a service account for a user, it names the SA using the format `{local-part}-{domain-abbrev}` (e.g., `john-ex` for `john@example.com` with abbreviation `ex`). It also grants the user permission to impersonate it:
 
 **Role granted to user:** `roles/iam.serviceAccountTokenCreator`
 
@@ -139,18 +141,19 @@ The server uses Application Default Credentials with:
 
 ### User OAuth Scopes (during authentication)
 
-Users are prompted to grant:
+Users are prompted to grant minimal scopes for identity verification only:
 - `openid` - OpenID Connect
 - `https://www.googleapis.com/auth/userinfo.email` - Email address
-- `https://www.googleapis.com/auth/userinfo.profile` - Profile info
-- `https://www.googleapis.com/auth/cloud-platform` - For impersonation
+
+**Note:** Users do NOT grant `cloud-platform` scope. The server uses its own credentials (ADC) for all IAM operations and impersonation.
 
 ### Service Account Token Scopes (returned to CLI)
 
 The short-lived tokens include:
-- `https://www.googleapis.com/auth/spreadsheets` - Google Sheets access
+- `https://www.googleapis.com/auth/spreadsheets` - Google Sheets read/write
+- `https://www.googleapis.com/auth/documents` - Google Docs read/write
+- `https://www.googleapis.com/auth/presentations` - Google Slides read/write
 - `https://www.googleapis.com/auth/drive.readonly` - Google Drive read access
-- `https://www.googleapis.com/auth/documents.readonly` - Google Docs read access
 
 ## Least Privilege Recommendations
 
@@ -162,7 +165,7 @@ For production environments:
    ```bash
    # Instead of project-level, grant on specific SA
    gcloud iam service-accounts add-iam-policy-binding \
-     ea-username@$PROJECT_ID.iam.gserviceaccount.com \
+     username-ex@$PROJECT_ID.iam.gserviceaccount.com \
      --member="serviceAccount:extrasuite-server@$PROJECT_ID.iam.gserviceaccount.com" \
      --role="roles/iam.serviceAccountTokenCreator"
    ```
