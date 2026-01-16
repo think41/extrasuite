@@ -24,7 +24,7 @@ from google.oauth2.credentials import Credentials
 from gateway import ExtraSuiteClient
 
 
-EXTRASUITE_SERVER_URL = "https://extrasuite-server-jrq7d3fexa-el.a.run.app"
+EXTRASUITE_SERVER_URL = "https://extrasuite.think41.com"
 TOKEN_CACHE_PATH = Path.home() / ".config" / "extrasuite" / "token.json"
 
 

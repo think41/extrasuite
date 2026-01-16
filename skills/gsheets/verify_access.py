@@ -27,7 +27,7 @@ from gspread.exceptions import SpreadsheetNotFound, APIError
 from gateway import ExtraSuiteClient
 
 
-EXTRASUITE_SERVER_URL = "https://extrasuite-server-jrq7d3fexa-el.a.run.app"
+EXTRASUITE_SERVER_URL = "https://extrasuite.think41.com"
 TOKEN_CACHE_PATH = Path.home() / ".config" / "extrasuite" / "token.json"
 
 
@@ -92,20 +92,6 @@ Please try again. If the problem persists, check:
         gc = gspread.authorize(creds)
         sh = gc.open_by_key(spreadsheet_id)
 
-        # Determine access level by attempting a write operation
-        access_role = "viewer"
-        try:
-            # Try batch_update with empty list - tests write permission without changing anything
-            sh.batch_update({"requests": []})
-            access_role = "editor"
-        except APIError as write_err:
-            # Write failed - check if it's a permission issue
-            if "403" in str(write_err) or getattr(getattr(write_err, 'response', None), 'status_code', None) == 403:
-                access_role = "viewer"
-            else:
-                # Some other error, assume viewer
-                access_role = "viewer"
-
         # Success - gather spreadsheet info
         worksheets = []
         for ws in sh.worksheets():
@@ -118,7 +104,6 @@ Please try again. If the problem persists, check:
 
         # Print friendly message with spreadsheet title first
         print(f"Spreadsheet: {sh.title}")
-        print(f"Access: {access_role}")
         print(f"Worksheets: {', '.join(ws['title'] for ws in worksheets)}")
         sys.exit(0)
 

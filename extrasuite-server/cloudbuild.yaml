@@ -14,7 +14,7 @@ substitutions:
   _REGION: asia-southeast1
   _SERVICE_NAME: extrasuite
   _RUNTIME_SA: extrasuite-server@${PROJECT_ID}.iam.gserviceaccount.com
-  _REDIRECT_URI: https://${_SERVICE_NAME}-565218627358.${_REGION}.run.app/api/auth/callback
+  _REDIRECT_URI: https://extrasuite.think41.com/api/auth/callback
   _ALLOWED_DOMAINS: think41.com,recruit41.com,mindlap.dev
   _DOMAIN_ABBREVIATIONS: '{"think41.com":"t41","recruit41.com":"r41","mindlap.dev":"mlap"}'
 

@@ -11,7 +11,7 @@ This document captures operational knowledge and lessons learned from deploying 
 | Project ID | `thinker41` |
 | Region | `asia-southeast1` (Singapore) |
 | Cloud Run Service | `extrasuite` |
-| Service URL | `https://extrasuite-565218627358.asia-southeast1.run.app` |
+| Service URL | `https://extrasuite.think41.com` |
 | Custom Domain | `extrasuite.think41.com` |
 | Firestore Database | `(default)` in `asia-southeast1` |
 | Service Account | `extrasuite-server@thinker41.iam.gserviceaccount.com` |
@@ -328,7 +328,7 @@ rm -f ~/.config/extrasuite/token.json
 # Run test
 cd /path/to/extrasuite
 PYTHONPATH=extrasuite-client/src python3 extrasuite-client/examples/basic_usage.py \
-  --server https://extrasuite-565218627358.asia-southeast1.run.app
+  --server https://extrasuite.think41.com
 ```
 
 **Three test scenarios:**
@@ -345,7 +345,7 @@ PYTHONPATH=extrasuite-client/src python3 extrasuite-client/examples/basic_usage.
 | `GOOGLE_CLOUD_PROJECT` | GCP project ID | `thinker41` |
 | `GOOGLE_CLIENT_ID` | OAuth client ID | (from Secret Manager) |
 | `GOOGLE_CLIENT_SECRET` | OAuth client secret | (from Secret Manager) |
-| `GOOGLE_REDIRECT_URI` | OAuth callback URL | `https://...run.app/api/auth/callback` |
+| `GOOGLE_REDIRECT_URI` | OAuth callback URL | `https://extrasuite.think41.com/api/auth/callback` |
 | `SECRET_KEY` | Session signing key | (from Secret Manager) |
 | `ALLOWED_EMAIL_DOMAINS` | Comma-separated domains | `think41.com,recruit41.com,mindlap.dev` |
 | `DOMAIN_ABBREVIATIONS` | JSON mapping | `{"think41.com":"t41",...}` |

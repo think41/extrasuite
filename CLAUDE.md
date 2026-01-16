@@ -114,18 +114,18 @@ Use `extrasuite-client/examples/basic_usage.py` to validate the three main flows
    ```bash
    rm -f ~/.config/extrasuite/token.json
    PYTHONPATH=extrasuite-client/src python3 extrasuite-client/examples/basic_usage.py \
-     --server https://extrasuite-server-jrq7d3fexa-el.a.run.app
+     --server https://extrasuite.think41.com
    ```
 2. **Cached token:** token file present and valid, no browser.
    ```bash
    PYTHONPATH=extrasuite-client/src python3 extrasuite-client/examples/basic_usage.py \
-     --server https://extrasuite-server-jrq7d3fexa-el.a.run.app
+     --server https://extrasuite.think41.com
    ```
 3. **Session reuse (no cache, no re-auth):** delete token cache, browser opens, SSO/session skips login.
    ```bash
    rm -f ~/.config/extrasuite/token.json
    PYTHONPATH=extrasuite-client/src python3 extrasuite-client/examples/basic_usage.py \
-     --server https://extrasuite-server-jrq7d3fexa-el.a.run.app
+     --server https://extrasuite.think41.com
    ```
 
 ## Package Names
