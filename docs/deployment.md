@@ -68,16 +68,17 @@ Create a dedicated service account for Cloud Build with least privileges:
 gcloud iam service-accounts create extrasuite-cloudbuild \
   --display-name="ExtraSuite Cloud Build"
 
-# Grant permission to push images to Container Registry
-# (GCR uses the artifacts.$PROJECT_ID.appspot.com bucket)
-gsutil iam ch \
-  serviceAccount:extrasuite-cloudbuild@$PROJECT_ID.iam.gserviceaccount.com:objectAdmin \
-  gs://artifacts.$PROJECT_ID.appspot.com
-
-# Grant permission to deploy to Cloud Run
+# Grant permission to push images to Container Registry (uses Artifact Registry backend)
 gcloud projects add-iam-policy-binding $PROJECT_ID \
   --member="serviceAccount:extrasuite-cloudbuild@$PROJECT_ID.iam.gserviceaccount.com" \
-  --role="roles/run.developer"
+  --role="roles/artifactregistry.writer" \
+  --condition=None
+
+# Grant permission to deploy to Cloud Run and set IAM policies (for --allow-unauthenticated)
+gcloud projects add-iam-policy-binding $PROJECT_ID \
+  --member="serviceAccount:extrasuite-cloudbuild@$PROJECT_ID.iam.gserviceaccount.com" \
+  --role="roles/run.admin" \
+  --condition=None
 
 # Grant permission to act as the runtime service account during deployment
 gcloud iam service-accounts add-iam-policy-binding \

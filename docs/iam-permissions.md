@@ -179,30 +179,32 @@ For production environments:
 
 For CI/CD deployments, create a dedicated service account (`extrasuite-cloudbuild`) with least privileges:
 
-### 1. Container Registry Access
+### 1. Artifact Registry Access
 
-**Permission:** `objectAdmin` on GCR bucket
+**Role:** `roles/artifactregistry.writer`
 
-**Purpose:** Push Docker images to Container Registry.
-
-**Grant command:**
-```bash
-gsutil iam ch \
-  serviceAccount:extrasuite-cloudbuild@$PROJECT_ID.iam.gserviceaccount.com:objectAdmin \
-  gs://artifacts.$PROJECT_ID.appspot.com
-```
-
-### 2. Cloud Run Deployment
-
-**Role:** `roles/run.developer`
-
-**Purpose:** Deploy and update Cloud Run services (cannot delete services).
+**Purpose:** Push Docker images to Container Registry (which uses Artifact Registry backend).
 
 **Grant command:**
 ```bash
 gcloud projects add-iam-policy-binding $PROJECT_ID \
   --member="serviceAccount:extrasuite-cloudbuild@$PROJECT_ID.iam.gserviceaccount.com" \
-  --role="roles/run.developer"
+  --role="roles/artifactregistry.writer" \
+  --condition=None
+```
+
+### 2. Cloud Run Deployment
+
+**Role:** `roles/run.admin`
+
+**Purpose:** Deploy Cloud Run services and set IAM policies (required for `--allow-unauthenticated`).
+
+**Grant command:**
+```bash
+gcloud projects add-iam-policy-binding $PROJECT_ID \
+  --member="serviceAccount:extrasuite-cloudbuild@$PROJECT_ID.iam.gserviceaccount.com" \
+  --role="roles/run.admin" \
+  --condition=None
 ```
 
 ### 3. Service Account User
@@ -247,7 +249,7 @@ gcloud projects add-iam-policy-binding $PROJECT_ID \
 
 | Role | Resource | Purpose |
 |------|----------|---------|
-| `objectAdmin` | GCR bucket | Push Docker images |
-| `roles/run.developer` | Project | Deploy to Cloud Run |
+| `roles/artifactregistry.writer` | Project | Push Docker images |
+| `roles/run.admin` | Project | Deploy to Cloud Run & set IAM |
 | `roles/iam.serviceAccountUser` | Runtime SA | Act as runtime SA |
 | `roles/logging.logWriter` | Project | Write build logs |

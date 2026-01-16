@@ -134,12 +134,12 @@ Automatic deployments are configured via Cloud Build:
 
 ### Cloud Build Service Account Permissions
 
-The `extrasuite-cloudbuild` service account has least-privilege permissions:
+The `extrasuite-cloudbuild` service account has these permissions:
 
 | Role | Resource | Purpose |
 |------|----------|---------|
-| `roles/storage.admin` | Project | Push images to GCR |
-| `roles/run.developer` | Project | Deploy to Cloud Run |
+| `roles/artifactregistry.writer` | Project | Push images to GCR |
+| `roles/run.admin` | Project | Deploy to Cloud Run & set IAM |
 | `roles/logging.logWriter` | Project | Write build logs |
 | `roles/iam.serviceAccountUser` | Runtime SA | Act as `extrasuite-server` |
 
