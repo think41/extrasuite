@@ -5,25 +5,11 @@ These fakes allow us to control the behavior of external dependencies
 """
 
 import hashlib
-from dataclasses import dataclass, field
-from datetime import UTC, datetime
+from dataclasses import dataclass
 from typing import Any
 
 from google.api_core.exceptions import NotFound
 from google.auth.exceptions import RefreshError
-
-
-@dataclass
-class FakeUserCredentials:
-    """Fake user credentials for testing."""
-
-    email: str
-    access_token: str = "fake-access-token"
-    refresh_token: str = "fake-refresh-token"
-    scopes: list[str] = field(default_factory=list)
-    service_account_email: str | None = None
-    created_at: datetime | None = None
-    updated_at: datetime | None = None
 
 
 class FakeDatabase:
@@ -33,51 +19,23 @@ class FakeDatabase:
     """
 
     def __init__(self) -> None:
-        self.users: dict[str, FakeUserCredentials] = {}
+        # Simple mapping: email -> service_account_email
+        self.users: dict[str, str] = {}
         self.oauth_states: dict[str, str] = {}
-        self._should_fail_get_user: bool = False
-        self._should_fail_update_sa: bool = False
+        self._should_fail_get_sa: bool = False
+        self._should_fail_set_sa: bool = False
 
-    async def get_user_credentials(self, email: str) -> FakeUserCredentials | None:
-        """Get user credentials by email."""
-        if self._should_fail_get_user:
+    async def get_service_account_email(self, email: str) -> str | None:
+        """Get service account email for a user."""
+        if self._should_fail_get_sa:
             raise TimeoutError("Simulated database timeout")
         return self.users.get(email)
 
-    async def store_user_credentials(
-        self,
-        email: str,
-        access_token: str,
-        refresh_token: str,
-        scopes: list[str],
-        service_account_email: str | None = None,
-    ) -> FakeUserCredentials:
-        """Store or update user OAuth credentials."""
-        now = datetime.now(UTC)
-        creds = FakeUserCredentials(
-            email=email,
-            access_token=access_token,
-            refresh_token=refresh_token,
-            scopes=scopes,
-            service_account_email=service_account_email,
-            created_at=self.users.get(email, FakeUserCredentials(email=email)).created_at or now,
-            updated_at=now,
-        )
-        self.users[email] = creds
-        return creds
-
-    async def update_service_account_email(self, email: str, service_account_email: str) -> None:
-        """Update the service account email for a user."""
-        if self._should_fail_update_sa:
+    async def set_service_account_email(self, email: str, service_account_email: str) -> None:
+        """Set the service account email for a user."""
+        if self._should_fail_set_sa:
             raise TimeoutError("Simulated database timeout")
-        if email in self.users:
-            self.users[email].service_account_email = service_account_email
-        else:
-            # Create minimal user record if it doesn't exist
-            self.users[email] = FakeUserCredentials(
-                email=email,
-                service_account_email=service_account_email,
-            )
+        self.users[email] = service_account_email
 
     async def save_state(self, state: str, redirect_url: str) -> None:
         """Save OAuth state token with redirect URL."""

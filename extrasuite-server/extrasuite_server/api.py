@@ -91,13 +91,13 @@ async def get_current_user(
     if not email:
         raise HTTPException(status_code=403, detail="Authentication required")
 
-    user_creds = await db.get_user_credentials(email)
-    if not user_creds:
+    sa_email = await db.get_service_account_email(email)
+    if not sa_email:
         raise HTTPException(status_code=403, detail="Authentication required")
 
     return {
         "email": email,
-        "service_account_email": user_creds.service_account_email,
+        "service_account_email": sa_email,
     }
 
 
@@ -116,8 +116,8 @@ async def list_users(
     if not email:
         raise HTTPException(status_code=403, detail="Authentication required")
 
-    user_creds = await db.get_user_credentials(email)
-    if not user_creds:
+    sa_email = await db.get_service_account_email(email)
+    if not sa_email:
         raise HTTPException(status_code=403, detail="Authentication required")
 
     users = await db.list_users_with_service_accounts()
@@ -158,16 +158,16 @@ async def start_token_auth(
     email = request.session.get("email")
     logger.info("Session check", extra={"email": email, "has_session": email is not None})
     if email:
-        user_creds = await db.get_user_credentials(email)
+        sa_email = await db.get_service_account_email(email)
         logger.info(
             "Firestore lookup",
             extra={
                 "email": email,
-                "found": user_creds is not None,
-                "has_sa": user_creds.service_account_email if user_creds else None,
+                "found": sa_email is not None,
+                "sa_email": sa_email,
             },
         )
-        if user_creds and user_creds.service_account_email:
+        if sa_email:
             logger.info("Session found, generating token", extra={"email": email, "cli_port": port})
             redirect_response = await _try_generate_token(db, email, cli_redirect, settings)
             if redirect_response:

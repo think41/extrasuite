@@ -93,9 +93,9 @@ class GeneratedToken:
 class DatabaseProtocol(Protocol):
     """Protocol for database operations needed by TokenGenerator."""
 
-    async def get_user_credentials(self, email: str) -> Any: ...
+    async def get_service_account_email(self, email: str) -> str | None: ...
 
-    async def update_service_account_email(
+    async def set_service_account_email(
         self, email: str, service_account_email: str
     ) -> None: ...
 
@@ -227,8 +227,7 @@ class TokenGenerator:
             ImpersonationError: If token generation fails
         """
         # 1. Look up existing SA from database
-        user_creds = await self._db.get_user_credentials(user_email)
-        sa_email = user_creds.service_account_email if user_creds else None
+        sa_email = await self._db.get_service_account_email(user_email)
 
         # 2. Create SA if not found
         sa_created = False
@@ -237,7 +236,7 @@ class TokenGenerator:
                 user_email, user_name
             )
             # Store mapping in database
-            await self._db.update_service_account_email(user_email, sa_email)
+            await self._db.set_service_account_email(user_email, sa_email)
 
         # 3. Impersonate SA using server ADC
         token, expires_at = await self._impersonate_service_account(

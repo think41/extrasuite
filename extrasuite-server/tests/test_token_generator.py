@@ -16,7 +16,6 @@ from tests.fakes import (
     FakeDatabase,
     FakeIAMAsyncClient,
     FakeSettings,
-    FakeUserCredentials,
     create_fake_impersonated_credentials_class,
 )
 
@@ -140,9 +139,9 @@ class TestTokenGenerator:
         assert len(fake_iam.service_accounts) == 1
 
         # SA email should be stored in database
-        user = fake_db.users.get("newuser@example.com")
-        assert user is not None
-        assert user.service_account_email == result.service_account_email
+        sa_email = fake_db.users.get("newuser@example.com")
+        assert sa_email is not None
+        assert sa_email == result.service_account_email
 
     @pytest.mark.asyncio
     async def test_generate_token_existing_user_reuses_sa(
@@ -154,10 +153,7 @@ class TestTokenGenerator:
         """Existing user should reuse their service account."""
         # Setup: user already has SA
         existing_sa = "existing-ex@test-project.iam.gserviceaccount.com"
-        fake_db.users["existing@example.com"] = FakeUserCredentials(
-            email="existing@example.com",
-            service_account_email=existing_sa,
-        )
+        fake_db.users["existing@example.com"] = existing_sa
 
         result = await generator.generate_token("existing@example.com")
 
@@ -282,10 +278,7 @@ class TestTokenGenerator:
         """Impersonation failure should raise ImpersonationError."""
         # Pre-create SA so we skip creation and go straight to impersonation
         sa_email = "user-ex@test-project.iam.gserviceaccount.com"
-        fake_db.users["user@example.com"] = FakeUserCredentials(
-            email="user@example.com",
-            service_account_email=sa_email,
-        )
+        fake_db.users["user@example.com"] = sa_email
 
         # Configure fake to fail on impersonation
         FakeCreds = create_fake_impersonated_credentials_class(
@@ -343,10 +336,9 @@ class TestTokenGenerator:
         """SA email should be stored in database for new users."""
         await generator.generate_token("newuser@example.com")
 
-        user = fake_db.users.get("newuser@example.com")
-        assert user is not None
-        assert user.service_account_email is not None
-        assert user.service_account_email.endswith("@test-project.iam.gserviceaccount.com")
+        sa_email = fake_db.users.get("newuser@example.com")
+        assert sa_email is not None
+        assert sa_email.endswith("@test-project.iam.gserviceaccount.com")
 
 
 class TestTokenGeneratorWithCustomToken:

@@ -1,16 +1,13 @@
 """Database layer using Google Cloud Firestore (async).
 
 Stores two types of data:
-1. Users: email -> OAuth credentials + service account info
+1. Users: email -> service account mapping
 2. OAuth States: state_token -> redirect_url + created_at (for OAuth flow)
 
 Collections structure:
 - users: Document ID = email (with "/" replaced by "__")
-  - access_token: OAuth access token
-  - refresh_token: OAuth refresh token
-  - scopes: List of OAuth scopes
+  - email: User's email address
   - service_account_email: Associated service account
-  - created_at: Record creation timestamp
   - updated_at: Last update timestamp
 
 - oauth_states: Document ID = state_token
@@ -19,10 +16,12 @@ Collections structure:
 
 Note: Sessions are handled via starlette's signed cookies (stateless).
 The cookie stores the user email, which is validated against the users collection.
+
+Note: We do NOT store OAuth access/refresh tokens. We only need the email to
+service account mapping since we use server ADC for impersonation.
 """
 
 import asyncio
-from dataclasses import dataclass
 from datetime import UTC, datetime, timedelta
 
 from fastapi import Request
@@ -33,19 +32,6 @@ OAUTH_STATE_TTL = timedelta(minutes=10)
 
 # Default timeout for database operations (seconds)
 DEFAULT_TIMEOUT = 10.0
-
-
-@dataclass
-class UserCredentials:
-    """User OAuth credentials and service account info."""
-
-    email: str
-    access_token: str
-    refresh_token: str
-    scopes: list[str]
-    service_account_email: str | None = None
-    created_at: datetime | None = None
-    updated_at: datetime | None = None
 
 
 class Database:
@@ -149,57 +135,14 @@ class Database:
         return count
 
     # =========================================================================
-    # User Credentials Management
+    # User -> Service Account Mapping
     # =========================================================================
 
-    async def store_user_credentials(
-        self,
-        email: str,
-        access_token: str,
-        refresh_token: str,
-        scopes: list[str],
-        service_account_email: str | None = None,
-    ) -> UserCredentials:
-        """Store or update user OAuth credentials."""
-        doc_id = self._email_to_doc_id(email)
-        doc_ref = self._client.collection("users").document(doc_id)
+    async def get_service_account_email(self, email: str) -> str | None:
+        """Get service account email for a user.
 
-        now = datetime.now(UTC)
-
-        # Check if document exists to preserve created_at
-        existing_doc = await asyncio.wait_for(doc_ref.get(), timeout=self._timeout)
-        created_at = now
-        if existing_doc.exists:
-            existing_data = existing_doc.to_dict()
-            if existing_data is not None:
-                created_at = existing_data.get("created_at", now)
-
-        data = {
-            "email": email,
-            "access_token": access_token,
-            "refresh_token": refresh_token,
-            "scopes": scopes,
-            "created_at": created_at,
-            "updated_at": now,
-        }
-
-        if service_account_email:
-            data["service_account_email"] = service_account_email
-
-        await asyncio.wait_for(doc_ref.set(data), timeout=self._timeout)
-
-        return UserCredentials(
-            email=email,
-            access_token=access_token,
-            refresh_token=refresh_token,
-            scopes=scopes,
-            service_account_email=service_account_email,
-            created_at=created_at,
-            updated_at=now,
-        )
-
-    async def get_user_credentials(self, email: str) -> UserCredentials | None:
-        """Get user credentials by email."""
+        Returns the service_account_email if found, None otherwise.
+        """
         doc_id = self._email_to_doc_id(email)
         doc_ref = self._client.collection("users").document(doc_id)
         doc = await asyncio.wait_for(doc_ref.get(), timeout=self._timeout)
@@ -211,30 +154,10 @@ class Database:
         if data is None:
             return None
 
-        access_token = data.get("access_token")
-        refresh_token = data.get("refresh_token")
+        return data.get("service_account_email")
 
-        # Allow returning credentials if we have service_account_email,
-        # even without OAuth tokens (since we use server ADC for impersonation)
-        service_account_email = data.get("service_account_email")
-        if not service_account_email and (not access_token or not refresh_token):
-            return None
-
-        return UserCredentials(
-            email=data.get("email", email),
-            access_token=access_token,
-            refresh_token=refresh_token,
-            scopes=data.get("scopes", []),
-            service_account_email=data.get("service_account_email"),
-            created_at=data.get("created_at"),
-            updated_at=data.get("updated_at"),
-        )
-
-    async def update_service_account_email(self, email: str, service_account_email: str) -> None:
-        """Update the service account email for a user.
-
-        Uses set with merge=True to handle both new and existing users.
-        """
+    async def set_service_account_email(self, email: str, service_account_email: str) -> None:
+        """Set the service account email for a user."""
         doc_id = self._email_to_doc_id(email)
         doc_ref = self._client.collection("users").document(doc_id)
 
