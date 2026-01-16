@@ -228,13 +228,23 @@ class Database:
         )
 
     async def update_service_account_email(self, email: str, service_account_email: str) -> None:
-        """Update the service account email for a user."""
+        """Update the service account email for a user.
+
+        Uses set with merge=True to handle both new and existing users.
+        """
         doc_id = self._email_to_doc_id(email)
         doc_ref = self._client.collection("users").document(doc_id)
 
         now = datetime.now(UTC)
         await asyncio.wait_for(
-            doc_ref.update({"service_account_email": service_account_email, "updated_at": now}),
+            doc_ref.set(
+                {
+                    "email": email,
+                    "service_account_email": service_account_email,
+                    "updated_at": now,
+                },
+                merge=True,
+            ),
             timeout=self._timeout,
         )
 
