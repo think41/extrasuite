@@ -2,7 +2,7 @@
 
 Stores two types of data:
 1. Users: email -> OAuth credentials + service account info
-2. OAuth States: state_token -> cli_redirect + created_at (for OAuth flow)
+2. OAuth States: state_token -> redirect_url + created_at (for OAuth flow)
 
 Collections structure:
 - users: Document ID = email (with "/" replaced by "__")
@@ -14,7 +14,7 @@ Collections structure:
   - updated_at: Last update timestamp
 
 - oauth_states: Document ID = state_token
-  - cli_redirect: Redirect URL for CLI
+  - redirect_url: Redirect URL for CLI callback
   - created_at: State creation timestamp (TTL: 10 minutes)
 
 Note: Sessions are handled via starlette's signed cookies (stateless).
@@ -46,15 +46,6 @@ class UserCredentials:
     service_account_email: str | None = None
     created_at: datetime | None = None
     updated_at: datetime | None = None
-
-
-@dataclass
-class OAuthState:
-    """OAuth state for CSRF protection."""
-
-    state: str
-    cli_redirect: str
-    created_at: datetime
 
 
 class Database:
@@ -89,19 +80,22 @@ class Database:
     # OAuth State Management (for CSRF protection during OAuth flow)
     # =========================================================================
 
-    async def create_oauth_state(self, state: str, cli_redirect: str) -> OAuthState:
-        """Create a new OAuth state token."""
+    async def save_state(self, state: str, redirect_url: str) -> None:
+        """Save OAuth state token with redirect URL."""
         now = datetime.now(UTC)
         doc_ref = self._client.collection("oauth_states").document(state)
 
         async def _create() -> None:
-            await doc_ref.set({"cli_redirect": cli_redirect, "created_at": now})
+            await doc_ref.set({"redirect_url": redirect_url, "created_at": now})
 
         await asyncio.wait_for(_create(), timeout=self._timeout)
-        return OAuthState(state=state, cli_redirect=cli_redirect, created_at=now)
 
-    async def get_oauth_state(self, state: str) -> OAuthState | None:
-        """Get OAuth state by token. Returns None if not found or expired."""
+    async def retrieve_state(self, state: str) -> str | None:
+        """Retrieve AND delete OAuth state. Returns redirect_url or None if not found/expired.
+
+        This is an atomic consume operation - the state is deleted after retrieval
+        to ensure one-time use.
+        """
         doc_ref = self._client.collection("oauth_states").document(state)
 
         async def _get() -> DocumentSnapshot:
@@ -116,10 +110,10 @@ class Database:
         if data is None:
             return None
 
-        cli_redirect = data.get("cli_redirect")
+        redirect_url = data.get("redirect_url")
         created_at = data.get("created_at")
 
-        if not cli_redirect or not created_at:
+        if not redirect_url or not created_at:
             return None
 
         # Check if state is expired
@@ -128,12 +122,10 @@ class Database:
             await asyncio.wait_for(doc_ref.delete(), timeout=self._timeout)
             return None
 
-        return OAuthState(state=state, cli_redirect=cli_redirect, created_at=created_at)
-
-    async def delete_oauth_state(self, state: str) -> None:
-        """Delete an OAuth state token (consume it)."""
-        doc_ref = self._client.collection("oauth_states").document(state)
+        # Delete the state (one-time use)
         await asyncio.wait_for(doc_ref.delete(), timeout=self._timeout)
+
+        return redirect_url
 
     async def cleanup_expired_oauth_states(self) -> int:
         """Clean up expired OAuth states. Returns count of deleted states."""

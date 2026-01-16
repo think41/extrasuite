@@ -4,6 +4,8 @@ All sensitive configuration must come from environment variables.
 The application will fail to start if required configuration is missing.
 """
 
+import hashlib
+import json
 import secrets
 from functools import lru_cache
 
@@ -52,6 +54,11 @@ class Settings(BaseSettings):
     # If empty, all domains are allowed
     allowed_email_domains: str = ""
 
+    # Domain abbreviations for service account naming (JSON format)
+    # Example: {"recruit41.com": "r41", "think41.com": "t41", "mindlap.dev": "mlap"}
+    # If domain not in map, falls back to 4-char hash of domain
+    domain_abbreviations: str = ""
+
     @property
     def is_production(self) -> bool:
         """Check if running in production environment."""
@@ -82,6 +89,29 @@ class Settings(BaseSettings):
 
         domain = email.split("@")[-1].lower()
         return domain in allowed
+
+    def get_domain_abbreviation(self, domain: str) -> str:
+        """Get abbreviation for a domain.
+
+        Looks up the domain in the configured abbreviations map.
+        Falls back to a 4-char hash of the domain if not configured.
+
+        Args:
+            domain: Email domain (e.g., "example.com")
+
+        Returns:
+            Abbreviation string (e.g., "r41" or "a1b2")
+        """
+        if self.domain_abbreviations:
+            try:
+                abbrevs = json.loads(self.domain_abbreviations)
+                if domain.lower() in abbrevs:
+                    return abbrevs[domain.lower()]
+            except json.JSONDecodeError:
+                pass
+
+        # Fallback: 4-char hash of domain
+        return hashlib.sha256(domain.lower().encode()).hexdigest()[:4]
 
     @model_validator(mode="after")
     def validate_required_settings(self) -> "Settings":

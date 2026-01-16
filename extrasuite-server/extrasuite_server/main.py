@@ -10,13 +10,13 @@ from fastapi import FastAPI, Request
 from fastapi.responses import JSONResponse
 from loguru import logger
 from slowapi.errors import RateLimitExceeded
+from slowapi.util import get_remote_address
 from starlette.middleware.sessions import SessionMiddleware
 
-from extrasuite_server import google_auth, health, token_exchange
+from extrasuite_server import api
 from extrasuite_server.config import get_settings
 from extrasuite_server.database import Database
 from extrasuite_server.logging import configure_logging
-from extrasuite_server.rate_limit import limiter, rate_limit_exceeded_handler
 
 
 async def unhandled_exception_handler(request: Request, exc: Exception) -> JSONResponse:
@@ -28,6 +28,18 @@ async def unhandled_exception_handler(request: Request, exc: Exception) -> JSONR
     return JSONResponse(
         status_code=500,
         content={"detail": "Internal server error"},
+    )
+
+
+def rate_limit_exceeded_handler(request: Request, _exc: Exception) -> JSONResponse:
+    """Handle rate limit exceeded errors."""
+    logger.warning(
+        "Rate limit exceeded",
+        extra={"path": request.url.path, "client": get_remote_address(request)},
+    )
+    return JSONResponse(
+        status_code=429,
+        content={"detail": "Rate limit exceeded. Please try again later."},
     )
 
 
@@ -75,8 +87,8 @@ def create_app() -> FastAPI:
     app.add_exception_handler(Exception, unhandled_exception_handler)
     app.add_exception_handler(RateLimitExceeded, rate_limit_exceeded_handler)
 
-    # Rate limiting
-    app.state.limiter = limiter
+    # Rate limiting - use the limiter from api module
+    app.state.limiter = api.limiter
 
     # Session middleware for signed cookie sessions
     # Note: type: ignore needed because Starlette's _MiddlewareFactory Protocol
@@ -90,10 +102,8 @@ def create_app() -> FastAPI:
         https_only=settings.is_production,
     )
 
-    # Register API routers
-    app.include_router(health.router, prefix="/api")
-    app.include_router(google_auth.router, prefix="/api")
-    app.include_router(token_exchange.router, prefix="/api")
+    # Register API router (all endpoints consolidated)
+    app.include_router(api.router, prefix="/api")
 
     @app.get("/")
     async def root():

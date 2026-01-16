@@ -10,10 +10,10 @@ import sys
 import traceback
 from typing import Any
 
-from loguru import Message, Record, logger
+from loguru import logger
 
 
-def _cloud_logging_serializer(record: Record) -> str:
+def _cloud_logging_serializer(record: dict[str, Any]) -> str:
     """Serialize log record to Google Cloud Logging JSON format.
 
     Cloud Logging expects specific field names:
@@ -74,7 +74,7 @@ def _cloud_logging_serializer(record: Record) -> str:
     return json.dumps(log_entry, default=str)
 
 
-def _json_sink(message: Message) -> None:
+def _json_sink(message: Any) -> None:
     """Sink that writes serialized JSON to stdout."""
     record = message.record
     serialized = _cloud_logging_serializer(record)

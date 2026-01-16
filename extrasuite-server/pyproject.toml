@@ -15,9 +15,11 @@ dependencies = [
     "google-auth-httplib2>=0.2.0",
     "google-api-python-client>=2.150.0",
     "google-cloud-firestore>=2.19.0",
+    "google-cloud-iam>=2.14.0",
     "loguru>=0.7.0",
     "itsdangerous>=2.1.0",
     "slowapi>=0.1.9",
+    "tenacity>=8.2.0",
 ]
 
 [project.optional-dependencies]
