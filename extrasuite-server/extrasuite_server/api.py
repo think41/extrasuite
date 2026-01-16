@@ -73,6 +73,50 @@ async def readiness_check() -> dict:
 
 
 # =============================================================================
+# User Info Endpoints
+# =============================================================================
+
+
+@router.get("/users/me")
+async def get_current_user(
+    request: Request,
+    db: Database = Depends(get_database),
+) -> dict:
+    """Get current user's info if logged in.
+
+    Returns the user's email and service account email if they have an active session.
+    Returns authenticated: false if not logged in.
+    """
+    email = request.session.get("email")
+    if not email:
+        return {"authenticated": False}
+
+    user_creds = await db.get_user_credentials(email)
+    if not user_creds:
+        return {"authenticated": False}
+
+    return {
+        "authenticated": True,
+        "email": email,
+        "service_account_email": user_creds.service_account_email,
+    }
+
+
+@router.get("/users")
+async def list_users(
+    db: Database = Depends(get_database),
+) -> dict:
+    """List all users and their service account emails.
+
+    This endpoint is public to enable transparency - users can see which
+    service account belongs to which employee. This helps identify who
+    made changes via their AI assistant.
+    """
+    users = await db.list_users_with_service_accounts()
+    return {"users": users}
+
+
+# =============================================================================
 # Token Exchange Endpoints
 # =============================================================================
 

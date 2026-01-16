@@ -248,6 +248,35 @@ class Database:
             timeout=self._timeout,
         )
 
+    async def list_users_with_service_accounts(self) -> list[dict]:
+        """List all users who have service accounts.
+
+        Returns a list of dicts with email and service_account_email.
+        Only includes users who have a service account assigned.
+        """
+        users_ref = self._client.collection("users")
+
+        async def _query() -> list[DocumentSnapshot]:
+            query = users_ref.where("service_account_email", "!=", None)
+            return await query.get()
+
+        docs = await asyncio.wait_for(_query(), timeout=self._timeout)
+
+        result = []
+        for doc in docs:
+            data = doc.to_dict()
+            if data and data.get("service_account_email"):
+                result.append(
+                    {
+                        "email": data.get("email", ""),
+                        "service_account_email": data.get("service_account_email"),
+                    }
+                )
+
+        # Sort by email for consistent ordering
+        result.sort(key=lambda x: x["email"])
+        return result
+
 
 def get_database(request: Request) -> Database:
     """FastAPI dependency to get the database instance.
