@@ -214,7 +214,10 @@ class Database:
         access_token = data.get("access_token")
         refresh_token = data.get("refresh_token")
 
-        if not access_token or not refresh_token:
+        # Allow returning credentials if we have service_account_email,
+        # even without OAuth tokens (since we use server ADC for impersonation)
+        service_account_email = data.get("service_account_email")
+        if not service_account_email and (not access_token or not refresh_token):
             return None
 
         return UserCredentials(
