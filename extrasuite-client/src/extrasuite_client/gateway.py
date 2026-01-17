@@ -6,6 +6,7 @@ import http.server
 import json
 import os
 import socket
+import ssl
 import stat
 import sys
 import threading
@@ -14,6 +15,13 @@ import urllib.error
 import urllib.parse
 import urllib.request
 import webbrowser
+
+# Try to use certifi for SSL certificates (common on macOS)
+try:
+    import certifi
+    SSL_CONTEXT = ssl.create_default_context(cafile=certifi.where())
+except ImportError:
+    SSL_CONTEXT = ssl.create_default_context()
 from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any
@@ -242,7 +250,7 @@ class ExtraSuiteClient:
         )
 
         try:
-            with urllib.request.urlopen(req, timeout=30) as response:
+            with urllib.request.urlopen(req, timeout=30, context=SSL_CONTEXT) as response:
                 return json.loads(response.read().decode("utf-8"))
         except urllib.error.HTTPError as e:
             error_body = e.read().decode("utf-8") if e.fp else str(e)
