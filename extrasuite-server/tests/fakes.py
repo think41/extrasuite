@@ -6,10 +6,14 @@ These fakes allow us to control the behavior of external dependencies
 
 import hashlib
 from dataclasses import dataclass
+from datetime import UTC, datetime, timedelta
 from typing import Any
 
 from google.api_core.exceptions import NotFound
 from google.auth.exceptions import RefreshError
+
+# Auth code TTL matching the real database
+AUTH_CODE_TTL = timedelta(seconds=120)
 
 
 class FakeDatabase:
@@ -22,6 +26,7 @@ class FakeDatabase:
         # Simple mapping: email -> service_account_email
         self.users: dict[str, str] = {}
         self.oauth_states: dict[str, str] = {}
+        self.auth_codes: dict[str, dict[str, Any]] = {}
         self._should_fail_get_sa: bool = False
         self._should_fail_set_sa: bool = False
 
@@ -44,6 +49,26 @@ class FakeDatabase:
     async def retrieve_state(self, state: str) -> str | None:
         """Retrieve AND delete OAuth state."""
         return self.oauth_states.pop(state, None)
+
+    async def save_auth_code(self, auth_code: str, service_account_email: str) -> None:
+        """Save auth code with associated service account email."""
+        self.auth_codes[auth_code] = {
+            "service_account_email": service_account_email,
+            "expires_at": datetime.now(UTC) + AUTH_CODE_TTL,
+        }
+
+    async def retrieve_auth_code(self, auth_code: str) -> str | None:
+        """Retrieve AND delete auth code. Returns service_account_email or None if not found/expired."""
+        if auth_code not in self.auth_codes:
+            return None
+
+        data = self.auth_codes.pop(auth_code)
+        expires_at = data.get("expires_at")
+
+        if not expires_at or datetime.now(UTC) > expires_at:
+            return None
+
+        return data.get("service_account_email")
 
 
 class FakeSettings:

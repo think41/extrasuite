@@ -5,6 +5,19 @@ This document explains what that means in practice, both from an employee perspe
 
 ---
 
+## Security constants
+
+| Constant | Value | Description |
+|----------|-------|-------------|
+| `ACCESS_TOKEN_TTL` | 1 hour (3600 seconds) | Lifetime of issued service account access tokens |
+| `AUTH_CODE_TTL` | 120 seconds | Lifetime of temporary auth codes for token exchange |
+| `OAUTH_STATE_TTL` | 10 minutes | Lifetime of OAuth state tokens for CSRF protection |
+| `TOKEN_DIR_PERMISSIONS` | `0700` | Directory permissions for token cache (owner rwx only) |
+| `TOKEN_FILE_PERMISSIONS` | `0600` | File permissions for cached tokens (owner rw only) |
+| `DEFAULT_SA_QUOTA` | 100 | Default GCP service account quota per project |
+
+---
+
 ## What this means for employees (non-normative)
 
 Extrasuite agents can only access what **you explicitly share** with them.
@@ -29,7 +42,7 @@ Extrasuite assigns a **dedicated Google service account per employee**, represen
 Employees explicitly share documents with their agent's service account email address using standard Google Drive sharing.
 This creates a clear, auditable, least-privilege access boundary that is enforced by Google Workspace itself.
 
-When the agent needs to act, Extrasuite issues **short-lived OAuth access tokens (1 hour)** for that specific service account using **service account impersonation** via Google Cloud IAM.
+When the agent needs to act, Extrasuite issues **short-lived OAuth access tokens (`ACCESS_TOKEN_TTL`)** for that specific service account using **service account impersonation** via Google Cloud IAM.
 
 No long-lived service account keys are used or distributed.
 
@@ -67,7 +80,7 @@ No long-lived service account keys are used or distributed.
   - End users do not impersonate service accounts directly.
 
 - **Short-lived credentials only**
-  - Agents receive OAuth access tokens that expire in 3600 seconds (1 hour).
+  - Agents receive OAuth access tokens that expire after `ACCESS_TOKEN_TTL`.
   - Tokens cannot be refreshed by the agent and must be reissued by the broker.
 
 - **No private key material**
@@ -84,6 +97,26 @@ No long-lived service account keys are used or distributed.
 
 ---
 
+### CLI authentication flow
+
+- **Auth code exchange pattern**
+  - Tokens are never exposed in browser URLs or history.
+  - Server generates a temporary auth code (valid for `AUTH_CODE_TTL`) and redirects the browser to the CLI with only the auth code.
+  - CLI exchanges the auth code for the token via a POST request to `/api/token/exchange`.
+  - Auth codes are single-use and deleted immediately upon exchange.
+
+- **Localhost binding**
+  - The CLI callback server binds to `127.0.0.1` (not `localhost`) to prevent DNS rebinding attacks.
+  - Only the local machine can receive the auth code callback.
+
+- **Secure token storage**
+  - Cached tokens are stored with restrictive file permissions:
+    - Directory: `TOKEN_DIR_PERMISSIONS` (owner read/write/execute only)
+    - Token file: `TOKEN_FILE_PERMISSIONS` (owner read/write only)
+  - This prevents other users on multi-user systems from reading token files.
+
+---
+
 ### Server-side data storage
 
 - **Minimal data retention**
@@ -92,8 +125,13 @@ No long-lived service account keys are used or distributed.
   - Session cookies are signed and stateless (contain only the user email).
 
 - **OAuth state tokens**
-  - Temporary state tokens for CSRF protection expire after 10 minutes.
+  - Temporary state tokens for CSRF protection expire after `OAUTH_STATE_TTL`.
   - State tokens are one-time use and deleted after consumption.
+
+- **Auth codes**
+  - Temporary auth codes for token exchange expire after `AUTH_CODE_TTL`.
+  - Auth codes are one-time use and deleted immediately upon exchange.
+  - Only the service account email is stored with the auth code; tokens are generated on-demand during exchange.
 
 ---
 
@@ -131,7 +169,7 @@ No long-lived service account keys are used or distributed.
 - **Service account lifecycle**
   - Extrasuite relies on one service account per employee.
   - Organizations are responsible for appropriate lifecycle management, including offboarding and cleanup of inactive agents.
-  - GCP projects have a default quota of 100 service accounts (can be increased).
+  - GCP projects have a default quota of `DEFAULT_SA_QUOTA` service accounts (can be increased).
 
 ---
 
@@ -143,6 +181,7 @@ Extrasuite guarantees the following:
 - Access is limited to the permission level chosen by the employee.
 - All agent edits are attributable, auditable, and reversible using native Google Workspace tools.
 - No long-lived credentials are exposed to agents or clients.
+- Tokens are never exposed in browser URLs or history (auth code exchange pattern).
 
 ---
 

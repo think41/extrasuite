@@ -21,6 +21,7 @@ from google.oauth2 import id_token
 from google_auth_oauthlib.flow import Flow
 from loguru import logger
 from oauthlib.oauth2.rfc6749.errors import OAuth2Error
+from pydantic import BaseModel, Field
 from slowapi import Limiter
 from slowapi.util import get_remote_address
 
@@ -115,6 +116,58 @@ async def list_users(
 # =============================================================================
 # Token Exchange Endpoints
 # =============================================================================
+
+
+class TokenExchangeRequest(BaseModel):
+    """Request body for auth code exchange."""
+
+    code: str = Field(..., min_length=1, description="Auth code received from redirect")
+
+
+class TokenExchangeResponse(BaseModel):
+    """Response body for auth code exchange."""
+
+    token: str
+    expires_at: str
+    service_account: str
+
+
+@router.post("/token/exchange", response_model=TokenExchangeResponse)
+@limiter.limit("20/minute")
+async def exchange_auth_code(
+    request: Request,  # noqa: ARG001 - Required for rate limiter
+    body: TokenExchangeRequest,
+    db: Database = Depends(get_database),
+    settings: Settings = Depends(get_settings),
+) -> TokenExchangeResponse:
+    """Exchange auth code for token.
+
+    No authentication required - the auth code is the proof of authentication.
+    Auth codes are single-use and expire after AUTH_CODE_TTL.
+
+    The token is generated on-demand via SA impersonation.
+    The service account MUST already exist - this endpoint does not create SAs.
+    """
+    service_account_email = await db.retrieve_auth_code(body.code)
+
+    if not service_account_email:
+        logger.warning("Invalid or expired auth code", extra={"code_prefix": body.code[:8]})
+        raise HTTPException(status_code=400, detail="Invalid or expired auth code")
+
+    # Generate token via impersonation - SA must exist, errors propagate to global handler
+    token_generator = TokenGenerator(database=db, settings=settings)
+    result = await token_generator.generate_token_for_service_account(service_account_email)
+
+    logger.info(
+        "Auth code exchanged for token",
+        extra={"service_account": service_account_email},
+    )
+
+    return TokenExchangeResponse(
+        token=result.token,
+        expires_at=result.expires_at.isoformat(),
+        service_account=result.service_account_email,
+    )
 
 
 @router.get("/token/auth", response_model=None)
@@ -257,30 +310,32 @@ def _create_oauth_flow(settings: Settings) -> Flow:
 async def _generate_token_and_redirect(
     db: Database, settings: Settings, email: str, cli_redirect: str
 ) -> RedirectResponse | HTMLResponse:
-    """Generate a token and redirect to CLI.
+    """Ensure service account exists and redirect to CLI with auth code.
 
-    Creates service account if needed, then generates token.
-    Returns error redirect to CLI if token generation fails.
+    Creates service account if needed. Does NOT generate token here.
+    Stores auth code with service account email in Firestore.
+    CLI then exchanges auth code for token via POST to /api/token/exchange.
+    Token is generated on-demand during exchange for security.
     """
     token_generator = TokenGenerator(database=db, settings=settings)
 
     try:
-        result = await token_generator.generate_token(email)
+        service_account_email = await token_generator.ensure_service_account(email)
     except Exception as e:
-        logger.exception("Token generation failed", extra={"email": email, "error": str(e)})
+        logger.exception("Service account setup failed", extra={"email": email, "error": str(e)})
         return _cli_error_response(cli_redirect)
 
     logger.info(
-        "Token generated",
-        extra={"email": email, "service_account": result.service_account_email},
+        "Service account ready",
+        extra={"email": email, "service_account": service_account_email},
     )
 
-    # Convert to dict for URL encoding (boundary conversion)
-    params = {
-        "token": result.token,
-        "expires_at": result.expires_at.isoformat(),
-        "service_account": result.service_account_email,
-    }
+    # Generate auth code and store SA email for later token generation
+    auth_code = secrets.token_urlsafe(32)
+    await db.save_auth_code(auth_code, service_account_email)
+
+    # Redirect with auth code only
+    params = {"code": auth_code}
     redirect_url = f"{cli_redirect}?{urlencode(params)}"
     return RedirectResponse(url=redirect_url)
 

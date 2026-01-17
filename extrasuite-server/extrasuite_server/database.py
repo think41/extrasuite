@@ -1,8 +1,9 @@
 """Database layer using Google Cloud Firestore (async).
 
-Stores two types of data:
+Stores three types of data:
 1. Users: email -> service account mapping
-2. OAuth States: state_token -> redirect_url + created_at (for OAuth flow)
+2. OAuth States: state_token -> redirect_url (for OAuth flow)
+3. Auth Codes: auth_code -> service_account_email (for secure token delivery)
 
 Collections structure:
 - users: Document ID = email (with "/" replaced by "__")
@@ -12,13 +13,21 @@ Collections structure:
 
 - oauth_states: Document ID = state_token
   - redirect_url: Redirect URL for CLI callback
-  - created_at: State creation timestamp (TTL: 10 minutes)
+  - expires_at: Firestore TTL field (OAUTH_STATE_TTL after creation)
+
+- auth_codes: Document ID = auth_code
+  - service_account_email: Associated service account
+  - expires_at: Firestore TTL field (AUTH_CODE_TTL after creation)
 
 Note: Sessions are handled via starlette's signed cookies (stateless).
 The cookie stores the user email, which is validated against the users collection.
 
-Note: We do NOT store OAuth access/refresh tokens. We only need the email to
-service account mapping since we use server ADC for impersonation.
+Note: We do NOT store OAuth access tokens. Tokens are generated on-demand when
+the auth code is exchanged. We only store the service account email needed to
+generate the token.
+
+TTL cleanup: Configure Firestore TTL policies on the `expires_at` field for
+`oauth_states` and `auth_codes` collections to automatically delete expired documents.
 """
 
 import asyncio
@@ -26,9 +35,13 @@ from datetime import UTC, datetime, timedelta
 
 from fastapi import Request
 from google.cloud.firestore_v1 import AsyncClient, AsyncQuery, DocumentSnapshot
+from google.cloud.firestore_v1.async_transaction import async_transactional
 
-# OAuth state TTL
+# OAuth state TTL (10 minutes)
 OAUTH_STATE_TTL = timedelta(minutes=10)
+
+# Auth code TTL (120 seconds for security)
+AUTH_CODE_TTL = timedelta(seconds=120)
 
 # Default timeout for database operations (seconds)
 DEFAULT_TIMEOUT = 10.0
@@ -67,60 +80,66 @@ class Database:
     # =========================================================================
 
     async def save_state(self, state: str, redirect_url: str) -> None:
-        """Save OAuth state token with redirect URL."""
-        now = datetime.now(UTC)
+        """Save OAuth state token with redirect URL.
+
+        Includes expires_at field for Firestore TTL automatic cleanup.
+        """
+        expires_at = datetime.now(UTC) + OAUTH_STATE_TTL
         doc_ref = self._client.collection("oauth_states").document(state)
 
         async def _create() -> None:
-            await doc_ref.set({"redirect_url": redirect_url, "created_at": now})
+            await doc_ref.set({
+                "redirect_url": redirect_url,
+                "expires_at": expires_at,
+            })
 
         await asyncio.wait_for(_create(), timeout=self._timeout)
 
     async def retrieve_state(self, state: str) -> str | None:
         """Retrieve AND delete OAuth state. Returns redirect_url or None if not found/expired.
 
-        This is an atomic consume operation - the state is deleted after retrieval
-        to ensure one-time use.
+        Uses a Firestore transaction for atomic get-and-delete to prevent race conditions.
         """
         doc_ref = self._client.collection("oauth_states").document(state)
 
-        async def _get() -> DocumentSnapshot:
-            return await doc_ref.get()
+        @async_transactional
+        async def _atomic_retrieve(transaction) -> str | None:
+            doc = await doc_ref.get(transaction=transaction)
 
-        doc = await asyncio.wait_for(_get(), timeout=self._timeout)
+            if not doc.exists:
+                return None
 
-        if not doc.exists:
-            return None
+            data = doc.to_dict()
+            if data is None:
+                return None
 
-        data = doc.to_dict()
-        if data is None:
-            return None
+            redirect_url = data.get("redirect_url")
+            expires_at = data.get("expires_at")
 
-        redirect_url = data.get("redirect_url")
-        created_at = data.get("created_at")
+            if not redirect_url or not expires_at:
+                transaction.delete(doc_ref)
+                return None
 
-        if not redirect_url or not created_at:
-            return None
+            # Check if state is expired
+            if datetime.now(UTC) > expires_at:
+                transaction.delete(doc_ref)
+                return None
 
-        # Check if state is expired
-        if datetime.now(UTC) - created_at > OAUTH_STATE_TTL:
-            # Clean up expired state
-            await asyncio.wait_for(doc_ref.delete(), timeout=self._timeout)
-            return None
+            # Delete the state (one-time use)
+            transaction.delete(doc_ref)
+            return redirect_url
 
-        # Delete the state (one-time use)
-        await asyncio.wait_for(doc_ref.delete(), timeout=self._timeout)
-
-        return redirect_url
+        transaction = self._client.transaction()
+        return await asyncio.wait_for(_atomic_retrieve(transaction), timeout=self._timeout)
 
     async def cleanup_expired_oauth_states(self) -> int:
         """Clean up expired OAuth states. Returns count of deleted states."""
-        cutoff = datetime.now(UTC) - OAUTH_STATE_TTL
+        now = datetime.now(UTC)
 
         async def _query() -> AsyncQuery:
             return (
                 self._client.collection("oauth_states")
-                .where("created_at", "<", cutoff)
+                .where("expires_at", "<", now)
                 .limit(100)  # Batch size to avoid timeout
             )
 
@@ -133,6 +152,65 @@ class Database:
             count += 1
 
         return count
+
+    # =========================================================================
+    # Auth Code Exchange (for secure token delivery)
+    # =========================================================================
+
+    async def save_auth_code(self, auth_code: str, service_account_email: str) -> None:
+        """Save auth code with associated service account email.
+
+        Auth codes are single-use and expire after AUTH_CODE_TTL.
+        Tokens are NOT stored - they are generated on-demand when the auth code is exchanged.
+        Includes expires_at field for Firestore TTL automatic cleanup.
+        """
+        expires_at = datetime.now(UTC) + AUTH_CODE_TTL
+        doc_ref = self._client.collection("auth_codes").document(auth_code)
+
+        async def _create() -> None:
+            await doc_ref.set({
+                "service_account_email": service_account_email,
+                "expires_at": expires_at,
+            })
+
+        await asyncio.wait_for(_create(), timeout=self._timeout)
+
+    async def retrieve_auth_code(self, auth_code: str) -> str | None:
+        """Retrieve AND delete auth code. Returns service_account_email or None if not found/expired.
+
+        Uses a Firestore transaction for atomic get-and-delete to prevent race conditions.
+        """
+        doc_ref = self._client.collection("auth_codes").document(auth_code)
+
+        @async_transactional
+        async def _atomic_retrieve(transaction) -> str | None:
+            doc = await doc_ref.get(transaction=transaction)
+
+            if not doc.exists:
+                return None
+
+            data = doc.to_dict()
+            if data is None:
+                return None
+
+            service_account_email = data.get("service_account_email")
+            expires_at = data.get("expires_at")
+
+            if not service_account_email or not expires_at:
+                transaction.delete(doc_ref)
+                return None
+
+            # Check if auth code is expired
+            if datetime.now(UTC) > expires_at:
+                transaction.delete(doc_ref)
+                return None
+
+            # Delete the auth code (one-time use)
+            transaction.delete(doc_ref)
+            return service_account_email
+
+        transaction = self._client.transaction()
+        return await asyncio.wait_for(_atomic_retrieve(transaction), timeout=self._timeout)
 
     # =========================================================================
     # User -> Service Account Mapping

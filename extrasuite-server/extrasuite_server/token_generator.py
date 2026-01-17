@@ -186,14 +186,70 @@ class TokenGenerator:
             )
         return self._admin_creds
 
-    async def generate_token(self, user_email: str, user_name: str = "") -> GeneratedToken:
-        """Generate a short-lived service account token for a user.
+    async def ensure_service_account(self, user_email: str, user_name: str = "") -> str:
+        """Ensure a service account exists for the user, creating one if needed.
 
         This method:
         1. Looks up user's service account in database
         2. Creates one if it doesn't exist (using server ADC)
-        3. Impersonates the SA using server ADC
-        4. Returns a short-lived access token
+        3. Returns the service account email
+
+        Args:
+            user_email: Verified email of the authenticated user
+            user_name: Display name for SA description (optional)
+
+        Returns:
+            Service account email
+
+        Raises:
+            ServiceAccountCreationError: If SA creation fails
+        """
+        # Look up existing SA from database
+        sa_email = await self._db.get_service_account_email(user_email)
+
+        # Create SA if not found
+        if not sa_email:
+            sa_email, _ = await self._get_or_create_service_account(user_email, user_name)
+            # Store mapping in database
+            await self._db.set_service_account_email(user_email, sa_email)
+
+        return sa_email
+
+    async def generate_token_for_service_account(self, sa_email: str) -> GeneratedToken:
+        """Generate a short-lived token for a service account.
+
+        This method impersonates the given service account using server ADC
+        and returns a short-lived access token.
+
+        Args:
+            sa_email: Service account email to impersonate
+
+        Returns:
+            GeneratedToken with token, expires_at, and service_account_email
+
+        Raises:
+            ImpersonationError: If token generation fails
+        """
+        token, expires_at = await self._impersonate_service_account(sa_email)
+
+        logger.info(
+            "Token generated for service account",
+            extra={"service_account": sa_email},
+        )
+
+        return GeneratedToken(
+            token=token,
+            expires_at=expires_at,
+            service_account_email=sa_email,
+        )
+
+    async def generate_token(self, user_email: str, user_name: str = "") -> GeneratedToken:
+        """Generate a short-lived service account token for a user.
+
+        This method:
+        1. Ensures service account exists (creates if needed)
+        2. Impersonates the SA using server ADC
+        3. Returns a short-lived access token
 
         Args:
             user_email: Verified email of the authenticated user
@@ -206,33 +262,8 @@ class TokenGenerator:
             ServiceAccountCreationError: If SA creation fails
             ImpersonationError: If token generation fails
         """
-        # 1. Look up existing SA from database
-        sa_email = await self._db.get_service_account_email(user_email)
-
-        # 2. Create SA if not found
-        sa_created = False
-        if not sa_email:
-            sa_email, sa_created = await self._get_or_create_service_account(user_email, user_name)
-            # Store mapping in database
-            await self._db.set_service_account_email(user_email, sa_email)
-
-        # 3. Impersonate SA using server ADC
-        token, expires_at = await self._impersonate_service_account(sa_email)
-
-        logger.info(
-            "Token generated",
-            extra={
-                "user_email": user_email,
-                "service_account": sa_email,
-                "sa_created": sa_created,
-            },
-        )
-
-        return GeneratedToken(
-            token=token,
-            expires_at=expires_at,
-            service_account_email=sa_email,
-        )
+        sa_email = await self.ensure_service_account(user_email, user_name)
+        return await self.generate_token_for_service_account(sa_email)
 
     async def _get_or_create_service_account(
         self, user_email: str, user_name: str

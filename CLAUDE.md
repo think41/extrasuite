@@ -18,17 +18,19 @@ The project consists of two packages:
 3. If cached token exists and is valid, return it
 4. Otherwise, start localhost callback server and open browser
 5. User authenticates via Google OAuth on the server
-6. Server redirects to localhost with short-lived token (1 hour)
-7. CLI saves token to `~/.config/extrasuite/token.json`
+6. Server redirects to localhost with auth code
+7. CLI exchanges auth code for token via POST to `/api/token/exchange`
+8. CLI saves token to `~/.config/extrasuite/token.json`
 
 **Server Flow:**
 1. Receive auth request at `/api/token/auth?port=<port>`
-2. If user has valid session, generate token and redirect to CLI
+2. If user has valid session, proceed to step 5
 3. Otherwise, redirect to Google OAuth
 4. On callback, verify identity and set session cookie
 5. Create service account if needed (email→SA mapping stored in Firestore)
-6. Impersonate SA using server ADC to generate short-lived token
-7. Redirect to `http://localhost:<port>/on-authentication?token=...`
+6. Generate auth code, store with SA email, redirect to `http://localhost:<port>/on-authentication?code=...`
+7. CLI exchanges auth code for token via POST to `/api/token/exchange`
+8. Server generates token on-demand via SA impersonation (token never stored)
 
 ## Development Commands
 
@@ -68,16 +70,16 @@ docker run -p 8080:8080 --env-file .env extrasuite-server:latest
 - `extrasuite-server/extrasuite_server/main.py` - FastAPI app entry point
 - `extrasuite-server/extrasuite_server/config.py` - Pydantic settings from environment
 - `extrasuite-server/extrasuite_server/database.py` - Async Firestore storage
-- `extrasuite-server/extrasuite_server/google_auth.py` - OAuth callback handler
-- `extrasuite-server/extrasuite_server/token_exchange.py` - Token exchange API
-- `extrasuite-server/extrasuite_server/service_account.py` - SA creation and impersonation
-- `extrasuite-server/extrasuite_server/rate_limit.py` - Rate limiting configuration
+- `extrasuite-server/extrasuite_server/api.py` - OAuth callback handler and token exchange API
+- `extrasuite-server/extrasuite_server/token_generator.py` - SA creation and impersonation
+- `extrasuite-server/extrasuite_server/logging.py` - Structured logging configuration
 
 ## API Endpoints
 
 | Method | Endpoint | Description |
 |--------|----------|-------------|
 | GET | `/api/token/auth?port=<port>` | CLI entry point - starts OAuth (port 1024-65535) |
+| POST | `/api/token/exchange` | Exchange auth code for token |
 | GET | `/api/auth/callback` | OAuth callback - exchanges code for token |
 | GET | `/api/health` | Health check |
 | GET | `/api/health/ready` | Readiness check |
@@ -146,18 +148,35 @@ ALLOWED_EMAIL_DOMAINS=example.com,company.org
 
 If not set, all domains are allowed.
 
-### Firestore TTL Policy
+### Firestore TTL Policies
 
-To automatically expire user records after 7 days of inactivity, configure a TTL policy on the `users` collection:
+Configure TTL policies for automatic cleanup of expired documents:
 
+**Short-lived collections (oauth_states, auth_codes):**
 ```bash
+# OAuth states expire after 10 minutes
+gcloud firestore fields ttls update expire_at \
+  --collection-group=oauth_states \
+  --enable-ttl \
+  --project=<project>
+
+# Auth codes expire after 120 seconds
+gcloud firestore fields ttls update expire_at \
+  --collection-group=auth_codes \
+  --enable-ttl \
+  --project=<project>
+```
+
+**User records (optional, for inactive user cleanup):**
+```bash
+# Users expire after 7 days of inactivity
 gcloud firestore fields ttls update updated_at \
   --collection-group=users \
   --enable-ttl \
   --project=<project>
 ```
 
-This ensures inactive user→SA mappings are cleaned up automatically.
+Note: Firestore TTL deletion is eventual (typically within 24 hours). The application also validates expiration in-code for immediate enforcement.
 
 ## Exception Handling
 
