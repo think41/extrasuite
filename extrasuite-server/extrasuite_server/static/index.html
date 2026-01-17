@@ -216,13 +216,14 @@
                 const data = await response.json();
                 downloadToken = data.token;
 
-                const downloadUrl = `${BASE_URL}/api/skills/download?token=${downloadToken}`;
+                // Simple install script URL with token embedded
+                const installUrl = `${BASE_URL}/api/skills/install/${downloadToken}`;
 
-                // macOS/Linux command - single line to avoid copy-paste issues
-                const macCmd = `curl -fsSL '${downloadUrl}' -o /tmp/es.zip && unzip -oq /tmp/es.zip -d /tmp/es && mkdir -p ~/.claude/skills ~/.codex/skills && cp -R /tmp/es/gsheets ~/.claude/skills/ && cp -R /tmp/es/gsheets ~/.codex/skills/ && rm -rf /tmp/es /tmp/es.zip && echo "Skill installed successfully!"`;
+                // macOS/Linux - pipe to bash
+                const macCmd = `curl -fsSL ${installUrl} | bash`;
 
-                // Windows PowerShell command - single line
-                const windowsCmd = `irm '${downloadUrl}' -OutFile $env:TEMP\\es.zip; Expand-Archive $env:TEMP\\es.zip $env:TEMP\\es -Force; md ~\\.claude\\skills,~\\.codex\\skills -Force >$null; cp $env:TEMP\\es\\gsheets ~\\.claude\\skills\\ -Recurse -Force; cp $env:TEMP\\es\\gsheets ~\\.codex\\skills\\ -Recurse -Force; rm $env:TEMP\\es.zip,$env:TEMP\\es -Recurse -Force; echo "Skill installed successfully!"`;
+                // Windows PowerShell - invoke expression (with ps=true for PowerShell script)
+                const windowsCmd = `irm "${installUrl}?ps=true" | iex`;
 
                 document.getElementById('install-cmd-mac').textContent = macCmd;
                 document.getElementById('install-cmd-windows').textContent = windowsCmd;

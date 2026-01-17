@@ -8,8 +8,8 @@ import io
 import zipfile
 from pathlib import Path
 
-from fastapi import APIRouter, HTTPException, Query, Request
-from fastapi.responses import StreamingResponse
+from fastapi import APIRouter, Depends, HTTPException, Query, Request
+from fastapi.responses import PlainTextResponse, StreamingResponse
 from itsdangerous import BadSignature, SignatureExpired, URLSafeTimedSerializer
 from loguru import logger
 
@@ -140,3 +140,57 @@ async def download_skills(
         media_type="application/zip",
         headers={"Content-Disposition": "attachment; filename=extrasuite-skills.zip"},
     )
+
+
+@router.get("/install/{token}")
+async def get_install_script(
+    request: Request,
+    token: str,
+    ps: bool = Query(False, description="Return PowerShell script instead of bash"),
+    settings: Settings = Depends(get_settings),
+) -> PlainTextResponse:
+    """Get a personalized install script with download URL embedded.
+
+    The token is validated and used to generate a download URL.
+    Returns a bash script by default, or PowerShell if ps=true.
+    """
+    serializer = _get_serializer(settings)
+
+    try:
+        data = serializer.loads(token, max_age=DOWNLOAD_TOKEN_TTL)
+    except SignatureExpired:
+        logger.warning("Install script token expired")
+        if ps:
+            script = 'Write-Error "Install link expired. Please get a new one from the website."'
+        else:
+            script = '#!/bin/bash\necho "Error: Install link expired. Please get a new one from the website."\nexit 1'
+        return PlainTextResponse(script, media_type="text/plain")
+    except BadSignature:
+        logger.warning("Invalid install script token")
+        if ps:
+            script = 'Write-Error "Invalid install link."'
+        else:
+            script = '#!/bin/bash\necho "Error: Invalid install link."\nexit 1'
+        return PlainTextResponse(script, media_type="text/plain")
+
+    if data.get("purpose") != "skills-download":
+        if ps:
+            script = 'Write-Error "Invalid token."'
+        else:
+            script = '#!/bin/bash\necho "Error: Invalid token."\nexit 1'
+        return PlainTextResponse(script, media_type="text/plain")
+
+    email = data.get("email", "unknown")
+    logger.info("Install script requested", extra={"email": email, "powershell": ps})
+
+    # Build the download URL with the same token
+    base_url = str(request.base_url).rstrip("/")
+    download_url = f"{base_url}/api/skills/download?token={token}"
+
+    # Read the appropriate template and substitute
+    script_file = "install.ps1" if ps else "install.sh"
+    script_template = Path(__file__).parent / "static" / script_file
+    script = script_template.read_text()
+    script = script.replace("__DOWNLOAD_URL__", download_url)
+
+    return PlainTextResponse(script, media_type="text/plain")
