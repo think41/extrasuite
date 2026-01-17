@@ -41,6 +41,10 @@ TOKEN_SCOPES = [
 # Token lifetime in seconds (1 hour)
 TOKEN_LIFETIME = 3600
 
+# Delay after SA creation to allow GCP propagation (seconds)
+# Required because impersonation may fail if SA hasn't propagated yet
+SA_PROPAGATION_DELAY = 3.0
+
 
 class TokenGeneratorError(Exception):
     """Base exception for TokenGenerator errors."""
@@ -289,6 +293,9 @@ class TokenGenerator:
             "Service account created",
             extra={"user_email": user_email, "sa_email": sa_email},
         )
+
+        # Wait for SA to propagate across GCP systems before impersonation
+        await asyncio.sleep(SA_PROPAGATION_DELAY)
 
         return sa_email, True
 
