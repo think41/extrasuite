@@ -37,6 +37,9 @@ WORKDIR /app
 COPY --from=builder /app/.venv /app/.venv
 COPY --from=builder /app/extrasuite_server /app/extrasuite_server
 
+# Copy skills folder (copied into build context by cloudbuild.yaml)
+COPY skills /app/skills
+
 # Set environment
 ENV PATH="/app/.venv/bin:$PATH"
 ENV PYTHONPATH="/app"

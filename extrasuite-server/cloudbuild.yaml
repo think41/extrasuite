@@ -19,6 +19,13 @@ substitutions:
   _DOMAIN_ABBREVIATIONS: '{"think41.com":"t41","recruit41.com":"r41","mindlap.dev":"mlap"}'
 
 steps:
+  # Copy skills folder into extrasuite-server for Docker build context
+  - name: 'gcr.io/cloud-builders/docker'
+    entrypoint: 'bash'
+    args:
+      - '-c'
+      - 'cp -r skills extrasuite-server/skills'
+
   # Build the Docker image
   - name: 'gcr.io/cloud-builders/docker'
     dir: 'extrasuite-server'

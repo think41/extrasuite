@@ -14,7 +14,7 @@ from slowapi.errors import RateLimitExceeded
 from slowapi.util import get_remote_address
 from starlette.middleware.sessions import SessionMiddleware
 
-from extrasuite_server import api
+from extrasuite_server import api, skills
 from extrasuite_server.config import get_settings
 from extrasuite_server.database import Database
 from extrasuite_server.logging import configure_logging
@@ -105,6 +105,9 @@ def create_app() -> FastAPI:
 
     # Register API router (all endpoints consolidated)
     app.include_router(api.router, prefix="/api")
+
+    # Register skills download router
+    app.include_router(skills.router, prefix="/api/skills")
 
     # Static pages directory
     static_dir = Path(__file__).parent / "static"
