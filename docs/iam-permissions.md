@@ -85,18 +85,14 @@ This is a common point of confusion. Here's why users don't need project members
 
 1. **User authenticates** via Google OAuth (only `openid` and `userinfo.email` scopes)
 2. **Server creates a service account** for the user using its own credentials (ADC)
-3. **Server grants IAM binding** directly to the user's email address:
-   ```
-   user:john@example.com → roles/iam.serviceAccountTokenCreator
-   ```
-   This binding is on the specific service account, not the project.
-4. **Server impersonates the SA** using its own ADC (not user credentials) to generate a token
+3. **Server impersonates the SA** using its own ADC to generate a short-lived token
+4. **Token is returned** to the CLI for use with Google Workspace APIs
 
-**Key change:** The server uses its own Application Default Credentials (as Cloud Run's service account) to impersonate user service accounts. Users only need to prove their identity - they don't need any GCP permissions.
+**Key design:** The server uses its own Application Default Credentials (as Cloud Run's service account) to impersonate all user service accounts. Users only need to prove their identity - they don't need any GCP permissions. No per-user IAM bindings are created.
 
 ### Key Insight
 
-In GCP IAM, you can grant permissions to **any Google account** (`user:email@domain.com`), even if they're not a member of the project. The permission is scoped to a specific service account resource.
+The server acts as a trusted intermediary. It has project-level permission to impersonate any service account it creates. Users authenticate to prove their identity, but never receive direct GCP permissions.
 
 ### What End Users Need
 
@@ -122,15 +118,11 @@ To enable all employees (e.g., `all@example.com`) to use ExtraSuite:
 
 That's it. No IAM configuration needed for the user group.
 
-## User Service Account Permissions
+## User Service Account Naming
 
-When ExtraSuite creates a service account for a user, it names the SA using the format `{local-part}-{domain-abbrev}` (e.g., `john-ex` for `john@example.com` with abbreviation `ex`). It also grants the user permission to impersonate it:
+When ExtraSuite creates a service account for a user, it names the SA using the format `{local-part}-{domain-abbrev}` (e.g., `john-ex` for `john@example.com` with abbreviation `ex`).
 
-**Role granted to user:** `roles/iam.serviceAccountTokenCreator`
-
-**Resource:** The user's service account
-
-This allows users to use tools like `gcloud` to generate tokens independently if needed.
+**Note:** Users do not receive direct IAM permissions on their service account. All token generation goes through the ExtraSuite server.
 
 ## OAuth Scopes
 

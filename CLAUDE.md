@@ -23,11 +23,11 @@ The project consists of two packages:
 
 **Server Flow:**
 1. Receive auth request at `/api/token/auth?port=<port>`
-2. If user has valid session, refresh token and redirect
+2. If user has valid session, generate token and redirect to CLI
 3. Otherwise, redirect to Google OAuth
-4. On callback, store OAuth credentials in Firestore
-5. Create/retrieve user's service account
-6. Impersonate SA to generate short-lived token
+4. On callback, verify identity and set session cookie
+5. Create service account if needed (email→SA mapping stored in Firestore)
+6. Impersonate SA using server ADC to generate short-lived token
 7. Redirect to `http://localhost:<port>/on-authentication?token=...`
 
 ## Development Commands
@@ -103,7 +103,7 @@ gcloud firestore databases create --location=asia-south1 --project=<project>
 
 ## Token Storage
 
-- **Server-side:** OAuth refresh tokens and sessions in Firestore
+- **Server-side:** Session cookies and email→SA mappings in Firestore
 - **Client-side:** Short-lived SA tokens in `~/.config/extrasuite/token.json`
 
 ## Testing (Auth Flows)
@@ -148,7 +148,7 @@ If not set, all domains are allowed.
 
 ### Firestore TTL Policy
 
-To automatically expire user credentials after 7 days of inactivity, configure a TTL policy on the `users` collection:
+To automatically expire user records after 7 days of inactivity, configure a TTL policy on the `users` collection:
 
 ```bash
 gcloud firestore fields ttls update updated_at \
@@ -157,7 +157,7 @@ gcloud firestore fields ttls update updated_at \
   --project=<project>
 ```
 
-This ensures refresh tokens don't persist indefinitely.
+This ensures inactive user→SA mappings are cleaned up automatically.
 
 ## Exception Handling
 

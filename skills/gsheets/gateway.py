@@ -10,6 +10,7 @@ import threading
 import time
 import urllib.parse
 import webbrowser
+from datetime import datetime
 from pathlib import Path
 from typing import Any
 
@@ -100,7 +101,8 @@ class ExtraSuiteClient:
 
         print("\nAuthentication successful!")
         print(f"Service account: {token_data.get('service_account_email', 'N/A')}")
-        print(f"Token expires in: {token_data['expires_in']} seconds")
+        expires_in = int(token_data["expires_at"] - time.time())
+        print(f"Token expires in: {expires_in} seconds")
 
         return token_data["access_token"]
 
@@ -184,11 +186,15 @@ class ExtraSuiteClient:
         if "token" not in token_holder:
             raise Exception("Authentication timed out. Please try again.")
 
+        # Parse expires_at from ISO 8601 format to Unix timestamp
+        expires_at_str = token_holder["expires_at"]
+        expires_at_dt = datetime.fromisoformat(expires_at_str.replace("Z", "+00:00"))
+        expires_at = expires_at_dt.timestamp()
+
         # Build token data
         token_data = {
             "access_token": token_holder["token"],
-            "expires_at": time.time() + token_holder["expires_in"],
-            "expires_in": token_holder["expires_in"],
+            "expires_at": expires_at,
             "service_account_email": token_holder.get("service_account", ""),
             "token_type": "Bearer",
         }
@@ -248,7 +254,7 @@ class ExtraSuiteClient:
                     )
                 elif "token" in params:
                     token_holder["token"] = params["token"][0]
-                    token_holder["expires_in"] = int(params.get("expires_in", ["3600"])[0])
+                    token_holder["expires_at"] = params.get("expires_at", [""])[0]
                     token_holder["service_account"] = params.get("service_account", [""])[0]
                     self._send_html("""
                         <html>

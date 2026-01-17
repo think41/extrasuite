@@ -7,7 +7,6 @@ This module provides the TokenGenerator class which:
 
 Key design decisions:
 - All IAM operations are async using IAMAsyncClient
-- Retry logic uses tenacity for declarative configuration
 - Domain abbreviations prevent SA name collisions across email domains
 - Dependencies are injected via constructor for testability
 """
@@ -19,9 +18,8 @@ from datetime import UTC, datetime, timedelta
 from typing import Any, Protocol
 
 import google.auth
-from google.api_core.exceptions import Aborted, NotFound, ServiceUnavailable
+from google.api_core.exceptions import NotFound
 from google.auth import impersonated_credentials
-from google.auth.exceptions import RefreshError
 from google.auth.transport import requests as google_requests
 from google.cloud.iam_admin_v1 import IAMAsyncClient
 from google.cloud.iam_admin_v1.types import (
@@ -29,14 +27,7 @@ from google.cloud.iam_admin_v1.types import (
     GetServiceAccountRequest,
     ServiceAccount,
 )
-from google.iam.v1 import iam_policy_pb2, policy_pb2
 from loguru import logger
-from tenacity import (
-    AsyncRetrying,
-    retry_if_exception_type,
-    stop_after_attempt,
-    wait_exponential,
-)
 
 # Scopes granted to the generated token
 # Read/write for sheets, docs, slides; read-only for drive
@@ -49,12 +40,6 @@ TOKEN_SCOPES = [
 
 # Token lifetime in seconds (1 hour)
 TOKEN_LIFETIME = 3600
-
-# Delay after SA creation to allow GCP propagation (seconds)
-SA_PROPAGATION_DELAY = 3.0
-
-# Retry settings for IAM operations
-IAM_RETRY_ATTEMPTS = 3
 
 
 class TokenGeneratorError(Exception):
@@ -95,9 +80,7 @@ class DatabaseProtocol(Protocol):
 
     async def get_service_account_email(self, email: str) -> str | None: ...
 
-    async def set_service_account_email(
-        self, email: str, service_account_email: str
-    ) -> None: ...
+    async def set_service_account_email(self, email: str, service_account_email: str) -> None: ...
 
 
 class SettingsProtocol(Protocol):
@@ -159,7 +142,6 @@ class TokenGenerator:
 
     Key design decisions:
     - Uses async IAMAsyncClient for non-blocking IAM operations
-    - Uses tenacity for declarative retry logic
     - Uses server's Application Default Credentials (not user OAuth credentials)
     - Dependencies injected via constructor for testability
     """
@@ -183,7 +165,7 @@ class TokenGenerator:
         """
         self._db = database
         self._settings = settings
-        self._iam_client = iam_client
+        self._iam_client = iam_client if iam_client is not None else IAMAsyncClient()
         self._impersonated_credentials_class = impersonated_credentials_class
         self._admin_creds: Any = None
 
@@ -191,12 +173,6 @@ class TokenGenerator:
     def _project_id(self) -> str:
         """Get project ID from settings."""
         return self._settings.google_cloud_project
-
-    async def _get_iam_client(self) -> IAMAsyncClient:
-        """Get async IAM client (lazy initialization)."""
-        if self._iam_client is None:
-            self._iam_client = IAMAsyncClient()
-        return self._iam_client
 
     def _get_admin_credentials(self) -> Any:
         """Get server's Application Default Credentials (cached)."""
@@ -232,16 +208,12 @@ class TokenGenerator:
         # 2. Create SA if not found
         sa_created = False
         if not sa_email:
-            sa_email, sa_created = await self._get_or_create_service_account(
-                user_email, user_name
-            )
+            sa_email, sa_created = await self._get_or_create_service_account(user_email, user_name)
             # Store mapping in database
             await self._db.set_service_account_email(user_email, sa_email)
 
         # 3. Impersonate SA using server ADC
-        token, expires_at = await self._impersonate_service_account(
-            sa_email, retry_on_permission_denied=sa_created
-        )
+        token, expires_at = await self._impersonate_service_account(sa_email)
 
         logger.info(
             "Token generated",
@@ -276,31 +248,25 @@ class TokenGenerator:
         account_id = sanitize_email_for_account_id(user_email, domain_abbrev)
         sa_email = f"{account_id}@{self._project_id}.iam.gserviceaccount.com"
 
-        client = await self._get_iam_client()
-
         # Check if SA exists
         try:
             request = GetServiceAccountRequest(
                 name=f"projects/{self._project_id}/serviceAccounts/{sa_email}"
             )
-            await client.get_service_account(request=request)
-            # SA exists, grant permission if needed
-            await self._grant_impersonation_permission(sa_email, user_email)
+            await self._iam_client.get_service_account(request=request)
             return sa_email, False
         except NotFound:
-            pass  # Create new SA
+            logger.info("SA not found, creating new one", extra={"sa_email": sa_email})
         except Exception as e:
-            logger.error(
-                "Failed to check service account existence",
-                extra={"user_email": user_email, "sa_email": sa_email, "error": str(e)},
-            )
             raise ServiceAccountCreationError(
                 f"Failed to check service account: {e}", user_email, e
             ) from e
 
         # Create new service account with metadata
         created_at = datetime.now(UTC).strftime("%Y-%m-%d %H:%M UTC")
-        display_name = f"AI EA for {user_name}"[:100] if user_name else f"AI EA for {user_email}"[:100]
+        display_name = (
+            f"AI EA for {user_name}"[:100] if user_name else f"AI EA for {user_email}"[:100]
+        )
         description = f"Owner: {user_email} | Created: {created_at} | Via: ExtraSuite"[:256]
 
         try:
@@ -312,13 +278,9 @@ class TokenGenerator:
                     description=description,
                 ),
             )
-            result = await client.create_service_account(request=request)
+            result = await self._iam_client.create_service_account(request=request)
             sa_email = result.email
         except Exception as e:
-            logger.error(
-                "Failed to create service account",
-                extra={"user_email": user_email, "account_id": account_id, "error": str(e)},
-            )
             raise ServiceAccountCreationError(
                 f"Failed to create service account: {e}", user_email, e
             ) from e
@@ -328,79 +290,9 @@ class TokenGenerator:
             extra={"user_email": user_email, "sa_email": sa_email},
         )
 
-        # Wait for SA to propagate across GCP systems (non-blocking)
-        logger.info(
-            "Waiting for SA propagation",
-            extra={"sa_email": sa_email, "delay_seconds": SA_PROPAGATION_DELAY},
-        )
-        await asyncio.sleep(SA_PROPAGATION_DELAY)
-
-        # Grant user permission to impersonate this SA
-        await self._grant_impersonation_permission(sa_email, user_email)
-
         return sa_email, True
 
-    async def _grant_impersonation_permission(
-        self, sa_email: str, user_email: str
-    ) -> None:
-        """Grant user permission to impersonate the service account.
-
-        Uses tenacity for declarative retry with exponential backoff.
-        """
-        member = f"user:{user_email}"
-        role = "roles/iam.serviceAccountTokenCreator"
-        resource = f"projects/{self._project_id}/serviceAccounts/{sa_email}"
-
-        try:
-            async for attempt in AsyncRetrying(
-                retry=retry_if_exception_type((NotFound, Aborted, ServiceUnavailable)),
-                stop=stop_after_attempt(IAM_RETRY_ATTEMPTS),
-                wait=wait_exponential(multiplier=1, min=1, max=10),
-                reraise=True,
-            ):
-                with attempt:
-                    client = await self._get_iam_client()
-
-                    # Get current policy
-                    get_request = iam_policy_pb2.GetIamPolicyRequest(resource=resource)
-                    policy = await client.get_iam_policy(request=get_request)
-
-                    # Check if binding already exists
-                    for binding in policy.bindings:
-                        if binding.role == role and member in binding.members:
-                            logger.info(
-                                "Impersonation permission already granted",
-                                extra={"user_email": user_email, "sa_email": sa_email},
-                            )
-                            return
-
-                    # Add new binding
-                    new_binding = policy_pb2.Binding(role=role, members=[member])
-                    policy.bindings.append(new_binding)
-
-                    # Set updated policy
-                    set_request = iam_policy_pb2.SetIamPolicyRequest(
-                        resource=resource,
-                        policy=policy,
-                    )
-                    await client.set_iam_policy(request=set_request)
-
-                    logger.info(
-                        "Granted impersonation permission",
-                        extra={"user_email": user_email, "sa_email": sa_email},
-                    )
-                    return
-
-        except Exception as e:
-            # Log but don't fail - impersonation may still work
-            logger.warning(
-                "Failed to grant impersonation permission",
-                extra={"user_email": user_email, "sa_email": sa_email, "error": str(e)},
-            )
-
-    async def _impersonate_service_account(
-        self, sa_email: str, retry_on_permission_denied: bool = False
-    ) -> tuple[str, datetime]:
+    async def _impersonate_service_account(self, sa_email: str) -> tuple[str, datetime]:
         """Impersonate service account using server ADC and return token.
 
         Note: This uses the sync google-auth library wrapped in asyncio.to_thread
@@ -408,7 +300,6 @@ class TokenGenerator:
 
         Args:
             sa_email: Service account email to impersonate
-            retry_on_permission_denied: If True, retry on 403/404 errors
 
         Returns:
             Tuple of (access_token, expires_at)
@@ -416,31 +307,15 @@ class TokenGenerator:
         Raises:
             ImpersonationError: If impersonation fails
         """
-        # Run blocking impersonation in thread pool since google-auth is sync
         try:
-            token = await asyncio.to_thread(
-                self._do_impersonation, sa_email, retry_on_permission_denied
-            )
+            token = await asyncio.to_thread(self._do_impersonation, sa_email)
             expires_at = datetime.now(UTC) + timedelta(seconds=TOKEN_LIFETIME)
             return token, expires_at
-        except RefreshError as e:
-            logger.error(
-                "Impersonation failed - credentials may be invalid",
-                extra={"sa_email": sa_email, "error": str(e)},
-            )
-            raise ImpersonationError(f"Impersonation failed: {e}", sa_email, e) from e
         except Exception as e:
-            logger.error(
-                "Impersonation failed",
-                extra={"sa_email": sa_email, "error": str(e)},
-            )
             raise ImpersonationError(f"Impersonation failed: {e}", sa_email, e) from e
 
-    def _do_impersonation(self, sa_email: str, _retry_on_permission_denied: bool) -> str:
-        """Perform the actual impersonation (blocking, runs in thread pool).
-
-        This is separated to allow asyncio.to_thread() to run it without blocking.
-        """
+    def _do_impersonation(self, sa_email: str) -> str:
+        """Perform the actual impersonation (blocking, runs in thread pool)."""
         source_credentials = self._get_admin_credentials()
 
         target_credentials = self._impersonated_credentials_class(

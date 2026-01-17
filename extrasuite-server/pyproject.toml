@@ -19,7 +19,6 @@ dependencies = [
     "loguru>=0.7.0",
     "itsdangerous>=2.1.0",
     "slowapi>=0.1.9",
-    "tenacity>=8.2.0",
 ]
 
 [project.optional-dependencies]

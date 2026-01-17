@@ -12,7 +12,6 @@ Endpoints:
 """
 
 import secrets
-from datetime import UTC, datetime
 from urllib.parse import urlencode
 
 from fastapi import APIRouter, Depends, HTTPException, Query, Request
@@ -27,11 +26,7 @@ from slowapi.util import get_remote_address
 
 from extrasuite_server.config import Settings, get_settings
 from extrasuite_server.database import Database, get_database
-from extrasuite_server.token_generator import (
-    ImpersonationError,
-    ServiceAccountCreationError,
-    TokenGenerator,
-)
+from extrasuite_server.token_generator import TokenGenerator
 
 # Reduced OAuth scopes - only what we need to identify the user
 # We use server's ADC for SA impersonation, NOT user's OAuth credentials
@@ -92,9 +87,6 @@ async def get_current_user(
         raise HTTPException(status_code=403, detail="Authentication required")
 
     sa_email = await db.get_service_account_email(email)
-    if not sa_email:
-        raise HTTPException(status_code=403, detail="Authentication required")
-
     return {
         "email": email,
         "service_account_email": sa_email,
@@ -116,10 +108,6 @@ async def list_users(
     if not email:
         raise HTTPException(status_code=403, detail="Authentication required")
 
-    sa_email = await db.get_service_account_email(email)
-    if not sa_email:
-        raise HTTPException(status_code=403, detail="Authentication required")
-
     users = await db.list_users_with_service_accounts()
     return {"users": users}
 
@@ -129,62 +117,37 @@ async def list_users(
 # =============================================================================
 
 
-@router.get("/token/auth")
+@router.get("/token/auth", response_model=None)
 @limiter.limit("10/minute")
 async def start_token_auth(
     request: Request,
     port: int = Query(..., description="CLI localhost callback port", ge=MIN_PORT, le=MAX_PORT),
     settings: Settings = Depends(get_settings),
     db: Database = Depends(get_database),
-) -> RedirectResponse:
+) -> RedirectResponse | HTMLResponse:
     """Start OAuth flow for CLI token exchange.
 
     The CLI should call this with a port parameter for its localhost server.
     Example: /api/token/auth?port=8085
 
-    The server will always redirect to http://localhost:{port}/on-authentication
-    to prevent open redirect vulnerabilities.
-
-    If the user has a valid session with stored credentials and service account,
-    a new token will be generated without requiring re-authentication.
-
-    Otherwise, this endpoint creates a state token and redirects to Google OAuth.
-    The callback is handled by /api/auth/callback.
+    Flow:
+    1. If user has valid session → generate token and redirect to CLI
+    2. Otherwise → redirect to Google OAuth (callback handles token generation)
     """
-    # Build the redirect URL - always localhost with fixed path
     cli_redirect = _build_cli_redirect_url(port)
 
-    # Check if user has a valid session with stored SA
+    # If user has a valid session, generate token directly
     email = request.session.get("email")
-    logger.info("Session check", extra={"email": email, "has_session": email is not None})
     if email:
-        sa_email = await db.get_service_account_email(email)
-        logger.info(
-            "Firestore lookup",
-            extra={
-                "email": email,
-                "found": sa_email is not None,
-                "sa_email": sa_email,
-            },
-        )
-        if sa_email:
-            logger.info("Session found, generating token", extra={"email": email, "cli_port": port})
-            redirect_response = await _try_generate_token(db, email, cli_redirect, settings)
-            if redirect_response:
-                return redirect_response
-            # Token generation failed, fall through to OAuth flow
-            logger.info("Token generation failed, starting OAuth flow", extra={"email": email})
+        logger.info("Session found, generating token", extra={"email": email, "cli_port": port})
+        return await _generate_token_and_redirect(db, settings, email, cli_redirect)
 
-    # No valid session or token generation failed, start OAuth flow
-    logger.info("Starting OAuth flow", extra={"cli_port": port})
-
-    # Create state token with CLI redirect info (stored in Firestore)
+    # No session - start OAuth flow
+    logger.info("No session, starting OAuth flow", extra={"cli_port": port})
     state = secrets.token_urlsafe(32)
     await db.save_state(state, cli_redirect)
 
-    # Create OAuth flow with minimal scopes
     flow = _create_oauth_flow(settings)
-
     authorization_url, _ = flow.authorization_url(
         access_type="offline",
         state=state,
@@ -203,7 +166,10 @@ async def google_callback(
     settings: Settings = Depends(get_settings),
     db: Database = Depends(get_database),
 ) -> RedirectResponse | HTMLResponse:
-    """Handle Google OAuth callback for CLI flow."""
+    """Handle Google OAuth callback for CLI flow.
+
+    Verifies OAuth, sets session, then generates token and redirects to CLI.
+    """
     # Retrieve and consume state token from Firestore (one-time use)
     cli_redirect = await db.retrieve_state(state)
     if not cli_redirect:
@@ -213,17 +179,15 @@ async def google_callback(
         )
         raise HTTPException(status_code=400, detail="Invalid or expired state token")
 
-    # Create OAuth flow with minimal scopes
-    flow = _create_oauth_flow(settings)
-
     # Exchange code for tokens
+    flow = _create_oauth_flow(settings)
     try:
         flow.fetch_token(code=code)
     except OAuth2Error as e:
         logger.warning("OAuth token exchange failed", extra={"error": str(e)})
         return _cli_error_response(cli_redirect)
 
-    # Get credentials and verify ID token
+    # Verify ID token
     credentials = flow.credentials
     try:
         id_info = id_token.verify_oauth2_token(
@@ -236,7 +200,6 @@ async def google_callback(
         return _cli_error_response(cli_redirect)
 
     user_email = id_info.get("email", "")
-    user_name = id_info.get("name", "")
 
     # Validate email domain against allowlist
     if not settings.is_email_domain_allowed(user_email):
@@ -246,51 +209,13 @@ async def google_callback(
         )
         return _cli_error_response(cli_redirect)
 
-    logger.info("OAuth callback successful", extra={"email": user_email})
-
-    # Generate token using TokenGenerator (uses server ADC for impersonation)
-    token_generator = TokenGenerator(
-        database=db,
-        settings=settings,
-    )
-
-    try:
-        result = await token_generator.generate_token(user_email, user_name)
-    except ServiceAccountCreationError as e:
-        logger.error(
-            "Service account creation failed",
-            extra={"email": e.user_email, "error": str(e.cause) if e.cause else str(e)},
-        )
-        return _cli_error_response(cli_redirect)
-    except ImpersonationError as e:
-        logger.error(
-            "Token generation failed",
-            extra={"sa_email": e.sa_email, "error": str(e.cause) if e.cause else str(e)},
-        )
-        return _cli_error_response(cli_redirect)
-
-    # Calculate expires_in from expires_at for the CLI
-    expires_in = int((result.expires_at - datetime.now(UTC)).total_seconds())
-    if expires_in < 0:
-        expires_in = 3600  # Fallback to 1 hour
-
-    # Create redirect response with token
-    params = {
-        "token": result.token,
-        "expires_in": str(expires_in),
-        "service_account": result.service_account_email,
-    }
-    redirect_url = f"{cli_redirect}?{urlencode(params)}"
-    response = RedirectResponse(url=redirect_url)
+    logger.info("OAuth successful", extra={"email": user_email})
 
     # Set session cookie so user doesn't need to re-authenticate
     request.session["email"] = user_email
 
-    logger.info(
-        "Auth successful",
-        extra={"email": user_email, "service_account": result.service_account_email},
-    )
-    return response
+    # Generate token and redirect to CLI
+    return await _generate_token_and_redirect(db, settings, user_email, cli_redirect)
 
 
 # =============================================================================
@@ -329,43 +254,34 @@ def _create_oauth_flow(settings: Settings) -> Flow:
     return flow
 
 
-async def _try_generate_token(
-    db: Database, email: str, cli_redirect: str, settings: Settings
-) -> RedirectResponse | None:
-    """Try to generate a token for an existing session.
+async def _generate_token_and_redirect(
+    db: Database, settings: Settings, email: str, cli_redirect: str
+) -> RedirectResponse | HTMLResponse:
+    """Generate a token and redirect to CLI.
 
-    Returns a RedirectResponse with the new token if successful, None otherwise.
+    Creates service account if needed, then generates token.
+    Returns error redirect to CLI if token generation fails.
     """
-    token_generator = TokenGenerator(
-        database=db,
-        settings=settings,
-    )
+    token_generator = TokenGenerator(database=db, settings=settings)
 
     try:
         result = await token_generator.generate_token(email)
-    except (ServiceAccountCreationError, ImpersonationError) as e:
-        logger.warning(
-            "Token generation failed for session", extra={"email": email, "error": str(e)}
-        )
-        return None
+    except Exception as e:
+        logger.exception("Token generation failed", extra={"email": email, "error": str(e)})
+        return _cli_error_response(cli_redirect)
 
-    # Calculate expires_in from expires_at for the CLI
-    expires_in = int((result.expires_at - datetime.now(UTC)).total_seconds())
-    if expires_in < 0:
-        expires_in = 3600
+    logger.info(
+        "Token generated",
+        extra={"email": email, "service_account": result.service_account_email},
+    )
 
-    # Redirect to CLI with token
+    # Convert to dict for URL encoding (boundary conversion)
     params = {
         "token": result.token,
-        "expires_in": str(expires_in),
+        "expires_at": result.expires_at.isoformat(),
         "service_account": result.service_account_email,
     }
     redirect_url = f"{cli_redirect}?{urlencode(params)}"
-
-    logger.info(
-        "Token generated from session",
-        extra={"email": email, "service_account": result.service_account_email},
-    )
     return RedirectResponse(url=redirect_url)
 
 

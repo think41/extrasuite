@@ -370,9 +370,7 @@ class TestFakeSettings:
 
     def test_configured_domain_returns_abbreviation(self) -> None:
         """Configured domain returns its abbreviation."""
-        settings = FakeSettings(
-            domain_abbreviations={"recruit41.com": "r41", "think41.com": "t41"}
-        )
+        settings = FakeSettings(domain_abbreviations={"recruit41.com": "r41", "think41.com": "t41"})
 
         assert settings.get_domain_abbreviation("recruit41.com") == "r41"
         assert settings.get_domain_abbreviation("think41.com") == "t41"
