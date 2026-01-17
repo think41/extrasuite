@@ -218,30 +218,11 @@
 
                 const downloadUrl = `${BASE_URL}/api/skills/download?token=${downloadToken}`;
 
-                // macOS/Linux command - downloads, extracts to both directories
-                const macCmd = `curl -fsSL "${downloadUrl}" -o /tmp/extrasuite-skills.zip && \\
-unzip -o /tmp/extrasuite-skills.zip -d /tmp/extrasuite-skills && \\
-mkdir -p ~/.claude/skills ~/.codex/skills && \\
-cp -R /tmp/extrasuite-skills/gsheets ~/.claude/skills/ && \\
-cp -R /tmp/extrasuite-skills/gsheets ~/.codex/skills/ && \\
-rm -rf /tmp/extrasuite-skills /tmp/extrasuite-skills.zip && \\
-echo "Skill installed successfully!"`;
+                // macOS/Linux command - single line to avoid copy-paste issues
+                const macCmd = `curl -fsSL '${downloadUrl}' -o /tmp/es.zip && unzip -oq /tmp/es.zip -d /tmp/es && mkdir -p ~/.claude/skills ~/.codex/skills && cp -R /tmp/es/gsheets ~/.claude/skills/ && cp -R /tmp/es/gsheets ~/.codex/skills/ && rm -rf /tmp/es /tmp/es.zip && echo "Skill installed successfully!"`;
 
-                // Windows PowerShell command
-                const windowsCmd = `$url = "${downloadUrl}"
-$zipPath = "$env:TEMP\\extrasuite-skills.zip"
-$extractPath = "$env:TEMP\\extrasuite-skills"
-Invoke-WebRequest -Uri $url -OutFile $zipPath
-Expand-Archive -Path $zipPath -DestinationPath $extractPath -Force
-$claudeSkills = "$env:USERPROFILE\\.claude\\skills"
-$codexSkills = "$env:USERPROFILE\\.codex\\skills"
-New-Item -ItemType Directory -Force -Path $claudeSkills | Out-Null
-New-Item -ItemType Directory -Force -Path $codexSkills | Out-Null
-Copy-Item -Path "$extractPath\\gsheets" -Destination $claudeSkills -Recurse -Force
-Copy-Item -Path "$extractPath\\gsheets" -Destination $codexSkills -Recurse -Force
-Remove-Item -Path $zipPath -Force
-Remove-Item -Path $extractPath -Recurse -Force
-Write-Host "Skill installed successfully!"`;
+                // Windows PowerShell command - single line
+                const windowsCmd = `irm '${downloadUrl}' -OutFile $env:TEMP\\es.zip; Expand-Archive $env:TEMP\\es.zip $env:TEMP\\es -Force; md ~\\.claude\\skills,~\\.codex\\skills -Force >$null; cp $env:TEMP\\es\\gsheets ~\\.claude\\skills\\ -Recurse -Force; cp $env:TEMP\\es\\gsheets ~\\.codex\\skills\\ -Recurse -Force; rm $env:TEMP\\es.zip,$env:TEMP\\es -Recurse -Force; echo "Skill installed successfully!"`;
 
                 document.getElementById('install-cmd-mac').textContent = macCmd;
                 document.getElementById('install-cmd-windows').textContent = windowsCmd;
