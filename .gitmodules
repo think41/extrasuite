@@ -1,0 +1,3 @@
+[submodule "gspread"]
+	path = gspread
+	url = git@github.com:sripathikrishnan/gspread.git
