@@ -10,6 +10,29 @@ The project consists of two packages:
 1. **Client Library** (`extrasuite-client`) - PyPI package for CLI tools
 2. **Server** (`extrasuite-server`) - FastAPI server for Cloud Run deployment
 
+## gspread Submodule
+
+The `gspread/` directory contains a fork of the [gspread](https://github.com/burnash/gspread) library, included as a git submodule from `github.com/sripathikrishnan/gspread`.
+
+**Why a fork?** The upstream gspread library is not actively maintained and lacks support for Google Sheets table management features. Rather than maintaining utility functions separately, we extended gspread directly with the methods we need.
+
+**Methods added to `gspread.Worksheet`:**
+- `get_shape()` - Get first/last rows for assessing table structure
+- `has_table()` - Check if worksheet has a defined table
+- `get_banded_ranges()` - Get alternating row color (banded) ranges
+- `remove_banded_ranges()` - Remove banded ranges (required before table creation)
+- `convert_to_table()` - Convert data range to a table via batchUpdate API
+- `delete_table()` - Delete a table from the worksheet
+
+**Submodule commands:**
+```bash
+# After cloning extrasuite, initialize the submodule
+git submodule update --init
+
+# Pull latest changes from the fork
+cd gspread && git pull origin master
+```
+
 ## Architecture
 
 **Client Flow:**
