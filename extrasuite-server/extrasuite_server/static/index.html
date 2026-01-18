@@ -82,21 +82,26 @@
             <!-- How it works -->
             <section class="mb-16">
                 <h3 class="text-2xl font-semibold text-gray-800 mb-8 text-center">How it works</h3>
-                <div class="grid md:grid-cols-3 gap-8">
+                <div class="grid md:grid-cols-4 gap-6">
+                    <div class="text-center">
+                        <div class="step-number bg-gray-300 text-gray-600 mx-auto mb-4">0</div>
+                        <h4 class="font-semibold text-gray-800 mb-2">Install an AI agent</h4>
+                        <p class="text-gray-600 text-sm">Get Claude Code, Gemini CLI, or Codex CLI on your machine.</p>
+                    </div>
                     <div class="text-center">
                         <div class="step-number bg-blue-100 text-blue-700 mx-auto mb-4">1</div>
                         <h4 class="font-semibold text-gray-800 mb-2">Install the skill</h4>
-                        <p class="text-gray-600 text-sm">Run a one-time install command to add Google Sheets access to Claude Code, Codex, or Gemini CLI.</p>
+                        <p class="text-gray-600 text-sm">Run a one-time command to add Google Sheets access.</p>
                     </div>
                     <div class="text-center">
                         <div class="step-number bg-blue-100 text-blue-700 mx-auto mb-4">2</div>
                         <h4 class="font-semibold text-gray-800 mb-2">Share your document</h4>
-                        <p class="text-gray-600 text-sm">Share your Google Sheet with your personal service account email. You control what the AI can access.</p>
+                        <p class="text-gray-600 text-sm">Share your Google Sheet with your service account email.</p>
                     </div>
                     <div class="text-center">
                         <div class="step-number bg-blue-100 text-blue-700 mx-auto mb-4">3</div>
-                        <h4 class="font-semibold text-gray-800 mb-2">Ask your AI</h4>
-                        <p class="text-gray-600 text-sm">Use natural language to ask Claude, Codex, or Gemini to read, analyze, or modify your spreadsheet.</p>
+                        <h4 class="font-semibold text-gray-800 mb-2">Put it to work</h4>
+                        <p class="text-gray-600 text-sm">Use natural language to work with your spreadsheet.</p>
                     </div>
                 </div>
             </section>
@@ -104,30 +109,28 @@
             <!-- Examples -->
             <section class="mb-16">
                 <h3 class="text-2xl font-semibold text-gray-800 mb-8 text-center">What you can do</h3>
-                <div class="grid md:grid-cols-2 gap-6">
-                    <div class="bg-white rounded-lg border border-gray-200 p-6">
-                        <div class="text-sm text-gray-500 mb-2">Prompt</div>
-                        <p class="text-gray-800 mb-4 italic">"Read the sales data from my Q4 spreadsheet and create a summary with trends"</p>
-                        <div class="text-sm text-gray-500 mb-2">Result</div>
-                        <p class="text-gray-600 text-sm">Claude reads the data, identifies patterns, and writes a formatted summary with charts to a new sheet.</p>
+                <p class="text-gray-600 mb-6 text-center max-w-2xl mx-auto">The more context you provide, the better the results. Here are real examples from our team:</p>
+                <div class="space-y-4 max-w-3xl mx-auto">
+                    <!-- Example 1: Complex recruitment analytics -->
+                    <div class="bg-white rounded-lg border border-gray-200 p-6 border-l-4 border-l-blue-500">
+                        <p class="text-gray-800 text-sm leading-relaxed mb-3">
+                            "I am meeting the CEO of [client]. They have been piloting with us and used 75+ interviews across several roles. Through linkedin posts and press releases, I see they are hiring BD managers for RPOs in Middle East, Singapore, and Australia.
+                            <br><br>
+                            I need candidate-side metrics: candidates invited, completed interviews, no-shows, and those who engaged 5+ minutes. For dropoffs, analyze if it was bad experience, technical issues, or self-selection.
+                            <br><br>
+                            On user-side: when was the interview created, when the first candidate was added, and time from candidate addition to interview completion.
+                            <br><br>
+                            Use the r41 sql tool to fetch data. Use the gsheets skill to update the data to https://docs.google.com/spreadsheets/..."
+                        </p>
+                        <p class="text-xs text-gray-500 italic">— Dr. Swetha Suresh, Co-founder Recruit41</p>
                     </div>
-                    <div class="bg-white rounded-lg border border-gray-200 p-6">
-                        <div class="text-sm text-gray-500 mb-2">Prompt</div>
-                        <p class="text-gray-800 mb-4 italic">"Clean up the contact list - remove duplicates, fix phone number formatting"</p>
-                        <div class="text-sm text-gray-500 mb-2">Result</div>
-                        <p class="text-gray-600 text-sm">Claude processes hundreds of rows, standardizes formats, and highlights changes for your review.</p>
-                    </div>
-                    <div class="bg-white rounded-lg border border-gray-200 p-6">
-                        <div class="text-sm text-gray-500 mb-2">Prompt</div>
-                        <p class="text-gray-800 mb-4 italic">"Generate a weekly report from this raw data and email it to the team"</p>
-                        <div class="text-sm text-gray-500 mb-2">Result</div>
-                        <p class="text-gray-600 text-sm">Claude transforms raw metrics into a polished report with insights and action items.</p>
-                    </div>
-                    <div class="bg-white rounded-lg border border-gray-200 p-6">
-                        <div class="text-sm text-gray-500 mb-2">Prompt</div>
-                        <p class="text-gray-800 mb-4 italic">"Compare these two budget spreadsheets and highlight the differences"</p>
-                        <div class="text-sm text-gray-500 mb-2">Result</div>
-                        <p class="text-gray-600 text-sm">Claude analyzes both sheets, creates a diff summary, and flags significant variances.</p>
+
+                    <!-- Example 2: Financial MIS report -->
+                    <div class="bg-white rounded-lg border border-gray-200 p-6 border-l-4 border-l-green-500">
+                        <p class="text-gray-800 text-sm leading-relaxed mb-3">
+                            "Help me make a MIS report for Think41 financials. Pull the data from zoho using zoho skill. Update the data in this spreadsheet https://docs.google.com/spreadsheets/..."
+                        </p>
+                        <p class="text-xs text-gray-500 italic">— Himanshu Varshney, Think41 Technologies</p>
                     </div>
                 </div>
             </section>
