@@ -3,165 +3,299 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>ExtraSuite - Internal Authentication Service</title>
+    <title>ExtraSuite for Google Drive</title>
     <script src="https://cdn.tailwindcss.com"></script>
     <style>
         .copy-btn:hover { opacity: 0.8; }
         .copy-btn:active { transform: scale(0.95); }
         .tab-active { border-bottom: 2px solid #1d4ed8; color: #1d4ed8; }
+        .step-number {
+            width: 32px;
+            height: 32px;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            border-radius: 50%;
+            font-weight: 600;
+            flex-shrink: 0;
+        }
     </style>
 </head>
 <body class="bg-gray-50 min-h-screen">
-    <!-- Header bar (shown when authenticated) -->
-    <header id="header-bar" class="hidden bg-white border-b border-gray-200 sticky top-0 z-10">
-        <div class="max-w-5xl mx-auto px-4 py-3 flex items-center justify-between">
-            <div class="flex items-center gap-3">
-                <h1 class="text-xl font-bold text-gray-900">ExtraSuite</h1>
-                <span class="text-sm text-gray-500 hidden sm:inline">Internal Authentication Service</span>
+    <!-- Header bar (always shown) -->
+    <header class="bg-white border-b border-gray-200 sticky top-0 z-10">
+        <div class="max-w-6xl mx-auto px-4 py-3 flex items-center justify-between">
+            <div class="flex items-center gap-6">
+                <a href="/" class="flex items-center gap-2">
+                    <h1 class="text-xl font-bold text-gray-900">ExtraSuite</h1>
+                </a>
+                <nav class="hidden sm:flex items-center gap-4 text-sm">
+                    <a href="/security" class="text-gray-600 hover:text-gray-900">Security</a>
+                    <a href="/faq" class="text-gray-600 hover:text-gray-900">FAQ</a>
+                    <a id="nav-directory" href="/users" class="text-gray-600 hover:text-gray-900 hidden">Directory</a>
+                </nav>
             </div>
             <div class="flex items-center gap-3">
-                <div class="flex items-center gap-2">
-                    <div class="w-8 h-8 bg-blue-600 rounded-full flex items-center justify-center">
-                        <span id="user-avatar" class="text-white text-sm font-medium"></span>
+                <!-- Unauthenticated nav -->
+                <div id="unauth-nav" class="hidden">
+                    <a href="/api/token/auth?port=9999"
+                       class="px-4 py-2 bg-gray-900 text-white text-sm rounded-lg hover:bg-gray-700 transition-colors">
+                        Sign in
+                    </a>
+                </div>
+                <!-- Authenticated nav -->
+                <div id="auth-nav" class="hidden flex items-center gap-3">
+                    <div class="flex items-center gap-2">
+                        <div class="w-8 h-8 bg-blue-600 rounded-full flex items-center justify-center">
+                            <span id="user-avatar" class="text-white text-sm font-medium"></span>
+                        </div>
+                        <span id="header-email" class="text-sm text-gray-700 hidden sm:inline"></span>
                     </div>
-                    <span id="header-email" class="text-sm text-gray-700 hidden sm:inline"></span>
+                    <button onclick="logout()" class="text-sm text-gray-500 hover:text-gray-700">
+                        Logout
+                    </button>
                 </div>
             </div>
         </div>
     </header>
 
-    <div class="max-w-3xl mx-auto px-4 py-8">
-        <!-- Title for unauthenticated view -->
-        <header id="unauth-header" class="mb-12">
-            <h1 class="text-4xl font-bold text-gray-900 mb-2">ExtraSuite</h1>
-            <p class="text-lg text-gray-600">Internal Authentication Service</p>
-        </header>
+    <!-- Loading state -->
+    <div id="loading-section" class="max-w-6xl mx-auto px-4 py-16">
+        <p class="text-gray-500">Loading...</p>
+    </div>
 
-        <main>
-            <!-- Loading state -->
-            <div id="loading-section" class="bg-white rounded-lg shadow-sm border border-gray-200 p-8 mb-8">
-                <p class="text-gray-500">Loading...</p>
+    <!-- Unauthenticated view -->
+    <div id="login-section" class="hidden">
+        <div class="max-w-4xl mx-auto px-4 py-16">
+            <!-- Hero -->
+            <section class="text-center mb-16">
+                <h2 class="text-4xl font-bold text-gray-900 mb-4">ExtraSuite for Google Drive</h2>
+                <p class="text-xl text-gray-600 mb-8 max-w-2xl mx-auto">
+                    ExtraSuite connects Claude Code and Codex to your Google Workspace. Ask your AI to read, analyze, and edit spreadsheets directly.
+                </p>
+                <a href="/api/token/auth?port=9999"
+                   class="inline-block px-8 py-4 bg-gray-900 text-white text-lg rounded-lg hover:bg-gray-700 transition-colors">
+                    Get Started
+                </a>
+            </section>
+
+            <!-- How it works -->
+            <section class="mb-16">
+                <h3 class="text-2xl font-semibold text-gray-800 mb-8 text-center">How it works</h3>
+                <div class="grid md:grid-cols-3 gap-8">
+                    <div class="text-center">
+                        <div class="step-number bg-blue-100 text-blue-700 mx-auto mb-4">1</div>
+                        <h4 class="font-semibold text-gray-800 mb-2">Install the skill</h4>
+                        <p class="text-gray-600 text-sm">Run a one-time install command to add Google Sheets access to Claude Code or Codex.</p>
+                    </div>
+                    <div class="text-center">
+                        <div class="step-number bg-blue-100 text-blue-700 mx-auto mb-4">2</div>
+                        <h4 class="font-semibold text-gray-800 mb-2">Share your document</h4>
+                        <p class="text-gray-600 text-sm">Share your Google Sheet with your personal service account email. You control what the AI can access.</p>
+                    </div>
+                    <div class="text-center">
+                        <div class="step-number bg-blue-100 text-blue-700 mx-auto mb-4">3</div>
+                        <h4 class="font-semibold text-gray-800 mb-2">Ask Claude</h4>
+                        <p class="text-gray-600 text-sm">Use natural language to ask Claude to read, analyze, or modify your spreadsheet.</p>
+                    </div>
+                </div>
+            </section>
+
+            <!-- Examples -->
+            <section class="mb-16">
+                <h3 class="text-2xl font-semibold text-gray-800 mb-8 text-center">What you can do</h3>
+                <div class="grid md:grid-cols-2 gap-6">
+                    <div class="bg-white rounded-lg border border-gray-200 p-6">
+                        <div class="text-sm text-gray-500 mb-2">Prompt</div>
+                        <p class="text-gray-800 mb-4 italic">"Read the sales data from my Q4 spreadsheet and create a summary with trends"</p>
+                        <div class="text-sm text-gray-500 mb-2">Result</div>
+                        <p class="text-gray-600 text-sm">Claude reads the data, identifies patterns, and writes a formatted summary with charts to a new sheet.</p>
+                    </div>
+                    <div class="bg-white rounded-lg border border-gray-200 p-6">
+                        <div class="text-sm text-gray-500 mb-2">Prompt</div>
+                        <p class="text-gray-800 mb-4 italic">"Clean up the contact list - remove duplicates, fix phone number formatting"</p>
+                        <div class="text-sm text-gray-500 mb-2">Result</div>
+                        <p class="text-gray-600 text-sm">Claude processes hundreds of rows, standardizes formats, and highlights changes for your review.</p>
+                    </div>
+                    <div class="bg-white rounded-lg border border-gray-200 p-6">
+                        <div class="text-sm text-gray-500 mb-2">Prompt</div>
+                        <p class="text-gray-800 mb-4 italic">"Generate a weekly report from this raw data and email it to the team"</p>
+                        <div class="text-sm text-gray-500 mb-2">Result</div>
+                        <p class="text-gray-600 text-sm">Claude transforms raw metrics into a polished report with insights and action items.</p>
+                    </div>
+                    <div class="bg-white rounded-lg border border-gray-200 p-6">
+                        <div class="text-sm text-gray-500 mb-2">Prompt</div>
+                        <p class="text-gray-800 mb-4 italic">"Compare these two budget spreadsheets and highlight the differences"</p>
+                        <div class="text-sm text-gray-500 mb-2">Result</div>
+                        <p class="text-gray-600 text-sm">Claude analyzes both sheets, creates a diff summary, and flags significant variances.</p>
+                    </div>
+                </div>
+            </section>
+
+            <!-- Coming soon -->
+            <section class="mb-16">
+                <div class="bg-gradient-to-r from-blue-50 to-indigo-50 rounded-lg p-8 text-center">
+                    <h3 class="text-xl font-semibold text-gray-800 mb-2">Coming Soon</h3>
+                    <p class="text-gray-600 mb-4">Google Docs and Google Slides support is on the way.</p>
+                    <div class="flex justify-center gap-4 text-sm text-gray-500">
+                        <span class="px-3 py-1 bg-white rounded-full border border-gray-200">Google Docs</span>
+                        <span class="px-3 py-1 bg-white rounded-full border border-gray-200">Google Slides</span>
+                    </div>
+                </div>
+            </section>
+
+            <!-- Internal use notice -->
+            <div class="bg-amber-50 border border-amber-200 rounded-lg p-4 text-center">
+                <p class="text-amber-800 text-sm">
+                    This service is for <strong>internal use only</strong> by employees of think41.com, recruit41.com, and mindlap.dev.
+                </p>
             </div>
+        </div>
+    </div>
 
-            <!-- Unauthenticated view -->
-            <div id="login-section" class="hidden bg-white rounded-lg shadow-sm border border-gray-200 p-8 mb-8">
-                <section class="mb-8">
-                    <h2 class="text-xl font-semibold text-gray-800 mb-4">About</h2>
-                    <p class="text-gray-700 mb-4">
-                        ExtraSuite is a headless authentication service that enables CLI tools and LLM agents to securely access Google Workspace APIs (Sheets, Docs, Drive). It handles OAuth authentication and generates short-lived service account tokens, so developers don't need to manage credentials manually.
-                    </p>
-                    <div class="bg-amber-50 border border-amber-200 rounded-lg p-4">
-                        <p class="text-amber-800">
-                            This service is for <strong>internal use only</strong> by employees of think41.com, recruit41.com, and mindlap.dev. Unauthorized access is prohibited.
+    <!-- Authenticated view -->
+    <div id="user-section" class="hidden">
+        <div class="max-w-6xl mx-auto px-4 py-8">
+            <div class="flex flex-col lg:flex-row gap-8">
+                <!-- Sidebar -->
+                <aside class="lg:w-80 flex-shrink-0">
+                    <div class="bg-white rounded-lg shadow-sm border border-gray-200 p-6 sticky top-20">
+                        <div class="text-center mb-6">
+                            <div class="w-16 h-16 bg-gradient-to-br from-blue-500 to-indigo-600 rounded-full mx-auto mb-4 flex items-center justify-center">
+                                <svg class="w-8 h-8 text-white" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                                    <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M9.75 17L9 20l-1 1h8l-1-1-.75-3M3 13h18M5 17h14a2 2 0 002-2V5a2 2 0 00-2-2H5a2 2 0 00-2 2v10a2 2 0 002 2z"></path>
+                                </svg>
+                            </div>
+                            <p class="text-gray-600 text-sm mb-1">Your AI assistant is ready at</p>
+                        </div>
+                        <div class="bg-gray-50 rounded-lg p-3 mb-4">
+                            <code id="service-account-email" class="text-sm text-gray-800 font-mono break-all block text-center"></code>
+                        </div>
+                        <button onclick="copyToClipboard('service-account-email')" class="copy-btn w-full px-4 py-2 bg-blue-600 text-white rounded-lg text-sm hover:bg-blue-700 transition-colors">
+                            Copy Email
+                        </button>
+                        <p class="text-xs text-gray-500 mt-4 text-center">
+                            Share your Google Sheets with this email to grant access.
                         </p>
                     </div>
-                </section>
+                </aside>
 
-                <section>
-                    <h2 class="text-xl font-semibold text-gray-800 mb-4">Employee Login</h2>
-                    <p class="text-gray-700 mb-4">
-                        Sign in with your company Google account to view your AI assistant details.
-                    </p>
-                    <a href="/api/token/auth?port=9999"
-                       class="inline-block px-6 py-3 bg-gray-900 text-white rounded-lg hover:bg-gray-700 transition-colors">
-                        Sign in with Google
-                    </a>
-                    <p class="text-sm text-gray-500 mt-3">
-                        Note: After signing in, you'll be redirected back to this page.
-                    </p>
-                </section>
-            </div>
+                <!-- Main content -->
+                <main class="flex-1 min-w-0">
+                    <!-- How it works -->
+                    <section class="bg-white rounded-lg shadow-sm border border-gray-200 p-6 mb-6">
+                        <h2 class="text-xl font-semibold text-gray-800 mb-6">Get started in 3 steps</h2>
+                        <div class="space-y-6">
+                            <div class="flex gap-4">
+                                <div class="step-number bg-blue-600 text-white">1</div>
+                                <div class="flex-1">
+                                    <h3 class="font-medium text-gray-800 mb-1">Install the skill</h3>
+                                    <p class="text-gray-600 text-sm">Run the command below in your terminal. This is a one-time setup.</p>
+                                </div>
+                            </div>
+                            <div class="flex gap-4">
+                                <div class="step-number bg-gray-200 text-gray-600">2</div>
+                                <div class="flex-1">
+                                    <h3 class="font-medium text-gray-800 mb-1">Share your Google Sheet</h3>
+                                    <p class="text-gray-600 text-sm">Open your Google Sheet, click Share, and add your service account email from the sidebar.</p>
+                                </div>
+                            </div>
+                            <div class="flex gap-4">
+                                <div class="step-number bg-gray-200 text-gray-600">3</div>
+                                <div class="flex-1">
+                                    <h3 class="font-medium text-gray-800 mb-1">Ask Claude or Codex</h3>
+                                    <p class="text-gray-600 text-sm">Use natural language: "Read my spreadsheet at [URL] and summarize the data"</p>
+                                </div>
+                            </div>
+                        </div>
+                    </section>
 
-            <!-- Authenticated view -->
-            <div id="user-section" class="hidden">
-                <!-- Service Account Card -->
-                <div class="bg-white rounded-lg shadow-sm border border-gray-200 p-6 mb-6">
-                    <div class="flex items-start justify-between mb-4">
-                        <h2 class="text-lg font-semibold text-gray-800">Your AI Assistant</h2>
-                    </div>
-                    <div class="bg-blue-50 border border-blue-200 rounded-lg p-4 mb-4">
-                        <p class="text-sm text-blue-700 mb-2">Service Account Email:</p>
-                        <div class="flex items-center gap-2">
-                            <code id="service-account-email" class="flex-1 bg-blue-100 px-3 py-2 rounded text-blue-900 font-mono text-sm break-all"></code>
-                            <button onclick="copyToClipboard('service-account-email')" class="copy-btn px-3 py-2 bg-blue-600 text-white rounded text-sm hover:bg-blue-700 transition-colors">
+                    <!-- Install Skill Card -->
+                    <section class="bg-white rounded-lg shadow-sm border border-gray-200 p-6 mb-6">
+                        <h2 class="text-lg font-semibold text-gray-800 mb-4">Install the Skill</h2>
+                        <p class="text-gray-600 text-sm mb-4">
+                            Run this command in your terminal to enable Google Sheets access:
+                        </p>
+
+                        <!-- OS Tabs -->
+                        <div class="border-b border-gray-200 mb-4">
+                            <div class="flex gap-4">
+                                <button id="tab-mac" onclick="showTab('mac')" class="px-3 py-2 text-sm font-medium tab-active">
+                                    macOS / Linux
+                                </button>
+                                <button id="tab-windows" onclick="showTab('windows')" class="px-3 py-2 text-sm font-medium text-gray-500 hover:text-gray-700">
+                                    Windows (PowerShell)
+                                </button>
+                            </div>
+                        </div>
+
+                        <!-- macOS/Linux command -->
+                        <div id="cmd-mac" class="relative">
+                            <div class="bg-gray-900 rounded-lg p-4 overflow-x-auto">
+                                <pre id="install-cmd-mac" class="text-green-400 font-mono text-sm whitespace-pre-wrap break-all"></pre>
+                            </div>
+                            <button onclick="copyCommand('mac')" class="copy-btn absolute top-2 right-2 px-3 py-1 bg-gray-700 text-white rounded text-xs hover:bg-gray-600 transition-colors">
                                 Copy
                             </button>
                         </div>
-                    </div>
-                    <div class="bg-gray-50 border border-gray-200 rounded-lg p-4">
-                        <p class="text-gray-700 mb-2 font-medium">Grant Access to Your Documents</p>
-                        <p class="text-gray-600 text-sm">
-                            To let Claude or Codex read and edit your Google Sheets, Docs, or Slides, share them with your service account email above. Once shared, your AI assistant can access them on your behalf.
+
+                        <!-- Windows command -->
+                        <div id="cmd-windows" class="hidden relative">
+                            <div class="bg-gray-900 rounded-lg p-4 overflow-x-auto">
+                                <pre id="install-cmd-windows" class="text-green-400 font-mono text-sm whitespace-pre-wrap break-all"></pre>
+                            </div>
+                            <button onclick="copyCommand('windows')" class="copy-btn absolute top-2 right-2 px-3 py-1 bg-gray-700 text-white rounded text-xs hover:bg-gray-600 transition-colors">
+                                Copy
+                            </button>
+                        </div>
+
+                        <p class="text-xs text-gray-500 mt-4">
+                            This installs the Google Sheets skill for both Claude Code and Codex. The command is valid for 5 minutes.
                         </p>
-                    </div>
-                </div>
+                    </section>
 
-                <!-- Install Skill Card -->
-                <div class="bg-white rounded-lg shadow-sm border border-gray-200 p-6 mb-6">
-                    <h2 class="text-lg font-semibold text-gray-800 mb-4">Install the Skill</h2>
-                    <p class="text-gray-700 mb-4">
-                        Run this command in your terminal to enable Google Sheets access in Claude Code or Codex:
-                    </p>
-
-                    <!-- OS Tabs -->
-                    <div class="border-b border-gray-200 mb-4">
-                        <div class="flex gap-4">
-                            <button id="tab-mac" onclick="showTab('mac')" class="px-3 py-2 text-sm font-medium tab-active">
-                                macOS / Linux
-                            </button>
-                            <button id="tab-windows" onclick="showTab('windows')" class="px-3 py-2 text-sm font-medium text-gray-500 hover:text-gray-700">
-                                Windows (PowerShell)
-                            </button>
+                    <!-- Examples -->
+                    <section class="bg-white rounded-lg shadow-sm border border-gray-200 p-6 mb-6">
+                        <h2 class="text-lg font-semibold text-gray-800 mb-4">Example prompts</h2>
+                        <div class="space-y-4">
+                            <div class="bg-gray-50 rounded-lg p-4">
+                                <p class="text-gray-800 italic">"Read my sales spreadsheet at [URL] and create a summary with monthly trends"</p>
+                            </div>
+                            <div class="bg-gray-50 rounded-lg p-4">
+                                <p class="text-gray-800 italic">"Clean up the contact list in this sheet - remove duplicates and fix formatting"</p>
+                            </div>
+                            <div class="bg-gray-50 rounded-lg p-4">
+                                <p class="text-gray-800 italic">"Compare the budgets in these two spreadsheets and highlight differences"</p>
+                            </div>
                         </div>
-                    </div>
+                    </section>
 
-                    <!-- macOS/Linux command -->
-                    <div id="cmd-mac" class="relative">
-                        <div class="bg-gray-900 rounded-lg p-4 overflow-x-auto">
-                            <pre id="install-cmd-mac" class="text-green-400 font-mono text-sm whitespace-pre-wrap break-all"></pre>
+                    <!-- Coming soon -->
+                    <section class="bg-gradient-to-r from-blue-50 to-indigo-50 rounded-lg p-6">
+                        <h2 class="text-lg font-semibold text-gray-800 mb-2">Coming Soon</h2>
+                        <p class="text-gray-600 text-sm mb-3">Google Docs and Google Slides support is on the way.</p>
+                        <div class="flex gap-3 text-sm text-gray-500">
+                            <span class="px-3 py-1 bg-white rounded-full border border-gray-200">Google Docs</span>
+                            <span class="px-3 py-1 bg-white rounded-full border border-gray-200">Google Slides</span>
                         </div>
-                        <button onclick="copyCommand('mac')" class="copy-btn absolute top-2 right-2 px-3 py-1 bg-gray-700 text-white rounded text-xs hover:bg-gray-600 transition-colors">
-                            Copy
-                        </button>
-                    </div>
-
-                    <!-- Windows command -->
-                    <div id="cmd-windows" class="hidden relative">
-                        <div class="bg-gray-900 rounded-lg p-4 overflow-x-auto">
-                            <pre id="install-cmd-windows" class="text-green-400 font-mono text-sm whitespace-pre-wrap break-all"></pre>
-                        </div>
-                        <button onclick="copyCommand('windows')" class="copy-btn absolute top-2 right-2 px-3 py-1 bg-gray-700 text-white rounded text-xs hover:bg-gray-600 transition-colors">
-                            Copy
-                        </button>
-                    </div>
-
-                    <p class="text-sm text-gray-500 mt-4">
-                        This installs the Google Sheets skill for both Claude Code and Codex. The command is valid for 5 minutes.
-                    </p>
-                </div>
-
-                <!-- User Directory Card -->
-                <div class="bg-white rounded-lg shadow-sm border border-gray-200 p-6">
-                    <h2 class="text-lg font-semibold text-gray-800 mb-2">User Directory</h2>
-                    <p class="text-gray-600 text-sm mb-4">
-                        View the mapping of employees to their AI assistant service accounts.
-                    </p>
-                    <a href="/users"
-                       class="inline-block px-4 py-2 border border-gray-300 text-gray-700 rounded-lg hover:bg-gray-50 transition-colors text-sm">
-                        View Directory
-                    </a>
-                </div>
+                    </section>
+                </main>
             </div>
-        </main>
-
-        <footer class="mt-12 text-sm text-gray-500">
-            <div class="flex flex-wrap gap-4 mb-4">
-                <a href="/privacy" class="hover:text-gray-700 underline">Privacy Policy</a>
-                <a href="/terms" class="hover:text-gray-700 underline">Terms of Service</a>
-            </div>
-            <p>&copy; 2026 Think41 Technologies Pvt. Ltd.</p>
-        </footer>
+        </div>
     </div>
+
+    <!-- Footer -->
+    <footer class="border-t border-gray-200 mt-16">
+        <div class="max-w-6xl mx-auto px-4 py-8">
+            <div class="flex flex-wrap gap-4 mb-4 text-sm">
+                <a href="/privacy" class="text-gray-500 hover:text-gray-700">Privacy Policy</a>
+                <a href="/terms" class="text-gray-500 hover:text-gray-700">Terms of Service</a>
+                <a href="/security" class="text-gray-500 hover:text-gray-700">Security</a>
+                <a href="/faq" class="text-gray-500 hover:text-gray-700">FAQ</a>
+            </div>
+            <p class="text-sm text-gray-500">&copy; 2026 Think41 Technologies Pvt. Ltd.</p>
+        </div>
+    </footer>
 
     <script>
         let downloadToken = null;
@@ -177,19 +311,25 @@
                     const data = await response.json();
                     showAuthenticatedView(data);
                 } else {
-                    document.getElementById('login-section').classList.remove('hidden');
+                    showUnauthenticatedView();
                 }
             } catch (error) {
                 console.error('Failed to check auth:', error);
                 document.getElementById('loading-section').classList.add('hidden');
-                document.getElementById('login-section').classList.remove('hidden');
+                showUnauthenticatedView();
             }
         }
 
+        function showUnauthenticatedView() {
+            document.getElementById('unauth-nav').classList.remove('hidden');
+            document.getElementById('login-section').classList.remove('hidden');
+        }
+
         async function showAuthenticatedView(data) {
-            // Hide unauthenticated header, show header bar
-            document.getElementById('unauth-header').classList.add('hidden');
-            document.getElementById('header-bar').classList.remove('hidden');
+            // Show authenticated nav
+            document.getElementById('auth-nav').classList.remove('hidden');
+            document.getElementById('auth-nav').style.display = 'flex';
+            document.getElementById('nav-directory').classList.remove('hidden');
             document.getElementById('user-section').classList.remove('hidden');
 
             // Set user info in header
@@ -257,6 +397,15 @@
         function copyCommand(os) {
             const elementId = os === 'mac' ? 'install-cmd-mac' : 'install-cmd-windows';
             copyToClipboard(elementId);
+        }
+
+        async function logout() {
+            try {
+                await fetch('/api/users/logout', { method: 'POST' });
+            } catch (error) {
+                console.error('Logout failed:', error);
+            }
+            window.location.reload();
         }
 
         document.addEventListener('DOMContentLoaded', checkAuth);

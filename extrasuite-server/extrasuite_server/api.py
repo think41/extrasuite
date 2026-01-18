@@ -94,6 +94,16 @@ async def get_current_user(
     }
 
 
+@router.post("/users/logout")
+async def logout(request: Request) -> dict:
+    """Log out the current user by clearing the session.
+
+    Clears the session cookie. Returns success even if not logged in.
+    """
+    request.session.clear()
+    return {"status": "logged_out"}
+
+
 @router.get("/users")
 async def list_users(
     request: Request,

@@ -1,0 +1,211 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>FAQ - ExtraSuite</title>
+    <script src="https://cdn.tailwindcss.com"></script>
+    <style>
+        details summary { cursor: pointer; }
+        details summary::-webkit-details-marker { display: none; }
+        details[open] .chevron { transform: rotate(90deg); }
+    </style>
+</head>
+<body class="bg-gray-50 min-h-screen">
+    <div class="max-w-3xl mx-auto px-4 py-16">
+        <header class="mb-12">
+            <a href="/" class="text-gray-600 hover:text-gray-900 mb-4 inline-block">&larr; Back to Home</a>
+            <h1 class="text-4xl font-bold text-gray-900 mb-2">Frequently Asked Questions</h1>
+            <p class="text-gray-600">Everything you need to know about using ExtraSuite</p>
+        </header>
+
+        <main class="space-y-4 mb-8">
+            <!-- Getting Started -->
+            <div class="bg-white rounded-lg shadow-sm border border-gray-200">
+                <details class="group" open>
+                    <summary class="flex items-center justify-between p-6 font-semibold text-gray-800">
+                        <span>What is ExtraSuite?</span>
+                        <span class="chevron transition-transform text-gray-400">
+                            <svg class="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                                <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M9 5l7 7-7 7"></path>
+                            </svg>
+                        </span>
+                    </summary>
+                    <div class="px-6 pb-6 text-gray-700">
+                        <p>ExtraSuite lets AI assistants like Claude Code and Codex work with your Google Sheets, Docs, and Slides. Instead of copy-pasting data, you can ask your AI to read, analyze, and edit your documents directly.</p>
+                    </div>
+                </details>
+            </div>
+
+            <div class="bg-white rounded-lg shadow-sm border border-gray-200">
+                <details class="group">
+                    <summary class="flex items-center justify-between p-6 font-semibold text-gray-800">
+                        <span>How do I get started?</span>
+                        <span class="chevron transition-transform text-gray-400">
+                            <svg class="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                                <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M9 5l7 7-7 7"></path>
+                            </svg>
+                        </span>
+                    </summary>
+                    <div class="px-6 pb-6 text-gray-700">
+                        <p class="mb-3">Three simple steps:</p>
+                        <ol class="list-decimal list-inside space-y-2">
+                            <li><strong>Install the skill</strong> - Run the install command from the homepage in your terminal</li>
+                            <li><strong>Share your document</strong> - Share your Google Sheet with your service account email</li>
+                            <li><strong>Ask Claude</strong> - Ask Claude Code or Codex to read or modify your document</li>
+                        </ol>
+                    </div>
+                </details>
+            </div>
+
+            <!-- Security & Privacy -->
+            <div class="bg-white rounded-lg shadow-sm border border-gray-200">
+                <details class="group">
+                    <summary class="flex items-center justify-between p-6 font-semibold text-gray-800">
+                        <span>Can the AI access all my documents?</span>
+                        <span class="chevron transition-transform text-gray-400">
+                            <svg class="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                                <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M9 5l7 7-7 7"></path>
+                            </svg>
+                        </span>
+                    </summary>
+                    <div class="px-6 pb-6 text-gray-700">
+                        <p><strong>No.</strong> The AI can only access documents you explicitly share with your service account email. If you don't share a document, the AI cannot see it. This uses standard Google Drive sharing - you're in complete control.</p>
+                    </div>
+                </details>
+            </div>
+
+            <div class="bg-white rounded-lg shadow-sm border border-gray-200">
+                <details class="group">
+                    <summary class="flex items-center justify-between p-6 font-semibold text-gray-800">
+                        <span>Can I revoke access to a document?</span>
+                        <span class="chevron transition-transform text-gray-400">
+                            <svg class="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                                <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M9 5l7 7-7 7"></path>
+                            </svg>
+                        </span>
+                    </summary>
+                    <div class="px-6 pb-6 text-gray-700">
+                        <p>Yes, instantly. Just remove your service account from the document's sharing settings in Google Drive, the same way you'd remove any other collaborator. Access is revoked immediately.</p>
+                    </div>
+                </details>
+            </div>
+
+            <div class="bg-white rounded-lg shadow-sm border border-gray-200">
+                <details class="group">
+                    <summary class="flex items-center justify-between p-6 font-semibold text-gray-800">
+                        <span>What if the AI makes a mistake?</span>
+                        <span class="chevron transition-transform text-gray-400">
+                            <svg class="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                                <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M9 5l7 7-7 7"></path>
+                            </svg>
+                        </span>
+                    </summary>
+                    <div class="px-6 pb-6 text-gray-700">
+                        <p>All changes appear in Google's version history under your agent's name. You can review exactly what changed and use Google's built-in "See version history" feature to undo any changes. Nothing is permanent.</p>
+                    </div>
+                </details>
+            </div>
+
+            <!-- Use Cases -->
+            <div class="bg-white rounded-lg shadow-sm border border-gray-200">
+                <details class="group">
+                    <summary class="flex items-center justify-between p-6 font-semibold text-gray-800">
+                        <span>What can I use this for?</span>
+                        <span class="chevron transition-transform text-gray-400">
+                            <svg class="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                                <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M9 5l7 7-7 7"></path>
+                            </svg>
+                        </span>
+                    </summary>
+                    <div class="px-6 pb-6 text-gray-700">
+                        <p class="mb-3">Here are some examples:</p>
+                        <ul class="list-disc list-inside space-y-2">
+                            <li>Generate reports from your data and write them to a Sheet</li>
+                            <li>Clean up and format messy spreadsheet data</li>
+                            <li>Create charts and summaries from raw numbers</li>
+                            <li>Extract data from one sheet and transform it into another format</li>
+                            <li>Automate repetitive spreadsheet tasks through natural language</li>
+                        </ul>
+                    </div>
+                </details>
+            </div>
+
+            <!-- Technical -->
+            <div class="bg-white rounded-lg shadow-sm border border-gray-200">
+                <details class="group">
+                    <summary class="flex items-center justify-between p-6 font-semibold text-gray-800">
+                        <span>What's a "service account email"?</span>
+                        <span class="chevron transition-transform text-gray-400">
+                            <svg class="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                                <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M9 5l7 7-7 7"></path>
+                            </svg>
+                        </span>
+                    </summary>
+                    <div class="px-6 pb-6 text-gray-700">
+                        <p>It's a special email address that represents your AI assistant. Think of it like a dedicated robot helper that only works for you. When you share a document with this email, you're granting access specifically to your AI assistant.</p>
+                    </div>
+                </details>
+            </div>
+
+            <div class="bg-white rounded-lg shadow-sm border border-gray-200">
+                <details class="group">
+                    <summary class="flex items-center justify-between p-6 font-semibold text-gray-800">
+                        <span>Do I need to install anything?</span>
+                        <span class="chevron transition-transform text-gray-400">
+                            <svg class="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                                <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M9 5l7 7-7 7"></path>
+                            </svg>
+                        </span>
+                    </summary>
+                    <div class="px-6 pb-6 text-gray-700">
+                        <p>Yes, a one-time setup. Run the install command from the homepage in your terminal. This adds the Google Sheets skill to Claude Code and Codex. The installation takes a few seconds.</p>
+                    </div>
+                </details>
+            </div>
+
+            <div class="bg-white rounded-lg shadow-sm border border-gray-200">
+                <details class="group">
+                    <summary class="flex items-center justify-between p-6 font-semibold text-gray-800">
+                        <span>Does it work with Google Docs and Slides?</span>
+                        <span class="chevron transition-transform text-gray-400">
+                            <svg class="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                                <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M9 5l7 7-7 7"></path>
+                            </svg>
+                        </span>
+                    </summary>
+                    <div class="px-6 pb-6 text-gray-700">
+                        <p>Google Sheets is fully supported today. Google Docs and Slides support is coming soon - the infrastructure is ready, we're just finalizing the skills.</p>
+                    </div>
+                </details>
+            </div>
+
+            <!-- Support -->
+            <div class="bg-white rounded-lg shadow-sm border border-gray-200">
+                <details class="group">
+                    <summary class="flex items-center justify-between p-6 font-semibold text-gray-800">
+                        <span>I need help. Who do I contact?</span>
+                        <span class="chevron transition-transform text-gray-400">
+                            <svg class="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                                <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M9 5l7 7-7 7"></path>
+                            </svg>
+                        </span>
+                    </summary>
+                    <div class="px-6 pb-6 text-gray-700">
+                        <p>Reach out to your IT administrator or use internal support channels. For urgent issues, contact the platform team directly.</p>
+                    </div>
+                </details>
+            </div>
+        </main>
+
+        <footer class="text-sm text-gray-500">
+            <div class="flex flex-wrap gap-4 mb-4">
+                <a href="/" class="hover:text-gray-700 underline">Home</a>
+                <a href="/security" class="hover:text-gray-700 underline">Security</a>
+                <a href="/privacy" class="hover:text-gray-700 underline">Privacy Policy</a>
+            </div>
+            <p>&copy; 2026 Think41 Technologies Pvt. Ltd.</p>
+        </footer>
+    </div>
+</body>
+</html>
