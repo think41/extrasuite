@@ -71,7 +71,7 @@
             <section class="text-center mb-16">
                 <h2 class="text-4xl font-bold text-gray-900 mb-4">ExtraSuite for Google Drive</h2>
                 <p class="text-xl text-gray-600 mb-8 max-w-2xl mx-auto">
-                    ExtraSuite connects Claude Code and Codex to your Google Workspace. Ask your AI to read, analyze, and edit spreadsheets directly.
+                    ExtraSuite connects Claude Code, Codex, and Gemini CLI to your Google Workspace. Ask your AI to read, analyze, and edit spreadsheets directly.
                 </p>
                 <a href="/api/auth/login"
                    class="inline-block px-8 py-4 bg-gray-900 text-white text-lg rounded-lg hover:bg-gray-700 transition-colors">
@@ -86,7 +86,7 @@
                     <div class="text-center">
                         <div class="step-number bg-blue-100 text-blue-700 mx-auto mb-4">1</div>
                         <h4 class="font-semibold text-gray-800 mb-2">Install the skill</h4>
-                        <p class="text-gray-600 text-sm">Run a one-time install command to add Google Sheets access to Claude Code or Codex.</p>
+                        <p class="text-gray-600 text-sm">Run a one-time install command to add Google Sheets access to Claude Code, Codex, or Gemini CLI.</p>
                     </div>
                     <div class="text-center">
                         <div class="step-number bg-blue-100 text-blue-700 mx-auto mb-4">2</div>
@@ -182,7 +182,29 @@
 
                 <!-- Main content -->
                 <main class="flex-1 min-w-0">
-                    <!-- How it works -->
+                    <!-- How it works overview -->
+                    <section class="bg-white rounded-lg shadow-sm border border-gray-200 p-6 mb-6">
+                        <h2 class="text-xl font-semibold text-gray-800 mb-6">How it works</h2>
+                        <div class="grid md:grid-cols-3 gap-6">
+                            <div class="text-center">
+                                <div class="step-number bg-blue-100 text-blue-700 mx-auto mb-3">1</div>
+                                <h4 class="font-semibold text-gray-800 mb-2">Install the skill</h4>
+                                <p class="text-gray-600 text-sm">Run a one-time install command to add Google Sheets access to Claude Code, Codex, or Gemini CLI.</p>
+                            </div>
+                            <div class="text-center">
+                                <div class="step-number bg-blue-100 text-blue-700 mx-auto mb-3">2</div>
+                                <h4 class="font-semibold text-gray-800 mb-2">Share your document</h4>
+                                <p class="text-gray-600 text-sm">Share your Google Sheet with your personal service account email. You control what the AI can access.</p>
+                            </div>
+                            <div class="text-center">
+                                <div class="step-number bg-blue-100 text-blue-700 mx-auto mb-3">3</div>
+                                <h4 class="font-semibold text-gray-800 mb-2">Ask your AI</h4>
+                                <p class="text-gray-600 text-sm">Use natural language to ask Claude, Codex, or Gemini to read, analyze, or modify your spreadsheet.</p>
+                            </div>
+                        </div>
+                    </section>
+
+                    <!-- Get started steps -->
                     <section class="bg-white rounded-lg shadow-sm border border-gray-200 p-6 mb-6">
                         <h2 class="text-xl font-semibold text-gray-800 mb-6">Get started in 3 steps</h2>
                         <div class="space-y-6">
@@ -203,7 +225,7 @@
                             <div class="flex gap-4">
                                 <div class="step-number bg-gray-200 text-gray-600">3</div>
                                 <div class="flex-1">
-                                    <h3 class="font-medium text-gray-800 mb-1">Ask Claude or Codex</h3>
+                                    <h3 class="font-medium text-gray-800 mb-1">Ask Claude, Codex, or Gemini</h3>
                                     <p class="text-gray-600 text-sm">Use natural language: "Read my spreadsheet at [URL] and summarize the data"</p>
                                 </div>
                             </div>
@@ -250,7 +272,7 @@
                         </div>
 
                         <p class="text-xs text-gray-500 mt-4">
-                            This installs the Google Sheets skill for both Claude Code and Codex. The command is valid for 5 minutes.
+                            This installs the Google Sheets skill for Claude Code, Codex, and Gemini CLI. The command is valid for 5 minutes.
                         </p>
                     </section>
 
