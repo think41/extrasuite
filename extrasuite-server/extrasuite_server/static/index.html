@@ -198,35 +198,12 @@
                     <h2 class="text-xl font-semibold text-gray-800">Prerequisite: Install an AI Agent</h2>
                 </div>
                 <p class="text-gray-600 mb-4">
-                    You need an AI coding assistant installed on your computer. Choose one of the following:
+                    You need an AI coding assistant installed on your computer. Install any one:
+                    <a href="https://claude.com/product/claude-code" target="_blank" class="text-blue-600 hover:underline">Claude Code</a> (requires paid plan),
+                    <a href="https://developers.openai.com/codex/cli/" target="_blank" class="text-blue-600 hover:underline">Codex CLI</a> (requires Plus plan or higher),
+                    <a href="https://geminicli.com/" target="_blank" class="text-blue-600 hover:underline">Gemini CLI</a> (requires paid API key), or
+                    <a href="https://claude.com/blog/cowork-research-preview" target="_blank" class="text-blue-600 hover:underline">Claude Cowork</a> (requires paid plan).
                 </p>
-
-                <div class="grid md:grid-cols-2 gap-4 mb-4">
-                    <div class="border border-gray-200 rounded-lg p-4">
-                        <h4 class="font-semibold text-gray-800 mb-1">Claude Code</h4>
-                        <p class="text-sm text-gray-600 mb-2">Requires any Claude paid plan</p>
-                        <div id="claude-install" class="bg-gray-100 rounded p-2 font-mono text-sm text-gray-800 mb-2"></div>
-                        <a href="https://claude.ai/code" target="_blank" class="text-blue-600 text-sm hover:underline">Learn more →</a>
-                    </div>
-                    <div class="border border-gray-200 rounded-lg p-4">
-                        <h4 class="font-semibold text-gray-800 mb-1">Gemini CLI</h4>
-                        <p class="text-sm text-gray-600 mb-2">Requires a Google AI API key</p>
-                        <div id="gemini-install" class="bg-gray-100 rounded p-2 font-mono text-sm text-gray-800 mb-2"></div>
-                        <a href="https://github.com/google-gemini/gemini-cli" target="_blank" class="text-blue-600 text-sm hover:underline">Learn more →</a>
-                    </div>
-                    <div class="border border-gray-200 rounded-lg p-4">
-                        <h4 class="font-semibold text-gray-800 mb-1">Codex CLI</h4>
-                        <p class="text-sm text-gray-600 mb-2">Requires ChatGPT Plus plan</p>
-                        <div id="codex-install" class="bg-gray-100 rounded p-2 font-mono text-sm text-gray-800 mb-2"></div>
-                        <a href="https://github.com/openai/codex" target="_blank" class="text-blue-600 text-sm hover:underline">Learn more →</a>
-                    </div>
-                    <div class="border border-gray-200 rounded-lg p-4">
-                        <h4 class="font-semibold text-gray-800 mb-1">Claude Desktop</h4>
-                        <p class="text-sm text-gray-600 mb-2">Desktop app with computer use</p>
-                        <p class="text-sm text-gray-500 mb-2">Download from <a href="https://claude.ai/download" target="_blank" class="text-blue-600 hover:underline">claude.ai/download</a></p>
-                        <a href="https://www.anthropic.com/news/claude-4-model-card" target="_blank" class="text-blue-600 text-sm hover:underline">Learn more →</a>
-                    </div>
-                </div>
 
                 <div class="bg-amber-50 border border-amber-200 rounded-lg p-3">
                     <p class="text-sm text-amber-800">
@@ -369,45 +346,6 @@
         let downloadToken = null;
         const BASE_URL = window.location.origin;
 
-        // Detect OS and populate install commands for Step 0
-        function detectOSAndPopulateInstalls() {
-            const platform = navigator.platform.toLowerCase();
-            const userAgent = navigator.userAgent.toLowerCase();
-
-            let isMac = platform.includes('mac');
-            let isWindows = platform.includes('win');
-            let isLinux = platform.includes('linux');
-
-            // Install commands for each agent
-            const commands = {
-                claude: {
-                    mac: 'npm install -g @anthropic-ai/claude-code',
-                    windows: 'npm install -g @anthropic-ai/claude-code',
-                    linux: 'npm install -g @anthropic-ai/claude-code'
-                },
-                gemini: {
-                    mac: 'npm install -g @anthropic-ai/gemini-cli',
-                    windows: 'npm install -g @anthropic-ai/gemini-cli',
-                    linux: 'npm install -g @anthropic-ai/gemini-cli'
-                },
-                codex: {
-                    mac: 'npm install -g @openai/codex',
-                    windows: 'npm install -g @openai/codex',
-                    linux: 'npm install -g @openai/codex'
-                }
-            };
-
-            let os = isMac ? 'mac' : (isWindows ? 'windows' : 'linux');
-
-            const claudeEl = document.getElementById('claude-install');
-            const geminiEl = document.getElementById('gemini-install');
-            const codexEl = document.getElementById('codex-install');
-
-            if (claudeEl) claudeEl.textContent = commands.claude[os];
-            if (geminiEl) geminiEl.textContent = commands.gemini[os];
-            if (codexEl) codexEl.textContent = commands.codex[os];
-        }
-
         async function checkAuth() {
             try {
                 const response = await fetch('/api/users/me');
@@ -515,10 +453,7 @@
             window.location.reload();
         }
 
-        document.addEventListener('DOMContentLoaded', function() {
-            detectOSAndPopulateInstalls();
-            checkAuth();
-        });
+        document.addEventListener('DOMContentLoaded', checkAuth);
     </script>
 </body>
 </html>
