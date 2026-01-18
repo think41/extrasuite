@@ -312,7 +312,17 @@ async def google_callback(
 
     # Check if this is a UI login (redirect is "/") vs CLI login
     if cli_redirect == "/":
-        logger.info("UI login complete, redirecting to home", extra={"email": user_email})
+        # Ensure service account exists for UI login (no auth code needed)
+        token_generator = TokenGenerator(database=db, settings=settings)
+        try:
+            sa_email = await token_generator.ensure_service_account(user_email)
+            logger.info(
+                "UI login complete, service account ready",
+                extra={"email": user_email, "service_account": sa_email},
+            )
+        except Exception as e:
+            logger.exception("Service account setup failed during UI login", extra={"email": user_email, "error": str(e)})
+            # Continue to home page - user can retry later
         return RedirectResponse(url="/")
 
     # Generate token and redirect to CLI
