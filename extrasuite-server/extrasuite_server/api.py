@@ -220,6 +220,39 @@ async def start_token_auth(
     return RedirectResponse(url=authorization_url)
 
 
+@router.get("/auth/login", response_model=None)
+@limiter.limit("10/minute")
+async def start_ui_login(
+    request: Request,
+    settings: Settings = Depends(get_settings),
+    db: Database = Depends(get_database),
+) -> RedirectResponse:
+    """Start OAuth flow for UI login.
+
+    Unlike /token/auth, this endpoint is for browser-based login from the UI.
+    On success, redirects back to the home page instead of a CLI callback.
+    """
+    # If user already has a valid session, redirect to home
+    email = request.session.get("email")
+    if email:
+        logger.info("Session found, redirecting to home", extra={"email": email})
+        return RedirectResponse(url="/")
+
+    # No session - start OAuth flow with "/" as redirect target
+    logger.info("No session, starting OAuth flow for UI login")
+    state = secrets.token_urlsafe(32)
+    await db.save_state(state, "/")  # Use "/" to indicate UI flow
+
+    flow = _create_oauth_flow(settings)
+    authorization_url, _ = flow.authorization_url(
+        access_type="offline",
+        state=state,
+        prompt="consent",
+    )
+
+    return RedirectResponse(url=authorization_url)
+
+
 @router.get("/auth/callback", response_model=None)
 @limiter.limit("10/minute")
 async def google_callback(
@@ -276,6 +309,11 @@ async def google_callback(
 
     # Set session cookie so user doesn't need to re-authenticate
     request.session["email"] = user_email
+
+    # Check if this is a UI login (redirect is "/") vs CLI login
+    if cli_redirect == "/":
+        logger.info("UI login complete, redirecting to home", extra={"email": user_email})
+        return RedirectResponse(url="/")
 
     # Generate token and redirect to CLI
     return await _generate_token_and_redirect(db, settings, user_email, cli_redirect)
