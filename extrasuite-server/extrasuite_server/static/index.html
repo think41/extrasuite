@@ -167,22 +167,71 @@
             <!-- How it works -->
             <section class="mb-12">
                 <h3 class="text-2xl font-semibold text-gray-800 mb-8 text-center">How it works</h3>
-                <div class="grid md:grid-cols-3 gap-8">
+                <div class="grid md:grid-cols-4 gap-6">
+                    <div class="text-center">
+                        <div class="step-number bg-gray-300 text-gray-600 mx-auto mb-4">0</div>
+                        <h4 class="font-semibold text-gray-800 mb-2">Install an AI agent</h4>
+                        <p class="text-gray-600 text-sm">Get Claude Code, Gemini CLI, or Codex CLI on your machine.</p>
+                    </div>
                     <div class="text-center">
                         <div class="step-number bg-blue-100 text-blue-700 mx-auto mb-4">1</div>
                         <h4 class="font-semibold text-gray-800 mb-2">Install the skill</h4>
-                        <p class="text-gray-600 text-sm">Run a one-time install command to add Google Sheets access to Claude Code, Codex, or Gemini CLI.</p>
+                        <p class="text-gray-600 text-sm">Run a one-time command to add Google Sheets access.</p>
                     </div>
                     <div class="text-center">
                         <div class="step-number bg-blue-100 text-blue-700 mx-auto mb-4">2</div>
                         <h4 class="font-semibold text-gray-800 mb-2">Share your document</h4>
-                        <p class="text-gray-600 text-sm">Share your Google Sheet with your personal service account email. You control what the AI can access.</p>
+                        <p class="text-gray-600 text-sm">Share your Google Sheet with your service account email.</p>
                     </div>
                     <div class="text-center">
                         <div class="step-number bg-blue-100 text-blue-700 mx-auto mb-4">3</div>
                         <h4 class="font-semibold text-gray-800 mb-2">Ask your AI</h4>
-                        <p class="text-gray-600 text-sm">Use natural language to ask Claude, Codex, or Gemini to read, analyze, or modify your spreadsheet.</p>
+                        <p class="text-gray-600 text-sm">Use natural language to work with your spreadsheet.</p>
                     </div>
+                </div>
+            </section>
+
+            <!-- Step 0: Install an AI Agent (Prerequisite) -->
+            <section id="step-0-section" class="bg-white rounded-lg shadow-sm border border-gray-200 p-6 mb-6">
+                <div class="flex items-center gap-3 mb-4">
+                    <div class="step-number bg-gray-400 text-white">0</div>
+                    <h2 class="text-xl font-semibold text-gray-800">Prerequisite: Install an AI Agent</h2>
+                </div>
+                <p class="text-gray-600 mb-4">
+                    You need an AI coding assistant installed on your computer. Choose one of the following:
+                </p>
+
+                <div class="grid md:grid-cols-2 gap-4 mb-4">
+                    <div class="border border-gray-200 rounded-lg p-4">
+                        <h4 class="font-semibold text-gray-800 mb-1">Claude Code</h4>
+                        <p class="text-sm text-gray-600 mb-2">Requires any Claude paid plan</p>
+                        <div id="claude-install" class="bg-gray-100 rounded p-2 font-mono text-sm text-gray-800 mb-2"></div>
+                        <a href="https://claude.ai/code" target="_blank" class="text-blue-600 text-sm hover:underline">Learn more →</a>
+                    </div>
+                    <div class="border border-gray-200 rounded-lg p-4">
+                        <h4 class="font-semibold text-gray-800 mb-1">Gemini CLI</h4>
+                        <p class="text-sm text-gray-600 mb-2">Requires a Google AI API key</p>
+                        <div id="gemini-install" class="bg-gray-100 rounded p-2 font-mono text-sm text-gray-800 mb-2"></div>
+                        <a href="https://github.com/google-gemini/gemini-cli" target="_blank" class="text-blue-600 text-sm hover:underline">Learn more →</a>
+                    </div>
+                    <div class="border border-gray-200 rounded-lg p-4">
+                        <h4 class="font-semibold text-gray-800 mb-1">Codex CLI</h4>
+                        <p class="text-sm text-gray-600 mb-2">Requires ChatGPT Plus plan</p>
+                        <div id="codex-install" class="bg-gray-100 rounded p-2 font-mono text-sm text-gray-800 mb-2"></div>
+                        <a href="https://github.com/openai/codex" target="_blank" class="text-blue-600 text-sm hover:underline">Learn more →</a>
+                    </div>
+                    <div class="border border-gray-200 rounded-lg p-4">
+                        <h4 class="font-semibold text-gray-800 mb-1">Claude Desktop</h4>
+                        <p class="text-sm text-gray-600 mb-2">Desktop app with computer use</p>
+                        <p class="text-sm text-gray-500 mb-2">Download from <a href="https://claude.ai/download" target="_blank" class="text-blue-600 hover:underline">claude.ai/download</a></p>
+                        <a href="https://www.anthropic.com/news/claude-4-model-card" target="_blank" class="text-blue-600 text-sm hover:underline">Learn more →</a>
+                    </div>
+                </div>
+
+                <div class="bg-amber-50 border border-amber-200 rounded-lg p-3">
+                    <p class="text-sm text-amber-800">
+                        <strong>What's a terminal?</strong> It's an app where you type commands. On Mac, search for "Terminal" in Spotlight. On Windows, search for "PowerShell" in the Start menu.
+                    </p>
                 </div>
             </section>
 
@@ -235,12 +284,12 @@
 
             <!-- Step 2: Share your Google Sheet -->
             <section class="bg-white rounded-lg shadow-sm border border-gray-200 p-6 mb-6">
-                <div class="flex items-center gap-3 mb-4">
+                <div class="flex items-center gap-3 mb-2">
                     <div class="step-number bg-blue-600 text-white">2</div>
                     <h2 class="text-xl font-semibold text-gray-800">Share your Google Sheet</h2>
                 </div>
                 <p class="text-gray-600 mb-4">
-                    Your AI assistant uses the email address below to access Google Sheets. Share any spreadsheet with this email to grant access.
+                    Click <strong>Share</strong> on any Google Sheet and add this email as an Editor.
                 </p>
 
                 <div class="bg-gray-50 rounded-lg p-4 mb-4">
@@ -250,17 +299,6 @@
                 <button onclick="copyToClipboard('service-account-email')" class="copy-btn px-4 py-2 bg-blue-600 text-white rounded-lg text-sm hover:bg-blue-700 transition-colors">
                     Copy Email
                 </button>
-
-                <div class="mt-6 p-4 bg-blue-50 rounded-lg border border-blue-100">
-                    <p class="text-sm text-gray-700 font-medium mb-2">How to share:</p>
-                    <ol class="text-sm text-gray-600 space-y-1 list-decimal list-inside">
-                        <li>Open your Google Sheet</li>
-                        <li>Click the <strong>Share</strong> button (top right)</li>
-                        <li>Paste the service account email above</li>
-                        <li>Choose <strong>Editor</strong> access (or Viewer for read-only)</li>
-                        <li>Click <strong>Send</strong></li>
-                    </ol>
-                </div>
             </section>
 
             <!-- Step 3: Try it out -->
@@ -270,26 +308,35 @@
                     <h2 class="text-xl font-semibold text-gray-800">Try it out</h2>
                 </div>
                 <p class="text-gray-600 mb-4">
-                    Open Claude Code, Codex, or Gemini CLI in your terminal and try one of these prompts. Replace [URL] with the link to your shared Google Sheet.
+                    Open your AI agent in the terminal and describe what you need. The more context you provide, the better the results. Here are real examples from our team:
                 </p>
 
-                <div class="space-y-3">
+                <div class="space-y-4">
+                    <!-- Example 1: Complex recruitment analytics -->
                     <div class="bg-gray-50 rounded-lg p-4 border-l-4 border-blue-500">
-                        <p class="text-gray-800 font-mono text-sm">"Read my spreadsheet at [URL] and summarize the data"</p>
+                        <p class="text-gray-800 text-sm leading-relaxed mb-3">
+                            "I am meeting the CEO of [client]. They have been piloting with us and used 75+ interviews across several roles. Through linkedin posts and press releases, I see they are hiring BD managers for RPOs in Middle East, Singapore, and Australia.
+                            <br><br>
+                            I need candidate-side metrics: candidates invited, completed interviews, no-shows, and those who engaged 5+ minutes. For dropoffs, analyze if it was bad experience, technical issues, or self-selection.
+                            <br><br>
+                            On user-side: when was the interview created, when the first candidate was added, and time from candidate addition to interview completion.
+                            <br><br>
+                            Use the r41 sql tool to fetch data. Use the gsheets skill to update the data to https://docs.google.com/spreadsheets/..."
+                        </p>
+                        <p class="text-xs text-gray-500 italic">— Dr. Swetha Suresh, Co-founder Recruit41</p>
                     </div>
-                    <div class="bg-gray-50 rounded-lg p-4 border-l-4 border-blue-500">
-                        <p class="text-gray-800 font-mono text-sm">"Add a new row to [URL] with today's sales figures: Product A, 150 units, $2,250"</p>
-                    </div>
-                    <div class="bg-gray-50 rounded-lg p-4 border-l-4 border-blue-500">
-                        <p class="text-gray-800 font-mono text-sm">"Clean up the contact list at [URL] - remove duplicates and fix phone number formatting"</p>
-                    </div>
-                    <div class="bg-gray-50 rounded-lg p-4 border-l-4 border-blue-500">
-                        <p class="text-gray-800 font-mono text-sm">"Compare the budgets in [URL1] and [URL2] and highlight the differences"</p>
+
+                    <!-- Example 2: Financial MIS report -->
+                    <div class="bg-gray-50 rounded-lg p-4 border-l-4 border-green-500">
+                        <p class="text-gray-800 text-sm leading-relaxed mb-3">
+                            "Help me make a MIS report for Think41 financials. Pull the data from zoho using zoho skill. Update the data in this spreadsheet https://docs.google.com/spreadsheets/..."
+                        </p>
+                        <p class="text-xs text-gray-500 italic">— Himanshu Varshney, Think41 Technologies</p>
                     </div>
                 </div>
 
                 <p class="text-sm text-gray-500 mt-4">
-                    Tip: You can use the full Google Sheets URL (e.g., https://docs.google.com/spreadsheets/d/...) in your prompts.
+                    <strong>Tip:</strong> Be specific about what data you need and where to put it. Include the full Google Sheets URL in your prompt.
                 </p>
             </section>
 
@@ -321,6 +368,45 @@
     <script>
         let downloadToken = null;
         const BASE_URL = window.location.origin;
+
+        // Detect OS and populate install commands for Step 0
+        function detectOSAndPopulateInstalls() {
+            const platform = navigator.platform.toLowerCase();
+            const userAgent = navigator.userAgent.toLowerCase();
+
+            let isMac = platform.includes('mac');
+            let isWindows = platform.includes('win');
+            let isLinux = platform.includes('linux');
+
+            // Install commands for each agent
+            const commands = {
+                claude: {
+                    mac: 'npm install -g @anthropic-ai/claude-code',
+                    windows: 'npm install -g @anthropic-ai/claude-code',
+                    linux: 'npm install -g @anthropic-ai/claude-code'
+                },
+                gemini: {
+                    mac: 'npm install -g @anthropic-ai/gemini-cli',
+                    windows: 'npm install -g @anthropic-ai/gemini-cli',
+                    linux: 'npm install -g @anthropic-ai/gemini-cli'
+                },
+                codex: {
+                    mac: 'npm install -g @openai/codex',
+                    windows: 'npm install -g @openai/codex',
+                    linux: 'npm install -g @openai/codex'
+                }
+            };
+
+            let os = isMac ? 'mac' : (isWindows ? 'windows' : 'linux');
+
+            const claudeEl = document.getElementById('claude-install');
+            const geminiEl = document.getElementById('gemini-install');
+            const codexEl = document.getElementById('codex-install');
+
+            if (claudeEl) claudeEl.textContent = commands.claude[os];
+            if (geminiEl) geminiEl.textContent = commands.gemini[os];
+            if (codexEl) codexEl.textContent = commands.codex[os];
+        }
 
         async function checkAuth() {
             try {
@@ -429,7 +515,10 @@
             window.location.reload();
         }
 
-        document.addEventListener('DOMContentLoaded', checkAuth);
+        document.addEventListener('DOMContentLoaded', function() {
+            detectOSAndPopulateInstalls();
+            checkAuth();
+        });
     </script>
 </body>
 </html>
