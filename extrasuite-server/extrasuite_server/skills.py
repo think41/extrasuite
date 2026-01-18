@@ -116,24 +116,33 @@ async def download_skills(
     email = data.get("email", "unknown")
     logger.info("Skills download started", extra={"email": email})
 
-    # Find the gsheets skill directory
-    gsheets_dir = SKILLS_DIR / "gsheets"
-    if not gsheets_dir.exists():
-        logger.error("Skills directory not found", extra={"path": str(gsheets_dir)})
+    # Find all skill directories
+    if not SKILLS_DIR.exists():
+        logger.error("Skills directory not found", extra={"path": str(SKILLS_DIR)})
         raise HTTPException(status_code=500, detail="Skills package not available")
 
-    # Create zip in memory
+    # Get all skill directories (top-level folders in SKILLS_DIR)
+    skill_dirs = [d for d in SKILLS_DIR.iterdir() if d.is_dir() and not d.name.startswith(".")]
+    if not skill_dirs:
+        logger.error("No skills found", extra={"path": str(SKILLS_DIR)})
+        raise HTTPException(status_code=500, detail="No skills available")
+
+    # Create zip in memory with all skills
     zip_buffer = io.BytesIO()
     with zipfile.ZipFile(zip_buffer, "w", zipfile.ZIP_DEFLATED) as zf:
-        for file_path in gsheets_dir.rglob("*"):
-            if file_path.is_file() and not _should_exclude(file_path):
-                # Archive name is relative to gsheets_dir, but we put files in gsheets/
-                arcname = "gsheets/" + str(file_path.relative_to(gsheets_dir))
-                zf.write(file_path, arcname)
+        for skill_dir in skill_dirs:
+            skill_name = skill_dir.name
+            for file_path in skill_dir.rglob("*"):
+                if file_path.is_file() and not _should_exclude(file_path):
+                    arcname = skill_name + "/" + str(file_path.relative_to(skill_dir))
+                    zf.write(file_path, arcname)
 
     zip_buffer.seek(0)
 
-    logger.info("Skills download completed", extra={"email": email})
+    logger.info(
+        "Skills download completed",
+        extra={"email": email, "skills": [d.name for d in skill_dirs]},
+    )
 
     return StreamingResponse(
         zip_buffer,
