@@ -95,8 +95,8 @@
                     </div>
                     <div class="text-center">
                         <div class="step-number bg-blue-100 text-blue-700 mx-auto mb-4">3</div>
-                        <h4 class="font-semibold text-gray-800 mb-2">Ask Claude</h4>
-                        <p class="text-gray-600 text-sm">Use natural language to ask Claude to read, analyze, or modify your spreadsheet.</p>
+                        <h4 class="font-semibold text-gray-800 mb-2">Ask your AI</h4>
+                        <p class="text-gray-600 text-sm">Use natural language to ask Claude, Codex, or Gemini to read, analyze, or modify your spreadsheet.</p>
                     </div>
                 </div>
             </section>
@@ -155,154 +155,153 @@
 
     <!-- Authenticated view -->
     <div id="user-section" class="hidden">
-        <div class="max-w-6xl mx-auto px-4 py-8">
-            <div class="flex flex-col lg:flex-row gap-8">
-                <!-- Sidebar -->
-                <aside class="lg:w-80 flex-shrink-0">
-                    <div class="bg-white rounded-lg shadow-sm border border-gray-200 p-6 sticky top-20">
-                        <div class="text-center mb-6">
-                            <div class="w-16 h-16 bg-gradient-to-br from-blue-500 to-indigo-600 rounded-full mx-auto mb-4 flex items-center justify-center">
-                                <svg class="w-8 h-8 text-white" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                                    <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M9.75 17L9 20l-1 1h8l-1-1-.75-3M3 13h18M5 17h14a2 2 0 002-2V5a2 2 0 00-2-2H5a2 2 0 00-2 2v10a2 2 0 002 2z"></path>
-                                </svg>
-                            </div>
-                            <p class="text-gray-600 text-sm mb-1">Your AI assistant is ready at</p>
-                        </div>
-                        <div class="bg-gray-50 rounded-lg p-3 mb-4">
-                            <code id="service-account-email" class="text-sm text-gray-800 font-mono break-all block text-center"></code>
-                        </div>
-                        <button onclick="copyToClipboard('service-account-email')" class="copy-btn w-full px-4 py-2 bg-blue-600 text-white rounded-lg text-sm hover:bg-blue-700 transition-colors">
-                            Copy Email
-                        </button>
-                        <p class="text-xs text-gray-500 mt-4 text-center">
-                            Share your Google Sheets with this email to grant access.
-                        </p>
+        <div class="max-w-4xl mx-auto px-4 py-8">
+            <!-- Hero -->
+            <section class="text-center mb-12">
+                <h2 class="text-4xl font-bold text-gray-900 mb-4">ExtraSuite for Google Drive</h2>
+                <p class="text-xl text-gray-600 max-w-2xl mx-auto">
+                    ExtraSuite connects Claude Code, Codex, and Gemini CLI to your Google Workspace. Ask your AI to read, analyze, and edit spreadsheets directly.
+                </p>
+            </section>
+
+            <!-- How it works -->
+            <section class="mb-12">
+                <h3 class="text-2xl font-semibold text-gray-800 mb-8 text-center">How it works</h3>
+                <div class="grid md:grid-cols-3 gap-8">
+                    <div class="text-center">
+                        <div class="step-number bg-blue-100 text-blue-700 mx-auto mb-4">1</div>
+                        <h4 class="font-semibold text-gray-800 mb-2">Install the skill</h4>
+                        <p class="text-gray-600 text-sm">Run a one-time install command to add Google Sheets access to Claude Code, Codex, or Gemini CLI.</p>
                     </div>
-                </aside>
+                    <div class="text-center">
+                        <div class="step-number bg-blue-100 text-blue-700 mx-auto mb-4">2</div>
+                        <h4 class="font-semibold text-gray-800 mb-2">Share your document</h4>
+                        <p class="text-gray-600 text-sm">Share your Google Sheet with your personal service account email. You control what the AI can access.</p>
+                    </div>
+                    <div class="text-center">
+                        <div class="step-number bg-blue-100 text-blue-700 mx-auto mb-4">3</div>
+                        <h4 class="font-semibold text-gray-800 mb-2">Ask your AI</h4>
+                        <p class="text-gray-600 text-sm">Use natural language to ask Claude, Codex, or Gemini to read, analyze, or modify your spreadsheet.</p>
+                    </div>
+                </div>
+            </section>
 
-                <!-- Main content -->
-                <main class="flex-1 min-w-0">
-                    <!-- How it works overview -->
-                    <section class="bg-white rounded-lg shadow-sm border border-gray-200 p-6 mb-6">
-                        <h2 class="text-xl font-semibold text-gray-800 mb-6">How it works</h2>
-                        <div class="grid md:grid-cols-3 gap-6">
-                            <div class="text-center">
-                                <div class="step-number bg-blue-100 text-blue-700 mx-auto mb-3">1</div>
-                                <h4 class="font-semibold text-gray-800 mb-2">Install the skill</h4>
-                                <p class="text-gray-600 text-sm">Run a one-time install command to add Google Sheets access to Claude Code, Codex, or Gemini CLI.</p>
-                            </div>
-                            <div class="text-center">
-                                <div class="step-number bg-blue-100 text-blue-700 mx-auto mb-3">2</div>
-                                <h4 class="font-semibold text-gray-800 mb-2">Share your document</h4>
-                                <p class="text-gray-600 text-sm">Share your Google Sheet with your personal service account email. You control what the AI can access.</p>
-                            </div>
-                            <div class="text-center">
-                                <div class="step-number bg-blue-100 text-blue-700 mx-auto mb-3">3</div>
-                                <h4 class="font-semibold text-gray-800 mb-2">Ask your AI</h4>
-                                <p class="text-gray-600 text-sm">Use natural language to ask Claude, Codex, or Gemini to read, analyze, or modify your spreadsheet.</p>
-                            </div>
-                        </div>
-                    </section>
+            <!-- Step 1: Install the Skill -->
+            <section class="bg-white rounded-lg shadow-sm border border-gray-200 p-6 mb-6">
+                <div class="flex items-center gap-3 mb-4">
+                    <div class="step-number bg-blue-600 text-white">1</div>
+                    <h2 class="text-xl font-semibold text-gray-800">Install the Skill</h2>
+                </div>
+                <p class="text-gray-600 mb-4">
+                    Open your terminal and run this command. It installs the Google Sheets skill for Claude Code, Codex, and Gemini CLI. This is a one-time setup.
+                </p>
 
-                    <!-- Get started steps -->
-                    <section class="bg-white rounded-lg shadow-sm border border-gray-200 p-6 mb-6">
-                        <h2 class="text-xl font-semibold text-gray-800 mb-6">Get started in 3 steps</h2>
-                        <div class="space-y-6">
-                            <div class="flex gap-4">
-                                <div class="step-number bg-blue-600 text-white">1</div>
-                                <div class="flex-1">
-                                    <h3 class="font-medium text-gray-800 mb-1">Install the skill</h3>
-                                    <p class="text-gray-600 text-sm">Run the command below in your terminal. This is a one-time setup.</p>
-                                </div>
-                            </div>
-                            <div class="flex gap-4">
-                                <div class="step-number bg-gray-200 text-gray-600">2</div>
-                                <div class="flex-1">
-                                    <h3 class="font-medium text-gray-800 mb-1">Share your Google Sheet</h3>
-                                    <p class="text-gray-600 text-sm">Open your Google Sheet, click Share, and add your service account email from the sidebar.</p>
-                                </div>
-                            </div>
-                            <div class="flex gap-4">
-                                <div class="step-number bg-gray-200 text-gray-600">3</div>
-                                <div class="flex-1">
-                                    <h3 class="font-medium text-gray-800 mb-1">Ask Claude, Codex, or Gemini</h3>
-                                    <p class="text-gray-600 text-sm">Use natural language: "Read my spreadsheet at [URL] and summarize the data"</p>
-                                </div>
-                            </div>
-                        </div>
-                    </section>
+                <!-- OS Tabs -->
+                <div class="border-b border-gray-200 mb-4">
+                    <div class="flex gap-4">
+                        <button id="tab-mac" onclick="showTab('mac')" class="px-3 py-2 text-sm font-medium tab-active">
+                            macOS / Linux
+                        </button>
+                        <button id="tab-windows" onclick="showTab('windows')" class="px-3 py-2 text-sm font-medium text-gray-500 hover:text-gray-700">
+                            Windows (PowerShell)
+                        </button>
+                    </div>
+                </div>
 
-                    <!-- Install Skill Card -->
-                    <section class="bg-white rounded-lg shadow-sm border border-gray-200 p-6 mb-6">
-                        <h2 class="text-lg font-semibold text-gray-800 mb-4">Install the Skill</h2>
-                        <p class="text-gray-600 text-sm mb-4">
-                            Run this command in your terminal to enable Google Sheets access:
-                        </p>
+                <!-- macOS/Linux command -->
+                <div id="cmd-mac" class="relative">
+                    <div class="bg-gray-900 rounded-lg p-4 overflow-x-auto">
+                        <pre id="install-cmd-mac" class="text-green-400 font-mono text-sm whitespace-pre-wrap break-all"></pre>
+                    </div>
+                    <button onclick="copyCommand('mac')" class="copy-btn absolute top-2 right-2 px-3 py-1 bg-gray-700 text-white rounded text-xs hover:bg-gray-600 transition-colors">
+                        Copy
+                    </button>
+                </div>
 
-                        <!-- OS Tabs -->
-                        <div class="border-b border-gray-200 mb-4">
-                            <div class="flex gap-4">
-                                <button id="tab-mac" onclick="showTab('mac')" class="px-3 py-2 text-sm font-medium tab-active">
-                                    macOS / Linux
-                                </button>
-                                <button id="tab-windows" onclick="showTab('windows')" class="px-3 py-2 text-sm font-medium text-gray-500 hover:text-gray-700">
-                                    Windows (PowerShell)
-                                </button>
-                            </div>
-                        </div>
+                <!-- Windows command -->
+                <div id="cmd-windows" class="hidden relative">
+                    <div class="bg-gray-900 rounded-lg p-4 overflow-x-auto">
+                        <pre id="install-cmd-windows" class="text-green-400 font-mono text-sm whitespace-pre-wrap break-all"></pre>
+                    </div>
+                    <button onclick="copyCommand('windows')" class="copy-btn absolute top-2 right-2 px-3 py-1 bg-gray-700 text-white rounded text-xs hover:bg-gray-600 transition-colors">
+                        Copy
+                    </button>
+                </div>
 
-                        <!-- macOS/Linux command -->
-                        <div id="cmd-mac" class="relative">
-                            <div class="bg-gray-900 rounded-lg p-4 overflow-x-auto">
-                                <pre id="install-cmd-mac" class="text-green-400 font-mono text-sm whitespace-pre-wrap break-all"></pre>
-                            </div>
-                            <button onclick="copyCommand('mac')" class="copy-btn absolute top-2 right-2 px-3 py-1 bg-gray-700 text-white rounded text-xs hover:bg-gray-600 transition-colors">
-                                Copy
-                            </button>
-                        </div>
+                <p class="text-xs text-gray-500 mt-4">
+                    The install command is personalized to your account and valid for 5 minutes. Refresh the page to generate a new one.
+                </p>
+            </section>
 
-                        <!-- Windows command -->
-                        <div id="cmd-windows" class="hidden relative">
-                            <div class="bg-gray-900 rounded-lg p-4 overflow-x-auto">
-                                <pre id="install-cmd-windows" class="text-green-400 font-mono text-sm whitespace-pre-wrap break-all"></pre>
-                            </div>
-                            <button onclick="copyCommand('windows')" class="copy-btn absolute top-2 right-2 px-3 py-1 bg-gray-700 text-white rounded text-xs hover:bg-gray-600 transition-colors">
-                                Copy
-                            </button>
-                        </div>
+            <!-- Step 2: Share your Google Sheet -->
+            <section class="bg-white rounded-lg shadow-sm border border-gray-200 p-6 mb-6">
+                <div class="flex items-center gap-3 mb-4">
+                    <div class="step-number bg-blue-600 text-white">2</div>
+                    <h2 class="text-xl font-semibold text-gray-800">Share your Google Sheet</h2>
+                </div>
+                <p class="text-gray-600 mb-4">
+                    Your AI assistant uses the email address below to access Google Sheets. Share any spreadsheet with this email to grant access.
+                </p>
 
-                        <p class="text-xs text-gray-500 mt-4">
-                            This installs the Google Sheets skill for Claude Code, Codex, and Gemini CLI. The command is valid for 5 minutes.
-                        </p>
-                    </section>
+                <div class="bg-gray-50 rounded-lg p-4 mb-4">
+                    <p class="text-xs text-gray-500 mb-2">Your service account email:</p>
+                    <code id="service-account-email" class="text-base text-gray-800 font-mono break-all block"></code>
+                </div>
+                <button onclick="copyToClipboard('service-account-email')" class="copy-btn px-4 py-2 bg-blue-600 text-white rounded-lg text-sm hover:bg-blue-700 transition-colors">
+                    Copy Email
+                </button>
 
-                    <!-- Examples -->
-                    <section class="bg-white rounded-lg shadow-sm border border-gray-200 p-6 mb-6">
-                        <h2 class="text-lg font-semibold text-gray-800 mb-4">Example prompts</h2>
-                        <div class="space-y-4">
-                            <div class="bg-gray-50 rounded-lg p-4">
-                                <p class="text-gray-800 italic">"Read my sales spreadsheet at [URL] and create a summary with monthly trends"</p>
-                            </div>
-                            <div class="bg-gray-50 rounded-lg p-4">
-                                <p class="text-gray-800 italic">"Clean up the contact list in this sheet - remove duplicates and fix formatting"</p>
-                            </div>
-                            <div class="bg-gray-50 rounded-lg p-4">
-                                <p class="text-gray-800 italic">"Compare the budgets in these two spreadsheets and highlight differences"</p>
-                            </div>
-                        </div>
-                    </section>
+                <div class="mt-6 p-4 bg-blue-50 rounded-lg border border-blue-100">
+                    <p class="text-sm text-gray-700 font-medium mb-2">How to share:</p>
+                    <ol class="text-sm text-gray-600 space-y-1 list-decimal list-inside">
+                        <li>Open your Google Sheet</li>
+                        <li>Click the <strong>Share</strong> button (top right)</li>
+                        <li>Paste the service account email above</li>
+                        <li>Choose <strong>Editor</strong> access (or Viewer for read-only)</li>
+                        <li>Click <strong>Send</strong></li>
+                    </ol>
+                </div>
+            </section>
 
-                    <!-- Coming soon -->
-                    <section class="bg-gradient-to-r from-blue-50 to-indigo-50 rounded-lg p-6">
-                        <h2 class="text-lg font-semibold text-gray-800 mb-2">Coming Soon</h2>
-                        <p class="text-gray-600 text-sm mb-3">Google Docs and Google Slides support is on the way.</p>
-                        <div class="flex gap-3 text-sm text-gray-500">
-                            <span class="px-3 py-1 bg-white rounded-full border border-gray-200">Google Docs</span>
-                            <span class="px-3 py-1 bg-white rounded-full border border-gray-200">Google Slides</span>
-                        </div>
-                    </section>
-                </main>
-            </div>
+            <!-- Step 3: Try it out -->
+            <section class="bg-white rounded-lg shadow-sm border border-gray-200 p-6 mb-6">
+                <div class="flex items-center gap-3 mb-4">
+                    <div class="step-number bg-blue-600 text-white">3</div>
+                    <h2 class="text-xl font-semibold text-gray-800">Try it out</h2>
+                </div>
+                <p class="text-gray-600 mb-4">
+                    Open Claude Code, Codex, or Gemini CLI in your terminal and try one of these prompts. Replace [URL] with the link to your shared Google Sheet.
+                </p>
+
+                <div class="space-y-3">
+                    <div class="bg-gray-50 rounded-lg p-4 border-l-4 border-blue-500">
+                        <p class="text-gray-800 font-mono text-sm">"Read my spreadsheet at [URL] and summarize the data"</p>
+                    </div>
+                    <div class="bg-gray-50 rounded-lg p-4 border-l-4 border-blue-500">
+                        <p class="text-gray-800 font-mono text-sm">"Add a new row to [URL] with today's sales figures: Product A, 150 units, $2,250"</p>
+                    </div>
+                    <div class="bg-gray-50 rounded-lg p-4 border-l-4 border-blue-500">
+                        <p class="text-gray-800 font-mono text-sm">"Clean up the contact list at [URL] - remove duplicates and fix phone number formatting"</p>
+                    </div>
+                    <div class="bg-gray-50 rounded-lg p-4 border-l-4 border-blue-500">
+                        <p class="text-gray-800 font-mono text-sm">"Compare the budgets in [URL1] and [URL2] and highlight the differences"</p>
+                    </div>
+                </div>
+
+                <p class="text-sm text-gray-500 mt-4">
+                    Tip: You can use the full Google Sheets URL (e.g., https://docs.google.com/spreadsheets/d/...) in your prompts.
+                </p>
+            </section>
+
+            <!-- Coming soon -->
+            <section class="bg-gradient-to-r from-blue-50 to-indigo-50 rounded-lg p-6">
+                <h2 class="text-lg font-semibold text-gray-800 mb-2">Coming Soon</h2>
+                <p class="text-gray-600 text-sm mb-3">Google Docs and Google Slides support is on the way.</p>
+                <div class="flex gap-3 text-sm text-gray-500">
+                    <span class="px-3 py-1 bg-white rounded-full border border-gray-200">Google Docs</span>
+                    <span class="px-3 py-1 bg-white rounded-full border border-gray-200">Google Slides</span>
+                </div>
+            </section>
         </div>
     </div>
 
