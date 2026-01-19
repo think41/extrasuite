@@ -4,13 +4,25 @@ from __future__ import annotations
 
 import http.server
 import json
+import os
 import socket
+import ssl
+import stat
 import sys
 import threading
 import time
+import urllib.error
 import urllib.parse
+import urllib.request
 import webbrowser
-from datetime import datetime
+
+# Try to use certifi for SSL certificates (common on macOS)
+try:
+    import certifi
+    SSL_CONTEXT = ssl.create_default_context(cafile=certifi.where())
+except ImportError:
+    SSL_CONTEXT = ssl.create_default_context()
+from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any
 
@@ -130,13 +142,23 @@ class ExtraSuiteClient:
             return None
 
     def _save_token(self, token_data: dict[str, Any]) -> None:
-        """Save token to cache file.
+        """Save token to cache file with secure permissions.
 
         Args:
             token_data: Token data dict to save.
+
+        Sets directory to 0700 and file to 0600 to prevent other users
+        from reading the token on multi-user systems.
         """
+        # Create parent directory with secure permissions (0700)
         self._token_cache_path.parent.mkdir(parents=True, exist_ok=True)
-        self._token_cache_path.write_text(json.dumps(token_data, indent=2))
+        os.chmod(self._token_cache_path.parent, stat.S_IRWXU)
+
+        # Write to temp file, set permissions, then rename atomically
+        temp_path = self._token_cache_path.with_suffix(".tmp")
+        temp_path.write_text(json.dumps(token_data, indent=2))
+        os.chmod(temp_path, stat.S_IRUSR | stat.S_IWUSR)  # 0600
+        temp_path.rename(self._token_cache_path)
         print(f"Token saved to {self._token_cache_path}")
 
     def _authenticate(self) -> dict[str, Any]:
@@ -160,7 +182,7 @@ class ExtraSuiteClient:
 
         # Start callback server
         handler_class = self._create_handler_class(token_holder)
-        server = http.server.HTTPServer(("localhost", port), handler_class)
+        server = http.server.HTTPServer(("127.0.0.1", port), handler_class)
         server.timeout = self._callback_timeout
 
         # Handle single request in thread
@@ -183,33 +205,68 @@ class ExtraSuiteClient:
         if "error" in token_holder:
             raise Exception(f"Authentication failed: {token_holder['error']}")
 
-        if "token" not in token_holder:
+        if "code" not in token_holder:
             raise Exception("Authentication timed out. Please try again.")
 
+        # Exchange auth code for token
+        print("Exchanging auth code for token...")
+        exchange_result = self._exchange_auth_code(token_holder["code"])
+
         # Parse expires_at from ISO 8601 format to Unix timestamp
-        expires_at_str = token_holder["expires_at"]
+        expires_at_str = exchange_result["expires_at"]
         expires_at_dt = datetime.fromisoformat(expires_at_str.replace("Z", "+00:00"))
         expires_at = expires_at_dt.timestamp()
 
         # Build token data
         token_data = {
-            "access_token": token_holder["token"],
+            "access_token": exchange_result["token"],
             "expires_at": expires_at,
-            "service_account_email": token_holder.get("service_account", ""),
+            "service_account_email": exchange_result.get("service_account", ""),
             "token_type": "Bearer",
         }
 
         return token_data
 
+    def _exchange_auth_code(self, auth_code: str) -> dict[str, Any]:
+        """Exchange auth code for token via POST request to server.
+
+        Args:
+            auth_code: The auth code received from the redirect.
+
+        Returns:
+            Dict with token, expires_at, and service_account.
+
+        Raises:
+            Exception: If exchange fails.
+        """
+        exchange_url = f"{self._server_url}/api/token/exchange"
+        body = json.dumps({"code": auth_code}).encode("utf-8")
+
+        req = urllib.request.Request(
+            exchange_url,
+            data=body,
+            headers={"Content-Type": "application/json"},
+            method="POST",
+        )
+
+        try:
+            with urllib.request.urlopen(req, timeout=30, context=SSL_CONTEXT) as response:
+                return json.loads(response.read().decode("utf-8"))
+        except urllib.error.HTTPError as e:
+            error_body = e.read().decode("utf-8") if e.fp else str(e)
+            raise Exception(f"Token exchange failed: {error_body}") from e
+        except urllib.error.URLError as e:
+            raise Exception(f"Failed to connect to server: {e}") from e
+
     @staticmethod
     def _find_free_port() -> int:
-        """Find an available port on localhost.
+        """Find an available port on 127.0.0.1.
 
         Returns:
             An available port number.
         """
         with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as s:
-            s.bind(("localhost", 0))
+            s.bind(("127.0.0.1", 0))
             s.listen(1)
             return s.getsockname()[1]
 
@@ -252,10 +309,8 @@ class ExtraSuiteClient:
                     """,
                         400,
                     )
-                elif "token" in params:
-                    token_holder["token"] = params["token"][0]
-                    token_holder["expires_at"] = params.get("expires_at", [""])[0]
-                    token_holder["service_account"] = params.get("service_account", [""])[0]
+                elif "code" in params:
+                    token_holder["code"] = params["code"][0]
                     self._send_html("""
                         <html>
                         <head><title>Authentication Successful</title></head>
@@ -273,7 +328,7 @@ class ExtraSuiteClient:
                         <head><title>Invalid Request</title></head>
                         <body style="font-family: sans-serif; padding: 40px; text-align: center;">
                             <h1>Invalid Request</h1>
-                            <p>Missing token in callback.</p>
+                            <p>Missing auth code in callback.</p>
                         </body>
                         </html>
                     """,
