@@ -1,0 +1,100 @@
+site_name: ExtraSuite Documentation
+site_description: Connect AI agents to your Google Workspace - read, analyze, and edit spreadsheets with natural language
+site_url: https://think41.github.io/extrasuite
+repo_url: https://github.com/think41/extrasuite
+repo_name: think41/extrasuite
+
+theme:
+  name: material
+  palette:
+    - scheme: default
+      primary: indigo
+      accent: indigo
+      toggle:
+        icon: material/brightness-7
+        name: Switch to dark mode
+    - scheme: slate
+      primary: indigo
+      accent: indigo
+      toggle:
+        icon: material/brightness-4
+        name: Switch to light mode
+  features:
+    - navigation.instant
+    - navigation.tracking
+    - navigation.tabs
+    - navigation.sections
+    - navigation.expand
+    - navigation.top
+    - search.suggest
+    - search.highlight
+    - content.tabs.link
+    - content.code.copy
+  icon:
+    repo: fontawesome/brands/github
+  logo: assets/logo.svg
+
+plugins:
+  - search
+  - minify:
+      minify_html: true
+
+markdown_extensions:
+  - admonition
+  - pymdownx.details
+  - pymdownx.superfences
+  - pymdownx.tabbed:
+      alternate_style: true
+  - pymdownx.highlight:
+      anchor_linenums: true
+  - pymdownx.inlinehilite
+  - pymdownx.snippets
+  - tables
+  - attr_list
+  - md_in_html
+  - toc:
+      permalink: true
+
+extra:
+  social:
+    - icon: fontawesome/brands/github
+      link: https://github.com/think41/extrasuite
+  generator: false
+
+copyright: "&copy; 2026 Think41 Technologies Pvt. Ltd."
+
+nav:
+  - Home: index.md
+  - Getting Started:
+    - Overview: getting-started/overview.md
+    - Installation:
+      - getting-started/installation/index.md
+      - Claude Code: getting-started/installation/claude-code.md
+      - Codex CLI: getting-started/installation/codex.md
+      - Gemini CLI: getting-started/installation/gemini-cli.md
+      - Claude Coworks: getting-started/installation/claude-coworks.md
+      - Cursor: getting-started/installation/cursor.md
+      - Windows (PowerShell): getting-started/installation/windows-powershell.md
+      - Windows (WSL): getting-started/installation/windows-wsl.md
+  - User Guide:
+    - user-guide/index.md
+    - Prompting: user-guide/prompting.md
+    - Sharing Documents: user-guide/sharing.md
+    - Revoking Access: user-guide/revoking-access.md
+  - Skills:
+    - skills/index.md
+    - Google Sheets: skills/sheets.md
+    - Google Docs: skills/docs.md
+    - Google Slides: skills/slides.md
+  - Deployment:
+    - deployment/index.md
+    - Cloud Run: deployment/cloud-run.md
+    - IAM Permissions: deployment/iam-permissions.md
+    - Operations: deployment/operations.md
+  - Customization:
+    - Skill Customization: customization/skill-customization.md
+  - Security: security.md
+  - FAQ: faq.md
+  - Legal:
+    - Privacy Policy: legal/privacy.md
+    - Terms of Service: legal/terms.md
