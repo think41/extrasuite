@@ -133,49 +133,9 @@ gcloud projects add-iam-policy-binding $PROJECT_ID \
   --condition=None
 ```
 
-## CI/CD Configuration
-
-### Cloud Build Trigger
-
-Automatic deployments are configured via Cloud Build:
-
-| Setting | Value |
-|---------|-------|
-| Trigger Name | `extrasuite-deploy-main` |
-| Repository | `think41/extrasuite` |
-| Branch | `^main$` |
-| Config File | `extrasuite-server/cloudbuild.yaml` |
-| Service Account | `extrasuite-cloudbuild@thinker41.iam.gserviceaccount.com` |
-
-**How it works:** Push to `main` branch triggers automatic build and deployment to Cloud Run.
-
-### Cloud Build Service Account Permissions
-
-The `extrasuite-cloudbuild` service account has these permissions:
-
-| Role | Resource | Purpose |
-|------|----------|---------|
-| `roles/artifactregistry.writer` | Project | Push images to GCR |
-| `roles/run.admin` | Project | Deploy to Cloud Run & set IAM |
-| `roles/logging.logWriter` | Project | Write build logs |
-| `roles/iam.serviceAccountUser` | Runtime SA | Act as `extrasuite-server` |
-
-### View Build Status
-
-```bash
-# List recent builds
-gcloud builds list --project=thinker41 --limit=5
-
-# View specific build logs
-gcloud builds log BUILD_ID --project=thinker41
-
-# Stream logs for running build
-gcloud builds log BUILD_ID --project=thinker41 --stream
-```
-
 ## Deployment Commands
 
-### Full Redeployment (Manual)
+### Full Redeployment
 
 ```bash
 # Set variables
@@ -183,13 +143,9 @@ PROJECT=thinker41
 REGION=asia-southeast1
 SERVICE=extrasuite
 
-# Build and push image
-cd extrasuite-server
-gcloud builds submit --tag gcr.io/$PROJECT/$SERVICE:latest --project=$PROJECT
-
-# Deploy
+# Deploy using GHCR image (automatically built by GitHub Actions)
 gcloud run deploy $SERVICE \
-  --image=gcr.io/$PROJECT/$SERVICE:latest \
+  --image=ghcr.io/think41/extrasuite-server:latest \
   --service-account=extrasuite-server@$PROJECT.iam.gserviceaccount.com \
   --region=$REGION \
   --allow-unauthenticated \

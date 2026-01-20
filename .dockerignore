@@ -1,0 +1,58 @@
+# Git
+.git/
+.gitignore
+.gitmodules
+
+# Git submodule (gspread fork - not needed in container)
+gspread/
+
+# Client library (server-only image)
+extrasuite-client/
+
+# Documentation
+docs/
+
+# Environment files and credentials
+*.env
+.env.*
+!.env.template
+credentials*.json
+*.pem
+*.key
+
+# Virtual environments
+.venv/
+venv/
+__pycache__/
+*.pyc
+*.pyo
+
+# Testing
+.pytest_cache/
+.coverage
+htmlcov/
+**/tests/
+
+# IDE
+.vscode/
+.idea/
+
+# Build artifacts
+*.egg-info/
+dist/
+build/
+
+# Docker files (not needed in context)
+Dockerfile*
+.dockerignore
+**/Dockerfile*
+**/.dockerignore
+
+# CI/CD
+.github/
+
+# Misc
+*.md
+!extrasuite-server/README.md
+CLAUDE.md
+LICENSE

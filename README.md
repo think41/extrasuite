@@ -119,16 +119,14 @@ See [docs/deployment.md](docs/deployment.md) for Cloud Run deployment instructio
 ### Quick Deploy
 
 ```bash
-# Build and push container
-docker build -t gcr.io/$PROJECT_ID/extrasuite-server:latest .
-docker push gcr.io/$PROJECT_ID/extrasuite-server:latest
-
-# Deploy to Cloud Run
+# Deploy to Cloud Run using pre-built image from GitHub Container Registry
 gcloud run deploy extrasuite-server \
-  --image=gcr.io/$PROJECT_ID/extrasuite-server:latest \
+  --image=ghcr.io/think41/extrasuite-server:latest \
+  --service-account=extrasuite-server@$PROJECT_ID.iam.gserviceaccount.com \
   --region=us-central1 \
   --allow-unauthenticated \
-  --set-env-vars="GOOGLE_CLIENT_ID=$CLIENT_ID,GOOGLE_CLIENT_SECRET=$CLIENT_SECRET,GOOGLE_CLOUD_PROJECT=$PROJECT_ID"
+  --set-env-vars="ENVIRONMENT=production,GOOGLE_CLOUD_PROJECT=$PROJECT_ID" \
+  --set-secrets="GOOGLE_CLIENT_ID=extrasuite-client-id:latest,GOOGLE_CLIENT_SECRET=extrasuite-client-secret:latest,SECRET_KEY=extrasuite-secret-key:latest"
 ```
 
 ## Development

@@ -1,12 +1,11 @@
 # Deploying ExtraSuite to Cloud Run
 
-This guide covers deploying the ExtraSuite server to Google Cloud Run.
+This guide covers deploying the ExtraSuite server to Google Cloud Run using pre-built Docker images from GitHub Container Registry.
 
 ## Prerequisites
 
 1. **Google Cloud Project** with billing enabled
 2. **gcloud CLI** installed and configured
-3. **Docker** installed locally
 
 ## Step 1: Enable Required APIs
 
@@ -16,7 +15,7 @@ gcloud services enable \
   firestore.googleapis.com \
   iam.googleapis.com \
   iamcredentials.googleapis.com \
-  containerregistry.googleapis.com
+  secretmanager.googleapis.com
 ```
 
 ## Step 2: Create Firestore Database
@@ -59,111 +58,9 @@ gcloud projects add-iam-policy-binding $PROJECT_ID \
   --role="roles/iam.serviceAccountTokenCreator"
 ```
 
-## Step 5: Create Cloud Build Service Account (for CI/CD)
+## Step 5: Store Secrets and Deploy
 
-Create a dedicated service account for Cloud Build with least privileges:
-
-```bash
-# Create the Cloud Build service account
-gcloud iam service-accounts create extrasuite-cloudbuild \
-  --display-name="ExtraSuite Cloud Build"
-
-# Grant permission to push images to Container Registry (uses Artifact Registry backend)
-gcloud projects add-iam-policy-binding $PROJECT_ID \
-  --member="serviceAccount:extrasuite-cloudbuild@$PROJECT_ID.iam.gserviceaccount.com" \
-  --role="roles/artifactregistry.writer" \
-  --condition=None
-
-# Grant permission to deploy to Cloud Run and set IAM policies (for --allow-unauthenticated)
-gcloud projects add-iam-policy-binding $PROJECT_ID \
-  --member="serviceAccount:extrasuite-cloudbuild@$PROJECT_ID.iam.gserviceaccount.com" \
-  --role="roles/run.admin" \
-  --condition=None
-
-# Grant permission to act as the runtime service account during deployment
-gcloud iam service-accounts add-iam-policy-binding \
-  extrasuite-server@$PROJECT_ID.iam.gserviceaccount.com \
-  --member="serviceAccount:extrasuite-cloudbuild@$PROJECT_ID.iam.gserviceaccount.com" \
-  --role="roles/iam.serviceAccountUser"
-
-# Grant permission to write build logs
-gcloud projects add-iam-policy-binding $PROJECT_ID \
-  --member="serviceAccount:extrasuite-cloudbuild@$PROJECT_ID.iam.gserviceaccount.com" \
-  --role="roles/logging.logWriter" \
-  --condition=None
-```
-
-**Note:** The `--condition=None` flag is required if the project has existing IAM bindings with conditions.
-
-### Configure Build Trigger
-
-After creating the service account, configure a Cloud Build trigger:
-
-1. Go to [Cloud Build Triggers](https://console.cloud.google.com/cloud-build/triggers)
-2. Click **Create Trigger**
-3. Configure the trigger:
-   - **Event:** Push to branch (e.g., `^main$`)
-   - **Source:** Your repository
-   - **Configuration:** Cloud Build configuration file
-   - **Location:** `extrasuite-server/cloudbuild.yaml`
-   - **Service account:** `extrasuite-cloudbuild@$PROJECT_ID.iam.gserviceaccount.com`
-4. Optionally override substitution variables:
-   - `_REGION`: Target Cloud Run region
-   - `_SERVICE_NAME`: Cloud Run service name
-   - `_REDIRECT_URI`: OAuth callback URL
-   - `_ALLOWED_DOMAINS`: Allowed email domains
-   - `_DOMAIN_ABBREVIATIONS`: Domain to abbreviation mapping
-
-## Step 6: Build and Push Docker Image (Manual)
-
-For manual deployments without Cloud Build:
-
-```bash
-# Build the image
-docker build -t gcr.io/$PROJECT_ID/extrasuite-server:latest .
-
-# Push to Container Registry
-docker push gcr.io/$PROJECT_ID/extrasuite-server:latest
-```
-
-## Step 7: Deploy to Cloud Run (Manual)
-
-For manual deployments:
-
-```bash
-gcloud run deploy extrasuite-server \
-  --image=gcr.io/$PROJECT_ID/extrasuite-server:latest \
-  --service-account=extrasuite-server@$PROJECT_ID.iam.gserviceaccount.com \
-  --region=asia-southeast1 \
-  --allow-unauthenticated \
-  --set-env-vars="ENVIRONMENT=production" \
-  --set-env-vars="GOOGLE_CLOUD_PROJECT=$PROJECT_ID" \
-  --set-env-vars="DOMAIN_ABBREVIATIONS={\"example.com\":\"ex\",\"company.org\":\"co\"}" \
-  --set-secrets="SECRET_KEY=extrasuite-secret-key:latest" \
-  --set-secrets="GOOGLE_CLIENT_ID=extrasuite-client-id:latest" \
-  --set-secrets="GOOGLE_CLIENT_SECRET=extrasuite-client-secret:latest"
-```
-
-## Step 8: Update OAuth Redirect URI
-
-After deployment, get your Cloud Run URL:
-
-```bash
-gcloud run services describe extrasuite-server --region=asia-southeast1 --format='value(status.url)'
-```
-
-Update your OAuth credentials in Google Cloud Console to include:
-- `https://your-cloud-run-url/api/auth/callback`
-
-Then update the environment variable:
-
-```bash
-gcloud run services update extrasuite-server \
-  --region=asia-southeast1 \
-  --set-env-vars="GOOGLE_REDIRECT_URI=https://your-cloud-run-url/api/auth/callback"
-```
-
-## Step 9: Store Secrets in Secret Manager
+### Create Secrets
 
 ```bash
 # Create secrets
@@ -183,6 +80,41 @@ gcloud secrets add-iam-policy-binding extrasuite-client-secret \
 gcloud secrets add-iam-policy-binding extrasuite-secret-key \
   --member="serviceAccount:extrasuite-server@$PROJECT_ID.iam.gserviceaccount.com" \
   --role="roles/secretmanager.secretAccessor"
+```
+
+### Deploy to Cloud Run
+
+```bash
+gcloud run deploy extrasuite-server \
+  --image=ghcr.io/think41/extrasuite-server:latest \
+  --service-account=extrasuite-server@$PROJECT_ID.iam.gserviceaccount.com \
+  --region=asia-southeast1 \
+  --allow-unauthenticated \
+  --set-env-vars="ENVIRONMENT=production" \
+  --set-env-vars="GOOGLE_CLOUD_PROJECT=$PROJECT_ID" \
+  --set-env-vars="DOMAIN_ABBREVIATIONS={\"example.com\":\"ex\",\"company.org\":\"co\"}" \
+  --set-secrets="SECRET_KEY=extrasuite-secret-key:latest" \
+  --set-secrets="GOOGLE_CLIENT_ID=extrasuite-client-id:latest" \
+  --set-secrets="GOOGLE_CLIENT_SECRET=extrasuite-client-secret:latest"
+```
+
+### Update OAuth Redirect URI
+
+After deployment, get your Cloud Run URL:
+
+```bash
+gcloud run services describe extrasuite-server --region=asia-southeast1 --format='value(status.url)'
+```
+
+Update your OAuth credentials in Google Cloud Console to include:
+- `https://your-cloud-run-url/api/auth/callback`
+
+Then update the environment variable:
+
+```bash
+gcloud run services update extrasuite-server \
+  --region=asia-southeast1 \
+  --set-env-vars="GOOGLE_REDIRECT_URI=https://your-cloud-run-url/api/auth/callback"
 ```
 
 ## Verification
@@ -236,6 +168,18 @@ gcloud firestore fields ttls update updated_at \
 ```
 
 This ensures refresh tokens don't persist indefinitely. Users will need to re-authenticate after credentials expire.
+
+### Use a Specific Version
+
+Instead of `latest`, you can pin to a specific version:
+
+```bash
+# Use a specific release
+--image=ghcr.io/think41/extrasuite-server:v1.0.0
+
+# Use a specific commit
+--image=ghcr.io/think41/extrasuite-server:sha-abc1234
+```
 
 ## Production Recommendations
 

@@ -75,11 +75,15 @@ uv run ruff check .
 uv run ruff format .
 ```
 
-### Docker
+### Docker (Local Development)
 ```bash
-cd extrasuite-server
+# Build locally from repo root (includes skills/ folder)
 docker build -t extrasuite-server:latest .
-docker run -p 8080:8080 --env-file .env extrasuite-server:latest
+docker run -p 8080:8080 --env-file extrasuite-server/.env extrasuite-server:latest
+
+# Or pull the pre-built image from GHCR
+docker pull ghcr.io/think41/extrasuite-server:latest
+docker run -p 8080:8080 --env-file extrasuite-server/.env ghcr.io/think41/extrasuite-server:latest
 ```
 
 ## Key Files
@@ -215,6 +219,29 @@ The server uses centralized exception handling via FastAPI's `add_exception_hand
 3. **For non-critical operations**, catch and log but continue (e.g., updating optional metadata)
 
 4. **Use domain exceptions** (`ValueError`, `RefreshError`) rather than `HTTPException` in business logic modules
+
+## CI/CD
+
+Docker images are automatically built and published to GitHub Container Registry (GHCR) via GitHub Actions.
+
+**Image location:** `ghcr.io/think41/extrasuite-server`
+
+**Automatic tagging:**
+| Trigger | Tags Created |
+|---------|--------------|
+| Push to `main` | `main`, `sha-<commit>` |
+| Git tag `v*` | `<version>`, `latest` |
+| Pull request | Build only (no push) |
+
+### Creating a Release
+
+To create a new release:
+```bash
+git tag v1.0.0
+git push origin v1.0.0
+```
+
+GitHub Actions will automatically build and push the image with tags `v1.0.0` and `latest`.
 
 ## Known Limitations
 

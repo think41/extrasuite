@@ -167,69 +167,7 @@ For production environments:
    - Token generation events
    - Failed authentication attempts
 
-## Cloud Build Service Account Permissions
-
-For CI/CD deployments, create a dedicated service account (`extrasuite-cloudbuild`) with least privileges:
-
-### 1. Artifact Registry Access
-
-**Role:** `roles/artifactregistry.writer`
-
-**Purpose:** Push Docker images to Container Registry (which uses Artifact Registry backend).
-
-**Grant command:**
-```bash
-gcloud projects add-iam-policy-binding $PROJECT_ID \
-  --member="serviceAccount:extrasuite-cloudbuild@$PROJECT_ID.iam.gserviceaccount.com" \
-  --role="roles/artifactregistry.writer" \
-  --condition=None
-```
-
-### 2. Cloud Run Deployment
-
-**Role:** `roles/run.admin`
-
-**Purpose:** Deploy Cloud Run services and set IAM policies (required for `--allow-unauthenticated`).
-
-**Grant command:**
-```bash
-gcloud projects add-iam-policy-binding $PROJECT_ID \
-  --member="serviceAccount:extrasuite-cloudbuild@$PROJECT_ID.iam.gserviceaccount.com" \
-  --role="roles/run.admin" \
-  --condition=None
-```
-
-### 3. Service Account User
-
-**Role:** `roles/iam.serviceAccountUser` (on runtime SA only)
-
-**Purpose:** Deploy Cloud Run services using the runtime service account.
-
-**Grant command:**
-```bash
-gcloud iam service-accounts add-iam-policy-binding \
-  extrasuite-server@$PROJECT_ID.iam.gserviceaccount.com \
-  --member="serviceAccount:extrasuite-cloudbuild@$PROJECT_ID.iam.gserviceaccount.com" \
-  --role="roles/iam.serviceAccountUser"
-```
-
-### 4. Logging
-
-**Role:** `roles/logging.logWriter`
-
-**Purpose:** Write Cloud Build logs.
-
-**Grant command:**
-```bash
-gcloud projects add-iam-policy-binding $PROJECT_ID \
-  --member="serviceAccount:extrasuite-cloudbuild@$PROJECT_ID.iam.gserviceaccount.com" \
-  --role="roles/logging.logWriter" \
-  --condition=None
-```
-
-**Note:** The `--condition=None` flag is required if the project has existing IAM bindings with conditions.
-
-## Summary Tables
+## Summary Table
 
 ### Runtime Service Account (`extrasuite-server`)
 
@@ -239,12 +177,3 @@ gcloud projects add-iam-policy-binding $PROJECT_ID \
 | `roles/iam.serviceAccountAdmin` | Project | Create user SAs |
 | `roles/iam.serviceAccountTokenCreator` | Project | Impersonate user SAs |
 | `roles/secretmanager.secretAccessor` | Specific secrets | Read OAuth config |
-
-### Cloud Build Service Account (`extrasuite-cloudbuild`)
-
-| Role | Resource | Purpose |
-|------|----------|---------|
-| `roles/artifactregistry.writer` | Project | Push Docker images |
-| `roles/run.admin` | Project | Deploy to Cloud Run & set IAM |
-| `roles/iam.serviceAccountUser` | Runtime SA | Act as runtime SA |
-| `roles/logging.logWriter` | Project | Write build logs |
