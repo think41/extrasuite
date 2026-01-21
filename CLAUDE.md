@@ -6,31 +6,28 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 ExtraSuite is a headless authentication service for CLI tools accessing Google Workspace APIs. It enables users to obtain short-lived service account tokens for interacting with Google Sheets, Docs, and Drive.
 
-The project consists of two packages:
-1. **Client Library** (`extrasuite-client`) - PyPI package for CLI tools
-2. **Server** (`extrasuite-server`) - FastAPI server for Cloud Run deployment
+The project consists of three packages:
+1. **extrasuite-server** - Containerized fastapi based application to provide employee specific service account and short lived acccess tokens that can be used to call google drive/sheets/docs/slides APIs. It also has minimal UI to allow employees to install skills via a command line installation command.
+2. **extrasuite-client** - Package that has a CLI based application to call extrasuite-server on behalf of an LLM based agent and provide it shortlived access tokens. 
+3. **website** - mkdocs based documentation website, hosted on github pages, automatically deployed to https://extrasuite.think41.com on every commit to main branch.
 
-## Architecture
-
-**Client Flow:**
-1. CLI creates `ExtraSuiteClient(server_url="...")` instance
-2. Calls `client.get_token()` to get a valid access token
-3. If cached token exists and is valid, return it
-4. Otherwise, start localhost callback server and open browser
-5. User authenticates via Google OAuth on the server
-6. Server redirects to localhost with auth code
-7. CLI exchanges auth code for token via POST to `/api/token/exchange`
-8. CLI saves token to `~/.config/extrasuite/token.json`
-
-**Server Flow:**
-1. Receive auth request at `/api/token/auth?port=<port>`
-2. If user has valid session, proceed to step 5
-3. Otherwise, redirect to Google OAuth
-4. On callback, verify identity and set session cookie
-5. Create service account if needed (email→SA mapping stored in Firestore)
-6. Generate auth code, store with SA email, redirect to `http://localhost:<port>/on-authentication?code=...`
-7. CLI exchanges auth code for token via POST to `/api/token/exchange`
-8. Server generates token on-demand via SA impersonation (token never stored)
+## User Flow
+1.  User logs in to the **extrasuite-server** using OAuth via their google workspace or gmail account 
+2.  This creates a 1:1 service acccount for the employee, and grants this service account read permissions for google drive API and read/write permissions to slides/docs/sheets API. We don't create credentials for this service account.
+3.  User copies the `<url> | sh` script to install the skill.
+4.  User instructs agent to access the sheet
+5.  Agent calls `CredentialsManager` in `extrasuite-client` to get a short lived access token
+6.  `CredentialsManager` returns the cached token if available, otherwise
+7.  `CredentialsManager` starts a http server on random port, then opens browser to `/api/token/auth?port=<port>`. 
+8.  Alternatively, it prints the URL and asks user to authenticate.
+9.  User is redirected to google to authenticate, and then redirected back to `/api/auth/callback` after authentication
+10. `extrasuite-server` `/api/auth/callback` is invoked. It redirects the browser back to http://localhost:<port>/on-authentication?code=<auth_code> and/or displays the <auth_code> to the user.
+11. `CredentialsManager` then calls `/api/token/exchange` with the auth code to get the token. 
+12. At this point, `extrasuite-server` impersonates the user specific service account using server credentials. Then it returns a short lived access token back to the `CredentialsManager` in `extrasuite-client`.
+13. `CredentialsManager` saves the token + service account email + expiry on disk with appropriate linux permissions.
+14. `CredentialsManager` provides the token + service account email to the LLM Agent
+15. LLM Agent then writes python code to make API calls to google sides/sheets/docs/drive directly from the user's device
+16. Once the token expires, the same flow repeats. If the user has a valid session with `extrasuite-server` - the browser will open but authentication against google server will be skipped. This will result in browser opening and closing in a few seconnds.
 
 ## Development Commands
 
@@ -52,36 +49,11 @@ uv run ruff check .
 uv run ruff format .
 ```
 
-### Docker (Local Development)
-```bash
-# Build locally from repo root (includes skills/ folder)
-docker build -t extrasuite-server:latest .
-docker run -p 8080:8080 --env-file extrasuite-server/.env extrasuite-server:latest
-
-# Or pull the pre-built image from GHCR
-docker pull ghcr.io/think41/extrasuite-server:latest
-docker run -p 8080:8080 --env-file extrasuite-server/.env ghcr.io/think41/extrasuite-server:latest
-```
-
-## Key Files
-
-### Client Library
-- `extrasuite-client/src/extrasuite_client/__init__.py` - Package exports
-- `extrasuite-client/src/extrasuite_client/gateway.py` - `ExtraSuiteClient` class
-- `extrasuite-client/examples/` - Usage examples
-
-### Server
-- `extrasuite-server/extrasuite_server/main.py` - FastAPI app entry point
-- `extrasuite-server/extrasuite_server/config.py` - Pydantic settings from environment
-- `extrasuite-server/extrasuite_server/database.py` - Async Firestore storage
-- `extrasuite-server/extrasuite_server/api.py` - OAuth callback handler and token exchange API
-- `extrasuite-server/extrasuite_server/token_generator.py` - SA creation and impersonation
-- `extrasuite-server/extrasuite_server/logging.py` - Structured logging configuration
-
 ## API Endpoints
 
 | Method | Endpoint | Description |
 |--------|----------|-------------|
+| GET | `/api/auth/login` | Start Oauth authentication flow from the UI to login the user |
 | GET | `/api/token/auth?port=<port>` | CLI entry point - starts OAuth (port 1024-65535) |
 | POST | `/api/token/exchange` | Exchange auth code for token |
 | GET | `/api/auth/callback` | OAuth callback - exchanges code for token |
@@ -109,7 +81,7 @@ gcloud firestore databases create --location=asia-south1 --project=<project>
 
 ## Token Storage
 
-- **Server-side:** Session cookies and email→SA mappings in Firestore
+- **Server-side:** Tokens are not stored on the server. They are generated on demand and returned immediately to the client.
 - **Client-side:** Short-lived SA tokens in `~/.config/extrasuite/token.json`
 
 ## Testing (Auth Flows)
@@ -133,54 +105,6 @@ Use `extrasuite-client/examples/basic_usage.py` to validate the three main flows
    PYTHONPATH=extrasuite-client/src python3 extrasuite-client/examples/basic_usage.py \
      --server https://extrasuite.think41.com
    ```
-
-## Package Names
-
-| Package | PyPI/Import Name | Directory |
-|---------|------------------|-----------|
-| Client | `extrasuite-client` / `extrasuite_client` | `extrasuite-client/` |
-| Server | `extrasuite-server` / `extrasuite_server` | `extrasuite-server/` |
-
-## Security Configuration
-
-### Email Domain Allowlist
-
-Restrict authentication to specific email domains by setting:
-```bash
-ALLOWED_EMAIL_DOMAINS=example.com,company.org
-```
-
-If not set, all domains are allowed.
-
-### Firestore TTL Policies
-
-Configure TTL policies for automatic cleanup of expired documents:
-
-**Short-lived collections (oauth_states, auth_codes):**
-```bash
-# OAuth states expire after 10 minutes
-gcloud firestore fields ttls update expire_at \
-  --collection-group=oauth_states \
-  --enable-ttl \
-  --project=<project>
-
-# Auth codes expire after 120 seconds
-gcloud firestore fields ttls update expire_at \
-  --collection-group=auth_codes \
-  --enable-ttl \
-  --project=<project>
-```
-
-**User records (optional, for inactive user cleanup):**
-```bash
-# Users expire after 7 days of inactivity
-gcloud firestore fields ttls update updated_at \
-  --collection-group=users \
-  --enable-ttl \
-  --project=<project>
-```
-
-Note: Firestore TTL deletion is eventual (typically within 24 hours). The application also validates expiration in-code for immediate enforcement.
 
 ## Exception Handling
 
@@ -219,14 +143,3 @@ git push origin v1.0.0
 ```
 
 GitHub Actions will automatically build and push the image with tags `v1.0.0` and `latest`.
-
-## Known Limitations
-
-### Service Account Quota
-
-ExtraSuite creates one service account per user. GCP projects have a quota of 100 service accounts by default (can be increased to ~200).
-
-For deployments expecting more users:
-- Monitor SA count: `gcloud iam service-accounts list --project=<project> | wc -l`
-- Request quota increase via GCP console
-- Consider implementing SA pooling for high-scale deployments
