@@ -1,0 +1,178 @@
+/* ExtraSuite Theme - Matching Think41 Branding */
+
+/* Import Inter font to match homepage */
+@import url('https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&display=swap');
+
+:root {
+  /* Think41 Colors */
+  --md-primary-fg-color: #2563EB;
+  --md-primary-fg-color--light: #3B82F6;
+  --md-primary-fg-color--dark: #1D4ED8;
+  --md-accent-fg-color: #2563EB;
+
+  /* Typography - Match homepage */
+  --md-text-font: "Inter", -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
+  --md-code-font: "JetBrains Mono", "Fira Code", Consolas, monospace;
+
+  /* Custom colors for reference */
+  --think41-blue: #2563EB;
+  --think41-dark: #1D4ED8;
+  --think41-navy: #0F172A;
+  --think41-light: #EFF6FF;
+}
+
+/* Dark mode */
+[data-md-color-scheme="slate"] {
+  --md-primary-fg-color: #3B82F6;
+  --md-accent-fg-color: #60A5FA;
+}
+
+/* Header - Dark navy like homepage */
+.md-header {
+  background-color: #0F172A;
+}
+
+/* Tabs under header */
+.md-tabs {
+  background-color: #0F172A;
+}
+
+.md-tabs__link {
+  font-weight: 500;
+}
+
+/* Content headings */
+.md-typeset h1 {
+  font-weight: 700;
+  color: #0F172A;
+}
+
+.md-typeset h2 {
+  font-weight: 600;
+  color: #0F172A;
+  border-bottom: 2px solid #EFF6FF;
+  padding-bottom: 0.5rem;
+}
+
+.md-typeset h3,
+.md-typeset h4 {
+  font-weight: 600;
+  color: #1E3A8A;
+}
+
+/* Links */
+.md-typeset a {
+  color: #2563EB;
+}
+
+.md-typeset a:hover {
+  color: #1D4ED8;
+}
+
+/* Buttons */
+.md-typeset .md-button {
+  border-radius: 0.5rem;
+  font-weight: 600;
+}
+
+.md-typeset .md-button--primary {
+  background-color: #2563EB;
+  border-color: #2563EB;
+}
+
+.md-typeset .md-button--primary:hover {
+  background-color: #1D4ED8;
+  border-color: #1D4ED8;
+}
+
+/* Admonitions */
+.md-typeset .admonition {
+  border-radius: 0.5rem;
+  border-left-width: 4px;
+}
+
+.md-typeset .admonition.note {
+  border-color: #2563EB;
+}
+
+.md-typeset .admonition.tip {
+  border-color: #10B981;
+}
+
+.md-typeset .admonition.warning {
+  border-color: #F59E0B;
+}
+
+.md-typeset .admonition.danger {
+  border-color: #EF4444;
+}
+
+/* Code blocks */
+.md-typeset pre {
+  border-radius: 0.5rem;
+}
+
+.md-typeset code {
+  border-radius: 0.25rem;
+}
+
+/* Tables */
+.md-typeset table:not([class]) {
+  border-radius: 0.5rem;
+  overflow: hidden;
+}
+
+.md-typeset table:not([class]) th {
+  background-color: #EFF6FF;
+  font-weight: 600;
+}
+
+/* Cards */
+.md-typeset .grid.cards > ol > li,
+.md-typeset .grid.cards > ul > li {
+  border-radius: 0.75rem;
+  border: 1px solid rgba(0, 0, 0, 0.08);
+  transition: all 0.2s ease;
+}
+
+.md-typeset .grid.cards > ol > li:hover,
+.md-typeset .grid.cards > ul > li:hover {
+  border-color: #2563EB;
+  box-shadow: 0 8px 16px -4px rgba(0, 0, 0, 0.1);
+}
+
+/* Footer */
+.md-footer {
+  background-color: #0F172A;
+}
+
+.md-footer-meta {
+  background-color: rgba(0, 0, 0, 0.2);
+}
+
+/* Sidebar */
+.md-nav__link--active {
+  color: #2563EB;
+  font-weight: 600;
+}
+
+/* Search */
+.md-search__input {
+  border-radius: 0.5rem;
+}
+
+/* Status badges */
+.text-green {
+  color: #10B981 !important;
+}
+
+.text-orange {
+  color: #F59E0B !important;
+}
+
+/* Mobile nav */
+@media screen and (max-width: 76.1875em) {
+  .md-nav--primary .md-nav__title {
+    background-color: #0F172A;
+  }
+}

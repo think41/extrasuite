@@ -1,38 +1,48 @@
-site_name: ExtraSuite Documentation
-site_description: Connect AI agents to your Google Workspace - read, analyze, and edit spreadsheets with natural language
+site_name: ExtraSuite
+site_description: Connect AI agents to your Google Workspace - read, analyze, and edit spreadsheets, documents, and slides with natural language
 site_url: https://think41.github.io/extrasuite
 repo_url: https://github.com/think41/extrasuite
 repo_name: think41/extrasuite
+
+dev_addr: '127.0.0.1:9000'
 
 theme:
   name: material
   palette:
     - scheme: default
-      primary: indigo
-      accent: indigo
+      primary: blue
+      accent: blue
       toggle:
         icon: material/brightness-7
         name: Switch to dark mode
     - scheme: slate
-      primary: indigo
-      accent: indigo
+      primary: blue
+      accent: blue
       toggle:
         icon: material/brightness-4
         name: Switch to light mode
+  font:
+    text: Inter
+    code: JetBrains Mono
   features:
     - navigation.instant
     - navigation.tracking
     - navigation.tabs
+    - navigation.tabs.sticky
     - navigation.sections
     - navigation.expand
     - navigation.top
+    - navigation.indexes
     - search.suggest
     - search.highlight
+    - search.share
     - content.tabs.link
     - content.code.copy
+    - content.code.annotate
+    - toc.follow
   icon:
     repo: fontawesome/brands/github
-  logo: assets/logo.svg
+    logo: material/cube-outline
 
 plugins:
   - search
@@ -47,26 +57,41 @@ markdown_extensions:
       alternate_style: true
   - pymdownx.highlight:
       anchor_linenums: true
+      line_spans: __span
+      pygments_lang_class: true
   - pymdownx.inlinehilite
   - pymdownx.snippets
+  - pymdownx.emoji:
+      emoji_index: !!python/name:material.extensions.emoji.twemoji
+      emoji_generator: !!python/name:material.extensions.emoji.to_svg
   - tables
   - attr_list
   - md_in_html
+  - def_list
+  - footnotes
   - toc:
       permalink: true
+      toc_depth: 3
+
+extra_css:
+  - stylesheets/extra.css
 
 extra:
   social:
     - icon: fontawesome/brands/github
       link: https://github.com/think41/extrasuite
+    - icon: fontawesome/solid/globe
+      link: https://think41.com
   generator: false
+  analytics:
+    provider: google
+    property: G-XXXXXXXXXX
 
-copyright: "&copy; 2026 Think41 Technologies Pvt. Ltd."
+copyright: "&copy; 2026 Think41 Technologies Pvt. Ltd. &nbsp;|&nbsp; <a href='legal/privacy/'>Privacy</a> &nbsp;|&nbsp; <a href='legal/terms/'>Terms</a>"
 
 nav:
-  - Home: index.md
   - Getting Started:
-    - Overview: getting-started/overview.md
+    - getting-started/overview.md
     - Installation:
       - getting-started/installation/index.md
       - Claude Code: getting-started/installation/claude-code.md
@@ -76,9 +101,10 @@ nav:
       - Cursor: getting-started/installation/cursor.md
       - Windows (PowerShell): getting-started/installation/windows-powershell.md
       - Windows (WSL): getting-started/installation/windows-wsl.md
+    - Individual Setup: getting-started/individual-setup.md
   - User Guide:
     - user-guide/index.md
-    - Prompting: user-guide/prompting.md
+    - Prompting Tips: user-guide/prompting.md
     - Sharing Documents: user-guide/sharing.md
     - Revoking Access: user-guide/revoking-access.md
   - Skills:
@@ -91,9 +117,10 @@ nav:
     - Cloud Run: deployment/cloud-run.md
     - IAM Permissions: deployment/iam-permissions.md
     - Operations: deployment/operations.md
+  - Security:
+    - security.md
   - Customization:
     - Skill Customization: customization/skill-customization.md
-  - Security: security.md
   - FAQ: faq.md
   - Legal:
     - Privacy Policy: legal/privacy.md
