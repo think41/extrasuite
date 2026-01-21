@@ -177,9 +177,7 @@ class CredentialsManager:
         if not force_refresh:
             cached = self._load_cached_token()
             if cached and cached.is_valid():
-                print(
-                    f"Using cached token (expires in {cached.expires_in_seconds()} seconds)"
-                )
+                print(f"Using cached token (expires in {cached.expires_in_seconds()} seconds)")
                 return cached
 
         print("Starting authentication flow...")
@@ -198,23 +196,19 @@ class CredentialsManager:
             from google.auth.transport.requests import Request
             from google.oauth2 import service_account
         except ImportError:
-            raise ImportError(
+            raise ImportError(  # noqa: B904
                 "google-auth package is required for service account authentication. "
                 "Install it with: pip install google-auth"
             )
 
         if not self._sa_path or not self._sa_path.exists():
-            raise FileNotFoundError(
-                f"Service account file not found: {self._sa_path}"
-            )
+            raise FileNotFoundError(f"Service account file not found: {self._sa_path}")
 
         # Check cache first (service account tokens also benefit from caching)
         if not force_refresh:
             cached = self._load_cached_token()
             if cached and cached.is_valid():
-                print(
-                    f"Using cached token (expires in {cached.expires_in_seconds()} seconds)"
-                )
+                print(f"Using cached token (expires in {cached.expires_in_seconds()} seconds)")
                 return cached
 
         print(f"Loading credentials from {self._sa_path}...")
@@ -315,6 +309,7 @@ class CredentialsManager:
         # Try to open browser (may fail in headless environments)
         try:
             import webbrowser
+
             if webbrowser.open(auth_url):
                 print("(Browser opened automatically)")
         except Exception:
@@ -419,9 +414,7 @@ class CredentialsManager:
             return s.getsockname()[1]
 
     @staticmethod
-    def _create_handler_class(
-        result_holder: dict[str, Any], result_lock: threading.Lock
-    ) -> type:
+    def _create_handler_class(result_holder: dict[str, Any], result_lock: threading.Lock) -> type:
         """Create HTTP handler class for OAuth callback."""
 
         class CallbackHandler(http.server.BaseHTTPRequestHandler):

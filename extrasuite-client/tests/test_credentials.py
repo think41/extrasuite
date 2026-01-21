@@ -7,7 +7,6 @@ import threading
 import time
 import urllib.error
 import urllib.request
-from datetime import datetime, timezone
 from pathlib import Path
 from unittest import mock
 
@@ -428,6 +427,7 @@ class TestCredentialsManagerServiceAccount:
         # or expect ImportError if google-auth is not installed
         try:
             import google.auth  # noqa: F401
+
             google_auth_available = True
         except ImportError:
             google_auth_available = False
@@ -460,7 +460,8 @@ class TestCredentialsManagerServiceAccount:
         # But for this test we just want to verify cache is used
         with mock.patch.object(manager, "_get_service_account_token") as mock_get:
             # Setup: make _load_cached_token return our cached token
-            cached_token = Token(
+            # (variable defined but used indirectly via patched_get_sa_token closure)
+            _ = Token(
                 access_token="cached-sa-token",
                 service_account_email="sa@example.com",
                 expires_at=time.time() + 3600,
@@ -481,7 +482,9 @@ class TestCredentialsManagerServiceAccount:
             token = manager.get_token()
             assert token.access_token == "cached-sa-token"
 
-    def test_service_account_missing_google_auth(self, temp_cache_dir: Path, mock_sa_file: Path) -> None:
+    def test_service_account_missing_google_auth(
+        self, temp_cache_dir: Path, mock_sa_file: Path
+    ) -> None:
         """Raises ImportError with helpful message when google-auth not installed."""
         cache_path = temp_cache_dir / "token.json"
 
@@ -494,6 +497,7 @@ class TestCredentialsManagerServiceAccount:
         # If google-auth is not installed, it will raise ImportError
         try:
             import google.auth  # noqa: F401
+
             # google-auth is installed, skip this test
             pytest.skip("google-auth is installed, cannot test ImportError case")
         except ImportError:
@@ -513,13 +517,8 @@ class TestCredentialsManagerCallbackHandler:
 
         handler_class = CredentialsManager._create_handler_class(result_holder, result_lock)
 
-        # Create a mock request
-        class MockRequest:
-            def makefile(self, *args, **kwargs):
-                return mock.MagicMock()
-
         # Simulate the handler receiving a code
-        with mock.patch.object(handler_class, "__init__", lambda self, *args: None):
+        with mock.patch.object(handler_class, "__init__", lambda _self, *_args: None):
             handler = handler_class.__new__(handler_class)
             handler.path = "/on-authentication?code=test-auth-code"
             handler.send_response = mock.MagicMock()
@@ -539,7 +538,7 @@ class TestCredentialsManagerCallbackHandler:
 
         handler_class = CredentialsManager._create_handler_class(result_holder, result_lock)
 
-        with mock.patch.object(handler_class, "__init__", lambda self, *args: None):
+        with mock.patch.object(handler_class, "__init__", lambda _self, *_args: None):
             handler = handler_class.__new__(handler_class)
             handler.path = "/on-authentication?error=access_denied"
             handler.send_response = mock.MagicMock()
