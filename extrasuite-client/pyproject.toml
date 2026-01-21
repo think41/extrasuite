@@ -54,3 +54,8 @@ ignore = ["E501"]
 
 [tool.ruff.lint.isort]
 known-first-party = ["extrasuite_client"]
+
+[dependency-groups]
+dev = [
+    "pytest>=9.0.2",
+]
