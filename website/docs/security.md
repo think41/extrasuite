@@ -207,6 +207,4 @@ This design prioritizes **least privilege**, **auditability**, and **employee tr
 
 **Related:**
 
-- [Privacy Policy](legal/privacy.md)
-- [Terms of Service](legal/terms.md)
 - [FAQ](faq.md)

@@ -242,4 +242,3 @@ We're actively developing this skill. Share feedback or report issues through yo
 
 - [Google Sheets Skill](sheets.md) - For spreadsheet operations
 - [Google Slides Skill](slides.md) - For presentations
-- [Skill Customization](../customization/skill-customization.md) - Create custom skills

@@ -119,4 +119,3 @@ Compared to the full ExtraSuite server deployment:
 
 - [Learn how to prompt effectively](../user-guide/prompting.md)
 - [Understand the security model](../security.md)
-- [Customize skills for your workflow](../customization/skill-customization.md)

@@ -181,8 +181,5 @@ Everything you need to know about using ExtraSuite.
     - **Bug reports**: Use internal support channels
     - **Feature requests**: Contact the platform team
 
-??? question "Can I customize the skills for my organization?"
-    Yes! See the [Skill Customization Guide](customization/skill-customization.md) for instructions on creating organization-specific workflows and functions.
-
 ??? question "Where can I see what features are planned?"
     Check the [Skills Overview](skills/index.md) for current status and planned features for each skill.

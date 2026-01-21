@@ -87,7 +87,7 @@ extra:
     provider: google
     property: G-XXXXXXXXXX
 
-copyright: "&copy; 2026 Think41 Technologies Pvt. Ltd. &nbsp;|&nbsp; <a href='legal/privacy/'>Privacy</a> &nbsp;|&nbsp; <a href='legal/terms/'>Terms</a>"
+copyright: "&copy; 2026 Think41 Technologies Pvt. Ltd."
 
 nav:
   - Getting Started:
@@ -119,9 +119,4 @@ nav:
     - Operations: deployment/operations.md
   - Security:
     - security.md
-  - Customization:
-    - Skill Customization: customization/skill-customization.md
   - FAQ: faq.md
-  - Legal:
-    - Privacy Policy: legal/privacy.md
-    - Terms of Service: legal/terms.md

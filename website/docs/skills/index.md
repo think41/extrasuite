@@ -122,10 +122,6 @@ Custom utility functions that extend standard libraries:
 - `has_table()` - Checks for defined tables
 - `convert_to_table()` - Creates tables from ranges
 
-## Creating Custom Skills
-
-Organizations can create custom skills tailored to their needs. See the [Skill Customization Guide](../customization/skill-customization.md) for details.
-
 ## Skill Updates
 
 Skills are updated when you re-run the install command from ExtraSuite:

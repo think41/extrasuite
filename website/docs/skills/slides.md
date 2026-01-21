@@ -373,4 +373,3 @@ We're actively developing this skill. Share feedback or report issues through yo
 
 - [Google Sheets Skill](sheets.md) - For spreadsheet operations
 - [Google Docs Skill](docs.md) - For document operations
-- [Skill Customization](../customization/skill-customization.md) - Create custom skills
