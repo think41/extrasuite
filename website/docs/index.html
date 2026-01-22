@@ -3,11 +3,10 @@
 <head>
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
-  <title>ExtraSuite - Let AI Handle Your Complex Spreadsheet Work</title>
+  <title>ExtraSuite - AI Securely Handle Your Complex Spreadsheet Work</title>
   <meta name="description" content="Give your AI assistant secure, auditable access to Google Workspace. Build financial models, automate reports, and manage projects through natural language.">
 
   <!-- Favicon -->
-  <link rel="icon" type="image/svg+xml" href="assets/logo.svg">
 
   <!-- Fonts -->
   <link rel="preconnect" href="https://fonts.googleapis.com">
@@ -36,6 +35,7 @@
   </script>
 
   <style>
+    html { scroll-behavior: smooth; }
     body { font-family: 'Inter', system-ui, -apple-system, sans-serif; }
 
     .grid-bg {
@@ -50,18 +50,120 @@
     }
 
     .card-hover {
-      transition: all 0.2s ease;
+      transition: all 0.25s ease;
     }
     .card-hover:hover {
+      transform: translateY(-4px);
+      box-shadow: 0 20px 40px -12px rgba(0, 0, 0, 0.15);
+    }
+
+    /* Focus states for accessibility */
+    a:focus-visible {
+      outline: 2px solid #2563EB;
+      outline-offset: 2px;
+      border-radius: 4px;
+    }
+
+    /* Subtle animation for spreadsheet */
+    .spreadsheet-bg {
+      transition: transform 0.3s ease, box-shadow 0.3s ease;
+    }
+    .spreadsheet-bg:hover {
       transform: translateY(-2px);
-      box-shadow: 0 12px 24px -8px rgba(0, 0, 0, 0.1);
+    }
+
+    /* Google Sheets style background */
+    .spreadsheet-bg {
+      background-color: #ffffff;
+      background-image:
+        /* Row lines */
+        repeating-linear-gradient(to bottom, transparent 0px, transparent 31px, #e2e8f0 31px, #e2e8f0 32px),
+        /* Column lines */
+        repeating-linear-gradient(to right, transparent 0px, transparent 79px, #e2e8f0 79px, #e2e8f0 80px);
+      background-size: 100% 100%;
+      background-position: 0 48px;
+      border: 2px solid #dadce0;
+      border-radius: 12px;
+      position: relative;
+      overflow: hidden;
+    }
+
+    .spreadsheet-header {
+      background: linear-gradient(135deg, #34a853 0%, #1e8e3e 100%);
+      padding: 8px 12px;
+      display: flex;
+      align-items: center;
+      gap: 6px;
+      border-bottom: 2px solid #1e8e3e;
+    }
+
+    .spreadsheet-header svg {
+      width: 18px;
+      height: 18px;
+      fill: white;
+    }
+
+    .spreadsheet-header span {
+      color: white;
+      font-size: 13px;
+      font-weight: 600;
+      font-family: 'Google Sans', 'Inter', sans-serif;
+    }
+
+    .spreadsheet-toolbar {
+      background: #f8f9fa;
+      border-bottom: 1px solid #e2e8f0;
+      padding: 4px 8px;
+      display: flex;
+      gap: 4px;
+    }
+
+    .toolbar-btn {
+      width: 20px;
+      height: 20px;
+      background: white;
+      border: 1px solid #dadce0;
+      border-radius: 3px;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      color: #5f6368;
+      font-size: 10px;
+      font-weight: 600;
+    }
+
+    .spreadsheet-content {
+      position: relative;
+      z-index: 1;
+      padding: 10px;
+    }
+
+    .sheet-cell {
+      background: white;
+      border: 1px solid #e2e8f0;
+      border-radius: 4px;
+      padding: 8px 10px;
+      transition: all 0.15s ease;
+    }
+
+    .sheet-cell:hover {
+      border-color: #34a853;
+      box-shadow: 0 2px 8px rgba(52, 168, 83, 0.15);
+    }
+
+    .sheet-cell-header {
+      background: linear-gradient(to bottom, #f0fdf4, #ffffff);
+      border: 1px solid #bbf7d0;
+      border-radius: 4px;
+      padding: 10px 14px;
+      margin-bottom: 12px;
     }
   </style>
 </head>
 <body class="bg-white text-gray-900">
 
   <!-- Header -->
-  <header class="bg-white border-b border-gray-100 sticky top-0 z-50">
+  <header class="bg-white/95 backdrop-blur-sm border-b border-gray-100 sticky top-0 z-50 shadow-sm">
     <div class="max-w-6xl mx-auto px-6 py-4 flex items-center justify-between">
       <a href="./" class="flex items-center gap-2">
         <svg class="w-8 h-8" viewBox="0 0 100 100">
@@ -84,79 +186,131 @@
           GitHub
         </a>
       </nav>
+      <!-- Mobile menu button -->
+      <a href="getting-started/" class="md:hidden text-think41-blue font-medium text-sm">
+        Docs →
+      </a>
     </div>
   </header>
 
-  <!-- Hero Section -->
-  <section class="hero-gradient grid-bg">
-    <div class="max-w-6xl mx-auto px-6 py-16 md:py-20">
-      <div class="text-center">
-        <h1 class="text-4xl md:text-5xl lg:text-6xl font-bold text-think41-navy mb-6 leading-tight">
-          Let AI Handle Your<br>
-          <span class="text-think41-blue">Complex Spreadsheet Work</span>
-        </h1>
-
-        <p class="text-lg md:text-xl text-gray-600 max-w-3xl mx-auto mb-6">
-          Build financial models, automate project tracking, generate reports from multiple sources&mdash;all through natural language. ExtraSuite gives AI assistants <strong class="text-think41-navy">secure, auditable access</strong> to your Google Workspace.
-        </p>
-
-        <!-- Key Security Points -->
-        <div class="flex flex-wrap items-center justify-center gap-x-6 gap-y-2 text-sm text-gray-600 mb-8">
-          <div class="flex items-center gap-1.5">
-            <svg class="w-4 h-4 text-green-500 flex-shrink-0" fill="currentColor" viewBox="0 0 20 20"><path fill-rule="evenodd" d="M5 9V7a5 5 0 0110 0v2a2 2 0 012 2v5a2 2 0 01-2 2H5a2 2 0 01-2-2v-5a2 2 0 012-2zm8-2v2H7V7a3 3 0 016 0z" clip-rule="evenodd"/></svg>
-            <span><strong class="text-think41-navy">Only accesses files you share</strong></span>
+  <!-- Combined Hero + Use Cases Section -->
+  <section class="hero-gradient grid-bg pt-8">
+    <div class="max-w-[1400px] mx-auto px-4 pt-10 pb-10 md:pt-16 md:pb-14">
+      <div class="grid lg:grid-cols-5 gap-8 lg:gap-14 items-stretch">
+        
+        <!-- Left: Hero Content -->
+        <div class="lg:col-span-3 flex flex-col justify-center">
+          <div class="mb-5">
+            <h1 class="text-3xl md:text-4xl lg:text-5xl font-bold text-think41-navy leading-tight">
+              AI <span class="text-green-600">Securely</span> Handle Your<br>
+              Complex <span class="text-green-600">Spreadsheet</span> Work
+            </h1>
           </div>
-          <div class="flex items-center gap-1.5">
-            <svg class="w-4 h-4 text-green-500 flex-shrink-0" fill="currentColor" viewBox="0 0 20 20"><path fill-rule="evenodd" d="M10 18a8 8 0 100-16 8 8 0 000 16zm1-12a1 1 0 10-2 0v4a1 1 0 00.293.707l2.828 2.829a1 1 0 101.415-1.415L11 9.586V6z" clip-rule="evenodd"/></svg>
-            <span><strong class="text-think41-navy">Tokens expire in 1 hour</strong></span>
+
+          <p class="text-base md:text-lg text-gray-600 mb-5">
+            Build financial models, automate project tracking, generate reports from multiple sources, all through natural language. ExtraSuite gives AI assistants <strong class="text-think41-navy">secure, auditable access</strong> to your Google Workspace.
+          </p>
+
+          <!-- Key Security Points -->
+          <div class="flex flex-col gap-2 text-sm text-gray-600 mb-6">
+            <div class="flex items-center gap-2">
+              <svg class="w-4 h-4 text-green-500 flex-shrink-0" fill="currentColor" viewBox="0 0 20 20"><path fill-rule="evenodd" d="M5 9V7a5 5 0 0110 0v2a2 2 0 012 2v5a2 2 0 01-2 2H5a2 2 0 01-2-2v-5a2 2 0 012-2zm8-2v2H7V7a3 3 0 016 0z" clip-rule="evenodd"/></svg>
+              <span><strong class="text-think41-navy">Only accesses files you share</strong></span>
+            </div>
+            <div class="flex items-center gap-2">
+              <svg class="w-4 h-4 text-green-500 flex-shrink-0" fill="currentColor" viewBox="0 0 20 20"><path fill-rule="evenodd" d="M10 18a8 8 0 100-16 8 8 0 000 16zm1-12a1 1 0 10-2 0v4a1 1 0 00.293.707l2.828 2.829a1 1 0 101.415-1.415L11 9.586V6z" clip-rule="evenodd"/></svg>
+              <span><strong class="text-think41-navy">Tokens expire in 1 hour</strong></span>
+            </div>
+            <div class="flex items-center gap-2">
+              <svg class="w-4 h-4 text-green-500 flex-shrink-0" fill="currentColor" viewBox="0 0 20 20"><path d="M9 2a1 1 0 000 2h2a1 1 0 100-2H9z"/><path fill-rule="evenodd" d="M4 5a2 2 0 012-2 3 3 0 003 3h2a3 3 0 003-3 2 2 0 012 2v11a2 2 0 01-2 2H6a2 2 0 01-2-2V5zm3 4a1 1 0 000 2h.01a1 1 0 100-2H7zm3 0a1 1 0 000 2h3a1 1 0 100-2h-3zm-3 4a1 1 0 100 2h.01a1 1 0 100-2H7zm3 0a1 1 0 100 2h3a1 1 0 100-2h-3z" clip-rule="evenodd"/></svg>
+              <span><strong class="text-think41-navy">Full audit trail in version history</strong></span>
+            </div>
           </div>
-          <div class="flex items-center gap-1.5">
-            <svg class="w-4 h-4 text-green-500 flex-shrink-0" fill="currentColor" viewBox="0 0 20 20"><path d="M9 2a1 1 0 000 2h2a1 1 0 100-2H9z"/><path fill-rule="evenodd" d="M4 5a2 2 0 012-2 3 3 0 003 3h2a3 3 0 003-3 2 2 0 012 2v11a2 2 0 01-2 2H6a2 2 0 01-2-2V5zm3 4a1 1 0 000 2h.01a1 1 0 100-2H7zm3 0a1 1 0 000 2h3a1 1 0 100-2h-3zm-3 4a1 1 0 100 2h.01a1 1 0 100-2H7zm3 0a1 1 0 100 2h3a1 1 0 100-2h-3z" clip-rule="evenodd"/></svg>
-            <span><strong class="text-think41-navy">Full audit trail in version history</strong></span>
+
+          <!-- CTA Buttons -->
+          <div class="flex flex-col sm:flex-row gap-3 mb-4">
+            <a href="getting-started/" class="inline-flex items-center justify-center gap-2 bg-gradient-to-r from-think41-blue to-think41-dark hover:from-think41-dark hover:to-think41-blue text-white font-semibold px-6 py-3 rounded-lg transition-all shadow-lg shadow-think41-blue/25 hover:shadow-xl hover:shadow-think41-blue/30">
+              <svg class="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M13 10V3L4 14h7v7l9-11h-7z"/></svg>
+              Get Started
+            </a>
+            <a href="https://github.com/think41/extrasuite" class="inline-flex items-center justify-center gap-2 bg-white hover:bg-gray-50 text-think41-navy font-semibold px-6 py-3 rounded-lg border border-gray-200 transition-all hover:border-gray-300 hover:shadow-md">
+              <svg class="w-5 h-5" fill="currentColor" viewBox="0 0 24 24"><path d="M12 0c-6.626 0-12 5.373-12 12 0 5.302 3.438 9.8 8.207 11.387.599.111.793-.261.793-.577v-2.234c-3.338.726-4.033-1.416-4.033-1.416-.546-1.387-1.333-1.756-1.333-1.756-1.089-.745.083-.729.083-.729 1.205.084 1.839 1.237 1.839 1.237 1.07 1.834 2.807 1.304 3.492.997.107-.775.418-1.305.762-1.604-2.665-.305-5.467-1.334-5.467-5.931 0-1.311.469-2.381 1.236-3.221-.124-.303-.535-1.524.117-3.176 0 0 1.008-.322 3.301 1.23.957-.266 1.983-.399 3.003-.404 1.02.005 2.047.138 3.006.404 2.291-1.552 3.297-1.23 3.297-1.23.653 1.653.242 2.874.118 3.176.77.84 1.235 1.911 1.235 3.221 0 4.609-2.807 5.624-5.479 5.921.43.372.823 1.102.823 2.222v3.293c0 .319.192.694.801.576 4.765-1.589 8.199-6.086 8.199-11.386 0-6.627-5.373-12-12-12z"/></svg>
+              View on GitHub
+            </a>
+          </div>
+
+          <p class="text-xs text-gray-400">Open source &middot; Apache 2.0 License &middot; By <a href="https://think41.com" class="hover:text-think41-blue transition-colors">Think41</a></p>
+        </div>
+
+        <!-- Right: What Can You Build (Spreadsheet Style) -->
+        <div class="lg:col-span-2 spreadsheet-bg shadow-2xl">
+          <!-- Header Bar -->
+          <div class="spreadsheet-header">
+            <svg viewBox="0 0 24 24"><path d="M19 3H5c-1.1 0-2 .9-2 2v14c0 1.1.9 2 2 2h14c1.1 0 2-.9 2-2V5c0-1.1-.9-2-2-2zm0 16H5V5h14v14zM7 10h2v7H7zm4-3h2v10h-2zm4 6h2v4h-2z"/></svg>
+            <span>Google Sheets</span>
+          </div>
+          
+          <!-- Toolbar -->
+          <div class="spreadsheet-toolbar">
+            <div class="toolbar-btn">B</div>
+            <div class="toolbar-btn">I</div>
+            <div class="toolbar-btn">U</div>
+            <div class="toolbar-btn" style="font-size: 8px;">123</div>
+            <div class="toolbar-btn">%</div>
+          </div>
+
+          <!-- Content Area -->
+          <div class="spreadsheet-content">
+            <!-- Title Cell -->
+            <div class="sheet-cell-header">
+              <h2 class="text-sm font-bold text-green-800 mb-0.5">What Can You Build?</h2>
+              <p class="text-green-600 text-[10px]">Tasks done through conversation</p>
+            </div>
+
+            <!-- Data Rows -->
+            <div class="space-y-1">
+              <!-- Row 1: Financial Models -->
+              <div class="sheet-cell">
+                <div class="flex items-center gap-1.5">
+                  <div class="text-sm flex-shrink-0">📊</div>
+                  <div>
+                    <h3 class="font-semibold text-think41-navy text-xs">Financial Models</h3>
+                    <p class="text-gray-500 text-[10px]">"Build DCF models, pull comps"</p>
+                  </div>
+                </div>
+              </div>
+
+              <!-- Row 2: Automated Reports -->
+              <div class="sheet-cell">
+                <div class="flex items-center gap-1.5">
+                  <div class="text-sm flex-shrink-0">📈</div>
+                  <div>
+                    <h3 class="font-semibold text-think41-navy text-xs">Automated Reports</h3>
+                    <p class="text-gray-500 text-[10px]">"Update dashboards from CRM"</p>
+                  </div>
+                </div>
+              </div>
+
+              <!-- Row 3: Project Tracking -->
+              <div class="sheet-cell">
+                <div class="flex items-center gap-1.5">
+                  <div class="text-sm flex-shrink-0">🎯</div>
+                  <div>
+                    <h3 class="font-semibold text-think41-navy text-xs">Project Tracking</h3>
+                    <p class="text-gray-500 text-[10px]">"Recalculate timelines, flag risks"</p>
+                  </div>
+                </div>
+              </div>
+            </div>
+
+            <!-- Formula Bar Style -->
+            <div class="mt-2 bg-gray-50 border border-gray-200 rounded px-2 py-1 flex items-center gap-1.5">
+              <span class="text-[10px] font-mono text-gray-400">fx</span>
+              <span class="text-[10px] font-mono text-gray-600">=AI("Analyze data")</span>
+            </div>
           </div>
         </div>
 
-        <!-- CTA Buttons -->
-        <div class="flex flex-col sm:flex-row gap-4 justify-center mb-6">
-          <a href="getting-started/" class="inline-flex items-center justify-center gap-2 bg-think41-blue hover:bg-think41-dark text-white font-semibold px-8 py-3.5 rounded-lg transition-colors shadow-sm">
-            <svg class="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M13 10V3L4 14h7v7l9-11h-7z"/></svg>
-            Get Started
-          </a>
-          <a href="https://github.com/think41/extrasuite" class="inline-flex items-center justify-center gap-2 bg-white hover:bg-gray-50 text-think41-navy font-semibold px-8 py-3.5 rounded-lg border border-gray-200 transition-colors">
-            <svg class="w-5 h-5" fill="currentColor" viewBox="0 0 24 24"><path d="M12 0c-6.626 0-12 5.373-12 12 0 5.302 3.438 9.8 8.207 11.387.599.111.793-.261.793-.577v-2.234c-3.338.726-4.033-1.416-4.033-1.416-.546-1.387-1.333-1.756-1.333-1.756-1.089-.745.083-.729.083-.729 1.205.084 1.839 1.237 1.839 1.237 1.07 1.834 2.807 1.304 3.492.997.107-.775.418-1.305.762-1.604-2.665-.305-5.467-1.334-5.467-5.931 0-1.311.469-2.381 1.236-3.221-.124-.303-.535-1.524.117-3.176 0 0 1.008-.322 3.301 1.23.957-.266 1.983-.399 3.003-.404 1.02.005 2.047.138 3.006.404 2.291-1.552 3.297-1.23 3.297-1.23.653 1.653.242 2.874.118 3.176.77.84 1.235 1.911 1.235 3.221 0 4.609-2.807 5.624-5.479 5.921.43.372.823 1.102.823 2.222v3.293c0 .319.192.694.801.576 4.765-1.589 8.199-6.086 8.199-11.386 0-6.627-5.373-12-12-12z"/></svg>
-            View on GitHub
-          </a>
-        </div>
-
-        <p class="text-xs text-gray-400">Open source &middot; Apache 2.0 License &middot; By <a href="https://think41.com" class="hover:text-think41-blue transition-colors">Think41</a></p>
-      </div>
-    </div>
-  </section>
-
-  <!-- Use Cases Section -->
-  <section class="py-16 bg-white">
-    <div class="max-w-6xl mx-auto px-6">
-      <div class="text-center mb-12">
-        <h2 class="text-3xl md:text-4xl font-bold text-think41-navy mb-4">What Can You Build?</h2>
-        <p class="text-gray-600 text-lg max-w-2xl mx-auto">Real tasks that used to take hours, now done through conversation</p>
-      </div>
-
-      <div class="grid md:grid-cols-3 gap-6">
-        <div class="bg-think41-light rounded-xl p-6 border border-blue-100">
-          <div class="text-2xl mb-3">📊</div>
-          <h3 class="font-semibold text-think41-navy mb-2">Financial Models</h3>
-          <p class="text-gray-600 text-sm">"Build a 3-year DCF model for this acquisition. Pull comps from the market data sheet and link the assumptions."</p>
-        </div>
-        <div class="bg-think41-light rounded-xl p-6 border border-blue-100">
-          <div class="text-2xl mb-3">📈</div>
-          <h3 class="font-semibold text-think41-navy mb-2">Automated Reports</h3>
-          <p class="text-gray-600 text-sm">"Every Monday, pull data from our CRM and update the sales dashboard with week-over-week comparisons."</p>
-        </div>
-        <div class="bg-think41-light rounded-xl p-6 border border-blue-100">
-          <div class="text-2xl mb-3">🎯</div>
-          <h3 class="font-semibold text-think41-navy mb-2">Project Tracking</h3>
-          <p class="text-gray-600 text-sm">"Update the project plan with these new tasks, recalculate the timeline, and highlight any dependencies at risk."</p>
-        </div>
       </div>
     </div>
   </section>
@@ -170,181 +324,36 @@
       </div>
 
       <!-- Steps Overview -->
-      <div class="grid grid-cols-2 md:grid-cols-4 gap-6 mb-12">
-        <div class="text-center">
-          <div class="w-10 h-10 bg-gray-200 text-gray-500 font-semibold text-base rounded-full flex items-center justify-center mx-auto mb-3">0</div>
-          <h3 class="font-semibold text-think41-navy mb-1 text-sm">Install an AI Agent</h3>
-          <p class="text-gray-500 text-xs">Get Claude Code, Gemini CLI, or Codex CLI on your machine.</p>
-        </div>
-        <div class="text-center">
-          <div class="w-10 h-10 bg-think41-blue text-white font-semibold text-base rounded-full flex items-center justify-center mx-auto mb-3">1</div>
-          <h3 class="font-semibold text-think41-navy mb-1 text-sm">Install the Skill</h3>
-          <p class="text-gray-500 text-xs">Run a one-time command to add Google Sheets access.</p>
-        </div>
-        <div class="text-center">
-          <div class="w-10 h-10 bg-think41-blue text-white font-semibold text-base rounded-full flex items-center justify-center mx-auto mb-3">2</div>
-          <h3 class="font-semibold text-think41-navy mb-1 text-sm">Share Your Document</h3>
-          <p class="text-gray-500 text-xs">Share your Google Sheet with your service account email.</p>
-        </div>
-        <div class="text-center">
-          <div class="w-10 h-10 bg-think41-blue text-white font-semibold text-base rounded-full flex items-center justify-center mx-auto mb-3">3</div>
-          <h3 class="font-semibold text-think41-navy mb-1 text-sm">Put It to Work</h3>
-          <p class="text-gray-500 text-xs">Use natural language to work with your spreadsheet.</p>
-        </div>
-      </div>
-
-      <!-- Detailed Steps -->
-      <div class="space-y-6">
-        <!-- Step 0: Prerequisite -->
-        <div class="bg-white rounded-xl p-6 border border-gray-200 shadow-sm">
-          <div class="flex items-center gap-3 mb-4">
-            <div class="w-8 h-8 bg-gray-200 text-gray-600 font-semibold text-sm rounded-full flex items-center justify-center flex-shrink-0">0</div>
-            <h3 class="font-semibold text-think41-navy text-lg">Prerequisite: Install an AI Agent</h3>
+      <div class="relative">
+        <!-- Connecting line (hidden on mobile) -->
+        <div class="hidden md:block absolute top-6 left-[10%] right-[10%] h-0.5 bg-gradient-to-r from-gray-300 via-think41-blue to-think41-blue"></div>
+        
+        <div class="grid grid-cols-2 md:grid-cols-5 gap-5 relative">
+          <div class="text-center">
+            <div class="w-12 h-12 bg-white border-2 border-dashed border-gray-300 text-gray-400 font-semibold text-lg rounded-full flex items-center justify-center mx-auto mb-4 relative z-10">0</div>
+            <h3 class="font-semibold text-think41-navy mb-2">Install an AI Agent</h3>
+            <p class="text-gray-500 text-sm">Get Claude Code, Gemini CLI, or Codex CLI on your machine.</p>
           </div>
-          <p class="text-gray-600 mb-4">You need an AI coding assistant installed on your computer. Install any one: <a href="https://claude.ai/code" class="text-think41-blue hover:underline">Claude Code</a> (requires paid plan), <a href="https://openai.com/index/introducing-codex/" class="text-think41-blue hover:underline">Codex CLI</a> (requires Plus plan or higher), <a href="https://ai.google.dev/gemini-api/docs/aistudio-quickstart" class="text-think41-blue hover:underline">Gemini CLI</a> (requires paid API key), or <a href="https://claude.ai/coworks" class="text-think41-blue hover:underline">Claude Coworks</a> (requires paid plan).</p>
-          <div class="bg-amber-50 border-l-4 border-amber-400 rounded-r-lg p-4">
-            <p class="text-amber-800 text-sm"><strong>What's a terminal?</strong> It's an app where you type commands. On Mac, search for "Terminal" in Spotlight. On Windows, search for "PowerShell" in the Start menu.</p>
+          <div class="text-center">
+            <div class="w-12 h-12 bg-think41-blue text-white font-semibold text-lg rounded-full flex items-center justify-center mx-auto mb-4 shadow-lg shadow-think41-blue/30 relative z-10">1</div>
+            <h3 class="font-semibold text-think41-navy mb-2">Connect Your AI</h3>
+            <p class="text-gray-500 text-sm">Works with Claude, ChatGPT, Gemini, and other AI assistants.</p>
           </div>
-        </div>
-
-        <!-- Step 1: Install the Skill -->
-        <div class="bg-white rounded-xl p-6 border border-gray-200 shadow-sm">
-          <div class="flex items-center gap-3 mb-4">
-            <div class="w-8 h-8 bg-think41-blue text-white font-semibold text-sm rounded-full flex items-center justify-center flex-shrink-0">1</div>
-            <h3 class="font-semibold text-think41-navy text-lg">Install the Skill</h3>
+          <div class="text-center">
+            <div class="w-12 h-12 bg-think41-blue text-white font-semibold text-lg rounded-full flex items-center justify-center mx-auto mb-4 shadow-lg shadow-think41-blue/30 relative z-10">2</div>
+            <h3 class="font-semibold text-think41-navy mb-2">Authenticate Once</h3>
+            <p class="text-gray-500 text-sm">Sign in with Google. Your AI gets a secure, time-limited token.</p>
           </div>
-          <p class="text-gray-600 mb-4">Open your terminal and run this command. It installs the Google Sheets skill for Claude Code, Codex, and Gemini CLI. This is a one-time setup.</p>
-
-          <!-- Tabs -->
-          <div class="mb-4">
-            <div class="flex border-b border-gray-200">
-              <button onclick="showTab('macos')" id="tab-macos" class="px-4 py-2 text-sm font-medium text-think41-blue border-b-2 border-think41-blue">macOS / Linux</button>
-              <button onclick="showTab('windows')" id="tab-windows" class="px-4 py-2 text-sm font-medium text-gray-500 hover:text-gray-700">Windows (PowerShell)</button>
-            </div>
-            <div id="content-macos" class="mt-4">
-              <div class="bg-gray-900 rounded-lg p-4 overflow-x-auto">
-                <code class="text-green-400 text-sm font-mono">curl -fsSL https://extrasuite.think41.com/api/skills/install/&lt;your-token&gt; | bash</code>
-              </div>
-            </div>
-            <div id="content-windows" class="mt-4 hidden">
-              <div class="bg-gray-900 rounded-lg p-4 overflow-x-auto">
-                <code class="text-green-400 text-sm font-mono">irm "https://extrasuite.think41.com/api/skills/install/&lt;your-token&gt;?ps=true" | iex</code>
-              </div>
-            </div>
+          <div class="text-center">
+            <div class="w-12 h-12 bg-think41-blue text-white font-semibold text-lg rounded-full flex items-center justify-center mx-auto mb-4 shadow-lg shadow-think41-blue/30 relative z-10">3</div>
+            <h3 class="font-semibold text-think41-navy mb-2">Share Documents</h3>
+            <p class="text-gray-500 text-sm">Share specific files with your AI, just like sharing with a colleague.</p>
           </div>
-
-          <p class="text-gray-500 text-sm">The install command is personalized to your account and valid for 5 minutes. Refresh the page to generate a new one if needed.</p>
-        </div>
-
-        <!-- Step 2: Share Your Google Sheet -->
-        <div class="bg-white rounded-xl p-6 border border-gray-200 shadow-sm">
-          <div class="flex items-center gap-3 mb-4">
-            <div class="w-8 h-8 bg-think41-blue text-white font-semibold text-sm rounded-full flex items-center justify-center flex-shrink-0">2</div>
-            <h3 class="font-semibold text-think41-navy text-lg">Share Your Google Sheet</h3>
+          <div class="text-center">
+            <div class="w-12 h-12 bg-think41-blue text-white font-semibold text-lg rounded-full flex items-center justify-center mx-auto mb-4 shadow-lg shadow-think41-blue/30 relative z-10">4</div>
+            <h3 class="font-semibold text-think41-navy mb-2">Get Work Done</h3>
+            <p class="text-gray-500 text-sm">Describe what you need. Your AI reads, writes, and updates your docs.</p>
           </div>
-          <p class="text-gray-600 mb-4">Click <strong>Share</strong> on any Google Sheet and add your service account email as an Editor.</p>
-          <div class="bg-gray-50 rounded-lg p-4 mb-4">
-            <p class="text-gray-500 text-xs mb-1">Your service account email (shown after sign-in):</p>
-            <code class="text-think41-navy font-mono text-sm">yourname-domain@project.iam.gserviceaccount.com</code>
-          </div>
-          <ol class="list-decimal list-inside text-gray-600 text-sm space-y-1">
-            <li>Open your Google Sheet</li>
-            <li>Click <strong>Share</strong> (top right)</li>
-            <li>Paste your service account email</li>
-            <li>Choose <strong>Editor</strong> permission</li>
-            <li>Click <strong>Send</strong></li>
-          </ol>
-        </div>
-
-        <!-- Step 3: Put It to Work -->
-        <div class="bg-white rounded-xl p-6 border border-gray-200 shadow-sm">
-          <div class="flex items-center gap-3 mb-4">
-            <div class="w-8 h-8 bg-think41-blue text-white font-semibold text-sm rounded-full flex items-center justify-center flex-shrink-0">3</div>
-            <h3 class="font-semibold text-think41-navy text-lg">Put It to Work</h3>
-          </div>
-          <p class="text-gray-600 mb-4">Open your AI agent in the terminal and describe what you need. The more context you provide, the better the results.</p>
-          <div class="space-y-3">
-            <blockquote class="border-l-4 border-think41-blue bg-blue-50 p-4 rounded-r-lg">
-              <p class="text-gray-700 text-sm italic">"Read the sales data from https://docs.google.com/spreadsheets/d/abc123/edit and create a summary of Q4 revenue by region."</p>
-            </blockquote>
-            <blockquote class="border-l-4 border-think41-blue bg-blue-50 p-4 rounded-r-lg">
-              <p class="text-gray-700 text-sm italic">"Update the project plan at https://docs.google.com/spreadsheets/d/abc123/edit with these new tasks and recalculate the timeline."</p>
-            </blockquote>
-          </div>
-          <p class="text-gray-500 text-sm mt-4"><strong>Tip:</strong> Be specific about what data you need and where to put it. Include the full Google Sheets URL in your prompt.</p>
-        </div>
-      </div>
-    </div>
-  </section>
-
-  <script>
-    function showTab(tab) {
-      // Hide all content
-      document.getElementById('content-macos').classList.add('hidden');
-      document.getElementById('content-windows').classList.add('hidden');
-      
-      // Reset all tabs
-      document.getElementById('tab-macos').classList.remove('text-think41-blue', 'border-b-2', 'border-think41-blue');
-      document.getElementById('tab-macos').classList.add('text-gray-500');
-      document.getElementById('tab-windows').classList.remove('text-think41-blue', 'border-b-2', 'border-think41-blue');
-      document.getElementById('tab-windows').classList.add('text-gray-500');
-      
-      // Show selected content and activate tab
-      document.getElementById('content-' + tab).classList.remove('hidden');
-      document.getElementById('tab-' + tab).classList.remove('text-gray-500');
-      document.getElementById('tab-' + tab).classList.add('text-think41-blue', 'border-b-2', 'border-think41-blue');
-    }
-  </script>
-
-  <!-- Supported Skills -->
-  <section class="py-16 bg-think41-light">
-    <div class="max-w-6xl mx-auto px-6">
-      <div class="text-center mb-12">
-        <h2 class="text-3xl md:text-4xl font-bold text-think41-navy mb-4">Supported Apps</h2>
-        <p class="text-gray-600 text-lg max-w-2xl mx-auto">Connect to your Google Workspace</p>
-      </div>
-
-      <div class="grid md:grid-cols-3 gap-6">
-        <div class="bg-white rounded-xl p-6 border border-gray-100 card-hover">
-          <div class="flex items-center gap-4 mb-4">
-            <div class="w-12 h-12 bg-green-100 rounded-lg flex items-center justify-center">
-              <svg class="w-7 h-7 text-green-600" viewBox="0 0 24 24" fill="currentColor"><path d="M19 3H5c-1.1 0-2 .9-2 2v14c0 1.1.9 2 2 2h14c1.1 0 2-.9 2-2V5c0-1.1-.9-2-2-2zm0 16H5V5h14v14zM7 10h2v7H7zm4-3h2v10h-2zm4 6h2v4h-2z"/></svg>
-            </div>
-            <div>
-              <h3 class="font-semibold text-think41-navy">Google Sheets</h3>
-              <span class="inline-flex items-center px-2 py-0.5 rounded text-xs font-medium bg-green-100 text-green-800">Stable</span>
-            </div>
-          </div>
-          <p class="text-gray-600 text-sm mb-4">Read, write, format, and manipulate spreadsheets. Create charts, pivot tables, and complex formulas.</p>
-          <a href="skills/sheets/" class="text-think41-blue font-medium text-sm hover:underline">Learn more →</a>
-        </div>
-
-        <div class="bg-white rounded-xl p-6 border border-gray-100 card-hover">
-          <div class="flex items-center gap-4 mb-4">
-            <div class="w-12 h-12 bg-blue-100 rounded-lg flex items-center justify-center">
-              <svg class="w-7 h-7 text-blue-600" viewBox="0 0 24 24" fill="currentColor"><path d="M14 2H6c-1.1 0-1.99.9-1.99 2L4 20c0 1.1.89 2 1.99 2H18c1.1 0 2-.9 2-2V8l-6-6zm2 16H8v-2h8v2zm0-4H8v-2h8v2zm-3-5V3.5L18.5 9H13z"/></svg>
-            </div>
-            <div>
-              <h3 class="font-semibold text-think41-navy">Google Docs</h3>
-              <span class="inline-flex items-center px-2 py-0.5 rounded text-xs font-medium bg-orange-100 text-orange-800">Alpha</span>
-            </div>
-          </div>
-          <p class="text-gray-600 text-sm mb-4">Create and edit documents. Format text, add images, and manage document structure.</p>
-          <a href="skills/docs/" class="text-think41-blue font-medium text-sm hover:underline">Learn more →</a>
-        </div>
-
-        <div class="bg-white rounded-xl p-6 border border-gray-100 card-hover">
-          <div class="flex items-center gap-4 mb-4">
-            <div class="w-12 h-12 bg-yellow-100 rounded-lg flex items-center justify-center">
-              <svg class="w-7 h-7 text-yellow-600" viewBox="0 0 24 24" fill="currentColor"><path d="M19 3H5c-1.1 0-2 .9-2 2v14c0 1.1.9 2 2 2h14c1.1 0 2-.9 2-2V5c0-1.1-.9-2-2-2zm0 16H5V5h14v14zM7 12h2v5H7zm4-3h2v8h-2zm4-3h2v11h-2z"/></svg>
-            </div>
-            <div>
-              <h3 class="font-semibold text-think41-navy">Google Slides</h3>
-              <span class="inline-flex items-center px-2 py-0.5 rounded text-xs font-medium bg-orange-100 text-orange-800">Alpha</span>
-            </div>
-          </div>
-          <p class="text-gray-600 text-sm mb-4">Build and edit presentations. Add slides, format content, and manage layouts.</p>
-          <a href="skills/slides/" class="text-think41-blue font-medium text-sm hover:underline">Learn more →</a>
         </div>
       </div>
     </div>
@@ -393,6 +402,69 @@
         <a href="security/" class="inline-flex items-center gap-2 text-white font-medium hover:underline">
           Read the Security Documentation →
         </a>
+      </div>
+    </div>
+  </section>
+
+  <!-- Supported Skills -->
+  <section class="py-16 bg-think41-light">
+    <div class="max-w-6xl mx-auto px-6">
+      <div class="text-center mb-12">
+        <h2 class="text-3xl md:text-4xl font-bold text-think41-navy mb-4">Supported Apps</h2>
+        <p class="text-gray-600 text-lg max-w-2xl mx-auto">Connect to your Google Workspace</p>
+      </div>
+
+      <div class="grid md:grid-cols-3 gap-6">
+        <div class="bg-white rounded-xl p-6 border border-gray-100 card-hover relative overflow-hidden">
+          <div class="absolute top-0 right-0 w-32 h-32 bg-gradient-to-bl from-green-50 to-transparent rounded-bl-full"></div>
+          <div class="relative">
+            <div class="flex items-center gap-4 mb-4">
+              <div class="w-12 h-12 bg-green-100 rounded-lg flex items-center justify-center shadow-sm">
+                <svg class="w-7 h-7 text-green-600" viewBox="0 0 24 24" fill="currentColor"><path d="M19 3H5c-1.1 0-2 .9-2 2v14c0 1.1.9 2 2 2h14c1.1 0 2-.9 2-2V5c0-1.1-.9-2-2-2zm0 16H5V5h14v14zM7 10h2v7H7zm4-3h2v10h-2zm4 6h2v4h-2z"/></svg>
+              </div>
+              <div>
+                <h3 class="font-semibold text-think41-navy">Google Sheets</h3>
+                <span class="inline-flex items-center px-2 py-0.5 rounded text-xs font-medium bg-green-100 text-green-800">Stable</span>
+              </div>
+            </div>
+            <p class="text-gray-600 text-sm mb-4">Read, write, format, and manipulate spreadsheets. Create charts, pivot tables, and complex formulas.</p>
+            <a href="skills/sheets/" class="text-think41-blue font-medium text-sm hover:underline inline-flex items-center gap-1">Learn more <span>→</span></a>
+          </div>
+        </div>
+
+        <div class="bg-white rounded-xl p-6 border border-gray-100 card-hover relative overflow-hidden">
+          <div class="absolute top-0 right-0 w-32 h-32 bg-gradient-to-bl from-blue-50 to-transparent rounded-bl-full"></div>
+          <div class="relative">
+            <div class="flex items-center gap-4 mb-4">
+              <div class="w-12 h-12 bg-blue-100 rounded-lg flex items-center justify-center shadow-sm">
+                <svg class="w-7 h-7 text-blue-600" viewBox="0 0 24 24" fill="currentColor"><path d="M14 2H6c-1.1 0-1.99.9-1.99 2L4 20c0 1.1.89 2 1.99 2H18c1.1 0 2-.9 2-2V8l-6-6zm2 16H8v-2h8v2zm0-4H8v-2h8v2zm-3-5V3.5L18.5 9H13z"/></svg>
+              </div>
+              <div>
+                <h3 class="font-semibold text-think41-navy">Google Docs</h3>
+                <span class="inline-flex items-center px-2 py-0.5 rounded text-xs font-medium bg-amber-100 text-amber-800">Alpha</span>
+              </div>
+            </div>
+            <p class="text-gray-600 text-sm mb-4">Create and edit documents. Format text, add images, and manage document structure.</p>
+            <a href="skills/docs/" class="text-think41-blue font-medium text-sm hover:underline inline-flex items-center gap-1">Learn more <span>→</span></a>
+          </div>
+        </div>
+
+        <div class="bg-white rounded-xl p-6 border border-gray-100 card-hover relative overflow-hidden">
+          <div class="absolute top-0 right-0 w-32 h-32 bg-gradient-to-bl from-yellow-50 to-transparent rounded-bl-full"></div>
+          <div class="relative">
+            <div class="flex items-center gap-4 mb-4">
+              <div class="w-12 h-12 bg-yellow-100 rounded-lg flex items-center justify-center shadow-sm">
+                <svg class="w-7 h-7 text-yellow-600" viewBox="0 0 24 24" fill="currentColor"><path d="M19 3H5c-1.1 0-2 .9-2 2v14c0 1.1.9 2 2 2h14c1.1 0 2-.9 2-2V5c0-1.1-.9-2-2-2zm0 16H5V5h14v14zM7 12h2v5H7zm4-3h2v8h-2zm4-3h2v11h-2z"/></svg>
+              </div>
+              <div>
+                <h3 class="font-semibold text-think41-navy">Google Slides</h3>
+                <span class="inline-flex items-center px-2 py-0.5 rounded text-xs font-medium bg-amber-100 text-amber-800">Alpha</span>
+              </div>
+            </div>
+            <p class="text-gray-600 text-sm mb-4">Build and edit presentations. Add slides, format content, and manage layouts.</p>
+            <a href="skills/slides/" class="text-think41-blue font-medium text-sm hover:underline inline-flex items-center gap-1">Learn more <span>→</span></a>
+          </div>
+        </div>
       </div>
     </div>
   </section>
@@ -467,7 +539,7 @@
         <p class="text-gray-600 text-lg max-w-2xl mx-auto">Everything you need to get started</p>
       </div>
 
-      <div class="grid md:grid-cols-4 gap-4">
+      <div class="grid grid-cols-2 md:grid-cols-4 gap-4">
         <a href="getting-started/" class="group bg-white p-5 rounded-xl border border-gray-200 hover:border-think41-blue hover:shadow-md transition-all">
           <div class="font-semibold text-think41-navy group-hover:text-think41-blue mb-1">Getting Started</div>
           <div class="text-sm text-gray-500">Installation guides</div>
@@ -493,23 +565,36 @@
           <div class="text-sm text-gray-500">Common questions</div>
         </a>
         <a href="https://github.com/think41/extrasuite" class="group bg-white p-5 rounded-xl border border-gray-200 hover:border-think41-blue hover:shadow-md transition-all">
-          <div class="font-semibold text-think41-navy group-hover:text-think41-blue mb-1">GitHub</div>
+          <div class="font-semibold text-think41-navy group-hover:text-think41-blue mb-1 flex items-center gap-1.5">
+            <svg class="w-4 h-4" fill="currentColor" viewBox="0 0 24 24"><path d="M12 0c-6.626 0-12 5.373-12 12 0 5.302 3.438 9.8 8.207 11.387.599.111.793-.261.793-.577v-2.234c-3.338.726-4.033-1.416-4.033-1.416-.546-1.387-1.333-1.756-1.333-1.756-1.089-.745.083-.729.083-.729 1.205.084 1.839 1.237 1.839 1.237 1.07 1.834 2.807 1.304 3.492.997.107-.775.418-1.305.762-1.604-2.665-.305-5.467-1.334-5.467-5.931 0-1.311.469-2.381 1.236-3.221-.124-.303-.535-1.524.117-3.176 0 0 1.008-.322 3.301 1.23.957-.266 1.983-.399 3.003-.404 1.02.005 2.047.138 3.006.404 2.291-1.552 3.297-1.23 3.297-1.23.653 1.653.242 2.874.118 3.176.77.84 1.235 1.911 1.235 3.221 0 4.609-2.807 5.624-5.479 5.921.43.372.823 1.102.823 2.222v3.293c0 .319.192.694.801.576 4.765-1.589 8.199-6.086 8.199-11.386 0-6.627-5.373-12-12-12z"/></svg>
+            GitHub
+          </div>
           <div class="text-sm text-gray-500">Source code</div>
+        </a>
+        <a href="https://github.com/think41/extrasuite/blob/main/LICENSE" class="group bg-white p-5 rounded-xl border border-gray-200 hover:border-think41-blue hover:shadow-md transition-all">
+          <div class="font-semibold text-think41-navy group-hover:text-think41-blue mb-1">License</div>
+          <div class="text-sm text-gray-500">Apache 2.0</div>
         </a>
       </div>
     </div>
   </section>
 
   <!-- CTA Section -->
-  <section class="py-16 bg-think41-blue">
-    <div class="max-w-4xl mx-auto px-6 text-center">
+  <section class="py-20 bg-gradient-to-br from-think41-blue via-think41-dark to-think41-navy relative overflow-hidden">
+    <!-- Decorative elements -->
+    <div class="absolute inset-0 opacity-10">
+      <div class="absolute top-0 left-1/4 w-96 h-96 bg-white rounded-full blur-3xl"></div>
+      <div class="absolute bottom-0 right-1/4 w-64 h-64 bg-white rounded-full blur-3xl"></div>
+    </div>
+    <div class="max-w-4xl mx-auto px-6 text-center relative">
       <h2 class="text-3xl md:text-4xl font-bold text-white mb-4">Ready to Get Started?</h2>
       <p class="text-blue-100 text-lg mb-8 max-w-2xl mx-auto">Give your AI assistant secure access to Google Workspace</p>
       <div class="flex flex-col sm:flex-row gap-4 justify-center">
-        <a href="getting-started/" class="inline-flex items-center justify-center gap-2 bg-white hover:bg-gray-100 text-think41-blue font-semibold px-8 py-3.5 rounded-lg transition-colors">
+        <a href="getting-started/" class="inline-flex items-center justify-center gap-2 bg-white hover:bg-gray-100 text-think41-blue font-semibold px-8 py-3.5 rounded-lg transition-all shadow-lg hover:shadow-xl hover:scale-105">
           Get Started Now
         </a>
-        <a href="https://github.com/think41/extrasuite" class="inline-flex items-center justify-center gap-2 bg-transparent hover:bg-white/10 text-white font-semibold px-8 py-3.5 rounded-lg border-2 border-white/30 transition-colors">
+        <a href="https://github.com/think41/extrasuite" class="inline-flex items-center justify-center gap-2 bg-white/10 hover:bg-white/20 text-white font-semibold px-8 py-3.5 rounded-lg border border-white/30 transition-all backdrop-blur-sm">
+          <svg class="w-5 h-5" fill="currentColor" viewBox="0 0 24 24"><path d="M12 0c-6.626 0-12 5.373-12 12 0 5.302 3.438 9.8 8.207 11.387.599.111.793-.261.793-.577v-2.234c-3.338.726-4.033-1.416-4.033-1.416-.546-1.387-1.333-1.756-1.333-1.756-1.089-.745.083-.729.083-.729 1.205.084 1.839 1.237 1.839 1.237 1.07 1.834 2.807 1.304 3.492.997.107-.775.418-1.305.762-1.604-2.665-.305-5.467-1.334-5.467-5.931 0-1.311.469-2.381 1.236-3.221-.124-.303-.535-1.524.117-3.176 0 0 1.008-.322 3.301 1.23.957-.266 1.983-.399 3.003-.404 1.02.005 2.047.138 3.006.404 2.291-1.552 3.297-1.23 3.297-1.23.653 1.653.242 2.874.118 3.176.77.84 1.235 1.911 1.235 3.221 0 4.609-2.807 5.624-5.479 5.921.43.372.823 1.102.823 2.222v3.293c0 .319.192.694.801.576 4.765-1.589 8.199-6.086 8.199-11.386 0-6.627-5.373-12-12-12z"/></svg>
           Star on GitHub
         </a>
       </div>
