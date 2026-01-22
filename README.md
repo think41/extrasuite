@@ -166,7 +166,7 @@ uv run ruff check .
 | `GOOGLE_CLIENT_SECRET` | Yes | - | OAuth 2.0 client secret |
 | `GOOGLE_CLOUD_PROJECT` | Yes | - | GCP project for service accounts |
 | `SECRET_KEY` | Yes | - | Key for signing state tokens |
-| `GOOGLE_REDIRECT_URI` | No | `http://localhost:8001/api/auth/callback` | OAuth redirect URI |
+| `SERVER_URL` | No | `http://localhost:8001` | Base URL for server (OAuth redirect URI computed from this) |
 | `FIRESTORE_DATABASE` | No | `(default)` | Firestore database name |
 | `ALLOWED_EMAIL_DOMAINS` | No | - | Comma-separated list of allowed email domains |
 | `ENVIRONMENT` | No | `development` | `development` or `production` |

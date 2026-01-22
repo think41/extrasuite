@@ -97,7 +97,6 @@ async def download_skills(
 
 @router.get("/install/{token}")
 async def get_install_script(
-    request: Request,
     token: str,
     ps: bool = Query(False, description="Return PowerShell script instead of bash"),
     settings: Settings = Depends(get_settings),
@@ -140,7 +139,7 @@ async def get_install_script(
     logger.info("Install script requested", extra={"email": email, "powershell": ps})
 
     # Determine download URL based on whether bundled skills.zip exists
-    base_url = str(request.base_url).rstrip("/")
+    base_url = settings.server_url.rstrip("/")
     if _DOCKER_SKILLS_ZIP.exists():
         # Enterprise: download from server with auth token
         download_url = f"{base_url}/api/skills/download?token={token}"

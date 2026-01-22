@@ -149,7 +149,7 @@ Then update the environment variable:
 ```bash
 gcloud run services update extrasuite-server \
   --region=asia-southeast1 \
-  --update-env-vars="GOOGLE_REDIRECT_URI=$SERVICE_URL/api/auth/callback" \
+  --update-env-vars="SERVER_URL=$SERVICE_URL" \
   --project=$PROJECT_ID
 ```
 

@@ -81,7 +81,7 @@ See [Cloud Run Deployment](cloud-run.md) for complete instructions.
 |----------|-------------|---------|
 | `ALLOWED_EMAIL_DOMAINS` | Comma-separated allowed domains | All domains |
 | `DOMAIN_ABBREVIATIONS` | JSON mapping for SA naming | Hash-based |
-| `GOOGLE_REDIRECT_URI` | OAuth callback URL | Auto-detected |
+| `SERVER_URL` | Base URL for server | `http://localhost:8001` |
 | `ENVIRONMENT` | `development` or `production` | `production` |
 
 ## Security Considerations

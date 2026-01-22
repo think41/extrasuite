@@ -164,12 +164,12 @@ gcloud run deploy $SERVICE \
   --set-secrets="GOOGLE_CLIENT_SECRET=extrasuite-client-secret:latest" \
   --project=$PROJECT
 
-# Update OAuth redirect URI
+# Update server URL
 SERVICE_URL=$(gcloud run services describe $SERVICE \
   --region=$REGION --project=$PROJECT --format='value(status.url)')
 gcloud run services update $SERVICE \
   --region=$REGION \
-  --update-env-vars="GOOGLE_REDIRECT_URI=$SERVICE_URL/api/auth/callback" \
+  --update-env-vars="SERVER_URL=$SERVICE_URL" \
   --project=$PROJECT
 ```
 
@@ -246,7 +246,7 @@ PYTHONPATH=extrasuite-client/src python3 extrasuite-client/examples/basic_usage.
 | `GOOGLE_CLOUD_PROJECT` | GCP project ID | `your-project` |
 | `GOOGLE_CLIENT_ID` | OAuth client ID | (from Secret Manager) |
 | `GOOGLE_CLIENT_SECRET` | OAuth client secret | (from Secret Manager) |
-| `GOOGLE_REDIRECT_URI` | OAuth callback URL | `https://domain.com/api/auth/callback` |
+| `SERVER_URL` | Base URL for server | `https://domain.com` |
 | `SECRET_KEY` | Session signing key | (from Secret Manager) |
 | `ALLOWED_EMAIL_DOMAINS` | Comma-separated domains | `example.com,company.org` |
 | `DOMAIN_ABBREVIATIONS` | JSON mapping | `{"example.com":"ex"}` |

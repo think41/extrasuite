@@ -114,7 +114,7 @@ Then update the environment variable:
 ```bash
 gcloud run services update extrasuite-server \
   --region=asia-southeast1 \
-  --set-env-vars="GOOGLE_REDIRECT_URI=https://your-cloud-run-url/api/auth/callback"
+  --set-env-vars="SERVER_URL=https://your-cloud-run-url"
 ```
 
 ## Verification

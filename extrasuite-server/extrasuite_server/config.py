@@ -37,7 +37,15 @@ class Settings(BaseSettings):
     # Google OAuth - must be set via environment variables
     google_client_id: str = ""
     google_client_secret: str = ""
-    google_redirect_uri: str = "http://localhost:8001/api/auth/callback"
+
+    # Server URL - base URL for this server (e.g., http://localhost:8001)
+    # Used to compute OAuth redirect URI and for install scripts
+    server_url: str = "http://localhost:8001"
+
+    @property
+    def google_redirect_uri(self) -> str:
+        """Compute OAuth redirect URI from server_url."""
+        return f"{self.server_url.rstrip('/')}/api/auth/callback"
 
     # Google Cloud Project - must be set via environment variable
     google_cloud_project: str = ""
@@ -132,14 +140,6 @@ class Settings(BaseSettings):
             raise ValueError("Configuration errors:\n  - " + "\n  - ".join(errors))
 
         return self
-
-    @field_validator("port")
-    @classmethod
-    def validate_port(cls, v: int) -> int:
-        """Validate port is in valid range."""
-        if not 1 <= v <= 65535:
-            raise ValueError("port must be between 1 and 65535")
-        return v
 
     @field_validator("log_level")
     @classmethod
