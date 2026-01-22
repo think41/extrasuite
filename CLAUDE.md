@@ -122,9 +122,9 @@ The server uses centralized exception handling via FastAPI's `add_exception_hand
 
 ## CI/CD
 
-Docker images are automatically built and published to GitHub Container Registry (GHCR) via GitHub Actions.
+Docker images are automatically built and published to Google Artifact Registry via GitHub Actions on every push to `main`.
 
-**Image location:** `ghcr.io/think41/extrasuite-server`
+**Public image location:** `asia-southeast1-docker.pkg.dev/thinker41/extrasuite/server`
 
 **Automatic tagging:**
 | Trigger | Tags Created |
@@ -142,3 +142,73 @@ git push origin v1.0.0
 ```
 
 GitHub Actions will automatically build and push the image with tags `v1.0.0` and `latest`.
+
+## Internal Deployment (Think41)
+
+The production deployment at `extrasuite.think41.com` is hosted on Cloud Run in project `thinker41`. Deployment is **manual** and decoupled from the GitHub repository.
+
+### Deploy to Production
+
+After pushing changes to `main`, GitHub Actions builds the image. To deploy:
+
+```bash
+gcloud run services update extrasuite \
+  --project=thinker41 \
+  --region=asia-southeast1 \
+  --image=asia-southeast1-docker.pkg.dev/thinker41/extrasuite/server:main
+```
+
+Or deploy a specific commit:
+```bash
+gcloud run services update extrasuite \
+  --project=thinker41 \
+  --region=asia-southeast1 \
+  --image=asia-southeast1-docker.pkg.dev/thinker41/extrasuite/server:sha-<commit>
+```
+
+### Environment Variables (Production)
+
+Current production configuration:
+```
+GOOGLE_CLOUD_PROJECT=thinker41
+BASE_DOMAIN=extrasuite.think41.com
+ALLOWED_EMAIL_DOMAINS=think41.com,recruit41.com,mindlap.dev
+DOMAIN_ABBREVIATIONS={"think41.com":"t41","recruit41.com":"r41","mindlap.dev":"mlap"}
+```
+
+Secrets are stored in Secret Manager:
+- `extrasuite-google-client-id`
+- `extrasuite-google-client-secret`
+- `extrasuite-secret-key`
+
+### Verify Deployment
+
+```bash
+curl https://extrasuite.think41.com/api/health
+# Expected: {"status":"healthy","service":"extrasuite-server"}
+```
+
+### View Logs
+
+```bash
+gcloud run services logs read extrasuite \
+  --project=thinker41 \
+  --region=asia-southeast1 \
+  --limit=50
+```
+
+### Rollback
+
+```bash
+# List recent revisions
+gcloud run revisions list \
+  --service=extrasuite \
+  --project=thinker41 \
+  --region=asia-southeast1
+
+# Route traffic to a previous revision
+gcloud run services update-traffic extrasuite \
+  --project=thinker41 \
+  --region=asia-southeast1 \
+  --to-revisions=extrasuite-00040-xyz=100
+```
