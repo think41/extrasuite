@@ -1,6 +1,6 @@
 # Dockerfile for ExtraSuite Server
 # Build context: repository root (not extrasuite-server/)
-# This allows including the skills/ folder directly without workarounds
+# Skills are bundled as /app/skills.zip for enterprise deployment
 
 FROM python:3.12-slim AS builder
 
@@ -21,6 +21,14 @@ COPY extrasuite-server/extrasuite_server ./extrasuite_server
 COPY extrasuite-server/README.md ./
 RUN uv sync --frozen --no-dev
 
+# Copy skills folder and create skills.zip (exclude venv, __pycache__, etc.)
+COPY extrasuite-server/skills /app/skills-src
+RUN apt-get update && apt-get install -y --no-install-recommends zip \
+    && cd /app/skills-src \
+    && zip -r /app/skills.zip . -x "*/venv/*" -x "*/__pycache__/*" -x "*/.pytest_cache/*" -x "*/.git/*" \
+    && rm -rf /app/skills-src \
+    && apt-get purge -y zip && apt-get autoremove -y && rm -rf /var/lib/apt/lists/*
+
 
 # Production stage
 FROM python:3.12-slim
@@ -34,12 +42,10 @@ RUN useradd --create-home --shell /bin/bash appuser
 
 WORKDIR /app
 
-# Copy virtual environment and source from builder
+# Copy virtual environment, source, and skills.zip from builder
 COPY --from=builder /app/.venv /app/.venv
 COPY --from=builder /app/extrasuite_server /app/extrasuite_server
-
-# Copy skills folder directly from repo root
-COPY skills /app/skills
+COPY --from=builder /app/skills.zip /app/skills.zip
 
 # Set environment
 ENV PATH="/app/.venv/bin:$PATH"

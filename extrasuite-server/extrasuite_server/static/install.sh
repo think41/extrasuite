@@ -10,4 +10,6 @@ cp -R /tmp/es/* ~/.gemini/skills/
 echo '{"EXTRASUITE_SERVER_URL": "__SERVER_URL__"}' > ~/.config/extrasuite/gateway.json
 chmod 600 ~/.config/extrasuite/gateway.json
 rm -rf /tmp/es /tmp/es.zip
+# Cleanup old gsheets skill (renamed to gsheetx)
+rm -rf ~/.claude/skills/gsheets ~/.codex/skills/gsheets ~/.gemini/skills/gsheets 2>/dev/null || true
 echo "Done!"
