@@ -3,7 +3,7 @@
 set -e
 cd "$(dirname "${BASH_SOURCE[0]}")"
 
-SERVER="${2:-https://extrasuite.think41.com}"
+SERVER="${2:-http://localhost:8001}"
 python3 -c "import certifi" 2>/dev/null || pip3 install -q certifi
 
 export PYTHONPATH="$PWD/src"

@@ -85,24 +85,24 @@ gcloud firestore databases create --location=asia-south1 --project=<project>
 
 ## Testing (Auth Flows)
 
-Use `extrasuite-client/examples/basic_usage.py` to validate the three main flows:
+Use `extrasuite-client/examples/basic_usage.py` to validate the three main flows. Replace `<your-server>` with your deployed server URL (e.g., `http://localhost:8001` for local development):
 
 1. **First run (no cache):** token file missing, browser opens, user authenticates.
    ```bash
    rm -f ~/.config/extrasuite/token.json
    PYTHONPATH=extrasuite-client/src python3 extrasuite-client/examples/basic_usage.py \
-     --server https://extrasuite.think41.com
+     --server https://<your-server>
    ```
 2. **Cached token:** token file present and valid, no browser.
    ```bash
    PYTHONPATH=extrasuite-client/src python3 extrasuite-client/examples/basic_usage.py \
-     --server https://extrasuite.think41.com
+     --server https://<your-server>
    ```
 3. **Session reuse (no cache, no re-auth):** delete token cache, browser opens, SSO/session skips login.
    ```bash
    rm -f ~/.config/extrasuite/token.json
    PYTHONPATH=extrasuite-client/src python3 extrasuite-client/examples/basic_usage.py \
-     --server https://extrasuite.think41.com
+     --server https://<your-server>
    ```
 
 ## Exception Handling
@@ -143,72 +143,3 @@ git push origin v1.0.0
 
 GitHub Actions will automatically build and push the image with tags `v1.0.0` and `latest`.
 
-## Internal Deployment (Think41)
-
-The production deployment at `extrasuite.think41.com` is hosted on Cloud Run in project `thinker41`. Deployment is **manual** and decoupled from the GitHub repository.
-
-### Deploy to Production
-
-After pushing changes to `main`, GitHub Actions builds the image. To deploy:
-
-```bash
-gcloud run services update extrasuite \
-  --project=thinker41 \
-  --region=asia-southeast1 \
-  --image=asia-southeast1-docker.pkg.dev/thinker41/extrasuite/server:main
-```
-
-Or deploy a specific commit:
-```bash
-gcloud run services update extrasuite \
-  --project=thinker41 \
-  --region=asia-southeast1 \
-  --image=asia-southeast1-docker.pkg.dev/thinker41/extrasuite/server:sha-<commit>
-```
-
-### Environment Variables (Production)
-
-Current production configuration:
-```
-GOOGLE_CLOUD_PROJECT=thinker41
-BASE_DOMAIN=extrasuite.think41.com
-ALLOWED_EMAIL_DOMAINS=think41.com,recruit41.com,mindlap.dev
-DOMAIN_ABBREVIATIONS={"think41.com":"t41","recruit41.com":"r41","mindlap.dev":"mlap"}
-```
-
-Secrets are stored in Secret Manager:
-- `extrasuite-google-client-id`
-- `extrasuite-google-client-secret`
-- `extrasuite-secret-key`
-
-### Verify Deployment
-
-```bash
-curl https://extrasuite.think41.com/api/health
-# Expected: {"status":"healthy","service":"extrasuite-server"}
-```
-
-### View Logs
-
-```bash
-gcloud run services logs read extrasuite \
-  --project=thinker41 \
-  --region=asia-southeast1 \
-  --limit=50
-```
-
-### Rollback
-
-```bash
-# List recent revisions
-gcloud run revisions list \
-  --service=extrasuite \
-  --project=thinker41 \
-  --region=asia-southeast1
-
-# Route traffic to a previous revision
-gcloud run services update-traffic extrasuite \
-  --project=thinker41 \
-  --region=asia-southeast1 \
-  --to-revisions=extrasuite-00040-xyz=100
-```
