@@ -77,7 +77,7 @@
         <span class="font-bold text-xl text-think41-navy">ExtraSuite</span>
       </a>
       <nav class="hidden md:flex items-center gap-6 text-sm font-medium text-gray-600">
-        <a href="getting-started/overview/" class="hover:text-think41-blue transition-colors">Docs</a>
+        <a href="getting-started/" class="hover:text-think41-blue transition-colors">Docs</a>
         <a href="security/" class="hover:text-think41-blue transition-colors">Security</a>
         <a href="https://github.com/think41/extrasuite" class="hover:text-think41-blue transition-colors flex items-center gap-1.5">
           <svg class="w-4 h-4" fill="currentColor" viewBox="0 0 24 24"><path d="M12 0c-6.626 0-12 5.373-12 12 0 5.302 3.438 9.8 8.207 11.387.599.111.793-.261.793-.577v-2.234c-3.338.726-4.033-1.416-4.033-1.416-.546-1.387-1.333-1.756-1.333-1.756-1.089-.745.083-.729.083-.729 1.205.084 1.839 1.237 1.839 1.237 1.07 1.834 2.807 1.304 3.492.997.107-.775.418-1.305.762-1.604-2.665-.305-5.467-1.334-5.467-5.931 0-1.311.469-2.381 1.236-3.221-.124-.303-.535-1.524.117-3.176 0 0 1.008-.322 3.301 1.23.957-.266 1.983-.399 3.003-.404 1.02.005 2.047.138 3.006.404 2.291-1.552 3.297-1.23 3.297-1.23.653 1.653.242 2.874.118 3.176.77.84 1.235 1.911 1.235 3.221 0 4.609-2.807 5.624-5.479 5.921.43.372.823 1.102.823 2.222v3.293c0 .319.192.694.801.576 4.765-1.589 8.199-6.086 8.199-11.386 0-6.627-5.373-12-12-12z"/></svg>
@@ -118,7 +118,7 @@
 
         <!-- CTA Buttons -->
         <div class="flex flex-col sm:flex-row gap-4 justify-center mb-6">
-          <a href="getting-started/overview/" class="inline-flex items-center justify-center gap-2 bg-think41-blue hover:bg-think41-dark text-white font-semibold px-8 py-3.5 rounded-lg transition-colors shadow-sm">
+          <a href="getting-started/" class="inline-flex items-center justify-center gap-2 bg-think41-blue hover:bg-think41-dark text-white font-semibold px-8 py-3.5 rounded-lg transition-colors shadow-sm">
             <svg class="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M13 10V3L4 14h7v7l9-11h-7z"/></svg>
             Get Started
           </a>
@@ -169,30 +169,132 @@
         <p class="text-gray-600 text-lg max-w-2xl mx-auto">Set up once, use everywhere</p>
       </div>
 
-      <div class="grid md:grid-cols-4 gap-8">
+      <!-- Steps Overview -->
+      <div class="grid grid-cols-2 md:grid-cols-4 gap-6 mb-12">
         <div class="text-center">
-          <div class="w-12 h-12 bg-white text-think41-blue font-bold text-lg rounded-full flex items-center justify-center mx-auto mb-4 shadow-sm border border-gray-100">1</div>
-          <h3 class="font-semibold text-think41-navy mb-2">Connect Your AI</h3>
-          <p class="text-gray-600 text-sm">Works with Claude, ChatGPT, Gemini, and other AI assistants</p>
+          <div class="w-10 h-10 bg-gray-200 text-gray-500 font-semibold text-base rounded-full flex items-center justify-center mx-auto mb-3">0</div>
+          <h3 class="font-semibold text-think41-navy mb-1 text-sm">Install an AI Agent</h3>
+          <p class="text-gray-500 text-xs">Get Claude Code, Gemini CLI, or Codex CLI on your machine.</p>
         </div>
         <div class="text-center">
-          <div class="w-12 h-12 bg-white text-think41-blue font-bold text-lg rounded-full flex items-center justify-center mx-auto mb-4 shadow-sm border border-gray-100">2</div>
-          <h3 class="font-semibold text-think41-navy mb-2">Authenticate Once</h3>
-          <p class="text-gray-600 text-sm">Sign in with Google. Your AI gets a secure, time-limited token</p>
+          <div class="w-10 h-10 bg-think41-blue text-white font-semibold text-base rounded-full flex items-center justify-center mx-auto mb-3">1</div>
+          <h3 class="font-semibold text-think41-navy mb-1 text-sm">Install the Skill</h3>
+          <p class="text-gray-500 text-xs">Run a one-time command to add Google Sheets access.</p>
         </div>
         <div class="text-center">
-          <div class="w-12 h-12 bg-white text-think41-blue font-bold text-lg rounded-full flex items-center justify-center mx-auto mb-4 shadow-sm border border-gray-100">3</div>
-          <h3 class="font-semibold text-think41-navy mb-2">Share Documents</h3>
-          <p class="text-gray-600 text-sm">Share specific files with your AI&mdash;just like sharing with a colleague</p>
+          <div class="w-10 h-10 bg-think41-blue text-white font-semibold text-base rounded-full flex items-center justify-center mx-auto mb-3">2</div>
+          <h3 class="font-semibold text-think41-navy mb-1 text-sm">Share Your Document</h3>
+          <p class="text-gray-500 text-xs">Share your Google Sheet with your service account email.</p>
         </div>
         <div class="text-center">
-          <div class="w-12 h-12 bg-white text-think41-blue font-bold text-lg rounded-full flex items-center justify-center mx-auto mb-4 shadow-sm border border-gray-100">4</div>
-          <h3 class="font-semibold text-think41-navy mb-2">Get Work Done</h3>
-          <p class="text-gray-600 text-sm">Describe what you need. Your AI reads, writes, and updates your docs</p>
+          <div class="w-10 h-10 bg-think41-blue text-white font-semibold text-base rounded-full flex items-center justify-center mx-auto mb-3">3</div>
+          <h3 class="font-semibold text-think41-navy mb-1 text-sm">Put It to Work</h3>
+          <p class="text-gray-500 text-xs">Use natural language to work with your spreadsheet.</p>
+        </div>
+      </div>
+
+      <!-- Detailed Steps -->
+      <div class="space-y-6">
+        <!-- Step 0: Prerequisite -->
+        <div class="bg-white rounded-xl p-6 border border-gray-200 shadow-sm">
+          <div class="flex items-center gap-3 mb-4">
+            <div class="w-8 h-8 bg-gray-200 text-gray-600 font-semibold text-sm rounded-full flex items-center justify-center flex-shrink-0">0</div>
+            <h3 class="font-semibold text-think41-navy text-lg">Prerequisite: Install an AI Agent</h3>
+          </div>
+          <p class="text-gray-600 mb-4">You need an AI coding assistant installed on your computer. Install any one: <a href="https://claude.ai/code" class="text-think41-blue hover:underline">Claude Code</a> (requires paid plan), <a href="https://openai.com/index/introducing-codex/" class="text-think41-blue hover:underline">Codex CLI</a> (requires Plus plan or higher), <a href="https://ai.google.dev/gemini-api/docs/aistudio-quickstart" class="text-think41-blue hover:underline">Gemini CLI</a> (requires paid API key), or <a href="https://claude.ai/coworks" class="text-think41-blue hover:underline">Claude Coworks</a> (requires paid plan).</p>
+          <div class="bg-amber-50 border-l-4 border-amber-400 rounded-r-lg p-4">
+            <p class="text-amber-800 text-sm"><strong>What's a terminal?</strong> It's an app where you type commands. On Mac, search for "Terminal" in Spotlight. On Windows, search for "PowerShell" in the Start menu.</p>
+          </div>
+        </div>
+
+        <!-- Step 1: Install the Skill -->
+        <div class="bg-white rounded-xl p-6 border border-gray-200 shadow-sm">
+          <div class="flex items-center gap-3 mb-4">
+            <div class="w-8 h-8 bg-think41-blue text-white font-semibold text-sm rounded-full flex items-center justify-center flex-shrink-0">1</div>
+            <h3 class="font-semibold text-think41-navy text-lg">Install the Skill</h3>
+          </div>
+          <p class="text-gray-600 mb-4">Open your terminal and run this command. It installs the Google Sheets skill for Claude Code, Codex, and Gemini CLI. This is a one-time setup.</p>
+
+          <!-- Tabs -->
+          <div class="mb-4">
+            <div class="flex border-b border-gray-200">
+              <button onclick="showTab('macos')" id="tab-macos" class="px-4 py-2 text-sm font-medium text-think41-blue border-b-2 border-think41-blue">macOS / Linux</button>
+              <button onclick="showTab('windows')" id="tab-windows" class="px-4 py-2 text-sm font-medium text-gray-500 hover:text-gray-700">Windows (PowerShell)</button>
+            </div>
+            <div id="content-macos" class="mt-4">
+              <div class="bg-gray-900 rounded-lg p-4 overflow-x-auto">
+                <code class="text-green-400 text-sm font-mono">curl -fsSL https://extrasuite.think41.com/api/skills/install/&lt;your-token&gt; | bash</code>
+              </div>
+            </div>
+            <div id="content-windows" class="mt-4 hidden">
+              <div class="bg-gray-900 rounded-lg p-4 overflow-x-auto">
+                <code class="text-green-400 text-sm font-mono">irm "https://extrasuite.think41.com/api/skills/install/&lt;your-token&gt;?ps=true" | iex</code>
+              </div>
+            </div>
+          </div>
+
+          <p class="text-gray-500 text-sm">The install command is personalized to your account and valid for 5 minutes. Refresh the page to generate a new one if needed.</p>
+        </div>
+
+        <!-- Step 2: Share Your Google Sheet -->
+        <div class="bg-white rounded-xl p-6 border border-gray-200 shadow-sm">
+          <div class="flex items-center gap-3 mb-4">
+            <div class="w-8 h-8 bg-think41-blue text-white font-semibold text-sm rounded-full flex items-center justify-center flex-shrink-0">2</div>
+            <h3 class="font-semibold text-think41-navy text-lg">Share Your Google Sheet</h3>
+          </div>
+          <p class="text-gray-600 mb-4">Click <strong>Share</strong> on any Google Sheet and add your service account email as an Editor.</p>
+          <div class="bg-gray-50 rounded-lg p-4 mb-4">
+            <p class="text-gray-500 text-xs mb-1">Your service account email (shown after sign-in):</p>
+            <code class="text-think41-navy font-mono text-sm">yourname-domain@project.iam.gserviceaccount.com</code>
+          </div>
+          <ol class="list-decimal list-inside text-gray-600 text-sm space-y-1">
+            <li>Open your Google Sheet</li>
+            <li>Click <strong>Share</strong> (top right)</li>
+            <li>Paste your service account email</li>
+            <li>Choose <strong>Editor</strong> permission</li>
+            <li>Click <strong>Send</strong></li>
+          </ol>
+        </div>
+
+        <!-- Step 3: Put It to Work -->
+        <div class="bg-white rounded-xl p-6 border border-gray-200 shadow-sm">
+          <div class="flex items-center gap-3 mb-4">
+            <div class="w-8 h-8 bg-think41-blue text-white font-semibold text-sm rounded-full flex items-center justify-center flex-shrink-0">3</div>
+            <h3 class="font-semibold text-think41-navy text-lg">Put It to Work</h3>
+          </div>
+          <p class="text-gray-600 mb-4">Open your AI agent in the terminal and describe what you need. The more context you provide, the better the results.</p>
+          <div class="space-y-3">
+            <blockquote class="border-l-4 border-think41-blue bg-blue-50 p-4 rounded-r-lg">
+              <p class="text-gray-700 text-sm italic">"Read the sales data from https://docs.google.com/spreadsheets/d/abc123/edit and create a summary of Q4 revenue by region."</p>
+            </blockquote>
+            <blockquote class="border-l-4 border-think41-blue bg-blue-50 p-4 rounded-r-lg">
+              <p class="text-gray-700 text-sm italic">"Update the project plan at https://docs.google.com/spreadsheets/d/abc123/edit with these new tasks and recalculate the timeline."</p>
+            </blockquote>
+          </div>
+          <p class="text-gray-500 text-sm mt-4"><strong>Tip:</strong> Be specific about what data you need and where to put it. Include the full Google Sheets URL in your prompt.</p>
         </div>
       </div>
     </div>
   </section>
+
+  <script>
+    function showTab(tab) {
+      // Hide all content
+      document.getElementById('content-macos').classList.add('hidden');
+      document.getElementById('content-windows').classList.add('hidden');
+      
+      // Reset all tabs
+      document.getElementById('tab-macos').classList.remove('text-think41-blue', 'border-b-2', 'border-think41-blue');
+      document.getElementById('tab-macos').classList.add('text-gray-500');
+      document.getElementById('tab-windows').classList.remove('text-think41-blue', 'border-b-2', 'border-think41-blue');
+      document.getElementById('tab-windows').classList.add('text-gray-500');
+      
+      // Show selected content and activate tab
+      document.getElementById('content-' + tab).classList.remove('hidden');
+      document.getElementById('tab-' + tab).classList.remove('text-gray-500');
+      document.getElementById('tab-' + tab).classList.add('text-think41-blue', 'border-b-2', 'border-think41-blue');
+    }
+  </script>
 
   <!-- Supported Skills -->
   <section class="py-16 bg-think41-light">
@@ -366,7 +468,7 @@
       </div>
 
       <div class="grid md:grid-cols-4 gap-4">
-        <a href="getting-started/overview/" class="group bg-white p-5 rounded-xl border border-gray-200 hover:border-think41-blue hover:shadow-md transition-all">
+        <a href="getting-started/" class="group bg-white p-5 rounded-xl border border-gray-200 hover:border-think41-blue hover:shadow-md transition-all">
           <div class="font-semibold text-think41-navy group-hover:text-think41-blue mb-1">Getting Started</div>
           <div class="text-sm text-gray-500">Installation guides</div>
         </a>
@@ -404,7 +506,7 @@
       <h2 class="text-3xl md:text-4xl font-bold text-white mb-4">Ready to Get Started?</h2>
       <p class="text-blue-100 text-lg mb-8 max-w-2xl mx-auto">Give your AI assistant secure access to Google Workspace</p>
       <div class="flex flex-col sm:flex-row gap-4 justify-center">
-        <a href="getting-started/overview/" class="inline-flex items-center justify-center gap-2 bg-white hover:bg-gray-100 text-think41-blue font-semibold px-8 py-3.5 rounded-lg transition-colors">
+        <a href="getting-started/" class="inline-flex items-center justify-center gap-2 bg-white hover:bg-gray-100 text-think41-blue font-semibold px-8 py-3.5 rounded-lg transition-colors">
           Get Started Now
         </a>
         <a href="https://github.com/think41/extrasuite" class="inline-flex items-center justify-center gap-2 bg-transparent hover:bg-white/10 text-white font-semibold px-8 py-3.5 rounded-lg border-2 border-white/30 transition-colors">
@@ -425,7 +527,7 @@
         <div>
           <div class="font-semibold mb-4">Documentation</div>
           <ul class="space-y-2 text-sm text-blue-200">
-            <li><a href="getting-started/overview/" class="hover:text-white transition-colors">Getting Started</a></li>
+            <li><a href="getting-started/" class="hover:text-white transition-colors">Getting Started</a></li>
             <li><a href="user-guide/" class="hover:text-white transition-colors">User Guide</a></li>
             <li><a href="skills/" class="hover:text-white transition-colors">Skills</a></li>
             <li><a href="deployment/" class="hover:text-white transition-colors">Deployment</a></li>

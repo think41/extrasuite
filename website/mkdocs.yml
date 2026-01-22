@@ -52,7 +52,11 @@ plugins:
 markdown_extensions:
   - admonition
   - pymdownx.details
-  - pymdownx.superfences
+  - pymdownx.superfences:
+      custom_fences:
+        - name: mermaid
+          class: mermaid
+          format: !!python/name:pymdownx.superfences.fence_code_format
   - pymdownx.tabbed:
       alternate_style: true
   - pymdownx.highlight:
@@ -91,17 +95,19 @@ copyright: "&copy; 2026 Think41 Technologies Pvt. Ltd."
 
 nav:
   - Getting Started:
-    - getting-started/overview.md
+    - getting-started/index.md
+    - Setup Paths:
+      - For Organizations: getting-started/organization-setup.md
+      - For Individuals: getting-started/individual-setup.md
     - Installation:
       - getting-started/installation/index.md
+      - Cursor: getting-started/installation/cursor.md
       - Claude Code: getting-started/installation/claude-code.md
       - Codex CLI: getting-started/installation/codex.md
       - Gemini CLI: getting-started/installation/gemini-cli.md
       - Claude Coworks: getting-started/installation/claude-coworks.md
-      - Cursor: getting-started/installation/cursor.md
       - Windows (PowerShell): getting-started/installation/windows-powershell.md
       - Windows (WSL): getting-started/installation/windows-wsl.md
-    - Individual Setup: getting-started/individual-setup.md
   - User Guide:
     - user-guide/index.md
     - Prompting Tips: user-guide/prompting.md

@@ -176,3 +176,124 @@
     background-color: #0F172A;
   }
 }
+
+/* ===== How It Works Steps ===== */
+
+/* Steps overview grid */
+.steps-overview {
+  display: grid;
+  grid-template-columns: repeat(4, 1fr);
+  gap: 1.5rem;
+  margin: 2rem 0;
+  padding: 1.5rem;
+  background: linear-gradient(135deg, #f8fafc 0%, #f1f5f9 100%);
+  border-radius: 1rem;
+}
+
+@media screen and (max-width: 960px) {
+  .steps-overview {
+    grid-template-columns: repeat(2, 1fr);
+  }
+}
+
+@media screen and (max-width: 600px) {
+  .steps-overview {
+    grid-template-columns: 1fr;
+  }
+}
+
+.step-card {
+  text-align: center;
+  padding: 1.5rem 1rem;
+}
+
+.step-number {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 2.5rem;
+  height: 2.5rem;
+  background-color: #e2e8f0;
+  color: #475569;
+  border-radius: 50%;
+  font-size: 1rem;
+  font-weight: 600;
+  margin-bottom: 1rem;
+}
+
+.step-number.active {
+  background-color: #2563EB;
+  color: white;
+}
+
+.step-card h4 {
+  margin: 0.5rem 0;
+  font-size: 1rem;
+  font-weight: 600;
+  color: #0f172a;
+  border: none !important;
+  padding: 0 !important;
+}
+
+.step-card p {
+  margin: 0;
+  font-size: 0.875rem;
+  color: #64748b;
+  line-height: 1.5;
+}
+
+/* Detailed step sections */
+.step-detail {
+  background: #ffffff;
+  border: 1px solid #e2e8f0;
+  border-radius: 1rem;
+  padding: 2rem;
+  margin: 1.5rem 0;
+  box-shadow: 0 1px 3px rgba(0, 0, 0, 0.05);
+}
+
+.step-detail h3 {
+  display: flex;
+  align-items: center;
+  gap: 0.75rem;
+  margin-top: 0;
+  padding-bottom: 0 !important;
+  border-bottom: none !important;
+}
+
+.step-detail .step-badge {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 2rem;
+  height: 2rem;
+  background-color: #2563EB;
+  color: white;
+  border-radius: 50%;
+  font-size: 0.875rem;
+  font-weight: 600;
+  flex-shrink: 0;
+}
+
+.step-detail .step-title {
+  font-size: 1.25rem;
+  font-weight: 600;
+  color: #0f172a;
+}
+
+/* Terminal tip box */
+.terminal-tip {
+  background: #fef3c7;
+  border-left: 4px solid #f59e0b;
+  border-radius: 0.5rem;
+  padding: 1rem 1.25rem;
+  margin: 1rem 0;
+}
+
+.terminal-tip strong {
+  color: #92400e;
+}
+
+.terminal-tip span {
+  color: #78350f;
+}

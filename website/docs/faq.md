@@ -16,7 +16,7 @@ Everything you need to know about using ExtraSuite.
     2. **Share your document** - Share your Google Sheet with your service account email
     3. **Ask your AI** - Ask Claude Code or Codex to read or modify your document
 
-    See the [Getting Started Guide](getting-started/overview.md) for detailed instructions.
+    See the [Getting Started Guide](getting-started/index.md) for detailed instructions.
 
 ??? question "Which AI assistants are supported?"
     ExtraSuite currently supports:
