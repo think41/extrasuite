@@ -6,7 +6,6 @@ The application will fail to start if required configuration is missing.
 
 import hashlib
 import json
-import secrets
 from functools import lru_cache
 
 from pydantic import field_validator, model_validator
@@ -17,7 +16,7 @@ class Settings(BaseSettings):
     """Application settings loaded from environment variables.
 
     Required environment variables:
-    - SECRET_KEY: For signing session cookies (must be set in production)
+    - SECRET_KEY: For signing session cookies
     - GOOGLE_CLIENT_ID: OAuth client ID
     - GOOGLE_CLIENT_SECRET: OAuth client secret
     - GOOGLE_CLOUD_PROJECT: GCP project for service accounts and Firestore
@@ -30,10 +29,6 @@ class Settings(BaseSettings):
         extra="ignore",  # Ignore extra env vars not defined in Settings
     )
 
-    # Server
-    port: int = 8001
-    environment: str = "development"
-    debug: bool = False
     log_level: str = "INFO"
 
     # Security - must be set via environment variable
@@ -64,11 +59,6 @@ class Settings(BaseSettings):
     default_skills_url: str = (
         "https://github.com/think41/extrasuite/releases/latest/download/skills.zip"
     )
-
-    @property
-    def is_production(self) -> bool:
-        """Check if running in production environment."""
-        return self.environment == "production"
 
     def get_allowed_domains(self) -> list[str]:
         """Get list of allowed email domains.
@@ -124,14 +114,9 @@ class Settings(BaseSettings):
         """Validate that required settings are configured."""
         errors = []
 
-        # In production, secret_key must be explicitly set
-        if self.is_production and not self.secret_key:
-            errors.append("SECRET_KEY must be set in production")
-
-        # Generate a random secret key for development if not set
+        # secret_key must be explicitly set
         if not self.secret_key:
-            # This is only for development - logs a warning
-            object.__setattr__(self, "secret_key", secrets.token_urlsafe(32))
+            errors.append("SECRET_KEY must be set")
 
         # OAuth credentials are always required
         if not self.google_client_id:
@@ -147,15 +132,6 @@ class Settings(BaseSettings):
             raise ValueError("Configuration errors:\n  - " + "\n  - ".join(errors))
 
         return self
-
-    @field_validator("environment")
-    @classmethod
-    def validate_environment(cls, v: str) -> str:
-        """Validate environment is a known value."""
-        allowed = {"development", "staging", "production"}
-        if v not in allowed:
-            raise ValueError(f"environment must be one of: {allowed}")
-        return v
 
     @field_validator("port")
     @classmethod

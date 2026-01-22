@@ -49,7 +49,7 @@ async def lifespan(app: FastAPI):
     """Application lifespan handler."""
     settings = get_settings()
 
-    logger.info(f"Starting ExtraSuite server on port {settings.port}")
+    logger.info("Starting ExtraSuite server")
 
     # Initialize database and store in app.state for dependency injection
     database = Database(
@@ -69,19 +69,16 @@ def create_app() -> FastAPI:
     settings = get_settings()
 
     # Configure structured JSON logging for Cloud Logging
-    configure_logging(
-        is_production=settings.is_production,
-        log_level=settings.log_level,
-    )
+    configure_logging(log_level=settings.log_level)
 
     app = FastAPI(
         title="ExtraSuite",
         description="Headless CLI authentication service for Google Workspace APIs",
         version="1.0.0",
         lifespan=lifespan,
-        docs_url="/api/docs" if not settings.is_production else None,
-        redoc_url="/api/redoc" if not settings.is_production else None,
-        openapi_url="/api/openapi.json" if not settings.is_production else None,
+        docs_url=None,
+        redoc_url=None,
+        openapi_url=None,
     )
 
     # Exception handlers
@@ -100,7 +97,7 @@ def create_app() -> FastAPI:
         session_cookie="extrasuite_session",
         max_age=24 * 60 * 60,  # 24 hours in seconds
         same_site="lax",
-        https_only=settings.is_production,
+        https_only=True,
     )
 
     # Register API router (all endpoints consolidated)
@@ -149,6 +146,6 @@ if __name__ == "__main__":
     uvicorn.run(
         "extrasuite_server.main:app",
         host="0.0.0.0",
-        port=settings.port,
-        reload=not settings.is_production,
+        port=8001,
+        reload=True,
     )
