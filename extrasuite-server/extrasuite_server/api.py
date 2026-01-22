@@ -8,7 +8,6 @@ Endpoints:
 - GET /api/token/auth     - CLI entry point, starts OAuth or refreshes token
 - GET /api/auth/callback  - OAuth callback, exchanges code for token
 - GET /api/health         - Health check
-- GET /api/health/ready   - Readiness check
 """
 
 import secrets
@@ -57,17 +56,6 @@ async def health_check() -> dict:
     return {"status": "healthy", "service": "extrasuite-server"}
 
 
-@router.get("/health/ready")
-async def readiness_check() -> dict:
-    """Readiness check for Kubernetes/Cloud Run."""
-    settings = get_settings()
-    return {
-        "status": "ready",
-        "service": "extrasuite-server",
-        "environment": settings.environment,
-    }
-
-
 # =============================================================================
 # User Info Endpoints
 # =============================================================================
@@ -102,25 +90,6 @@ async def logout(request: Request) -> dict:
     """
     request.session.clear()
     return {"status": "logged_out"}
-
-
-@router.get("/users")
-async def list_users(
-    request: Request,
-    db: Database = Depends(get_database),
-) -> dict:
-    """List all users and their service account emails.
-
-    Requires authentication - returns 403 if not logged in.
-    This endpoint enables transparency - users can see which
-    service account belongs to which employee.
-    """
-    email = request.session.get("email")
-    if not email:
-        raise HTTPException(status_code=403, detail="Authentication required")
-
-    users = await db.list_users_with_service_accounts()
-    return {"users": users}
 
 
 # =============================================================================
@@ -321,7 +290,10 @@ async def google_callback(
                 extra={"email": user_email, "service_account": sa_email},
             )
         except Exception as e:
-            logger.exception("Service account setup failed during UI login", extra={"email": user_email, "error": str(e)})
+            logger.exception(
+                "Service account setup failed during UI login",
+                extra={"email": user_email, "error": str(e)},
+            )
             # Continue to home page - user can retry later
         return RedirectResponse(url="/")
 

@@ -59,6 +59,12 @@ class Settings(BaseSettings):
     # If domain not in map, falls back to 4-char hash of domain
     domain_abbreviations: str = ""
 
+    # Default skills URL (public GitHub release)
+    # Used when no bundled skills.zip is present in the Docker image
+    default_skills_url: str = (
+        "https://github.com/think41/extrasuite/releases/latest/download/skills.zip"
+    )
+
     @property
     def is_production(self) -> bool:
         """Check if running in production environment."""

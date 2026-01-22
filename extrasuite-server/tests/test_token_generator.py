@@ -115,7 +115,7 @@ class TestTokenGenerator:
         return TokenGenerator(
             database=fake_db,
             settings=fake_settings,
-            iam_client=fake_iam,
+            iam_client=fake_iam,  # type: ignore[arg-type]
             impersonated_credentials_class=FakeCreds,
         )
 
@@ -208,7 +208,7 @@ class TestTokenGenerator:
         generator = TokenGenerator(
             database=fake_db,
             settings=fake_settings,
-            iam_client=fake_iam,
+            iam_client=fake_iam,  # type: ignore[arg-type]
             impersonated_credentials_class=FakeCreds,
         )
 
@@ -231,7 +231,7 @@ class TestTokenGenerator:
         generator = TokenGenerator(
             database=fake_db,
             settings=fake_settings,
-            iam_client=fake_iam,
+            iam_client=fake_iam,  # type: ignore[arg-type]
             impersonated_credentials_class=FakeCreds,
         )
 
@@ -258,7 +258,7 @@ class TestTokenGenerator:
         generator = TokenGenerator(
             database=fake_db,
             settings=fake_settings,
-            iam_client=fake_iam,
+            iam_client=fake_iam,  # type: ignore[arg-type]
             impersonated_credentials_class=FakeCreds,
         )
 
@@ -288,7 +288,7 @@ class TestTokenGenerator:
         generator = TokenGenerator(
             database=fake_db,
             settings=fake_settings,
-            iam_client=fake_iam,
+            iam_client=fake_iam,  # type: ignore[arg-type]
             impersonated_credentials_class=FakeCreds,
         )
 
@@ -312,7 +312,7 @@ class TestTokenGenerator:
         generator = TokenGenerator(
             database=fake_db,
             settings=fake_settings,
-            iam_client=fake_iam,
+            iam_client=fake_iam,  # type: ignore[arg-type]
             impersonated_credentials_class=FakeCreds,
         )
 
@@ -356,7 +356,7 @@ class TestTokenGeneratorWithCustomToken:
         generator = TokenGenerator(
             database=fake_db,
             settings=fake_settings,
-            iam_client=fake_iam,
+            iam_client=fake_iam,  # type: ignore[arg-type]
             impersonated_credentials_class=FakeCreds,
         )
 

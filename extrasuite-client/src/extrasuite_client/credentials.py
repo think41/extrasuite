@@ -85,8 +85,9 @@ class CredentialsManager:
     Precedence order for configuration:
     1. extrasuite_server constructor parameter
     2. EXTRASUITE_SERVER_URL environment variable
-    3. service_account_path constructor parameter
-    4. SERVICE_ACCOUNT_PATH environment variable
+    3. ~/.config/extrasuite/gateway.json (created by install script)
+    4. service_account_path constructor parameter
+    5. SERVICE_ACCOUNT_PATH environment variable
 
     Args:
         extrasuite_server: URL of the ExtraSuite server (optional).
@@ -105,6 +106,7 @@ class CredentialsManager:
     """
 
     DEFAULT_CACHE_PATH = Path.home() / ".config" / "extrasuite" / "token.json"
+    GATEWAY_CONFIG_PATH = Path.home() / ".config" / "extrasuite" / "gateway.json"
     DEFAULT_CALLBACK_TIMEOUT = 300  # 5 minutes for headless mode
 
     def __init__(
@@ -122,10 +124,15 @@ class CredentialsManager:
 
         Raises:
             ValueError: If neither extrasuite_server nor service_account_path
-                is provided (via constructor or environment variables).
+                is provided (via constructor, environment variables, or gateway.json).
         """
-        # Resolve configuration with precedence
+        # Resolve configuration with precedence: constructor > env var > gateway.json
         self._server_url = extrasuite_server or os.environ.get("EXTRASUITE_SERVER_URL")
+
+        # If not set, try gateway.json
+        if not self._server_url:
+            self._server_url = self._load_gateway_config()
+
         if self._server_url:
             self._server_url = self._server_url.rstrip("/")
 
@@ -136,7 +143,8 @@ class CredentialsManager:
         if not self._server_url and not self._sa_path:
             raise ValueError(
                 "No authentication method configured. "
-                "Set EXTRASUITE_SERVER_URL or SERVICE_ACCOUNT_PATH environment variable, "
+                "Set EXTRASUITE_SERVER_URL environment variable, "
+                "install skills via the ExtraSuite website (creates gateway.json), "
                 "or pass extrasuite_server or service_account_path to constructor."
             )
 
@@ -266,6 +274,23 @@ class CredentialsManager:
         os.chmod(temp_path, stat.S_IRUSR | stat.S_IWUSR)  # 0600
         temp_path.rename(self._token_cache_path)
         print(f"Token saved to {self._token_cache_path}")
+
+    def _load_gateway_config(self) -> str | None:
+        """Load server URL from gateway.json if it exists.
+
+        The gateway.json file is created by the install script and contains
+        the ExtraSuite server URL configured during skill installation.
+
+        Returns:
+            The server URL if gateway.json exists and is valid, None otherwise.
+        """
+        if not self.GATEWAY_CONFIG_PATH.exists():
+            return None
+        try:
+            data = json.loads(self.GATEWAY_CONFIG_PATH.read_text())
+            return data.get("EXTRASUITE_SERVER_URL")
+        except (json.JSONDecodeError, OSError):
+            return None
 
     def _authenticate_extrasuite(self) -> Token:
         """Run the ExtraSuite authentication flow.

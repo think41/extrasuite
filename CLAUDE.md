@@ -58,7 +58,6 @@ uv run ruff format .
 | POST | `/api/token/exchange` | Exchange auth code for token |
 | GET | `/api/auth/callback` | OAuth callback - exchanges code for token |
 | GET | `/api/health` | Health check |
-| GET | `/api/health/ready` | Readiness check |
 
 ## Environment Setup
 
