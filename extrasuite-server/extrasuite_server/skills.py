@@ -34,16 +34,13 @@ def _get_serializer(settings: Settings) -> URLSafeTimedSerializer:
 @router.post("/download-token")
 async def generate_download_token(
     request: Request,
-    settings: Settings | None = None,
+    settings: Settings = Depends(get_settings),
 ) -> dict:
     """Generate a short-lived token for downloading skills.
 
     Requires authentication - user must be logged in.
     Returns a signed token that can be used to download the skills zip.
     """
-    if settings is None:
-        settings = get_settings()
-
     email = request.session.get("email")
     if not email:
         raise HTTPException(status_code=403, detail="Authentication required")
@@ -59,16 +56,13 @@ async def generate_download_token(
 @router.get("/download")
 async def download_skills(
     token: str = Query(..., description="Download token from /api/skills/download-token"),
-    settings: Settings | None = None,
+    settings: Settings = Depends(get_settings),
 ) -> FileResponse:
     """Download the skills package as a zip file.
 
     Only available when bundled skills.zip exists (enterprise deployment).
     Requires a valid download token (no session/cookie needed).
     """
-    if settings is None:
-        settings = get_settings()
-
     serializer = _get_serializer(settings)
 
     try:
