@@ -7,6 +7,7 @@ The application will fail to start if required configuration is missing.
 import hashlib
 import json
 from functools import lru_cache
+from typing import Literal
 
 from pydantic import field_validator, model_validator
 from pydantic_settings import BaseSettings, SettingsConfigDict
@@ -38,14 +39,55 @@ class Settings(BaseSettings):
     google_client_id: str = ""
     google_client_secret: str = ""
 
+    # Base domain - the domain of this server (e.g., extrasuite.think41.com)
+    # Used for session cookie domain and to derive server_url if not set
+    base_domain: str = ""
+
     # Server URL - base URL for this server (e.g., http://localhost:8001)
-    # Used to compute OAuth redirect URI and for install scripts
-    server_url: str = "http://localhost:8001"
+    # If not set, derived from base_domain as https://{base_domain}
+    # For local development, set explicitly to http://localhost:8001
+    server_url: str = ""
+
+    @property
+    def effective_server_url(self) -> str:
+        """Get the effective server URL.
+
+        Returns server_url if set, otherwise derives from base_domain.
+        Falls back to http://localhost:8001 for local development.
+        """
+        if self.server_url:
+            return self.server_url.rstrip("/")
+        if self.base_domain:
+            return f"https://{self.base_domain}"
+        return "http://localhost:8001"
 
     @property
     def google_redirect_uri(self) -> str:
         """Compute OAuth redirect URI from server_url."""
-        return f"{self.server_url.rstrip('/')}/api/auth/callback"
+        return f"{self.effective_server_url}/api/auth/callback"
+
+    # Session cookie settings
+    session_cookie_name: str = "session"
+    session_cookie_expiry_minutes: int = 1440  # 24 hours
+    session_cookie_same_site: Literal["lax", "strict", "none"] = "lax"
+    session_cookie_https_only: bool = True
+    session_cookie_domain: str = ""  # Empty means use base_domain, None disables domain
+
+    @property
+    def effective_session_cookie_domain(self) -> str | None:
+        """Get the effective session cookie domain.
+
+        Returns session_cookie_domain if explicitly set,
+        otherwise returns base_domain if set, or None.
+        """
+        if self.session_cookie_domain:
+            return self.session_cookie_domain
+        if self.base_domain:
+            return self.base_domain
+        return None
+
+    # Token settings
+    token_expiry_minutes: int = 60  # 1 hour (converted to seconds for API)
 
     # Google Cloud Project - must be set via environment variable
     google_cloud_project: str = ""

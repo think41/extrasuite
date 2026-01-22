@@ -38,9 +38,6 @@ TOKEN_SCOPES = [
     "https://www.googleapis.com/auth/drive.readonly",
 ]
 
-# Token lifetime in seconds (1 hour)
-TOKEN_LIFETIME = 3600
-
 # Delay after SA creation to allow GCP propagation (seconds)
 # Required because impersonation may fail if SA hasn't propagated yet
 SA_PROPAGATION_DELAY = 3.0
@@ -91,6 +88,7 @@ class SettingsProtocol(Protocol):
     """Protocol for settings needed by TokenGenerator."""
 
     google_cloud_project: str
+    token_expiry_minutes: int
 
     def get_domain_abbreviation(self, domain: str) -> str: ...
 
@@ -177,6 +175,11 @@ class TokenGenerator:
     def _project_id(self) -> str:
         """Get project ID from settings."""
         return self._settings.google_cloud_project
+
+    @property
+    def _token_lifetime_seconds(self) -> int:
+        """Get token lifetime in seconds from settings."""
+        return self._settings.token_expiry_minutes * 60
 
     def _get_admin_credentials(self) -> Any:
         """Get server's Application Default Credentials (cached)."""
@@ -347,7 +350,7 @@ class TokenGenerator:
         """
         try:
             token = await asyncio.to_thread(self._do_impersonation, sa_email)
-            expires_at = datetime.now(UTC) + timedelta(seconds=TOKEN_LIFETIME)
+            expires_at = datetime.now(UTC) + timedelta(seconds=self._token_lifetime_seconds)
             return token, expires_at
         except Exception as e:
             raise ImpersonationError(f"Impersonation failed: {e}", sa_email, e) from e
@@ -360,7 +363,7 @@ class TokenGenerator:
             source_credentials=source_credentials,
             target_principal=sa_email,
             target_scopes=TOKEN_SCOPES,
-            lifetime=TOKEN_LIFETIME,
+            lifetime=self._token_lifetime_seconds,
         )
 
         target_credentials.refresh(google_requests.Request())

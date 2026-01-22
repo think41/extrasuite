@@ -139,7 +139,7 @@ async def get_install_script(
     logger.info("Install script requested", extra={"email": email, "powershell": ps})
 
     # Determine download URL based on whether bundled skills.zip exists
-    base_url = settings.server_url.rstrip("/")
+    base_url = settings.effective_server_url
     if _DOCKER_SKILLS_ZIP.exists():
         # Enterprise: download from server with auth token
         download_url = f"{base_url}/api/skills/download?token={token}"

@@ -94,10 +94,11 @@ def create_app() -> FastAPI:
     app.add_middleware(
         SessionMiddleware,  # type: ignore[arg-type]
         secret_key=settings.secret_key,
-        session_cookie="extrasuite_session",
-        max_age=24 * 60 * 60,  # 24 hours in seconds
-        same_site="lax",
-        https_only=True,
+        session_cookie=settings.session_cookie_name,
+        max_age=settings.session_cookie_expiry_minutes * 60,  # Convert minutes to seconds
+        same_site=settings.session_cookie_same_site,
+        https_only=settings.session_cookie_https_only,
+        domain=settings.effective_session_cookie_domain,
     )
 
     # Register API router (all endpoints consolidated)

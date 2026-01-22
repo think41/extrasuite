@@ -81,9 +81,11 @@ class FakeSettings:
         self,
         google_cloud_project: str = "test-project",
         domain_abbreviations: dict[str, str] | None = None,
+        token_expiry_minutes: int = 60,
     ) -> None:
         self.google_cloud_project = google_cloud_project
         self._domain_abbreviations = domain_abbreviations or {}
+        self.token_expiry_minutes = token_expiry_minutes
 
     def get_domain_abbreviation(self, domain: str) -> str:
         """Get abbreviation for a domain."""
