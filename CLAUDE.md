@@ -142,7 +142,8 @@ Use `extrasuite-client/examples/basic_usage.py` to test the three main authentic
 # Clear cache and test fresh authentication
 rm -f ~/.config/extrasuite/token.json
 PYTHONPATH=extrasuite-client/src python3 extrasuite-client/examples/basic_usage.py \
-  --server https://<your-cloud-run-url>
+  --auth-url https://<your-cloud-run-url>/api/token/auth \
+  --exchange-url https://<your-cloud-run-url>/api/token/exchange
 ```
 
 ## Exception Handling

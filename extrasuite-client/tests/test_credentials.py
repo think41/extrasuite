@@ -120,17 +120,16 @@ class TestToken:
 class TestCredentialsManagerInit:
     """Tests for CredentialsManager initialization."""
 
-    def test_init_with_extrasuite_server_param(self) -> None:
-        """Constructor param for extrasuite_server works."""
-        manager = CredentialsManager(extrasuite_server="https://auth.example.com")
-        assert manager._server_url == "https://auth.example.com"
+    def test_init_with_auth_and_exchange_urls(self) -> None:
+        """Constructor params for auth_url and exchange_url work."""
+        manager = CredentialsManager(
+            auth_url="https://auth.example.com/api/token/auth",
+            exchange_url="https://auth.example.com/api/token/exchange",
+        )
+        assert manager._auth_url == "https://auth.example.com/api/token/auth"
+        assert manager._exchange_url == "https://auth.example.com/api/token/exchange"
         assert manager._use_extrasuite is True
         assert manager.auth_mode == "extrasuite"
-
-    def test_init_with_extrasuite_server_trailing_slash(self) -> None:
-        """Trailing slash is stripped from server URL."""
-        manager = CredentialsManager(extrasuite_server="https://auth.example.com/")
-        assert manager._server_url == "https://auth.example.com"
 
     def test_init_with_service_account_path_param(self) -> None:
         """Constructor param for service_account_path works."""
@@ -139,33 +138,44 @@ class TestCredentialsManagerInit:
         assert manager._use_extrasuite is False
         assert manager.auth_mode == "service_account"
 
-    def test_init_with_env_var_extrasuite(self) -> None:
-        """EXTRASUITE_SERVER_URL env var is used."""
-        with mock.patch.dict(os.environ, {"EXTRASUITE_SERVER_URL": "https://env.example.com"}):
+    def test_init_with_env_vars(self) -> None:
+        """AUTH_URL and EXCHANGE_URL env vars are used."""
+        env = {
+            "AUTH_URL": "https://env.example.com/auth",
+            "EXCHANGE_URL": "https://env.example.com/exchange",
+        }
+        with mock.patch.dict(os.environ, env, clear=True):
             manager = CredentialsManager()
-            assert manager._server_url == "https://env.example.com"
+            assert manager._auth_url == "https://env.example.com/auth"
+            assert manager._exchange_url == "https://env.example.com/exchange"
             assert manager.auth_mode == "extrasuite"
 
     def test_init_with_env_var_service_account(self) -> None:
         """SERVICE_ACCOUNT_PATH env var is used."""
         with mock.patch.dict(os.environ, {"SERVICE_ACCOUNT_PATH": "/env/path/sa.json"}, clear=True):
-            # Clear EXTRASUITE_SERVER_URL if set
-            env = {"SERVICE_ACCOUNT_PATH": "/env/path/sa.json"}
-            with mock.patch.dict(os.environ, env, clear=True):
-                manager = CredentialsManager()
-                assert manager._sa_path == Path("/env/path/sa.json")
-                assert manager.auth_mode == "service_account"
+            manager = CredentialsManager()
+            assert manager._sa_path == Path("/env/path/sa.json")
+            assert manager.auth_mode == "service_account"
 
     def test_init_param_overrides_env_var(self) -> None:
         """Constructor params take precedence over env vars."""
-        with mock.patch.dict(os.environ, {"EXTRASUITE_SERVER_URL": "https://env.example.com"}):
-            manager = CredentialsManager(extrasuite_server="https://param.example.com")
-            assert manager._server_url == "https://param.example.com"
+        env = {
+            "AUTH_URL": "https://env.example.com/auth",
+            "EXCHANGE_URL": "https://env.example.com/exchange",
+        }
+        with mock.patch.dict(os.environ, env, clear=True):
+            manager = CredentialsManager(
+                auth_url="https://param.example.com/auth",
+                exchange_url="https://param.example.com/exchange",
+            )
+            assert manager._auth_url == "https://param.example.com/auth"
+            assert manager._exchange_url == "https://param.example.com/exchange"
 
     def test_init_extrasuite_takes_precedence_over_service_account(self) -> None:
-        """ExtraSuite server takes precedence when both are configured."""
+        """ExtraSuite protocol takes precedence when both are configured."""
         manager = CredentialsManager(
-            extrasuite_server="https://auth.example.com",
+            auth_url="https://auth.example.com/auth",
+            exchange_url="https://auth.example.com/exchange",
             service_account_path="/path/to/sa.json",
         )
         assert manager._use_extrasuite is True
@@ -178,10 +188,18 @@ class TestCredentialsManagerInit:
                 CredentialsManager()
             assert "No authentication method configured" in str(exc_info.value)
 
+    def test_init_partial_urls_raises_error(self) -> None:
+        """ValueError raised when only one URL is provided."""
+        with mock.patch.dict(os.environ, {}, clear=True):
+            with pytest.raises(ValueError) as exc_info:
+                CredentialsManager(auth_url="https://auth.example.com/auth")
+            assert "No authentication method configured" in str(exc_info.value)
+
     def test_init_custom_cache_path(self) -> None:
         """Custom token_cache_path is respected."""
         manager = CredentialsManager(
-            extrasuite_server="https://auth.example.com",
+            auth_url="https://auth.example.com/auth",
+            exchange_url="https://auth.example.com/exchange",
             token_cache_path="/custom/cache/token.json",
         )
         assert manager._token_cache_path == Path("/custom/cache/token.json")
@@ -200,7 +218,8 @@ class TestCredentialsManagerTokenCache:
         """Returns None when cache file doesn't exist."""
         cache_path = temp_cache_dir / "token.json"
         manager = CredentialsManager(
-            extrasuite_server="https://auth.example.com",
+            auth_url="https://auth.example.com/api/token/auth",
+            exchange_url="https://auth.example.com/api/token/exchange",
             token_cache_path=cache_path,
         )
         assert manager._load_cached_token() is None
@@ -216,7 +235,8 @@ class TestCredentialsManagerTokenCache:
         cache_path.write_text(json.dumps(token_data))
 
         manager = CredentialsManager(
-            extrasuite_server="https://auth.example.com",
+            auth_url="https://auth.example.com/api/token/auth",
+            exchange_url="https://auth.example.com/api/token/exchange",
             token_cache_path=cache_path,
         )
         token = manager._load_cached_token()
@@ -234,7 +254,8 @@ class TestCredentialsManagerTokenCache:
         cache_path.write_text(json.dumps(token_data))
 
         manager = CredentialsManager(
-            extrasuite_server="https://auth.example.com",
+            auth_url="https://auth.example.com/api/token/auth",
+            exchange_url="https://auth.example.com/api/token/exchange",
             token_cache_path=cache_path,
         )
         assert manager._load_cached_token() is None
@@ -245,7 +266,8 @@ class TestCredentialsManagerTokenCache:
         cache_path.write_text("not valid json")
 
         manager = CredentialsManager(
-            extrasuite_server="https://auth.example.com",
+            auth_url="https://auth.example.com/api/token/auth",
+            exchange_url="https://auth.example.com/api/token/exchange",
             token_cache_path=cache_path,
         )
         assert manager._load_cached_token() is None
@@ -254,7 +276,8 @@ class TestCredentialsManagerTokenCache:
         """save_token creates parent directory if needed."""
         cache_path = temp_cache_dir / "subdir" / "token.json"
         manager = CredentialsManager(
-            extrasuite_server="https://auth.example.com",
+            auth_url="https://auth.example.com/api/token/auth",
+            exchange_url="https://auth.example.com/api/token/exchange",
             token_cache_path=cache_path,
         )
         token = Token(
@@ -272,7 +295,8 @@ class TestCredentialsManagerTokenCache:
         """save_token sets secure file permissions."""
         cache_path = temp_cache_dir / "token.json"
         manager = CredentialsManager(
-            extrasuite_server="https://auth.example.com",
+            auth_url="https://auth.example.com/api/token/auth",
+            exchange_url="https://auth.example.com/api/token/exchange",
             token_cache_path=cache_path,
         )
         token = Token(
@@ -307,7 +331,8 @@ class TestCredentialsManagerExtraSuite:
         cache_path.write_text(json.dumps(token_data))
 
         manager = CredentialsManager(
-            extrasuite_server="https://auth.example.com",
+            auth_url="https://auth.example.com/api/token/auth",
+            exchange_url="https://auth.example.com/api/token/exchange",
             token_cache_path=cache_path,
         )
         token = manager.get_token()
@@ -324,7 +349,8 @@ class TestCredentialsManagerExtraSuite:
         cache_path.write_text(json.dumps(token_data))
 
         manager = CredentialsManager(
-            extrasuite_server="https://auth.example.com",
+            auth_url="https://auth.example.com/api/token/auth",
+            exchange_url="https://auth.example.com/api/token/exchange",
             token_cache_path=cache_path,
         )
 
@@ -341,7 +367,8 @@ class TestCredentialsManagerExtraSuite:
     def test_exchange_auth_code_success(self, temp_cache_dir: Path) -> None:
         """_exchange_auth_code successfully exchanges code for token."""
         manager = CredentialsManager(
-            extrasuite_server="https://auth.example.com",
+            auth_url="https://auth.example.com/api/token/auth",
+            exchange_url="https://auth.example.com/api/token/exchange",
             token_cache_path=temp_cache_dir / "token.json",
         )
 
@@ -367,7 +394,8 @@ class TestCredentialsManagerExtraSuite:
     def test_exchange_auth_code_http_error(self, temp_cache_dir: Path) -> None:
         """_exchange_auth_code raises on HTTP error."""
         manager = CredentialsManager(
-            extrasuite_server="https://auth.example.com",
+            auth_url="https://auth.example.com/api/token/auth",
+            exchange_url="https://auth.example.com/api/token/exchange",
             token_cache_path=temp_cache_dir / "token.json",
         )
 
@@ -576,7 +604,8 @@ class TestCredentialsManagerIntegration:
 
         # Create manager and get token
         manager = CredentialsManager(
-            extrasuite_server="https://auth.example.com",
+            auth_url="https://auth.example.com/api/token/auth",
+            exchange_url="https://auth.example.com/api/token/exchange",
             token_cache_path=cache_path,
         )
 
@@ -599,7 +628,8 @@ class TestCredentialsManagerIntegration:
         cache_path.write_text(json.dumps(token_data))
 
         manager = CredentialsManager(
-            extrasuite_server="https://auth.example.com",
+            auth_url="https://auth.example.com/api/token/auth",
+            exchange_url="https://auth.example.com/api/token/exchange",
             token_cache_path=cache_path,
         )
 

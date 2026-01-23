@@ -73,15 +73,18 @@ The `extrasuite-client` library implements the client side of this protocol:
 ```python
 from extrasuite_client import CredentialsManager
 
-# Point to your server
-creds = CredentialsManager(server_url="https://your-server.com")
+# Point to your endpoints
+manager = CredentialsManager(
+    auth_url="https://your-server.com/api/token/auth",
+    exchange_url="https://your-server.com/api/token/exchange",
+)
 
 # Get a token (handles auth flow automatically)
-token_info = creds.get_credentials()
+token = manager.get_token()
 
-print(f"Token: {token_info['access_token']}")
-print(f"Expires: {token_info['expires_at']}")
-print(f"Service Account: {token_info['service_account_email']}")
+print(f"Token: {token.access_token}")
+print(f"Expires in: {token.expires_in_seconds()} seconds")
+print(f"Service Account: {token.service_account_email}")
 ```
 
 The client library works with any server that implements the [Authentication API Specification](auth-spec.md).
