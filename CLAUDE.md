@@ -1,33 +1,62 @@
-# CLAUDE.md
-
-This file provides guidance to Claude Code (claude.ai/code) when working with code in this repository.
-
 ## Project Overview
+ExtraSuite is an open source project (https://github.com/think41/extrasuite) that enables an AI agent such as claude code or codex to get temporary service account tokens on behalf of the user so that it can read or edit google sheets, docs or slides. Each end user gets their own private service account. `extrasuite-server` generates this service account on first access and returns a short lived token. End users must share the google drive file with this service account, and then instruct their AI agent to access the file. This ensures the AI agent has temporary access to the files. It also ensures that any edits made by the AI show up in the version history clearly attributed to the service account email, thereby maintaining an audit trail.
 
-ExtraSuite is a headless authentication service for CLI tools accessing Google Workspace APIs. It enables users to obtain short-lived service account tokens for interacting with Google Sheets, Docs, and Drive.
+This project publishes a public docker image on google cloud artifact registry. Each organization or group that wishes to use this project must deploy the container via google cloud run in a google cloud project. In addition, to authenticate end users belonging to that organization or group, they must setup OAuth credentials in google cloud. 
 
+## Packages
 The project consists of three packages:
-1. **extrasuite-server** - Containerized fastapi based application to provide employee specific service account and short lived acccess tokens that can be used to call google drive/sheets/docs/slides APIs. It also has minimal UI to allow employees to install skills via a command line installation command.
-2. **extrasuite-client** - Package that has a CLI based application to call extrasuite-server on behalf of an LLM based agent and provide it shortlived access tokens. 
-3. **website** - mkdocs based documentation website, hosted on github pages, automatically deployed to https://extrasuite.think41.com on every commit to main branch.
+1. **extrasuite-server** - Containerized FastAPI application to provide employee-specific service accounts and short-lived access tokens that can be used to call google drive/sheets/docs/slides APIs. It also has minimal UI to allow employees to install skills via a command line installation command.
+2. **extrasuite-client** - CLI based application to call extrasuite-server from an AI Agent and provide it shortlived access tokens. This will eventually be published to a pypi package, but currently extrasuite-client/src/extrasuite_client/credentials.py is manually copied by the projects that wish to use it.
+3. **website** - mkdocs based documentation website, hosted on github pages, automatically deployed to https://extrasuite.think41.com on every commit to main branch. The website also has instructions to deploy, end user documentation and other product usage.
+
+## Skills for Slides, Docs and Sheets Specific Packages
+The AI agent needs instructions on how to read or edit google drive files. These are provided as "Agent Skills" which are an open standard. See https://agentskills.io/home. At its core, a skill is a markdown file <skillname>/SKILL.md that is saved by end users at a well known agent specific location. The skills are distributed by extrasuite-server, see extrasuite-server/skills.
+
+In addition to instructions, the AI agent needs python libraries to manipulate files. We have 3 related open source python projects. On a developer machine, each of these projects is cloned in folders parallel to the root of this project. 
+
+The SKILL.md file explains how to use `extrasuite-client` to get the temporary service account token, and then use one of the following projects to read or edit the specific file type.
+
+1. **gsheetx** - See https://github.com/think41/gsheetx, forked from gspread, provides methods to manipulate google sheets.
+1. **gslidex** - See https://github.com/think41/gslidex. "Pulls" google slides into an XML file called Slide Markup Language or SML. AI agents make edits to this XML file. A "diff" process identifies the exact changes that need to be carried out, and then "push" invokes appropriate google slides API to ensure the diffs are applied. This gives AI agents a simpler model to edit google slides. This library is alpha quality.
+1. **gdocx** - See https://github.com/think41/gdocx. Similar workflow to gslidex, but the intermediate format is an HTML file representing the google doc. This is under development and not meant for end users yet.
+
+Currently, these three packages haven't been published to PyPI. Only the gsheetx skill is working, and it uses the underlying gspread library directly. The wrapper code is in `extrasuite-server/skills/gsheetx/gsheet_utils.py`, which will be replaced once gsheetx is published to PyPI.
+
+## Organization Setup (prerequisite)
+
+Before end users can use ExtraSuite, an administrator must deploy extrasuite-server for their organization:
+
+1. **Create a Google Cloud project** with billing enabled
+2. **Enable required APIs**: IAM, Service Account Credentials, Firestore, Drive, Sheets, Docs, Slides
+3. **Configure OAuth consent screen** and create OAuth 2.0 credentials (Web application type)
+4. **Create a Firestore database** in the project
+5. **Deploy extrasuite-server to Cloud Run** using the public image: `asia-southeast1-docker.pkg.dev/thinker41/extrasuite/server`
+6. **Set environment variables** on Cloud Run: `GOOGLE_CLIENT_ID`, `GOOGLE_CLIENT_SECRET`, `GOOGLE_CLOUD_PROJECT`, `SECRET_KEY`
+7. **Share the Cloud Run URL** with end users in the organization
+
+See `website/docs/deployment/` for detailed deployment instructions.
 
 ## User Flow
-1.  User logs in to the **extrasuite-server** using OAuth via their google workspace or gmail account 
-2.  This creates a 1:1 service acccount for the employee, and grants this service account read permissions for google drive API and read/write permissions to slides/docs/sheets API. We don't create credentials for this service account.
-3.  User copies the `<url> | sh` script to install the skill.
-4.  User instructs agent to access the sheet
-5.  Agent calls `CredentialsManager` in `extrasuite-client` to get a short lived access token
-6.  `CredentialsManager` returns the cached token if available, otherwise
-7.  `CredentialsManager` starts a http server on random port, then opens browser to `/api/token/auth?port=<port>`. 
-8.  Alternatively, it prints the URL and asks user to authenticate.
-9.  User is redirected to google to authenticate, and then redirected back to `/api/auth/callback` after authentication
-10. `extrasuite-server` `/api/auth/callback` is invoked. It redirects the browser back to http://localhost:<port>/on-authentication?code=<auth_code> and/or displays the <auth_code> to the user.
-11. `CredentialsManager` then calls `/api/token/exchange` with the auth code to get the token. 
-12. At this point, `extrasuite-server` impersonates the user specific service account using server credentials. Then it returns a short lived access token back to the `CredentialsManager` in `extrasuite-client`.
-13. `CredentialsManager` saves the token + service account email + expiry on disk with appropriate linux permissions.
-14. `CredentialsManager` provides the token + service account email to the LLM Agent
-15. LLM Agent then writes python code to make API calls to google sides/sheets/docs/drive directly from the user's device
-16. Once the token expires, the same flow repeats. If the user has a valid session with `extrasuite-server` - the browser will open but authentication against google server will be skipped. This will result in browser opening and closing in a few seconnds.
+
+### One-Time Setup (per user)
+1. User logs in to **extrasuite-server** via OAuth using their Google Workspace or Gmail account
+2. Server creates a dedicated service account for this user, granting it read access to Google Drive API and read/write access to Sheets/Docs/Slides APIs (no credentials are stored for this service account)
+3. User copies the skill installation command from the server UI and runs it to install the skill into their AI agent (e.g., Claude Code's `~/.claude/commands/` directory)
+
+### Runtime Flow (each time agent needs access)
+4. User shares a Google Drive file with their service account email, then instructs the agent to access it
+5. Agent invokes the skill, which calls `CredentialsManager` (in `extrasuite-client`) to get a short-lived access token
+6. If a valid cached token exists in `~/.config/extrasuite/token.json`, it's returned immediately
+7. Otherwise, `CredentialsManager` starts a local HTTP server on a random port and opens the browser to `/api/token/auth?port=<port>` (or prints the URL if browser launch fails)
+8. User authenticates with Google, then is redirected to `/api/auth/callback`
+9. Server redirects browser to `http://localhost:<port>/on-authentication?code=<auth_code>` (also displays the code for manual entry if needed)
+10. `CredentialsManager` exchanges the auth code via `/api/token/exchange`
+11. Server uses domain-wide delegation to impersonate the user's service account and returns a short-lived access token
+12. `CredentialsManager` caches the token locally (with 600 permissions) and provides it to the agent
+13. Agent uses the token to make Google API calls directly from the user's device
+
+### Token Refresh
+When the token expires, the runtime flow repeats from step 7. If the user still has a valid session with extrasuite-server, the browser opens briefly and closes automatically (no re-authentication required).
 
 ## Development Commands
 
@@ -83,27 +112,38 @@ gcloud firestore databases create --location=asia-south1 --project=<project>
 - **Server-side:** Tokens are not stored on the server. They are generated on demand and returned immediately to the client.
 - **Client-side:** Short-lived SA tokens in `~/.config/extrasuite/token.json`
 
-## Testing (Auth Flows)
+## Testing
 
-Use `extrasuite-client/examples/basic_usage.py` to validate the three main flows. Replace `<your-server>` with your deployed server URL (e.g., `http://localhost:8001` for local development):
+Due to tight integration with Google Cloud APIs, local testing is impractical. Developers should set up their own Google Cloud project following the same steps as Organization Setup (see `website/docs/deployment/`).
 
-1. **First run (no cache):** token file missing, browser opens, user authenticates.
+### Deploy from a branch
+
+To test changes before merging to main:
+
+1. Push your changes to a feature branch on GitHub
+2. GitHub Actions automatically builds and pushes a container tagged with the branch name
+3. Deploy the branch image to your Cloud Run instance:
    ```bash
-   rm -f ~/.config/extrasuite/token.json
-   PYTHONPATH=extrasuite-client/src python3 extrasuite-client/examples/basic_usage.py \
-     --server https://<your-server>
+   gcloud run deploy extrasuite-server \
+     --image asia-southeast1-docker.pkg.dev/thinker41/extrasuite/server:<branch-name> \
+     --region asia-southeast1 \
+     --project <your-project>
    ```
-2. **Cached token:** token file present and valid, no browser.
-   ```bash
-   PYTHONPATH=extrasuite-client/src python3 extrasuite-client/examples/basic_usage.py \
-     --server https://<your-server>
-   ```
-3. **Session reuse (no cache, no re-auth):** delete token cache, browser opens, SSO/session skips login.
-   ```bash
-   rm -f ~/.config/extrasuite/token.json
-   PYTHONPATH=extrasuite-client/src python3 extrasuite-client/examples/basic_usage.py \
-     --server https://<your-server>
-   ```
+
+### Validate auth flows
+
+Use `extrasuite-client/examples/basic_usage.py` to test the three main authentication scenarios:
+
+1. **First run (no cache):** Token file missing, browser opens, user authenticates
+2. **Cached token:** Token file present and valid, no browser opens
+3. **Session reuse:** Delete token cache, browser opens but SSO skips login
+
+```bash
+# Clear cache and test fresh authentication
+rm -f ~/.config/extrasuite/token.json
+PYTHONPATH=extrasuite-client/src python3 extrasuite-client/examples/basic_usage.py \
+  --server https://<your-cloud-run-url>
+```
 
 ## Exception Handling
 
@@ -129,7 +169,7 @@ Docker images are automatically built and published to Google Artifact Registry 
 **Automatic tagging:**
 | Trigger | Tags Created |
 |---------|--------------|
-| Push to `main` | `main`, `sha-<commit>` |
+| Push to any branch | `<branch-name>`, `sha-<commit>` |
 | Git tag `v*` | `<version>`, `latest` |
 | Pull request | Build only (no push) |
 
