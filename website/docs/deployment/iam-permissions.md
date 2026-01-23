@@ -33,7 +33,19 @@ ExtraSuite requires **one service account** (`extrasuite-server`) with **four ro
 
 **Why needed:** ExtraSuite creates a dedicated service account for each user on first login (e.g., `john-ex@project.iam.gserviceaccount.com`). This role permits creating these accounts.
 
-**Security note:** This is a powerful role. ExtraSuite only creates service accounts; it does not delete existing ones or modify their permissions.
+**Security note:** While this sounds like a powerful role, it is safe because **creating a service account is separate from granting it permissions**.
+
+`serviceAccountAdmin` allows:
+
+- ✓ Creating service accounts
+- ✓ Updating metadata (display name, description)
+- ✓ Deleting service accounts
+- ✗ Granting IAM roles to service accounts
+- ✗ Modifying project IAM policies
+
+To grant any IAM role to a service account, you need `roles/resourcemanager.projectIamAdmin` or specific `setIamPolicy` permissions—which ExtraSuite does not have.
+
+**The service accounts ExtraSuite creates have zero IAM roles.** They cannot access any GCP resources (BigQuery, Cloud Storage, Compute, etc.). They can only access Google Workspace files (Sheets, Docs, Slides) that users explicitly share with them.
 
 ---
 
