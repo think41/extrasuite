@@ -272,14 +272,15 @@ Choose your platform for detailed instructions:
 
 ---
 
-## Next Steps
+## Continue to Quick Start
 
-After installation, continue with your setup path:
+You've completed the installation. Continue to the Quick Start guide to learn how to use ExtraSuite:
 
-- **Organizations:** [Step 5: Share Your Document](../organization-setup.md#step-5-share-your-document)
-- **Individuals:** [Step 8: Share Documents and Start Using](../individual-setup.md#step-8-share-documents-and-start-using)
+[:octicons-arrow-right-24: Continue to Start Using ExtraSuite](../index.md#start-using-extrasuite)
 
-Or learn more about using ExtraSuite:
+---
+
+## Additional Resources
 
 - **[Prompting Tips](../../user-guide/prompting.md)** - Write effective prompts
 - **[Sharing Documents](../../user-guide/sharing.md)** - Share with your AI agent

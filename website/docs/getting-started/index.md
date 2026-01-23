@@ -112,7 +112,7 @@ graph LR
 
 ---
 
-## Quick Start (After Setup)
+## Start Using ExtraSuite
 
 Once you've completed either setup path, here's how to use ExtraSuite:
 

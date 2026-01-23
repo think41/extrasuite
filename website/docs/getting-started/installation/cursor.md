@@ -120,7 +120,15 @@ Access tokens expire after 1 hour. The skill will prompt you to re-authenticate 
 
 ---
 
-## Next Steps
+## Continue to Quick Start
+
+You've completed the Cursor installation. Continue to the Quick Start guide to learn how to use ExtraSuite:
+
+[:octicons-arrow-right-24: Continue to Start Using ExtraSuite](../index.md#start-using-extrasuite)
+
+---
+
+## Additional Resources
 
 - [Share your documents](../../user-guide/sharing.md) with your service account
 - [Learn effective prompting techniques](../../user-guide/prompting.md)

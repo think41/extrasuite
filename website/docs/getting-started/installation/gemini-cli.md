@@ -146,7 +146,15 @@ curl -fsSL https://extrasuite.think41.com/api/skills/install/<your-token> | bash
 
 ---
 
-**Next Steps:**
+## Continue to Quick Start
+
+You've completed the Gemini CLI installation. Continue to the Quick Start guide to learn how to use ExtraSuite:
+
+[:octicons-arrow-right-24: Continue to Start Using ExtraSuite](../index.md#start-using-extrasuite)
+
+---
+
+**Additional Resources:**
 
 - [Learn effective prompting techniques](../../user-guide/prompting.md)
 - [Understand how to share documents](../../user-guide/sharing.md)
