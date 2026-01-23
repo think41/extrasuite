@@ -1,98 +1,152 @@
 # Operations Guide
 
-This document covers monitoring, debugging, and troubleshooting for ExtraSuite deployments.
+This guide covers monitoring, updating, and troubleshooting your ExtraSuite deployment.
 
 ## Monitoring
 
 ### View Logs
 
+#### Using gcloud CLI
+
 ```bash
-# Recent logs
+# Recent logs (last 50 entries)
 gcloud run services logs read extrasuite-server \
   --region=asia-southeast1 \
   --project=$PROJECT_ID \
   --limit=50
 
-# Error logs only
+# Errors only
 gcloud logging read \
   'resource.type="cloud_run_revision" AND resource.labels.service_name="extrasuite-server" AND severity>=ERROR' \
   --project=$PROJECT_ID \
-  --limit=20 \
-  --format="json"
+  --limit=20
 ```
 
-### Health Checks
+#### Using Google Cloud Console
+
+1. Go to **Cloud Run > extrasuite-server**
+2. Click the **Logs** tab
+
+### Health Check
 
 ```bash
-# Basic health check
-curl https://your-domain.com/api/health
-# Expected: {"status":"healthy","service":"extrasuite-server"}
+curl https://YOUR_DOMAIN/api/health
+```
+
+Expected response:
+```json
+{"status":"healthy","service":"extrasuite-server"}
 ```
 
 ### List User Service Accounts
+
+See how many users have been onboarded:
 
 ```bash
 gcloud iam service-accounts list --project=$PROJECT_ID \
   --format="table(email,displayName)"
 ```
 
-### Check IAM Permissions
+---
+
+## Updating ExtraSuite
+
+### Update to Latest Version
+
+#### Using gcloud CLI
 
 ```bash
-gcloud projects get-iam-policy $PROJECT_ID \
-  --flatten="bindings[].members" \
-  --format="table(bindings.role,bindings.members)" \
-  --filter="bindings.members:extrasuite-server@$PROJECT_ID.iam.gserviceaccount.com"
+gcloud run services update extrasuite-server \
+  --region=asia-southeast1 \
+  --image=asia-southeast1-docker.pkg.dev/thinker41/extrasuite/server:latest \
+  --project=$PROJECT_ID
 ```
 
-## Common Issues
+#### Using Google Cloud Console
 
-### OAuth Scopes Showing Too Many Permissions
+1. Go to **Cloud Run > extrasuite-server**
+2. Click **Edit & Deploy New Revision**
+3. Update the container image URL to use `latest` or a specific version
+4. Click **Deploy**
 
-**Symptom:** OAuth consent screen asks for "See, edit, configure and delete your Google Cloud data" instead of just email access.
+### Pin to a Specific Version
 
-**Cause:** Using `include_granted_scopes="true"` causes Google to include any previously granted scopes.
+For production stability, pin to a version tag:
 
-**Solution:** Users may need to revoke existing app permissions at [myaccount.google.com/permissions](https://myaccount.google.com/permissions) before re-authenticating.
+```bash
+gcloud run services update extrasuite-server \
+  --region=asia-southeast1 \
+  --image=asia-southeast1-docker.pkg.dev/thinker41/extrasuite/server:v1.0.0 \
+  --project=$PROJECT_ID
+```
 
-### Firestore "No document to update" Error
+### Rollback to Previous Version
 
-**Symptom:**
+```bash
+# List available revisions
+gcloud run revisions list \
+  --service=extrasuite-server \
+  --region=asia-southeast1 \
+  --project=$PROJECT_ID
+
+# Route all traffic to a previous revision
+gcloud run services update-traffic extrasuite-server \
+  --region=asia-southeast1 \
+  --to-revisions=extrasuite-server-00001-abc=100 \
+  --project=$PROJECT_ID
+```
+
+---
+
+## Troubleshooting
+
+### OAuth Consent Shows Too Many Permissions
+
+**Symptom:** Users see "See, edit, configure and delete your Google Cloud data" instead of just email access.
+
+**Cause:** Google includes previously granted scopes when `include_granted_scopes` is enabled.
+
+**Solution:** Users should revoke ExtraSuite's access at [myaccount.google.com/permissions](https://myaccount.google.com/permissions), then log in again.
+
+---
+
+### 404 Error: "No document to update"
+
+**Symptom:** Error in logs:
 ```
 NotFound: 404 No document to update: projects/.../documents/users/email@domain.com
 ```
 
-**Cause:** Code is using Firestore `update()` method on a document that doesn't exist.
+**Cause:** This is a code bug where `update()` is used instead of `set(merge=True)`.
 
-**Solution:** Use `set(merge=True)` instead of `update()` for upsert behavior.
+**Solution:** Update to the latest version of ExtraSuite which fixes this issue.
+
+---
 
 ### Email Domain Allowlist Not Working
 
-**Symptom:** Valid email domains are rejected.
+**Symptom:** Valid email domains are rejected during login.
 
-**Cause:** The gcloud CLI may interpret commas incorrectly in some shells.
+**Cause:** The `ALLOWED_EMAIL_DOMAINS` environment variable may be malformed.
 
-**Solution:** Verify the environment variable is set correctly:
+**Diagnosis:**
 ```bash
 gcloud run services describe extrasuite-server \
   --region=asia-southeast1 \
-  --format="value(spec.template.spec.containers[0].env)"
+  --project=$PROJECT_ID \
+  --format="yaml(spec.template.spec.containers[0].env)"
 ```
 
-### Firestore Database Recreation Delay
-
-**Symptom:** After deleting a Firestore database, recreating fails:
+**Solution:** Ensure domains are comma-separated with no spaces:
 ```
-FAILED_PRECONDITION: Database ID '(default)' is not available. Please retry in X seconds.
+ALLOWED_EMAIL_DOMAINS=example.com,company.org
 ```
 
-**Cause:** Firestore requires a cooldown period (~4-5 minutes) after database deletion.
+---
 
-**Solution:** Wait for the cooldown period before recreating.
+### Custom Domain SSL Certificate Not Working
 
-### Custom Domain SSL Certificate Pending
-
-**Symptom:** Custom domain doesn't work with HTTPS.
+**Symptom:** HTTPS doesn't work on your custom domain.
 
 **Cause:** Google-managed SSL certificates take 15-30 minutes to provision.
 
@@ -101,14 +155,17 @@ FAILED_PRECONDITION: Database ID '(default)' is not available. Please retry in X
 gcloud beta run domain-mappings describe \
   --domain=your-domain.com \
   --region=asia-southeast1 \
+  --project=$PROJECT_ID \
   --format="yaml(status.conditions)"
 
-# Verify DNS
+# Verify DNS is configured
 dig your-domain.com CNAME +short
-# Should return: ghs.googlehosted.com.
+# Expected: ghs.googlehosted.com.
 ```
 
-**Solution:** Wait for certificate provisioning. When `CertificateProvisioned` shows `status: 'True'`, HTTPS will work.
+**Solution:** Wait for certificate provisioning. Once `CertificateProvisioned` shows `status: 'True'`, HTTPS will work.
+
+---
 
 ### IAM Policy Binding Fails
 
@@ -127,103 +184,106 @@ gcloud projects add-iam-policy-binding $PROJECT_ID \
   --condition=None
 ```
 
-## Updating the Deployment
+---
 
-### Update to Latest Version
+### Firestore Database Recreation Fails
 
-```bash
-gcloud run services update extrasuite-server \
-  --region=asia-southeast1 \
-  --image=asia-southeast1-docker.pkg.dev/thinker41/extrasuite/server:latest \
-  --project=$PROJECT_ID
+**Symptom:** After deleting a Firestore database, recreating fails with:
+```
+FAILED_PRECONDITION: Database ID '(default)' is not available. Please retry in X seconds.
 ```
 
-### Update Environment Variables
+**Cause:** Firestore requires a cooldown period (~5 minutes) after database deletion.
 
+**Solution:** Wait 5 minutes, then try again.
+
+---
+
+### Service Account Quota Exceeded
+
+**Symptom:** New users cannot onboard.
+
+**Cause:** GCP default quota is 100 service accounts per project.
+
+**Diagnosis:**
 ```bash
-gcloud run services update extrasuite-server \
-  --region=asia-southeast1 \
-  --update-env-vars="KEY=value" \
-  --project=$PROJECT_ID
+gcloud iam service-accounts list --project=$PROJECT_ID | wc -l
 ```
 
-### Rollback to Previous Version
+**Solution:** [Request a quota increase](https://console.cloud.google.com/iam-admin/quotas) for "Service Accounts per Project".
 
-```bash
-# List revisions
-gcloud run revisions list \
-  --service=extrasuite-server \
-  --region=asia-southeast1 \
-  --project=$PROJECT_ID
-
-# Route traffic to a specific revision
-gcloud run services update-traffic extrasuite-server \
-  --region=asia-southeast1 \
-  --to-revisions=extrasuite-server-00001-abc=100 \
-  --project=$PROJECT_ID
-```
-
-## Testing Authentication Flow
-
-```bash
-# Clear token cache
-rm -f ~/.config/extrasuite/token.json
-
-# Run test
-cd /path/to/extrasuite
-PYTHONPATH=extrasuite-client/src python3 extrasuite-client/examples/basic_usage.py \
-  --server https://your-domain.com
-```
-
-**Three test scenarios:**
-
-1. **First run (no cache):** Token file missing, browser opens, user authenticates
-2. **Cached token:** Token file present and valid, no browser needed
-3. **Session reuse:** Delete token cache, browser opens, SSO/session skips login prompt
+---
 
 ## Secrets Management
 
-### Rotate Secrets
+### Rotate a Secret
 
 ```bash
-# Update secret with new value
-echo -n "new-value" | gcloud secrets versions add extrasuite-secret-key --data-file=-
+# Add new version
+echo -n "new-secret-value" | gcloud secrets versions add extrasuite-secret-key \
+  --data-file=- \
+  --project=$PROJECT_ID
 
-# Deploy with new version (Cloud Run auto-updates on next deploy)
+# Redeploy to pick up new version
 gcloud run services update extrasuite-server \
   --region=asia-southeast1 \
   --update-secrets="SECRET_KEY=extrasuite-secret-key:latest" \
   --project=$PROJECT_ID
 ```
 
-## Service Account Quota
-
-ExtraSuite creates one service account per user. Monitor usage:
+### View Secret Versions
 
 ```bash
-# Count service accounts
-gcloud iam service-accounts list --project=$PROJECT_ID | wc -l
+gcloud secrets versions list extrasuite-secret-key --project=$PROJECT_ID
 ```
 
-GCP default quota is 100 service accounts per project. [Request an increase](https://console.cloud.google.com/iam-admin/quotas) if needed.
+---
 
-## Clean Up
+## Testing the Authentication Flow
 
-To remove all ExtraSuite resources:
+Use the included test script to verify authentication works:
+
+```bash
+# Clear any cached token
+rm -f ~/.config/extrasuite/token.json
+
+# Run the test
+cd /path/to/extrasuite
+PYTHONPATH=extrasuite-client/src python3 extrasuite-client/examples/basic_usage.py \
+  --server https://YOUR_DOMAIN
+```
+
+**Expected behavior:**
+
+1. Browser opens to the login page
+2. User authenticates with Google
+3. Browser redirects back and closes
+4. Script prints a valid access token
+
+---
+
+## Cleanup
+
+To completely remove ExtraSuite from your project:
 
 ```bash
 # Delete Cloud Run service
 gcloud run services delete extrasuite-server \
   --region=asia-southeast1 \
-  --project=$PROJECT_ID
+  --project=$PROJECT_ID \
+  --quiet
 
-# Delete user service accounts (adjust pattern for your domains)
+# Delete user service accounts (adjust pattern for your domain abbreviations)
 gcloud iam service-accounts list --project=$PROJECT_ID --format="value(email)" | \
   grep -E '-(ex|co)@' | \
   xargs -I {} gcloud iam service-accounts delete {} --project=$PROJECT_ID --quiet
 
+# Delete the server service account
+gcloud iam service-accounts delete extrasuite-server@$PROJECT_ID.iam.gserviceaccount.com \
+  --project=$PROJECT_ID --quiet
+
 # Delete Firestore database
-gcloud firestore databases delete --database="(default)" --project=$PROJECT_ID
+gcloud firestore databases delete --database="(default)" --project=$PROJECT_ID --quiet
 
 # Delete secrets
 for secret in extrasuite-client-id extrasuite-client-secret extrasuite-secret-key; do
@@ -233,8 +293,13 @@ done
 
 ---
 
-## Continue Your Setup
+## Getting Help
 
-If you arrived here from the Organization Setup guide, return to continue with user onboarding:
+If you encounter issues not covered here:
 
-[:octicons-arrow-right-24: Continue Organization Setup](../getting-started/organization-setup.md#step-2-install-your-ai-editor)
+1. Check [Cloud Run logs](#view-logs) for error details
+2. Search [GitHub Issues](https://github.com/think41/extrasuite/issues)
+3. Open a new issue with:
+   - Error message from logs
+   - Steps to reproduce
+   - Your configuration (without secrets)
