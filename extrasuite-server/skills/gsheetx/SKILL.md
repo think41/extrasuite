@@ -1,5 +1,5 @@
 ---
-name: gsheet
+name: gsheetx
 description: Read, write, and manipulate Google Sheets. Use when user asks to work with Google Sheets, spreadsheets, or shares a docs.google.com/spreadsheets URL.
 ---
 
@@ -11,19 +11,19 @@ Work with Google Sheets using Python and the gspread library.
 
 **Step 1: Run environment checks (ALWAYS run first)**
 ```bash
-python3 ~/.claude/skills/gsheets/checks.py
+python3 ~/.claude/skills/gsheetx/checks.py
 ```
 Creates virtual environment and installs dependencies. On failure, provides setup instructions.
 
 **Step 2: Verify spreadsheet access**
 ```bash
-~/.claude/skills/gsheets/venv/bin/python ~/.claude/skills/gsheets/verify_access.py <spreadsheet_url>
+~/.claude/skills/gsheetx/venv/bin/python ~/.claude/skills/gsheetx/verify_access.py <spreadsheet_url>
 ```
 Authenticates via ExtraSuite (opens browser if needed) and confirms access to the sheet. On failure, provides sharing instructions with the service account email.
 
 **Step 3: Execute your code**
 ```bash
-~/.claude/skills/gsheets/venv/bin/python your_script.py
+~/.claude/skills/gsheetx/venv/bin/python your_script.py
 ```
 All scripts use the skill's venv Python to access installed packages.
 
@@ -38,7 +38,7 @@ For worksheets with tabular data, check if it should be treated as a table:
 ```python
 import os
 import sys
-sys.path.insert(0, os.path.expanduser("~/.claude/skills/gsheets"))
+sys.path.insert(0, os.path.expanduser("~/.claude/skills/gsheetx"))
 from gsheet_utils import open_sheet, get_shape, has_table, convert_to_table
 
 sheet = open_sheet("https://docs.google.com/spreadsheets/d/.../edit")

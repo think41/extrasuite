@@ -40,7 +40,7 @@ See `.env.template` for required configuration:
 | `GOOGLE_CLIENT_ID` | Yes | Google OAuth client ID |
 | `GOOGLE_CLIENT_SECRET` | Yes | Google OAuth client secret |
 | `GOOGLE_CLOUD_PROJECT` | Yes | GCP project for service account creation |
-| `GOOGLE_REDIRECT_URI` | No | OAuth callback URL (default: localhost:8001) |
+| `SERVER_URL` | No | Base URL for server (default: http://localhost:8001) |
 | `ALLOWED_EMAIL_DOMAINS` | No | Comma-separated list of allowed email domains |
 | `FIRESTORE_DATABASE` | No | Firestore database name (default: `(default)`) |
 

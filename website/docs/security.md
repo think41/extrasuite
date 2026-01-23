@@ -134,11 +134,46 @@ ExtraSuite does not issue broad Google Cloud API permissions.
 
 ---
 
+## Configurable Security Settings
+
+The following security settings can be configured via environment variables:
+
+### Session Cookie Settings
+
+| Setting | Default | Description |
+|---------|---------|-------------|
+| `SESSION_COOKIE_NAME` | `session` | Name of the session cookie |
+| `SESSION_COOKIE_EXPIRY_MINUTES` | `1440` (24 hours) | Session cookie lifetime in minutes |
+| `SESSION_COOKIE_SAME_SITE` | `lax` | SameSite attribute (`lax`, `strict`, or `none`) |
+| `SESSION_COOKIE_HTTPS_ONLY` | `true` | Whether to set the Secure flag (HTTPS only) |
+| `SESSION_COOKIE_DOMAIN` | (derived from `BASE_DOMAIN`) | Cookie domain restriction |
+
+### Token Settings
+
+| Setting | Default | Description |
+|---------|---------|-------------|
+| `TOKEN_EXPIRY_MINUTES` | `60` (1 hour) | Access token lifetime in minutes |
+
+### Server URL Settings
+
+| Setting | Default | Description |
+|---------|---------|-------------|
+| `BASE_DOMAIN` | (none) | Server domain (e.g., `extrasuite.example.com`) |
+| `SERVER_URL` | Derived from `BASE_DOMAIN` | Full server URL. If `BASE_DOMAIN` is set, defaults to `https://{BASE_DOMAIN}` |
+
+!!! tip "Production Configuration"
+    For production deployments, set `BASE_DOMAIN` to your server's domain. This automatically configures `SERVER_URL` with HTTPS and sets the session cookie domain appropriately.
+
+!!! warning "Local Development"
+    For local development, set `SERVER_URL=http://localhost:8001` explicitly, as HTTPS is not available locally.
+
+---
+
 ## Security Constants
 
 | Constant | Value | Description |
 |----------|-------|-------------|
-| `ACCESS_TOKEN_TTL` | 1 hour | Lifetime of issued access tokens |
+| `ACCESS_TOKEN_TTL` | 1 hour (configurable) | Lifetime of issued access tokens |
 | `AUTH_CODE_TTL` | 2 minutes | Lifetime of temporary auth codes |
 | `OAUTH_STATE_TTL` | 10 minutes | Lifetime of OAuth state tokens |
 | `TOKEN_DIR_PERMISSIONS` | `0700` | Directory permissions for token cache |

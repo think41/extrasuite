@@ -16,31 +16,12 @@ Exit codes:
 Prerequisites: Run checks.py first to set up the environment.
 """
 
-import json
 import sys
-from pathlib import Path
 
 import gspread
+from credentials import CredentialsManager
 from google.oauth2.credentials import Credentials
-from gspread.exceptions import SpreadsheetNotFound, APIError
-
-from gateway import ExtraSuiteClient
-
-
-EXTRASUITE_SERVER_URL = "https://extrasuite.think41.com"
-TOKEN_CACHE_PATH = Path.home() / ".config" / "extrasuite" / "token.json"
-
-
-def get_service_account_email():
-    """Get service account email from cached token."""
-    if not TOKEN_CACHE_PATH.exists():
-        return None
-    try:
-        with open(TOKEN_CACHE_PATH) as f:
-            token_data = json.load(f)
-        return token_data.get("service_account_email")
-    except (json.JSONDecodeError, KeyError):
-        return None
+from gspread.exceptions import APIError, SpreadsheetNotFound
 
 
 def extract_spreadsheet_id(url):
@@ -55,14 +36,20 @@ def extract_spreadsheet_id(url):
         d_index = parts.index("d")
         return parts[d_index + 1], None
     except (ValueError, IndexError):
-        return None, f"Invalid Google Sheets URL format.\n\nExpected: https://docs.google.com/spreadsheets/d/SPREADSHEET_ID/edit\nGot: {url}"
+        return (
+            None,
+            f"Invalid Google Sheets URL format.\n\nExpected: https://docs.google.com/spreadsheets/d/SPREADSHEET_ID/edit\nGot: {url}",
+        )
 
 
 def main():
     if len(sys.argv) < 2:
         print("Usage: venv/bin/python verify_access.py <spreadsheet_url>", file=sys.stderr)
         print("\nExample:", file=sys.stderr)
-        print("  venv/bin/python verify_access.py https://docs.google.com/spreadsheets/d/abc123/edit", file=sys.stderr)
+        print(
+            "  venv/bin/python verify_access.py https://docs.google.com/spreadsheets/d/abc123/edit",
+            file=sys.stderr,
+        )
         sys.exit(1)
 
     url = sys.argv[1]
@@ -73,19 +60,23 @@ def main():
 
     # Authenticate via ExtraSuite
     try:
-        client = ExtraSuiteClient(server_url=EXTRASUITE_SERVER_URL)
-        access_token = client.get_token()
+        manager = CredentialsManager()
+        token = manager.get_token()
+        access_token = token.access_token
     except Exception as e:
-        print(f"""Authentication failed.
+        print(
+            f"""Authentication failed.
 
 Error: {e}
 
 Please try again. If the problem persists, check:
 - Your internet connection
-- The ExtraSuite server is accessible: {EXTRASUITE_SERVER_URL}""", file=sys.stderr)
+- The ExtraSuite server is accessible""",
+            file=sys.stderr,
+        )
         sys.exit(1)
 
-    client_email = get_service_account_email() or "your service account"
+    client_email = token.service_account_email or "your service account"
 
     try:
         creds = Credentials(token=access_token)
@@ -95,12 +86,9 @@ Please try again. If the problem persists, check:
         # Success - gather spreadsheet info
         worksheets = []
         for ws in sh.worksheets():
-            worksheets.append({
-                "title": ws.title,
-                "id": ws.id,
-                "rows": ws.row_count,
-                "cols": ws.col_count
-            })
+            worksheets.append(
+                {"title": ws.title, "id": ws.id, "rows": ws.row_count, "cols": ws.col_count}
+            )
 
         # Print friendly message with spreadsheet title first
         print(f"Spreadsheet: {sh.title}")
@@ -110,7 +98,8 @@ Please try again. If the problem persists, check:
     except SpreadsheetNotFound:
         # Reconstruct the URL for the error message
         sheet_url = f"https://docs.google.com/spreadsheets/d/{spreadsheet_id}/edit"
-        print(f"""Spreadsheet (ID: {spreadsheet_id}) not accessible.
+        print(
+            f"""Spreadsheet (ID: {spreadsheet_id}) not accessible.
 
 To fix this:
 1. Open the spreadsheet: {sheet_url}
@@ -119,14 +108,16 @@ To fix this:
 4. Select role: Editor (or Viewer if read-only access is sufficient)
 5. Click "Send"
 
-Then run this command again.""", file=sys.stderr)
+Then run this command again.""",
+            file=sys.stderr,
+        )
         sys.exit(2)
 
     except (APIError, PermissionError) as e:
         # Handle PermissionError which wraps APIError in gspread
         original_error = e.__cause__ if isinstance(e, PermissionError) and e.__cause__ else e
         error_str = str(original_error)
-        status = getattr(original_error, 'response', None)
+        status = getattr(original_error, "response", None)
         status_code = status.status_code if status else None
 
         # Check for API not enabled - multiple patterns
@@ -136,21 +127,25 @@ Then run this command again.""", file=sys.stderr)
             "has not been used in project",
             "API has not been used",
             "is disabled",
-            "Enable it by visiting"
+            "Enable it by visiting",
         ]
         is_api_not_enabled = any(pattern in error_str for pattern in api_not_enabled_patterns)
 
         if is_api_not_enabled:
-            print(f"""Google Sheets API is not enabled for the service account's project.
+            print(
+                """Google Sheets API is not enabled for the service account's project.
 
 This is a server-side configuration issue. Please contact the administrator
-of the ExtraSuite server.""", file=sys.stderr)
+of the ExtraSuite server.""",
+                file=sys.stderr,
+            )
             sys.exit(3)
 
         elif status_code == 403 or "403" in error_str:
             # Generic 403 - likely not shared
             sheet_url = f"https://docs.google.com/spreadsheets/d/{spreadsheet_id}/edit"
-            print(f"""Spreadsheet (ID: {spreadsheet_id}) - Access forbidden.
+            print(
+                f"""Spreadsheet (ID: {spreadsheet_id}) - Access forbidden.
 
 To fix this:
 1. Open the spreadsheet: {sheet_url}
@@ -159,29 +154,38 @@ To fix this:
 4. Select role: Editor (or Viewer if read-only access is sufficient)
 5. Click "Send"
 
-Then run this command again.""", file=sys.stderr)
+Then run this command again.""",
+                file=sys.stderr,
+            )
             sys.exit(2)
 
         elif status_code == 404 or "404" in error_str:
-            print(f"""Spreadsheet (ID: {spreadsheet_id}) not found.
+            print(
+                f"""Spreadsheet (ID: {spreadsheet_id}) not found.
 
 The spreadsheet does not exist or has been deleted.
 
 Please verify:
 - The URL is correct
-- The spreadsheet has not been deleted""", file=sys.stderr)
+- The spreadsheet has not been deleted""",
+                file=sys.stderr,
+            )
             sys.exit(2)
 
         elif status_code == 429 or "429" in error_str or "RATE_LIMIT" in error_str:
-            print("""Rate limit exceeded.
+            print(
+                """Rate limit exceeded.
 
-Google Sheets API has usage quotas. Please wait 1-2 minutes and try again.""", file=sys.stderr)
+Google Sheets API has usage quotas. Please wait 1-2 minutes and try again.""",
+                file=sys.stderr,
+            )
             sys.exit(4)
 
         else:
             # For unexpected errors, still provide actionable info
             sheet_url = f"https://docs.google.com/spreadsheets/d/{spreadsheet_id}/edit"
-            print(f"""Spreadsheet (ID: {spreadsheet_id}) - Unable to access.
+            print(
+                f"""Spreadsheet (ID: {spreadsheet_id}) - Unable to access.
 
 Error: {error_str}
 
@@ -189,13 +193,16 @@ Possible fixes:
 1. Ensure the spreadsheet is shared with: {client_email}
 2. Verify the URL is correct: {sheet_url}
 
-Then run this command again.""", file=sys.stderr)
+Then run this command again.""",
+                file=sys.stderr,
+            )
             sys.exit(6)
 
     except Exception as e:
         # Catch-all with helpful context
         sheet_url = f"https://docs.google.com/spreadsheets/d/{spreadsheet_id}/edit"
-        print(f"""Spreadsheet (ID: {spreadsheet_id}) - Unable to access.
+        print(
+            f"""Spreadsheet (ID: {spreadsheet_id}) - Unable to access.
 
 Error: {type(e).__name__}: {e}
 
@@ -203,7 +210,9 @@ Possible fixes:
 1. Ensure the spreadsheet is shared with: {client_email}
 2. Verify the URL is correct: {sheet_url}
 
-Then run this command again.""", file=sys.stderr)
+Then run this command again.""",
+            file=sys.stderr,
+        )
         sys.exit(6)
 
 

@@ -19,20 +19,17 @@ import json
 from pathlib import Path
 
 import gspread
+from credentials import CredentialsManager
 from google.oauth2.credentials import Credentials
 
-from gateway import ExtraSuiteClient
-
-
-EXTRASUITE_SERVER_URL = "https://extrasuite.think41.com"
 TOKEN_CACHE_PATH = Path.home() / ".config" / "extrasuite" / "token.json"
 
 
 def _get_gspread_client():
     """Get an authenticated gspread client using ExtraSuite."""
-    client = ExtraSuiteClient(server_url=EXTRASUITE_SERVER_URL)
-    access_token = client.get_token()
-    creds = Credentials(token=access_token)
+    manager = CredentialsManager()
+    token = manager.get_token()
+    creds = Credentials(token=token.access_token)
     return gspread.authorize(creds)
 
 
@@ -85,7 +82,7 @@ def get_shape(ws, header_rows=5, footer_rows=3):
             "total_cols": 0,
             "first_rows": [],
             "last_rows": [],
-            "has_data": False
+            "has_data": False,
         }
 
     total_rows = len(all_values)
@@ -113,8 +110,10 @@ def get_shape(ws, header_rows=5, footer_rows=3):
         "first_rows": first_rows,
         "first_row_numbers": list(range(1, len(first_rows) + 1)),
         "last_rows": last_rows,
-        "last_row_numbers": list(range(last_row_start, last_row_start + len(last_rows))) if last_row_start else [],
-        "has_data": total_rows > 0
+        "last_row_numbers": list(range(last_row_start, last_row_start + len(last_rows)))
+        if last_row_start
+        else [],
+        "has_data": total_rows > 0,
     }
 
 
@@ -148,13 +147,13 @@ def has_table(ws):
                                 {
                                     "name": col.get("columnName"),
                                     "type": col.get("columnType"),
-                                    "index": col.get("columnIndex")
+                                    "index": col.get("columnIndex"),
                                 }
                                 for col in t.get("columnProperties", [])
-                            ]
+                            ],
                         }
                         for t in tables
-                    ]
+                    ],
                 }
     return {"spreadsheet": sh.title, "worksheet": ws.title, "has_table": False, "tables": []}
 
@@ -177,13 +176,7 @@ def get_banded_ranges(ws):
     for sheet in metadata.get("sheets", []):
         if sheet.get("properties", {}).get("sheetId") == ws.id:
             banded = sheet.get("bandedRanges", [])
-            return [
-                {
-                    "id": br.get("bandedRangeId"),
-                    "range": br.get("range")
-                }
-                for br in banded
-            ]
+            return [{"id": br.get("bandedRangeId"), "range": br.get("range")} for br in banded]
     return []
 
 
@@ -216,7 +209,9 @@ def remove_banded_ranges(ws):
     return {"spreadsheet": sh.title, "worksheet": ws.title, "removed": len(banded)}
 
 
-def convert_to_table(ws, name=None, start_row=1, start_col=1, end_row=None, end_col=None, auto_remove_banding=True):
+def convert_to_table(
+    ws, name=None, start_row=1, start_col=1, end_row=None, end_col=None, auto_remove_banding=True
+):
     """
     Convert worksheet data range to a table.
 
@@ -262,21 +257,10 @@ def convert_to_table(ws, name=None, start_row=1, start_col=1, end_row=None, end_
         "startRowIndex": start_row - 1,
         "endRowIndex": end_row,
         "startColumnIndex": start_col - 1,
-        "endColumnIndex": end_col
+        "endColumnIndex": end_col,
     }
 
-    request = {
-        "requests": [
-            {
-                "addTable": {
-                    "table": {
-                        "name": name,
-                        "range": table_range
-                    }
-                }
-            }
-        ]
-    }
+    request = {"requests": [{"addTable": {"table": {"name": name, "range": table_range}}}]}
 
     response = sh.batch_update(request)
 
@@ -289,10 +273,10 @@ def convert_to_table(ws, name=None, start_row=1, start_col=1, end_row=None, end_
             "start_row": start_row,
             "end_row": end_row,
             "start_col": start_col,
-            "end_col": end_col
+            "end_col": end_col,
         },
         "banding_removed": banding_removed,
-        "response": response
+        "response": response,
     }
 
 
@@ -309,15 +293,7 @@ def delete_table(ws, table_id):
     """
     sh = ws.spreadsheet
 
-    request = {
-        "requests": [
-            {
-                "deleteTable": {
-                    "tableId": table_id
-                }
-            }
-        ]
-    }
+    request = {"requests": [{"deleteTable": {"tableId": table_id}}]}
 
     response = sh.batch_update(request)
     return {"success": True, "spreadsheet": sh.title, "worksheet": ws.title, "response": response}

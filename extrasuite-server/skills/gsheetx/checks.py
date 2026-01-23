@@ -14,12 +14,10 @@ Exit codes:
 """
 
 import json
-import os
 import subprocess
 import sys
 import venv
 from pathlib import Path
-
 
 # Configuration
 SKILL_DIR = Path(__file__).parent.resolve()
@@ -47,15 +45,15 @@ def error(message, instructions=None):
 
 def info(message):
     """Print info message to stderr (keep stdout clean for machine output)."""
-    print(f"[gsheet-skill] {message}", file=sys.stderr)
+    print(f"[gsheetx-skill] {message}", file=sys.stderr)
 
 
 def check_python_version():
-    """Ensure Python 3.8+ is available."""
-    if sys.version_info < (3, 8):
+    """Ensure Python 3.12+ is available."""
+    if sys.version_info < (3, 12):  # noqa: UP036 - runs on user machines with older Python
         error(
-            f"Python 3.8+ required, found {sys.version_info.major}.{sys.version_info.minor}",
-            ["Install Python 3.8 or later from https://www.python.org/downloads/"]
+            f"Python 3.12+ required, found {sys.version_info.major}.{sys.version_info.minor}",
+            ["Install Python 3.12 or later from https://www.python.org/downloads/"],
         )
 
 
@@ -72,14 +70,14 @@ def create_venv():
             f"Failed to create virtual environment: {e}",
             [
                 "Ensure you have write permissions to the skill directory",
-                f"Try manually: python3 -m venv {VENV_DIR}"
-            ]
+                f"Try manually: python3 -m venv {VENV_DIR}",
+            ],
         )
 
     if not VENV_PYTHON.exists():
         error(
             "Virtual environment created but Python interpreter not found",
-            [f"Expected at: {VENV_PYTHON}"]
+            [f"Expected at: {VENV_PYTHON}"],
         )
 
     return True  # Newly created
@@ -90,7 +88,7 @@ def install_dependencies():
     if not REQUIREMENTS_FILE.exists():
         error(
             f"requirements.txt not found at {REQUIREMENTS_FILE}",
-            ["Ensure requirements.txt exists in the skill directory"]
+            ["Ensure requirements.txt exists in the skill directory"],
         )
 
     # Check if gspread is already installed
@@ -101,8 +99,14 @@ def install_dependencies():
 
     info("Installing dependencies...")
     pip_cmd = [
-        str(VENV_PYTHON), "-m", "pip", "install",
-        "--quiet", "--upgrade", "-r", str(REQUIREMENTS_FILE)
+        str(VENV_PYTHON),
+        "-m",
+        "pip",
+        "install",
+        "--quiet",
+        "--upgrade",
+        "-r",
+        str(REQUIREMENTS_FILE),
     ]
     result = subprocess.run(pip_cmd, capture_output=True, text=True)
     if result.returncode != 0:
@@ -110,8 +114,8 @@ def install_dependencies():
             f"Failed to install dependencies: {result.stderr}",
             [
                 f"Try manually: {VENV_PYTHON} -m pip install -r {REQUIREMENTS_FILE}",
-                "Check your internet connection"
-            ]
+                "Check your internet connection",
+            ],
         )
     return True  # Newly installed
 
@@ -133,7 +137,7 @@ def main():
         "status": "ok",
         "venv_python": str(VENV_PYTHON),
         "skill_dir": str(SKILL_DIR),
-        "message": "Environment ready. Use verify_access.py to test spreadsheet access."
+        "message": "Environment ready. Use verify_access.py to test spreadsheet access.",
     }
     print(json.dumps(output))
     return 0

@@ -81,5 +81,3 @@ logs/
 *.sqlite
 *.sqlite3
 
-# Skills folder copied during Docker build (not the source)
-extrasuite-server/skills/

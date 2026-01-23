@@ -1,7 +1,7 @@
 """Structured JSON logging configuration for Google Cloud Logging.
 
 Configures loguru to output JSON-formatted logs compatible with Google Cloud Run
-and Cloud Logging. In development, uses human-readable colored output.
+and Cloud Logging.
 """
 
 import json
@@ -82,42 +82,25 @@ def _json_sink(message: Any) -> None:
     sys.stdout.flush()
 
 
-def configure_logging(*, is_production: bool, log_level: str = "INFO") -> None:
+def configure_logging(*, log_level: str = "INFO") -> None:
     """Configure loguru for the application.
 
+    Outputs JSON-formatted logs for Google Cloud Logging.
+
     Args:
-        is_production: If True, output JSON for Cloud Logging. If False, use
-            human-readable colored output for development.
         log_level: Minimum log level (DEBUG, INFO, WARNING, ERROR, CRITICAL).
     """
     # Remove default handler
     logger.remove()
 
-    if is_production:
-        # JSON output for Cloud Logging
-        logger.add(
-            _json_sink,
-            level=log_level,
-            format="{message}",  # Format is handled by the sink
-            backtrace=False,  # Don't include backtrace in format (handled in serializer)
-            diagnose=False,  # Don't include variable values in production
-        )
-    else:
-        # Human-readable colored output for development
-        logger.add(
-            sys.stderr,
-            level=log_level,
-            format=(
-                "<green>{time:YYYY-MM-DD HH:mm:ss}</green> | "
-                "<level>{level: <8}</level> | "
-                "<cyan>{name}</cyan>:<cyan>{function}</cyan>:<cyan>{line}</cyan> | "
-                "<level>{message}</level>"
-                "{exception}"
-            ),
-            colorize=True,
-            backtrace=True,
-            diagnose=True,
-        )
+    # JSON output for Cloud Logging
+    logger.add(
+        _json_sink,
+        level=log_level,
+        format="{message}",  # Format is handled by the sink
+        backtrace=False,  # Don't include backtrace in format (handled in serializer)
+        diagnose=False,  # Don't include variable values
+    )
 
     # Intercept standard library logging (for uvicorn, etc.)
     _intercept_standard_logging(log_level)

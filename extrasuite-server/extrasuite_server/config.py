@@ -6,8 +6,8 @@ The application will fail to start if required configuration is missing.
 
 import hashlib
 import json
-import secrets
 from functools import lru_cache
+from typing import Literal
 
 from pydantic import field_validator, model_validator
 from pydantic_settings import BaseSettings, SettingsConfigDict
@@ -17,7 +17,7 @@ class Settings(BaseSettings):
     """Application settings loaded from environment variables.
 
     Required environment variables:
-    - SECRET_KEY: For signing session cookies (must be set in production)
+    - SECRET_KEY: For signing session cookies
     - GOOGLE_CLIENT_ID: OAuth client ID
     - GOOGLE_CLIENT_SECRET: OAuth client secret
     - GOOGLE_CLOUD_PROJECT: GCP project for service accounts and Firestore
@@ -30,10 +30,6 @@ class Settings(BaseSettings):
         extra="ignore",  # Ignore extra env vars not defined in Settings
     )
 
-    # Server
-    port: int = 8001
-    environment: str = "development"
-    debug: bool = False
     log_level: str = "INFO"
 
     # Security - must be set via environment variable
@@ -42,7 +38,56 @@ class Settings(BaseSettings):
     # Google OAuth - must be set via environment variables
     google_client_id: str = ""
     google_client_secret: str = ""
-    google_redirect_uri: str = "http://localhost:8001/api/auth/callback"
+
+    # Base domain - the domain of this server (e.g., extrasuite.think41.com)
+    # Used for session cookie domain and to derive server_url if not set
+    base_domain: str = ""
+
+    # Server URL - base URL for this server (e.g., http://localhost:8001)
+    # If not set, derived from base_domain as https://{base_domain}
+    # For local development, set explicitly to http://localhost:8001
+    server_url: str = ""
+
+    @property
+    def effective_server_url(self) -> str:
+        """Get the effective server URL.
+
+        Returns server_url if set, otherwise derives from base_domain.
+        Falls back to http://localhost:8001 for local development.
+        """
+        if self.server_url:
+            return self.server_url.rstrip("/")
+        if self.base_domain:
+            return f"https://{self.base_domain}"
+        return "http://localhost:8001"
+
+    @property
+    def google_redirect_uri(self) -> str:
+        """Compute OAuth redirect URI from server_url."""
+        return f"{self.effective_server_url}/api/auth/callback"
+
+    # Session cookie settings
+    session_cookie_name: str = "session"
+    session_cookie_expiry_minutes: int = 1440  # 24 hours
+    session_cookie_same_site: Literal["lax", "strict", "none"] = "lax"
+    session_cookie_https_only: bool = True
+    session_cookie_domain: str = ""  # Empty means use base_domain, None disables domain
+
+    @property
+    def effective_session_cookie_domain(self) -> str | None:
+        """Get the effective session cookie domain.
+
+        Returns session_cookie_domain if explicitly set,
+        otherwise returns base_domain if set, or None.
+        """
+        if self.session_cookie_domain:
+            return self.session_cookie_domain
+        if self.base_domain:
+            return self.base_domain
+        return None
+
+    # Token settings
+    token_expiry_minutes: int = 60  # 1 hour (converted to seconds for API)
 
     # Google Cloud Project - must be set via environment variable
     google_cloud_project: str = ""
@@ -59,10 +104,11 @@ class Settings(BaseSettings):
     # If domain not in map, falls back to 4-char hash of domain
     domain_abbreviations: str = ""
 
-    @property
-    def is_production(self) -> bool:
-        """Check if running in production environment."""
-        return self.environment == "production"
+    # Default skills URL (public GitHub release)
+    # Used when no bundled skills.zip is present in the Docker image
+    default_skills_url: str = (
+        "https://github.com/think41/extrasuite/releases/latest/download/skills.zip"
+    )
 
     def get_allowed_domains(self) -> list[str]:
         """Get list of allowed email domains.
@@ -118,14 +164,9 @@ class Settings(BaseSettings):
         """Validate that required settings are configured."""
         errors = []
 
-        # In production, secret_key must be explicitly set
-        if self.is_production and not self.secret_key:
-            errors.append("SECRET_KEY must be set in production")
-
-        # Generate a random secret key for development if not set
+        # secret_key must be explicitly set
         if not self.secret_key:
-            # This is only for development - logs a warning
-            object.__setattr__(self, "secret_key", secrets.token_urlsafe(32))
+            errors.append("SECRET_KEY must be set")
 
         # OAuth credentials are always required
         if not self.google_client_id:
@@ -141,23 +182,6 @@ class Settings(BaseSettings):
             raise ValueError("Configuration errors:\n  - " + "\n  - ".join(errors))
 
         return self
-
-    @field_validator("environment")
-    @classmethod
-    def validate_environment(cls, v: str) -> str:
-        """Validate environment is a known value."""
-        allowed = {"development", "staging", "production"}
-        if v not in allowed:
-            raise ValueError(f"environment must be one of: {allowed}")
-        return v
-
-    @field_validator("port")
-    @classmethod
-    def validate_port(cls, v: int) -> int:
-        """Validate port is in valid range."""
-        if not 1 <= v <= 65535:
-            raise ValueError("port must be between 1 and 65535")
-        return v
 
     @field_validator("log_level")
     @classmethod

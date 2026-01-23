@@ -2,14 +2,16 @@
 
 Provides endpoints to download skill packages for Claude Code/Codex.
 Protected by short-lived signed tokens.
+
+Skills distribution:
+- Enterprise (bundled): /app/skills.zip is served via authenticated download
+- Public (default): Install script downloads directly from GitHub releases
 """
 
-import io
-import zipfile
 from pathlib import Path
 
 from fastapi import APIRouter, Depends, HTTPException, Query, Request
-from fastapi.responses import PlainTextResponse, StreamingResponse
+from fastapi.responses import FileResponse, PlainTextResponse
 from itsdangerous import BadSignature, SignatureExpired, URLSafeTimedSerializer
 from loguru import logger
 
@@ -20,40 +22,8 @@ router = APIRouter()
 # Token expiry in seconds (5 minutes)
 DOWNLOAD_TOKEN_TTL = 300
 
-# Skills directory paths
-# In Docker (production): /app/skills (copied during build)
-# In development: repo_root/skills
-_DOCKER_SKILLS_DIR = Path("/app/skills")
-_DEV_SKILLS_DIR = Path(__file__).parent.parent.parent / "skills"
-
-# Use Docker path if it exists, otherwise fall back to dev path
-SKILLS_DIR = _DOCKER_SKILLS_DIR if _DOCKER_SKILLS_DIR.exists() else _DEV_SKILLS_DIR
-
-# Files/directories to exclude from the zip
-EXCLUDED_PATTERNS = {
-    "venv",
-    "__pycache__",
-    ".git",
-    ".DS_Store",
-    "*.pyc",
-    ".gitignore",
-}
-
-
-def _should_exclude(path: Path) -> bool:
-    """Check if a path should be excluded from the zip."""
-    for pattern in EXCLUDED_PATTERNS:
-        if pattern.startswith("*"):
-            # Glob pattern for extension
-            if path.name.endswith(pattern[1:]):
-                return True
-        elif path.name == pattern:
-            return True
-        # Check if any parent matches
-        for parent in path.parents:
-            if parent.name == pattern:
-                return True
-    return False
+# Bundled skills zip path (only exists in enterprise Docker images)
+_DOCKER_SKILLS_ZIP = Path("/app/skills.zip")
 
 
 def _get_serializer(settings: Settings) -> URLSafeTimedSerializer:
@@ -64,16 +34,13 @@ def _get_serializer(settings: Settings) -> URLSafeTimedSerializer:
 @router.post("/download-token")
 async def generate_download_token(
     request: Request,
-    settings: Settings = None,
+    settings: Settings = Depends(get_settings),
 ) -> dict:
     """Generate a short-lived token for downloading skills.
 
     Requires authentication - user must be logged in.
     Returns a signed token that can be used to download the skills zip.
     """
-    if settings is None:
-        settings = get_settings()
-
     email = request.session.get("email")
     if not email:
         raise HTTPException(status_code=403, detail="Authentication required")
@@ -89,16 +56,13 @@ async def generate_download_token(
 @router.get("/download")
 async def download_skills(
     token: str = Query(..., description="Download token from /api/skills/download-token"),
-    settings: Settings = None,
-) -> StreamingResponse:
+    settings: Settings = Depends(get_settings),
+) -> FileResponse:
     """Download the skills package as a zip file.
 
+    Only available when bundled skills.zip exists (enterprise deployment).
     Requires a valid download token (no session/cookie needed).
-    This allows curl-based downloads without browser authentication.
     """
-    if settings is None:
-        settings = get_settings()
-
     serializer = _get_serializer(settings)
 
     try:
@@ -114,46 +78,25 @@ async def download_skills(
         raise HTTPException(status_code=401, detail="Invalid token purpose")
 
     email = data.get("email", "unknown")
+
+    # Only serve bundled skills.zip (enterprise deployment)
+    if not _DOCKER_SKILLS_ZIP.exists():
+        logger.warning(
+            "Skills download requested but no bundled skills.zip", extra={"email": email}
+        )
+        raise HTTPException(status_code=404, detail="Skills package not available")
+
     logger.info("Skills download started", extra={"email": email})
 
-    # Find all skill directories
-    if not SKILLS_DIR.exists():
-        logger.error("Skills directory not found", extra={"path": str(SKILLS_DIR)})
-        raise HTTPException(status_code=500, detail="Skills package not available")
-
-    # Get all skill directories (top-level folders in SKILLS_DIR)
-    skill_dirs = [d for d in SKILLS_DIR.iterdir() if d.is_dir() and not d.name.startswith(".")]
-    if not skill_dirs:
-        logger.error("No skills found", extra={"path": str(SKILLS_DIR)})
-        raise HTTPException(status_code=500, detail="No skills available")
-
-    # Create zip in memory with all skills
-    zip_buffer = io.BytesIO()
-    with zipfile.ZipFile(zip_buffer, "w", zipfile.ZIP_DEFLATED) as zf:
-        for skill_dir in skill_dirs:
-            skill_name = skill_dir.name
-            for file_path in skill_dir.rglob("*"):
-                if file_path.is_file() and not _should_exclude(file_path):
-                    arcname = skill_name + "/" + str(file_path.relative_to(skill_dir))
-                    zf.write(file_path, arcname)
-
-    zip_buffer.seek(0)
-
-    logger.info(
-        "Skills download completed",
-        extra={"email": email, "skills": [d.name for d in skill_dirs]},
-    )
-
-    return StreamingResponse(
-        zip_buffer,
+    return FileResponse(
+        _DOCKER_SKILLS_ZIP,
         media_type="application/zip",
-        headers={"Content-Disposition": "attachment; filename=extrasuite-skills.zip"},
+        filename="extrasuite-skills.zip",
     )
 
 
 @router.get("/install/{token}")
 async def get_install_script(
-    request: Request,
     token: str,
     ps: bool = Query(False, description="Return PowerShell script instead of bash"),
     settings: Settings = Depends(get_settings),
@@ -162,6 +105,9 @@ async def get_install_script(
 
     The token is validated and used to generate a download URL.
     Returns a bash script by default, or PowerShell if ps=true.
+
+    If bundled skills.zip exists (enterprise): downloads from server.
+    Otherwise: downloads directly from GitHub releases.
     """
     serializer = _get_serializer(settings)
 
@@ -192,14 +138,20 @@ async def get_install_script(
     email = data.get("email", "unknown")
     logger.info("Install script requested", extra={"email": email, "powershell": ps})
 
-    # Build the download URL with the same token
-    base_url = str(request.base_url).rstrip("/")
-    download_url = f"{base_url}/api/skills/download?token={token}"
+    # Determine download URL based on whether bundled skills.zip exists
+    base_url = settings.effective_server_url
+    if _DOCKER_SKILLS_ZIP.exists():
+        # Enterprise: download from server with auth token
+        download_url = f"{base_url}/api/skills/download?token={token}"
+    else:
+        # Public: download directly from GitHub
+        download_url = settings.default_skills_url
 
-    # Read the appropriate template and substitute
+    # Read the appropriate template and substitute placeholders
     script_file = "install.ps1" if ps else "install.sh"
     script_template = Path(__file__).parent / "static" / script_file
     script = script_template.read_text()
     script = script.replace("__DOWNLOAD_URL__", download_url)
+    script = script.replace("__SERVER_URL__", base_url)
 
     return PlainTextResponse(script, media_type="text/plain")

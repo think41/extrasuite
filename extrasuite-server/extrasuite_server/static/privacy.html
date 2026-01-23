@@ -18,7 +18,7 @@
             <section class="mb-8">
                 <h2 class="text-xl font-semibold text-gray-800 mb-4">Overview</h2>
                 <p class="text-gray-700">
-                    ExtraSuite is an internal authentication service operated by Think41 for employees of think41.com, recruit41.com, and mindlap.dev. This policy explains what information we collect and how we use it.
+                    ExtraSuite is an authentication service that enables AI agents to access Google Workspace APIs on your behalf. This policy explains what information we collect and how we use it.
                 </p>
             </section>
 
@@ -26,20 +26,20 @@
                 <h2 class="text-xl font-semibold text-gray-800 mb-4">Information We Collect</h2>
                 <p class="text-gray-700 mb-4">We collect minimal information necessary to provide the authentication service:</p>
                 <ul class="list-disc list-inside text-gray-700 space-y-2">
-                    <li><strong>Email address:</strong> Your Google Workspace email address, used to identify your account and restrict access to authorized domains.</li>
-                    <li><strong>OAuth refresh token:</strong> Stored securely to maintain your authentication session without requiring repeated logins.</li>
+                    <li><strong>Email address:</strong> Your Google account email address, used to identify your account.</li>
+                    <li><strong>Session data:</strong> A session cookie to maintain your login state.</li>
                 </ul>
             </section>
 
             <section class="mb-8">
-                <h2 class="text-xl font-semibold text-gray-800 mb-4">What We Do NOT Collect or Access</h2>
+                <h2 class="text-xl font-semibold text-gray-800 mb-4">What We Do NOT Collect or Store</h2>
                 <ul class="list-disc list-inside text-gray-700 space-y-2">
+                    <li><strong>OAuth refresh tokens:</strong> We do not store your Google OAuth refresh tokens.</li>
                     <li><strong>Document contents:</strong> ExtraSuite does not read, store, or access your Google Docs, Sheets, or Drive files.</li>
                     <li><strong>Personal files:</strong> We have no access to your personal data stored in Google Workspace.</li>
-                    <li><strong>Usage data:</strong> We do not track how you use the tokens we generate.</li>
                 </ul>
                 <p class="text-gray-700 mt-4">
-                    ExtraSuite only facilitates token creation. The CLI tools or LLM agents that use these tokens are responsible for their own data handling.
+                    ExtraSuite only facilitates token creation. The CLI tools or AI agents that use these tokens are responsible for their own data handling.
                 </p>
             </section>
 
@@ -47,32 +47,30 @@
                 <h2 class="text-xl font-semibold text-gray-800 mb-4">How We Use Your Information</h2>
                 <ul class="list-disc list-inside text-gray-700 space-y-2">
                     <li>Authenticate you via Google OAuth</li>
-                    <li>Verify your email domain is authorized</li>
                     <li>Generate short-lived service account tokens (valid for 1 hour)</li>
                     <li>Maintain your session to avoid repeated authentication</li>
                 </ul>
             </section>
 
             <section class="mb-8">
-                <h2 class="text-xl font-semibold text-gray-800 mb-4">Data Storage and Retention</h2>
+                <h2 class="text-xl font-semibold text-gray-800 mb-4">Data Storage</h2>
                 <ul class="list-disc list-inside text-gray-700 space-y-2">
-                    <li>Data is stored in Google Cloud Firestore within our GCP project</li>
-                    <li>OAuth refresh tokens are automatically deleted after 7 days of inactivity</li>
                     <li>Generated access tokens expire after 1 hour and are not stored server-side</li>
+                    <li>Session cookies are used to maintain login state</li>
                 </ul>
             </section>
 
             <section class="mb-8">
                 <h2 class="text-xl font-semibold text-gray-800 mb-4">Data Sharing</h2>
                 <p class="text-gray-700">
-                    We do not sell, share, or disclose your information to third parties. Your data is used solely for operating this internal authentication service.
+                    We do not sell, share, or disclose your information to third parties. Your data is used solely for operating this authentication service.
                 </p>
             </section>
 
             <section>
                 <h2 class="text-xl font-semibold text-gray-800 mb-4">Contact</h2>
                 <p class="text-gray-700">
-                    For questions about this privacy policy, contact your IT administrator or reach out via internal channels.
+                    For questions about this privacy policy, contact your administrator.
                 </p>
             </section>
         </main>
@@ -82,7 +80,6 @@
                 <a href="/" class="hover:text-gray-700 underline">Home</a>
                 <a href="/terms" class="hover:text-gray-700 underline">Terms of Service</a>
             </div>
-            <p>&copy; 2026 Think41 Technologies Pvt. Ltd.</p>
         </footer>
     </div>
 </body>

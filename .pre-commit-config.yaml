@@ -4,16 +4,16 @@ repos:
     hooks:
       - id: ruff
         args: [--fix]
-        files: ^server/
+        files: ^extrasuite-(server|client)/
       - id: ruff-format
-        files: ^server/
+        files: ^extrasuite-(server|client)/
 
   - repo: local
     hooks:
       - id: pyright
         name: pyright
-        entry: bash -c 'cd server && uv run pyright'
+        entry: bash -c 'cd extrasuite-server && uv run pyright'
         language: system
         types: [python]
-        files: ^server/
+        files: ^extrasuite-server/
         pass_filenames: false
