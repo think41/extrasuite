@@ -71,3 +71,13 @@ asia-southeast1-docker.pkg.dev/thinker41/extrasuite/server
 
 - **[IAM Permissions Reference](iam-permissions.md)** - Detailed explanation of required permissions
 - **[Operations Guide](operations.md)** - Monitoring, troubleshooting, and maintenance
+
+## Build Your Own Implementation
+
+This deployment guide is for the reference implementation using Google OAuth and Cloud Run. If you prefer to:
+
+- Use your own authentication mechanism (SAML, SSO, LDAP)
+- Apply custom access policies (specific departments, approval workflows)
+- Integrate into your existing employee portal
+
+See the **[Authentication API Specification](../api/auth-spec.md)** for the protocol specification. You can implement the two required endpoints in any language or framework while maintaining compatibility with the ExtraSuite client library and skills.

@@ -117,6 +117,9 @@ nav:
     - Cloud Run: deployment/cloud-run.md
     - IAM Permissions: deployment/iam-permissions.md
     - Operations: deployment/operations.md
+  - API Reference:
+    - api/index.md
+    - Authentication Spec: api/auth-spec.md
   - Security:
     - security.md
   - FAQ: faq.md
