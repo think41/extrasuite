@@ -1,643 +1,1659 @@
-<!DOCTYPE html>
+<!doctype html>
 <html lang="en">
-<head>
-  <meta charset="UTF-8">
-  <meta name="viewport" content="width=device-width, initial-scale=1.0">
-  <title>ExtraSuite - AI Securely Handle Your Complex Spreadsheet Work</title>
-  <meta name="description" content="Give your AI assistant secure, auditable access to Google Workspace. Build financial models, automate reports, and manage projects through natural language.">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>
+      ExtraSuite - Let AI Increase Your Productivity Across Google Workspace
+    </title>
+    <meta
+      name="description"
+      content="Give your AI assistant secure, auditable access to Google Workspace. Work with Sheets, Docs, and Slides through natural language - build financial models, create presentations, and automate reports."
+    />
 
-  <!-- Favicon -->
+    <!-- Favicon -->
 
-  <!-- Fonts -->
-  <link rel="preconnect" href="https://fonts.googleapis.com">
-  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
-  <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700;800&display=swap" rel="stylesheet">
+    <!-- Fonts -->
+    <link rel="preconnect" href="https://fonts.googleapis.com" />
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+    <link
+      href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700;800&display=swap"
+      rel="stylesheet"
+    />
 
-  <!-- Tailwind CSS -->
-  <script src="https://cdn.tailwindcss.com"></script>
-  <script>
-    tailwind.config = {
-      theme: {
-        extend: {
-          colors: {
-            'think41-blue': '#2563EB',
-            'think41-dark': '#1D4ED8',
-            'think41-navy': '#0F172A',
-            'think41-light': '#EFF6FF',
-            'think41-accent': '#A78BFA',
+    <!-- Tailwind CSS -->
+    <script src="https://cdn.tailwindcss.com"></script>
+    <script>
+      tailwind.config = {
+        theme: {
+          extend: {
+            colors: {
+              "think41-blue": "#2563EB",
+              "think41-dark": "#1D4ED8",
+              "think41-navy": "#0F172A",
+              "think41-light": "#EFF6FF",
+              "think41-accent": "#A78BFA",
+            },
+            fontFamily: {
+              sans: ["Inter", "system-ui", "-apple-system", "sans-serif"],
+            },
           },
-          fontFamily: {
-            'sans': ['Inter', 'system-ui', '-apple-system', 'sans-serif'],
-          }
+        },
+      };
+    </script>
+
+    <style>
+      html {
+        scroll-behavior: smooth;
+      }
+      body {
+        font-family:
+          "Inter",
+          system-ui,
+          -apple-system,
+          sans-serif;
+      }
+
+      .grid-bg {
+        background-image:
+          linear-gradient(rgba(37, 99, 235, 0.04) 1px, transparent 1px),
+          linear-gradient(90deg, rgba(37, 99, 235, 0.04) 1px, transparent 1px);
+        background-size: 50px 50px;
+      }
+
+      .hero-gradient {
+        background: linear-gradient(180deg, #eff6ff 0%, #ffffff 100%);
+      }
+
+      .card-hover {
+        transition: all 0.25s ease;
+      }
+      .card-hover:hover {
+        transform: translateY(-4px);
+        box-shadow: 0 20px 40px -12px rgba(0, 0, 0, 0.15);
+      }
+
+      /* Focus states for accessibility */
+      a:focus-visible {
+        outline: 2px solid #2563eb;
+        outline-offset: 2px;
+        border-radius: 4px;
+      }
+
+      /* Subtle animation for spreadsheet */
+      .spreadsheet-bg {
+        transition:
+          transform 0.3s ease,
+          box-shadow 0.3s ease;
+      }
+      .spreadsheet-bg:hover {
+        transform: translateY(-2px);
+      }
+
+      /* Google Sheets style background */
+      .spreadsheet-bg {
+        background-color: #ffffff;
+        background-image:
+        /* Row lines */
+          repeating-linear-gradient(
+            to bottom,
+            transparent 0px,
+            transparent 31px,
+            #e2e8f0 31px,
+            #e2e8f0 32px
+          ),
+          /* Column lines */
+          repeating-linear-gradient(
+              to right,
+              transparent 0px,
+              transparent 79px,
+              #e2e8f0 79px,
+              #e2e8f0 80px
+            );
+        background-size: 100% 100%;
+        background-position: 0 48px;
+        border: 2px solid #dadce0;
+        border-radius: 12px 0px 0px 0px;
+        position: relative;
+        overflow: hidden;
+        display: flex;
+        flex-direction: column;
+      }
+
+      .spreadsheet-header {
+        background: linear-gradient(135deg, #34a853 0%, #1e8e3e 100%);
+        padding: 8px 12px;
+        display: flex;
+        align-items: center;
+        gap: 6px;
+        border-bottom: 2px solid #1e8e3e;
+      }
+
+      .spreadsheet-header svg {
+        width: 18px;
+        height: 18px;
+        fill: white;
+      }
+
+      .spreadsheet-header span {
+        color: white;
+        font-size: 13px;
+        font-weight: 600;
+        font-family: "Google Sans", "Inter", sans-serif;
+      }
+
+      .spreadsheet-toolbar {
+        background: #f8f9fa;
+        border-bottom: 1px solid #e2e8f0;
+        padding: 4px 8px;
+        display: flex;
+        gap: 4px;
+      }
+
+      .toolbar-btn {
+        width: 20px;
+        height: 20px;
+        background: white;
+        border: 1px solid #dadce0;
+        border-radius: 3px;
+        display: flex;
+        align-items: center;
+        justify-content: center;
+        color: #5f6368;
+        font-size: 10px;
+        font-weight: 600;
+      }
+
+      .spreadsheet-content {
+        position: relative;
+        z-index: 1;
+        padding: 24px;
+        flex: 1;
+        display: flex;
+        flex-direction: column;
+        overflow: hidden;
+      }
+
+      .sheet-cell {
+        background: white;
+        border: 1px solid #e2e8f0;
+        border-radius: 6px;
+        padding: 18px 24px;
+        transition: all 0.15s ease;
+      }
+
+      .sheet-cell--sheet:hover {
+        border-color: #34a853;
+        box-shadow: 0 2px 8px rgba(52, 168, 83, 0.15);
+      }
+
+      .sheet-cell--presentation:hover {
+        border-color: #f9ab00;
+        box-shadow: 0 2px 8px rgba(52, 168, 83, 0.15);
+      }
+
+      .sheet-cell--docs:hover {
+        border-color: #1967d2;
+        box-shadow: 0 2px 8px rgba(52, 168, 83, 0.15);
+      }
+
+      /* Animation for shining border effect */
+      @keyframes shineBorder {
+        0% {
+          border-color: #34a853;
+          box-shadow: 0 2px 8px rgba(52, 168, 83, 0.15);
+        }
+        30% {
+          border-color: #34a853;
+          box-shadow: 0 2px 8px rgba(52, 168, 83, 0.15);
+        }
+        33%,
+        100% {
+          border-color: #e2e8f0;
+          box-shadow: none;
         }
       }
-    }
-  </script>
 
-  <style>
-    html { scroll-behavior: smooth; }
-    body { font-family: 'Inter', system-ui, -apple-system, sans-serif; }
+      .sheet-cell-animate {
+        animation: shineBorder 6s infinite;
+        border-color: #e2e8f0;
+        box-shadow: none;
+      }
 
-    .grid-bg {
-      background-image:
-        linear-gradient(rgba(37, 99, 235, 0.04) 1px, transparent 1px),
-        linear-gradient(90deg, rgba(37, 99, 235, 0.04) 1px, transparent 1px);
-      background-size: 50px 50px;
-    }
+      .sheet-cell-animate:nth-child(1) {
+        animation-delay: 0s;
+      }
 
-    .hero-gradient {
-      background: linear-gradient(180deg, #EFF6FF 0%, #FFFFFF 100%);
-    }
+      .sheet-cell-animate:nth-child(2) {
+        animation-delay: 2s;
+      }
 
-    .card-hover {
-      transition: all 0.25s ease;
-    }
-    .card-hover:hover {
-      transform: translateY(-4px);
-      box-shadow: 0 20px 40px -12px rgba(0, 0, 0, 0.15);
-    }
+      .sheet-cell-animate:nth-child(3) {
+        animation-delay: 4s;
+      }
 
-    /* Focus states for accessibility */
-    a:focus-visible {
-      outline: 2px solid #2563EB;
-      outline-offset: 2px;
-      border-radius: 4px;
-    }
+      /* Card stacking effect */
+      .cards-container {
+        position: relative;
+        perspective: 1000px;
+        min-height: 500px;
+        display: flex;
+        align-items: flex-end;
+      }
 
-    /* Subtle animation for spreadsheet */
-    .spreadsheet-bg {
-      transition: transform 0.3s ease, box-shadow 0.3s ease;
-    }
-    .spreadsheet-bg:hover {
-      transform: translateY(-2px);
-    }
+      .app-card {
+        position: absolute;
+        width: 100%;
+        height: 500px;
+        bottom: 0;
+        cursor: pointer;
+      }
 
-    /* Google Sheets style background */
-    .spreadsheet-bg {
-      background-color: #ffffff;
-      background-image:
-        /* Row lines */
-        repeating-linear-gradient(to bottom, transparent 0px, transparent 31px, #e2e8f0 31px, #e2e8f0 32px),
-        /* Column lines */
-        repeating-linear-gradient(to right, transparent 0px, transparent 79px, #e2e8f0 79px, #e2e8f0 80px);
-      background-size: 100% 100%;
-      background-position: 0 48px;
-      border: 2px solid #dadce0;
-      border-radius: 12px;
-      position: relative;
-      overflow: hidden;
-    }
+      .app-card .spreadsheet-bg {
+        height: 100%;
+        width: 100%;
+      }
 
-    .spreadsheet-header {
-      background: linear-gradient(135deg, #34a853 0%, #1e8e3e 100%);
-      padding: 8px 12px;
-      display: flex;
-      align-items: center;
-      gap: 6px;
-      border-bottom: 2px solid #1e8e3e;
-    }
+      /* Rotation based on position (z-index) */
+      .app-card {
+        transform-origin: left bottom;
+      }
 
-    .spreadsheet-header svg {
-      width: 18px;
-      height: 18px;
-      fill: white;
-    }
+      .app-card:nth-child(1) {
+        animation: cardCycle1 12s infinite step-end;
+      }
 
-    .spreadsheet-header span {
-      color: white;
-      font-size: 13px;
-      font-weight: 600;
-      font-family: 'Google Sans', 'Inter', sans-serif;
-    }
+      .app-card:nth-child(2) {
+        animation: cardCycle2 12s infinite step-end;
+      }
 
-    .spreadsheet-toolbar {
-      background: #f8f9fa;
-      border-bottom: 1px solid #e2e8f0;
-      padding: 4px 8px;
-      display: flex;
-      gap: 4px;
-    }
+      .app-card:nth-child(3) {
+        animation: cardCycle3 12s infinite step-end;
+      }
 
-    .toolbar-btn {
-      width: 20px;
-      height: 20px;
-      background: white;
-      border: 1px solid #dadce0;
-      border-radius: 3px;
-      display: flex;
-      align-items: center;
-      justify-content: center;
-      color: #5f6368;
-      font-size: 10px;
-      font-weight: 600;
-    }
+      /* Card 1: starts at front (z-index: 3, 0deg) */
+      @keyframes cardCycle1 {
+        0%,
+        33.32% {
+          z-index: 3;
+          transform: rotate(0deg);
+        }
+        33.33%,
+        66.65% {
+          z-index: 2;
+          transform: rotate(2deg);
+        }
+        66.66%,
+        100% {
+          z-index: 1;
+          transform: rotate(4deg);
+        }
+      }
 
-    .spreadsheet-content {
-      position: relative;
-      z-index: 1;
-      padding: 10px;
-    }
+      /* Card 2: starts at middle (z-index: 2, 2deg) */
+      @keyframes cardCycle2 {
+        0%,
+        33.32% {
+          z-index: 2;
+          transform: rotate(2deg);
+        }
+        33.33%,
+        66.65% {
+          z-index: 1;
+          transform: rotate(4deg);
+        }
+        66.66%,
+        100% {
+          z-index: 3;
+          transform: rotate(0deg);
+        }
+      }
 
-    .sheet-cell {
-      background: white;
-      border: 1px solid #e2e8f0;
-      border-radius: 4px;
-      padding: 8px 10px;
-      transition: all 0.15s ease;
-    }
+      /* Card 3: starts at back (z-index: 1, 4deg) */
+      @keyframes cardCycle3 {
+        0%,
+        33.32% {
+          z-index: 1;
+          transform: rotate(4deg);
+        }
+        33.33%,
+        66.65% {
+          z-index: 3;
+          transform: rotate(0deg);
+        }
+        66.66%,
+        100% {
+          z-index: 2;
+          transform: rotate(2deg);
+        }
+      }
 
-    .sheet-cell:hover {
-      border-color: #34a853;
-      box-shadow: 0 2px 8px rgba(52, 168, 83, 0.15);
-    }
+      /* Pause animation on hover */
+      .cards-container:hover .app-card {
+        animation-play-state: paused;
+      }
 
-    .sheet-cell-header {
-      background: linear-gradient(to bottom, #f0fdf4, #ffffff);
-      border: 1px solid #bbf7d0;
-      border-radius: 4px;
-      padding: 10px 14px;
-      margin-bottom: 12px;
-    }
-  </style>
-</head>
-<body class="bg-white text-gray-900">
+      /* Color variants for different apps */
+      .app-card-sheets .spreadsheet-header {
+        background: linear-gradient(135deg, #34a853 0%, #1e8e3e 100%);
+        border-bottom: 2px solid #1e8e3e;
+      }
 
-  <!-- Header -->
-  <header class="bg-white/95 backdrop-blur-sm border-b border-gray-100 sticky top-0 z-50 shadow-sm">
-    <div class="max-w-6xl mx-auto px-6 py-4 flex items-center justify-between">
-      <a href="./" class="flex items-center gap-2">
-        <svg class="w-8 h-8" viewBox="0 0 100 100">
-          <defs>
-            <linearGradient id="grad" x1="0%" y1="0%" x2="100%" y2="100%">
-              <stop offset="0%" style="stop-color:#2563EB"/>
-              <stop offset="100%" style="stop-color:#1D4ED8"/>
-            </linearGradient>
-          </defs>
-          <rect x="10" y="10" width="80" height="80" rx="15" fill="url(#grad)"/>
-          <text x="50" y="65" font-family="Arial" font-size="40" font-weight="bold" fill="white" text-anchor="middle">ES</text>
-        </svg>
-        <span class="font-bold text-xl text-think41-navy">ExtraSuite</span>
-      </a>
-      <nav class="hidden md:flex items-center gap-6 text-sm font-medium text-gray-600">
-        <a href="getting-started/" class="hover:text-think41-blue transition-colors">Docs</a>
-        <a href="security/" class="hover:text-think41-blue transition-colors">Security</a>
-        <a href="https://github.com/think41/extrasuite" class="hover:text-think41-blue transition-colors flex items-center gap-1.5">
-          <svg class="w-4 h-4" fill="currentColor" viewBox="0 0 24 24"><path d="M12 0c-6.626 0-12 5.373-12 12 0 5.302 3.438 9.8 8.207 11.387.599.111.793-.261.793-.577v-2.234c-3.338.726-4.033-1.416-4.033-1.416-.546-1.387-1.333-1.756-1.333-1.756-1.089-.745.083-.729.083-.729 1.205.084 1.839 1.237 1.839 1.237 1.07 1.834 2.807 1.304 3.492.997.107-.775.418-1.305.762-1.604-2.665-.305-5.467-1.334-5.467-5.931 0-1.311.469-2.381 1.236-3.221-.124-.303-.535-1.524.117-3.176 0 0 1.008-.322 3.301 1.23.957-.266 1.983-.399 3.003-.404 1.02.005 2.047.138 3.006.404 2.291-1.552 3.297-1.23 3.297-1.23.653 1.653.242 2.874.118 3.176.77.84 1.235 1.911 1.235 3.221 0 4.609-2.807 5.624-5.479 5.921.43.372.823 1.102.823 2.222v3.293c0 .319.192.694.801.576 4.765-1.589 8.199-6.086 8.199-11.386 0-6.627-5.373-12-12-12z"/></svg>
-          GitHub
+      .app-card-slides .spreadsheet-header {
+        background: linear-gradient(135deg, #fbbc04 0%, #f9ab00 100%);
+        border-bottom: 2px solid #f9ab00;
+      }
+
+      .app-card-slides .sheet-cell-header {
+        background: linear-gradient(to bottom, #fef7e0, #ffffff);
+        border: 1px solid #fde293;
+      }
+
+      .app-card-slides .sheet-cell-header h2 {
+        color: #ea8600;
+      }
+
+      .app-card-slides .sheet-cell-header p {
+        color: #f9ab00;
+      }
+
+      .app-card-docs .spreadsheet-header {
+        background: linear-gradient(135deg, #4285f4 0%, #1967d2 100%);
+        border-bottom: 2px solid #1967d2;
+      }
+
+      .app-card-docs .sheet-cell-header {
+        background: linear-gradient(to bottom, #e8f0fe, #ffffff);
+        border: 1px solid #aecbfa;
+      }
+
+      .app-card-docs .sheet-cell-header h2 {
+        color: #1967d2;
+      }
+
+      .app-card-docs .sheet-cell-header p {
+        color: #4285f4;
+      }
+
+      /* Google Docs background override - only background properties */
+      .app-card-docs.spreadsheet-bg {
+        background-color: #f8f9fa;
+        background-image:
+        /* Page shadow effect */
+          linear-gradient(to right, rgba(0, 0, 0, 0.03) 0px, transparent 8px),
+          /* Subtle vertical margin lines */
+          linear-gradient(
+              to right,
+              transparent 60px,
+              #e3e8f0 60px,
+              #e3e8f0 61px,
+              transparent 61px,
+              transparent calc(100% - 60px),
+              #e3e8f0 calc(100% - 60px),
+              #e3e8f0 calc(100% - 59px),
+              transparent calc(100% - 59px)
+            );
+      }
+
+      /* Google Slides background override - only background properties */
+      .app-card-slides.spreadsheet-bg {
+        background-color: #fffef7;
+        background-image:
+        /* Subtle presentation grid */
+          repeating-linear-gradient(
+            to bottom,
+            transparent 0px,
+            transparent 99px,
+            rgba(251, 188, 4, 0.05) 99px,
+            rgba(251, 188, 4, 0.05) 100px
+          ),
+          repeating-linear-gradient(
+            to right,
+            transparent 0px,
+            transparent 99px,
+            rgba(251, 188, 4, 0.05) 99px,
+            rgba(251, 188, 4, 0.05) 100px
+          );
+      }
+
+      .coming-soon-badge {
+        display: inline-block;
+        background: linear-gradient(135deg, #f59e0b, #d97706);
+        color: white;
+        font-size: 11px;
+        font-weight: 700;
+        padding: 4px 12px;
+        border-radius: 12px;
+        text-transform: uppercase;
+        letter-spacing: 0.5px;
+        box-shadow: 0 2px 4px rgba(245, 158, 11, 0.3);
+      }
+
+      .sheet-cell-header {
+        background: linear-gradient(to bottom, #f0fdf4, #ffffff);
+        border: 1px solid #bbf7d0;
+        border-radius: 6px;
+        padding: 20px 24px;
+        margin-bottom: 24px;
+        flex-shrink: 0;
+      }
+    </style>
+  </head>
+  <body class="bg-white text-gray-900">
+    <!-- Header -->
+    <header
+      class="bg-white/95 backdrop-blur-sm border-b border-gray-100 sticky top-0 z-50 shadow-sm"
+    >
+      <div
+        class="max-w-6xl mx-auto px-6 py-4 flex items-center justify-between"
+      >
+        <a href="./" class="flex items-center gap-2">
+          <svg class="w-8 h-8" viewBox="0 0 100 100">
+            <defs>
+              <linearGradient id="grad" x1="0%" y1="0%" x2="100%" y2="100%">
+                <stop offset="0%" style="stop-color: #2563eb" />
+                <stop offset="100%" style="stop-color: #1d4ed8" />
+              </linearGradient>
+            </defs>
+            <rect
+              x="10"
+              y="10"
+              width="80"
+              height="80"
+              rx="15"
+              fill="url(#grad)"
+            />
+            <text
+              x="50"
+              y="65"
+              font-family="Arial"
+              font-size="40"
+              font-weight="bold"
+              fill="white"
+              text-anchor="middle"
+            >
+              ES
+            </text>
+          </svg>
+          <span class="font-bold text-xl text-think41-navy">ExtraSuite</span>
         </a>
-      </nav>
-      <!-- Mobile menu button -->
-      <a href="getting-started/" class="md:hidden text-think41-blue font-medium text-sm">
-        Docs →
-      </a>
-    </div>
-  </header>
-
-  <!-- Combined Hero + Use Cases Section -->
-  <section class="hero-gradient grid-bg pt-8">
-    <div class="max-w-[1400px] mx-auto px-4 pt-10 pb-10 md:pt-16 md:pb-14">
-      <div class="grid lg:grid-cols-5 gap-8 lg:gap-14 items-stretch">
-        
-        <!-- Left: Hero Content -->
-        <div class="lg:col-span-3 flex flex-col justify-center">
-          <div class="mb-5">
-            <h1 class="text-3xl md:text-4xl lg:text-5xl font-bold text-think41-navy leading-tight">
-              AI <span class="text-green-600">Securely</span> Handle Your<br>
-              Complex <span class="text-green-600">Spreadsheet</span> Work
-            </h1>
-          </div>
-
-          <p class="text-base md:text-lg text-gray-600 mb-5">
-            Build financial models, automate project tracking, generate reports from multiple sources, all through natural language. ExtraSuite gives AI assistants <strong class="text-think41-navy">secure, auditable access</strong> to your Google Workspace.
-          </p>
-
-          <!-- Key Security Points -->
-          <div class="flex flex-col gap-2 text-sm text-gray-600 mb-6">
-            <div class="flex items-center gap-2">
-              <svg class="w-4 h-4 text-green-500 flex-shrink-0" fill="currentColor" viewBox="0 0 20 20"><path fill-rule="evenodd" d="M5 9V7a5 5 0 0110 0v2a2 2 0 012 2v5a2 2 0 01-2 2H5a2 2 0 01-2-2v-5a2 2 0 012-2zm8-2v2H7V7a3 3 0 016 0z" clip-rule="evenodd"/></svg>
-              <span><strong class="text-think41-navy">Only accesses files you share</strong></span>
-            </div>
-            <div class="flex items-center gap-2">
-              <svg class="w-4 h-4 text-green-500 flex-shrink-0" fill="currentColor" viewBox="0 0 20 20"><path fill-rule="evenodd" d="M10 18a8 8 0 100-16 8 8 0 000 16zm1-12a1 1 0 10-2 0v4a1 1 0 00.293.707l2.828 2.829a1 1 0 101.415-1.415L11 9.586V6z" clip-rule="evenodd"/></svg>
-              <span><strong class="text-think41-navy">Tokens expire in 1 hour</strong></span>
-            </div>
-            <div class="flex items-center gap-2">
-              <svg class="w-4 h-4 text-green-500 flex-shrink-0" fill="currentColor" viewBox="0 0 20 20"><path d="M9 2a1 1 0 000 2h2a1 1 0 100-2H9z"/><path fill-rule="evenodd" d="M4 5a2 2 0 012-2 3 3 0 003 3h2a3 3 0 003-3 2 2 0 012 2v11a2 2 0 01-2 2H6a2 2 0 01-2-2V5zm3 4a1 1 0 000 2h.01a1 1 0 100-2H7zm3 0a1 1 0 000 2h3a1 1 0 100-2h-3zm-3 4a1 1 0 100 2h.01a1 1 0 100-2H7zm3 0a1 1 0 100 2h3a1 1 0 100-2h-3z" clip-rule="evenodd"/></svg>
-              <span><strong class="text-think41-navy">Full audit trail in version history</strong></span>
-            </div>
-          </div>
-
-          <!-- CTA Buttons -->
-          <div class="flex flex-col sm:flex-row gap-3 mb-4">
-            <a href="getting-started/" class="inline-flex items-center justify-center gap-2 bg-gradient-to-r from-think41-blue to-think41-dark hover:from-think41-dark hover:to-think41-blue text-white font-semibold px-6 py-3 rounded-lg transition-all shadow-lg shadow-think41-blue/25 hover:shadow-xl hover:shadow-think41-blue/30">
-              <svg class="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M13 10V3L4 14h7v7l9-11h-7z"/></svg>
-              Get Started
-            </a>
-            <a href="https://github.com/think41/extrasuite" class="inline-flex items-center justify-center gap-2 bg-white hover:bg-gray-50 text-think41-navy font-semibold px-6 py-3 rounded-lg border border-gray-200 transition-all hover:border-gray-300 hover:shadow-md">
-              <svg class="w-5 h-5" fill="currentColor" viewBox="0 0 24 24"><path d="M12 0c-6.626 0-12 5.373-12 12 0 5.302 3.438 9.8 8.207 11.387.599.111.793-.261.793-.577v-2.234c-3.338.726-4.033-1.416-4.033-1.416-.546-1.387-1.333-1.756-1.333-1.756-1.089-.745.083-.729.083-.729 1.205.084 1.839 1.237 1.839 1.237 1.07 1.834 2.807 1.304 3.492.997.107-.775.418-1.305.762-1.604-2.665-.305-5.467-1.334-5.467-5.931 0-1.311.469-2.381 1.236-3.221-.124-.303-.535-1.524.117-3.176 0 0 1.008-.322 3.301 1.23.957-.266 1.983-.399 3.003-.404 1.02.005 2.047.138 3.006.404 2.291-1.552 3.297-1.23 3.297-1.23.653 1.653.242 2.874.118 3.176.77.84 1.235 1.911 1.235 3.221 0 4.609-2.807 5.624-5.479 5.921.43.372.823 1.102.823 2.222v3.293c0 .319.192.694.801.576 4.765-1.589 8.199-6.086 8.199-11.386 0-6.627-5.373-12-12-12z"/></svg>
-              View on GitHub
-            </a>
-          </div>
-
-          <p class="text-xs text-gray-400">Open source &middot; Apache 2.0 License &middot; By <a href="https://think41.com" class="hover:text-think41-blue transition-colors">Think41</a></p>
-        </div>
-
-        <!-- Right: What Can You Build (Spreadsheet Style) -->
-        <div class="lg:col-span-2 spreadsheet-bg shadow-2xl">
-          <!-- Header Bar -->
-          <div class="spreadsheet-header">
-            <svg viewBox="0 0 24 24"><path d="M19 3H5c-1.1 0-2 .9-2 2v14c0 1.1.9 2 2 2h14c1.1 0 2-.9 2-2V5c0-1.1-.9-2-2-2zm0 16H5V5h14v14zM7 10h2v7H7zm4-3h2v10h-2zm4 6h2v4h-2z"/></svg>
-            <span>Google Sheets</span>
-          </div>
-          
-          <!-- Toolbar -->
-          <div class="spreadsheet-toolbar">
-            <div class="toolbar-btn">B</div>
-            <div class="toolbar-btn">I</div>
-            <div class="toolbar-btn">U</div>
-            <div class="toolbar-btn" style="font-size: 8px;">123</div>
-            <div class="toolbar-btn">%</div>
-          </div>
-
-          <!-- Content Area -->
-          <div class="spreadsheet-content">
-            <!-- Title Cell -->
-            <div class="sheet-cell-header">
-              <h2 class="text-sm font-bold text-green-800 mb-0.5">What Can You Build?</h2>
-              <p class="text-green-600 text-[10px]">Tasks done through conversation</p>
-            </div>
-
-            <!-- Data Rows -->
-            <div class="space-y-1">
-              <!-- Row 1: Financial Models -->
-              <div class="sheet-cell">
-                <div class="flex items-center gap-1.5">
-                  <div class="text-sm flex-shrink-0">📊</div>
-                  <div>
-                    <h3 class="font-semibold text-think41-navy text-xs">Financial Models</h3>
-                    <p class="text-gray-500 text-[10px]">"Build DCF models, pull comps"</p>
-                  </div>
-                </div>
-              </div>
-
-              <!-- Row 2: Automated Reports -->
-              <div class="sheet-cell">
-                <div class="flex items-center gap-1.5">
-                  <div class="text-sm flex-shrink-0">📈</div>
-                  <div>
-                    <h3 class="font-semibold text-think41-navy text-xs">Automated Reports</h3>
-                    <p class="text-gray-500 text-[10px]">"Update dashboards from CRM"</p>
-                  </div>
-                </div>
-              </div>
-
-              <!-- Row 3: Project Tracking -->
-              <div class="sheet-cell">
-                <div class="flex items-center gap-1.5">
-                  <div class="text-sm flex-shrink-0">🎯</div>
-                  <div>
-                    <h3 class="font-semibold text-think41-navy text-xs">Project Tracking</h3>
-                    <p class="text-gray-500 text-[10px]">"Recalculate timelines, flag risks"</p>
-                  </div>
-                </div>
-              </div>
-            </div>
-
-            <!-- Formula Bar Style -->
-            <div class="mt-2 bg-gray-50 border border-gray-200 rounded px-2 py-1 flex items-center gap-1.5">
-              <span class="text-[10px] font-mono text-gray-400">fx</span>
-              <span class="text-[10px] font-mono text-gray-600">=AI("Analyze data")</span>
-            </div>
-          </div>
-        </div>
-
-      </div>
-    </div>
-  </section>
-
-  <!-- How It Works -->
-  <section class="py-16 bg-gradient-to-b from-white to-think41-light">
-    <div class="max-w-6xl mx-auto px-6">
-      <div class="text-center mb-12">
-        <h2 class="text-3xl md:text-4xl font-bold text-think41-navy mb-4">How It Works</h2>
-        <p class="text-gray-600 text-lg max-w-2xl mx-auto">Set up once, use everywhere</p>
-      </div>
-
-      <!-- Steps Overview -->
-      <div class="relative">
-        <!-- Connecting line (hidden on mobile) -->
-        <div class="hidden md:block absolute top-6 left-[10%] right-[10%] h-0.5 bg-gradient-to-r from-gray-300 via-think41-blue to-think41-blue"></div>
-        
-        <div class="grid grid-cols-2 md:grid-cols-5 gap-5 relative">
-          <div class="text-center">
-            <div class="w-12 h-12 bg-white border-2 border-dashed border-gray-300 text-gray-400 font-semibold text-lg rounded-full flex items-center justify-center mx-auto mb-4 relative z-10">0</div>
-            <h3 class="font-semibold text-think41-navy mb-2">Install an AI Agent</h3>
-            <p class="text-gray-500 text-sm">Get Claude Code, Gemini CLI, or Codex CLI on your machine.</p>
-          </div>
-          <div class="text-center">
-            <div class="w-12 h-12 bg-think41-blue text-white font-semibold text-lg rounded-full flex items-center justify-center mx-auto mb-4 shadow-lg shadow-think41-blue/30 relative z-10">1</div>
-            <h3 class="font-semibold text-think41-navy mb-2">Connect Your AI</h3>
-            <p class="text-gray-500 text-sm">Works with Claude, ChatGPT, Gemini, and other AI assistants.</p>
-          </div>
-          <div class="text-center">
-            <div class="w-12 h-12 bg-think41-blue text-white font-semibold text-lg rounded-full flex items-center justify-center mx-auto mb-4 shadow-lg shadow-think41-blue/30 relative z-10">2</div>
-            <h3 class="font-semibold text-think41-navy mb-2">Authenticate Once</h3>
-            <p class="text-gray-500 text-sm">Sign in with Google. Your AI gets a secure, time-limited token.</p>
-          </div>
-          <div class="text-center">
-            <div class="w-12 h-12 bg-think41-blue text-white font-semibold text-lg rounded-full flex items-center justify-center mx-auto mb-4 shadow-lg shadow-think41-blue/30 relative z-10">3</div>
-            <h3 class="font-semibold text-think41-navy mb-2">Share Documents</h3>
-            <p class="text-gray-500 text-sm">Share specific files with your AI, just like sharing with a colleague.</p>
-          </div>
-          <div class="text-center">
-            <div class="w-12 h-12 bg-think41-blue text-white font-semibold text-lg rounded-full flex items-center justify-center mx-auto mb-4 shadow-lg shadow-think41-blue/30 relative z-10">4</div>
-            <h3 class="font-semibold text-think41-navy mb-2">Get Work Done</h3>
-            <p class="text-gray-500 text-sm">Describe what you need. Your AI reads, writes, and updates your docs.</p>
-          </div>
-        </div>
-      </div>
-    </div>
-  </section>
-
-  <!-- Security Features -->
-  <section class="py-16 bg-think41-navy text-white">
-    <div class="max-w-6xl mx-auto px-6">
-      <div class="text-center mb-12">
-        <h2 class="text-3xl md:text-4xl font-bold mb-4">Built with Security First</h2>
-        <p class="text-blue-200 text-lg max-w-2xl mx-auto">Enterprise-grade security for your Google Workspace data</p>
-      </div>
-
-      <div class="grid md:grid-cols-2 lg:grid-cols-4 gap-8">
-        <div class="text-center">
-          <div class="w-14 h-14 bg-white/10 rounded-xl flex items-center justify-center mx-auto mb-4">
-            <svg class="w-7 h-7" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M12 15v2m-6 4h12a2 2 0 002-2v-6a2 2 0 00-2-2H6a2 2 0 00-2 2v6a2 2 0 002 2zm10-10V7a4 4 0 00-8 0v4h8z"/></svg>
-          </div>
-          <h3 class="font-semibold mb-2">You Stay in Control</h3>
-          <p class="text-blue-200 text-sm">AI agents can only access documents you explicitly share. Revoke access anytime.</p>
-        </div>
-        <div class="text-center">
-          <div class="w-14 h-14 bg-white/10 rounded-xl flex items-center justify-center mx-auto mb-4">
-            <svg class="w-7 h-7" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M12 8v4l3 3m6-3a9 9 0 11-18 0 9 9 0 0118 0z"/></svg>
-          </div>
-          <h3 class="font-semibold mb-2">Short-Lived Tokens</h3>
-          <p class="text-blue-200 text-sm">Access tokens expire after 1 hour. No long-lived credentials stored.</p>
-        </div>
-        <div class="text-center">
-          <div class="w-14 h-14 bg-white/10 rounded-xl flex items-center justify-center mx-auto mb-4">
-            <svg class="w-7 h-7" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M9 5H7a2 2 0 00-2 2v12a2 2 0 002 2h10a2 2 0 002-2V7a2 2 0 00-2-2h-2M9 5a2 2 0 002 2h2a2 2 0 002-2M9 5a2 2 0 012-2h2a2 2 0 012 2"/></svg>
-          </div>
-          <h3 class="font-semibold mb-2">Full Audit Trail</h3>
-          <p class="text-blue-200 text-sm">All changes appear in Google's version history. Review and undo instantly.</p>
-        </div>
-        <div class="text-center">
-          <div class="w-14 h-14 bg-white/10 rounded-xl flex items-center justify-center mx-auto mb-4">
-            <svg class="w-7 h-7" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M9 12l2 2 4-4m5.618-4.016A11.955 11.955 0 0112 2.944a11.955 11.955 0 01-8.618 3.04A12.02 12.02 0 003 9c0 5.591 3.824 10.29 9 11.622 5.176-1.332 9-6.03 9-11.622 0-1.042-.133-2.052-.382-3.016z"/></svg>
-          </div>
-          <h3 class="font-semibold mb-2">Enterprise IAM</h3>
-          <p class="text-blue-200 text-sm">Built on Google Cloud IAM with domain restrictions and service account impersonation.</p>
-        </div>
-      </div>
-
-      <div class="text-center mt-10">
-        <a href="security/" class="inline-flex items-center gap-2 text-white font-medium hover:underline">
-          Read the Security Documentation →
-        </a>
-      </div>
-    </div>
-  </section>
-
-  <!-- Supported Skills -->
-  <section class="py-16 bg-think41-light">
-    <div class="max-w-6xl mx-auto px-6">
-      <div class="text-center mb-12">
-        <h2 class="text-3xl md:text-4xl font-bold text-think41-navy mb-4">Supported Apps</h2>
-        <p class="text-gray-600 text-lg max-w-2xl mx-auto">Connect to your Google Workspace</p>
-      </div>
-
-      <div class="grid md:grid-cols-3 gap-6">
-        <div class="bg-white rounded-xl p-6 border border-gray-100 card-hover relative overflow-hidden">
-          <div class="absolute top-0 right-0 w-32 h-32 bg-gradient-to-bl from-green-50 to-transparent rounded-bl-full"></div>
-          <div class="relative">
-            <div class="flex items-center gap-4 mb-4">
-              <div class="w-12 h-12 bg-green-100 rounded-lg flex items-center justify-center shadow-sm">
-                <svg class="w-7 h-7 text-green-600" viewBox="0 0 24 24" fill="currentColor"><path d="M19 3H5c-1.1 0-2 .9-2 2v14c0 1.1.9 2 2 2h14c1.1 0 2-.9 2-2V5c0-1.1-.9-2-2-2zm0 16H5V5h14v14zM7 10h2v7H7zm4-3h2v10h-2zm4 6h2v4h-2z"/></svg>
-              </div>
-              <div>
-                <h3 class="font-semibold text-think41-navy">Google Sheets</h3>
-                <span class="inline-flex items-center px-2 py-0.5 rounded text-xs font-medium bg-green-100 text-green-800">Stable</span>
-              </div>
-            </div>
-            <p class="text-gray-600 text-sm mb-4">Read, write, format, and manipulate spreadsheets. Create charts, pivot tables, and complex formulas.</p>
-            <a href="skills/sheets/" class="text-think41-blue font-medium text-sm hover:underline inline-flex items-center gap-1">Learn more <span>→</span></a>
-          </div>
-        </div>
-
-        <div class="bg-white rounded-xl p-6 border border-gray-100 card-hover relative overflow-hidden">
-          <div class="absolute top-0 right-0 w-32 h-32 bg-gradient-to-bl from-blue-50 to-transparent rounded-bl-full"></div>
-          <div class="relative">
-            <div class="flex items-center gap-4 mb-4">
-              <div class="w-12 h-12 bg-blue-100 rounded-lg flex items-center justify-center shadow-sm">
-                <svg class="w-7 h-7 text-blue-600" viewBox="0 0 24 24" fill="currentColor"><path d="M14 2H6c-1.1 0-1.99.9-1.99 2L4 20c0 1.1.89 2 1.99 2H18c1.1 0 2-.9 2-2V8l-6-6zm2 16H8v-2h8v2zm0-4H8v-2h8v2zm-3-5V3.5L18.5 9H13z"/></svg>
-              </div>
-              <div>
-                <h3 class="font-semibold text-think41-navy">Google Docs</h3>
-                <span class="inline-flex items-center px-2 py-0.5 rounded text-xs font-medium bg-amber-100 text-amber-800">Alpha</span>
-              </div>
-            </div>
-            <p class="text-gray-600 text-sm mb-4">Create and edit documents. Format text, add images, and manage document structure.</p>
-            <a href="skills/docs/" class="text-think41-blue font-medium text-sm hover:underline inline-flex items-center gap-1">Learn more <span>→</span></a>
-          </div>
-        </div>
-
-        <div class="bg-white rounded-xl p-6 border border-gray-100 card-hover relative overflow-hidden">
-          <div class="absolute top-0 right-0 w-32 h-32 bg-gradient-to-bl from-yellow-50 to-transparent rounded-bl-full"></div>
-          <div class="relative">
-            <div class="flex items-center gap-4 mb-4">
-              <div class="w-12 h-12 bg-yellow-100 rounded-lg flex items-center justify-center shadow-sm">
-                <svg class="w-7 h-7 text-yellow-600" viewBox="0 0 24 24" fill="currentColor"><path d="M19 3H5c-1.1 0-2 .9-2 2v14c0 1.1.9 2 2 2h14c1.1 0 2-.9 2-2V5c0-1.1-.9-2-2-2zm0 16H5V5h14v14zM7 12h2v5H7zm4-3h2v8h-2zm4-3h2v11h-2z"/></svg>
-              </div>
-              <div>
-                <h3 class="font-semibold text-think41-navy">Google Slides</h3>
-                <span class="inline-flex items-center px-2 py-0.5 rounded text-xs font-medium bg-amber-100 text-amber-800">Alpha</span>
-              </div>
-            </div>
-            <p class="text-gray-600 text-sm mb-4">Build and edit presentations. Add slides, format content, and manage layouts.</p>
-            <a href="skills/slides/" class="text-think41-blue font-medium text-sm hover:underline inline-flex items-center gap-1">Learn more <span>→</span></a>
-          </div>
-        </div>
-      </div>
-    </div>
-  </section>
-
-  <!-- For Different Audiences -->
-  <section class="py-16 bg-white">
-    <div class="max-w-6xl mx-auto px-6">
-      <div class="text-center mb-12">
-        <h2 class="text-3xl md:text-4xl font-bold text-think41-navy mb-4">Built for Your Team</h2>
-        <p class="text-gray-600 text-lg max-w-2xl mx-auto">Whether you're deploying for an organization or just want it for yourself</p>
-      </div>
-
-      <div class="grid md:grid-cols-2 gap-8">
-        <div class="bg-white rounded-xl p-8 border border-gray-200 card-hover">
-          <div class="w-14 h-14 bg-think41-light rounded-xl flex items-center justify-center mb-6">
-            <svg class="w-7 h-7 text-think41-blue" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M19 21V5a2 2 0 00-2-2H7a2 2 0 00-2 2v16m14 0h2m-2 0h-5m-9 0H3m2 0h5M9 7h1m-1 4h1m4-4h1m-1 4h1m-5 10v-5a1 1 0 011-1h2a1 1 0 011 1v5m-4 0h4"/></svg>
-          </div>
-          <h3 class="text-xl font-bold text-think41-navy mb-3">For Organizations</h3>
-          <p class="text-gray-600 mb-6">Deploy ExtraSuite on your own Google Cloud infrastructure. Full control over authentication, domain restrictions, and audit logging.</p>
-          <ul class="space-y-2 text-sm text-gray-600 mb-6">
-            <li class="flex items-center gap-2">
-              <svg class="w-4 h-4 text-green-500 flex-shrink-0" fill="currentColor" viewBox="0 0 20 20"><path fill-rule="evenodd" d="M16.707 5.293a1 1 0 010 1.414l-8 8a1 1 0 01-1.414 0l-4-4a1 1 0 011.414-1.414L8 12.586l7.293-7.293a1 1 0 011.414 0z" clip-rule="evenodd"/></svg>
-              Self-hosted on Cloud Run
-            </li>
-            <li class="flex items-center gap-2">
-              <svg class="w-4 h-4 text-green-500 flex-shrink-0" fill="currentColor" viewBox="0 0 20 20"><path fill-rule="evenodd" d="M16.707 5.293a1 1 0 010 1.414l-8 8a1 1 0 01-1.414 0l-4-4a1 1 0 011.414-1.414L8 12.586l7.293-7.293a1 1 0 011.414 0z" clip-rule="evenodd"/></svg>
-              Domain-restricted authentication
-            </li>
-            <li class="flex items-center gap-2">
-              <svg class="w-4 h-4 text-green-500 flex-shrink-0" fill="currentColor" viewBox="0 0 20 20"><path fill-rule="evenodd" d="M16.707 5.293a1 1 0 010 1.414l-8 8a1 1 0 01-1.414 0l-4-4a1 1 0 011.414-1.414L8 12.586l7.293-7.293a1 1 0 011.414 0z" clip-rule="evenodd"/></svg>
-              Enterprise IAM integration
-            </li>
-          </ul>
-          <a href="deployment/" class="inline-flex items-center gap-2 text-think41-blue font-medium hover:underline">
-            Deployment Guide →
-          </a>
-        </div>
-
-        <div class="bg-white rounded-xl p-8 border border-gray-200 card-hover">
-          <div class="w-14 h-14 bg-think41-light rounded-xl flex items-center justify-center mb-6">
-            <svg class="w-7 h-7 text-think41-blue" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M16 7a4 4 0 11-8 0 4 4 0 018 0zM12 14a7 7 0 00-7 7h14a7 7 0 00-7-7z"/></svg>
-          </div>
-          <h3 class="text-xl font-bold text-think41-navy mb-3">For Individuals</h3>
-          <p class="text-gray-600 mb-6">Just want it for yourself? Skip the server setup. Download a service account key directly and configure your AI agent locally.</p>
-          <ul class="space-y-2 text-sm text-gray-600 mb-6">
-            <li class="flex items-center gap-2">
-              <svg class="w-4 h-4 text-green-500 flex-shrink-0" fill="currentColor" viewBox="0 0 20 20"><path fill-rule="evenodd" d="M16.707 5.293a1 1 0 010 1.414l-8 8a1 1 0 01-1.414 0l-4-4a1 1 0 011.414-1.414L8 12.586l7.293-7.293a1 1 0 011.414 0z" clip-rule="evenodd"/></svg>
-              No server required
-            </li>
-            <li class="flex items-center gap-2">
-              <svg class="w-4 h-4 text-green-500 flex-shrink-0" fill="currentColor" viewBox="0 0 20 20"><path fill-rule="evenodd" d="M16.707 5.293a1 1 0 010 1.414l-8 8a1 1 0 01-1.414 0l-4-4a1 1 0 011.414-1.414L8 12.586l7.293-7.293a1 1 0 011.414 0z" clip-rule="evenodd"/></svg>
-              Local service account key
-            </li>
-            <li class="flex items-center gap-2">
-              <svg class="w-4 h-4 text-green-500 flex-shrink-0" fill="currentColor" viewBox="0 0 20 20"><path fill-rule="evenodd" d="M16.707 5.293a1 1 0 010 1.414l-8 8a1 1 0 01-1.414 0l-4-4a1 1 0 011.414-1.414L8 12.586l7.293-7.293a1 1 0 011.414 0z" clip-rule="evenodd"/></svg>
-              Quick setup in minutes
-            </li>
-          </ul>
-          <a href="getting-started/individual-setup/" class="inline-flex items-center gap-2 text-think41-blue font-medium hover:underline">
-            Individual Setup Guide →
-          </a>
-        </div>
-      </div>
-    </div>
-  </section>
-
-  <!-- Documentation Links -->
-  <section class="py-16 bg-think41-light">
-    <div class="max-w-6xl mx-auto px-6">
-      <div class="text-center mb-12">
-        <h2 class="text-3xl md:text-4xl font-bold text-think41-navy mb-4">Documentation</h2>
-        <p class="text-gray-600 text-lg max-w-2xl mx-auto">Everything you need to get started</p>
-      </div>
-
-      <div class="grid grid-cols-2 md:grid-cols-4 gap-4">
-        <a href="getting-started/" class="group bg-white p-5 rounded-xl border border-gray-200 hover:border-think41-blue hover:shadow-md transition-all">
-          <div class="font-semibold text-think41-navy group-hover:text-think41-blue mb-1">Getting Started</div>
-          <div class="text-sm text-gray-500">Installation guides</div>
-        </a>
-        <a href="user-guide/" class="group bg-white p-5 rounded-xl border border-gray-200 hover:border-think41-blue hover:shadow-md transition-all">
-          <div class="font-semibold text-think41-navy group-hover:text-think41-blue mb-1">User Guide</div>
-          <div class="text-sm text-gray-500">Prompting & sharing</div>
-        </a>
-        <a href="skills/" class="group bg-white p-5 rounded-xl border border-gray-200 hover:border-think41-blue hover:shadow-md transition-all">
-          <div class="font-semibold text-think41-navy group-hover:text-think41-blue mb-1">Skills Reference</div>
-          <div class="text-sm text-gray-500">Sheets, Docs, Slides</div>
-        </a>
-        <a href="deployment/" class="group bg-white p-5 rounded-xl border border-gray-200 hover:border-think41-blue hover:shadow-md transition-all">
-          <div class="font-semibold text-think41-navy group-hover:text-think41-blue mb-1">Deployment</div>
-          <div class="text-sm text-gray-500">Cloud Run & IAM</div>
-        </a>
-        <a href="security/" class="group bg-white p-5 rounded-xl border border-gray-200 hover:border-think41-blue hover:shadow-md transition-all">
-          <div class="font-semibold text-think41-navy group-hover:text-think41-blue mb-1">Security</div>
-          <div class="text-sm text-gray-500">Threat model</div>
-        </a>
-        <a href="faq/" class="group bg-white p-5 rounded-xl border border-gray-200 hover:border-think41-blue hover:shadow-md transition-all">
-          <div class="font-semibold text-think41-navy group-hover:text-think41-blue mb-1">FAQ</div>
-          <div class="text-sm text-gray-500">Common questions</div>
-        </a>
-        <a href="https://github.com/think41/extrasuite" class="group bg-white p-5 rounded-xl border border-gray-200 hover:border-think41-blue hover:shadow-md transition-all">
-          <div class="font-semibold text-think41-navy group-hover:text-think41-blue mb-1 flex items-center gap-1.5">
-            <svg class="w-4 h-4" fill="currentColor" viewBox="0 0 24 24"><path d="M12 0c-6.626 0-12 5.373-12 12 0 5.302 3.438 9.8 8.207 11.387.599.111.793-.261.793-.577v-2.234c-3.338.726-4.033-1.416-4.033-1.416-.546-1.387-1.333-1.756-1.333-1.756-1.089-.745.083-.729.083-.729 1.205.084 1.839 1.237 1.839 1.237 1.07 1.834 2.807 1.304 3.492.997.107-.775.418-1.305.762-1.604-2.665-.305-5.467-1.334-5.467-5.931 0-1.311.469-2.381 1.236-3.221-.124-.303-.535-1.524.117-3.176 0 0 1.008-.322 3.301 1.23.957-.266 1.983-.399 3.003-.404 1.02.005 2.047.138 3.006.404 2.291-1.552 3.297-1.23 3.297-1.23.653 1.653.242 2.874.118 3.176.77.84 1.235 1.911 1.235 3.221 0 4.609-2.807 5.624-5.479 5.921.43.372.823 1.102.823 2.222v3.293c0 .319.192.694.801.576 4.765-1.589 8.199-6.086 8.199-11.386 0-6.627-5.373-12-12-12z"/></svg>
+        <nav
+          class="hidden md:flex items-center gap-6 text-sm font-medium text-gray-600"
+        >
+          <a
+            href="getting-started/"
+            class="hover:text-think41-blue transition-colors"
+            >Docs</a
+          >
+          <a href="security/" class="hover:text-think41-blue transition-colors"
+            >Security</a
+          >
+          <a
+            href="https://github.com/think41/extrasuite"
+            class="hover:text-think41-blue transition-colors flex items-center gap-1.5"
+          >
+            <svg class="w-4 h-4" fill="currentColor" viewBox="0 0 24 24">
+              <path
+                d="M12 0c-6.626 0-12 5.373-12 12 0 5.302 3.438 9.8 8.207 11.387.599.111.793-.261.793-.577v-2.234c-3.338.726-4.033-1.416-4.033-1.416-.546-1.387-1.333-1.756-1.333-1.756-1.089-.745.083-.729.083-.729 1.205.084 1.839 1.237 1.839 1.237 1.07 1.834 2.807 1.304 3.492.997.107-.775.418-1.305.762-1.604-2.665-.305-5.467-1.334-5.467-5.931 0-1.311.469-2.381 1.236-3.221-.124-.303-.535-1.524.117-3.176 0 0 1.008-.322 3.301 1.23.957-.266 1.983-.399 3.003-.404 1.02.005 2.047.138 3.006.404 2.291-1.552 3.297-1.23 3.297-1.23.653 1.653.242 2.874.118 3.176.77.84 1.235 1.911 1.235 3.221 0 4.609-2.807 5.624-5.479 5.921.43.372.823 1.102.823 2.222v3.293c0 .319.192.694.801.576 4.765-1.589 8.199-6.086 8.199-11.386 0-6.627-5.373-12-12-12z"
+              />
+            </svg>
             GitHub
-          </div>
-          <div class="text-sm text-gray-500">Source code</div>
-        </a>
-        <a href="https://github.com/think41/extrasuite/blob/main/LICENSE" class="group bg-white p-5 rounded-xl border border-gray-200 hover:border-think41-blue hover:shadow-md transition-all">
-          <div class="font-semibold text-think41-navy group-hover:text-think41-blue mb-1">License</div>
-          <div class="text-sm text-gray-500">Apache 2.0</div>
-        </a>
-      </div>
-    </div>
-  </section>
-
-  <!-- CTA Section -->
-  <section class="py-20 bg-gradient-to-br from-think41-blue via-think41-dark to-think41-navy relative overflow-hidden">
-    <!-- Decorative elements -->
-    <div class="absolute inset-0 opacity-10">
-      <div class="absolute top-0 left-1/4 w-96 h-96 bg-white rounded-full blur-3xl"></div>
-      <div class="absolute bottom-0 right-1/4 w-64 h-64 bg-white rounded-full blur-3xl"></div>
-    </div>
-    <div class="max-w-4xl mx-auto px-6 text-center relative">
-      <h2 class="text-3xl md:text-4xl font-bold text-white mb-4">Ready to Get Started?</h2>
-      <p class="text-blue-100 text-lg mb-8 max-w-2xl mx-auto">Give your AI assistant secure access to Google Workspace</p>
-      <div class="flex flex-col sm:flex-row gap-4 justify-center">
-        <a href="getting-started/" class="inline-flex items-center justify-center gap-2 bg-white hover:bg-gray-100 text-think41-blue font-semibold px-8 py-3.5 rounded-lg transition-all shadow-lg hover:shadow-xl hover:scale-105">
-          Get Started Now
-        </a>
-        <a href="https://github.com/think41/extrasuite" class="inline-flex items-center justify-center gap-2 bg-white/10 hover:bg-white/20 text-white font-semibold px-8 py-3.5 rounded-lg border border-white/30 transition-all backdrop-blur-sm">
-          <svg class="w-5 h-5" fill="currentColor" viewBox="0 0 24 24"><path d="M12 0c-6.626 0-12 5.373-12 12 0 5.302 3.438 9.8 8.207 11.387.599.111.793-.261.793-.577v-2.234c-3.338.726-4.033-1.416-4.033-1.416-.546-1.387-1.333-1.756-1.333-1.756-1.089-.745.083-.729.083-.729 1.205.084 1.839 1.237 1.839 1.237 1.07 1.834 2.807 1.304 3.492.997.107-.775.418-1.305.762-1.604-2.665-.305-5.467-1.334-5.467-5.931 0-1.311.469-2.381 1.236-3.221-.124-.303-.535-1.524.117-3.176 0 0 1.008-.322 3.301 1.23.957-.266 1.983-.399 3.003-.404 1.02.005 2.047.138 3.006.404 2.291-1.552 3.297-1.23 3.297-1.23.653 1.653.242 2.874.118 3.176.77.84 1.235 1.911 1.235 3.221 0 4.609-2.807 5.624-5.479 5.921.43.372.823 1.102.823 2.222v3.293c0 .319.192.694.801.576 4.765-1.589 8.199-6.086 8.199-11.386 0-6.627-5.373-12-12-12z"/></svg>
-          Star on GitHub
-        </a>
-      </div>
-    </div>
-  </section>
-
-  <!-- Footer -->
-  <footer class="bg-think41-navy text-white py-12">
-    <div class="max-w-6xl mx-auto px-6">
-      <div class="grid md:grid-cols-3 gap-8 mb-8">
-        <div>
-          <div class="font-bold text-lg mb-4">ExtraSuite</div>
-          <p class="text-blue-200 text-sm">Connect AI agents to Google Workspace. An open-source project by Think41.</p>
-        </div>
-        <div>
-          <div class="font-semibold mb-4">Documentation</div>
-          <ul class="space-y-2 text-sm text-blue-200">
-            <li><a href="getting-started/" class="hover:text-white transition-colors">Getting Started</a></li>
-            <li><a href="user-guide/" class="hover:text-white transition-colors">User Guide</a></li>
-            <li><a href="skills/" class="hover:text-white transition-colors">Skills</a></li>
-            <li><a href="deployment/" class="hover:text-white transition-colors">Deployment</a></li>
-          </ul>
-        </div>
-        <div>
-          <div class="font-semibold mb-4">Resources</div>
-          <ul class="space-y-2 text-sm text-blue-200">
-            <li><a href="security/" class="hover:text-white transition-colors">Security</a></li>
-            <li><a href="faq/" class="hover:text-white transition-colors">FAQ</a></li>
-            <li><a href="https://github.com/think41/extrasuite" class="hover:text-white transition-colors">GitHub</a></li>
-          </ul>
-        </div>
-      </div>
-      <div class="border-t border-white/10 pt-8 flex flex-col md:flex-row justify-between items-center gap-4">
-        <div class="text-sm text-blue-200">© 2026 Think41 Technologies Pvt. Ltd.</div>
-        <div class="flex items-center gap-4">
-          <a href="https://github.com/think41/extrasuite" class="text-blue-200 hover:text-white transition-colors">
-            <svg class="w-5 h-5" fill="currentColor" viewBox="0 0 24 24"><path d="M12 0c-6.626 0-12 5.373-12 12 0 5.302 3.438 9.8 8.207 11.387.599.111.793-.261.793-.577v-2.234c-3.338.726-4.033-1.416-4.033-1.416-.546-1.387-1.333-1.756-1.333-1.756-1.089-.745.083-.729.083-.729 1.205.084 1.839 1.237 1.839 1.237 1.07 1.834 2.807 1.304 3.492.997.107-.775.418-1.305.762-1.604-2.665-.305-5.467-1.334-5.467-5.931 0-1.311.469-2.381 1.236-3.221-.124-.303-.535-1.524.117-3.176 0 0 1.008-.322 3.301 1.23.957-.266 1.983-.399 3.003-.404 1.02.005 2.047.138 3.006.404 2.291-1.552 3.297-1.23 3.297-1.23.653 1.653.242 2.874.118 3.176.77.84 1.235 1.911 1.235 3.221 0 4.609-2.807 5.624-5.479 5.921.43.372.823 1.102.823 2.222v3.293c0 .319.192.694.801.576 4.765-1.589 8.199-6.086 8.199-11.386 0-6.627-5.373-12-12-12z"/></svg>
           </a>
-          <a href="https://think41.com" class="text-blue-200 hover:text-white transition-colors text-sm">think41.com</a>
+        </nav>
+        <!-- Mobile menu button -->
+        <a
+          href="getting-started/"
+          class="md:hidden text-think41-blue font-medium text-sm"
+        >
+          Docs →
+        </a>
+      </div>
+    </header>
+
+    <!-- Combined Hero + Use Cases Section -->
+    <section class="hero-gradient grid-bg pt-8">
+      <div class="max-w-[1600px] mx-auto px-6 pt-10 pb-16 md:pt-16 md:pb-20">
+        <div class="grid lg:grid-cols-5 gap-8 lg:gap-12 items-stretch">
+          <!-- Left: Hero Content -->
+          <div
+            class="lg:col-span-3 flex flex-col justify-start"
+            style="padding-top: 48px"
+          >
+            <div class="mb-8">
+              <h1
+                class="text-3xl md:text-4xl lg:text-5xl font-bold text-think41-navy leading-tight"
+              >
+                Let AI
+                <span class="text-think41-blue">Increase Your Productivity</span
+                ><br />
+                Across Google Workspace Tasks -
+                <span class="text-think41-blue">Securely</span>
+              </h1>
+            </div>
+
+            <p class="text-lg md:text-xl text-gray-600 mb-8 leading-relaxed">
+              Build financial models, automate project tracking, generate
+              reports from multiple sources, all through natural language.
+              ExtraSuite gives AI assistants
+              <strong class="text-think41-navy"
+                >secure, auditable access</strong
+              >
+              to your Google Workspace.
+            </p>
+
+            <!-- Key Security Points -->
+            <div class="flex flex-col gap-3 text-base text-gray-600 mb-8">
+              <div class="flex items-center gap-3">
+                <svg
+                  class="w-5 h-5 text-green-500 flex-shrink-0"
+                  fill="currentColor"
+                  viewBox="0 0 20 20"
+                >
+                  <path
+                    fill-rule="evenodd"
+                    d="M5 9V7a5 5 0 0110 0v2a2 2 0 012 2v5a2 2 0 01-2 2H5a2 2 0 01-2-2v-5a2 2 0 012-2zm8-2v2H7V7a3 3 0 016 0z"
+                    clip-rule="evenodd"
+                  />
+                </svg>
+                <span
+                  ><strong class="text-think41-navy"
+                    >Only accesses files you share</strong
+                  ></span
+                >
+              </div>
+              <div class="flex items-center gap-3">
+                <svg
+                  class="w-5 h-5 text-green-500 flex-shrink-0"
+                  fill="currentColor"
+                  viewBox="0 0 20 20"
+                >
+                  <path
+                    fill-rule="evenodd"
+                    d="M10 18a8 8 0 100-16 8 8 0 000 16zm1-12a1 1 0 10-2 0v4a1 1 0 00.293.707l2.828 2.829a1 1 0 101.415-1.415L11 9.586V6z"
+                    clip-rule="evenodd"
+                  />
+                </svg>
+                <span
+                  ><strong class="text-think41-navy"
+                    >Tokens expire in 1 hour</strong
+                  ></span
+                >
+              </div>
+              <div class="flex items-center gap-3">
+                <svg
+                  class="w-5 h-5 text-green-500 flex-shrink-0"
+                  fill="currentColor"
+                  viewBox="0 0 20 20"
+                >
+                  <path d="M9 2a1 1 0 000 2h2a1 1 0 100-2H9z" />
+                  <path
+                    fill-rule="evenodd"
+                    d="M4 5a2 2 0 012-2 3 3 0 003 3h2a3 3 0 003-3 2 2 0 012 2v11a2 2 0 01-2 2H6a2 2 0 01-2-2V5zm3 4a1 1 0 000 2h.01a1 1 0 100-2H7zm3 0a1 1 0 000 2h3a1 1 0 100-2h-3zm-3 4a1 1 0 100 2h.01a1 1 0 100-2H7zm3 0a1 1 0 100 2h3a1 1 0 100-2h-3z"
+                    clip-rule="evenodd"
+                  />
+                </svg>
+                <span
+                  ><strong class="text-think41-navy"
+                    >Full audit trail in version history</strong
+                  ></span
+                >
+              </div>
+            </div>
+
+            <!-- CTA Buttons -->
+            <div class="flex flex-col sm:flex-row gap-4 mb-6">
+              <a
+                href="getting-started/"
+                class="inline-flex items-center justify-center gap-2 bg-gradient-to-r from-think41-blue to-think41-dark hover:from-think41-dark hover:to-think41-blue text-white font-semibold px-8 py-4 rounded-lg transition-all shadow-lg shadow-think41-blue/25 hover:shadow-xl hover:shadow-think41-blue/30 text-lg"
+              >
+                <svg
+                  class="w-6 h-6"
+                  fill="none"
+                  stroke="currentColor"
+                  viewBox="0 0 24 24"
+                >
+                  <path
+                    stroke-linecap="round"
+                    stroke-linejoin="round"
+                    stroke-width="2"
+                    d="M13 10V3L4 14h7v7l9-11h-7z"
+                  />
+                </svg>
+                Get Started
+              </a>
+              <a
+                href="https://github.com/think41/extrasuite"
+                class="inline-flex items-center justify-center gap-2 bg-white hover:bg-gray-50 text-think41-navy font-semibold px-8 py-4 rounded-lg border-2 border-gray-200 transition-all hover:border-gray-300 hover:shadow-md text-lg"
+              >
+                <svg class="w-6 h-6" fill="currentColor" viewBox="0 0 24 24">
+                  <path
+                    d="M12 0c-6.626 0-12 5.373-12 12 0 5.302 3.438 9.8 8.207 11.387.599.111.793-.261.793-.577v-2.234c-3.338.726-4.033-1.416-4.033-1.416-.546-1.387-1.333-1.756-1.333-1.756-1.089-.745.083-.729.083-.729 1.205.084 1.839 1.237 1.839 1.237 1.07 1.834 2.807 1.304 3.492.997.107-.775.418-1.305.762-1.604-2.665-.305-5.467-1.334-5.467-5.931 0-1.311.469-2.381 1.236-3.221-.124-.303-.535-1.524.117-3.176 0 0 1.008-.322 3.301 1.23.957-.266 1.983-.399 3.003-.404 1.02.005 2.047.138 3.006.404 2.291-1.552 3.297-1.23 3.297-1.23.653 1.653.242 2.874.118 3.176.77.84 1.235 1.911 1.235 3.221 0 4.609-2.807 5.624-5.479 5.921.43.372.823 1.102.823 2.222v3.293c0 .319.192.694.801.576 4.765-1.589 8.199-6.086 8.199-11.386 0-6.627-5.373-12-12-12z"
+                  />
+                </svg>
+                View on GitHub
+              </a>
+            </div>
+
+            <p class="text-sm text-gray-400">
+              Open source &middot; Apache 2.0 License &middot; By
+              <a
+                href="https://think41.com"
+                class="hover:text-think41-blue transition-colors"
+                >Think41</a
+              >
+            </p>
+          </div>
+
+          <!-- Right: What Can You Build (Card Stack) -->
+          <div class="lg:col-span-2">
+            <div class="cards-container overflow-y-clip">
+              <!-- Card 1: Google Sheets -->
+              <div class="app-card app-card-sheets spreadsheet-bg">
+                <div class="spreadsheet-header">
+                  <svg viewBox="0 0 24 24">
+                    <path
+                      d="M19 3H5c-1.1 0-2 .9-2 2v14c0 1.1.9 2 2 2h14c1.1 0 2-.9 2-2V5c0-1.1-.9-2-2-2zm0 16H5V5h14v14zM7 10h2v7H7zm4-3h2v10h-2zm4 6h2v4h-2z"
+                    />
+                  </svg>
+                  <span>Google Sheets</span>
+                </div>
+                <div class="spreadsheet-toolbar">
+                  <div class="toolbar-btn">B</div>
+                  <div class="toolbar-btn">I</div>
+                  <div class="toolbar-btn">U</div>
+                  <div class="toolbar-btn" style="font-size: 8px">123</div>
+                  <div class="toolbar-btn">%</div>
+                </div>
+                <div class="spreadsheet-content">
+                  <div class="sheet-cell-header">
+                    <h2 class="text-xl font-bold text-green-800 mb-2">
+                      What Can You Build?
+                    </h2>
+                    <p class="text-green-600 text-sm">
+                      Tasks done through conversation
+                    </p>
+                  </div>
+                  <div class="space-y-3 flex-shrink-0">
+                    <div class="sheet-cell sheet-cell--sheet">
+                      <div class="flex items-center gap-3">
+                        <div class="text-2xl flex-shrink-0">📊</div>
+                        <div>
+                          <h3 class="font-semibold text-think41-navy text-base">
+                            Financial Models
+                          </h3>
+                          <p class="text-gray-500 text-sm">
+                            "Build DCF models, pull comps"
+                          </p>
+                        </div>
+                      </div>
+                    </div>
+                    <div class="sheet-cell sheet-cell--docs--sheet">
+                      <div class="flex items-center gap-3">
+                        <div class="text-2xl flex-shrink-0">📈</div>
+                        <div>
+                          <h3 class="font-semibold text-think41-navy text-base">
+                            Automated Reports
+                          </h3>
+                          <p class="text-gray-500 text-sm">
+                            "Update dashboards from CRM"
+                          </p>
+                        </div>
+                      </div>
+                    </div>
+                    <div class="sheet-cell sheet-cell--docs--sheet">
+                      <div class="flex items-center gap-3">
+                        <div class="text-2xl flex-shrink-0">🎯</div>
+                        <div>
+                          <h3 class="font-semibold text-think41-navy text-base">
+                            Project Tracking
+                          </h3>
+                          <p class="text-gray-500 text-sm">
+                            "Recalculate timelines, flag risks"
+                          </p>
+                        </div>
+                      </div>
+                    </div>
+                  </div>
+                </div>
+              </div>
+
+              <!-- Card 2: Google Slides -->
+              <div class="app-card app-card-slides spreadsheet-bg">
+                <div class="spreadsheet-header">
+                  <svg viewBox="0 0 24 24">
+                    <path
+                      d="M19 3H5c-1.1 0-2 .9-2 2v14c0 1.1.9 2 2 2h14c1.1 0 2-.9 2-2V5c0-1.1-.9-2-2-2zm0 16H5V5h14v14zM7 12h2v5H7zm4-3h2v8h-2zm4-3h2v11h-2z"
+                    />
+                  </svg>
+                  <span>Google Slides</span>
+                </div>
+                <div class="spreadsheet-toolbar">
+                  <div class="toolbar-btn">B</div>
+                  <div class="toolbar-btn">I</div>
+                  <div class="toolbar-btn">U</div>
+                  <div class="toolbar-btn" style="font-size: 8px">123</div>
+                  <div class="toolbar-btn">%</div>
+                </div>
+                <div class="spreadsheet-content">
+                  <div class="sheet-cell-header">
+                    <h2 class="text-xl font-bold mb-2">What Can You Build?</h2>
+                    <p class="text-sm">Tasks done through conversation</p>
+                  </div>
+                  <div class="space-y-3 flex-shrink-0">
+                    <div class="sheet-cell sheet-cell--presentation">
+                      <div class="flex items-center gap-3">
+                        <div class="text-2xl flex-shrink-0">🎨</div>
+                        <div>
+                          <h3 class="font-semibold text-think41-navy text-base">
+                            Pitch Decks
+                          </h3>
+                          <p class="text-gray-500 text-sm">
+                            "Create investor presentations"
+                          </p>
+                        </div>
+                      </div>
+                    </div>
+                    <div class="sheet-cell sheet-cell--presentation">
+                      <div class="flex items-center gap-3">
+                        <div class="text-2xl flex-shrink-0">📊</div>
+                        <div>
+                          <h3 class="font-semibold text-think41-navy text-base">
+                            Data Visualization
+                          </h3>
+                          <p class="text-gray-500 text-sm">
+                            "Turn data into visual stories"
+                          </p>
+                        </div>
+                      </div>
+                    </div>
+                    <div class="sheet-cell sheet-cell--presentation">
+                      <div class="flex items-center gap-3">
+                        <div class="text-2xl flex-shrink-0">🎯</div>
+                        <div>
+                          <h3 class="font-semibold text-think41-navy text-base">
+                            Training Materials
+                          </h3>
+                          <p class="text-gray-500 text-sm">
+                            "Build educational content"
+                          </p>
+                        </div>
+                      </div>
+                    </div>
+                  </div>
+                </div>
+              </div>
+
+              <!-- Card 3: Google Docs -->
+              <div class="app-card app-card-docs spreadsheet-bg">
+                <div class="spreadsheet-header">
+                  <svg viewBox="0 0 24 24">
+                    <path
+                      d="M14 2H6c-1.1 0-1.99.9-1.99 2L4 20c0 1.1.89 2 1.99 2H18c1.1 0 2-.9 2-2V8l-6-6zm2 16H8v-2h8v2zm0-4H8v-2h8v2zm-3-5V3.5L18.5 9H13z"
+                    />
+                  </svg>
+                  <span>Google Docs</span>
+                </div>
+                <div class="spreadsheet-toolbar">
+                  <div class="toolbar-btn">B</div>
+                  <div class="toolbar-btn">I</div>
+                  <div class="toolbar-btn">U</div>
+                  <div class="toolbar-btn" style="font-size: 8px">123</div>
+                  <div class="toolbar-btn">%</div>
+                </div>
+                <div class="spreadsheet-content">
+                  <div class="sheet-cell-header">
+                    <h2 class="text-xl font-bold mb-2">What Can You Build?</h2>
+                    <p class="text-sm">Tasks done through conversation</p>
+                    <div class="mt-3">
+                      <span class="coming-soon-badge">Coming Soon</span>
+                    </div>
+                  </div>
+                  <div class="space-y-3 flex-shrink-0">
+                    <div class="sheet-cell sheet-cell--docs">
+                      <div class="flex items-center gap-3">
+                        <div class="text-2xl flex-shrink-0">📝</div>
+                        <div>
+                          <h3 class="font-semibold text-think41-navy text-base">
+                            Research Reports
+                          </h3>
+                          <p class="text-gray-500 text-sm">
+                            "Compile and analyze findings"
+                          </p>
+                        </div>
+                      </div>
+                    </div>
+                    <div class="sheet-cell sheet-cell--docs">
+                      <div class="flex items-center gap-3">
+                        <div class="text-2xl flex-shrink-0">📄</div>
+                        <div>
+                          <h3 class="font-semibold text-think41-navy text-base">
+                            Meeting Notes
+                          </h3>
+                          <p class="text-gray-500 text-sm">
+                            "Organize and summarize discussions"
+                          </p>
+                        </div>
+                      </div>
+                    </div>
+                    <div class="sheet-cell sheet-cell--docs">
+                      <div class="flex items-center gap-3">
+                        <div class="text-2xl flex-shrink-0">✍️</div>
+                        <div>
+                          <h3 class="font-semibold text-think41-navy text-base">
+                            Proposals & RFPs
+                          </h3>
+                          <p class="text-gray-500 text-sm">
+                            "Draft professional documents"
+                          </p>
+                        </div>
+                      </div>
+                    </div>
+                  </div>
+                </div>
+              </div>
+            </div>
+
+            <!-- CLI Command Line - Attached to bottom of cards -->
+            <div class="mt-3">
+              <div
+                class="bg-[#1e1e1e] rounded-lg shadow-lg border border-gray-800"
+              >
+                <div class="font-mono text-sm">
+                  <!-- Top section with horizontal line -->
+                  <div class="border-b border-gray-700 px-4 py-3">
+                    <div class="flex items-start">
+                      <span class="text-green-400 mr-2 mt-0.5">&gt;</span>
+                      <div class="flex-1">
+                        <span class="text-gray-300"
+                          >Update Q4 revenue in Financial Model sheet</span
+                        >
+                        <br />
+                        <span class="text-gray-300"
+                          >Add conditional formatting for risks over $50k</span
+                        >
+                        <br />
+                        <span class="text-gray-300"
+                          >Generate executive summary in new tab</span
+                        >
+                        <span class="animate-pulse text-gray-300 ml-1">█</span>
+                      </div>
+                    </div>
+                  </div>
+
+                  <!-- Bottom status bar -->
+                  <div class="px-4 py-2 text-xs">
+                    <span class="text-purple-400">▶▶</span>
+                    <span class="text-blue-400 ml-2">accept edits on</span>
+                    <span class="text-gray-500 ml-1">(shift+tab to cycle)</span>
+                    <span class="text-gray-600 mx-2">·</span>
+                    <span class="text-gray-400">Financial_Model.xlsx</span>
+                    <span class="text-green-400 ml-2">+124</span>
+                    <span class="text-red-400 ml-1">-8</span>
+                  </div>
+                </div>
+              </div>
+            </div>
+          </div>
         </div>
       </div>
-    </div>
-  </footer>
+    </section>
 
-</body>
+    <!-- How It Works -->
+    <section class="py-20 bg-think41-light">
+      <div class="max-w-6xl mx-auto px-6">
+        <div class="text-center mb-12">
+          <h2 class="text-4xl md:text-5xl font-bold text-think41-navy mb-4">
+            How It Works
+          </h2>
+          <p class="text-gray-600 text-xl max-w-2xl mx-auto">
+            Set up once, use everywhere
+          </p>
+        </div>
+
+        <!-- Steps Overview -->
+        <div class="relative">
+          <!-- Connecting line (hidden on mobile) -->
+          <div
+            class="hidden md:block absolute top-6 left-[10%] right-[10%] h-0.5 bg-gradient-to-r from-gray-300 via-think41-blue to-think41-blue"
+          ></div>
+
+          <div class="grid grid-cols-2 md:grid-cols-5 gap-5 relative">
+            <div class="text-center">
+              <div
+                class="w-14 h-14 bg-white border-2 border-dashed border-gray-300 text-gray-400 font-semibold text-xl rounded-full flex items-center justify-center mx-auto mb-4 relative z-10"
+              >
+                0
+              </div>
+              <h3 class="font-semibold text-think41-navy mb-2 text-lg">
+                Install an AI Agent
+              </h3>
+              <p class="text-gray-500 text-base">
+                Get Claude Code, Gemini CLI, or Codex CLI on your machine.
+              </p>
+            </div>
+            <div class="text-center">
+              <div
+                class="w-14 h-14 bg-think41-blue text-white font-semibold text-xl rounded-full flex items-center justify-center mx-auto mb-4 shadow-lg shadow-think41-blue/30 relative z-10"
+              >
+                1
+              </div>
+              <h3 class="font-semibold text-think41-navy mb-2 text-lg">
+                Connect Your AI
+              </h3>
+              <p class="text-gray-500 text-base">
+                Works with Claude, ChatGPT, Gemini, and other AI assistants.
+              </p>
+            </div>
+            <div class="text-center">
+              <div
+                class="w-14 h-14 bg-think41-blue text-white font-semibold text-xl rounded-full flex items-center justify-center mx-auto mb-4 shadow-lg shadow-think41-blue/30 relative z-10"
+              >
+                2
+              </div>
+              <h3 class="font-semibold text-think41-navy mb-2 text-lg">
+                Authenticate Once
+              </h3>
+              <p class="text-gray-500 text-base">
+                Sign in with Google. Your AI gets a secure, time-limited token.
+              </p>
+            </div>
+            <div class="text-center">
+              <div
+                class="w-14 h-14 bg-think41-blue text-white font-semibold text-xl rounded-full flex items-center justify-center mx-auto mb-4 shadow-lg shadow-think41-blue/30 relative z-10"
+              >
+                3
+              </div>
+              <h3 class="font-semibold text-think41-navy mb-2 text-lg">
+                Share Documents
+              </h3>
+              <p class="text-gray-500 text-base">
+                Share specific files with your AI, just like sharing with a
+                colleague.
+              </p>
+            </div>
+            <div class="text-center">
+              <div
+                class="w-14 h-14 bg-think41-blue text-white font-semibold text-xl rounded-full flex items-center justify-center mx-auto mb-4 shadow-lg shadow-think41-blue/30 relative z-10"
+              >
+                4
+              </div>
+              <h3 class="font-semibold text-think41-navy mb-2 text-lg">
+                Get Work Done
+              </h3>
+              <p class="text-gray-500 text-base">
+                Describe what you need. Your AI reads, writes, and updates your
+                docs.
+              </p>
+            </div>
+          </div>
+        </div>
+      </div>
+    </section>
+
+    <!-- Security Features -->
+    <section class="py-20 bg-think41-navy text-white">
+      <div class="max-w-6xl mx-auto px-6">
+        <div class="text-center mb-12">
+          <h2 class="text-4xl md:text-5xl font-bold mb-4">
+            Built with Security First
+          </h2>
+          <p class="text-blue-200 text-xl max-w-2xl mx-auto">
+            Enterprise-grade security for your Google Workspace data
+          </p>
+        </div>
+
+        <div class="grid md:grid-cols-2 lg:grid-cols-4 gap-8">
+          <div class="text-center">
+            <div
+              class="w-16 h-16 bg-white/10 rounded-xl flex items-center justify-center mx-auto mb-4"
+            >
+              <svg
+                class="w-8 h-8"
+                fill="none"
+                stroke="currentColor"
+                viewBox="0 0 24 24"
+              >
+                <path
+                  stroke-linecap="round"
+                  stroke-linejoin="round"
+                  stroke-width="2"
+                  d="M12 15v2m-6 4h12a2 2 0 002-2v-6a2 2 0 00-2-2H6a2 2 0 00-2 2v6a2 2 0 002 2zm10-10V7a4 4 0 00-8 0v4h8z"
+                />
+              </svg>
+            </div>
+            <h3 class="font-semibold mb-2 text-lg">You Stay in Control</h3>
+            <p class="text-blue-200 text-base">
+              AI agents can only access documents you explicitly share. Revoke
+              access anytime.
+            </p>
+          </div>
+          <div class="text-center">
+            <div
+              class="w-16 h-16 bg-white/10 rounded-xl flex items-center justify-center mx-auto mb-4"
+            >
+              <svg
+                class="w-8 h-8"
+                fill="none"
+                stroke="currentColor"
+                viewBox="0 0 24 24"
+              >
+                <path
+                  stroke-linecap="round"
+                  stroke-linejoin="round"
+                  stroke-width="2"
+                  d="M12 8v4l3 3m6-3a9 9 0 11-18 0 9 9 0 0118 0z"
+                />
+              </svg>
+            </div>
+            <h3 class="font-semibold mb-2 text-lg">Short-Lived Tokens</h3>
+            <p class="text-blue-200 text-base">
+              Access tokens expire after 1 hour. No long-lived credentials
+              stored.
+            </p>
+          </div>
+          <div class="text-center">
+            <div
+              class="w-16 h-16 bg-white/10 rounded-xl flex items-center justify-center mx-auto mb-4"
+            >
+              <svg
+                class="w-8 h-8"
+                fill="none"
+                stroke="currentColor"
+                viewBox="0 0 24 24"
+              >
+                <path
+                  stroke-linecap="round"
+                  stroke-linejoin="round"
+                  stroke-width="2"
+                  d="M9 5H7a2 2 0 00-2 2v12a2 2 0 002 2h10a2 2 0 002-2V7a2 2 0 00-2-2h-2M9 5a2 2 0 002 2h2a2 2 0 002-2M9 5a2 2 0 012-2h2a2 2 0 012 2"
+                />
+              </svg>
+            </div>
+            <h3 class="font-semibold mb-2 text-lg">Full Audit Trail</h3>
+            <p class="text-blue-200 text-base">
+              All changes appear in Google's version history. Review and undo
+              instantly.
+            </p>
+          </div>
+          <div class="text-center">
+            <div
+              class="w-16 h-16 bg-white/10 rounded-xl flex items-center justify-center mx-auto mb-4"
+            >
+              <svg
+                class="w-8 h-8"
+                fill="none"
+                stroke="currentColor"
+                viewBox="0 0 24 24"
+              >
+                <path
+                  stroke-linecap="round"
+                  stroke-linejoin="round"
+                  stroke-width="2"
+                  d="M9 12l2 2 4-4m5.618-4.016A11.955 11.955 0 0112 2.944a11.955 11.955 0 01-8.618 3.04A12.02 12.02 0 003 9c0 5.591 3.824 10.29 9 11.622 5.176-1.332 9-6.03 9-11.622 0-1.042-.133-2.052-.382-3.016z"
+                />
+              </svg>
+            </div>
+            <h3 class="font-semibold mb-2 text-lg">Enterprise IAM</h3>
+            <p class="text-blue-200 text-base">
+              Built on Google Cloud IAM with domain restrictions and service
+              account impersonation.
+            </p>
+          </div>
+        </div>
+
+        <div class="text-center mt-10">
+          <a
+            href="security/"
+            class="inline-flex items-center gap-2 text-white font-medium hover:underline text-lg"
+          >
+            Read the Security Documentation →
+          </a>
+        </div>
+      </div>
+    </section>
+
+    <!-- Supported Skills -->
+    <section class="py-20 bg-think41-light">
+      <div class="max-w-6xl mx-auto px-6">
+        <div class="text-center mb-12">
+          <h2 class="text-4xl md:text-5xl font-bold text-think41-navy mb-4">
+            Supported Apps
+          </h2>
+          <p class="text-gray-600 text-xl max-w-2xl mx-auto">
+            Connect to your Google Workspace
+          </p>
+        </div>
+
+        <div class="grid md:grid-cols-3 gap-6">
+          <div
+            class="bg-white rounded-xl p-6 border border-gray-100 card-hover relative overflow-hidden"
+          >
+            <div
+              class="absolute top-0 right-0 w-32 h-32 bg-gradient-to-bl from-green-50 to-transparent rounded-bl-full"
+            ></div>
+            <div class="relative">
+              <div class="flex items-center gap-4 mb-4">
+                <div
+                  class="w-12 h-12 bg-green-100 rounded-lg flex items-center justify-center shadow-sm"
+                >
+                  <svg
+                    class="w-7 h-7 text-green-600"
+                    viewBox="0 0 24 24"
+                    fill="currentColor"
+                  >
+                    <path
+                      d="M19 3H5c-1.1 0-2 .9-2 2v14c0 1.1.9 2 2 2h14c1.1 0 2-.9 2-2V5c0-1.1-.9-2-2-2zm0 16H5V5h14v14zM7 10h2v7H7zm4-3h2v10h-2zm4 6h2v4h-2z"
+                    />
+                  </svg>
+                </div>
+                <div>
+                  <h3 class="font-semibold text-think41-navy">Google Sheets</h3>
+                  <span
+                    class="inline-flex items-center px-2 py-0.5 rounded text-xs font-medium bg-green-100 text-green-800"
+                    >Stable</span
+                  >
+                </div>
+              </div>
+              <p class="text-gray-600 text-base mb-4">
+                Read, write, format, and manipulate spreadsheets. Create charts,
+                pivot tables, and complex formulas.
+              </p>
+              <a
+                href="skills/sheets/"
+                class="text-think41-blue font-medium text-base hover:underline inline-flex items-center gap-1"
+                >Learn more <span>→</span></a
+              >
+            </div>
+          </div>
+
+          <div
+            class="bg-white rounded-xl p-6 border border-gray-100 card-hover relative overflow-hidden"
+          >
+            <div
+              class="absolute top-0 right-0 w-32 h-32 bg-gradient-to-bl from-yellow-50 to-transparent rounded-bl-full"
+            ></div>
+            <div class="relative">
+              <div class="flex items-center gap-4 mb-4">
+                <div
+                  class="w-12 h-12 bg-yellow-100 rounded-lg flex items-center justify-center shadow-sm"
+                >
+                  <svg
+                    class="w-7 h-7 text-yellow-600"
+                    viewBox="0 0 24 24"
+                    fill="currentColor"
+                  >
+                    <path
+                      d="M19 3H5c-1.1 0-2 .9-2 2v14c0 1.1.9 2 2 2h14c1.1 0 2-.9 2-2V5c0-1.1-.9-2-2-2zm0 16H5V5h14v14zM7 12h2v5H7zm4-3h2v8h-2zm4-3h2v11h-2z"
+                    />
+                  </svg>
+                </div>
+                <div>
+                  <h3 class="font-semibold text-think41-navy">Google Slides</h3>
+                  <span
+                    class="inline-flex items-center px-2 py-0.5 rounded text-xs font-medium bg-amber-100 text-amber-800"
+                    >Alpha</span
+                  >
+                </div>
+              </div>
+              <p class="text-gray-600 text-base mb-4">
+                Build and edit presentations. Add slides, format content, and
+                manage layouts.
+              </p>
+              <a
+                href="skills/slides/"
+                class="text-think41-blue font-medium text-base hover:underline inline-flex items-center gap-1"
+                >Learn more <span>→</span></a
+              >
+            </div>
+          </div>
+
+          <div
+            class="bg-white rounded-xl p-6 border border-gray-100 card-hover relative overflow-hidden"
+          >
+            <div
+              class="absolute top-0 right-0 w-32 h-32 bg-gradient-to-bl from-blue-50 to-transparent rounded-bl-full"
+            ></div>
+            <div class="relative">
+              <div class="flex items-center gap-4 mb-4">
+                <div
+                  class="w-12 h-12 bg-blue-100 rounded-lg flex items-center justify-center shadow-sm"
+                >
+                  <svg
+                    class="w-7 h-7 text-blue-600"
+                    viewBox="0 0 24 24"
+                    fill="currentColor"
+                  >
+                    <path
+                      d="M14 2H6c-1.1 0-1.99.9-1.99 2L4 20c0 1.1.89 2 1.99 2H18c1.1 0 2-.9 2-2V8l-6-6zm2 16H8v-2h8v2zm0-4H8v-2h8v2zm-3-5V3.5L18.5 9H13z"
+                    />
+                  </svg>
+                </div>
+                <div>
+                  <h3 class="font-semibold text-think41-navy">Google Docs</h3>
+                  <span
+                    class="inline-flex items-center px-2 py-0.5 rounded text-xs font-medium bg-amber-100 text-amber-800"
+                    >Coming Soon</span
+                  >
+                </div>
+              </div>
+              <p class="text-gray-600 text-base mb-4">
+                Create and edit documents. Format text, add images, and manage
+                document structure.
+              </p>
+              <a
+                href="skills/docs/"
+                class="text-think41-blue font-medium text-base hover:underline inline-flex items-center gap-1"
+                >Learn more <span>→</span></a
+              >
+            </div>
+          </div>
+        </div>
+      </div>
+    </section>
+
+    <!-- For Different Audiences -->
+    <section class="py-20 bg-white">
+      <div class="max-w-6xl mx-auto px-6">
+        <div class="text-center mb-12">
+          <h2 class="text-4xl md:text-5xl font-bold text-think41-navy mb-4">
+            Built for Your Team
+          </h2>
+          <p class="text-gray-600 text-xl max-w-2xl mx-auto">
+            Whether you're deploying for an organization or just want it for
+            yourself
+          </p>
+        </div>
+
+        <div class="grid md:grid-cols-2 gap-8">
+          <div
+            class="bg-white rounded-xl p-8 border border-gray-200 card-hover"
+          >
+            <div
+              class="w-14 h-14 bg-think41-light rounded-xl flex items-center justify-center mb-6"
+            >
+              <svg
+                class="w-7 h-7 text-think41-blue"
+                fill="none"
+                stroke="currentColor"
+                viewBox="0 0 24 24"
+              >
+                <path
+                  stroke-linecap="round"
+                  stroke-linejoin="round"
+                  stroke-width="2"
+                  d="M19 21V5a2 2 0 00-2-2H7a2 2 0 00-2 2v16m14 0h2m-2 0h-5m-9 0H3m2 0h5M9 7h1m-1 4h1m4-4h1m-1 4h1m-5 10v-5a1 1 0 011-1h2a1 1 0 011 1v5m-4 0h4"
+                />
+              </svg>
+            </div>
+            <h3 class="text-2xl font-bold text-think41-navy mb-3">
+              For Organizations
+            </h3>
+            <p class="text-gray-600 mb-6 text-lg">
+              Deploy ExtraSuite on your own Google Cloud infrastructure. Full
+              control over authentication, domain restrictions, and audit
+              logging.
+            </p>
+            <ul class="space-y-2 text-base text-gray-600 mb-6">
+              <li class="flex items-center gap-2">
+                <svg
+                  class="w-4 h-4 text-green-500 flex-shrink-0"
+                  fill="currentColor"
+                  viewBox="0 0 20 20"
+                >
+                  <path
+                    fill-rule="evenodd"
+                    d="M16.707 5.293a1 1 0 010 1.414l-8 8a1 1 0 01-1.414 0l-4-4a1 1 0 011.414-1.414L8 12.586l7.293-7.293a1 1 0 011.414 0z"
+                    clip-rule="evenodd"
+                  />
+                </svg>
+                Self-hosted on Cloud Run
+              </li>
+              <li class="flex items-center gap-2">
+                <svg
+                  class="w-4 h-4 text-green-500 flex-shrink-0"
+                  fill="currentColor"
+                  viewBox="0 0 20 20"
+                >
+                  <path
+                    fill-rule="evenodd"
+                    d="M16.707 5.293a1 1 0 010 1.414l-8 8a1 1 0 01-1.414 0l-4-4a1 1 0 011.414-1.414L8 12.586l7.293-7.293a1 1 0 011.414 0z"
+                    clip-rule="evenodd"
+                  />
+                </svg>
+                Domain-restricted authentication
+              </li>
+              <li class="flex items-center gap-2">
+                <svg
+                  class="w-4 h-4 text-green-500 flex-shrink-0"
+                  fill="currentColor"
+                  viewBox="0 0 20 20"
+                >
+                  <path
+                    fill-rule="evenodd"
+                    d="M16.707 5.293a1 1 0 010 1.414l-8 8a1 1 0 01-1.414 0l-4-4a1 1 0 011.414-1.414L8 12.586l7.293-7.293a1 1 0 011.414 0z"
+                    clip-rule="evenodd"
+                  />
+                </svg>
+                Enterprise IAM integration
+              </li>
+            </ul>
+            <a
+              href="deployment/"
+              class="inline-flex items-center gap-2 text-think41-blue font-medium hover:underline text-lg"
+            >
+              Deployment Guide →
+            </a>
+          </div>
+
+          <div
+            class="bg-white rounded-xl p-8 border border-gray-200 card-hover"
+          >
+            <div
+              class="w-14 h-14 bg-think41-light rounded-xl flex items-center justify-center mb-6"
+            >
+              <svg
+                class="w-7 h-7 text-think41-blue"
+                fill="none"
+                stroke="currentColor"
+                viewBox="0 0 24 24"
+              >
+                <path
+                  stroke-linecap="round"
+                  stroke-linejoin="round"
+                  stroke-width="2"
+                  d="M16 7a4 4 0 11-8 0 4 4 0 018 0zM12 14a7 7 0 00-7 7h14a7 7 0 00-7-7z"
+                />
+              </svg>
+            </div>
+            <h3 class="text-2xl font-bold text-think41-navy mb-3">
+              For Individuals
+            </h3>
+            <p class="text-gray-600 mb-6 text-lg">
+              Just want it for yourself? Skip the server setup. Download a
+              service account key directly and configure your AI agent locally.
+            </p>
+            <ul class="space-y-2 text-base text-gray-600 mb-6">
+              <li class="flex items-center gap-2">
+                <svg
+                  class="w-4 h-4 text-green-500 flex-shrink-0"
+                  fill="currentColor"
+                  viewBox="0 0 20 20"
+                >
+                  <path
+                    fill-rule="evenodd"
+                    d="M16.707 5.293a1 1 0 010 1.414l-8 8a1 1 0 01-1.414 0l-4-4a1 1 0 011.414-1.414L8 12.586l7.293-7.293a1 1 0 011.414 0z"
+                    clip-rule="evenodd"
+                  />
+                </svg>
+                No server required
+              </li>
+              <li class="flex items-center gap-2">
+                <svg
+                  class="w-4 h-4 text-green-500 flex-shrink-0"
+                  fill="currentColor"
+                  viewBox="0 0 20 20"
+                >
+                  <path
+                    fill-rule="evenodd"
+                    d="M16.707 5.293a1 1 0 010 1.414l-8 8a1 1 0 01-1.414 0l-4-4a1 1 0 011.414-1.414L8 12.586l7.293-7.293a1 1 0 011.414 0z"
+                    clip-rule="evenodd"
+                  />
+                </svg>
+                Local service account key
+              </li>
+              <li class="flex items-center gap-2">
+                <svg
+                  class="w-4 h-4 text-green-500 flex-shrink-0"
+                  fill="currentColor"
+                  viewBox="0 0 20 20"
+                >
+                  <path
+                    fill-rule="evenodd"
+                    d="M16.707 5.293a1 1 0 010 1.414l-8 8a1 1 0 01-1.414 0l-4-4a1 1 0 011.414-1.414L8 12.586l7.293-7.293a1 1 0 011.414 0z"
+                    clip-rule="evenodd"
+                  />
+                </svg>
+                Quick setup in minutes
+              </li>
+            </ul>
+            <a
+              href="getting-started/individual-setup/"
+              class="inline-flex items-center gap-2 text-think41-blue font-medium hover:underline text-lg"
+            >
+              Individual Setup Guide →
+            </a>
+          </div>
+        </div>
+      </div>
+    </section>
+
+    <!-- Documentation Links -->
+    <section class="py-20 bg-think41-light">
+      <div class="max-w-6xl mx-auto px-6">
+        <div class="text-center mb-12">
+          <h2 class="text-4xl md:text-5xl font-bold text-think41-navy mb-4">
+            Documentation
+          </h2>
+          <p class="text-gray-600 text-xl max-w-2xl mx-auto">
+            Everything you need to get started
+          </p>
+        </div>
+
+        <div class="grid grid-cols-2 md:grid-cols-4 gap-4">
+          <a
+            href="getting-started/"
+            class="group bg-white p-5 rounded-xl border border-gray-200 hover:border-think41-blue hover:shadow-md transition-all"
+          >
+            <div
+              class="font-semibold text-think41-navy group-hover:text-think41-blue mb-1"
+            >
+              Getting Started
+            </div>
+            <div class="text-sm text-gray-500">Installation guides</div>
+          </a>
+          <a
+            href="user-guide/"
+            class="group bg-white p-5 rounded-xl border border-gray-200 hover:border-think41-blue hover:shadow-md transition-all"
+          >
+            <div
+              class="font-semibold text-think41-navy group-hover:text-think41-blue mb-1"
+            >
+              User Guide
+            </div>
+            <div class="text-sm text-gray-500">Prompting & sharing</div>
+          </a>
+          <a
+            href="skills/"
+            class="group bg-white p-5 rounded-xl border border-gray-200 hover:border-think41-blue hover:shadow-md transition-all"
+          >
+            <div
+              class="font-semibold text-think41-navy group-hover:text-think41-blue mb-1"
+            >
+              Skills Reference
+            </div>
+            <div class="text-sm text-gray-500">Sheets, Docs, Slides</div>
+          </a>
+          <a
+            href="deployment/"
+            class="group bg-white p-5 rounded-xl border border-gray-200 hover:border-think41-blue hover:shadow-md transition-all"
+          >
+            <div
+              class="font-semibold text-think41-navy group-hover:text-think41-blue mb-1"
+            >
+              Deployment
+            </div>
+            <div class="text-sm text-gray-500">Cloud Run & IAM</div>
+          </a>
+          <a
+            href="security/"
+            class="group bg-white p-5 rounded-xl border border-gray-200 hover:border-think41-blue hover:shadow-md transition-all"
+          >
+            <div
+              class="font-semibold text-think41-navy group-hover:text-think41-blue mb-1"
+            >
+              Security
+            </div>
+            <div class="text-sm text-gray-500">Threat model</div>
+          </a>
+          <a
+            href="faq/"
+            class="group bg-white p-5 rounded-xl border border-gray-200 hover:border-think41-blue hover:shadow-md transition-all"
+          >
+            <div
+              class="font-semibold text-think41-navy group-hover:text-think41-blue mb-1"
+            >
+              FAQ
+            </div>
+            <div class="text-sm text-gray-500">Common questions</div>
+          </a>
+          <a
+            href="https://github.com/think41/extrasuite"
+            class="group bg-white p-5 rounded-xl border border-gray-200 hover:border-think41-blue hover:shadow-md transition-all"
+          >
+            <div
+              class="font-semibold text-think41-navy group-hover:text-think41-blue mb-1 flex items-center gap-1.5"
+            >
+              <svg class="w-4 h-4" fill="currentColor" viewBox="0 0 24 24">
+                <path
+                  d="M12 0c-6.626 0-12 5.373-12 12 0 5.302 3.438 9.8 8.207 11.387.599.111.793-.261.793-.577v-2.234c-3.338.726-4.033-1.416-4.033-1.416-.546-1.387-1.333-1.756-1.333-1.756-1.089-.745.083-.729.083-.729 1.205.084 1.839 1.237 1.839 1.237 1.07 1.834 2.807 1.304 3.492.997.107-.775.418-1.305.762-1.604-2.665-.305-5.467-1.334-5.467-5.931 0-1.311.469-2.381 1.236-3.221-.124-.303-.535-1.524.117-3.176 0 0 1.008-.322 3.301 1.23.957-.266 1.983-.399 3.003-.404 1.02.005 2.047.138 3.006.404 2.291-1.552 3.297-1.23 3.297-1.23.653 1.653.242 2.874.118 3.176.77.84 1.235 1.911 1.235 3.221 0 4.609-2.807 5.624-5.479 5.921.43.372.823 1.102.823 2.222v3.293c0 .319.192.694.801.576 4.765-1.589 8.199-6.086 8.199-11.386 0-6.627-5.373-12-12-12z"
+                />
+              </svg>
+              GitHub
+            </div>
+            <div class="text-sm text-gray-500">Source code</div>
+          </a>
+          <a
+            href="https://github.com/think41/extrasuite/blob/main/LICENSE"
+            class="group bg-white p-5 rounded-xl border border-gray-200 hover:border-think41-blue hover:shadow-md transition-all"
+          >
+            <div
+              class="font-semibold text-think41-navy group-hover:text-think41-blue mb-1"
+            >
+              License
+            </div>
+            <div class="text-sm text-gray-500">Apache 2.0</div>
+          </a>
+        </div>
+      </div>
+    </section>
+
+    <!-- CTA Section -->
+    <section class="py-20 bg-think41-blue relative">
+      <div class="max-w-4xl mx-auto px-6 text-center relative">
+        <h2 class="text-4xl md:text-5xl font-bold text-white mb-4">
+          Ready to Get Started?
+        </h2>
+        <p class="text-blue-100 text-xl mb-8 max-w-2xl mx-auto">
+          Give your AI assistant secure access to Google Workspace
+        </p>
+        <div class="flex flex-col sm:flex-row gap-4 justify-center">
+          <a
+            href="getting-started/"
+            class="inline-flex items-center justify-center gap-2 bg-white hover:bg-gray-100 text-think41-blue font-semibold px-8 py-4 rounded-lg transition-all shadow-lg hover:shadow-xl hover:scale-105 text-lg"
+          >
+            Get Started Now
+          </a>
+          <a
+            href="https://github.com/think41/extrasuite"
+            class="inline-flex items-center justify-center gap-2 bg-white/10 hover:bg-white/20 text-white font-semibold px-8 py-4 rounded-lg border border-white/30 transition-all backdrop-blur-sm text-lg"
+          >
+            <svg class="w-5 h-5" fill="currentColor" viewBox="0 0 24 24">
+              <path
+                d="M12 0c-6.626 0-12 5.373-12 12 0 5.302 3.438 9.8 8.207 11.387.599.111.793-.261.793-.577v-2.234c-3.338.726-4.033-1.416-4.033-1.416-.546-1.387-1.333-1.756-1.333-1.756-1.089-.745.083-.729.083-.729 1.205.084 1.839 1.237 1.839 1.237 1.07 1.834 2.807 1.304 3.492.997.107-.775.418-1.305.762-1.604-2.665-.305-5.467-1.334-5.467-5.931 0-1.311.469-2.381 1.236-3.221-.124-.303-.535-1.524.117-3.176 0 0 1.008-.322 3.301 1.23.957-.266 1.983-.399 3.003-.404 1.02.005 2.047.138 3.006.404 2.291-1.552 3.297-1.23 3.297-1.23.653 1.653.242 2.874.118 3.176.77.84 1.235 1.911 1.235 3.221 0 4.609-2.807 5.624-5.479 5.921.43.372.823 1.102.823 2.222v3.293c0 .319.192.694.801.576 4.765-1.589 8.199-6.086 8.199-11.386 0-6.627-5.373-12-12-12z"
+              />
+            </svg>
+            Star on GitHub
+          </a>
+        </div>
+      </div>
+    </section>
+
+    <!-- Footer -->
+    <footer class="bg-think41-navy text-white py-12">
+      <div class="max-w-6xl mx-auto px-6">
+        <div class="grid md:grid-cols-3 gap-8 mb-8">
+          <div>
+            <div class="font-bold text-lg mb-4">ExtraSuite</div>
+            <p class="text-blue-200 text-sm">
+              Connect AI agents to Google Workspace. An open-source project by
+              Think41.
+            </p>
+          </div>
+          <div>
+            <div class="font-semibold mb-4">Documentation</div>
+            <ul class="space-y-2 text-sm text-blue-200">
+              <li>
+                <a
+                  href="getting-started/"
+                  class="hover:text-white transition-colors"
+                  >Getting Started</a
+                >
+              </li>
+              <li>
+                <a href="user-guide/" class="hover:text-white transition-colors"
+                  >User Guide</a
+                >
+              </li>
+              <li>
+                <a href="skills/" class="hover:text-white transition-colors"
+                  >Skills</a
+                >
+              </li>
+              <li>
+                <a href="deployment/" class="hover:text-white transition-colors"
+                  >Deployment</a
+                >
+              </li>
+            </ul>
+          </div>
+          <div>
+            <div class="font-semibold mb-4">Resources</div>
+            <ul class="space-y-2 text-sm text-blue-200">
+              <li>
+                <a href="security/" class="hover:text-white transition-colors"
+                  >Security</a
+                >
+              </li>
+              <li>
+                <a href="faq/" class="hover:text-white transition-colors"
+                  >FAQ</a
+                >
+              </li>
+              <li>
+                <a
+                  href="https://github.com/think41/extrasuite"
+                  class="hover:text-white transition-colors"
+                  >GitHub</a
+                >
+              </li>
+            </ul>
+          </div>
+        </div>
+        <div
+          class="border-t border-white/10 pt-8 flex flex-col md:flex-row justify-between items-center gap-4"
+        >
+          <div class="text-sm text-blue-200">
+            © 2026 Think41 Technologies Pvt. Ltd.
+          </div>
+          <div class="flex items-center gap-4">
+            <a
+              href="https://github.com/think41/extrasuite"
+              class="text-blue-200 hover:text-white transition-colors"
+            >
+              <svg class="w-5 h-5" fill="currentColor" viewBox="0 0 24 24">
+                <path
+                  d="M12 0c-6.626 0-12 5.373-12 12 0 5.302 3.438 9.8 8.207 11.387.599.111.793-.261.793-.577v-2.234c-3.338.726-4.033-1.416-4.033-1.416-.546-1.387-1.333-1.756-1.333-1.756-1.089-.745.083-.729.083-.729 1.205.084 1.839 1.237 1.839 1.237 1.07 1.834 2.807 1.304 3.492.997.107-.775.418-1.305.762-1.604-2.665-.305-5.467-1.334-5.467-5.931 0-1.311.469-2.381 1.236-3.221-.124-.303-.535-1.524.117-3.176 0 0 1.008-.322 3.301 1.23.957-.266 1.983-.399 3.003-.404 1.02.005 2.047.138 3.006.404 2.291-1.552 3.297-1.23 3.297-1.23.653 1.653.242 2.874.118 3.176.77.84 1.235 1.911 1.235 3.221 0 4.609-2.807 5.624-5.479 5.921.43.372.823 1.102.823 2.222v3.293c0 .319.192.694.801.576 4.765-1.589 8.199-6.086 8.199-11.386 0-6.627-5.373-12-12-12z"
+                />
+              </svg>
+            </a>
+            <a
+              href="https://think41.com"
+              class="text-blue-200 hover:text-white transition-colors text-sm"
+              >think41.com</a
+            >
+          </div>
+        </div>
+      </div>
+    </footer>
+  </body>
 </html>
