@@ -264,7 +264,15 @@ rm -rf ~/.claude/skills/gsheets
 
 ---
 
-**Next Steps:**
+## Continue to Quick Start
+
+You've completed the Windows WSL installation. Continue to the Quick Start guide to learn how to use ExtraSuite:
+
+[:octicons-arrow-right-24: Continue to Start Using ExtraSuite](../index.md#start-using-extrasuite)
+
+---
+
+**Additional Resources:**
 
 - [Learn effective prompting techniques](../../user-guide/prompting.md)
 - [Understand how to share documents](../../user-guide/sharing.md)

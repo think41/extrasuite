@@ -1,8 +1,8 @@
-# Operations Runbook
+# Operations Guide
 
-This document captures operational knowledge and troubleshooting guidance for ExtraSuite deployments.
+This document covers monitoring, debugging, and troubleshooting for ExtraSuite deployments.
 
-## Monitoring and Debugging
+## Monitoring
 
 ### View Logs
 
@@ -19,12 +19,6 @@ gcloud logging read \
   --project=$PROJECT_ID \
   --limit=20 \
   --format="json"
-
-# Logs with specific message
-gcloud logging read \
-  'resource.type="cloud_run_revision" AND jsonPayload.message:"OAuth callback"' \
-  --project=$PROJECT_ID \
-  --limit=10
 ```
 
 ### Health Checks
@@ -33,13 +27,9 @@ gcloud logging read \
 # Basic health check
 curl https://your-domain.com/api/health
 # Expected: {"status":"healthy","service":"extrasuite-server"}
-
-# Readiness check
-curl https://your-domain.com/api/health/ready
-# Expected: {"status":"ready"}
 ```
 
-### List Service Accounts
+### List User Service Accounts
 
 ```bash
 gcloud iam service-accounts list --project=$PROJECT_ID \
@@ -55,7 +45,7 @@ gcloud projects get-iam-policy $PROJECT_ID \
   --filter="bindings.members:extrasuite-server@$PROJECT_ID.iam.gserviceaccount.com"
 ```
 
-## Common Issues and Solutions
+## Common Issues
 
 ### OAuth Scopes Showing Too Many Permissions
 
@@ -72,23 +62,22 @@ gcloud projects get-iam-policy $PROJECT_ID \
 NotFound: 404 No document to update: projects/.../documents/users/email@domain.com
 ```
 
-**Cause:** Using Firestore `update()` method on a document that doesn't exist.
+**Cause:** Code is using Firestore `update()` method on a document that doesn't exist.
 
-**Solution:** This is a code bug. Use `set(merge=True)` instead of `update()` for upsert behavior.
+**Solution:** Use `set(merge=True)` instead of `update()` for upsert behavior.
 
 ### Email Domain Allowlist Not Working
 
 **Symptom:** Valid email domains are rejected.
 
-**Cause:** The gcloud CLI interprets commas as value separators incorrectly.
+**Cause:** The gcloud CLI may interpret commas incorrectly in some shells.
 
-**Solution:** Use gcloud's alternate delimiter syntax:
+**Solution:** Verify the environment variable is set correctly:
 ```bash
-gcloud run services update extrasuite-server \
-  --update-env-vars='^@^ALLOWED_EMAIL_DOMAINS=example.com,company.org'
+gcloud run services describe extrasuite-server \
+  --region=asia-southeast1 \
+  --format="value(spec.template.spec.containers[0].env)"
 ```
-
-The `^@^` prefix changes the delimiter to `@` instead of `,`.
 
 ### Firestore Database Recreation Delay
 
@@ -138,86 +127,40 @@ gcloud projects add-iam-policy-binding $PROJECT_ID \
   --condition=None
 ```
 
-## Deployment Commands
+## Updating the Deployment
 
-### Full Redeployment
+### Update to Latest Version
 
 ```bash
-# Set variables
-PROJECT=your-project-id
-REGION=asia-southeast1
-SERVICE=extrasuite-server
-
-# Build and push image
-cd extrasuite-server
-gcloud builds submit --tag gcr.io/$PROJECT/$SERVICE:latest --project=$PROJECT
-
-# Deploy
-gcloud run deploy $SERVICE \
-  --image=gcr.io/$PROJECT/$SERVICE:latest \
-  --service-account=extrasuite-server@$PROJECT.iam.gserviceaccount.com \
-  --region=$REGION \
-  --allow-unauthenticated \
-  --set-env-vars="ENVIRONMENT=production,GOOGLE_CLOUD_PROJECT=$PROJECT" \
-  --set-secrets="SECRET_KEY=extrasuite-secret-key:latest" \
-  --set-secrets="GOOGLE_CLIENT_ID=extrasuite-client-id:latest" \
-  --set-secrets="GOOGLE_CLIENT_SECRET=extrasuite-client-secret:latest" \
-  --project=$PROJECT
-
-# Update OAuth redirect URI
-SERVICE_URL=$(gcloud run services describe $SERVICE \
-  --region=$REGION --project=$PROJECT --format='value(status.url)')
-gcloud run services update $SERVICE \
-  --region=$REGION \
-  --update-env-vars="GOOGLE_REDIRECT_URI=$SERVICE_URL/api/auth/callback" \
-  --project=$PROJECT
+gcloud run services update extrasuite-server \
+  --region=asia-southeast1 \
+  --image=asia-southeast1-docker.pkg.dev/thinker41/extrasuite/server:latest \
+  --project=$PROJECT_ID
 ```
 
-### Clean Slate Deployment
-
-When you need to delete everything and start fresh:
+### Update Environment Variables
 
 ```bash
-# 1. Delete Cloud Run service
-gcloud run services delete $SERVICE --region=$REGION --project=$PROJECT --quiet
-
-# 2. Delete Firestore database
-gcloud firestore databases delete --database="(default)" --project=$PROJECT --quiet
-
-# 3. Delete user service accounts (adjust pattern for your domains)
-gcloud iam service-accounts list --project=$PROJECT --format="value(email)" | \
-  grep -E '-(ex|co)@' | \
-  xargs -I {} gcloud iam service-accounts delete {} --project=$PROJECT --quiet
-
-# 4. Wait for Firestore cooldown (~5 minutes)
-sleep 300
-
-# 5. Recreate Firestore database
-gcloud firestore databases create --location=$REGION --project=$PROJECT
-
-# 6. Proceed with deployment
+gcloud run services update extrasuite-server \
+  --region=asia-southeast1 \
+  --update-env-vars="KEY=value" \
+  --project=$PROJECT_ID
 ```
 
-## CI/CD Operations
-
-### View Build Status
+### Rollback to Previous Version
 
 ```bash
-# List recent builds
-gcloud builds list --project=$PROJECT_ID --limit=5
+# List revisions
+gcloud run revisions list \
+  --service=extrasuite-server \
+  --region=asia-southeast1 \
+  --project=$PROJECT_ID
 
-# View specific build logs
-gcloud builds log BUILD_ID --project=$PROJECT_ID
-
-# Stream logs for running build
-gcloud builds log BUILD_ID --project=$PROJECT_ID --stream
-```
-
-### Trigger Manual Build
-
-```bash
-cd extrasuite-server
-gcloud builds submit --config=cloudbuild.yaml --project=$PROJECT_ID
+# Route traffic to a specific revision
+gcloud run services update-traffic extrasuite-server \
+  --region=asia-southeast1 \
+  --to-revisions=extrasuite-server-00001-abc=100 \
+  --project=$PROJECT_ID
 ```
 
 ## Testing Authentication Flow
@@ -238,38 +181,19 @@ PYTHONPATH=extrasuite-client/src python3 extrasuite-client/examples/basic_usage.
 2. **Cached token:** Token file present and valid, no browser needed
 3. **Session reuse:** Delete token cache, browser opens, SSO/session skips login prompt
 
-## Environment Variables Reference
-
-| Variable | Description | Example |
-|----------|-------------|---------|
-| `ENVIRONMENT` | Runtime environment | `production` |
-| `GOOGLE_CLOUD_PROJECT` | GCP project ID | `your-project` |
-| `GOOGLE_CLIENT_ID` | OAuth client ID | (from Secret Manager) |
-| `GOOGLE_CLIENT_SECRET` | OAuth client secret | (from Secret Manager) |
-| `GOOGLE_REDIRECT_URI` | OAuth callback URL | `https://domain.com/api/auth/callback` |
-| `SECRET_KEY` | Session signing key | (from Secret Manager) |
-| `ALLOWED_EMAIL_DOMAINS` | Comma-separated domains | `example.com,company.org` |
-| `DOMAIN_ABBREVIATIONS` | JSON mapping | `{"example.com":"ex"}` |
-
 ## Secrets Management
-
-Secrets stored in Secret Manager:
-
-| Secret Name | Purpose |
-|-------------|---------|
-| `extrasuite-client-id` | OAuth Client ID |
-| `extrasuite-client-secret` | OAuth Client Secret |
-| `extrasuite-secret-key` | Session signing key |
 
 ### Rotate Secrets
 
 ```bash
-# Update secret
-echo -n "new-value" | gcloud secrets versions add SECRET_NAME --data-file=-
+# Update secret with new value
+echo -n "new-value" | gcloud secrets versions add extrasuite-secret-key --data-file=-
 
-# Deploy with new version
+# Deploy with new version (Cloud Run auto-updates on next deploy)
 gcloud run services update extrasuite-server \
-  --update-secrets="SECRET_KEY=extrasuite-secret-key:latest"
+  --region=asia-southeast1 \
+  --update-secrets="SECRET_KEY=extrasuite-secret-key:latest" \
+  --project=$PROJECT_ID
 ```
 
 ## Service Account Quota
@@ -281,4 +205,36 @@ ExtraSuite creates one service account per user. Monitor usage:
 gcloud iam service-accounts list --project=$PROJECT_ID | wc -l
 ```
 
-GCP default quota is 100 service accounts per project. Request increase if needed.
+GCP default quota is 100 service accounts per project. [Request an increase](https://console.cloud.google.com/iam-admin/quotas) if needed.
+
+## Clean Up
+
+To remove all ExtraSuite resources:
+
+```bash
+# Delete Cloud Run service
+gcloud run services delete extrasuite-server \
+  --region=asia-southeast1 \
+  --project=$PROJECT_ID
+
+# Delete user service accounts (adjust pattern for your domains)
+gcloud iam service-accounts list --project=$PROJECT_ID --format="value(email)" | \
+  grep -E '-(ex|co)@' | \
+  xargs -I {} gcloud iam service-accounts delete {} --project=$PROJECT_ID --quiet
+
+# Delete Firestore database
+gcloud firestore databases delete --database="(default)" --project=$PROJECT_ID
+
+# Delete secrets
+for secret in extrasuite-client-id extrasuite-client-secret extrasuite-secret-key; do
+  gcloud secrets delete $secret --project=$PROJECT_ID --quiet
+done
+```
+
+---
+
+## Continue Your Setup
+
+If you arrived here from the Organization Setup guide, return to continue with user onboarding:
+
+[:octicons-arrow-right-24: Continue Organization Setup](../getting-started/organization-setup.md#step-2-install-your-ai-editor)

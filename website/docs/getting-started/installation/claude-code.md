@@ -143,7 +143,15 @@ If you use multiple ExtraSuite accounts, you can switch between them by re-runni
 
 ---
 
-**Next Steps:**
+## Continue to Quick Start
+
+You've completed the Claude Code installation. Continue to the Quick Start guide to learn how to use ExtraSuite:
+
+[:octicons-arrow-right-24: Continue to Start Using ExtraSuite](../index.md#start-using-extrasuite)
+
+---
+
+**Additional Resources:**
 
 - [Learn effective prompting techniques](../../user-guide/prompting.md)
 - [Understand how to share documents](../../user-guide/sharing.md)

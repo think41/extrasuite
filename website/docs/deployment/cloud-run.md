@@ -6,7 +6,6 @@ This guide covers deploying the ExtraSuite server to Google Cloud Run.
 
 1. **Google Cloud Project** with billing enabled
 2. **gcloud CLI** installed and configured
-3. **Docker** installed locally (optional, for local builds)
 
 ## Step 1: Enable Required APIs
 
@@ -18,7 +17,6 @@ gcloud services enable \
   firestore.googleapis.com \
   iam.googleapis.com \
   iamcredentials.googleapis.com \
-  containerregistry.googleapis.com \
   secretmanager.googleapis.com \
   --project=$PROJECT_ID
 ```
@@ -26,9 +24,10 @@ gcloud services enable \
 ## Step 2: Create Firestore Database
 
 ```bash
-# Create Firestore database (collections are created automatically on first use)
 gcloud firestore databases create --location=asia-southeast1 --project=$PROJECT_ID
 ```
+
+Collections are created automatically on first use.
 
 ## Step 3: Create OAuth 2.0 Credentials
 
@@ -36,7 +35,7 @@ gcloud firestore databases create --location=asia-southeast1 --project=$PROJECT_
 2. Click **Create Credentials** > **OAuth client ID**
 3. Select **Web application**
 4. Add authorized redirect URIs:
-   - `https://your-cloud-run-url/api/auth/callback`
+   - `https://your-domain.com/api/auth/callback`
    - `http://localhost:8001/api/auth/callback` (for development)
 5. Save the **Client ID** and **Client Secret**
 
@@ -67,7 +66,7 @@ gcloud projects add-iam-policy-binding $PROJECT_ID \
 ## Step 5: Store Secrets in Secret Manager
 
 ```bash
-# Create secrets
+# Create secrets (replace with your actual values)
 echo -n "your-oauth-client-id" | gcloud secrets create extrasuite-client-id \
   --data-file=- --project=$PROJECT_ID
 echo -n "your-oauth-client-secret" | gcloud secrets create extrasuite-client-secret \
@@ -84,45 +83,16 @@ for secret in extrasuite-client-id extrasuite-client-secret extrasuite-secret-ke
 done
 ```
 
-## Step 6: Build and Deploy
-
-### Option A: Deploy from Source
+## Step 6: Deploy to Cloud Run
 
 ```bash
-cd extrasuite-server
-
 gcloud run deploy extrasuite-server \
-  --source . \
+  --image=asia-southeast1-docker.pkg.dev/thinker41/extrasuite/server:latest \
   --service-account=extrasuite-server@$PROJECT_ID.iam.gserviceaccount.com \
   --region=asia-southeast1 \
   --allow-unauthenticated \
-  --set-env-vars="ENVIRONMENT=production" \
   --set-env-vars="GOOGLE_CLOUD_PROJECT=$PROJECT_ID" \
-  --set-secrets="SECRET_KEY=extrasuite-secret-key:latest" \
-  --set-secrets="GOOGLE_CLIENT_ID=extrasuite-client-id:latest" \
-  --set-secrets="GOOGLE_CLIENT_SECRET=extrasuite-client-secret:latest" \
-  --project=$PROJECT_ID
-```
-
-### Option B: Build and Push Docker Image
-
-```bash
-cd extrasuite-server
-
-# Build the image
-docker build -t gcr.io/$PROJECT_ID/extrasuite-server:latest .
-
-# Push to Container Registry
-docker push gcr.io/$PROJECT_ID/extrasuite-server:latest
-
-# Deploy
-gcloud run deploy extrasuite-server \
-  --image=gcr.io/$PROJECT_ID/extrasuite-server:latest \
-  --service-account=extrasuite-server@$PROJECT_ID.iam.gserviceaccount.com \
-  --region=asia-southeast1 \
-  --allow-unauthenticated \
-  --set-env-vars="ENVIRONMENT=production" \
-  --set-env-vars="GOOGLE_CLOUD_PROJECT=$PROJECT_ID" \
+  --set-env-vars="BASE_DOMAIN=your-domain.com" \
   --set-secrets="SECRET_KEY=extrasuite-secret-key:latest" \
   --set-secrets="GOOGLE_CLIENT_ID=extrasuite-client-id:latest" \
   --set-secrets="GOOGLE_CLIENT_SECRET=extrasuite-client-secret:latest" \
@@ -144,41 +114,43 @@ echo $SERVICE_URL
 Update your OAuth credentials in Google Cloud Console to include:
 `https://your-cloud-run-url/api/auth/callback`
 
-Then update the environment variable:
+If not using a custom domain, update the BASE_DOMAIN:
 
 ```bash
+# Extract domain from URL (removes https://)
+DOMAIN=$(echo $SERVICE_URL | sed 's|https://||')
+
 gcloud run services update extrasuite-server \
   --region=asia-southeast1 \
-  --update-env-vars="GOOGLE_REDIRECT_URI=$SERVICE_URL/api/auth/callback" \
+  --update-env-vars="BASE_DOMAIN=$DOMAIN" \
   --project=$PROJECT_ID
 ```
 
-## Step 8: Configure Email Domain Allowlist
+## Step 8: Configure Email Domain Allowlist (Optional)
 
 Restrict authentication to specific email domains:
 
 ```bash
 gcloud run services update extrasuite-server \
   --region=asia-southeast1 \
-  --update-env-vars='^@^ALLOWED_EMAIL_DOMAINS=example.com,company.org' \
+  --update-env-vars="ALLOWED_EMAIL_DOMAINS=example.com,company.org" \
   --project=$PROJECT_ID
 ```
 
-!!! note "Delimiter Syntax"
-    The `^@^` prefix changes the delimiter to `@` instead of `,` to handle comma-separated values properly.
-
-## Step 9: Configure Domain Abbreviations
+## Step 9: Configure Domain Abbreviations (Optional)
 
 Service accounts are named using the user's email local part plus a domain abbreviation:
 
 ```bash
 gcloud run services update extrasuite-server \
   --region=asia-southeast1 \
-  --update-env-vars='^@^DOMAIN_ABBREVIATIONS={"example.com":"ex","company.org":"co"}' \
+  --update-env-vars='DOMAIN_ABBREVIATIONS={"example.com":"ex","company.org":"co"}' \
   --project=$PROJECT_ID
 ```
 
-Example: `john@example.com` → `john-ex@project.iam.gserviceaccount.com`
+Example: `john@example.com` creates service account `john-ex@project.iam.gserviceaccount.com`
+
+If a domain is not in the mapping, a 4-character hash is used as fallback.
 
 ## Verification
 
@@ -188,54 +160,7 @@ Test the deployment:
 # Health check
 curl $SERVICE_URL/api/health
 # Expected: {"status":"healthy","service":"extrasuite-server"}
-
-# Readiness check
-curl $SERVICE_URL/api/health/ready
-# Expected: {"status":"ready"}
 ```
-
-## CI/CD with Cloud Build
-
-### Create Cloud Build Service Account
-
-```bash
-# Create the Cloud Build service account
-gcloud iam service-accounts create extrasuite-cloudbuild \
-  --display-name="ExtraSuite Cloud Build" \
-  --project=$PROJECT_ID
-
-# Grant necessary permissions
-gcloud projects add-iam-policy-binding $PROJECT_ID \
-  --member="serviceAccount:extrasuite-cloudbuild@$PROJECT_ID.iam.gserviceaccount.com" \
-  --role="roles/artifactregistry.writer" \
-  --condition=None
-
-gcloud projects add-iam-policy-binding $PROJECT_ID \
-  --member="serviceAccount:extrasuite-cloudbuild@$PROJECT_ID.iam.gserviceaccount.com" \
-  --role="roles/run.admin" \
-  --condition=None
-
-gcloud iam service-accounts add-iam-policy-binding \
-  extrasuite-server@$PROJECT_ID.iam.gserviceaccount.com \
-  --member="serviceAccount:extrasuite-cloudbuild@$PROJECT_ID.iam.gserviceaccount.com" \
-  --role="roles/iam.serviceAccountUser" \
-  --project=$PROJECT_ID
-
-gcloud projects add-iam-policy-binding $PROJECT_ID \
-  --member="serviceAccount:extrasuite-cloudbuild@$PROJECT_ID.iam.gserviceaccount.com" \
-  --role="roles/logging.logWriter" \
-  --condition=None
-```
-
-### Configure Build Trigger
-
-1. Go to [Cloud Build Triggers](https://console.cloud.google.com/cloud-build/triggers)
-2. Click **Create Trigger**
-3. Configure:
-   - **Event:** Push to branch (e.g., `^main$`)
-   - **Source:** Your repository
-   - **Configuration:** `extrasuite-server/cloudbuild.yaml`
-   - **Service account:** `extrasuite-cloudbuild@$PROJECT_ID.iam.gserviceaccount.com`
 
 ## Custom Domain
 
@@ -259,6 +184,30 @@ gcloud beta run domain-mappings describe \
   --project=$PROJECT_ID
 ```
 
+After the domain is configured, update the BASE_DOMAIN:
+
+```bash
+gcloud run services update extrasuite-server \
+  --region=asia-southeast1 \
+  --update-env-vars="BASE_DOMAIN=extrasuite.yourdomain.com" \
+  --project=$PROJECT_ID
+```
+
+## Using a Specific Version
+
+Instead of `latest`, you can pin to a specific version:
+
+```bash
+# Use a specific release
+--image=asia-southeast1-docker.pkg.dev/thinker41/extrasuite/server:v1.0.0
+
+# Use a specific commit
+--image=asia-southeast1-docker.pkg.dev/thinker41/extrasuite/server:sha-abc1234
+
+# Use latest from main branch
+--image=asia-southeast1-docker.pkg.dev/thinker41/extrasuite/server:main
+```
+
 ## Production Recommendations
 
 1. **Enable Cloud Armor** for DDoS protection
@@ -266,9 +215,12 @@ gcloud beta run domain-mappings describe \
 3. **Enable Cloud Audit Logs** for compliance
 4. **Set minimum instances** to reduce cold starts:
    ```bash
-   gcloud run services update extrasuite-server --min-instances=1
+   gcloud run services update extrasuite-server \
+     --region=asia-southeast1 \
+     --min-instances=1 \
+     --project=$PROJECT_ID
    ```
-5. **Configure Firestore TTL** for automatic cleanup:
+5. **Configure Firestore TTL** for automatic cleanup of expired OAuth states:
    ```bash
    gcloud firestore fields ttls update expire_at \
      --collection-group=oauth_states \
@@ -278,4 +230,12 @@ gcloud beta run domain-mappings describe \
 
 ---
 
-**Next:** Review [IAM Permissions](iam-permissions.md) for a complete permission reference.
+## Continue Your Setup
+
+You've completed the server deployment (Step 1). Return to the Organization Setup guide to continue with user onboarding:
+
+[:octicons-arrow-right-24: Continue to Step 2: Install Your AI Editor](../getting-started/organization-setup.md#step-2-install-your-ai-editor)
+
+---
+
+**Reference:** Review [IAM Permissions](iam-permissions.md) for a complete permission reference.

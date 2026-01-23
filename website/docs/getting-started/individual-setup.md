@@ -438,7 +438,15 @@ To completely revoke access:
 
 ---
 
-## Next Steps
+## Continue to Quick Start
+
+You've completed the Individual Setup. Continue to the Quick Start guide to learn how to use ExtraSuite:
+
+[:octicons-arrow-right-24: Continue to Start Using ExtraSuite](index.md#start-using-extrasuite)
+
+---
+
+## Additional Resources
 
 - **[Prompting Tips](../user-guide/prompting.md)** - Learn effective prompting techniques
 - **[Sharing Documents](../user-guide/sharing.md)** - Best practices for sharing

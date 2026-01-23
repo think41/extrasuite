@@ -309,7 +309,15 @@ Tokens expire after 1 hour. The skill will automatically prompt you to re-authen
 
 ---
 
-## Next Steps
+## Continue to Quick Start
+
+You've completed the Organization Setup. Continue to the Quick Start guide to learn how to use ExtraSuite:
+
+[:octicons-arrow-right-24: Continue to Start Using ExtraSuite](index.md#start-using-extrasuite)
+
+---
+
+## Additional Resources
 
 <div class="grid cards" markdown>
 
