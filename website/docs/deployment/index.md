@@ -1,171 +1,73 @@
 # Deployment Guide
 
-ExtraSuite is designed to be deployed as a self-hosted service on Google Cloud Platform. This guide covers deploying your own instance.
+ExtraSuite is designed to be deployed as a self-hosted service on Google Cloud Platform. This guide walks you through deploying your own instance.
 
-## Quick Start
+## What You're Building
 
-```bash
-# Set your project ID
-export PROJECT_ID=your-project-id
+When you complete this guide, you'll have:
 
-# Deploy using the pre-built image
-gcloud run deploy extrasuite-server \
-  --image=asia-southeast1-docker.pkg.dev/thinker41/extrasuite/server:latest \
-  --region=asia-southeast1 \
-  --allow-unauthenticated \
-  --project=$PROJECT_ID
-```
-
-See [Cloud Run Deployment](cloud-run.md) for complete setup instructions including OAuth configuration.
-
-## Architecture Overview
+- A Cloud Run service that authenticates users and issues short-lived access tokens
+- A Firestore database to store user records
+- OAuth credentials so users can log in with their Google accounts
+- A service account with permissions to create user-specific service accounts
 
 ```
 ┌─────────────┐     ┌─────────────────┐     ┌──────────────────┐
-│   CLI Tool  │────▶│  ExtraSuite     │────▶│  Google Cloud    │
+│   AI Agent  │────▶│  ExtraSuite     │────▶│  Google Cloud    │
 │  (Claude,   │     │  Server         │     │  - Firestore     │
 │   Codex)    │◀────│  (Cloud Run)    │◀────│  - IAM           │
 └─────────────┘     └─────────────────┘     │  - OAuth         │
                                             └──────────────────┘
 ```
 
-## Prerequisites
+## Prerequisites Checklist
 
-### Google Cloud Platform
+Before you begin, ensure you have:
 
-1. **GCP Project** with billing enabled
-2. **gcloud CLI** installed and configured
-3. **Required APIs**:
-   - Cloud Run
-   - Firestore
-   - IAM
-   - IAM Credentials
-   - Secret Manager
+| Requirement | Details |
+|-------------|---------|
+| Google Cloud Project | A project where you have **Owner** or **Editor** role, with billing enabled |
+| Google Workspace or Gmail | To test authentication after deployment |
 
-### OAuth Credentials
+**Optional but recommended:**
 
-1. **Google OAuth Client** configured in Cloud Console
-2. **OAuth consent screen** set up (internal or external)
+| Requirement | Details |
+|-------------|---------|
+| gcloud CLI | Makes deployment faster. [Install gcloud CLI](https://cloud.google.com/sdk/docs/install) |
+| Custom domain | For a professional URL instead of the auto-generated Cloud Run URL |
 
-### Domain (Optional)
+## Deployment Steps Overview
 
-- Custom domain with DNS access for production deployments
+The deployment process has 8 steps:
 
-## Docker Images
+| Step | What You'll Do | Time |
+|------|----------------|------|
+| 1 | Enable Google Cloud APIs | 2 min |
+| 2 | Create a Firestore database | 2 min |
+| 3 | Configure OAuth consent screen | 5 min |
+| 4 | Create OAuth credentials | 3 min |
+| 5 | Create a service account for ExtraSuite | 3 min |
+| 6 | Store secrets securely | 3 min |
+| 7 | Deploy to Cloud Run | 5 min |
+| 8 | Verify the deployment | 2 min |
 
-Pre-built Docker images are available from Google Artifact Registry:
+**[Start the Deployment Guide →](cloud-run.md)**
+
+## Docker Image
+
+ExtraSuite publishes official Docker images to Google Artifact Registry:
 
 ```
 asia-southeast1-docker.pkg.dev/thinker41/extrasuite/server
 ```
 
-**Available tags:**
-
-| Tag | Description |
+| Tag | When to Use |
 |-----|-------------|
-| `latest` | Latest stable release |
-| `v1.0.0` | Specific version |
-| `main` | Latest from main branch |
-| `sha-abc1234` | Specific commit |
+| `latest` | Production deployments (latest stable release) |
+| `v1.0.0` | Pin to a specific version |
+| `main` | Testing latest changes (may be unstable) |
 
-## Environment Variables
+## Additional Resources
 
-### Required
-
-| Variable | Description |
-|----------|-------------|
-| `GOOGLE_CLIENT_ID` | OAuth 2.0 Client ID |
-| `GOOGLE_CLIENT_SECRET` | OAuth 2.0 Client Secret |
-| `GOOGLE_CLOUD_PROJECT` | GCP Project ID for service accounts and Firestore |
-| `SECRET_KEY` | Session signing key (use a long random string) |
-| `BASE_DOMAIN` | Domain of your server (e.g., `extrasuite.example.com`) |
-
-### Optional
-
-| Variable | Description | Default |
-|----------|-------------|---------|
-| `SERVER_URL` | Full base URL for server | Derived from `BASE_DOMAIN` as `https://{BASE_DOMAIN}` |
-| `FIRESTORE_DATABASE` | Firestore database name | `(default)` |
-| `ALLOWED_EMAIL_DOMAINS` | Comma-separated allowed domains | All domains |
-| `DOMAIN_ABBREVIATIONS` | JSON mapping for SA naming | Hash-based |
-
-### Session Cookie Settings
-
-| Variable | Description | Default |
-|----------|-------------|---------|
-| `SESSION_COOKIE_NAME` | Cookie name | `session` |
-| `SESSION_COOKIE_EXPIRY_MINUTES` | Session duration | `1440` (24 hours) |
-| `SESSION_COOKIE_SAME_SITE` | SameSite policy | `lax` |
-| `SESSION_COOKIE_HTTPS_ONLY` | HTTPS-only cookies | `true` |
-| `SESSION_COOKIE_DOMAIN` | Cookie domain | Value of `BASE_DOMAIN` |
-
-### Token Settings
-
-| Variable | Description | Default |
-|----------|-------------|---------|
-| `TOKEN_EXPIRY_MINUTES` | Access token lifetime | `60` (1 hour) |
-
-## Security Considerations
-
-### IAM Permissions
-
-The ExtraSuite server requires specific IAM roles. See [IAM Permissions](iam-permissions.md) for details.
-
-**Key principle:** End users do NOT need any GCP project access. The server acts as a trusted intermediary.
-
-### Secret Management
-
-- Store OAuth credentials in Secret Manager
-- Generate strong random keys for session signing
-- Rotate secrets periodically
-
-### Network Security
-
-- Always use HTTPS in production
-- Consider Cloud Armor for DDoS protection
-- Enable VPC Service Controls for sensitive environments
-
-## Deployment Guides
-
-- **[Cloud Run Deployment](cloud-run.md)** - Step-by-step deployment guide
-- **[IAM Permissions](iam-permissions.md)** - Complete IAM role reference
-- **[Operations](operations.md)** - Troubleshooting and common issues
-
-## Local Development
-
-For development and testing:
-
-```bash
-cd extrasuite-server
-cp .env.template .env
-# Edit .env with your configuration
-
-uv sync
-uv run uvicorn extrasuite_server.main:app --reload --port 8001
-```
-
-Set `SERVER_URL=http://localhost:8001` for local development.
-
-## Building from Source
-
-If you prefer to build your own image:
-
-```bash
-git clone https://github.com/think41/extrasuite.git
-cd extrasuite
-
-# Build the image
-docker build -t my-extrasuite-server:latest .
-
-# Push to your registry
-docker tag my-extrasuite-server:latest gcr.io/$PROJECT_ID/extrasuite-server:latest
-docker push gcr.io/$PROJECT_ID/extrasuite-server:latest
-```
-
-## Support
-
-For deployment issues:
-
-1. Check the [Operations guide](operations.md) for common issues
-2. Review Cloud Run logs for errors
-3. Open an issue on [GitHub](https://github.com/think41/extrasuite/issues)
+- **[IAM Permissions Reference](iam-permissions.md)** - Detailed explanation of required permissions
+- **[Operations Guide](operations.md)** - Monitoring, troubleshooting, and maintenance

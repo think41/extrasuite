@@ -1,148 +1,146 @@
 # IAM Permissions Reference
 
-This document lists all IAM permissions required by the ExtraSuite server.
+This reference document explains the IAM roles and permissions required by ExtraSuite.
 
-## Cloud Run Service Account
+## Summary
 
-The service account running the ExtraSuite server needs the following roles:
+ExtraSuite requires **one service account** (`extrasuite-server`) with **four roles**:
 
-### Firestore Access
+| Role | Purpose |
+|------|---------|
+| `roles/datastore.user` | Read/write user records in Firestore |
+| `roles/iam.serviceAccountAdmin` | Create service accounts for each user |
+| `roles/iam.serviceAccountTokenCreator` | Generate short-lived access tokens |
+| `roles/secretmanager.secretAccessor` | Read OAuth credentials and secret key |
 
-**Role:** `roles/datastore.user`
+## Role Details
 
-**Purpose:** Read and write session data and user records in Firestore.
+### Cloud Datastore User (`roles/datastore.user`)
 
-```bash
-gcloud projects add-iam-policy-binding $PROJECT_ID \
-  --member="serviceAccount:extrasuite-server@$PROJECT_ID.iam.gserviceaccount.com" \
-  --role="roles/datastore.user"
-```
+**What it does:** Allows ExtraSuite to store and retrieve user records and session data in Firestore.
 
-### Service Account Administration
+**Scope:** Project-level binding
 
-**Role:** `roles/iam.serviceAccountAdmin`
+**Why needed:** When a user logs in, ExtraSuite stores their email and service account email in Firestore. This data persists across sessions.
 
-**Purpose:** Create service accounts for users during first authentication.
+---
 
-```bash
-gcloud projects add-iam-policy-binding $PROJECT_ID \
-  --member="serviceAccount:extrasuite-server@$PROJECT_ID.iam.gserviceaccount.com" \
-  --role="roles/iam.serviceAccountAdmin"
-```
+### Service Account Admin (`roles/iam.serviceAccountAdmin`)
 
-### Token Creation (Impersonation)
+**What it does:** Allows ExtraSuite to create, update, and delete service accounts.
 
-**Role:** `roles/iam.serviceAccountTokenCreator`
+**Scope:** Project-level binding
 
-**Purpose:** Generate short-lived access tokens by impersonating user service accounts.
+**Why needed:** ExtraSuite creates a dedicated service account for each user on first login (e.g., `john-ex@project.iam.gserviceaccount.com`). This role permits creating these accounts.
 
-```bash
-gcloud projects add-iam-policy-binding $PROJECT_ID \
-  --member="serviceAccount:extrasuite-server@$PROJECT_ID.iam.gserviceaccount.com" \
-  --role="roles/iam.serviceAccountTokenCreator"
-```
+**Security note:** This is a powerful role. ExtraSuite only creates service accounts; it does not delete existing ones or modify their permissions.
 
-### Secret Manager Access
+---
 
-**Role:** `roles/secretmanager.secretAccessor`
+### Service Account Token Creator (`roles/iam.serviceAccountTokenCreator`)
 
-**Purpose:** Read secrets for OAuth credentials and signing keys.
+**What it does:** Allows ExtraSuite to generate short-lived access tokens by impersonating user service accounts.
 
-```bash
-gcloud secrets add-iam-policy-binding $SECRET_NAME \
-  --member="serviceAccount:extrasuite-server@$PROJECT_ID.iam.gserviceaccount.com" \
-  --role="roles/secretmanager.secretAccessor"
-```
+**Scope:** Project-level binding
 
-## End-User Permissions
+**Why needed:** When the CLI requests a token, ExtraSuite impersonates the user's service account to create a time-limited OAuth token. This is the core functionality that makes ExtraSuite work.
 
-**Important:** End users do NOT need any GCP project access or IAM roles to use ExtraSuite.
+**Security note:** Tokens are short-lived (default: 60 minutes) and scoped to Google Workspace APIs only.
 
-### How It Works
+---
 
-1. **User authenticates** via Google OAuth (only `openid` and `userinfo.email` scopes)
-2. **Server creates a service account** for the user using its own credentials
-3. **Server impersonates the SA** to generate a short-lived token
-4. **Token is returned** to the CLI for use with Google Workspace APIs
+### Secret Manager Secret Accessor (`roles/secretmanager.secretAccessor`)
 
-The server acts as a trusted intermediary. Users only need to prove their identity - they don't need any GCP permissions.
+**What it does:** Allows ExtraSuite to read specific secrets.
 
-### What End Users Need
+**Scope:** Secret-level binding (not project-level)
 
-| Requirement | Needed? | Notes |
-|-------------|---------|-------|
-| GCP Project membership | **No** | IAM bindings work with any Google account |
-| GCP Console access | **No** | Users never interact with GCP directly |
-| Any project-level IAM roles | **No** | Permissions are per-SA, granted automatically |
-| Google Workspace account | **Yes** | For OAuth authentication |
+**Why needed:** ExtraSuite reads three secrets at startup:
 
-### Organization Rollout
+- `extrasuite-client-id` - OAuth Client ID
+- `extrasuite-client-secret` - OAuth Client Secret
+- `extrasuite-secret-key` - Session signing key
 
-To enable all employees to use ExtraSuite:
+**Security note:** This role is granted only on specific secrets, not all secrets in the project.
 
-1. **Configure domain allowlist** on the server:
-   ```bash
-   ALLOWED_EMAIL_DOMAINS=example.com
-   ```
+---
 
-2. **Grant server permissions** (see sections above)
+## End Users Do NOT Need GCP Access
 
-3. **Share Google Workspace resources** with the created service accounts
+A common misconception is that end users need GCP permissions. They do not.
 
-That's it. No IAM configuration needed for individual users.
+| Requirement | Needed? |
+|-------------|---------|
+| GCP project membership | No |
+| GCP Console access | No |
+| Any IAM roles | No |
+| Google Workspace/Gmail account | Yes |
+
+**How it works:**
+
+1. User proves their identity via Google OAuth (only email scope)
+2. ExtraSuite uses its own credentials to create the user's service account
+3. ExtraSuite generates tokens using its own permissions
+4. User receives tokens without ever touching GCP
+
+---
 
 ## OAuth Scopes
 
-### Server OAuth Scopes
+### User Authentication Scopes
 
-The server uses Application Default Credentials with:
+When users log in to ExtraSuite, they grant only:
 
-- `https://www.googleapis.com/auth/cloud-platform` - For IAM and Firestore operations
+- `openid` - Standard OpenID Connect
+- `userinfo.email` - Access to email address
 
-### User OAuth Scopes (Authentication)
-
-Users are prompted to grant minimal scopes for identity verification only:
-
-- `openid` - OpenID Connect
-- `https://www.googleapis.com/auth/userinfo.email` - Email address
-
-Users do NOT grant `cloud-platform` scope. The server uses its own credentials for all IAM operations.
+Users do NOT grant `cloud-platform` or any Google Workspace scopes during login.
 
 ### Service Account Token Scopes
 
-The short-lived tokens include:
+The short-lived tokens issued to AI agents include:
 
-- `https://www.googleapis.com/auth/spreadsheets` - Google Sheets read/write
-- `https://www.googleapis.com/auth/documents` - Google Docs read/write
-- `https://www.googleapis.com/auth/presentations` - Google Slides read/write
-- `https://www.googleapis.com/auth/drive.readonly` - Google Drive read access
+- `https://www.googleapis.com/auth/drive.readonly` - Read Google Drive files
+- `https://www.googleapis.com/auth/spreadsheets` - Read/write Google Sheets
+- `https://www.googleapis.com/auth/documents` - Read/write Google Docs
+- `https://www.googleapis.com/auth/presentations` - Read/write Google Slides
 
-## Summary Table
+---
 
-### Runtime Service Account (`extrasuite-server`)
+## Least Privilege Considerations
 
-| Role | Resource | Purpose |
-|------|----------|---------|
-| `roles/datastore.user` | Project | Read/write Firestore |
-| `roles/iam.serviceAccountAdmin` | Project | Create user SAs |
-| `roles/iam.serviceAccountTokenCreator` | Project | Impersonate user SAs |
-| `roles/secretmanager.secretAccessor` | Specific secrets | Read OAuth config |
+The default setup grants project-level permissions for simplicity. For stricter security:
 
-## Least Privilege Recommendations
+### Option 1: Separate Projects
 
-For production environments:
+Use one project for ExtraSuite infrastructure and another for user service accounts. This isolates user service accounts from the ExtraSuite server.
 
-1. **Use separate projects** for ExtraSuite infrastructure and user service accounts if needed for compliance
+### Option 2: Conditional Token Creator
 
-2. **Restrict token creator scope** to specific service accounts if possible:
-   ```bash
-   gcloud iam service-accounts add-iam-policy-binding \
-     username-ex@$PROJECT_ID.iam.gserviceaccount.com \
-     --member="serviceAccount:extrasuite-server@$PROJECT_ID.iam.gserviceaccount.com" \
-     --role="roles/iam.serviceAccountTokenCreator"
-   ```
+Instead of project-level `serviceAccountTokenCreator`, grant it only on specific service accounts:
 
-3. **Audit regularly** using Cloud Audit Logs to monitor:
-   - Service account creation events
-   - Token generation events
-   - Failed authentication attempts
+```bash
+gcloud iam service-accounts add-iam-policy-binding \
+  USERNAME-ABBR@PROJECT.iam.gserviceaccount.com \
+  --member="serviceAccount:extrasuite-server@PROJECT.iam.gserviceaccount.com" \
+  --role="roles/iam.serviceAccountTokenCreator"
+```
+
+This requires updating bindings each time a new user is onboarded.
+
+---
+
+## Audit Logging
+
+Enable Cloud Audit Logs to monitor ExtraSuite activity:
+
+- **Admin Activity logs** (always on): Service account creation
+- **Data Access logs** (must enable): Token generation, Firestore reads
+
+View logs in Cloud Logging:
+
+```bash
+gcloud logging read 'protoPayload.serviceName="iam.googleapis.com"' \
+  --project=$PROJECT_ID \
+  --limit=20
+```
