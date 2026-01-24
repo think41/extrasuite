@@ -4,23 +4,26 @@ ExtraSuite is an open source project (https://github.com/think41/extrasuite) tha
 This project publishes a public docker image on google cloud artifact registry. Each organization or group that wishes to use this project must deploy the container via google cloud run in a google cloud project. In addition, to authenticate end users belonging to that organization or group, they must setup OAuth credentials in google cloud. 
 
 ## Packages
-The project consists of three packages:
+The project is a monorepo consisting of the following packages:
 1. **extrasuite-server** - Containerized FastAPI application to provide employee-specific service accounts and short-lived access tokens that can be used to call google drive/sheets/docs/slides APIs. It also has minimal UI to allow employees to install skills via a command line installation command.
 2. **extrasuite-client** - CLI based application to call extrasuite-server from an AI Agent and provide it shortlived access tokens. This will eventually be published to a pypi package, but currently extrasuite-client/src/extrasuite_client/credentials.py is manually copied by the projects that wish to use it.
-3. **website** - mkdocs based documentation website, hosted on github pages, automatically deployed to https://extrasuite.think41.com on every commit to main branch. The website also has instructions to deploy, end user documentation and other product usage.
+3. **extraslide** - Python library that simplifies editing Google Slides through an SML (Slide Markup Language) abstraction. "Pulls" google slides into an XML file, AI agents make edits to this XML, a "diff" process identifies changes, and "push" invokes appropriate Google Slides API. This library is alpha quality.
+4. **website** - mkdocs based documentation website, hosted on github pages, automatically deployed to https://extrasuite.think41.com on every commit to main branch. The website also has instructions to deploy, end user documentation and other product usage.
 
-## Skills for Slides, Docs and Sheets Specific Packages
+## Skills for Slides, Docs and Sheets
 The AI agent needs instructions on how to read or edit google drive files. These are provided as "Agent Skills" which are an open standard. See https://agentskills.io/home. At its core, a skill is a markdown file <skillname>/SKILL.md that is saved by end users at a well known agent specific location. The skills are distributed by extrasuite-server, see extrasuite-server/skills.
 
-In addition to instructions, the AI agent needs python libraries to manipulate files. We have 3 related open source python projects. On a developer machine, each of these projects is cloned in folders parallel to the root of this project. 
+The SKILL.md file explains how to use `extrasuite-client` to get the temporary service account token, and then use the appropriate library to read or edit the specific file type.
 
-The SKILL.md file explains how to use `extrasuite-client` to get the temporary service account token, and then use one of the following projects to read or edit the specific file type.
+### Package Naming Convention
+The packages are being renamed for consistency:
+- **extraslide** (formerly gslidex) - Google Slides manipulation, now part of this monorepo at `/extraslide/`
+- **extrasheet** (formerly gsheetx) - Google Sheets manipulation, see https://github.com/think41/gsheetx
+- **extradoc** (formerly gdocx) - Google Docs manipulation, see https://github.com/think41/gdocx (under development)
 
-1. **gsheetx** - See https://github.com/think41/gsheetx, forked from gspread, provides methods to manipulate google sheets.
-1. **gslidex** - See https://github.com/think41/gslidex. "Pulls" google slides into an XML file called Slide Markup Language or SML. AI agents make edits to this XML file. A "diff" process identifies the exact changes that need to be carried out, and then "push" invokes appropriate google slides API to ensure the diffs are applied. This gives AI agents a simpler model to edit google slides. This library is alpha quality.
-1. **gdocx** - See https://github.com/think41/gdocx. Similar workflow to gslidex, but the intermediate format is an HTML file representing the google doc. This is under development and not meant for end users yet.
-
-Currently, these three packages haven't been published to PyPI. Only the gsheetx skill is working, and it uses the underlying gspread library directly. The wrapper code is in `extrasuite-server/skills/gsheetx/gsheet_utils.py`, which will be replaced once gsheetx is published to PyPI.
+### Current Status
+- **extraslide** skill is available at `extrasuite-server/skills/extraslide/`
+- **gsheetx** skill is working at `extrasuite-server/skills/gsheetx/` and uses the underlying gspread library directly
 
 ## Organization Setup (prerequisite)
 
@@ -76,6 +79,16 @@ uv run uvicorn extrasuite_server.main:app --reload --port 8001
 uv run pytest tests/ -v
 uv run ruff check .
 uv run ruff format .
+```
+
+### Extraslide Library
+```bash
+cd extraslide
+uv sync
+uv run pytest tests/ -v
+uv run ruff check .
+uv run ruff format .
+uv run mypy src/extraslide
 ```
 
 ## API Endpoints

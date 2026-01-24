@@ -55,10 +55,17 @@ Thumbs.db
 
 # Testing
 .coverage
+coverage.xml
 htmlcov/
 .pytest_cache/
 .tox/
 .nox/
+
+# Type checking
+.mypy_cache/
+
+# Linting
+.ruff_cache/
 
 # Secrets
 *.pem

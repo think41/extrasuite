@@ -88,10 +88,12 @@ class Database:
         doc_ref = self._client.collection("oauth_states").document(state)
 
         async def _create() -> None:
-            await doc_ref.set({
-                "redirect_url": redirect_url,
-                "expires_at": expires_at,
-            })
+            await doc_ref.set(
+                {
+                    "redirect_url": redirect_url,
+                    "expires_at": expires_at,
+                }
+            )
 
         await asyncio.wait_for(_create(), timeout=self._timeout)
 
@@ -168,10 +170,12 @@ class Database:
         doc_ref = self._client.collection("auth_codes").document(auth_code)
 
         async def _create() -> None:
-            await doc_ref.set({
-                "service_account_email": service_account_email,
-                "expires_at": expires_at,
-            })
+            await doc_ref.set(
+                {
+                    "service_account_email": service_account_email,
+                    "expires_at": expires_at,
+                }
+            )
 
         await asyncio.wait_for(_create(), timeout=self._timeout)
 

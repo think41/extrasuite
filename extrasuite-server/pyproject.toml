@@ -64,6 +64,10 @@ testpaths = ["tests"]
 python_files = "test_*.py"
 python_functions = "test_*"
 
+[tool.pyright]
+include = ["extrasuite_server", "tests"]
+exclude = ["skills"]
+
 [tool.uv]
 dev-dependencies = [
     "pytest>=8.3.0",
