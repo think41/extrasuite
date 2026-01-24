@@ -139,10 +139,10 @@ class TestCredentialsManagerInit:
         assert manager.auth_mode == "service_account"
 
     def test_init_with_env_vars(self) -> None:
-        """AUTH_URL and EXCHANGE_URL env vars are used."""
+        """EXTRASUITE_AUTH_URL and EXTRASUITE_EXCHANGE_URL env vars are used."""
         env = {
-            "AUTH_URL": "https://env.example.com/auth",
-            "EXCHANGE_URL": "https://env.example.com/exchange",
+            "EXTRASUITE_AUTH_URL": "https://env.example.com/auth",
+            "EXTRASUITE_EXCHANGE_URL": "https://env.example.com/exchange",
         }
         with mock.patch.dict(os.environ, env, clear=True):
             manager = CredentialsManager()
@@ -160,8 +160,8 @@ class TestCredentialsManagerInit:
     def test_init_param_overrides_env_var(self) -> None:
         """Constructor params take precedence over env vars."""
         env = {
-            "AUTH_URL": "https://env.example.com/auth",
-            "EXCHANGE_URL": "https://env.example.com/exchange",
+            "EXTRASUITE_AUTH_URL": "https://env.example.com/auth",
+            "EXTRASUITE_EXCHANGE_URL": "https://env.example.com/exchange",
         }
         with mock.patch.dict(os.environ, env, clear=True):
             manager = CredentialsManager(

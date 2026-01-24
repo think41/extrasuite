@@ -8,7 +8,7 @@ Example:
     from extrasuite_client import CredentialsManager
 
     # Configure via environment variables:
-    # - AUTH_URL and EXCHANGE_URL for ExtraSuite protocol
+    # - EXTRASUITE_AUTH_URL and EXTRASUITE_EXCHANGE_URL for ExtraSuite protocol
     # - SERVICE_ACCOUNT_PATH for service account file
     manager = CredentialsManager()
     token = manager.get_token()

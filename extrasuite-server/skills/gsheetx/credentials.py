@@ -84,7 +84,7 @@ class CredentialsManager:
 
     Precedence order for configuration:
     1. auth_url/exchange_url constructor parameters
-    2. AUTH_URL/EXCHANGE_URL environment variables
+    2. EXTRASUITE_AUTH_URL/EXTRASUITE_EXCHANGE_URL environment variables
     3. ~/.config/extrasuite/gateway.json (created by install script)
     4. service_account_path constructor parameter
     5. SERVICE_ACCOUNT_PATH environment variable
@@ -134,8 +134,8 @@ class CredentialsManager:
                 is provided (via constructor, environment variables, or gateway.json).
         """
         # Resolve configuration with precedence: constructor > env var > gateway.json
-        self._auth_url = auth_url or os.environ.get("AUTH_URL")
-        self._exchange_url = exchange_url or os.environ.get("EXCHANGE_URL")
+        self._auth_url = auth_url or os.environ.get("EXTRASUITE_AUTH_URL")
+        self._exchange_url = exchange_url or os.environ.get("EXTRASUITE_EXCHANGE_URL")
 
         # If not set, try gateway.json
         if not self._auth_url or not self._exchange_url:
@@ -152,7 +152,7 @@ class CredentialsManager:
         if not has_extrasuite and not self._sa_path:
             raise ValueError(
                 "No authentication method configured. "
-                "Set AUTH_URL and EXCHANGE_URL environment variables, "
+                "Set EXTRASUITE_AUTH_URL and EXTRASUITE_EXCHANGE_URL environment variables, "
                 "install skills via the ExtraSuite website (creates gateway.json), "
                 "or pass auth_url/exchange_url or service_account_path to constructor."
             )
@@ -299,8 +299,8 @@ class CredentialsManager:
         try:
             data = json.loads(self.GATEWAY_CONFIG_PATH.read_text())
             return {
-                "auth_url": data.get("AUTH_URL"),
-                "exchange_url": data.get("EXCHANGE_URL"),
+                "auth_url": data.get("EXTRASUITE_AUTH_URL"),
+                "exchange_url": data.get("EXTRASUITE_EXCHANGE_URL"),
             }
         except (json.JSONDecodeError, OSError):
             return None
@@ -414,6 +414,7 @@ class CredentialsManager:
 
     def _exchange_auth_code(self, auth_code: str) -> Token:
         """Exchange auth code for token via POST request to server."""
+        assert self._exchange_url is not None  # Guaranteed when using ExtraSuite mode
         body = json.dumps({"code": auth_code}).encode("utf-8")
 
         req = urllib.request.Request(
@@ -535,11 +536,11 @@ def main() -> int:
     )
     parser.add_argument(
         "--auth-url",
-        help="URL to start authentication (or set AUTH_URL env var)",
+        help="URL to start authentication (or set EXTRASUITE_AUTH_URL env var)",
     )
     parser.add_argument(
         "--exchange-url",
-        help="URL to exchange auth code for token (or set EXCHANGE_URL env var)",
+        help="URL to exchange auth code for token (or set EXTRASUITE_EXCHANGE_URL env var)",
     )
     parser.add_argument(
         "--service-account",

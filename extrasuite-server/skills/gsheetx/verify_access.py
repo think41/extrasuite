@@ -18,10 +18,10 @@ Prerequisites: Run checks.py first to set up the environment.
 
 import sys
 
-import gspread
+import gspread  # type: ignore[import-not-found]
 from credentials import CredentialsManager
 from google.oauth2.credentials import Credentials
-from gspread.exceptions import APIError, SpreadsheetNotFound
+from gspread.exceptions import APIError, SpreadsheetNotFound  # type: ignore[import-not-found]
 
 
 def extract_spreadsheet_id(url):
