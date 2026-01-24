@@ -1,14 +1,14 @@
 """ExtraSuite Client - Secure OAuth token exchange for CLI tools.
 
 This library provides a simple interface to obtain short-lived Google service
-account tokens via an ExtraSuite server or service account files. It handles
+account tokens via the ExtraSuite protocol or service account files. It handles
 the OAuth flow automatically, including browser-based authentication and token caching.
 
 Example:
     from extrasuite_client import CredentialsManager
 
     # Configure via environment variables:
-    # - EXTRASUITE_SERVER_URL for ExtraSuite server
+    # - EXTRASUITE_AUTH_URL and EXTRASUITE_EXCHANGE_URL for ExtraSuite protocol
     # - SERVICE_ACCOUNT_PATH for service account file
     manager = CredentialsManager()
     token = manager.get_token()

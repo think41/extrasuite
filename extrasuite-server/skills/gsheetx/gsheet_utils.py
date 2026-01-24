@@ -18,7 +18,7 @@ use gspread directly - see gsheet.md for examples.
 import json
 from pathlib import Path
 
-import gspread
+import gspread  # type: ignore[import-not-found]
 from credentials import CredentialsManager
 from google.oauth2.credentials import Credentials
 

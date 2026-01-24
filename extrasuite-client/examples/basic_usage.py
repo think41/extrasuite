@@ -2,34 +2,45 @@
 """Basic usage example for ExtraSuite.
 
 This script demonstrates the simplest way to get an access token
-using the ExtraSuiteClient.
+using the CredentialsManager.
 
 Usage:
-    python basic_usage.py --server https://your-extrasuite-server.example.com
+    python basic_usage.py \\
+        --auth-url https://your-server.example.com/api/token/auth \\
+        --exchange-url https://your-server.example.com/api/token/exchange
 """
 
 import argparse
 
-from extrasuite_client import ExtraSuiteClient
+from extrasuite_client import CredentialsManager
 
 
 def main():
     parser = argparse.ArgumentParser(description="Basic ExtraSuite usage")
     parser.add_argument(
-        "--server",
+        "--auth-url",
         required=True,
-        help="ExtraSuite server URL",
+        help="URL to start authentication flow",
+    )
+    parser.add_argument(
+        "--exchange-url",
+        required=True,
+        help="URL to exchange auth code for token",
     )
     args = parser.parse_args()
 
-    # Create ExtraSuite client
-    client = ExtraSuiteClient(server_url=args.server)
+    # Create credentials manager
+    manager = CredentialsManager(
+        auth_url=args.auth_url,
+        exchange_url=args.exchange_url,
+    )
 
     # Get a token (will open browser if not cached)
-    token = client.get_token()
+    token = manager.get_token()
 
     print("\nToken obtained successfully!")
-    print(f"Token (first 50 chars): {token[:50]}...")
+    print(f"Service account: {token.service_account_email}")
+    print(f"Token (first 50 chars): {token.access_token[:50]}...")
 
 
 if __name__ == "__main__":

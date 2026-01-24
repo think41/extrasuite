@@ -79,25 +79,30 @@ class CredentialsManager:
     """Manages credentials for Google API access.
 
     Supports two authentication modes:
-    1. ExtraSuite server - obtains short-lived tokens via OAuth flow
+    1. ExtraSuite protocol - obtains short-lived tokens via OAuth flow
     2. Service account file - uses credentials from a JSON key file
 
     Precedence order for configuration:
-    1. extrasuite_server constructor parameter
-    2. EXTRASUITE_SERVER_URL environment variable
+    1. auth_url/exchange_url constructor parameters
+    2. EXTRASUITE_AUTH_URL/EXTRASUITE_EXCHANGE_URL environment variables
     3. ~/.config/extrasuite/gateway.json (created by install script)
     4. service_account_path constructor parameter
     5. SERVICE_ACCOUNT_PATH environment variable
 
     Args:
-        extrasuite_server: URL of the ExtraSuite server (optional).
+        auth_url: URL to start authentication (e.g., "https://server.com/api/token/auth").
+            The port parameter will be appended as a query string.
+        exchange_url: URL to exchange auth code for token (e.g., "https://server.com/api/token/exchange").
         service_account_path: Path to service account JSON file (optional).
         token_cache_path: Path to cache tokens. Defaults to
             ~/.config/extrasuite/token.json
 
     Example:
-        # Using ExtraSuite server (via env var or constructor)
-        manager = CredentialsManager(extrasuite_server="https://auth.example.com")
+        # Using explicit URLs
+        manager = CredentialsManager(
+            auth_url="https://auth.example.com/api/token/auth",
+            exchange_url="https://auth.example.com/api/token/exchange",
+        )
         token = manager.get_token()
 
         # Using service account file
@@ -111,45 +116,56 @@ class CredentialsManager:
 
     def __init__(
         self,
-        extrasuite_server: str | None = None,
+        auth_url: str | None = None,
+        exchange_url: str | None = None,
         service_account_path: str | Path | None = None,
         token_cache_path: str | Path | None = None,
     ) -> None:
         """Initialize the credentials manager.
 
         Args:
-            extrasuite_server: URL of the ExtraSuite server.
+            auth_url: URL to start authentication flow.
+            exchange_url: URL to exchange auth code for token.
             service_account_path: Path to service account JSON file.
             token_cache_path: Path to cache tokens.
 
         Raises:
-            ValueError: If neither extrasuite_server nor service_account_path
+            ValueError: If neither auth_url/exchange_url nor service_account_path
                 is provided (via constructor, environment variables, or gateway.json).
         """
         # Resolve configuration with precedence: constructor > env var > gateway.json
-        self._server_url = extrasuite_server or os.environ.get("EXTRASUITE_SERVER_URL")
+        self._auth_url = auth_url or os.environ.get("EXTRASUITE_AUTH_URL")
+        self._exchange_url = exchange_url or os.environ.get("EXTRASUITE_EXCHANGE_URL")
 
         # If not set, try gateway.json
-        if not self._server_url:
-            self._server_url = self._load_gateway_config()
-
-        if self._server_url:
-            self._server_url = self._server_url.rstrip("/")
+        if not self._auth_url or not self._exchange_url:
+            gateway_urls = self._load_gateway_config()
+            if gateway_urls:
+                self._auth_url = self._auth_url or gateway_urls.get("auth_url")
+                self._exchange_url = self._exchange_url or gateway_urls.get("exchange_url")
 
         sa_path = service_account_path or os.environ.get("SERVICE_ACCOUNT_PATH")
         self._sa_path = Path(sa_path) if sa_path else None
 
         # Validate that at least one auth method is configured
-        if not self._server_url and not self._sa_path:
+        has_extrasuite = bool(self._auth_url and self._exchange_url)
+        has_partial_extrasuite = bool(self._auth_url) != bool(self._exchange_url)
+        if has_partial_extrasuite:
+            missing = "exchange_url" if self._auth_url else "auth_url"
+            raise ValueError(
+                f"Incomplete ExtraSuite configuration: {missing} is missing. "
+                "Both auth_url and exchange_url must be provided together."
+            )
+        if not has_extrasuite and not self._sa_path:
             raise ValueError(
                 "No authentication method configured. "
-                "Set EXTRASUITE_SERVER_URL environment variable, "
+                "Set EXTRASUITE_AUTH_URL and EXTRASUITE_EXCHANGE_URL environment variables, "
                 "install skills via the ExtraSuite website (creates gateway.json), "
-                "or pass extrasuite_server or service_account_path to constructor."
+                "or pass auth_url/exchange_url or service_account_path to constructor."
             )
 
-        # ExtraSuite server takes precedence if both are configured
-        self._use_extrasuite = bool(self._server_url)
+        # ExtraSuite protocol takes precedence if both are configured
+        self._use_extrasuite = has_extrasuite
 
         self._token_cache_path = (
             Path(token_cache_path) if token_cache_path else self.DEFAULT_CACHE_PATH
@@ -275,20 +291,24 @@ class CredentialsManager:
         temp_path.rename(self._token_cache_path)
         print(f"Token saved to {self._token_cache_path}")
 
-    def _load_gateway_config(self) -> str | None:
-        """Load server URL from gateway.json if it exists.
+    def _load_gateway_config(self) -> dict[str, str] | None:
+        """Load endpoint URLs from gateway.json if it exists.
 
         The gateway.json file is created by the install script and contains
-        the ExtraSuite server URL configured during skill installation.
+        the authentication endpoint URLs configured during skill installation.
 
         Returns:
-            The server URL if gateway.json exists and is valid, None otherwise.
+            Dictionary with 'auth_url' and 'exchange_url' if gateway.json exists
+            and is valid, None otherwise.
         """
         if not self.GATEWAY_CONFIG_PATH.exists():
             return None
         try:
             data = json.loads(self.GATEWAY_CONFIG_PATH.read_text())
-            return data.get("EXTRASUITE_SERVER_URL")
+            return {
+                "auth_url": data.get("EXTRASUITE_AUTH_URL"),
+                "exchange_url": data.get("EXTRASUITE_EXCHANGE_URL"),
+            }
         except (json.JSONDecodeError, OSError):
             return None
 
@@ -301,7 +321,7 @@ class CredentialsManager:
         - Accepts auth code from either HTTP callback or stdin input
         """
         port = self._find_free_port()
-        auth_url = f"{self._server_url}/api/token/auth?port={port}"
+        auth_url = f"{self._auth_url}?port={port}"
 
         # Shared state for receiving auth code
         result_holder: dict[str, Any] = {"code": None, "error": None, "done": False}
@@ -401,11 +421,11 @@ class CredentialsManager:
 
     def _exchange_auth_code(self, auth_code: str) -> Token:
         """Exchange auth code for token via POST request to server."""
-        exchange_url = f"{self._server_url}/api/token/exchange"
+        assert self._exchange_url is not None  # Guaranteed when using ExtraSuite mode
         body = json.dumps({"code": auth_code}).encode("utf-8")
 
         req = urllib.request.Request(
-            exchange_url,
+            self._exchange_url,
             data=body,
             headers={"Content-Type": "application/json"},
             method="POST",
@@ -522,8 +542,12 @@ def main() -> int:
         description="Get Google API access token via ExtraSuite or service account"
     )
     parser.add_argument(
-        "--server",
-        help="ExtraSuite server URL (or set EXTRASUITE_SERVER_URL env var)",
+        "--auth-url",
+        help="URL to start authentication (or set EXTRASUITE_AUTH_URL env var)",
+    )
+    parser.add_argument(
+        "--exchange-url",
+        help="URL to exchange auth code for token (or set EXTRASUITE_EXCHANGE_URL env var)",
     )
     parser.add_argument(
         "--service-account",
@@ -544,7 +568,8 @@ def main() -> int:
 
     try:
         manager = CredentialsManager(
-            extrasuite_server=args.server,
+            auth_url=args.auth_url,
+            exchange_url=args.exchange_url,
             service_account_path=args.service_account,
         )
         print(f"Auth mode: {manager.auth_mode}")
