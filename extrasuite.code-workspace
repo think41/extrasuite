@@ -9,13 +9,19 @@
 			"path": "extrasuite-server"
 		},
 		{
+			"name": "extraslide",
+			"path": "extraslide"
+		},
+		{
+			"name": "website",
+			"path": "website"
+		},
+		{
 			"name": "root",
 			"path": "."
 		}
 	],
 	"settings": {
-		"python.defaultInterpreterPath": "${workspaceFolder}/.venv/bin/python",
-		"python.analysis.extraPaths": [],
 		"[python]": {
 			"editor.defaultFormatter": "charliermarsh.ruff",
 			"editor.formatOnSave": true,

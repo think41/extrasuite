@@ -1,9 +1,4 @@
 {
-	"python.defaultInterpreterPath": "${workspaceFolder}/extrasuite-server/.venv/bin/python",
-	"python.analysis.extraPaths": [
-		"${workspaceFolder}/extrasuite-client/src",
-		"${workspaceFolder}/extrasuite-server"
-	],
 	"[python]": {
 		"editor.defaultFormatter": "charliermarsh.ruff",
 		"editor.formatOnSave": true,

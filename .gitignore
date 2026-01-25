@@ -74,6 +74,9 @@ htmlcov/
 !package.json
 !package-lock.json
 !tsconfig.json
+!.vscode/settings.json
+!*/.vscode/settings.json
+!*.code-workspace
 credentials/
 
 # Docker
