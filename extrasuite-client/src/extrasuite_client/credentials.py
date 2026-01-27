@@ -210,6 +210,15 @@ class CredentialsManager:
 
     def _get_service_account_token(self, force_refresh: bool) -> Token:
         """Get token from service account file."""
+        # Check cache first (service account tokens also benefit from caching)
+        # This avoids requiring google-auth if we have a valid cached token
+        if not force_refresh:
+            cached = self._load_cached_token()
+            if cached and cached.is_valid():
+                print(f"Using cached token (expires in {cached.expires_in_seconds()} seconds)")
+                return cached
+
+        # Only import google-auth when we actually need to refresh
         try:
             from google.auth.transport.requests import Request
             from google.oauth2 import service_account
@@ -221,13 +230,6 @@ class CredentialsManager:
 
         if not self._sa_path or not self._sa_path.exists():
             raise FileNotFoundError(f"Service account file not found: {self._sa_path}")
-
-        # Check cache first (service account tokens also benefit from caching)
-        if not force_refresh:
-            cached = self._load_cached_token()
-            if cached and cached.is_valid():
-                print(f"Using cached token (expires in {cached.expires_in_seconds()} seconds)")
-                return cached
 
         print(f"Loading credentials from {self._sa_path}...")
 
