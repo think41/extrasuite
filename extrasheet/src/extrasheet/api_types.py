@@ -21,6 +21,7 @@ from typing import Any, TypedDict
 # Core Objects
 # =============================================================================
 
+
 class GridRange(TypedDict, total=False):
     """A range on a sheet. All indexes are zero-based. Indexes are half open, i.e. the start index is inclusive and the end index is exclusive -- [start_index, end_index). Missing indexes indicate the range is unbounded on that side. For example, if `"Sheet1"` is sheet ID 123456, then: `Sheet1!A1:A1 == sheet_id: 123456, start_row_index: 0, end_row_index: 1, start_column_index: 0, end_column_index: 1` `Sheet1!A3:B4 == sheet_id: 123456, start_row_index: 2, end_row_index: 4, start_column_index: 0, end_column_index: 2` `Sheet1!A:B == sheet_id: 123456, start_column_index: 0, end_column_index: 2` `Sheet1!A5:B == sheet_id: 123456, start_row_index: 4, start_column_index: 0, end_column_index: 2` `Sheet1 == sheet_id: 123456` The start index must always be less than or equal to the end index. If the start index equals the end index, then the range is empty. Empty ranges are typically not meaningful and are usually rendered in the UI as `#REF!`."""
 
@@ -40,7 +41,6 @@ class GridRange(TypedDict, total=False):
     startRowIndex: int
 
 
-
 class GridCoordinate(TypedDict, total=False):
     """A coordinate in a sheet. All indexes are zero-based."""
 
@@ -52,7 +52,6 @@ class GridCoordinate(TypedDict, total=False):
 
     # The sheet this coordinate is on.
     sheetId: int
-
 
 
 class CellFormat(TypedDict, total=False):
@@ -120,7 +119,6 @@ class CellFormat(TypedDict, total=False):
     wrapStrategy: str
 
 
-
 class DimensionRange(TypedDict, total=False):
     """A range along a single dimension on a sheet. All indexes are zero-based. Indexes are half open: the start index is inclusive and the end index is exclusive. Missing indexes indicate the range is unbounded on that side."""
 
@@ -141,7 +139,6 @@ class DimensionRange(TypedDict, total=False):
     startIndex: int
 
 
-
 class DimensionGroup(TypedDict, total=False):
     """A group over an interval of rows or columns on a sheet, which can contain or be contained within other groups. A group can be collapsed or expanded as a unit on the sheet."""
 
@@ -155,7 +152,6 @@ class DimensionGroup(TypedDict, total=False):
     range: DimensionRange
 
 
-
 class NamedRange(TypedDict, total=False):
     """A named range."""
 
@@ -167,7 +163,6 @@ class NamedRange(TypedDict, total=False):
 
     # The range this represents.
     range: GridRange
-
 
 
 class GridProperties(TypedDict, total=False):
@@ -193,7 +188,6 @@ class GridProperties(TypedDict, total=False):
 
     # True if the row grouping control toggle is shown after the group.
     rowGroupControlAfter: bool
-
 
 
 class SheetProperties(TypedDict, total=False):
@@ -237,7 +231,6 @@ class SheetProperties(TypedDict, total=False):
     title: str
 
 
-
 class ErrorValue(TypedDict, total=False):
     """An error in a cell."""
 
@@ -259,7 +252,6 @@ class ErrorValue(TypedDict, total=False):
     type: str
 
 
-
 class ExtendedValue(TypedDict, total=False):
     """The kinds of value that a cell in a spreadsheet can have."""
 
@@ -277,7 +269,6 @@ class ExtendedValue(TypedDict, total=False):
 
     # Represents a string value. Leading single quotes are not included. For ex...
     stringValue: str
-
 
 
 class CellData(TypedDict, total=False):
@@ -324,13 +315,11 @@ class CellData(TypedDict, total=False):
     userEnteredValue: ExtendedValue
 
 
-
 class RowData(TypedDict, total=False):
     """Data about each cell in a row."""
 
     # The values in the row, one per column.
     values: list[CellData]
-
 
 
 class DimensionProperties(TypedDict, total=False):
@@ -351,7 +340,6 @@ class DimensionProperties(TypedDict, total=False):
 
     # The height (if a row) or width (if a column) of the dimension in pixels.
     pixelSize: int
-
 
 
 class SpreadsheetProperties(TypedDict, total=False):
@@ -387,7 +375,6 @@ class SpreadsheetProperties(TypedDict, total=False):
     title: str
 
 
-
 class GridData(TypedDict, total=False):
     """Data in the grid, as well as metadata about the dimensions."""
 
@@ -405,7 +392,6 @@ class GridData(TypedDict, total=False):
 
     # The first row this GridData refers to, zero-based.
     startRow: int
-
 
 
 class Sheet(TypedDict, total=False):
@@ -454,7 +440,6 @@ class Sheet(TypedDict, total=False):
     tables: list[Table]
 
 
-
 class Spreadsheet(TypedDict, total=False):
     """Resource that represents a spreadsheet."""
 
@@ -484,11 +469,10 @@ class Spreadsheet(TypedDict, total=False):
     spreadsheetUrl: str
 
 
-
-
 # =============================================================================
 # Formatting
 # =============================================================================
+
 
 class Color(TypedDict, total=False):
     """Represents a color in the RGBA color space. This representation is designed for simplicity of conversion to and from color representations in various languages over compactness. For example, the fields of this representation can be trivially provided to the constructor of `java.awt.Color` in Java; it can also be trivially provided to UIColor's `+colorWithRed:green:blue:alpha` method in iOS; and, with just a little work, it can be easily formatted into a CSS `rgba()` string in JavaScript. This reference page doesn't have information about the absolute color space that should be used to interpret the RGB value—for example, sRGB, Adobe RGB, DCI-P3, and BT.2020. By default, applications should assume the sRGB color space. When color equality needs to be decided, implementations, unless documented otherwise, treat two colors as equal if all their red, green, blue, and alpha values each differ by at most `1e-5`. Example (Java): import com.google.type.Color; // ... public static java.awt.Color fromProto(Color protocolor) { float alpha = protocolor.hasAlpha() ? protocolor.getAlpha().getValue() : 1.0; return new java.awt.Color( protocolor.getRed(), protocolor.getGreen(), protocolor.getBlue(), alpha); } public static Color toProto(java.awt.Color color) { float red = (float) color.getRed(); float green = (float) color.getGreen(); float blue = (float) color.getBlue(); float denominator = 255.0; Color.Builder resultBuilder = Color .newBuilder() .setRed(red / denominator) .setGreen(green / denominator) .setBlue(blue / denominator); int alpha = color.getAlpha(); if (alpha != 255) { result.setAlpha( FloatValue .newBuilder() .setValue(((float) alpha) / denominator) .build()); } return resultBuilder.build(); } // ... Example (iOS / Obj-C): // ... static UIColor* fromProto(Color* protocolor) { float red = [protocolor red]; float green = [protocolor green]; float blue = [protocolor blue]; FloatValue* alpha_wrapper = [protocolor alpha]; float alpha = 1.0; if (alpha_wrapper != nil) { alpha = [alpha_wrapper value]; } return [UIColor colorWithRed:red green:green blue:blue alpha:alpha]; } static Color* toProto(UIColor* color) { CGFloat red, green, blue, alpha; if (![color getRed:&red green:&green blue:&blue alpha:&alpha]) { return nil; } Color* result = [[Color alloc] init]; [result setRed:red]; [result setGreen:green]; [result setBlue:blue]; if (alpha <= 0.9999) { [result setAlpha:floatWrapperWithValue(alpha)]; } [result autorelease]; return result; } // ... Example (JavaScript): // ... var protoToCssColor = function(rgb_color) { var redFrac = rgb_color.red || 0.0; var greenFrac = rgb_color.green || 0.0; var blueFrac = rgb_color.blue || 0.0; var red = Math.floor(redFrac * 255); var green = Math.floor(greenFrac * 255); var blue = Math.floor(blueFrac * 255); if (!('alpha' in rgb_color)) { return rgbToCssColor(red, green, blue); } var alphaFrac = rgb_color.alpha.value || 0.0; var rgbParams = [red, green, blue].join(','); return ['rgba(', rgbParams, ',', alphaFrac, ')'].join(''); }; var rgbToCssColor = function(red, green, blue) { var rgbNumber = new Number((red << 16) | (green << 8) | blue); var hexString = rgbNumber.toString(16); var missingZeros = 6 - hexString.length; var resultBuilder = ['#']; for (var i = 0; i < missingZeros; i++) { resultBuilder.push('0'); } resultBuilder.push(hexString); return resultBuilder.join(''); }; // ..."""
@@ -504,7 +488,6 @@ class Color(TypedDict, total=False):
 
     # The amount of red in the color as a value in the interval [0, 1].
     red: float
-
 
 
 class ColorStyle(TypedDict, total=False):
@@ -528,7 +511,6 @@ class ColorStyle(TypedDict, total=False):
     themeColor: str
 
 
-
 class EmbeddedObjectBorder(TypedDict, total=False):
     """A border along an embedded object."""
 
@@ -538,7 +520,6 @@ class EmbeddedObjectBorder(TypedDict, total=False):
 
     # The color of the border. If color is also set, this field takes precedence.
     colorStyle: ColorStyle
-
 
 
 class LineStyle(TypedDict, total=False):
@@ -559,7 +540,6 @@ class LineStyle(TypedDict, total=False):
 
     # The thickness of the line, in px.
     width: int
-
 
 
 class TextFormat(TypedDict, total=False):
@@ -594,7 +574,6 @@ class TextFormat(TypedDict, total=False):
     underline: bool
 
 
-
 class PointStyle(TypedDict, total=False):
     """The style of a point on the chart."""
 
@@ -615,7 +594,6 @@ class PointStyle(TypedDict, total=False):
     size: float
 
 
-
 class KeyValueFormat(TypedDict, total=False):
     """Formatting options for key value."""
 
@@ -624,7 +602,6 @@ class KeyValueFormat(TypedDict, total=False):
 
     # Text formatting options for key value. The link field is not supported.
     textFormat: TextFormat
-
 
 
 class BaselineValueFormat(TypedDict, total=False):
@@ -661,7 +638,6 @@ class BaselineValueFormat(TypedDict, total=False):
     textFormat: TextFormat
 
 
-
 class Padding(TypedDict, total=False):
     """The amount of padding around the cell, in pixels. When updating padding, every field must be specified."""
 
@@ -676,7 +652,6 @@ class Padding(TypedDict, total=False):
 
     # The top padding of the cell.
     top: int
-
 
 
 class Border(TypedDict, total=False):
@@ -706,7 +681,6 @@ class Border(TypedDict, total=False):
     width: int
 
 
-
 class Borders(TypedDict, total=False):
     """The borders of the cell."""
 
@@ -721,7 +695,6 @@ class Borders(TypedDict, total=False):
 
     # The top border of the cell.
     top: Border
-
 
 
 class NumberFormat(TypedDict, total=False):
@@ -744,7 +717,6 @@ class NumberFormat(TypedDict, total=False):
     type: str
 
 
-
 class ConditionalFormatRule(TypedDict, total=False):
     """A rule describing a conditional format."""
 
@@ -758,7 +730,6 @@ class ConditionalFormatRule(TypedDict, total=False):
     ranges: list[GridRange]
 
 
-
 class TextFormatRun(TypedDict, total=False):
     """A run of a text format. The format of this run continues until the start index of the next run. When updating, all fields must be set."""
 
@@ -767,7 +738,6 @@ class TextFormatRun(TypedDict, total=False):
 
     # The zero-based character index where this run starts, in UTF-16 code units.
     startIndex: int
-
 
 
 class ThemeColorPair(TypedDict, total=False):
@@ -791,18 +761,16 @@ class ThemeColorPair(TypedDict, total=False):
     colorType: str
 
 
-
-
 # =============================================================================
 # Charts
 # =============================================================================
+
 
 class ChartSourceRange(TypedDict, total=False):
     """Source ranges for a chart."""
 
     # The ranges of data for a series or domain. Exactly one dimension must hav...
     sources: list[GridRange]
-
 
 
 class ChartDateTimeRule(TypedDict, total=False):
@@ -829,7 +797,6 @@ class ChartDateTimeRule(TypedDict, total=False):
     type: str
 
 
-
 class ChartHistogramRule(TypedDict, total=False):
     """Allows you to organize numeric values in a source data column into buckets of constant size."""
 
@@ -843,7 +810,6 @@ class ChartHistogramRule(TypedDict, total=False):
     minValue: float
 
 
-
 class ChartGroupRule(TypedDict, total=False):
     """An optional setting on the ChartData of the domain of a data source chart that defines buckets for the values in the domain rather than breaking out each individual value. For example, when plotting a data source chart, you can specify a histogram rule on the domain (it should only contain numeric values), grouping its values into buckets. Any values of a chart series that fall into the same bucket are aggregated based on the aggregate_type."""
 
@@ -852,7 +818,6 @@ class ChartGroupRule(TypedDict, total=False):
 
     # A ChartHistogramRule
     histogramRule: ChartHistogramRule
-
 
 
 class ChartData(TypedDict, total=False):
@@ -879,7 +844,6 @@ class ChartData(TypedDict, total=False):
     sourceRange: ChartSourceRange
 
 
-
 class CandlestickDomain(TypedDict, total=False):
     """The domain of a CandlestickChart."""
 
@@ -890,13 +854,11 @@ class CandlestickDomain(TypedDict, total=False):
     reversed: bool
 
 
-
 class CandlestickSeries(TypedDict, total=False):
     """The series of a CandlestickData."""
 
     # The data of the CandlestickSeries.
     data: ChartData
-
 
 
 class CandlestickData(TypedDict, total=False):
@@ -915,7 +877,6 @@ class CandlestickData(TypedDict, total=False):
     openSeries: CandlestickSeries
 
 
-
 class CandlestickChartSpec(TypedDict, total=False):
     """A candlestick chart."""
 
@@ -926,7 +887,6 @@ class CandlestickChartSpec(TypedDict, total=False):
     domain: CandlestickDomain
 
 
-
 class WaterfallChartDomain(TypedDict, total=False):
     """The domain of a waterfall chart."""
 
@@ -935,7 +895,6 @@ class WaterfallChartDomain(TypedDict, total=False):
 
     # True to reverse the order of the domain values (horizontal axis).
     reversed: bool
-
 
 
 class WaterfallChartCustomSubtotal(TypedDict, total=False):
@@ -951,7 +910,6 @@ class WaterfallChartCustomSubtotal(TypedDict, total=False):
     subtotalIndex: int
 
 
-
 class WaterfallChartColumnStyle(TypedDict, total=False):
     """Styles for a waterfall chart column."""
 
@@ -964,7 +922,6 @@ class WaterfallChartColumnStyle(TypedDict, total=False):
 
     # The label of the column's legend.
     label: str
-
 
 
 class WaterfallChartSeries(TypedDict, total=False):
@@ -990,7 +947,6 @@ class WaterfallChartSeries(TypedDict, total=False):
 
     # Styles for all subtotal columns in this series.
     subtotalColumnsStyle: WaterfallChartColumnStyle
-
 
 
 class WaterfallChartSpec(TypedDict, total=False):
@@ -1020,7 +976,6 @@ class WaterfallChartSpec(TypedDict, total=False):
 
     # Controls whether to display additional data labels on stacked charts whic...
     totalDataLabel: DataLabel
-
 
 
 class TreemapChartColorScale(TypedDict, total=False):
@@ -1053,7 +1008,6 @@ class TreemapChartColorScale(TypedDict, total=False):
 
     # The background color for cells that have no color data associated with th...
     noDataColorStyle: ColorStyle
-
 
 
 class TreemapChartSpec(TypedDict, total=False):
@@ -1098,7 +1052,6 @@ class TreemapChartSpec(TypedDict, total=False):
 
     # The text format for all labels on the chart. The link field is not suppor...
     textFormat: TextFormat
-
 
 
 class BubbleChartSpec(TypedDict, total=False):
@@ -1150,7 +1103,6 @@ class BubbleChartSpec(TypedDict, total=False):
     series: ChartData
 
 
-
 class DataSourceChartProperties(TypedDict, total=False):
     """Properties of a data source chart."""
 
@@ -1160,7 +1112,6 @@ class DataSourceChartProperties(TypedDict, total=False):
 
     # ID of the data source that the chart is associated with.
     dataSourceId: str
-
 
 
 class OrgChartSpec(TypedDict, total=False):
@@ -1198,7 +1149,6 @@ class OrgChartSpec(TypedDict, total=False):
     tooltips: ChartData
 
 
-
 class HistogramSeries(TypedDict, total=False):
     """A histogram series containing the series color and data."""
 
@@ -1211,7 +1161,6 @@ class HistogramSeries(TypedDict, total=False):
 
     # The data for this histogram series.
     data: ChartData
-
 
 
 class HistogramChartSpec(TypedDict, total=False):
@@ -1241,7 +1190,6 @@ class HistogramChartSpec(TypedDict, total=False):
     showItemDividers: bool
 
 
-
 class ChartAxisViewWindowOptions(TypedDict, total=False):
     """The options that define a "view window" for a chart (such as the visible values in an axis)."""
 
@@ -1258,7 +1206,6 @@ class ChartAxisViewWindowOptions(TypedDict, total=False):
     #   "EXPLICIT": Follows the min and max exactly if specified. If a value ...
     #   "PRETTY": Chooses a min and max that make the chart look good. Both...
     viewWindowMode: str
-
 
 
 class BasicChartAxis(TypedDict, total=False):
@@ -1285,7 +1232,6 @@ class BasicChartAxis(TypedDict, total=False):
     viewWindowOptions: ChartAxisViewWindowOptions
 
 
-
 class BasicChartDomain(TypedDict, total=False):
     """The domain of a chart. For example, if charting stock prices over time, this would be the date."""
 
@@ -1294,7 +1240,6 @@ class BasicChartDomain(TypedDict, total=False):
 
     # True to reverse the order of the domain values (horizontal axis).
     reversed: bool
-
 
 
 class BasicSeriesDataPointStyleOverride(TypedDict, total=False):
@@ -1312,7 +1257,6 @@ class BasicSeriesDataPointStyleOverride(TypedDict, total=False):
 
     # Point style of the series data point. Valid only if the chartType is AREA...
     pointStyle: PointStyle
-
 
 
 class BasicChartSeries(TypedDict, total=False):
@@ -1359,7 +1303,6 @@ class BasicChartSeries(TypedDict, total=False):
     #   "COMBO": A combo chart.
     #   "STEPPED_AREA": A stepped area chart.
     type: str
-
 
 
 class BasicChartSpec(TypedDict, total=False):
@@ -1427,7 +1370,6 @@ class BasicChartSpec(TypedDict, total=False):
     totalDataLabel: DataLabel
 
 
-
 class PieChartSpec(TypedDict, total=False):
     """A pie chart."""
 
@@ -1455,7 +1397,6 @@ class PieChartSpec(TypedDict, total=False):
     threeDimensional: bool
 
 
-
 class ChartCustomNumberFormatOptions(TypedDict, total=False):
     """Custom number formatting options for chart attributes."""
 
@@ -1464,7 +1405,6 @@ class ChartCustomNumberFormatOptions(TypedDict, total=False):
 
     # Custom suffix to be appended to the chart attribute. This field is optional.
     suffix: str
-
 
 
 class ScorecardChartSpec(TypedDict, total=False):
@@ -1505,7 +1445,6 @@ class ScorecardChartSpec(TypedDict, total=False):
 
     # Value to scale scorecard key and baseline value. For example, a factor of...
     scaleFactor: float
-
 
 
 class ChartSpec(TypedDict, total=False):
@@ -1591,7 +1530,6 @@ class ChartSpec(TypedDict, total=False):
     waterfallChart: WaterfallChartSpec
 
 
-
 class EmbeddedChart(TypedDict, total=False):
     """A chart embedded in a sheet."""
 
@@ -1608,7 +1546,6 @@ class EmbeddedChart(TypedDict, total=False):
     spec: ChartSpec
 
 
-
 class HistogramRule(TypedDict, total=False):
     """Allows you to organize the numeric values in a source data column into buckets of a constant size. All values from HistogramRule.start to HistogramRule.end are placed into groups of size HistogramRule.interval. In addition, all values below HistogramRule.start are placed in one group, and all values above HistogramRule.end are placed in another. Only HistogramRule.interval is required, though if HistogramRule.start and HistogramRule.end are both provided, HistogramRule.start must be less than HistogramRule.end. For example, a pivot table showing average purchase amount by age that has 50+ rows: +-----+-------------------+ | Age | AVERAGE of Amount | +-----+-------------------+ | 16 | $27.13 | | 17 | $5.24 | | 18 | $20.15 | ... +-----+-------------------+ could be turned into a pivot table that looks like the one below by applying a histogram group rule with a HistogramRule.start of 25, an HistogramRule.interval of 20, and an HistogramRule.end of 65. +-------------+-------------------+ | Grouped Age | AVERAGE of Amount | +-------------+-------------------+ | < 25 | $19.34 | | 25-45 | $31.43 | | 45-65 | $35.87 | | > 65 | $27.55 | +-------------+-------------------+ | Grand Total | $29.12 | +-------------+-------------------+"""
 
@@ -1622,11 +1559,10 @@ class HistogramRule(TypedDict, total=False):
     start: float
 
 
-
-
 # =============================================================================
 # Features (Pivot Tables, Filters, etc.)
 # =============================================================================
+
 
 class BandedRange(TypedDict, total=False):
     """A banded (alternating colors) range in a sheet."""
@@ -1646,7 +1582,6 @@ class BandedRange(TypedDict, total=False):
 
     # Properties for row bands. These properties are applied on a row-by-row ba...
     rowProperties: BandingProperties
-
 
 
 class FilterCriteria(TypedDict, total=False):
@@ -1673,7 +1608,6 @@ class FilterCriteria(TypedDict, total=False):
     visibleForegroundColorStyle: ColorStyle
 
 
-
 class FilterSpec(TypedDict, total=False):
     """The filter criteria associated with a specific column."""
 
@@ -1687,7 +1621,6 @@ class FilterSpec(TypedDict, total=False):
     filterCriteria: FilterCriteria
 
 
-
 class BigQueryTableSpec(TypedDict, total=False):
     """Specifies a BigQuery table definition. Only [native tables](https://cloud.google.com/bigquery/docs/tables-intro) are allowed."""
 
@@ -1699,7 +1632,6 @@ class BigQueryTableSpec(TypedDict, total=False):
 
     # The ID of a BigQuery project the table belongs to. If not specified, the ...
     tableProjectId: str
-
 
 
 class FilterView(TypedDict, total=False):
@@ -1731,7 +1663,6 @@ class FilterView(TypedDict, total=False):
     title: str
 
 
-
 class ProtectedRange(TypedDict, total=False):
     """A protected range."""
 
@@ -1761,7 +1692,6 @@ class ProtectedRange(TypedDict, total=False):
 
     # True if this protected range will show a warning when editing. Warning-ba...
     warningOnly: bool
-
 
 
 class SlicerSpec(TypedDict, total=False):
@@ -1801,7 +1731,6 @@ class SlicerSpec(TypedDict, total=False):
     title: str
 
 
-
 class Slicer(TypedDict, total=False):
     """A slicer in a sheet."""
 
@@ -1815,13 +1744,11 @@ class Slicer(TypedDict, total=False):
     spec: SlicerSpec
 
 
-
 class TableColumnDataValidationRule(TypedDict, total=False):
     """A data validation rule for a column in a table."""
 
     # The condition that data in the cell must match. Valid only if the [Boolea...
     condition: BooleanCondition
-
 
 
 class TableColumnProperties(TypedDict, total=False):
@@ -1856,7 +1783,6 @@ class TableColumnProperties(TypedDict, total=False):
     dataValidationRule: TableColumnDataValidationRule
 
 
-
 class TableRowsProperties(TypedDict, total=False):
     """The table row properties."""
 
@@ -1871,7 +1797,6 @@ class TableRowsProperties(TypedDict, total=False):
 
     # The second color that is alternating. If this field is set, the second ba...
     secondBandColorStyle: ColorStyle
-
 
 
 class Table(TypedDict, total=False):
@@ -1893,7 +1818,6 @@ class Table(TypedDict, total=False):
     tableId: str
 
 
-
 class PivotFilterCriteria(TypedDict, total=False):
     """Criteria for showing/hiding rows in a pivot table."""
 
@@ -1907,7 +1831,6 @@ class PivotFilterCriteria(TypedDict, total=False):
     visibleValues: list[str]
 
 
-
 class PivotFilterSpec(TypedDict, total=False):
     """The pivot table filter criteria associated with a specific source column offset."""
 
@@ -1919,7 +1842,6 @@ class PivotFilterSpec(TypedDict, total=False):
 
     # The criteria for the column.
     filterCriteria: PivotFilterCriteria
-
 
 
 class PivotValue(TypedDict, total=False):
@@ -1966,7 +1888,6 @@ class PivotValue(TypedDict, total=False):
     summarizeFunction: str
 
 
-
 class PivotGroupValueMetadata(TypedDict, total=False):
     """Metadata about a value in a pivot grouping."""
 
@@ -1975,7 +1896,6 @@ class PivotGroupValueMetadata(TypedDict, total=False):
 
     # The calculated value the metadata corresponds to. (Note that formulaValue...
     value: ExtendedValue
-
 
 
 class PivotGroupSortValueBucket(TypedDict, total=False):
@@ -1988,7 +1908,6 @@ class PivotGroupSortValueBucket(TypedDict, total=False):
     valuesIndex: int
 
 
-
 class PivotGroupLimit(TypedDict, total=False):
     """The count limit on rows or columns in the pivot group."""
 
@@ -1997,7 +1916,6 @@ class PivotGroupLimit(TypedDict, total=False):
 
     # The count limit.
     countLimit: int
-
 
 
 class PivotGroupRule(TypedDict, total=False):
@@ -2011,7 +1929,6 @@ class PivotGroupRule(TypedDict, total=False):
 
     # A ManualRule.
     manualRule: ManualRule
-
 
 
 class PivotGroup(TypedDict, total=False):
@@ -2052,7 +1969,6 @@ class PivotGroup(TypedDict, total=False):
     valueMetadata: list[PivotGroupValueMetadata]
 
 
-
 class PivotTable(TypedDict, total=False):
     """A pivot table."""
 
@@ -2089,7 +2005,6 @@ class PivotTable(TypedDict, total=False):
     values: list[PivotValue]
 
 
-
 class DataSourceTable(TypedDict, total=False):
     """A data source table, which allows the user to import a static table of data from the DataSource into Sheets. This is also known as "Extract" in the Sheets editor."""
 
@@ -2120,7 +2035,6 @@ class DataSourceTable(TypedDict, total=False):
     sortSpecs: list[SortSpec]
 
 
-
 class DataValidationRule(TypedDict, total=False):
     """A data validation rule."""
 
@@ -2135,7 +2049,6 @@ class DataValidationRule(TypedDict, total=False):
 
     # True if invalid data should be rejected.
     strict: bool
-
 
 
 class BasicFilter(TypedDict, total=False):
@@ -2158,7 +2071,6 @@ class BasicFilter(TypedDict, total=False):
     tableId: str
 
 
-
 class DataFilter(TypedDict, total=False):
     """Filter that describes what data should be selected or returned from a request."""
 
@@ -2170,7 +2082,6 @@ class DataFilter(TypedDict, total=False):
 
     # Selects data that matches the range described by the GridRange.
     gridRange: GridRange
-
 
 
 class DataFilterValueRange(TypedDict, total=False):
@@ -2190,18 +2101,16 @@ class DataFilterValueRange(TypedDict, total=False):
     values: list[list[Any]]
 
 
-
-
 # =============================================================================
 # Data Sources
 # =============================================================================
+
 
 class DataSourceColumnReference(TypedDict, total=False):
     """An unique identifier that references a data source column."""
 
     # The display name of the column. It should be unique within a data source.
     name: str
-
 
 
 class DataSourceColumn(TypedDict, total=False):
@@ -2214,13 +2123,11 @@ class DataSourceColumn(TypedDict, total=False):
     reference: DataSourceColumnReference
 
 
-
 class BigQueryQuerySpec(TypedDict, total=False):
     """Specifies a custom BigQuery query."""
 
     # The raw query string.
     rawQuery: str
-
 
 
 class BigQueryDataSourceSpec(TypedDict, total=False):
@@ -2236,7 +2143,6 @@ class BigQueryDataSourceSpec(TypedDict, total=False):
     tableSpec: BigQueryTableSpec
 
 
-
 class LookerDataSourceSpec(TypedDict, total=False):
     """The specification of a Looker data source."""
 
@@ -2248,7 +2154,6 @@ class LookerDataSourceSpec(TypedDict, total=False):
 
     # Name of a Looker model.
     model: str
-
 
 
 class DataSourceParameter(TypedDict, total=False):
@@ -2264,7 +2169,6 @@ class DataSourceParameter(TypedDict, total=False):
     range: GridRange
 
 
-
 class DataSourceSpec(TypedDict, total=False):
     """This specifies the details of the data source. For example, for BigQuery, this specifies information about the BigQuery source."""
 
@@ -2276,7 +2180,6 @@ class DataSourceSpec(TypedDict, total=False):
 
     # The parameters of the data source, used when querying the data source.
     parameters: list[DataSourceParameter]
-
 
 
 class DataSource(TypedDict, total=False):
@@ -2295,7 +2198,6 @@ class DataSource(TypedDict, total=False):
     spec: DataSourceSpec
 
 
-
 class DataSourceSheetProperties(TypedDict, total=False):
     """Additional properties of a DATA_SOURCE sheet."""
 
@@ -2309,7 +2211,6 @@ class DataSourceSheetProperties(TypedDict, total=False):
     dataSourceId: str
 
 
-
 class DataSourceFormula(TypedDict, total=False):
     """A data source formula."""
 
@@ -2321,7 +2222,6 @@ class DataSourceFormula(TypedDict, total=False):
     dataSourceId: str
 
 
-
 class DataSourceSheetDimensionRange(TypedDict, total=False):
     """A range along a single dimension on a DATA_SOURCE sheet."""
 
@@ -2330,7 +2230,6 @@ class DataSourceSheetDimensionRange(TypedDict, total=False):
 
     # The ID of the data source sheet the range is on.
     sheetId: int
-
 
 
 class DataSourceObjectReference(TypedDict, total=False):
@@ -2352,13 +2251,11 @@ class DataSourceObjectReference(TypedDict, total=False):
     sheetId: str
 
 
-
 class DataSourceObjectReferences(TypedDict, total=False):
     """A list of references to data source objects."""
 
     # The references.
     references: list[DataSourceObjectReference]
-
 
 
 class DataSourceRefreshMonthlySchedule(TypedDict, total=False):
@@ -2371,13 +2268,11 @@ class DataSourceRefreshMonthlySchedule(TypedDict, total=False):
     startTime: TimeOfDay
 
 
-
 class DataSourceRefreshDailySchedule(TypedDict, total=False):
     """A schedule for data to refresh every day in a given time interval."""
 
     # The start time of a time interval in which a data source refresh is sched...
     startTime: TimeOfDay
-
 
 
 class DataSourceRefreshWeeklySchedule(TypedDict, total=False):
@@ -2388,7 +2283,6 @@ class DataSourceRefreshWeeklySchedule(TypedDict, total=False):
 
     # The start time of a time interval in which a data source refresh is sched...
     startTime: TimeOfDay
-
 
 
 class DataSourceRefreshSchedule(TypedDict, total=False):
@@ -2417,7 +2311,6 @@ class DataSourceRefreshSchedule(TypedDict, total=False):
     weeklySchedule: DataSourceRefreshWeeklySchedule
 
 
-
 class RefreshDataSourceObjectExecutionStatus(TypedDict, total=False):
     """The execution status of refreshing one data source object."""
 
@@ -2426,7 +2319,6 @@ class RefreshDataSourceObjectExecutionStatus(TypedDict, total=False):
 
     # Reference to a data source object being refreshed.
     reference: DataSourceObjectReference
-
 
 
 class CancelDataSourceRefreshStatus(TypedDict, total=False):
@@ -2439,11 +2331,10 @@ class CancelDataSourceRefreshStatus(TypedDict, total=False):
     refreshCancellationStatus: RefreshCancellationStatus
 
 
-
-
 # =============================================================================
 # Other Objects
 # =============================================================================
+
 
 class BandingProperties(TypedDict, total=False):
     """Properties referring a single dimension (either row or column). If both BandedRange.row_properties and BandedRange.column_properties are set, the fill colors are applied to cells according to the following rules: * header_color and footer_color take priority over band colors. * first_band_color takes priority over second_band_color. * row_properties takes priority over column_properties. For example, the first row color takes priority over the first column color, but the first column color takes priority over the second row color. Similarly, the row header takes priority over the column header in the top left cell, but the column header takes priority over the first row color if the row header is not set."""
@@ -2477,7 +2368,6 @@ class BandingProperties(TypedDict, total=False):
     secondBandColorStyle: ColorStyle
 
 
-
 class SortSpec(TypedDict, total=False):
     """A sort order associated with a specific column or row."""
 
@@ -2509,7 +2399,6 @@ class SortSpec(TypedDict, total=False):
     sortOrder: str
 
 
-
 class ConditionValue(TypedDict, total=False):
     """The value of the condition."""
 
@@ -2526,7 +2415,6 @@ class ConditionValue(TypedDict, total=False):
 
     # A value the condition is based on. The value is parsed as if the user typ...
     userEnteredValue: str
-
 
 
 class BooleanCondition(TypedDict, total=False):
@@ -2573,13 +2461,11 @@ class BooleanCondition(TypedDict, total=False):
     values: list[ConditionValue]
 
 
-
 class Link(TypedDict, total=False):
     """An external or local reference."""
 
     # The link identifier.
     uri: str
-
 
 
 class DataLabel(TypedDict, total=False):
@@ -2611,7 +2497,6 @@ class DataLabel(TypedDict, total=False):
     #   "DATA": The data label is displayed using values from the series ...
     #   "CUSTOM": The data label is displayed using values from a custom da...
     type: str
-
 
 
 class DataExecutionStatus(TypedDict, total=False):
@@ -2658,7 +2543,6 @@ class DataExecutionStatus(TypedDict, total=False):
     state: str
 
 
-
 class TextPosition(TypedDict, total=False):
     """Position settings for text."""
 
@@ -2669,7 +2553,6 @@ class TextPosition(TypedDict, total=False):
     #   "CENTER": The text is explicitly aligned to the center of the cell.
     #   "RIGHT": The text is explicitly aligned to the right of the cell.
     horizontalAlignment: str
-
 
 
 class OverlayPosition(TypedDict, total=False):
@@ -2691,7 +2574,6 @@ class OverlayPosition(TypedDict, total=False):
     widthPixels: int
 
 
-
 class EmbeddedObjectPosition(TypedDict, total=False):
     """The position of an embedded object such as a chart."""
 
@@ -2703,7 +2585,6 @@ class EmbeddedObjectPosition(TypedDict, total=False):
 
     # The sheet this is on. Set only if the embedded object is on its own sheet...
     sheetId: int
-
 
 
 class InterpolationPoint(TypedDict, total=False):
@@ -2730,7 +2611,6 @@ class InterpolationPoint(TypedDict, total=False):
     value: str
 
 
-
 class GradientRule(TypedDict, total=False):
     """A rule that applies a gradient color scale format, based on the interpolation points listed. The format of a cell will vary based on its contents as compared to the values of the interpolation points."""
 
@@ -2744,7 +2624,6 @@ class GradientRule(TypedDict, total=False):
     minpoint: InterpolationPoint
 
 
-
 class TextRotation(TypedDict, total=False):
     """The rotation applied to text in a cell."""
 
@@ -2755,7 +2634,6 @@ class TextRotation(TypedDict, total=False):
     vertical: bool
 
 
-
 class BooleanRule(TypedDict, total=False):
     """A rule that may or may not match, depending on the condition."""
 
@@ -2764,7 +2642,6 @@ class BooleanRule(TypedDict, total=False):
 
     # The format to apply. Conditional formatting can only apply a subset of fo...
     format: CellFormat
-
 
 
 class Editors(TypedDict, total=False):
@@ -2780,7 +2657,6 @@ class Editors(TypedDict, total=False):
     users: list[str]
 
 
-
 class ManualRuleGroup(TypedDict, total=False):
     """A group name and a list of items from the source data that should be placed in the group with this name."""
 
@@ -2791,13 +2667,11 @@ class ManualRuleGroup(TypedDict, total=False):
     items: list[ExtendedValue]
 
 
-
 class ManualRule(TypedDict, total=False):
     """Allows you to manually organize the values in a source data column into buckets with names of your choosing. For example, a pivot table that aggregates population by state: +-------+-------------------+ | State | SUM of Population | +-------+-------------------+ | AK | 0.7 | | AL | 4.8 | | AR | 2.9 | ... +-------+-------------------+ could be turned into a pivot table that aggregates population by time zone by providing a list of groups (for example, groupName = 'Central', items = ['AL', 'AR', 'IA', ...]) to a manual group rule. Note that a similar effect could be achieved by adding a time zone column to the source data and adjusting the pivot table. +-----------+-------------------+ | Time Zone | SUM of Population | +-----------+-------------------+ | Central | 106.3 | | Eastern | 151.9 | | Mountain | 17.4 | ... +-----------+-------------------+"""
 
     # The list of group names and the corresponding items from the source data ...
     groups: list[ManualRuleGroup]
-
 
 
 class DateTimeRule(TypedDict, total=False):
@@ -2824,7 +2698,6 @@ class DateTimeRule(TypedDict, total=False):
     type: str
 
 
-
 class PersonProperties(TypedDict, total=False):
     """Properties specific to a linked person."""
 
@@ -2840,7 +2713,6 @@ class PersonProperties(TypedDict, total=False):
     email: str
 
 
-
 class RichLinkProperties(TypedDict, total=False):
     """Properties of a link to a Google resource (such as a file in Drive, a YouTube video, a Maps address, or a Calendar event). Only Drive files can be written as chips. All other rich link types are read only. URIs cannot exceed 2000 bytes when writing. NOTE: Writing Drive file chips requires at least one of the `drive.file`, `drive.readonly`, or `drive` OAuth scopes."""
 
@@ -2850,7 +2722,6 @@ class RichLinkProperties(TypedDict, total=False):
 
     # Required. The URI to the link. This is always present.
     uri: str
-
 
 
 class Chip(TypedDict, total=False):
@@ -2863,7 +2734,6 @@ class Chip(TypedDict, total=False):
     richLinkProperties: RichLinkProperties
 
 
-
 class ChipRun(TypedDict, total=False):
     """The run of a chip. The chip continues until the start index of the next run."""
 
@@ -2872,7 +2742,6 @@ class ChipRun(TypedDict, total=False):
 
     # Required. The zero-based character index where this run starts, in UTF-16...
     startIndex: int
-
 
 
 class ValueRange(TypedDict, total=False):
@@ -2892,7 +2761,6 @@ class ValueRange(TypedDict, total=False):
     values: list[list[Any]]
 
 
-
 class SourceAndDestination(TypedDict, total=False):
     """A combination of a source range and how to extend that source."""
 
@@ -2908,7 +2776,6 @@ class SourceAndDestination(TypedDict, total=False):
 
     # The location of the data to use as the source of the autofill.
     source: GridRange
-
 
 
 class DeveloperMetadataLocation(TypedDict, total=False):
@@ -2931,7 +2798,6 @@ class DeveloperMetadataLocation(TypedDict, total=False):
 
     # True when metadata is associated with an entire spreadsheet.
     spreadsheet: bool
-
 
 
 class DeveloperMetadataLookup(TypedDict, total=False):
@@ -2973,7 +2839,6 @@ class DeveloperMetadataLookup(TypedDict, total=False):
     visibility: str
 
 
-
 class MatchedValueRange(TypedDict, total=False):
     """A value range that was matched by one or more data filers."""
 
@@ -2982,7 +2847,6 @@ class MatchedValueRange(TypedDict, total=False):
 
     # The values matched by the DataFilter.
     valueRange: ValueRange
-
 
 
 class DeveloperMetadata(TypedDict, total=False):
@@ -3008,7 +2872,6 @@ class DeveloperMetadata(TypedDict, total=False):
     visibility: str
 
 
-
 class IterativeCalculationSettings(TypedDict, total=False):
     """Settings to control how circular dependencies are resolved with iterative calculation."""
 
@@ -3019,7 +2882,6 @@ class IterativeCalculationSettings(TypedDict, total=False):
     maxIterations: int
 
 
-
 class SpreadsheetTheme(TypedDict, total=False):
     """Represents spreadsheet theme"""
 
@@ -3028,7 +2890,6 @@ class SpreadsheetTheme(TypedDict, total=False):
 
     # The spreadsheet theme color pairs. To update you must provide all theme c...
     themeColors: list[ThemeColorPair]
-
 
 
 class TimeOfDay(TypedDict, total=False):
@@ -3047,7 +2908,6 @@ class TimeOfDay(TypedDict, total=False):
     seconds: int
 
 
-
 class Interval(TypedDict, total=False):
     """Represents a time interval, encoded as a Timestamp start (inclusive) and a Timestamp end (exclusive). The start must be less than or equal to the end. When the start equals the end, the interval is empty (matches no time). When both start and end are unspecified, the interval matches any time."""
 
@@ -3056,7 +2916,6 @@ class Interval(TypedDict, total=False):
 
     # Optional. Inclusive start of the interval. If specified, a Timestamp matc...
     startTime: str
-
 
 
 class RefreshCancellationStatus(TypedDict, total=False):
@@ -3080,7 +2939,6 @@ class RefreshCancellationStatus(TypedDict, total=False):
     state: str
 
 
-
 class MatchedDeveloperMetadata(TypedDict, total=False):
     """A developer metadata entry and the data filters specified in the original request that matched it."""
 
@@ -3091,11 +2949,10 @@ class MatchedDeveloperMetadata(TypedDict, total=False):
     developerMetadata: DeveloperMetadata
 
 
-
-
 # =============================================================================
 # Requests
 # =============================================================================
+
 
 class AddBandingRequest(TypedDict, total=False):
     """Adds a new banded range to the spreadsheet."""
@@ -3104,13 +2961,11 @@ class AddBandingRequest(TypedDict, total=False):
     bandedRange: BandedRange
 
 
-
 class AddChartRequest(TypedDict, total=False):
     """Adds a chart to a sheet in the spreadsheet."""
 
     # The chart that should be added to the spreadsheet, including the position...
     chart: EmbeddedChart
-
 
 
 class AddConditionalFormatRuleRequest(TypedDict, total=False):
@@ -3123,13 +2978,11 @@ class AddConditionalFormatRuleRequest(TypedDict, total=False):
     rule: ConditionalFormatRule
 
 
-
 class AddDataSourceRequest(TypedDict, total=False):
     """Adds a data source. After the data source is added successfully, an associated DATA_SOURCE sheet is created and an execution is triggered to refresh the sheet to read data from the data source. The request requires an additional `bigquery.readonly` OAuth scope if you are adding a BigQuery data source."""
 
     # The data source to add.
     dataSource: DataSource
-
 
 
 class AddDimensionGroupRequest(TypedDict, total=False):
@@ -3139,13 +2992,11 @@ class AddDimensionGroupRequest(TypedDict, total=False):
     range: DimensionRange
 
 
-
 class AddFilterViewRequest(TypedDict, total=False):
     """Adds a filter view."""
 
     # The filter to add. The filterViewId field is optional; if one is not set,...
     filter: FilterView
-
 
 
 class AddNamedRangeRequest(TypedDict, total=False):
@@ -3155,13 +3006,11 @@ class AddNamedRangeRequest(TypedDict, total=False):
     namedRange: NamedRange
 
 
-
 class AddProtectedRangeRequest(TypedDict, total=False):
     """Adds a new protected range."""
 
     # The protected range to be added. The protectedRangeId field is optional; ...
     protectedRange: ProtectedRange
-
 
 
 class AddSheetRequest(TypedDict, total=False):
@@ -3171,7 +3020,6 @@ class AddSheetRequest(TypedDict, total=False):
     properties: SheetProperties
 
 
-
 class AddSlicerRequest(TypedDict, total=False):
     """Adds a slicer to a sheet in the spreadsheet."""
 
@@ -3179,13 +3027,11 @@ class AddSlicerRequest(TypedDict, total=False):
     slicer: Slicer
 
 
-
 class AddTableRequest(TypedDict, total=False):
     """Adds a new table to the spreadsheet."""
 
     # Required. The table to add.
     table: Table
-
 
 
 class AppendCellsRequest(TypedDict, total=False):
@@ -3202,7 +3048,6 @@ class AppendCellsRequest(TypedDict, total=False):
 
     # The ID of the table to append data to. The data will be only appended to ...
     tableId: str
-
 
 
 class AppendDimensionRequest(TypedDict, total=False):
@@ -3222,7 +3067,6 @@ class AppendDimensionRequest(TypedDict, total=False):
     sheetId: int
 
 
-
 class AutoFillRequest(TypedDict, total=False):
     """Fills in more data based on existing data."""
 
@@ -3236,7 +3080,6 @@ class AutoFillRequest(TypedDict, total=False):
     useAlternateSeries: bool
 
 
-
 class AutoResizeDimensionsRequest(TypedDict, total=False):
     """Automatically resizes one or more dimensions based on the contents of the cells in that dimension."""
 
@@ -3247,7 +3090,6 @@ class AutoResizeDimensionsRequest(TypedDict, total=False):
     dimensions: DimensionRange
 
 
-
 class BatchClearValuesByDataFilterRequest(TypedDict, total=False):
     """The request for clearing more than one range selected by a DataFilter in a spreadsheet."""
 
@@ -3255,13 +3097,11 @@ class BatchClearValuesByDataFilterRequest(TypedDict, total=False):
     dataFilters: list[DataFilter]
 
 
-
 class BatchClearValuesRequest(TypedDict, total=False):
     """The request for clearing more than one range of values in a spreadsheet."""
 
     # The ranges to clear, in [A1 notation or R1C1 notation](https://developers...
     ranges: list[str]
-
 
 
 class BatchGetValuesByDataFilterRequest(TypedDict, total=False):
@@ -3291,7 +3131,6 @@ class BatchGetValuesByDataFilterRequest(TypedDict, total=False):
     valueRenderOption: str
 
 
-
 class UpdateDataSourceRequest(TypedDict, total=False):
     """Updates a data source. After the data source is updated successfully, an execution is triggered to refresh the associated DATA_SOURCE sheet to read data from the updated data source. The request requires an additional `bigquery.readonly` OAuth scope if you are updating a BigQuery data source."""
 
@@ -3300,7 +3139,6 @@ class UpdateDataSourceRequest(TypedDict, total=False):
 
     # The fields that should be updated. At least one field must be specified. ...
     fields: str
-
 
 
 class InsertRangeRequest(TypedDict, total=False):
@@ -3317,7 +3155,6 @@ class InsertRangeRequest(TypedDict, total=False):
     shiftDimension: str
 
 
-
 class UpdateEmbeddedObjectBorderRequest(TypedDict, total=False):
     """Updates an embedded object's border property."""
 
@@ -3331,7 +3168,6 @@ class UpdateEmbeddedObjectBorderRequest(TypedDict, total=False):
     objectId: int
 
 
-
 class UpdateProtectedRangeRequest(TypedDict, total=False):
     """Updates an existing protected range with the specified protectedRangeId."""
 
@@ -3340,7 +3176,6 @@ class UpdateProtectedRangeRequest(TypedDict, total=False):
 
     # The protected range to update with the new properties.
     protectedRange: ProtectedRange
-
 
 
 class CopyPasteRequest(TypedDict, total=False):
@@ -3370,7 +3205,6 @@ class CopyPasteRequest(TypedDict, total=False):
     source: GridRange
 
 
-
 class UpdateBandingRequest(TypedDict, total=False):
     """Updates properties of the supplied banded range."""
 
@@ -3379,7 +3213,6 @@ class UpdateBandingRequest(TypedDict, total=False):
 
     # The fields that should be updated. At least one field must be specified. ...
     fields: str
-
 
 
 class SortRangeRequest(TypedDict, total=False):
@@ -3392,7 +3225,6 @@ class SortRangeRequest(TypedDict, total=False):
     sortSpecs: list[SortSpec]
 
 
-
 class ClearBasicFilterRequest(TypedDict, total=False):
     """Clears the basic filter, if any exists on the sheet."""
 
@@ -3400,13 +3232,11 @@ class ClearBasicFilterRequest(TypedDict, total=False):
     sheetId: int
 
 
-
 class DeleteDimensionGroupRequest(TypedDict, total=False):
     """Deletes a group over the specified range by decrementing the depth of the dimensions in the range. For example, assume the sheet has a depth-1 group over B:E and a depth-2 group over C:D. Deleting a group over D:E leaves the sheet with a depth-1 group over B:D and a depth-2 group over C:C."""
 
     # The range of the group to be deleted.
     range: DimensionRange
-
 
 
 class UpdateDimensionPropertiesRequest(TypedDict, total=False):
@@ -3425,7 +3255,6 @@ class UpdateDimensionPropertiesRequest(TypedDict, total=False):
     range: DimensionRange
 
 
-
 class UpdateTableRequest(TypedDict, total=False):
     """Updates a table in the spreadsheet."""
 
@@ -3436,13 +3265,11 @@ class UpdateTableRequest(TypedDict, total=False):
     table: Table
 
 
-
 class DeleteEmbeddedObjectRequest(TypedDict, total=False):
     """Deletes the embedded object with the given ID."""
 
     # The ID of the embedded object to delete.
     objectId: int
-
 
 
 class RefreshDataSourceRequest(TypedDict, total=False):
@@ -3461,7 +3288,6 @@ class RefreshDataSourceRequest(TypedDict, total=False):
     references: DataSourceObjectReferences
 
 
-
 class UpdateEmbeddedObjectPositionRequest(TypedDict, total=False):
     """Update an embedded object's position (such as a moving or resizing a chart or image)."""
 
@@ -3475,7 +3301,6 @@ class UpdateEmbeddedObjectPositionRequest(TypedDict, total=False):
     objectId: int
 
 
-
 class DeleteTableRequest(TypedDict, total=False):
     """Removes the table with the given ID from the spreadsheet."""
 
@@ -3483,13 +3308,11 @@ class DeleteTableRequest(TypedDict, total=False):
     tableId: str
 
 
-
 class DeleteBandingRequest(TypedDict, total=False):
     """Removes the banded range with the given ID from the spreadsheet."""
 
     # The ID of the banded range to delete.
     bandedRangeId: int
-
 
 
 class MoveDimensionRequest(TypedDict, total=False):
@@ -3500,7 +3323,6 @@ class MoveDimensionRequest(TypedDict, total=False):
 
     # The source dimensions to move.
     source: DimensionRange
-
 
 
 class UpdateDeveloperMetadataRequest(TypedDict, total=False):
@@ -3516,7 +3338,6 @@ class UpdateDeveloperMetadataRequest(TypedDict, total=False):
     fields: str
 
 
-
 class DeleteDataSourceRequest(TypedDict, total=False):
     """Deletes a data source. The request also deletes the associated data source sheet, and unlinks all associated data source objects."""
 
@@ -3524,13 +3345,11 @@ class DeleteDataSourceRequest(TypedDict, total=False):
     dataSourceId: str
 
 
-
 class SetBasicFilterRequest(TypedDict, total=False):
     """Sets the basic filter associated with a sheet."""
 
     # The filter to set.
     filter: BasicFilter
-
 
 
 class UpdateDimensionGroupRequest(TypedDict, total=False):
@@ -3541,7 +3360,6 @@ class UpdateDimensionGroupRequest(TypedDict, total=False):
 
     # The fields that should be updated. At least one field must be specified. ...
     fields: str
-
 
 
 class MergeCellsRequest(TypedDict, total=False):
@@ -3558,7 +3376,6 @@ class MergeCellsRequest(TypedDict, total=False):
     range: GridRange
 
 
-
 class UpdateSheetPropertiesRequest(TypedDict, total=False):
     """Updates properties of the sheet with the specified sheetId."""
 
@@ -3567,7 +3384,6 @@ class UpdateSheetPropertiesRequest(TypedDict, total=False):
 
     # The properties to update.
     properties: SheetProperties
-
 
 
 class PasteDataRequest(TypedDict, total=False):
@@ -3597,7 +3413,6 @@ class PasteDataRequest(TypedDict, total=False):
     type: str
 
 
-
 class UpdateNamedRangeRequest(TypedDict, total=False):
     """Updates properties of the named range with the specified namedRangeId."""
 
@@ -3608,7 +3423,6 @@ class UpdateNamedRangeRequest(TypedDict, total=False):
     namedRange: NamedRange
 
 
-
 class DeleteDuplicatesRequest(TypedDict, total=False):
     """Removes rows within this range that contain values in the specified columns that are duplicates of values in any previous row. Rows with identical values but different letter cases, formatting, or formulas are considered to be duplicates. This request also removes duplicate rows hidden from view (for example, due to a filter). When removing duplicates, the first instance of each duplicate row scanning from the top downwards is kept in the resulting range. Content outside of the specified range isn't removed, and rows considered duplicates do not have to be adjacent to each other in the range."""
 
@@ -3617,7 +3431,6 @@ class DeleteDuplicatesRequest(TypedDict, total=False):
 
     # The range to remove duplicates rows from.
     range: GridRange
-
 
 
 class UpdateCellsRequest(TypedDict, total=False):
@@ -3636,7 +3449,6 @@ class UpdateCellsRequest(TypedDict, total=False):
     start: GridCoordinate
 
 
-
 class DeleteConditionalFormatRuleRequest(TypedDict, total=False):
     """Deletes a conditional format rule at the given index. All subsequent rules' indexes are decremented."""
 
@@ -3645,7 +3457,6 @@ class DeleteConditionalFormatRuleRequest(TypedDict, total=False):
 
     # The sheet the rule is being deleted from.
     sheetId: int
-
 
 
 class SetDataValidationRequest(TypedDict, total=False):
@@ -3659,7 +3470,6 @@ class SetDataValidationRequest(TypedDict, total=False):
 
     # The data validation rule to set on each cell in the range, or empty to cl...
     rule: DataValidationRule
-
 
 
 class UpdateBordersRequest(TypedDict, total=False):
@@ -3687,13 +3497,11 @@ class UpdateBordersRequest(TypedDict, total=False):
     top: Border
 
 
-
 class CreateDeveloperMetadataRequest(TypedDict, total=False):
     """A request to create developer metadata."""
 
     # The developer metadata to create.
     developerMetadata: DeveloperMetadata
-
 
 
 class TextToColumnsRequest(TypedDict, total=False):
@@ -3717,7 +3525,6 @@ class TextToColumnsRequest(TypedDict, total=False):
     source: GridRange
 
 
-
 class UpdateChartSpecRequest(TypedDict, total=False):
     """Updates a chart's specifications. (This does not move or resize a chart. To move or resize a chart, use UpdateEmbeddedObjectPositionRequest.)"""
 
@@ -3728,13 +3535,11 @@ class UpdateChartSpecRequest(TypedDict, total=False):
     spec: ChartSpec
 
 
-
 class DeleteDeveloperMetadataRequest(TypedDict, total=False):
     """A request to delete developer metadata."""
 
     # The data filter describing the criteria used to select which developer me...
     dataFilter: DataFilter
-
 
 
 class InsertDimensionRequest(TypedDict, total=False):
@@ -3747,13 +3552,11 @@ class InsertDimensionRequest(TypedDict, total=False):
     range: DimensionRange
 
 
-
 class UnmergeCellsRequest(TypedDict, total=False):
     """Unmerges cells in the given range."""
 
     # The range within which all cells should be unmerged. If the range spans m...
     range: GridRange
-
 
 
 class CutPasteRequest(TypedDict, total=False):
@@ -3777,13 +3580,11 @@ class CutPasteRequest(TypedDict, total=False):
     source: GridRange
 
 
-
 class DeleteProtectedRangeRequest(TypedDict, total=False):
     """Deletes the protected range with the given ID."""
 
     # The ID of the protected range to delete.
     protectedRangeId: int
-
 
 
 class UpdateFilterViewRequest(TypedDict, total=False):
@@ -3796,7 +3597,6 @@ class UpdateFilterViewRequest(TypedDict, total=False):
     filter: FilterView
 
 
-
 class DeleteNamedRangeRequest(TypedDict, total=False):
     """Removes the named range with the given ID from the spreadsheet."""
 
@@ -3804,13 +3604,11 @@ class DeleteNamedRangeRequest(TypedDict, total=False):
     namedRangeId: str
 
 
-
 class RandomizeRangeRequest(TypedDict, total=False):
     """Randomizes the order of the rows in a range."""
 
     # The range to randomize.
     range: GridRange
-
 
 
 class UpdateSpreadsheetPropertiesRequest(TypedDict, total=False):
@@ -3823,13 +3621,11 @@ class UpdateSpreadsheetPropertiesRequest(TypedDict, total=False):
     properties: SpreadsheetProperties
 
 
-
 class DeleteFilterViewRequest(TypedDict, total=False):
     """Deletes a particular filter view."""
 
     # The ID of the filter to delete.
     filterId: int
-
 
 
 class RepeatCellRequest(TypedDict, total=False):
@@ -3845,13 +3641,11 @@ class RepeatCellRequest(TypedDict, total=False):
     range: GridRange
 
 
-
 class TrimWhitespaceRequest(TypedDict, total=False):
     """Trims the whitespace (such as spaces, tabs, or new lines) in every cell in the specified range. This request removes all whitespace from the start and end of each cell's text, and reduces any subsequence of remaining whitespace characters to a single space. If the resulting trimmed text starts with a '+' or '=' character, the text remains as a string value and isn't interpreted as a formula."""
 
     # The range whose cells to trim.
     range: GridRange
-
 
 
 class UpdateConditionalFormatRuleRequest(TypedDict, total=False):
@@ -3870,7 +3664,6 @@ class UpdateConditionalFormatRuleRequest(TypedDict, total=False):
     sheetId: int
 
 
-
 class CancelDataSourceRefreshRequest(TypedDict, total=False):
     """Cancels one or multiple refreshes of data source objects in the spreadsheet by the specified references. The request requires an additional `bigquery.readonly` OAuth scope if you are cancelling a refresh on a BigQuery data source."""
 
@@ -3884,7 +3677,6 @@ class CancelDataSourceRefreshRequest(TypedDict, total=False):
     references: DataSourceObjectReferences
 
 
-
 class DeleteSheetRequest(TypedDict, total=False):
     """Deletes the requested sheet."""
 
@@ -3892,13 +3684,11 @@ class DeleteSheetRequest(TypedDict, total=False):
     sheetId: int
 
 
-
 class DeleteDimensionRequest(TypedDict, total=False):
-    """ Deletes the dimensions from the sheet."""
+    """Deletes the dimensions from the sheet."""
 
     # The dimensions to delete from the sheet.
     range: DimensionRange
-
 
 
 class DeleteRangeRequest(TypedDict, total=False):
@@ -3915,13 +3705,11 @@ class DeleteRangeRequest(TypedDict, total=False):
     shiftDimension: str
 
 
-
 class DuplicateFilterViewRequest(TypedDict, total=False):
     """Duplicates a particular filter view."""
 
     # The ID of the filter being duplicated.
     filterId: int
-
 
 
 class DuplicateSheetRequest(TypedDict, total=False):
@@ -3940,7 +3728,6 @@ class DuplicateSheetRequest(TypedDict, total=False):
     sourceSheetId: int
 
 
-
 class UpdateSlicerSpecRequest(TypedDict, total=False):
     """Updates a slicer's specifications. (This does not move or resize a slicer. To move or resize a slicer use UpdateEmbeddedObjectPositionRequest."""
 
@@ -3952,7 +3739,6 @@ class UpdateSlicerSpecRequest(TypedDict, total=False):
 
     # The specification to apply to the slicer.
     spec: SlicerSpec
-
 
 
 class FindReplaceRequest(TypedDict, total=False):
@@ -3984,7 +3770,6 @@ class FindReplaceRequest(TypedDict, total=False):
 
     # The sheet to find/replace over.
     sheetId: int
-
 
 
 class Request(TypedDict, total=False):
@@ -4198,7 +3983,6 @@ class Request(TypedDict, total=False):
     updateTable: UpdateTableRequest
 
 
-
 class BatchUpdateSpreadsheetRequest(TypedDict, total=False):
     """The request for updating any aspect of a spreadsheet."""
 
@@ -4213,7 +3997,6 @@ class BatchUpdateSpreadsheetRequest(TypedDict, total=False):
 
     # Limits the ranges included in the response spreadsheet. Meaningful only i...
     responseRanges: list[str]
-
 
 
 class BatchUpdateValuesByDataFilterRequest(TypedDict, total=False):
@@ -4246,7 +4029,6 @@ class BatchUpdateValuesByDataFilterRequest(TypedDict, total=False):
     valueInputOption: str
 
 
-
 class BatchUpdateValuesRequest(TypedDict, total=False):
     """The request for updating more than one range of values in a spreadsheet."""
 
@@ -4277,7 +4059,6 @@ class BatchUpdateValuesRequest(TypedDict, total=False):
     valueInputOption: str
 
 
-
 class ClearValuesRequest(TypedDict, total=False):
     """The request for clearing a range of values in a spreadsheet."""
 
@@ -4289,7 +4070,6 @@ class CopySheetToAnotherSpreadsheetRequest(TypedDict, total=False):
 
     # The ID of the spreadsheet to copy the sheet to.
     destinationSpreadsheetId: str
-
 
 
 class GetSpreadsheetByDataFilterRequest(TypedDict, total=False):
@@ -4305,7 +4085,6 @@ class GetSpreadsheetByDataFilterRequest(TypedDict, total=False):
     includeGridData: bool
 
 
-
 class SearchDeveloperMetadataRequest(TypedDict, total=False):
     """A request to retrieve all developer metadata matching the set of specified criteria."""
 
@@ -4313,11 +4092,10 @@ class SearchDeveloperMetadataRequest(TypedDict, total=False):
     dataFilters: list[DataFilter]
 
 
-
-
 # =============================================================================
 # Responses
 # =============================================================================
+
 
 class AddBandingResponse(TypedDict, total=False):
     """The result of adding a banded range."""
@@ -4326,13 +4104,11 @@ class AddBandingResponse(TypedDict, total=False):
     bandedRange: BandedRange
 
 
-
 class AddChartResponse(TypedDict, total=False):
     """The result of adding a chart to a spreadsheet."""
 
     # The newly added chart.
     chart: EmbeddedChart
-
 
 
 class AddDataSourceResponse(TypedDict, total=False):
@@ -4345,13 +4121,11 @@ class AddDataSourceResponse(TypedDict, total=False):
     dataSource: DataSource
 
 
-
 class AddDimensionGroupResponse(TypedDict, total=False):
     """The result of adding a group."""
 
     # All groups of a dimension after adding a group to that dimension.
     dimensionGroups: list[DimensionGroup]
-
 
 
 class AddFilterViewResponse(TypedDict, total=False):
@@ -4361,13 +4135,11 @@ class AddFilterViewResponse(TypedDict, total=False):
     filter: FilterView
 
 
-
 class AddNamedRangeResponse(TypedDict, total=False):
     """The result of adding a named range."""
 
     # The named range to add.
     namedRange: NamedRange
-
 
 
 class AddProtectedRangeResponse(TypedDict, total=False):
@@ -4377,13 +4149,11 @@ class AddProtectedRangeResponse(TypedDict, total=False):
     protectedRange: ProtectedRange
 
 
-
 class AddSheetResponse(TypedDict, total=False):
     """The result of adding a sheet."""
 
     # The properties of the newly added sheet.
     properties: SheetProperties
-
 
 
 class AddSlicerResponse(TypedDict, total=False):
@@ -4393,14 +4163,12 @@ class AddSlicerResponse(TypedDict, total=False):
     slicer: Slicer
 
 
-
 class AddTableResponse(TypedDict, total=False):
     """The result of adding a table."""
 
     # Output only. The table that was added.
     # Read-only field
     table: Table
-
 
 
 class UpdateValuesResponse(TypedDict, total=False):
@@ -4425,7 +4193,6 @@ class UpdateValuesResponse(TypedDict, total=False):
     updatedRows: int
 
 
-
 class AppendValuesResponse(TypedDict, total=False):
     """The response when updating a range of values in a spreadsheet."""
 
@@ -4439,7 +4206,6 @@ class AppendValuesResponse(TypedDict, total=False):
     updates: UpdateValuesResponse
 
 
-
 class BatchClearValuesByDataFilterResponse(TypedDict, total=False):
     """The response when clearing a range of values selected with DataFilters in a spreadsheet."""
 
@@ -4448,7 +4214,6 @@ class BatchClearValuesByDataFilterResponse(TypedDict, total=False):
 
     # The spreadsheet the updates were applied to.
     spreadsheetId: str
-
 
 
 class BatchClearValuesResponse(TypedDict, total=False):
@@ -4461,7 +4226,6 @@ class BatchClearValuesResponse(TypedDict, total=False):
     spreadsheetId: str
 
 
-
 class BatchGetValuesByDataFilterResponse(TypedDict, total=False):
     """The response when retrieving more than one range of values in a spreadsheet selected by DataFilters."""
 
@@ -4470,7 +4234,6 @@ class BatchGetValuesByDataFilterResponse(TypedDict, total=False):
 
     # The requested values with the list of data filters that matched them.
     valueRanges: list[MatchedValueRange]
-
 
 
 class BatchGetValuesResponse(TypedDict, total=False):
@@ -4483,13 +4246,11 @@ class BatchGetValuesResponse(TypedDict, total=False):
     valueRanges: list[ValueRange]
 
 
-
 class UpdateDeveloperMetadataResponse(TypedDict, total=False):
     """The response from updating developer metadata."""
 
     # The updated developer metadata.
     developerMetadata: list[DeveloperMetadata]
-
 
 
 class UpdateEmbeddedObjectPositionResponse(TypedDict, total=False):
@@ -4499,13 +4260,11 @@ class UpdateEmbeddedObjectPositionResponse(TypedDict, total=False):
     position: EmbeddedObjectPosition
 
 
-
 class CreateDeveloperMetadataResponse(TypedDict, total=False):
     """The response from creating developer metadata."""
 
     # The developer metadata that was created.
     developerMetadata: DeveloperMetadata
-
 
 
 class FindReplaceResponse(TypedDict, total=False):
@@ -4527,7 +4286,6 @@ class FindReplaceResponse(TypedDict, total=False):
     valuesChanged: int
 
 
-
 class UpdateConditionalFormatRuleResponse(TypedDict, total=False):
     """The result of updating a conditional format rule."""
 
@@ -4544,7 +4302,6 @@ class UpdateConditionalFormatRuleResponse(TypedDict, total=False):
     oldRule: ConditionalFormatRule
 
 
-
 class UpdateDataSourceResponse(TypedDict, total=False):
     """The response from updating data source."""
 
@@ -4555,13 +4312,11 @@ class UpdateDataSourceResponse(TypedDict, total=False):
     dataSource: DataSource
 
 
-
 class DeleteConditionalFormatRuleResponse(TypedDict, total=False):
     """The result of deleting a conditional format rule."""
 
     # The rule that was deleted.
     rule: ConditionalFormatRule
-
 
 
 class DeleteDuplicatesResponse(TypedDict, total=False):
@@ -4571,13 +4326,11 @@ class DeleteDuplicatesResponse(TypedDict, total=False):
     duplicatesRemovedCount: int
 
 
-
 class DeleteDeveloperMetadataResponse(TypedDict, total=False):
     """The response from deleting developer metadata."""
 
     # The metadata that was deleted.
     deletedDeveloperMetadata: list[DeveloperMetadata]
-
 
 
 class DuplicateSheetResponse(TypedDict, total=False):
@@ -4587,13 +4340,11 @@ class DuplicateSheetResponse(TypedDict, total=False):
     properties: SheetProperties
 
 
-
 class RefreshDataSourceResponse(TypedDict, total=False):
     """The response from refreshing one or multiple data source objects."""
 
     # All the refresh status for the data source object references specified in...
     statuses: list[RefreshDataSourceObjectExecutionStatus]
-
 
 
 class TrimWhitespaceResponse(TypedDict, total=False):
@@ -4603,13 +4354,11 @@ class TrimWhitespaceResponse(TypedDict, total=False):
     cellsChangedCount: int
 
 
-
 class DeleteDimensionGroupResponse(TypedDict, total=False):
     """The result of deleting a group."""
 
     # All groups of a dimension after deleting a group from that dimension.
     dimensionGroups: list[DimensionGroup]
-
 
 
 class DuplicateFilterViewResponse(TypedDict, total=False):
@@ -4619,13 +4368,11 @@ class DuplicateFilterViewResponse(TypedDict, total=False):
     filter: FilterView
 
 
-
 class CancelDataSourceRefreshResponse(TypedDict, total=False):
     """The response from cancelling one or multiple data source object refreshes."""
 
     # The cancellation statuses of refreshes of all data source objects specifi...
     statuses: list[CancelDataSourceRefreshStatus]
-
 
 
 class Response(TypedDict, total=False):
@@ -4707,7 +4454,6 @@ class Response(TypedDict, total=False):
     updateEmbeddedObjectPosition: UpdateEmbeddedObjectPositionResponse
 
 
-
 class BatchUpdateSpreadsheetResponse(TypedDict, total=False):
     """The reply for batch updating a spreadsheet."""
 
@@ -4719,7 +4465,6 @@ class BatchUpdateSpreadsheetResponse(TypedDict, total=False):
 
     # The spreadsheet after updates were applied. This is only set if BatchUpda...
     updatedSpreadsheet: Spreadsheet
-
 
 
 class UpdateValuesByDataFilterResponse(TypedDict, total=False):
@@ -4744,7 +4489,6 @@ class UpdateValuesByDataFilterResponse(TypedDict, total=False):
     updatedRows: int
 
 
-
 class BatchUpdateValuesByDataFilterResponse(TypedDict, total=False):
     """The response when updating a range of values in a spreadsheet."""
 
@@ -4765,7 +4509,6 @@ class BatchUpdateValuesByDataFilterResponse(TypedDict, total=False):
 
     # The total number of sheets where at least one cell in the sheet was updated.
     totalUpdatedSheets: int
-
 
 
 class BatchUpdateValuesResponse(TypedDict, total=False):
@@ -4790,7 +4533,6 @@ class BatchUpdateValuesResponse(TypedDict, total=False):
     totalUpdatedSheets: int
 
 
-
 class ClearValuesResponse(TypedDict, total=False):
     """The response when clearing a range of values in a spreadsheet."""
 
@@ -4801,11 +4543,8 @@ class ClearValuesResponse(TypedDict, total=False):
     spreadsheetId: str
 
 
-
 class SearchDeveloperMetadataResponse(TypedDict, total=False):
     """A reply to a developer metadata search request."""
 
     # The metadata matching the criteria of the search request.
     matchedDeveloperMetadata: list[MatchedDeveloperMetadata]
-
-

@@ -96,6 +96,7 @@ class SheetsClient:
         """Create an SSL context with certificate verification."""
         try:
             import certifi
+
             return ssl.create_default_context(cafile=certifi.where())
         except ImportError:
             return ssl.create_default_context()

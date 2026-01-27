@@ -148,7 +148,13 @@ class TestTsvEscaping:
         assert escape_tsv_value("Hello\\World") == "Hello\\\\World"
 
     def test_unescape_roundtrip(self) -> None:
-        test_cases = ["Hello", "Tab\there", "New\nline", "Back\\slash", "All\t\n\\chars"]
+        test_cases = [
+            "Hello",
+            "Tab\there",
+            "New\nline",
+            "Back\\slash",
+            "All\t\n\\chars",
+        ]
         for original in test_cases:
             escaped = escape_tsv_value(original)
             unescaped = unescape_tsv_value(escaped)

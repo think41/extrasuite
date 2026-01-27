@@ -78,13 +78,25 @@ def range_to_a1(
         (0, 1, None, None) -> 1:1 (full row)
     """
     # Full column(s)
-    if start_row is None and end_row is None and start_col is not None and end_col is not None:
+    if (
+        start_row is None
+        and end_row is None
+        and start_col is not None
+        and end_col is not None
+    ):
         if end_col - start_col == 1:
             return f"{column_index_to_letter(start_col)}:{column_index_to_letter(start_col)}"
-        return f"{column_index_to_letter(start_col)}:{column_index_to_letter(end_col - 1)}"
+        return (
+            f"{column_index_to_letter(start_col)}:{column_index_to_letter(end_col - 1)}"
+        )
 
     # Full row(s)
-    if start_col is None and end_col is None and start_row is not None and end_row is not None:
+    if (
+        start_col is None
+        and end_col is None
+        and start_row is not None
+        and end_row is not None
+    ):
         if end_row - start_row == 1:
             return f"{start_row + 1}:{start_row + 1}"
         return f"{start_row + 1}:{end_row}"
@@ -133,7 +145,12 @@ def escape_tsv_value(value: str) -> str:
 
     Escapes tabs, newlines, and backslashes.
     """
-    return value.replace("\\", "\\\\").replace("\t", "\\t").replace("\n", "\\n").replace("\r", "\\r")
+    return (
+        value.replace("\\", "\\\\")
+        .replace("\t", "\\t")
+        .replace("\n", "\\n")
+        .replace("\r", "\\r")
+    )
 
 
 def unescape_tsv_value(value: str) -> str:
@@ -214,7 +231,9 @@ def get_effective_value_string(
     return ""
 
 
-def is_default_cell_format(cell_format: dict, default_format: dict | None = None) -> bool:
+def is_default_cell_format(
+    cell_format: dict, default_format: dict | None = None
+) -> bool:
     """Check if a cell format is the default (no customization).
 
     Args:

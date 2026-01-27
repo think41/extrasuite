@@ -110,7 +110,7 @@ def generate_typeddict(
 
     # Class docstring
     description = schema.get("description", f"Represents a {name} in Google Sheets.")
-    lines.append(f'class {name}(TypedDict, total=False):')
+    lines.append(f"class {name}(TypedDict, total=False):")
     lines.append(f'    """{description}"""')
     lines.append("")
 
@@ -131,7 +131,7 @@ def generate_typeddict(
             # Wrap long descriptions
             max_len = 76
             if len(prop_desc) > max_len:
-                prop_desc = prop_desc[:max_len - 3] + "..."
+                prop_desc = prop_desc[: max_len - 3] + "..."
             lines.append(f"    # {prop_desc}")
 
         # Add enum values as comments
@@ -185,9 +185,40 @@ def categorize_schemas(schemas: dict[str, Any]) -> dict[str, dict[str, Any]]:
         "DimensionGroup",
     }
 
-    chart_keywords = {"Chart", "Series", "Axis", "Domain", "Candlestick", "Histogram", "Pie", "Bubble", "Treemap", "Waterfall", "Scorecard", "Org"}
-    formatting_keywords = {"Format", "Color", "Border", "Style", "Padding", "TextFormat", "NumberFormat"}
-    feature_keywords = {"Pivot", "Filter", "Slicer", "Table", "Banded", "Conditional", "Validation", "Protected", "Merge"}
+    chart_keywords = {
+        "Chart",
+        "Series",
+        "Axis",
+        "Domain",
+        "Candlestick",
+        "Histogram",
+        "Pie",
+        "Bubble",
+        "Treemap",
+        "Waterfall",
+        "Scorecard",
+        "Org",
+    }
+    formatting_keywords = {
+        "Format",
+        "Color",
+        "Border",
+        "Style",
+        "Padding",
+        "TextFormat",
+        "NumberFormat",
+    }
+    feature_keywords = {
+        "Pivot",
+        "Filter",
+        "Slicer",
+        "Table",
+        "Banded",
+        "Conditional",
+        "Validation",
+        "Protected",
+        "Merge",
+    }
     data_source_keywords = {"DataSource", "BigQuery", "Looker"}
 
     for name, schema in schemas.items():
@@ -226,7 +257,10 @@ def build_dependency_order(schemas: dict[str, Any]) -> list[str]:
                 deps.add(prop["$ref"])
             elif "items" in prop and "$ref" in prop["items"]:
                 deps.add(prop["items"]["$ref"])
-            elif "additionalProperties" in prop and "$ref" in prop["additionalProperties"]:
+            elif (
+                "additionalProperties" in prop
+                and "$ref" in prop["additionalProperties"]
+            ):
                 deps.add(prop["additionalProperties"]["$ref"])
         dependencies[name] = deps
 

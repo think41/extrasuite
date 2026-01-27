@@ -18,6 +18,7 @@ from typing import Any
 # Range handling
 # =============================================================================
 
+
 @dataclass(frozen=True)
 class Range:
     """A rectangular range of cells."""
@@ -60,7 +61,7 @@ def _coord_to_a1(row: int, col: int) -> str:
     col_str = ""
     c = col
     while c >= 0:
-        col_str = chr(ord('A') + c % 26) + col_str
+        col_str = chr(ord("A") + c % 26) + col_str
         c = c // 26 - 1
     return f"{col_str}{row + 1}"
 
@@ -126,7 +127,7 @@ def find_largest_rectangle(cells: set[tuple[int, int]]) -> Range | None:
                         top_row + min_row,
                         left_col + min_col,
                         bottom_row + min_row,
-                        right_col + min_col
+                        right_col + min_col,
                     )
             stack.append(col)
 
@@ -136,6 +137,7 @@ def find_largest_rectangle(cells: set[tuple[int, int]]) -> Range | None:
 # =============================================================================
 # Format optimization
 # =============================================================================
+
 
 def _rgb_to_hex(color: dict[str, Any]) -> str:
     """Convert {"red": 0.84, "green": 1, "blue": 0.84} to "#D7FFD7"."""
@@ -150,13 +152,15 @@ def _is_empty_color(color: dict[str, Any] | None) -> bool:
     if not color:
         return True
     return (
-        color.get("red", 0) == 0 and
-        color.get("green", 0) == 0 and
-        color.get("blue", 0) == 0
+        color.get("red", 0) == 0
+        and color.get("green", 0) == 0
+        and color.get("blue", 0) == 0
     )
 
 
-def _compact_color_style(color_style: dict[str, Any] | None) -> str | dict[str, Any] | None:
+def _compact_color_style(
+    color_style: dict[str, Any] | None,
+) -> str | dict[str, Any] | None:
     """Convert colorStyle to compact form."""
     if not color_style:
         return None
@@ -317,7 +321,9 @@ def optimize_format(fmt: dict[str, Any]) -> dict[str, Any]:
     return result
 
 
-def compute_delta(base_format: dict[str, Any], full_format: dict[str, Any]) -> dict[str, Any]:
+def compute_delta(
+    base_format: dict[str, Any], full_format: dict[str, Any]
+) -> dict[str, Any]:
     """
     Compute the delta between base format and full format.
     Returns only the properties that are different or new.
@@ -351,9 +357,9 @@ def compute_delta(base_format: dict[str, Any], full_format: dict[str, Any]) -> d
 # Main compression function
 # =============================================================================
 
+
 def compress_cell_formats(
-    cell_formats: dict[str, dict[str, Any]],
-    threshold: float = 0.6
+    cell_formats: dict[str, dict[str, Any]], threshold: float = 0.6
 ) -> dict[str, Any]:
     """
     Compress cell formats into cascading rules.
@@ -379,7 +385,7 @@ def compress_cell_formats(
         col_str, row_str = match.groups()
         col = 0
         for c in col_str:
-            col = col * 26 + (ord(c) - ord('A') + 1)
+            col = col * 26 + (ord(c) - ord("A") + 1)
         row = int(row_str) - 1
         col = col - 1
 
@@ -417,10 +423,7 @@ def compress_cell_formats(
         # Use bounding box for dominant format
         bbox = Range.from_cells(all_cells)
         base_format = sig_to_format[dominant_sig]
-        rules.append({
-            "range": bbox.to_a1(),
-            "format": base_format
-        })
+        rules.append({"range": bbox.to_a1(), "format": base_format})
 
         # Remove dominant cells from remaining
         remaining = {c: s for c, s in remaining.items() if s != dominant_sig}
@@ -453,10 +456,7 @@ def compress_cell_formats(
             else:
                 rule_format = full_format
 
-            rules.append({
-                "range": rect.to_a1(),
-                "format": rule_format
-            })
+            rules.append({"range": rect.to_a1(), "format": rule_format})
 
             for c in covered_cells:
                 if c in remaining:
@@ -471,10 +471,9 @@ def compress_cell_formats(
                 else:
                     rule_format = full_format
 
-                rules.append({
-                    "range": _coord_to_a1(coord[0], coord[1]),
-                    "format": rule_format
-                })
+                rules.append(
+                    {"range": _coord_to_a1(coord[0], coord[1]), "format": rule_format}
+                )
             break
 
     return {"formatRules": rules}
