@@ -18,8 +18,8 @@ import urllib.request
 from pathlib import Path
 from typing import Any
 
+from extraslide.credentials import CredentialsManager
 from extraslide.diff import diff_sml
-from extraslide.gateway import Gateway
 from extraslide.generator import json_to_sml
 from extraslide.parser import parse_sml
 from extraslide.requests import generate_requests
@@ -35,11 +35,8 @@ except ImportError:
 class SlidesClient:
     """Client for interacting with Google Slides via SML.
 
-    Args:
-        gateway_url: URL of the authentication gateway server.
-
-    Example (file-based workflow):
-        client = SlidesClient(gateway_url="https://gateway.example.com")
+    Example (default authentication - recommended):
+        client = SlidesClient()
         url = "https://docs.google.com/presentation/d/abc123/edit"
 
         # Pull presentation to file
@@ -55,34 +52,40 @@ class SlidesClient:
         # Apply changes
         client.apply(url, "presentation.sml", "presentation_edited.sml")
 
-    Example (string-based workflow):
-        client = SlidesClient(gateway_url="https://gateway.example.com")
-
-        # Fetch presentation as SML string
+    Example (with explicit access token):
+        client = SlidesClient(access_token="ya29...")
         sml = client.pull_s("https://docs.google.com/presentation/d/abc123/edit")
-
-        # Edit the SML...
-        edited_sml = sml.replace('fill-#ffffff', 'fill-#3b82f6')
-
-        # Preview changes (dry run)
-        requests = client.diff_s(sml, edited_sml)
-        for req in requests:
-            print(req)
-
-        # Apply changes
-        client.apply_s(url, sml, edited_sml)
     """
 
-    def __init__(self, gateway_url: str) -> None:
-        self._gateway_url = gateway_url
-        self._gateway: Gateway | None = None
+    def __init__(
+        self,
+        access_token: str | None = None,
+    ) -> None:
+        """Initialize the client.
 
-    @property
-    def gateway(self) -> Gateway:
-        """Lazily initialize and return the gateway."""
-        if self._gateway is None:
-            self._gateway = Gateway(server_url=self._gateway_url)
-        return self._gateway
+        Args:
+            access_token: OAuth2 access token with slides scope.
+                If provided, this token is used directly without any credential management.
+
+        Note:
+            If access_token is not provided, authentication is handled automatically
+            via environment variables, gateway.json, or the ExtraSuite OAuth flow.
+        """
+        self._access_token = access_token
+        self._credentials_manager: CredentialsManager | None = None
+
+    def _get_token(self) -> str:
+        """Get a valid access token.
+
+        Returns the configured token, or obtains one from the CredentialsManager.
+        """
+        if self._access_token:
+            return self._access_token
+
+        if self._credentials_manager is None:
+            self._credentials_manager = CredentialsManager()
+
+        return self._credentials_manager.get_token().access_token
 
     # -------------------------------------------------------------------------
     # File-based API (primary interface)
@@ -235,7 +238,7 @@ class SlidesClient:
             urllib.error.HTTPError: If API request fails.
 
         Example:
-            client = SlidesClient(gateway_url="...")
+            client = SlidesClient()
             url = "https://docs.google.com/presentation/d/abc123/edit"
 
             # Get metadata only
@@ -247,7 +250,7 @@ class SlidesClient:
             print(f"Saved to: {info['saved_to']}")
         """
         presentation_id = self._extract_presentation_id(url)
-        token = self.gateway.get_token()
+        token = self._get_token()
 
         api_url = (
             f"https://slides.googleapis.com/v1/presentations/"
@@ -290,7 +293,7 @@ class SlidesClient:
     def _fetch_json(self, url: str) -> dict[str, Any]:
         """Fetch the raw JSON representation of a presentation from the API."""
         presentation_id = self._extract_presentation_id(url)
-        token = self.gateway.get_token()
+        token = self._get_token()
 
         api_url = f"https://slides.googleapis.com/v1/presentations/{presentation_id}"
         req = urllib.request.Request(
@@ -306,7 +309,7 @@ class SlidesClient:
         self, presentation_id: str, requests: list[dict[str, Any]]
     ) -> dict[str, Any]:
         """Send batchUpdate request to the Google Slides API."""
-        token = self.gateway.get_token()
+        token = self._get_token()
 
         api_url = f"https://slides.googleapis.com/v1/presentations/{presentation_id}:batchUpdate"
         body = json.dumps({"requests": requests}).encode("utf-8")

@@ -26,6 +26,7 @@ classifiers = [
 ]
 dependencies = [
     "certifi>=2023.0.0",
+    "keyring>=24.0.0",
 ]
 
 [project.optional-dependencies]

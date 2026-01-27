@@ -140,7 +140,9 @@ class CredentialsManager:
             gateway_urls = self._load_gateway_config()
             if gateway_urls:
                 self._auth_url = self._auth_url or gateway_urls.get("auth_url")
-                self._exchange_url = self._exchange_url or gateway_urls.get("exchange_url")
+                self._exchange_url = self._exchange_url or gateway_urls.get(
+                    "exchange_url"
+                )
 
         sa_path = service_account_path or os.environ.get("SERVICE_ACCOUNT_PATH")
         self._sa_path = Path(sa_path) if sa_path else None
@@ -195,7 +197,9 @@ class CredentialsManager:
         if not force_refresh:
             cached = self._load_cached_token()
             if cached and cached.is_valid():
-                print(f"Using cached token (expires in {cached.expires_in_seconds()} seconds)")
+                print(
+                    f"Using cached token (expires in {cached.expires_in_seconds()} seconds)"
+                )
                 return cached
 
         print("Starting authentication flow...")
@@ -215,13 +219,19 @@ class CredentialsManager:
         if not force_refresh:
             cached = self._load_cached_token()
             if cached and cached.is_valid():
-                print(f"Using cached token (expires in {cached.expires_in_seconds()} seconds)")
+                print(
+                    f"Using cached token (expires in {cached.expires_in_seconds()} seconds)"
+                )
                 return cached
 
         # Only import google-auth when we actually need to refresh
         try:
-            from google.auth.transport.requests import Request
-            from google.oauth2 import service_account
+            from google.auth.transport.requests import (  # type: ignore[import-not-found]
+                Request,
+            )
+            from google.oauth2 import (  # type: ignore[import-not-found]
+                service_account,
+            )
         except ImportError:
             raise ImportError(  # noqa: B904
                 "google-auth package is required for service account authentication. "
@@ -236,7 +246,7 @@ class CredentialsManager:
         # Load service account credentials
         credentials = service_account.Credentials.from_service_account_file(
             str(self._sa_path),
-            scopes=["https://www.googleapis.com/auth/spreadsheets"],
+            scopes=["https://www.googleapis.com/auth/presentations"],
         )
 
         # Refresh to get access token
@@ -444,7 +454,9 @@ class CredentialsManager:
         )
 
         try:
-            with urllib.request.urlopen(req, timeout=30, context=SSL_CONTEXT) as response:
+            with urllib.request.urlopen(
+                req, timeout=30, context=SSL_CONTEXT
+            ) as response:
                 result = json.loads(response.read().decode("utf-8"))
         except urllib.error.HTTPError as e:
             error_body = e.read().decode("utf-8") if e.fp else str(e)
@@ -468,10 +480,13 @@ class CredentialsManager:
         with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as s:
             s.bind(("127.0.0.1", 0))
             s.listen(1)
-            return s.getsockname()[1]
+            port: int = s.getsockname()[1]
+            return port
 
     @staticmethod
-    def _create_handler_class(result_holder: dict[str, Any], result_lock: threading.Lock) -> type:
+    def _create_handler_class(
+        result_holder: dict[str, Any], result_lock: threading.Lock
+    ) -> type:
         """Create HTTP handler class for OAuth callback."""
 
         class CallbackHandler(http.server.BaseHTTPRequestHandler):
@@ -574,7 +589,7 @@ def authenticate(
         Exception: If authentication fails.
 
     Example:
-        from extrasheet import authenticate
+        from extraslide import authenticate
 
         token = authenticate()
         print(f"Token: {token.access_token[:50]}...")

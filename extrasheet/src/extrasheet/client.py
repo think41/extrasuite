@@ -12,6 +12,7 @@ import urllib.parse
 import urllib.request
 from typing import TYPE_CHECKING, Any
 
+from extrasheet.credentials import CredentialsManager
 from extrasheet.transformer import SpreadsheetTransformer
 from extrasheet.writer import FileWriter
 
@@ -44,6 +45,11 @@ class SheetsClient:
     transforms it into a file-based representation optimized for LLM agents.
 
     Example:
+        # Default authentication (recommended)
+        >>> client = SheetsClient()
+        >>> client.pull("1BxiMVs0XRA5nFMdKvBdBZjgmUUqptlbs74OgvE2upms", "./output")
+
+        # With explicit access token
         >>> client = SheetsClient(access_token="ya29...")
         >>> client.pull("1BxiMVs0XRA5nFMdKvBdBZjgmUUqptlbs74OgvE2upms", "./output")
     """
@@ -52,19 +58,39 @@ class SheetsClient:
 
     def __init__(
         self,
-        access_token: str,
+        access_token: str | None = None,
         *,
         timeout: int = 60,
     ) -> None:
         """Initialize the client.
 
         Args:
-            access_token: OAuth2 access token with sheets.readonly scope
-            timeout: Request timeout in seconds
+            access_token: OAuth2 access token with sheets.readonly scope.
+                If provided, this token is used directly without any credential management.
+            timeout: Request timeout in seconds.
+
+        Note:
+            If access_token is not provided, authentication is handled automatically
+            via environment variables, gateway.json, or the ExtraSuite OAuth flow.
         """
-        self.access_token = access_token
+        self._access_token = access_token
+        self._credentials_manager: CredentialsManager | None = None
         self.timeout = timeout
         self._ssl_context = self._create_ssl_context()
+
+    @property
+    def access_token(self) -> str:
+        """Get a valid access token.
+
+        Returns the configured token, or obtains one from the CredentialsManager.
+        """
+        if self._access_token:
+            return self._access_token
+
+        if self._credentials_manager is None:
+            self._credentials_manager = CredentialsManager()
+
+        return self._credentials_manager.get_token().access_token
 
     def _create_ssl_context(self) -> ssl.SSLContext:
         """Create an SSL context with certificate verification."""

@@ -10,31 +10,31 @@ class TestExtractPresentationId:
 
     def test_extract_from_edit_url(self) -> None:
         """Extract ID from /edit URL."""
-        client = SlidesClient(gateway_url="https://example.com")
+        client = SlidesClient(access_token="test_token")
         url = "https://docs.google.com/presentation/d/abc123xyz/edit"
         assert client._extract_presentation_id(url) == "abc123xyz"
 
     def test_extract_from_edit_url_with_slide(self) -> None:
         """Extract ID from /edit URL with slide fragment."""
-        client = SlidesClient(gateway_url="https://example.com")
+        client = SlidesClient(access_token="test_token")
         url = "https://docs.google.com/presentation/d/abc123xyz/edit#slide=id.g123"
         assert client._extract_presentation_id(url) == "abc123xyz"
 
     def test_extract_from_trailing_slash(self) -> None:
         """Extract ID from URL with trailing slash."""
-        client = SlidesClient(gateway_url="https://example.com")
+        client = SlidesClient(access_token="test_token")
         url = "https://docs.google.com/presentation/d/abc123xyz/"
         assert client._extract_presentation_id(url) == "abc123xyz"
 
     def test_extract_with_hyphens_and_underscores(self) -> None:
         """Extract ID containing hyphens and underscores."""
-        client = SlidesClient(gateway_url="https://example.com")
+        client = SlidesClient(access_token="test_token")
         url = "https://docs.google.com/presentation/d/abc-123_xyz/edit"
         assert client._extract_presentation_id(url) == "abc-123_xyz"
 
     def test_invalid_url_raises(self) -> None:
         """Invalid URL raises ValueError."""
-        client = SlidesClient(gateway_url="https://example.com")
+        client = SlidesClient(access_token="test_token")
         with pytest.raises(ValueError, match="Invalid Google Slides URL"):
             client._extract_presentation_id("https://example.com/not-a-slides-url")
 
@@ -44,7 +44,7 @@ class TestDiffS:
 
     def test_diff_s_no_changes(self) -> None:
         """diff_s with identical SML returns empty list."""
-        client = SlidesClient(gateway_url="https://example.com")
+        client = SlidesClient(access_token="test_token")
         sml = """<Presentation id="pres1">
             <Slide id="slide1"/>
         </Presentation>"""
@@ -54,7 +54,7 @@ class TestDiffS:
 
     def test_diff_s_add_shape(self) -> None:
         """diff_s adding a shape returns createShape request."""
-        client = SlidesClient(gateway_url="https://example.com")
+        client = SlidesClient(access_token="test_token")
 
         original = """<Presentation id="pres1">
             <Slide id="slide1"/>
@@ -74,7 +74,7 @@ class TestDiffS:
 
     def test_diff_s_delete_shape(self) -> None:
         """diff_s deleting a shape returns deleteObject request."""
-        client = SlidesClient(gateway_url="https://example.com")
+        client = SlidesClient(access_token="test_token")
 
         original = """<Presentation id="pres1">
             <Slide id="slide1">
@@ -94,7 +94,7 @@ class TestDiffS:
 
     def test_diff_s_modify_fill(self) -> None:
         """diff_s changing fill color returns updateShapeProperties."""
-        client = SlidesClient(gateway_url="https://example.com")
+        client = SlidesClient(access_token="test_token")
 
         original = """<Presentation id="pres1">
             <Slide id="slide1">
@@ -115,7 +115,7 @@ class TestDiffS:
 
     def test_diff_s_add_slide(self) -> None:
         """diff_s adding a slide returns createSlide request."""
-        client = SlidesClient(gateway_url="https://example.com")
+        client = SlidesClient(access_token="test_token")
 
         original = """<Presentation id="pres1">
             <Slide id="slide1"/>
@@ -136,12 +136,18 @@ class TestDiffS:
 class TestClientInitialization:
     """Test client initialization."""
 
-    def test_gateway_url_stored(self) -> None:
-        """Gateway URL is stored on client."""
-        client = SlidesClient(gateway_url="https://gateway.example.com")
-        assert client._gateway_url == "https://gateway.example.com"
+    def test_access_token_stored(self) -> None:
+        """Access token is stored on client."""
+        client = SlidesClient(access_token="test_token_123")
+        assert client._access_token == "test_token_123"
 
-    def test_gateway_lazy_initialization(self) -> None:
-        """Gateway is not initialized until accessed."""
-        client = SlidesClient(gateway_url="https://gateway.example.com")
-        assert client._gateway is None
+    def test_credentials_manager_lazy_initialization(self) -> None:
+        """CredentialsManager is not initialized until accessed."""
+        client = SlidesClient(access_token="test_token")
+        assert client._credentials_manager is None
+
+    def test_no_args_creates_client(self) -> None:
+        """Client can be created with no arguments (lazy initialization)."""
+        client = SlidesClient()
+        assert client._access_token is None
+        assert client._credentials_manager is None
