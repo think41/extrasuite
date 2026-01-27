@@ -19,15 +19,11 @@ classifiers = [
     "Topic :: Internet :: WWW/HTTP :: Session",
 ]
 
-# Zero external dependencies - stdlib only
-dependencies = []
-
-[project.optional-dependencies]
-dev = [
-    "pytest>=8.0",
-    "ruff>=0.7.0",
-    "ty>=0.0.1a7",
+dependencies = [
+    "keyring>=25.0.0",
+    "certifi>=2024.0.0",
 ]
+
 
 [project.urls]
 Homepage = "https://github.com/anthropics/extrasuite"
@@ -75,7 +71,8 @@ indent-style = "space"
 skip-magic-trailing-comma = false
 line-ending = "auto"
 
-[dependency-groups]
-dev = [
-    "pytest>=9.0.2",
+[tool.uv]
+dev-dependencies = [
+    "pytest>=8.0",
+    "ruff>=0.7.0",
 ]

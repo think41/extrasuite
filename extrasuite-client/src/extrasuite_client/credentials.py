@@ -13,7 +13,6 @@ import os
 import select
 import socket
 import ssl
-import stat
 import sys
 import threading
 import time
@@ -25,13 +24,14 @@ from datetime import datetime
 from pathlib import Path
 from typing import Any
 
-# Try to use certifi for SSL certificates (common on macOS)
-try:
-    import certifi
+import certifi
+import keyring
 
-    SSL_CONTEXT = ssl.create_default_context(cafile=certifi.where())
-except ImportError:
-    SSL_CONTEXT = ssl.create_default_context()
+SSL_CONTEXT = ssl.create_default_context(cafile=certifi.where())
+
+# Keyring service name for storing tokens
+KEYRING_SERVICE = "extrasuite"
+KEYRING_USERNAME = "token"
 
 
 @dataclass
@@ -89,13 +89,14 @@ class CredentialsManager:
     4. service_account_path constructor parameter
     5. SERVICE_ACCOUNT_PATH environment variable
 
+    Tokens are securely cached in the OS keyring (macOS Keychain, Windows Credential
+    Locker, or Linux Secret Service).
+
     Args:
         auth_url: URL to start authentication (e.g., "https://server.com/api/token/auth").
             The port parameter will be appended as a query string.
         exchange_url: URL to exchange auth code for token (e.g., "https://server.com/api/token/exchange").
         service_account_path: Path to service account JSON file (optional).
-        token_cache_path: Path to cache tokens. Defaults to
-            ~/.config/extrasuite/token.json
 
     Example:
         # Using explicit URLs
@@ -110,7 +111,6 @@ class CredentialsManager:
         token = manager.get_token()
     """
 
-    DEFAULT_CACHE_PATH = Path.home() / ".config" / "extrasuite" / "token.json"
     GATEWAY_CONFIG_PATH = Path.home() / ".config" / "extrasuite" / "gateway.json"
     DEFAULT_CALLBACK_TIMEOUT = 300  # 5 minutes for headless mode
 
@@ -119,7 +119,6 @@ class CredentialsManager:
         auth_url: str | None = None,
         exchange_url: str | None = None,
         service_account_path: str | Path | None = None,
-        token_cache_path: str | Path | None = None,
     ) -> None:
         """Initialize the credentials manager.
 
@@ -127,7 +126,6 @@ class CredentialsManager:
             auth_url: URL to start authentication flow.
             exchange_url: URL to exchange auth code for token.
             service_account_path: Path to service account JSON file.
-            token_cache_path: Path to cache tokens.
 
         Raises:
             ValueError: If neither auth_url/exchange_url nor service_account_path
@@ -166,10 +164,6 @@ class CredentialsManager:
 
         # ExtraSuite protocol takes precedence if both are configured
         self._use_extrasuite = has_extrasuite
-
-        self._token_cache_path = (
-            Path(token_cache_path) if token_cache_path else self.DEFAULT_CACHE_PATH
-        )
 
     @property
     def auth_mode(self) -> str:
@@ -262,12 +256,13 @@ class CredentialsManager:
         return token
 
     def _load_cached_token(self) -> Token | None:
-        """Load cached token if it exists and is still valid."""
-        if not self._token_cache_path.exists():
-            return None
-
+        """Load cached token from OS keyring if it exists and is still valid."""
         try:
-            data = json.loads(self._token_cache_path.read_text())
+            token_json = keyring.get_password(KEYRING_SERVICE, KEYRING_USERNAME)
+            if not token_json:
+                return None
+
+            data = json.loads(token_json)
             token = Token.from_dict(data)
             if token.is_valid():
                 return token
@@ -279,17 +274,10 @@ class CredentialsManager:
             return None
 
     def _save_token(self, token: Token) -> None:
-        """Save token to cache file with secure permissions."""
-        # Create parent directory with secure permissions (0700)
-        self._token_cache_path.parent.mkdir(parents=True, exist_ok=True)
-        os.chmod(self._token_cache_path.parent, stat.S_IRWXU)
-
-        # Write to temp file, set permissions, then rename atomically
-        temp_path = self._token_cache_path.with_suffix(".tmp")
-        temp_path.write_text(json.dumps(token.to_dict(), indent=2))
-        os.chmod(temp_path, stat.S_IRUSR | stat.S_IWUSR)  # 0600
-        temp_path.rename(self._token_cache_path)
-        print(f"Token saved to {self._token_cache_path}")
+        """Save token securely to OS keyring."""
+        token_json = json.dumps(token.to_dict())
+        keyring.set_password(KEYRING_SERVICE, KEYRING_USERNAME, token_json)
+        print("Token saved to OS keyring")
 
     def _load_gateway_config(self) -> dict[str, str] | None:
         """Load endpoint URLs from gateway.json if it exists.
@@ -554,6 +542,48 @@ class CredentialsManager:
                 self.wfile.write(content.encode())
 
         return CallbackHandler
+
+
+def authenticate(
+    auth_url: str | None = None,
+    exchange_url: str | None = None,
+    service_account_path: str | Path | None = None,
+    force_refresh: bool = False,
+) -> Token:
+    """Authenticate and get a valid Google API access token.
+
+    This is a convenience function that creates a CredentialsManager and
+    retrieves a token. Configuration can be provided via parameters,
+    environment variables (EXTRASUITE_AUTH_URL, EXTRASUITE_EXCHANGE_URL,
+    SERVICE_ACCOUNT_PATH), or gateway.json.
+
+    Args:
+        auth_url: URL to start authentication flow.
+        exchange_url: URL to exchange auth code for token.
+        service_account_path: Path to service account JSON file.
+        force_refresh: If True, ignore cached token and re-authenticate.
+
+    Returns:
+        A valid Token object with access_token, service_account_email,
+        and expires_at fields.
+
+    Raises:
+        ValueError: If no authentication method is configured.
+        Exception: If authentication fails.
+
+    Example:
+        from extrasuite_client import authenticate
+
+        token = authenticate()
+        print(f"Token: {token.access_token[:50]}...")
+        print(f"Service account: {token.service_account_email}")
+    """
+    manager = CredentialsManager(
+        auth_url=auth_url,
+        exchange_url=exchange_url,
+        service_account_path=service_account_path,
+    )
+    return manager.get_token(force_refresh=force_refresh)
 
 
 def main() -> int:
