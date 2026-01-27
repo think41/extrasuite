@@ -8,22 +8,13 @@ The project is a monorepo consisting of the following packages:
 1. **extrasuite-server** - Containerized FastAPI application to provide employee-specific service accounts and short-lived access tokens that can be used to call google drive/sheets/docs/slides APIs. It also has minimal UI to allow employees to install skills via a command line installation command.
 2. **extrasuite-client** - CLI based application to call extrasuite-server from an AI Agent and provide it shortlived access tokens. This will eventually be published to a pypi package, but currently extrasuite-client/src/extrasuite_client/credentials.py is manually copied by the projects that wish to use it.
 3. **extraslide** - Python library that simplifies editing Google Slides through an SML (Slide Markup Language) abstraction. "Pulls" google slides into an XML file, AI agents make edits to this XML, a "diff" process identifies changes, and "push" invokes appropriate Google Slides API. This library is alpha quality.
+4. **extrasheet** - Python library that simplifies editing Google Sheets. It downloads a google sheet into a folder with several files - an overall spreadsheet.json, a directory per worskheet with individual files like data.tsv (raw data), formula.json (formulas in this worksheet), format.json (formatting information), dimension.json (row and column dimnsions) and feature.json (any charts/pivot tables etc). The AI Agent can use this to understand what nees to be changed, and then issue batchUpdate commands.
 4. **website** - mkdocs based documentation website, hosted on github pages, automatically deployed to https://extrasuite.think41.com on every commit to main branch. The website also has instructions to deploy, end user documentation and other product usage.
 
 ## Skills for Slides, Docs and Sheets
 The AI agent needs instructions on how to read or edit google drive files. These are provided as "Agent Skills" which are an open standard. See https://agentskills.io/home. At its core, a skill is a markdown file <skillname>/SKILL.md that is saved by end users at a well known agent specific location. The skills are distributed by extrasuite-server, see extrasuite-server/skills.
 
 The SKILL.md file explains how to use `extrasuite-client` to get the temporary service account token, and then use the appropriate library to read or edit the specific file type.
-
-### Package Naming Convention
-The packages are being renamed for consistency:
-- **extraslide** (formerly gslidex) - Google Slides manipulation, now part of this monorepo at `/extraslide/`
-- **extrasheet** (formerly gsheetx) - Google Sheets manipulation, see https://github.com/think41/gsheetx
-- **extradoc** (formerly gdocx) - Google Docs manipulation, see https://github.com/think41/gdocx (under development)
-
-### Current Status
-- **extraslide** skill is available at `extrasuite-server/skills/extraslide/`
-- **gsheetx** skill is working at `extrasuite-server/skills/gsheetx/` and uses the underlying gspread library directly
 
 ## Organization Setup (prerequisite)
 
