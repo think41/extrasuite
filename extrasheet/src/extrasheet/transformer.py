@@ -33,13 +33,21 @@ if TYPE_CHECKING:
 class SpreadsheetTransformer:
     """Transforms a Google Sheets API Spreadsheet response into file representations."""
 
-    def __init__(self, spreadsheet: Spreadsheet) -> None:
+    def __init__(
+        self,
+        spreadsheet: Spreadsheet,
+        *,
+        truncation_info: dict[int, dict[str, Any]] | None = None,
+    ) -> None:
         """Initialize the transformer with a spreadsheet response.
 
         Args:
             spreadsheet: Full Spreadsheet object from Google Sheets API
+            truncation_info: Optional dict mapping sheetId -> truncation details.
+                           Used when rows were limited during fetch.
         """
         self.spreadsheet = spreadsheet
+        self.truncation_info = truncation_info or {}
         self._sheet_folders: dict[int, str] = {}  # sheetId -> folder name
 
     def transform(self) -> dict[str, Any]:
@@ -151,14 +159,26 @@ class SpreadsheetTransformer:
             elif sheet_props.get("tabColor"):
                 sheet_entry["tabColor"] = sheet_props["tabColor"]
 
+            # Add truncation info if this sheet was truncated
+            if sheet_id in self.truncation_info:
+                sheet_entry["truncation"] = self.truncation_info[sheet_id]
+
             sheets_meta.append(sheet_entry)
 
-        return {
+        result = {
             "spreadsheetId": self.spreadsheet.get("spreadsheetId", ""),
             "spreadsheetUrl": self.spreadsheet.get("spreadsheetUrl", ""),
             "properties": props,
             "sheets": sheets_meta,
         }
+
+        # Add top-level truncation warning if any sheets were truncated
+        if self.truncation_info:
+            result["_truncationWarning"] = (
+                "Some sheets have partial data. Check each sheet's 'truncation' field for details."
+            )
+
+        return result
 
     def _transform_named_ranges(self, named_ranges: list[NamedRange]) -> dict[str, Any]:
         """Transform named ranges."""

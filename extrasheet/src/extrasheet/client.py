@@ -153,7 +153,8 @@ class SheetsClient:
         *,
         include_grid_data: bool = True,
         ranges: list[str] | None = None,
-    ) -> Spreadsheet:
+        max_rows: int | None = None,
+    ) -> tuple[Spreadsheet, dict[int, dict[str, Any]] | None]:
         """Fetch a spreadsheet from the Google Sheets API.
 
         Args:
@@ -161,10 +162,60 @@ class SheetsClient:
             include_grid_data: Whether to include cell data
             ranges: Optional list of ranges to fetch (e.g., ["Sheet1!A1:D10"])
                    If not specified, fetches all data.
+            max_rows: Optional maximum number of rows to fetch per sheet.
+                     If specified, only the first max_rows rows are fetched.
 
         Returns:
-            Spreadsheet object from the API
+            Tuple of (Spreadsheet object, truncation_info dict or None).
+            truncation_info maps sheetId -> {"totalRows": int, "fetchedRows": int}
+            for sheets that were truncated.
         """
+        truncation_info: dict[int, dict[str, Any]] | None = None
+
+        # If max_rows is specified and no explicit ranges, we need to:
+        # 1. First fetch metadata only to get sheet names and row counts
+        # 2. Build limited ranges for each sheet
+        # 3. Fetch with those ranges
+        if max_rows is not None and ranges is None and include_grid_data:
+            # Step 1: Fetch metadata only
+            metadata_url = f"{self.API_BASE}/{spreadsheet_id}"
+            metadata = self._make_request(metadata_url)
+
+            # Step 2: Build limited ranges and track truncation
+            limited_ranges: list[str] = []
+            truncation_info = {}
+
+            for sheet in metadata.get("sheets", []):
+                props = sheet.get("properties", {})
+                title = props.get("title", "Sheet1")
+                sheet_id = props.get("sheetId", 0)
+                grid_props = props.get("gridProperties", {})
+                row_count = grid_props.get("rowCount", 0)
+                col_count = grid_props.get("columnCount", 26)
+
+                # Escape sheet title for range notation (single quotes if needed)
+                escaped_title = self._escape_sheet_title(title)
+
+                # Calculate how many rows to fetch
+                rows_to_fetch = min(max_rows, row_count)
+
+                # Track truncation if we're limiting
+                if row_count > max_rows:
+                    truncation_info[sheet_id] = {
+                        "totalRows": row_count,
+                        "fetchedRows": max_rows,
+                        "truncated": True,
+                    }
+
+                # Build range: SheetName!A1:LastCol{rows_to_fetch}
+                # Use column count to determine last column
+                last_col = self._column_index_to_letter(col_count - 1)
+                range_str = f"{escaped_title}!A1:{last_col}{rows_to_fetch}"
+                limited_ranges.append(range_str)
+
+            # Step 3: Fetch with limited ranges
+            ranges = limited_ranges
+
         # Build URL with parameters
         params: list[str] = []
         if include_grid_data:
@@ -177,7 +228,40 @@ class SheetsClient:
         if params:
             url += "?" + "&".join(params)
 
-        return self._make_request(url)
+        return self._make_request(url), truncation_info
+
+    def _escape_sheet_title(self, title: str) -> str:
+        """Escape sheet title for use in A1 notation ranges.
+
+        Sheet names containing spaces, special characters, or starting with
+        digits need to be wrapped in single quotes.
+        """
+        # If title contains special chars or spaces, wrap in single quotes
+        # and escape any existing single quotes
+        needs_quoting = (
+            " " in title
+            or "'" in title
+            or "!" in title
+            or ":" in title
+            or title[0:1].isdigit()
+        )
+        if needs_quoting:
+            escaped = title.replace("'", "''")
+            return f"'{escaped}'"
+        return title
+
+    def _column_index_to_letter(self, index: int) -> str:
+        """Convert a 0-based column index to Excel-style letter(s).
+
+        Examples: 0 -> A, 25 -> Z, 26 -> AA, 27 -> AB
+        """
+        result = ""
+        while True:
+            result = chr(ord("A") + (index % 26)) + result
+            index = index // 26 - 1
+            if index < 0:
+                break
+        return result
 
     def pull(
         self,
@@ -186,6 +270,7 @@ class SheetsClient:
         *,
         ranges: list[str] | None = None,
         save_raw: bool = False,
+        max_rows: int | None = None,
     ) -> list[Path]:
         """Pull a spreadsheet and write to file representation.
 
@@ -198,6 +283,9 @@ class SheetsClient:
             ranges: Optional list of ranges to fetch. If not specified,
                    fetches the entire spreadsheet.
             save_raw: If True, also saves the raw API response to raw.json
+            max_rows: Optional maximum number of rows to fetch per sheet.
+                     If specified, only the first max_rows rows are fetched,
+                     and truncation info is included in spreadsheet.json.
 
         Returns:
             List of paths to written files
@@ -206,19 +294,23 @@ class SheetsClient:
             >>> client = SheetsClient(access_token="ya29...")
             >>> files = client.pull(
             ...     "1BxiMVs0XRA5nFMdKvBdBZjgmUUqptlbs74OgvE2upms",
-            ...     "./output"
+            ...     "./output",
+            ...     max_rows=500
             ... )
             >>> print(f"Wrote {len(files)} files")
         """
         # Fetch spreadsheet data
-        spreadsheet = self.get_spreadsheet(
+        spreadsheet, truncation_info = self.get_spreadsheet(
             spreadsheet_id,
             include_grid_data=True,
             ranges=ranges,
+            max_rows=max_rows,
         )
 
         # Transform to file representation
-        transformer = SpreadsheetTransformer(spreadsheet)
+        transformer = SpreadsheetTransformer(
+            spreadsheet, truncation_info=truncation_info
+        )
         files = transformer.transform()
 
         # Write to disk
@@ -237,6 +329,7 @@ class SheetsClient:
         spreadsheet_id: str,
         *,
         ranges: list[str] | None = None,
+        max_rows: int | None = None,
     ) -> dict[str, Any]:
         """Pull a spreadsheet and return as dictionary (without writing to disk).
 
@@ -246,17 +339,21 @@ class SheetsClient:
         Args:
             spreadsheet_id: The ID of the spreadsheet
             ranges: Optional list of ranges to fetch
+            max_rows: Optional maximum number of rows to fetch per sheet
 
         Returns:
             Dictionary mapping file paths to content
         """
-        spreadsheet = self.get_spreadsheet(
+        spreadsheet, truncation_info = self.get_spreadsheet(
             spreadsheet_id,
             include_grid_data=True,
             ranges=ranges,
+            max_rows=max_rows,
         )
 
-        transformer = SpreadsheetTransformer(spreadsheet)
+        transformer = SpreadsheetTransformer(
+            spreadsheet, truncation_info=truncation_info
+        )
         return transformer.transform()
 
     def transform_from_json(

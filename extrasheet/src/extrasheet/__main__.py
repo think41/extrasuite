@@ -41,11 +41,19 @@ def cmd_download(args: argparse.Namespace) -> int:
         return 1
 
     # Pull spreadsheet
-    print(f"Downloading spreadsheet: {spreadsheet_id}")
+    max_rows = None if args.no_limit else args.max_rows
+    if max_rows:
+        print(
+            f"Downloading spreadsheet: {spreadsheet_id} (limited to {max_rows} rows per sheet)"
+        )
+    else:
+        print(f"Downloading spreadsheet: {spreadsheet_id} (fetching all rows)")
     client = SheetsClient(access_token=token_obj.access_token)
 
     try:
-        files = client.pull(spreadsheet_id, output_path, save_raw=args.save_raw)
+        files = client.pull(
+            spreadsheet_id, output_path, save_raw=args.save_raw, max_rows=max_rows
+        )
         print(f"\nWrote {len(files)} files to {output_path}:")
         for path in files:
             print(f"  {path}")
@@ -79,6 +87,17 @@ def main() -> int:
         "--save-raw",
         action="store_true",
         help="Also save the raw API response",
+    )
+    download_parser.add_argument(
+        "--max-rows",
+        type=int,
+        default=100,
+        help="Maximum number of rows to fetch per sheet (default: 100)",
+    )
+    download_parser.add_argument(
+        "--no-limit",
+        action="store_true",
+        help="Fetch all rows (may timeout on large spreadsheets)",
     )
     download_parser.set_defaults(func=cmd_download)
 
