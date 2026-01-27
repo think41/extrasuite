@@ -297,6 +297,10 @@ class CredentialsManager:
         The gateway.json file is created by the install script and contains
         the authentication endpoint URLs configured during skill installation.
 
+        Supports both formats:
+        - New format: EXTRASUITE_AUTH_URL and EXTRASUITE_EXCHANGE_URL
+        - Legacy format: EXTRASUITE_SERVER_URL (deprecated, will derive URLs)
+
         Returns:
             Dictionary with 'auth_url' and 'exchange_url' if gateway.json exists
             and is valid, None otherwise.
@@ -305,9 +309,27 @@ class CredentialsManager:
             return None
         try:
             data = json.loads(self.GATEWAY_CONFIG_PATH.read_text())
+
+            # Check for new format first
+            auth_url = data.get("EXTRASUITE_AUTH_URL")
+            exchange_url = data.get("EXTRASUITE_EXCHANGE_URL")
+
+            # Fall back to legacy EXTRASUITE_SERVER_URL format
+            if not auth_url or not exchange_url:
+                server_url = data.get("EXTRASUITE_SERVER_URL")
+                if server_url:
+                    # Remove trailing slash if present
+                    server_url = server_url.rstrip("/")
+                    auth_url = f"{server_url}/api/token/auth"
+                    exchange_url = f"{server_url}/api/token/exchange"
+                    print(
+                        "Warning: gateway.json uses deprecated EXTRASUITE_SERVER_URL format. "
+                        "Please update to use EXTRASUITE_AUTH_URL and EXTRASUITE_EXCHANGE_URL."
+                    )
+
             return {
-                "auth_url": data.get("EXTRASUITE_AUTH_URL"),
-                "exchange_url": data.get("EXTRASUITE_EXCHANGE_URL"),
+                "auth_url": auth_url,
+                "exchange_url": exchange_url,
             }
         except (json.JSONDecodeError, OSError):
             return None
