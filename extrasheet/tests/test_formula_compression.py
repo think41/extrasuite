@@ -56,6 +56,17 @@ class TestNormalizeFormula:
         result = _normalize_formula("=SUM(A2:C2)", 1, 3)
         assert result == "=SUM({c-3}{r}:{c-1}{r})"
 
+    def test_structured_table_reference_not_matched(self):
+        """Test that structured table references like Table1_2[#ALL] are not matched.
+
+        This ensures names like 'Table1' are not mistakenly parsed as cell references.
+        """
+        # Formula in F2: =vlookup(E2,Table1_2[#ALL],3,0)
+        result = _normalize_formula("=vlookup(E2,Table1_2[#ALL],3,0)", 1, 5)
+        # Only E2 should be normalized (col offset -1, same row)
+        # Table1_2[#ALL] should be unchanged
+        assert result == "=vlookup({c-1}{r},Table1_2[#ALL],3,0)"
+
 
 class TestDenormalizeFormula:
     """Tests for formula denormalization."""
@@ -187,6 +198,49 @@ class TestCompressFormulas:
         assert result["formulas"]["A1"] == "=B1+C1"
         assert result["formulas"]["A3"] == "=B3+C3"
         assert result["formulas"]["A5"] == "=B5+C5"
+
+    def test_structured_table_reference_compressed(self):
+        """Test formulas with structured table references are properly compressed.
+
+        Regression test: 'Table1' in 'Table1_2[#ALL]' was incorrectly matched as
+        a cell reference, causing each formula to normalize differently and
+        preventing compression.
+        """
+        formulas = {
+            "F2": "=vlookup(E2,Table1_2[#ALL],3,0)",
+            "F3": "=vlookup(E3,Table1_2[#ALL],3,0)",
+            "F4": "=vlookup(E4,Table1_2[#ALL],3,0)",
+            "F5": "=vlookup(E5,Table1_2[#ALL],3,0)",
+        }
+        result = compress_formulas(formulas)
+
+        # Should be compressed into a single range
+        assert "formulaRanges" in result
+        assert len(result["formulaRanges"]) == 1
+        assert result["formulaRanges"][0]["range"] == "F2:F5"
+        assert result["formulaRanges"][0]["formula"] == "=vlookup(E2,Table1_2[#ALL],3,0)"
+        assert "formulas" not in result
+
+    def test_quoted_sheet_name_with_number_compressed(self):
+        """Test formulas with quoted sheet names containing numbers are compressed.
+
+        Regression test: 'R41' in "'R41 Shortlisted'!A:A" was incorrectly matched as
+        a cell reference, causing each formula to normalize differently and
+        preventing compression.
+        """
+        formulas = {
+            "J2": "=xlookup(A2,'R41 Shortlisted'!A:A,'R41 Shortlisted'!B:B,\"No\")",
+            "J3": "=xlookup(A3,'R41 Shortlisted'!A:A,'R41 Shortlisted'!B:B,\"No\")",
+            "J4": "=xlookup(A4,'R41 Shortlisted'!A:A,'R41 Shortlisted'!B:B,\"No\")",
+            "J5": "=xlookup(A5,'R41 Shortlisted'!A:A,'R41 Shortlisted'!B:B,\"No\")",
+        }
+        result = compress_formulas(formulas)
+
+        # Should be compressed into a single range
+        assert "formulaRanges" in result
+        assert len(result["formulaRanges"]) == 1
+        assert result["formulaRanges"][0]["range"] == "J2:J5"
+        assert "formulas" not in result
 
 
 class TestExpandFormulas:

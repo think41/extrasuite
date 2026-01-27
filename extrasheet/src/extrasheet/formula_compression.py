@@ -54,7 +54,11 @@ def _normalize_formula(formula: str, anchor_row: int, anchor_col: int) -> str | 
     Returns None if formula contains features that prevent pattern matching.
     """
     # Find all cell references (including absolute references)
-    cell_ref_pattern = r"\$?[A-Za-z]+\$?\d+"
+    # - (?<![A-Za-z']) ensures we don't match mid-identifier or inside quoted sheet names
+    #   (e.g., "ble1" in "Table1" or "R41" in "'R41 Shortlisted'!A:A")
+    # - Use {1,3} for column letters since Google Sheets max column is XFD (3 letters)
+    # - (?![_\[]) ensures we don't match structured refs (e.g., "Table1_2[#ALL]")
+    cell_ref_pattern = r"(?<![A-Za-z'])\$?[A-Za-z]{1,3}\$?\d+(?![_\[])"
 
     def replace_ref(match: re.Match) -> str:
         ref = match.group(0)
