@@ -13,6 +13,10 @@
 			"path": "extraslide"
 		},
 		{
+			"name": "extrasheet",
+			"path": "extrasheet"
+		},
+		{
 			"name": "website",
 			"path": "website"
 		},
