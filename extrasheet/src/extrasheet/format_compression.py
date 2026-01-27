@@ -14,7 +14,6 @@ from collections import Counter
 from dataclasses import dataclass
 from typing import Any
 
-
 # =============================================================================
 # Range handling
 # =============================================================================
@@ -75,7 +74,7 @@ def find_largest_rectangle(cells: set[tuple[int, int]]) -> Range | None:
         return None
 
     if len(cells) == 1:
-        c = list(cells)[0]
+        c = next(iter(cells))
         return Range(c[0], c[1], c[0], c[1])
 
     min_row = min(c[0] for c in cells)
@@ -433,7 +432,7 @@ def compress_cell_formats(
         best_rule: tuple[Range, str, set[tuple[int, int]]] | None = None
         best_cells_covered = 0
 
-        for sig, count in sig_counts.most_common():
+        for sig, _count in sig_counts.most_common():
             sig_cells = {c for c, s in remaining.items() if s == sig}
             rect = find_largest_rectangle(sig_cells)
 

@@ -170,12 +170,15 @@ class TestSpreadsheetTransformer:
         transformer = SpreadsheetTransformer(spreadsheet)
         result = transformer.transform()
 
-        # Check format.json
+        # Check format.json - now uses compressed formatRules
         assert "test123/Sheet1/format.json" in result
         formatting = result["test123/Sheet1/format.json"]
-        assert "cellFormats" in formatting
-        assert "A1" in formatting["cellFormats"]
-        assert formatting["cellFormats"]["A1"]["textFormat"]["bold"] is True
+        assert "formatRules" in formatting
+        # Single cell A1 should have a rule with range "A1"
+        assert len(formatting["formatRules"]) == 1
+        rule = formatting["formatRules"][0]
+        assert rule["range"] == "A1"
+        assert rule["format"]["textFormat"]["bold"] is True
 
     def test_sheet_with_notes(self) -> None:
         """Test extracting cell notes."""

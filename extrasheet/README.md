@@ -46,6 +46,22 @@ client.pull("1BxiMVs0XRA5nFMdKvBdBZjgmUUqptlbs74OgvE2upms", "./output")
 #       └── feature.json     # Charts, pivot tables, etc.
 ```
 
+## CLI Usage
+
+```bash
+# Download a spreadsheet to local files
+python -m extrasheet download <spreadsheet_id_or_url> <output_dir>
+
+# Also save the raw API response
+python -m extrasheet download <spreadsheet_id_or_url> <output_dir> --save-raw
+```
+
+## Documentation
+
+- **[On-Disk Format](docs/on-disk-format.md)** - Complete specification of the file format
+- **[LLM Agent Guide](docs/llm-agent-guide.md)** - How to use extrasheet output for spreadsheet modifications
+- **[API Types](src/extrasheet/api_types.py)** - TypedDict definitions generated from Google Sheets API
+
 ## Development
 
 ```bash

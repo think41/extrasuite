@@ -9,6 +9,7 @@ from __future__ import annotations
 from typing import TYPE_CHECKING, Any
 
 from extrasheet.format_compression import compress_cell_formats
+from extrasheet.formula_compression import compress_formulas
 from extrasheet.utils import (
     cell_to_a1,
     column_index_to_letter,
@@ -185,7 +186,7 @@ class SpreadsheetTransformer:
 
                 # Formulas
                 formulas = self._extract_formulas(grid_data_list)
-                if formulas.get("formulas") or formulas.get("arrayFormulas") or formulas.get("dataSourceFormulas"):
+                if formulas:
                     result["formula.json"] = formulas
 
                 # Formatting
@@ -308,8 +309,15 @@ class SpreadsheetTransformer:
                         })
 
         result: dict[str, Any] = {}
+
+        # Compress regular formulas into patterns
         if formulas:
-            result["formulas"] = formulas
+            compressed = compress_formulas(formulas)
+            if compressed.get("formulaPatterns"):
+                result["formulaPatterns"] = compressed["formulaPatterns"]
+            if compressed.get("formulas"):
+                result["formulas"] = compressed["formulas"]
+
         if array_formulas:
             result["arrayFormulas"] = array_formulas
         if data_source_formulas:
