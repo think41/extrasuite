@@ -76,9 +76,8 @@ class TestSpreadsheetTransformer:
         assert "test123/Sheet1/data.tsv" in result
         tsv = result["test123/Sheet1/data.tsv"]
         lines = tsv.split("\n")
-        assert lines[0] == "A\tB"  # Header
-        assert lines[1] == "Name\tValue"
-        assert lines[2] == "Alice\t100"
+        assert lines[0] == "Name\tValue"
+        assert lines[1] == "Alice\t100"
 
     def test_sheet_with_formulas(self) -> None:
         """Test extracting formulas from cells."""

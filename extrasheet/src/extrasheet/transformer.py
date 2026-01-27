@@ -12,7 +12,6 @@ from extrasheet.format_compression import compress_cell_formats
 from extrasheet.formula_compression import compress_formulas
 from extrasheet.utils import (
     cell_to_a1,
-    column_index_to_letter,
     escape_tsv_value,
     get_effective_value_string,
     grid_range_to_a1,
@@ -278,10 +277,6 @@ class SpreadsheetTransformer:
 
         # Generate TSV
         lines: list[str] = []
-
-        # Header row with column letters
-        header = "\t".join(column_index_to_letter(c) for c in range(max_col + 1))
-        lines.append(header)
 
         # Data rows
         for row in range(max_row + 1):

@@ -189,9 +189,9 @@ Contains external data source connections (BigQuery, Looker).
 Tab-separated values containing cell data. Formulas display their computed result, not the formula text.
 
 **Format:**
-- First row: Column headers (A, B, C, ..., AA, AB, ...)
-- Subsequent rows: Cell values
+- Each row contains cell values separated by tabs
 - Trailing empty columns and rows are trimmed
+- Row and column indices are zero-based (first row is row 0, first column is column 0)
 
 **Escaping:**
 - Tab characters: `\t`
@@ -201,7 +201,6 @@ Tab-separated values containing cell data. Formulas display their computed resul
 
 **Example:**
 ```
-A	B	C	D
 Name	Sales	Region	Total
 Alice	1000	North	1500
 Bob	500	South	1200
