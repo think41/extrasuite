@@ -1,6 +1,5 @@
 """Tests for formula compression."""
 
-
 from extrasheet.formula_compression import (
     _denormalize_formula,
     _normalize_formula,
@@ -97,9 +96,9 @@ class TestCompressFormulas:
         result = compress_formulas(formulas)
         assert result == {"formulas": {"A1": "=B1+C1"}}
 
-    def test_identical_relative_formulas_in_column(self):
-        """Test formulas with same pattern in a column are compressed."""
-        # These formulas follow the pattern =I{row}&" - "&J{row}
+    def test_fewer_than_4_cells_not_compressed(self):
+        """Test that fewer than 4 cells are not compressed."""
+        # 3 cells with same pattern - should NOT be compressed
         formulas = {
             "K4": '=I4&" - "&J4',
             "K5": '=I5&" - "&J5',
@@ -107,32 +106,50 @@ class TestCompressFormulas:
         }
         result = compress_formulas(formulas)
 
-        assert "formulaPatterns" in result
-        assert len(result["formulaPatterns"]) == 1
+        # Should be stored as individual formulas, not compressed
+        assert "formulaRanges" not in result
+        assert "formulas" in result
+        assert result["formulas"]["K4"] == '=I4&" - "&J4'
+        assert result["formulas"]["K5"] == '=I5&" - "&J5'
+        assert result["formulas"]["K6"] == '=I6&" - "&J6'
 
-        pattern = result["formulaPatterns"][0]
-        assert pattern["range"] == "K4:K6"
-        assert pattern["anchor"] == "K4"
-        # Pattern should use placeholders
-        assert "{r}" in pattern["pattern"]
+    def test_4_cells_compressed(self):
+        """Test that 4+ cells with same pattern in a column are compressed."""
+        formulas = {
+            "K4": '=I4&" - "&J4',
+            "K5": '=I5&" - "&J5',
+            "K6": '=I6&" - "&J6',
+            "K7": '=I7&" - "&J7',
+        }
+        result = compress_formulas(formulas)
+
+        assert "formulaRanges" in result
+        assert len(result["formulaRanges"]) == 1
+
+        range_rule = result["formulaRanges"][0]
+        assert range_rule["range"] == "K4:K7"
+        # Formula should be the actual formula from first cell (not pattern)
+        assert range_rule["formula"] == '=I4&" - "&J4'
 
         # Should not have individual formulas
         assert "formulas" not in result
 
-    def test_identical_relative_formulas_in_row(self):
+    def test_4_cells_in_row_compressed(self):
         """Test formulas with same pattern in a row are compressed."""
         formulas = {
             "B1": "=B2+B3",
             "C1": "=C2+C3",
             "D1": "=D2+D3",
+            "E1": "=E2+E3",
         }
         result = compress_formulas(formulas)
 
-        assert "formulaPatterns" in result
-        assert len(result["formulaPatterns"]) == 1
+        assert "formulaRanges" in result
+        assert len(result["formulaRanges"]) == 1
 
-        pattern = result["formulaPatterns"][0]
-        assert pattern["range"] == "B1:D1"
+        range_rule = result["formulaRanges"][0]
+        assert range_rule["range"] == "B1:E1"
+        assert range_rule["formula"] == "=B2+B3"
 
     def test_mixed_formulas(self):
         """Test mix of compressible and non-compressible formulas."""
@@ -141,21 +158,22 @@ class TestCompressFormulas:
             "C2": "=A2+B2",
             "C3": "=A3+B3",
             "C4": "=A4+B4",
+            "C5": "=A5+B5",  # Now 4 cells with same pattern
         }
         result = compress_formulas(formulas)
 
-        assert "formulaPatterns" in result
+        assert "formulaRanges" in result
         assert "formulas" in result
 
-        # C2:C4 should be compressed
-        patterns = result["formulaPatterns"]
-        assert any(p.get("range") == "C2:C4" for p in patterns)
+        # C2:C5 should be compressed
+        ranges = result["formulaRanges"]
+        assert any(r.get("range") == "C2:C5" for r in ranges)
 
         # A1 should remain as individual formula
         assert result["formulas"]["A1"] == "=SUM(B:B)"
 
-    def test_non_contiguous_same_pattern(self):
-        """Test non-contiguous cells with same pattern."""
+    def test_non_contiguous_same_pattern_not_compressed(self):
+        """Test non-contiguous cells with same pattern are not compressed."""
         formulas = {
             "A1": "=B1+C1",
             "A3": "=B3+C3",  # Skip A2
@@ -163,24 +181,24 @@ class TestCompressFormulas:
         }
         result = compress_formulas(formulas)
 
-        assert "formulaPatterns" in result
-        pattern = result["formulaPatterns"][0]
-        # Should list cells individually since not contiguous
-        assert "cells" in pattern
-        assert set(pattern["cells"]) == {"A1", "A3", "A5"}
+        # Non-contiguous cells should be stored individually
+        assert "formulaRanges" not in result
+        assert "formulas" in result
+        assert result["formulas"]["A1"] == "=B1+C1"
+        assert result["formulas"]["A3"] == "=B3+C3"
+        assert result["formulas"]["A5"] == "=B5+C5"
 
 
 class TestExpandFormulas:
     """Tests for expanding compressed formulas."""
 
-    def test_expand_range_pattern(self):
-        """Test expanding a range-based pattern."""
+    def test_expand_formula_range(self):
+        """Test expanding a formula range."""
         compressed = {
-            "formulaPatterns": [
+            "formulaRanges": [
                 {
-                    "pattern": "={c-2}{r}+{c-1}{r}",
-                    "range": "C2:C4",
-                    "anchor": "C2",
+                    "formula": "=A2+B2",
+                    "range": "C2:C5",
                 }
             ]
         }
@@ -189,46 +207,63 @@ class TestExpandFormulas:
         assert result["C2"] == "=A2+B2"
         assert result["C3"] == "=A3+B3"
         assert result["C4"] == "=A4+B4"
+        assert result["C5"] == "=A5+B5"
 
-    def test_expand_cell_list_pattern(self):
-        """Test expanding a cell-list pattern."""
+    def test_expand_formula_range_horizontal(self):
+        """Test expanding a horizontal formula range."""
         compressed = {
-            "formulaPatterns": [
+            "formulaRanges": [
                 {
-                    "pattern": "={c-1}{r}*2",
-                    "cells": ["B1", "B3", "B5"],
-                    "anchor": "B1",
+                    "formula": "=B2+B3",
+                    "range": "B1:E1",
                 }
             ]
         }
         result = expand_formulas(compressed)
 
-        assert result["B1"] == "=A1*2"
-        assert result["B3"] == "=A3*2"
-        assert result["B5"] == "=A5*2"
+        assert result["B1"] == "=B2+B3"
+        assert result["C1"] == "=C2+C3"
+        assert result["D1"] == "=D2+D3"
+        assert result["E1"] == "=E2+E3"
 
     def test_expand_with_regular_formulas(self):
-        """Test expanding when there are both patterns and regular formulas."""
+        """Test expanding when there are both ranges and regular formulas."""
         compressed = {
-            "formulaPatterns": [
+            "formulaRanges": [
                 {
-                    "pattern": "={c-1}{r}",
-                    "range": "B2:B3",
-                    "anchor": "B2",
+                    "formula": "=A2",
+                    "range": "B2:B5",
                 }
             ],
             "formulas": {
                 "A1": "=SUM(C:C)",
-            }
+            },
         }
         result = expand_formulas(compressed)
 
         assert result["B2"] == "=A2"
         assert result["B3"] == "=A3"
+        assert result["B4"] == "=A4"
+        assert result["B5"] == "=A5"
         assert result["A1"] == "=SUM(C:C)"
 
-    def test_roundtrip(self):
-        """Test that compress -> expand produces equivalent formulas."""
+    def test_roundtrip_4_cells(self):
+        """Test that compress -> expand produces equivalent formulas (4+ cells)."""
+        original = {
+            "K4": '=I4&" - "&J4',
+            "K5": '=I5&" - "&J5',
+            "K6": '=I6&" - "&J6',
+            "K7": '=I7&" - "&J7',
+            "A1": "=NOW()",
+        }
+
+        compressed = compress_formulas(original)
+        expanded = expand_formulas(compressed)
+
+        assert expanded == original
+
+    def test_roundtrip_fewer_than_4_cells(self):
+        """Test that compress -> expand works for non-compressed formulas."""
         original = {
             "K4": '=I4&" - "&J4',
             "K5": '=I5&" - "&J5',
@@ -237,6 +272,8 @@ class TestExpandFormulas:
         }
 
         compressed = compress_formulas(original)
+        # With fewer than 4 cells, nothing should be in formulaRanges
+        assert "formulaRanges" not in compressed
         expanded = expand_formulas(compressed)
 
         assert expanded == original

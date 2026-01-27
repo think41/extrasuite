@@ -224,25 +224,25 @@ Bob	500	South	1200
 
 ### formula.json
 
-Formulas are stored with pattern-based compression. Formulas that follow the same pattern (with relative references adjusted per cell) are grouped together.
+Formulas are stored with range-based compression. When 4+ cells have the same formula pattern (with relative references adjusted per cell), they are compressed into a single entry showing the formula from the first cell and the range.
 
 ```json
 {
-  "formulaPatterns": [
+  "formulaRanges": [
     {
-      "pattern": "={c-2}{r}&\" - \"&{c-1}{r}",
-      "range": "K4:K12",
-      "anchor": "K4"
+      "formula": "=I4&\" - \"&J4",
+      "range": "K4:K12"
     },
     {
-      "pattern": "=SUM({c-1}{r}:{c-1}{r+9})",
-      "cells": ["B2", "B15", "B28"],
-      "anchor": "B2"
+      "formula": "=A2+B2",
+      "range": "C2:C10"
     }
   ],
   "formulas": {
     "A1": "=NOW()",
-    "Z1": "=UNIQUE(Sheet2!A:A)"
+    "Z1": "=UNIQUE(Sheet2!A:A)",
+    "B2": "=A2+B2",
+    "B3": "=A3+B3"
   },
   "arrayFormulas": {
     "A10": {
@@ -268,32 +268,39 @@ Formulas are stored with pattern-based compression. Formulas that follow the sam
 }
 ```
 
-**Pattern Placeholders:**
-
-| Placeholder | Description |
-|-------------|-------------|
-| `{r}` | Current row (same row as cell) |
-| `{r+N}` or `{r-N}` | Row offset from current cell |
-| `{c}` | Current column (same column as cell) |
-| `{c+N}` or `{c-N}` | Column offset from current cell |
-
 **Sections:**
 
 | Section | Description |
 |---------|-------------|
-| `formulaPatterns` | Compressed patterns with range or cell list |
-| `formulas` | Non-compressible formulas (unique patterns) |
+| `formulaRanges` | Compressed formula ranges (4+ cells with same pattern) |
+| `formulas` | Individual formulas (unique patterns or fewer than 4 cells) |
 | `arrayFormulas` | Array formulas with their output range |
 | `dataSourceFormulas` | Formulas connected to external data sources |
 
-**Pattern Compression:**
+**Formula Range Compression:**
 
-Formulas are compressed when multiple cells share the same normalized pattern. For example, `=A2+B2` in C2 and `=A3+B3` in C3 both normalize to `={c-2}{r}+{c-1}{r}`.
+When 4 or more contiguous cells share the same relative reference pattern, they are compressed into a `formulaRanges` entry:
 
-- **range**: Used when cells form a contiguous rectangular range
-- **cells**: Used when cells are non-contiguous
+- **formula**: The actual formula as entered in the first cell of the range
+- **range**: The A1-notation range (e.g., `C2:C10`)
 
-**Note:** The computed values appear in `data.tsv`. To reconstruct the original formula for a cell, substitute the placeholders with the actual row/column.
+This format is intuitive for anyone familiar with spreadsheets: the formula auto-fills across the range using standard Excel/Google Sheets behavior (relative references increment, absolute references stay fixed).
+
+**Example:**
+```json
+{"formula": "=A2+B2", "range": "C2:C5"}
+```
+This means:
+- C2: `=A2+B2`
+- C3: `=A3+B3` (row references increment)
+- C4: `=A4+B4`
+- C5: `=A5+B5`
+
+**Compression Threshold:**
+
+Only contiguous ranges with **4 or more cells** are compressed. Smaller groups are stored as individual formulas in the `formulas` section since listing them explicitly is clearer.
+
+**Note:** The computed values appear in `data.tsv`. To reconstruct the original formula for a cell, apply standard spreadsheet auto-fill logic from the first cell's formula.
 
 ### format.json
 

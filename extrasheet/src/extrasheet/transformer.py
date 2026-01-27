@@ -58,13 +58,15 @@ class SpreadsheetTransformer:
         self._compute_sheet_folders()
 
         # Transform spreadsheet-level files
-        result[f"{spreadsheet_id}/spreadsheet.json"] = self._transform_spreadsheet_metadata()
+        result[f"{spreadsheet_id}/spreadsheet.json"] = (
+            self._transform_spreadsheet_metadata()
+        )
 
         # Named ranges (if any)
         named_ranges = self.spreadsheet.get("namedRanges", [])
         if named_ranges:
-            result[f"{spreadsheet_id}/named_ranges.json"] = self._transform_named_ranges(
-                named_ranges
+            result[f"{spreadsheet_id}/named_ranges.json"] = (
+                self._transform_named_ranges(named_ranges)
             )
 
         # Developer metadata (if any)
@@ -207,9 +209,7 @@ class SpreadsheetTransformer:
         # Protection
         protected_ranges = sheet.get("protectedRanges", [])
         if protected_ranges:
-            result["protection.json"] = {
-                "protectedRanges": protected_ranges
-            }
+            result["protection.json"] = {"protectedRanges": protected_ranges}
 
         return result
 
@@ -302,19 +302,23 @@ class SpreadsheetTransformer:
                     # Check for data source formula
                     ds_formula = cell_data.get("dataSourceFormula")
                     if ds_formula:
-                        data_source_formulas.append({
-                            "cell": cell_a1,
-                            "formula": ds_formula.get("dataSourceId", ""),
-                            "dataExecutionStatus": ds_formula.get("dataExecutionStatus"),
-                        })
+                        data_source_formulas.append(
+                            {
+                                "cell": cell_a1,
+                                "formula": ds_formula.get("dataSourceId", ""),
+                                "dataExecutionStatus": ds_formula.get(
+                                    "dataExecutionStatus"
+                                ),
+                            }
+                        )
 
         result: dict[str, Any] = {}
 
-        # Compress regular formulas into patterns
+        # Compress regular formulas into ranges
         if formulas:
             compressed = compress_formulas(formulas)
-            if compressed.get("formulaPatterns"):
-                result["formulaPatterns"] = compressed["formulaPatterns"]
+            if compressed.get("formulaRanges"):
+                result["formulaRanges"] = compressed["formulaRanges"]
             if compressed.get("formulas"):
                 result["formulas"] = compressed["formulas"]
 
@@ -356,7 +360,9 @@ class SpreadsheetTransformer:
 
                     # User-entered format
                     user_format = cell_data.get("userEnteredFormat")
-                    if user_format and not is_default_cell_format(user_format, default_format):
+                    if user_format and not is_default_cell_format(
+                        user_format, default_format
+                    ):
                         cell_formats[cell_a1] = user_format
 
                     # Text format runs (rich text)
@@ -396,13 +402,15 @@ class SpreadsheetTransformer:
         if merges:
             merge_ranges = []
             for merge in merges:
-                merge_ranges.append({
-                    "range": grid_range_to_a1(merge),
-                    "startRow": merge.get("startRowIndex"),
-                    "endRow": merge.get("endRowIndex"),
-                    "startColumn": merge.get("startColumnIndex"),
-                    "endColumn": merge.get("endColumnIndex"),
-                })
+                merge_ranges.append(
+                    {
+                        "range": grid_range_to_a1(merge),
+                        "startRow": merge.get("startRowIndex"),
+                        "endRow": merge.get("endRowIndex"),
+                        "startColumn": merge.get("startColumnIndex"),
+                        "endColumn": merge.get("endColumnIndex"),
+                    }
+                )
             result["merges"] = merge_ranges
 
         if text_format_runs:
@@ -522,6 +530,7 @@ class SpreadsheetTransformer:
 
                         # Use JSON string as key for grouping identical rules
                         import json
+
                         rule_key = json.dumps(validation, sort_keys=True)
 
                         if rule_key not in validation_rules:
@@ -537,11 +546,15 @@ class SpreadsheetTransformer:
             cells = entry["cells"]
             # Try to compress to range if cells are contiguous
             # For now, just list the cells
-            result.append({
-                "range": ", ".join(cells) if len(cells) <= 5 else f"{cells[0]}... ({len(cells)} cells)",
-                "cells": cells,
-                "rule": entry["rule"],
-            })
+            result.append(
+                {
+                    "range": ", ".join(cells)
+                    if len(cells) <= 5
+                    else f"{cells[0]}... ({len(cells)} cells)",
+                    "cells": cells,
+                    "rule": entry["rule"],
+                }
+            )
 
         return result
 
@@ -600,8 +613,7 @@ class SpreadsheetTransformer:
         # Developer metadata at sheet level (dimension-related)
         dev_metadata = sheet.get("developerMetadata", [])
         dim_metadata = [
-            m for m in dev_metadata
-            if m.get("location", {}).get("dimensionRange")
+            m for m in dev_metadata if m.get("location", {}).get("dimensionRange")
         ]
         if dim_metadata:
             result["developerMetadata"] = dim_metadata
@@ -611,8 +623,11 @@ class SpreadsheetTransformer:
     def _has_formatting_content(self, formatting: dict[str, Any]) -> bool:
         """Check if formatting dict has any meaningful content."""
         meaningful_keys = {
-            "formatRules", "conditionalFormats", "merges",
-            "textFormatRuns", "notes"
+            "formatRules",
+            "conditionalFormats",
+            "merges",
+            "textFormatRuns",
+            "notes",
         }
         return bool(set(formatting.keys()) & meaningful_keys)
 

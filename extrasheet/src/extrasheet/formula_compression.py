@@ -1,8 +1,13 @@
 """
 Formula compression for Google Sheets formulas.
 
-Compresses per-cell formulas into pattern-based rules where formulas follow
-a consistent pattern with relative references.
+Compresses per-cell formulas by grouping cells with equivalent relative reference
+patterns. The output uses the actual formula from the first cell of a range,
+which is more intuitive than pattern placeholders since readers familiar with
+spreadsheets understand that formulas auto-fill with relative references.
+
+Only contiguous ranges of 4+ cells are compressed. Smaller groups are stored
+as individual formulas since listing them is clearer.
 """
 
 from __future__ import annotations
@@ -90,6 +95,7 @@ def _normalize_formula(formula: str, anchor_row: int, anchor_col: int) -> str | 
 
 def _denormalize_formula(pattern: str, row: int, col: int) -> str:
     """Convert a normalized pattern back to a formula for a specific cell."""
+
     def replace_placeholder(match: re.Match) -> str:
         placeholder = match.group(0)
 
@@ -112,7 +118,9 @@ def _denormalize_formula(pattern: str, row: int, col: int) -> str:
     return re.sub(r"\{[cr][+-]?\d*\}", replace_placeholder, pattern)
 
 
-def _cells_form_contiguous_range(cells: list[tuple[int, int]]) -> tuple[int, int, int, int] | None:
+def _cells_form_contiguous_range(
+    cells: list[tuple[int, int]],
+) -> tuple[int, int, int, int] | None:
     """Check if cells form a contiguous rectangular range.
 
     Returns (start_row, end_row, start_col, end_col) if contiguous, None otherwise.
@@ -133,7 +141,8 @@ def _cells_form_contiguous_range(cells: list[tuple[int, int]]) -> tuple[int, int
 
     # Check for full rectangular range
     expected_cells = {
-        (r, c) for r in range(min(rows), max(rows) + 1)
+        (r, c)
+        for r in range(min(rows), max(rows) + 1)
         for c in range(min(cols), max(cols) + 1)
     }
     if set(cells) == expected_cells:
@@ -151,19 +160,30 @@ def _range_to_a1(start_row: int, end_row: int, start_col: int, end_col: int) -> 
     """Convert range indices to A1 notation."""
     if end_row - start_row == 1 and end_col - start_col == 1:
         return _coord_to_a1(start_row, start_col)
-    return f"{_coord_to_a1(start_row, start_col)}:{_coord_to_a1(end_row - 1, end_col - 1)}"
+    return (
+        f"{_coord_to_a1(start_row, start_col)}:{_coord_to_a1(end_row - 1, end_col - 1)}"
+    )
+
+
+# Minimum number of cells required to compress a range.
+# Smaller groups are stored as individual formulas for clarity.
+MIN_CELLS_FOR_COMPRESSION = 4
 
 
 def compress_formulas(formulas: dict[str, str]) -> dict[str, Any]:
-    """Compress cell formulas into pattern-based rules.
+    """Compress cell formulas by grouping equivalent relative patterns.
+
+    Groups cells with the same relative reference pattern. For compressed ranges,
+    stores the actual formula from the first cell (more intuitive than pattern
+    placeholders). Only contiguous ranges with 4+ cells are compressed.
 
     Args:
         formulas: Dict mapping A1 cell references to formula strings
 
     Returns:
         {
-            "formulaPatterns": [
-                {"pattern": "=SUM({c-1}{r}:{c-1}{r+9})", "range": "B2:B10", "anchor": "B2"},
+            "formulaRanges": [
+                {"formula": "=A2+B2", "range": "C2:C10"},
                 ...
             ],
             "formulas": {"A1": "=UNIQUE(...)", ...}  # Non-compressible formulas
@@ -173,7 +193,9 @@ def compress_formulas(formulas: dict[str, str]) -> dict[str, Any]:
         return {}
 
     # Parse cell references and normalize formulas
-    cell_data: dict[tuple[int, int], tuple[str, str]] = {}  # (row, col) -> (formula, normalized)
+    cell_data: dict[
+        tuple[int, int], tuple[str, str]
+    ] = {}  # (row, col) -> (formula, normalized)
 
     for cell_a1, formula in formulas.items():
         match = re.match(r"([A-Za-z]+)(\d+)", cell_a1)
@@ -197,42 +219,35 @@ def compress_formulas(formulas: dict[str, str]) -> dict[str, Any]:
         pattern_cells[normalized].append(coord)
 
     # Build output
-    formula_patterns: list[dict[str, Any]] = []
+    formula_ranges: list[dict[str, Any]] = []
     remaining_formulas: dict[str, str] = {}
 
-    for pattern, cells in pattern_cells.items():
-        if len(cells) == 1:
-            # Single cell - not worth compressing
-            row, col = cells[0]
-            remaining_formulas[_coord_to_a1(row, col)] = cell_data[(row, col)][0]
-        else:
-            # Multiple cells with same pattern
-            cells_sorted = sorted(cells)
-            range_bounds = _cells_form_contiguous_range(cells_sorted)
+    for _pattern, cells in pattern_cells.items():
+        cells_sorted = sorted(cells)
+        range_bounds = _cells_form_contiguous_range(cells_sorted)
 
-            if range_bounds:
-                # Contiguous range - represent as pattern + range
-                start_row, end_row, start_col, end_col = range_bounds
-                anchor = _coord_to_a1(start_row, start_col)
-                range_a1 = _range_to_a1(start_row, end_row, start_col, end_col)
-                formula_patterns.append({
-                    "pattern": pattern,
+        # Only compress contiguous ranges with MIN_CELLS_FOR_COMPRESSION+ cells
+        if range_bounds and len(cells_sorted) >= MIN_CELLS_FOR_COMPRESSION:
+            # Contiguous range - represent as formula + range
+            start_row, end_row, start_col, end_col = range_bounds
+            range_a1 = _range_to_a1(start_row, end_row, start_col, end_col)
+            # Use the actual formula from the first cell (more intuitive than pattern)
+            first_cell_formula = cell_data[(start_row, start_col)][0]
+            formula_ranges.append(
+                {
+                    "formula": first_cell_formula,
                     "range": range_a1,
-                    "anchor": anchor,
-                })
-            else:
-                # Non-contiguous - list individual cells
-                cell_list = [_coord_to_a1(r, c) for r, c in cells_sorted]
-                anchor = cell_list[0]
-                formula_patterns.append({
-                    "pattern": pattern,
-                    "cells": cell_list,
-                    "anchor": anchor,
-                })
+                }
+            )
+        else:
+            # Not compressible: single cell, non-contiguous, or too few cells
+            # Store as individual formulas
+            for row, col in cells_sorted:
+                remaining_formulas[_coord_to_a1(row, col)] = cell_data[(row, col)][0]
 
     result: dict[str, Any] = {}
-    if formula_patterns:
-        result["formulaPatterns"] = formula_patterns
+    if formula_ranges:
+        result["formulaRanges"] = formula_ranges
     if remaining_formulas:
         result["formulas"] = remaining_formulas
 
@@ -246,45 +261,36 @@ def expand_formulas(compressed: dict[str, Any]) -> dict[str, str]:
     """
     result: dict[str, str] = {}
 
-    # Expand patterns
-    for pattern_rule in compressed.get("formulaPatterns", []):
-        pattern = pattern_rule["pattern"]
+    # Expand formula ranges
+    for range_rule in compressed.get("formulaRanges", []):
+        formula = range_rule["formula"]
+        range_str = range_rule["range"]
 
-        if "range" in pattern_rule:
-            # Range-based pattern
-            range_str = pattern_rule["range"]
-            if ":" in range_str:
-                start, end = range_str.split(":")
-                start_match = re.match(r"([A-Za-z]+)(\d+)", start)
-                end_match = re.match(r"([A-Za-z]+)(\d+)", end)
-                if start_match and end_match:
-                    start_col = _col_letter_to_index(start_match.group(1))
-                    start_row = int(start_match.group(2)) - 1
-                    end_col = _col_letter_to_index(end_match.group(1))
-                    end_row = int(end_match.group(2)) - 1
+        if ":" in range_str:
+            start, end = range_str.split(":")
+            start_match = re.match(r"([A-Za-z]+)(\d+)", start)
+            end_match = re.match(r"([A-Za-z]+)(\d+)", end)
+            if start_match and end_match:
+                start_col = _col_letter_to_index(start_match.group(1))
+                start_row = int(start_match.group(2)) - 1
+                end_col = _col_letter_to_index(end_match.group(1))
+                end_row = int(end_match.group(2)) - 1
 
+                # Normalize the formula from the first cell to get the pattern
+                pattern = _normalize_formula(formula, start_row, start_col)
+                if pattern:
                     for row in range(start_row, end_row + 1):
                         for col in range(start_col, end_col + 1):
-                            formula = _denormalize_formula(pattern, row, col)
+                            expanded = _denormalize_formula(pattern, row, col)
+                            result[_coord_to_a1(row, col)] = expanded
+                else:
+                    # Fallback: use formula as-is for all cells
+                    for row in range(start_row, end_row + 1):
+                        for col in range(start_col, end_col + 1):
                             result[_coord_to_a1(row, col)] = formula
-            else:
-                # Single cell in "range" format
-                match = re.match(r"([A-Za-z]+)(\d+)", range_str)
-                if match:
-                    col = _col_letter_to_index(match.group(1))
-                    row = int(match.group(2)) - 1
-                    formula = _denormalize_formula(pattern, row, col)
-                    result[_coord_to_a1(row, col)] = formula
-
-        elif "cells" in pattern_rule:
-            # Cell list pattern
-            for cell in pattern_rule["cells"]:
-                match = re.match(r"([A-Za-z]+)(\d+)", cell)
-                if match:
-                    col = _col_letter_to_index(match.group(1))
-                    row = int(match.group(2)) - 1
-                    formula = _denormalize_formula(pattern, row, col)
-                    result[cell] = formula
+        else:
+            # Single cell in "range" format
+            result[range_str] = formula
 
     # Add non-compressed formulas
     result.update(compressed.get("formulas", {}))
