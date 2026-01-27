@@ -8,6 +8,7 @@ from __future__ import annotations
 
 from typing import TYPE_CHECKING, Any
 
+from extrasheet.format_compression import compress_cell_formats
 from extrasheet.utils import (
     cell_to_a1,
     column_index_to_letter,
@@ -319,16 +320,18 @@ class SpreadsheetTransformer:
     def _extract_formatting(
         self, sheet: Sheet, grid_data_list: list[GridData]
     ) -> dict[str, Any]:
-        """Extract formatting information from sheet and grid data."""
+        """Extract formatting information from sheet and grid data.
+
+        Uses range compression to reduce verbose per-cell formats into
+        cascading rules with optimized format representation.
+        """
         result: dict[str, Any] = {}
 
         # Default format from spreadsheet
         spreadsheet_props = self.spreadsheet.get("properties", {})
         default_format = spreadsheet_props.get("defaultFormat")
-        if default_format:
-            result["defaultFormat"] = default_format
 
-        # Cell formats (sparse)
+        # Cell formats (sparse) - collect raw formats first
         cell_formats: dict[str, Any] = {}
         text_format_runs: dict[str, Any] = {}
         notes: dict[str, str] = {}
@@ -358,8 +361,11 @@ class SpreadsheetTransformer:
                     if note:
                         notes[cell_a1] = note
 
+        # Compress cell formats into cascading rules
         if cell_formats:
-            result["cellFormats"] = cell_formats
+            compressed = compress_cell_formats(cell_formats)
+            if compressed.get("formatRules"):
+                result["formatRules"] = compressed["formatRules"]
 
         # Conditional formats
         cond_formats = sheet.get("conditionalFormats", [])
@@ -596,9 +602,8 @@ class SpreadsheetTransformer:
 
     def _has_formatting_content(self, formatting: dict[str, Any]) -> bool:
         """Check if formatting dict has any meaningful content."""
-        # defaultFormat alone is not enough
         meaningful_keys = {
-            "cellFormats", "conditionalFormats", "merges",
+            "formatRules", "conditionalFormats", "merges",
             "textFormatRuns", "notes"
         }
         return bool(set(formatting.keys()) & meaningful_keys)

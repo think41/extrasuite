@@ -158,6 +158,7 @@ class SheetsClient:
         output_path: str | Path,
         *,
         ranges: list[str] | None = None,
+        save_raw: bool = False,
     ) -> list[Path]:
         """Pull a spreadsheet and write to file representation.
 
@@ -169,6 +170,7 @@ class SheetsClient:
             output_path: Directory to write files to
             ranges: Optional list of ranges to fetch. If not specified,
                    fetches the entire spreadsheet.
+            save_raw: If True, also saves the raw API response to raw.json
 
         Returns:
             List of paths to written files
@@ -195,6 +197,11 @@ class SheetsClient:
         # Write to disk
         writer = FileWriter(output_path)
         written = writer.write_all(files)
+
+        # Optionally save raw API response
+        if save_raw:
+            raw_path = writer.write_json(f"{spreadsheet_id}/raw.json", spreadsheet)
+            written.append(raw_path)
 
         return written
 
