@@ -82,28 +82,27 @@ Every update operation requires the correct ID. Extract these from the output fi
 
 **Files to read:** `spreadsheet.json`, `formula.json` (existing formulas), `named_ranges.json` (for validation)
 
-**Understanding formula.json patterns:**
+**Understanding formula.json:**
 
-Formulas are stored in compressed pattern format. To understand existing formulas:
+Formulas are stored as a flat dictionary where keys are cell references or ranges:
 
 ```json
 {
-  "formulaPatterns": [
-    {
-      "pattern": "={c-2}{r}+{c-1}{r}",
-      "range": "C2:C10",
-      "anchor": "C2"
-    }
-  ],
-  "formulas": {
-    "A1": "=NOW()"
-  }
+  "B2:K2": "='Operating Model'!B37",
+  "B3:K3": "=B2*operating_expense_ratio",
+  "A1": "=NOW()",
+  "Z1": "=UNIQUE(Sheet2!A:A)"
 }
 ```
 
-- `{r}` = current row, `{c}` = current column
-- `{r+N}` or `{r-N}` = row offset, `{c+N}` or `{c-N}` = column offset
-- To expand: for C5, `={c-2}{r}+{c-1}{r}` becomes `=A5+B5`
+- **Single cell keys** (e.g., `"A1"`): The formula applies to that cell only
+- **Range keys** (e.g., `"B2:K2"`): The formula auto-fills across the range using standard spreadsheet behavior (relative references increment, absolute references stay fixed)
+
+**Example:** `"C2:C10": "=A2+B2"` means:
+- C2: `=A2+B2`
+- C3: `=A3+B3`
+- C4: `=A4+B4`
+- ... and so on to C10
 
 **Request:**
 ```json

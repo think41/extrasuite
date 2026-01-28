@@ -253,83 +253,49 @@ Bob	500	South	1200
 
 ### formula.json
 
-Formulas are stored with range-based compression. When 4+ cells have the same formula pattern (with relative references adjusted per cell), they are compressed into a single entry showing the formula from the first cell and the range.
+Formulas are stored as a flat dictionary where keys are either single cell references or ranges, and values are the formula strings. When multiple contiguous cells share the same formula pattern (with relative references), they are compressed into a single range entry.
 
 ```json
 {
-  "formulaRanges": [
-    {
-      "formula": "=I4&\" - \"&J4",
-      "range": "K4:K12"
-    },
-    {
-      "formula": "=A2+B2",
-      "range": "C2:C10"
-    }
-  ],
-  "formulas": {
-    "A1": "=NOW()",
-    "Z1": "=UNIQUE(Sheet2!A:A)",
-    "B2": "=A2+B2",
-    "B3": "=A3+B3"
-  },
-  "arrayFormulas": {
-    "A10": {
-      "formula": "=ARRAYFORMULA(A2:A9*B2:B9)",
-      "range": {
-        "startRowIndex": 9,
-        "endRowIndex": 18,
-        "startColumnIndex": 0,
-        "endColumnIndex": 1
-      }
-    }
-  },
-  "dataSourceFormulas": [
-    {
-      "cell": "F1",
-      "formula": "datasource_abc",
-      "dataExecutionStatus": {
-        "state": "SUCCEEDED",
-        "lastRefreshTime": "2024-01-15T10:30:00Z"
-      }
-    }
-  ]
+  "B2:K2": "='Operating Model'!B37",
+  "B3:K3": "=B2*operating_expense_ratio",
+  "B4:K4": "=B2-B3",
+  "A1": "=NOW()",
+  "Z1": "=UNIQUE(Sheet2!A:A)"
 }
 ```
 
-**Sections:**
+**Format:**
 
-| Section | Description |
-|---------|-------------|
-| `formulaRanges` | Compressed formula ranges (4+ cells with same pattern) |
-| `formulas` | Individual formulas (unique patterns or fewer than 4 cells) |
-| `arrayFormulas` | Array formulas with their output range |
-| `dataSourceFormulas` | Formulas connected to external data sources |
+- **Keys**: Cell references (`"A1"`) or ranges (`"B2:K2"`)
+- **Values**: The formula string as entered in the first cell
 
-**Formula Range Compression:**
+**Range Compression:**
 
-When 4 or more contiguous cells share the same relative reference pattern, they are compressed into a `formulaRanges` entry:
+When contiguous cells share the same relative reference pattern, they are compressed into a single entry:
 
-- **formula**: The actual formula as entered in the first cell of the range
-- **range**: The A1-notation range (e.g., `C2:C10`)
-
-This format is intuitive for anyone familiar with spreadsheets: the formula auto-fills across the range using standard Excel/Google Sheets behavior (relative references increment, absolute references stay fixed).
-
-**Example:**
 ```json
-{"formula": "=A2+B2", "range": "C2:C5"}
+{
+  "C2:C100": "=A2+B2"
+}
 ```
+
 This means:
 - C2: `=A2+B2`
 - C3: `=A3+B3` (row references increment)
 - C4: `=A4+B4`
-- C5: `=A5+B5`
+- ... and so on to C100
 
-**Compression Threshold:**
+The formula auto-fills across the range using standard Excel/Google Sheets behavior: relative references increment, absolute references (like `$A$1`) stay fixed.
 
-Only contiguous ranges with **4 or more cells** are compressed. Smaller groups are stored as individual formulas in the `formulas` section since listing them explicitly is clearer.
+**Additional Sections (if present):**
 
-**Note:** The computed values appear in `data.tsv`. To reconstruct the original formula for a cell, apply standard spreadsheet auto-fill logic from the first cell's formula.
+| Section | Description |
+|---------|-------------|
+| `arrayFormulas` | Array formulas with their output range (rare) |
+| `dataSourceFormulas` | Formulas connected to external data sources (rare) |
+
+**Note:** The computed values appear in `data.tsv`. The `formula.json` file only contains cells that have formulas.
 
 ### format.json
 
