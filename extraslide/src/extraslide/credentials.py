@@ -246,7 +246,10 @@ class CredentialsManager:
         # Load service account credentials
         credentials = service_account.Credentials.from_service_account_file(
             str(self._sa_path),
-            scopes=["https://www.googleapis.com/auth/presentations"],
+            scopes=[
+                "https://www.googleapis.com/auth/spreadsheets",
+                "https://www.googleapis.com/auth/presentations",
+            ],
         )
 
         # Refresh to get access token
@@ -589,7 +592,7 @@ def authenticate(
         Exception: If authentication fails.
 
     Example:
-        from extraslide import authenticate
+        from extrasuite.client import authenticate
 
         token = authenticate()
         print(f"Token: {token.access_token[:50]}...")

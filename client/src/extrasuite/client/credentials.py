@@ -220,8 +220,12 @@ class CredentialsManager:
 
         # Only import google-auth when we actually need to refresh
         try:
-            from google.auth.transport.requests import Request
-            from google.oauth2 import service_account
+            from google.auth.transport.requests import (  # type: ignore[import-not-found]
+                Request,
+            )
+            from google.oauth2 import (  # type: ignore[import-not-found]
+                service_account,
+            )
         except ImportError:
             raise ImportError(  # noqa: B904
                 "google-auth package is required for service account authentication. "
@@ -236,7 +240,10 @@ class CredentialsManager:
         # Load service account credentials
         credentials = service_account.Credentials.from_service_account_file(
             str(self._sa_path),
-            scopes=["https://www.googleapis.com/auth/spreadsheets"],
+            scopes=[
+                "https://www.googleapis.com/auth/spreadsheets",
+                "https://www.googleapis.com/auth/presentations",
+            ],
         )
 
         # Refresh to get access token
@@ -468,7 +475,8 @@ class CredentialsManager:
         with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as s:
             s.bind(("127.0.0.1", 0))
             s.listen(1)
-            return s.getsockname()[1]
+            port: int = s.getsockname()[1]
+            return port
 
     @staticmethod
     def _create_handler_class(result_holder: dict[str, Any], result_lock: threading.Lock) -> type:
