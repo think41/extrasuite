@@ -126,10 +126,10 @@ class TestSpreadsheetTransformer:
         transformer = SpreadsheetTransformer(spreadsheet)
         result = transformer.transform()
 
-        # Check formula.json
+        # Check formula.json - unified format with cell/range keys
         assert "test123/Sheet1/formula.json" in result
         formulas = result["test123/Sheet1/formula.json"]
-        assert formulas["formulas"]["C2"] == "=A2+B2"
+        assert formulas["C2"] == "=A2+B2"
 
     def test_sheet_with_formatting(self) -> None:
         """Test extracting cell formatting."""

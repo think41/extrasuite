@@ -2,19 +2,20 @@
 Formula compression for Google Sheets formulas.
 
 Compresses per-cell formulas by grouping cells with equivalent relative reference
-patterns. The output uses the actual formula from the first cell of a range,
-which is more intuitive than pattern placeholders since readers familiar with
+patterns. The output uses a unified format where keys are either cell references
+(e.g., "A1") or ranges (e.g., "B2:K2"), and values are the formulas.
+
+For ranges, the stored formula is from the first cell. Readers familiar with
 spreadsheets understand that formulas auto-fill with relative references.
 
-Only contiguous ranges of 4+ cells are compressed. Smaller groups are stored
-as individual formulas since listing them is clearer.
+Non-contiguous cells with the same pattern are split into maximal contiguous
+sub-ranges (e.g., A1, C1, D1, E1 becomes {"A1": "=...", "C1:E1": "=..."}).
 """
 
 from __future__ import annotations
 
 import re
 from collections import defaultdict
-from typing import Any
 
 
 def _col_letter_to_index(col: str) -> int:
@@ -169,29 +170,80 @@ def _range_to_a1(start_row: int, end_row: int, start_col: int, end_col: int) -> 
     )
 
 
-# Minimum number of cells required to compress a range.
-# Smaller groups are stored as individual formulas for clarity.
-MIN_CELLS_FOR_COMPRESSION = 4
+def _find_contiguous_ranges(
+    cells: list[tuple[int, int]],
+) -> list[tuple[int, int, int, int]]:
+    """Find all maximal contiguous rectangular ranges from a list of cells.
+
+    Given a list of cells that may not all be contiguous, find the maximal
+    contiguous sub-ranges. For example, cells A1, C1, D1, E1 would return
+    two ranges: A1 (single cell) and C1:E1.
+
+    Returns list of (start_row, end_row, start_col, end_col) tuples.
+    """
+    if not cells:
+        return []
+
+    cells_set = set(cells)
+    used = set()
+    ranges = []
+
+    # Sort cells by row, then column for consistent processing
+    cells_sorted = sorted(cells)
+
+    for cell in cells_sorted:
+        if cell in used:
+            continue
+
+        row, col = cell
+
+        # Try to extend horizontally first (single row range)
+        end_col = col
+        while (row, end_col + 1) in cells_set and (row, end_col + 1) not in used:
+            end_col += 1
+
+        # Try to extend vertically (single column range)
+        end_row = row
+        while (end_row + 1, col) in cells_set and (end_row + 1, col) not in used:
+            end_row += 1
+
+        # Decide: prefer horizontal if it captures more cells, else vertical
+        horizontal_count = end_col - col + 1
+        vertical_count = end_row - row + 1
+
+        if horizontal_count >= vertical_count and horizontal_count > 1:
+            # Use horizontal range
+            for c in range(col, end_col + 1):
+                used.add((row, c))
+            ranges.append((row, row + 1, col, end_col + 1))
+        elif vertical_count > 1:
+            # Use vertical range
+            for r in range(row, end_row + 1):
+                used.add((r, col))
+            ranges.append((row, end_row + 1, col, col + 1))
+        else:
+            # Single cell
+            used.add(cell)
+            ranges.append((row, row + 1, col, col + 1))
+
+    return ranges
 
 
-def compress_formulas(formulas: dict[str, str]) -> dict[str, Any]:
+def compress_formulas(formulas: dict[str, str]) -> dict[str, str]:
     """Compress cell formulas by grouping equivalent relative patterns.
 
-    Groups cells with the same relative reference pattern. For compressed ranges,
-    stores the actual formula from the first cell (more intuitive than pattern
-    placeholders). Only contiguous ranges with 4+ cells are compressed.
+    Groups cells with the same relative reference pattern. Returns a unified
+    dictionary where keys are either cell references (e.g., "A1") or ranges
+    (e.g., "B2:K2"), and values are the formulas.
+
+    For ranges, the stored formula is from the first cell. Non-contiguous cells
+    with the same pattern are split into maximal contiguous sub-ranges.
 
     Args:
         formulas: Dict mapping A1 cell references to formula strings
 
     Returns:
-        {
-            "formulaRanges": [
-                {"formula": "=A2+B2", "range": "C2:C10"},
-                ...
-            ],
-            "formulas": {"A1": "=UNIQUE(...)", ...}  # Non-compressible formulas
-        }
+        {"A1": "=UNIQUE(...)", "B2:K2": "=A2+B2", ...}
     """
     if not formulas:
         return {}
@@ -215,63 +267,49 @@ def compress_formulas(formulas: dict[str, str]) -> dict[str, Any]:
 
     if not cell_data:
         # Nothing could be normalized, return original
-        return {"formulas": formulas}
+        return formulas.copy()
 
     # Group by normalized pattern
     pattern_cells: dict[str, list[tuple[int, int]]] = defaultdict(list)
     for coord, (_formula, normalized) in cell_data.items():
         pattern_cells[normalized].append(coord)
 
-    # Build output
-    formula_ranges: list[dict[str, Any]] = []
-    remaining_formulas: dict[str, str] = {}
+    # Build output - unified format
+    result: dict[str, str] = {}
 
     for _pattern, cells in pattern_cells.items():
         cells_sorted = sorted(cells)
-        range_bounds = _cells_form_contiguous_range(cells_sorted)
 
-        # Only compress contiguous ranges with MIN_CELLS_FOR_COMPRESSION+ cells
-        if range_bounds and len(cells_sorted) >= MIN_CELLS_FOR_COMPRESSION:
-            # Contiguous range - represent as formula + range
-            start_row, end_row, start_col, end_col = range_bounds
+        # Find all maximal contiguous ranges
+        contiguous_ranges = _find_contiguous_ranges(cells_sorted)
+
+        for start_row, end_row, start_col, end_col in contiguous_ranges:
             range_a1 = _range_to_a1(start_row, end_row, start_col, end_col)
-            # Use the actual formula from the first cell (more intuitive than pattern)
+            # Use the actual formula from the first cell of this range
             first_cell_formula = cell_data[(start_row, start_col)][0]
-            formula_ranges.append(
-                {
-                    "formula": first_cell_formula,
-                    "range": range_a1,
-                }
-            )
-        else:
-            # Not compressible: single cell, non-contiguous, or too few cells
-            # Store as individual formulas
-            for row, col in cells_sorted:
-                remaining_formulas[_coord_to_a1(row, col)] = cell_data[(row, col)][0]
-
-    result: dict[str, Any] = {}
-    if formula_ranges:
-        result["formulaRanges"] = formula_ranges
-    if remaining_formulas:
-        result["formulas"] = remaining_formulas
+            result[range_a1] = first_cell_formula
 
     return result
 
 
-def expand_formulas(compressed: dict[str, Any]) -> dict[str, str]:
+def expand_formulas(compressed: dict[str, str]) -> dict[str, str]:
     """Expand compressed formulas back to per-cell representation.
 
-    This is the inverse of compress_formulas.
+    This is the inverse of compress_formulas. Accepts the unified format
+    where keys are either cell references or ranges.
+
+    Args:
+        compressed: Dict with cell/range keys and formula values
+
+    Returns:
+        Dict mapping individual cell references to formulas
     """
     result: dict[str, str] = {}
 
-    # Expand formula ranges
-    for range_rule in compressed.get("formulaRanges", []):
-        formula = range_rule["formula"]
-        range_str = range_rule["range"]
-
-        if ":" in range_str:
-            start, end = range_str.split(":")
+    for key, formula in compressed.items():
+        if ":" in key:
+            # It's a range - expand it
+            start, end = key.split(":")
             start_match = re.match(r"([A-Za-z]+)(\d+)", start)
             end_match = re.match(r"([A-Za-z]+)(\d+)", end)
             if start_match and end_match:
@@ -293,10 +331,7 @@ def expand_formulas(compressed: dict[str, Any]) -> dict[str, str]:
                         for col in range(start_col, end_col + 1):
                             result[_coord_to_a1(row, col)] = formula
         else:
-            # Single cell in "range" format
-            result[range_str] = formula
-
-    # Add non-compressed formulas
-    result.update(compressed.get("formulas", {}))
+            # Single cell reference
+            result[key] = formula
 
     return result

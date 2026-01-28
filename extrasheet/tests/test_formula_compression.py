@@ -102,14 +102,25 @@ class TestCompressFormulas:
         assert result == {}
 
     def test_single_formula(self):
-        """Test single formula is not compressed."""
+        """Test single formula stays as single cell."""
         formulas = {"A1": "=B1+C1"}
         result = compress_formulas(formulas)
-        assert result == {"formulas": {"A1": "=B1+C1"}}
+        assert result == {"A1": "=B1+C1"}
 
-    def test_fewer_than_4_cells_not_compressed(self):
-        """Test that fewer than 4 cells are not compressed."""
-        # 3 cells with same pattern - should NOT be compressed
+    def test_2_cells_compressed(self):
+        """Test that 2 contiguous cells are compressed into a range."""
+        formulas = {
+            "K4": '=I4&" - "&J4',
+            "K5": '=I5&" - "&J5',
+        }
+        result = compress_formulas(formulas)
+
+        # Should be compressed into a range
+        assert "K4:K5" in result
+        assert result["K4:K5"] == '=I4&" - "&J4'
+
+    def test_3_cells_compressed(self):
+        """Test that 3 contiguous cells are compressed into a range."""
         formulas = {
             "K4": '=I4&" - "&J4',
             "K5": '=I5&" - "&J5',
@@ -117,12 +128,9 @@ class TestCompressFormulas:
         }
         result = compress_formulas(formulas)
 
-        # Should be stored as individual formulas, not compressed
-        assert "formulaRanges" not in result
-        assert "formulas" in result
-        assert result["formulas"]["K4"] == '=I4&" - "&J4'
-        assert result["formulas"]["K5"] == '=I5&" - "&J5'
-        assert result["formulas"]["K6"] == '=I6&" - "&J6'
+        # Should be compressed into a range
+        assert "K4:K6" in result
+        assert result["K4:K6"] == '=I4&" - "&J4'
 
     def test_4_cells_compressed(self):
         """Test that 4+ cells with same pattern in a column are compressed."""
@@ -134,16 +142,11 @@ class TestCompressFormulas:
         }
         result = compress_formulas(formulas)
 
-        assert "formulaRanges" in result
-        assert len(result["formulaRanges"]) == 1
-
-        range_rule = result["formulaRanges"][0]
-        assert range_rule["range"] == "K4:K7"
+        assert "K4:K7" in result
         # Formula should be the actual formula from first cell (not pattern)
-        assert range_rule["formula"] == '=I4&" - "&J4'
-
-        # Should not have individual formulas
-        assert "formulas" not in result
+        assert result["K4:K7"] == '=I4&" - "&J4'
+        # Should only have one entry
+        assert len(result) == 1
 
     def test_4_cells_in_row_compressed(self):
         """Test formulas with same pattern in a row are compressed."""
@@ -155,12 +158,8 @@ class TestCompressFormulas:
         }
         result = compress_formulas(formulas)
 
-        assert "formulaRanges" in result
-        assert len(result["formulaRanges"]) == 1
-
-        range_rule = result["formulaRanges"][0]
-        assert range_rule["range"] == "B1:E1"
-        assert range_rule["formula"] == "=B2+B3"
+        assert "B1:E1" in result
+        assert result["B1:E1"] == "=B2+B3"
 
     def test_mixed_formulas(self):
         """Test mix of compressible and non-compressible formulas."""
@@ -169,22 +168,34 @@ class TestCompressFormulas:
             "C2": "=A2+B2",
             "C3": "=A3+B3",
             "C4": "=A4+B4",
-            "C5": "=A5+B5",  # Now 4 cells with same pattern
+            "C5": "=A5+B5",
         }
         result = compress_formulas(formulas)
 
-        assert "formulaRanges" in result
-        assert "formulas" in result
-
         # C2:C5 should be compressed
-        ranges = result["formulaRanges"]
-        assert any(r.get("range") == "C2:C5" for r in ranges)
+        assert "C2:C5" in result
 
         # A1 should remain as individual formula
-        assert result["formulas"]["A1"] == "=SUM(B:B)"
+        assert result["A1"] == "=SUM(B:B)"
 
-    def test_non_contiguous_same_pattern_not_compressed(self):
-        """Test non-contiguous cells with same pattern are not compressed."""
+    def test_non_contiguous_split_into_ranges(self):
+        """Test non-contiguous cells are split into maximal contiguous ranges."""
+        formulas = {
+            "A1": "=B1+C1",
+            "C1": "=D1+E1",  # Skip B1
+            "D1": "=E1+F1",
+            "E1": "=F1+G1",
+        }
+        result = compress_formulas(formulas)
+
+        # Should have A1 as single cell and C1:E1 as range
+        assert "A1" in result
+        assert result["A1"] == "=B1+C1"
+        assert "C1:E1" in result
+        assert result["C1:E1"] == "=D1+E1"
+
+    def test_non_contiguous_all_single_cells(self):
+        """Test non-contiguous cells with gaps become individual cells."""
         formulas = {
             "A1": "=B1+C1",
             "A3": "=B3+C3",  # Skip A2
@@ -193,11 +204,9 @@ class TestCompressFormulas:
         result = compress_formulas(formulas)
 
         # Non-contiguous cells should be stored individually
-        assert "formulaRanges" not in result
-        assert "formulas" in result
-        assert result["formulas"]["A1"] == "=B1+C1"
-        assert result["formulas"]["A3"] == "=B3+C3"
-        assert result["formulas"]["A5"] == "=B5+C5"
+        assert result["A1"] == "=B1+C1"
+        assert result["A3"] == "=B3+C3"
+        assert result["A5"] == "=B5+C5"
 
     def test_structured_table_reference_compressed(self):
         """Test formulas with structured table references are properly compressed.
@@ -215,11 +224,9 @@ class TestCompressFormulas:
         result = compress_formulas(formulas)
 
         # Should be compressed into a single range
-        assert "formulaRanges" in result
-        assert len(result["formulaRanges"]) == 1
-        assert result["formulaRanges"][0]["range"] == "F2:F5"
-        assert result["formulaRanges"][0]["formula"] == "=vlookup(E2,Table1_2[#ALL],3,0)"
-        assert "formulas" not in result
+        assert "F2:F5" in result
+        assert result["F2:F5"] == "=vlookup(E2,Table1_2[#ALL],3,0)"
+        assert len(result) == 1
 
     def test_quoted_sheet_name_with_number_compressed(self):
         """Test formulas with quoted sheet names containing numbers are compressed.
@@ -237,10 +244,8 @@ class TestCompressFormulas:
         result = compress_formulas(formulas)
 
         # Should be compressed into a single range
-        assert "formulaRanges" in result
-        assert len(result["formulaRanges"]) == 1
-        assert result["formulaRanges"][0]["range"] == "J2:J5"
-        assert "formulas" not in result
+        assert "J2:J5" in result
+        assert len(result) == 1
 
 
 class TestExpandFormulas:
@@ -248,14 +253,7 @@ class TestExpandFormulas:
 
     def test_expand_formula_range(self):
         """Test expanding a formula range."""
-        compressed = {
-            "formulaRanges": [
-                {
-                    "formula": "=A2+B2",
-                    "range": "C2:C5",
-                }
-            ]
-        }
+        compressed = {"C2:C5": "=A2+B2"}
         result = expand_formulas(compressed)
 
         assert result["C2"] == "=A2+B2"
@@ -265,14 +263,7 @@ class TestExpandFormulas:
 
     def test_expand_formula_range_horizontal(self):
         """Test expanding a horizontal formula range."""
-        compressed = {
-            "formulaRanges": [
-                {
-                    "formula": "=B2+B3",
-                    "range": "B1:E1",
-                }
-            ]
-        }
+        compressed = {"B1:E1": "=B2+B3"}
         result = expand_formulas(compressed)
 
         assert result["B1"] == "=B2+B3"
@@ -283,15 +274,8 @@ class TestExpandFormulas:
     def test_expand_with_regular_formulas(self):
         """Test expanding when there are both ranges and regular formulas."""
         compressed = {
-            "formulaRanges": [
-                {
-                    "formula": "=A2",
-                    "range": "B2:B5",
-                }
-            ],
-            "formulas": {
-                "A1": "=SUM(C:C)",
-            },
+            "B2:B5": "=A2",
+            "A1": "=SUM(C:C)",
         }
         result = expand_formulas(compressed)
 
@@ -316,18 +300,30 @@ class TestExpandFormulas:
 
         assert expanded == original
 
-    def test_roundtrip_fewer_than_4_cells(self):
-        """Test that compress -> expand works for non-compressed formulas."""
+    def test_roundtrip_2_cells(self):
+        """Test that compress -> expand works for 2 contiguous cells."""
         original = {
             "K4": '=I4&" - "&J4',
             "K5": '=I5&" - "&J5',
+            "A1": "=NOW()",
+        }
+
+        compressed = compress_formulas(original)
+        # Should have K4:K5 as a range
+        assert "K4:K5" in compressed
+        expanded = expand_formulas(compressed)
+
+        assert expanded == original
+
+    def test_roundtrip_non_contiguous(self):
+        """Test that compress -> expand works for non-contiguous cells."""
+        original = {
+            "K4": '=I4&" - "&J4',
             "K6": '=I6&" - "&J6',
             "A1": "=NOW()",
         }
 
         compressed = compress_formulas(original)
-        # With fewer than 4 cells, nothing should be in formulaRanges
-        assert "formulaRanges" not in compressed
         expanded = expand_formulas(compressed)
 
         assert expanded == original

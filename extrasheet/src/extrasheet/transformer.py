@@ -327,15 +327,10 @@ class SpreadsheetTransformer:
                             }
                         )
 
-        result: dict[str, Any] = {}
-
-        # Compress regular formulas into ranges
-        if formulas:
-            compressed = compress_formulas(formulas)
-            if compressed.get("formulaRanges"):
-                result["formulaRanges"] = compressed["formulaRanges"]
-            if compressed.get("formulas"):
-                result["formulas"] = compressed["formulas"]
+        # Compress regular formulas into ranges (unified format)
+        result: dict[str, Any] = (
+            dict(compress_formulas(formulas)) if formulas else {}
+        )
 
         if array_formulas:
             result["arrayFormulas"] = array_formulas
