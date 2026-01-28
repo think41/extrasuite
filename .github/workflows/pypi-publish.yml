@@ -1,0 +1,69 @@
+name: Publish to PyPI
+
+on:
+  push:
+    tags:
+      - 'extrasuite-v*'
+      - 'extrasheet-v*'
+      - 'extraslide-v*'
+
+jobs:
+  publish:
+    runs-on: ubuntu-latest
+    permissions:
+      id-token: write  # Required for trusted publishing
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Determine package from tag
+        id: package
+        run: |
+          TAG="${GITHUB_REF#refs/tags/}"
+          echo "tag=$TAG" >> $GITHUB_OUTPUT
+
+          if [[ "$TAG" == extrasuite-v* ]]; then
+            echo "name=extrasuite" >> $GITHUB_OUTPUT
+            echo "dir=client" >> $GITHUB_OUTPUT
+            echo "version=${TAG#extrasuite-v}" >> $GITHUB_OUTPUT
+          elif [[ "$TAG" == extrasheet-v* ]]; then
+            echo "name=extrasheet" >> $GITHUB_OUTPUT
+            echo "dir=extrasheet" >> $GITHUB_OUTPUT
+            echo "version=${TAG#extrasheet-v}" >> $GITHUB_OUTPUT
+          elif [[ "$TAG" == extraslide-v* ]]; then
+            echo "name=extraslide" >> $GITHUB_OUTPUT
+            echo "dir=extraslide" >> $GITHUB_OUTPUT
+            echo "version=${TAG#extraslide-v}" >> $GITHUB_OUTPUT
+          else
+            echo "::error::Unknown tag format: $TAG"
+            exit 1
+          fi
+
+      - name: Validate version matches pyproject.toml
+        run: |
+          PYPROJECT_VERSION=$(grep -E '^version = ' ${{ steps.package.outputs.dir }}/pyproject.toml | head -1 | sed 's/version = "\(.*\)"/\1/')
+          TAG_VERSION="${{ steps.package.outputs.version }}"
+
+          echo "Tag version: $TAG_VERSION"
+          echo "pyproject.toml version: $PYPROJECT_VERSION"
+
+          if [[ "$TAG_VERSION" != "$PYPROJECT_VERSION" ]]; then
+            echo "::error::Version mismatch! Tag has '$TAG_VERSION' but pyproject.toml has '$PYPROJECT_VERSION'"
+            exit 1
+          fi
+
+          echo "Version validated successfully: $TAG_VERSION"
+
+      - name: Install uv
+        uses: astral-sh/setup-uv@v4
+
+      - name: Build package
+        working-directory: ${{ steps.package.outputs.dir }}
+        run: uv build
+
+      - name: Publish to PyPI
+        uses: pypa/gh-action-pypi-publish@release/v1
+        with:
+          packages-dir: ${{ steps.package.outputs.dir }}/dist/
+          print-hash: true
