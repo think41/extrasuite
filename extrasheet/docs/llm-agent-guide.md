@@ -9,18 +9,24 @@ The extrasheet format provides all information needed for "fly-blind" editing:
 2. Construct `batchUpdate` requests based on user instructions
 3. Execute requests via `POST /v4/spreadsheets/{spreadsheetId}:batchUpdate`
 
+**Progressive disclosure:** Start by reading `spreadsheet.json` which includes:
+- Sheet names and structure
+- **Preview data** (first 5 and last 3 rows of each sheet) to understand content at a glance
+- Only then read specific `<sheet>/data.tsv` files for full data when needed
+
 **Important:** After structural changes (insert/delete rows/columns, new sheets), recommend re-pulling the spreadsheet as references may have shifted.
 
 ---
 
-## Special Directories
+## Special Directories and Files
 
-The pulled folder contains two special directories that should be handled carefully:
+The pulled folder contains special directories and files that should be handled carefully:
 
-| Directory | Purpose | Action |
-|-----------|---------|--------|
+| Path | Purpose | Action |
+|------|---------|--------|
 | `.pristine/` | Contains a zip of the original pulled state. Used internally by `diff` and `push` commands. | **Ignore completely.** Never read, modify, or delete. |
 | `.raw/` | Contains raw JSON responses from the Google Sheets API (`metadata.json`, `data.json`). Useful for debugging. | **Read-only reference.** Do not modify. |
+| `theme.json` | Contains default cell formatting (`defaultFormat`) and spreadsheet theme colors (`spreadsheetTheme`). | **Only read if formatting work is needed.** Most editing tasks don't require this file. |
 
 Only read and modify the main files (`spreadsheet.json`, `data.tsv`, `formula.json`, etc.) in the sheet folders.
 

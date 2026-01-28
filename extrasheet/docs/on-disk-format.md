@@ -1,6 +1,6 @@
 # Extrasheet On-Disk Format Specification
 
-Version: 2.1.0
+Version: 2.2.0
 Last Updated: 2026-01-28
 
 ## Overview
@@ -14,7 +14,8 @@ This document describes the current implementation's output format.
 ```
 <output_dir>/
 └── <spreadsheet_id>/
-    ├── spreadsheet.json           # Spreadsheet metadata and sheet index
+    ├── spreadsheet.json           # Spreadsheet metadata, sheet index, and data previews
+    ├── theme.json                 # Default formatting and theme colors (if any)
     ├── named_ranges.json          # Named ranges (if any exist)
     ├── developer_metadata.json    # Developer metadata (if any exist)
     ├── data_sources.json          # External data sources (if any exist)
@@ -70,6 +71,7 @@ Example: Sheet "Other Locations / Virtual" becomes folder `Other Locations _ Vir
 ### File Creation Rules
 
 Files are only created when they contain meaningful data:
+- `theme.json` - Only if spreadsheet has defaultFormat or spreadsheetTheme
 - `formula.json` - Only if sheet has formulas
 - `format.json` - Only if sheet has non-default formatting, conditional formats, merges, text runs, or notes
 - `feature.json` - Only if sheet has charts, pivots, filters, tables, slicers, banded ranges, or data validation
@@ -85,7 +87,9 @@ Files are only created when they contain meaningful data:
 
 ### spreadsheet.json
 
-Contains spreadsheet metadata and an index of all sheets.
+Contains spreadsheet metadata, an index of all sheets, and data previews for quick understanding.
+
+**Design for progressive disclosure:** This file is optimized for LLM agents to understand the spreadsheet structure at a glance. Theme and formatting details are stored separately in `theme.json` to keep this file focused on content.
 
 ```json
 {
@@ -95,9 +99,7 @@ Contains spreadsheet metadata and an index of all sheets.
     "title": "My Spreadsheet",
     "locale": "en_US",
     "autoRecalc": "ON_CHANGE",
-    "timeZone": "America/New_York",
-    "defaultFormat": { /* CellFormat */ },
-    "spreadsheetTheme": { /* SpreadsheetTheme */ }
+    "timeZone": "America/New_York"
   },
   "sheets": [
     {
@@ -113,7 +115,21 @@ Contains spreadsheet metadata and an index of all sheets.
         "frozenColumnCount": 0
       },
       "hidden": false,
-      "tabColorStyle": { "rgbColor": { "red": 1.0, "green": 0, "blue": 0 } }
+      "tabColorStyle": { "rgbColor": { "red": 1.0, "green": 0, "blue": 0 } },
+      "preview": {
+        "firstRows": [
+          ["Name", "Age", "City", "Sales"],
+          ["Alice", "30", "NYC", "1000"],
+          ["Bob", "25", "LA", "1500"],
+          ["Carol", "35", "Chicago", "2000"],
+          ["Dave", "28", "Boston", "1200"]
+        ],
+        "lastRows": [
+          ["Tom", "40", "Miami", "800"],
+          ["Sue", "32", "Denver", "950"],
+          ["Joe", "45", "Seattle", "1100"]
+        ]
+      }
     }
   ]
 }
@@ -128,12 +144,45 @@ Contains spreadsheet metadata and an index of all sheets.
 | `properties.title` | Spreadsheet title |
 | `properties.locale` | Locale for formatting (e.g., `en_US`) |
 | `properties.timeZone` | Time zone for date calculations |
-| `properties.defaultFormat` | Default cell format applied to all cells |
 | `sheets[].sheetId` | Unique numeric ID for each sheet (used in API calls) |
 | `sheets[].title` | Display title of the sheet |
 | `sheets[].folder` | Sanitized folder name on disk |
 | `sheets[].sheetType` | `GRID`, `OBJECT`, or `DATA_SOURCE` |
 | `sheets[].gridProperties` | Row/column counts and frozen dimensions |
+| `sheets[].hidden` | `true` if sheet is hidden (omitted if visible) |
+| `sheets[].preview.firstRows` | First 5 rows of data (for quick understanding) |
+| `sheets[].preview.lastRows` | Last 3 rows of data (non-overlapping with firstRows) |
+
+### theme.json
+
+Contains default cell formatting and spreadsheet theme colors. This file is separated from `spreadsheet.json` to keep the main metadata file focused on content structure.
+
+```json
+{
+  "defaultFormat": {
+    "backgroundColor": { "red": 1, "green": 1, "blue": 1 },
+    "padding": { "top": 2, "right": 3, "bottom": 2, "left": 3 },
+    "verticalAlignment": "BOTTOM",
+    "wrapStrategy": "OVERFLOW_CELL",
+    "textFormat": {
+      "fontFamily": "arial,sans,sans-serif",
+      "fontSize": 10,
+      "bold": false,
+      "italic": false
+    }
+  },
+  "spreadsheetTheme": {
+    "primaryFontFamily": "Arial",
+    "themeColors": [
+      { "colorType": "TEXT", "color": { "rgbColor": {} } },
+      { "colorType": "BACKGROUND", "color": { "rgbColor": { "red": 1, "green": 1, "blue": 1 } } },
+      { "colorType": "ACCENT1", "color": { "rgbColor": { "red": 0.26, "green": 0.52, "blue": 0.96 } } }
+    ]
+  }
+}
+```
+
+**When to use:** Only read this file if you need to understand or modify the spreadsheet's default formatting or theme colors. Most editing tasks don't require this file.
 
 ### named_ranges.json
 

@@ -55,18 +55,23 @@ Also works via `uvx extrasheet pull/diff/push`.
 After `pull`, the folder contains:
 ```
 <spreadsheet_id>/
-  spreadsheet.json        # Metadata (title, sheets list, etc.)
+  spreadsheet.json        # Metadata + sheet index + data previews (first 5 / last 3 rows)
+  theme.json              # Default formatting and theme colors (optional)
+  named_ranges.json       # Named ranges (optional)
   <sheet_name>/
     data.tsv              # Cell values
     formula.json          # Formulas (compressed)
     format.json           # Formatting (compressed)
     feature.json          # Charts, pivot tables, etc.
+    dimension.json        # Row/column sizes (optional)
   .raw/
     metadata.json         # Raw metadata API response
     data.json             # Raw data API response (with grid data)
   .pristine/
     spreadsheet.zip       # Original state for diff comparison
 ```
+
+**Progressive disclosure:** LLM agents should start by reading `spreadsheet.json` to understand the structure. The `preview` field in each sheet shows first 5 and last 3 rows, giving agents enough context to decide which sheets need detailed examination.
 
 The agent edits files in place. `diff` and `push` compare against `.pristine/` to determine changes.
 

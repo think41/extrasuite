@@ -65,10 +65,18 @@ class SpreadsheetTransformer:
         # Compute sheet folder names (handle duplicates)
         self._compute_sheet_folders()
 
+        # Extract sheet previews (needed for spreadsheet.json)
+        sheet_previews = self._extract_all_sheet_previews()
+
         # Transform spreadsheet-level files
         result[f"{spreadsheet_id}/spreadsheet.json"] = (
-            self._transform_spreadsheet_metadata()
+            self._transform_spreadsheet_metadata(sheet_previews)
         )
+
+        # Theme file (defaultFormat and spreadsheetTheme)
+        theme = self._extract_theme()
+        if theme:
+            result[f"{spreadsheet_id}/theme.json"] = theme
 
         # Named ranges (if any)
         named_ranges = self.spreadsheet.get("namedRanges", [])
@@ -126,9 +134,22 @@ class SpreadsheetTransformer:
 
             self._sheet_folders[sheet_id] = folder_name
 
-    def _transform_spreadsheet_metadata(self) -> dict[str, Any]:
-        """Transform spreadsheet-level metadata."""
+    def _transform_spreadsheet_metadata(
+        self, sheet_previews: dict[int, dict[str, Any]]
+    ) -> dict[str, Any]:
+        """Transform spreadsheet-level metadata.
+
+        Args:
+            sheet_previews: Dict mapping sheetId to preview data (firstRows, lastRows)
+        """
         props = self.spreadsheet.get("properties", {})
+
+        # Slim properties - only keep essential fields
+        # Theme-related fields (defaultFormat, spreadsheetTheme) go to theme.json
+        slim_props: dict[str, Any] = {}
+        for key in ("title", "locale", "autoRecalc", "timeZone"):
+            if key in props:
+                slim_props[key] = props[key]
 
         # Build sheets array with essential metadata
         sheets_meta = []
@@ -163,12 +184,16 @@ class SpreadsheetTransformer:
             if sheet_id in self.truncation_info:
                 sheet_entry["truncation"] = self.truncation_info[sheet_id]
 
+            # Add preview if available
+            if sheet_id in sheet_previews:
+                sheet_entry["preview"] = sheet_previews[sheet_id]
+
             sheets_meta.append(sheet_entry)
 
         result = {
             "spreadsheetId": self.spreadsheet.get("spreadsheetId", ""),
             "spreadsheetUrl": self.spreadsheet.get("spreadsheetUrl", ""),
-            "properties": props,
+            "properties": slim_props,
             "sheets": sheets_meta,
         }
 
@@ -183,6 +208,102 @@ class SpreadsheetTransformer:
     def _transform_named_ranges(self, named_ranges: list[NamedRange]) -> dict[str, Any]:
         """Transform named ranges."""
         return {"namedRanges": named_ranges}
+
+    def _extract_theme(self) -> dict[str, Any]:
+        """Extract theme information (defaultFormat, spreadsheetTheme) from properties.
+
+        Returns:
+            Dict with defaultFormat and/or spreadsheetTheme, or empty dict if neither exists.
+        """
+        props = self.spreadsheet.get("properties", {})
+        theme: dict[str, Any] = {}
+
+        if "defaultFormat" in props:
+            theme["defaultFormat"] = props["defaultFormat"]
+        if "spreadsheetTheme" in props:
+            theme["spreadsheetTheme"] = props["spreadsheetTheme"]
+
+        return theme
+
+    def _extract_all_sheet_previews(self) -> dict[int, dict[str, Any]]:
+        """Extract preview rows (first 5, last 3) for all sheets.
+
+        Returns:
+            Dict mapping sheetId to preview dict with firstRows and lastRows.
+        """
+        previews: dict[int, dict[str, Any]] = {}
+
+        for sheet in self.spreadsheet.get("sheets", []):
+            sheet_props = sheet.get("properties", {})
+            sheet_id = sheet_props.get("sheetId", 0)
+            sheet_type = sheet_props.get("sheetType", "GRID")
+
+            # Only GRID sheets have preview data
+            if sheet_type != "GRID":
+                continue
+
+            grid_data_list = sheet.get("data", [])
+            if not grid_data_list:
+                # Empty sheet - include empty preview
+                previews[sheet_id] = {"firstRows": [], "lastRows": []}
+                continue
+
+            preview = self._extract_sheet_preview(grid_data_list)
+            previews[sheet_id] = preview
+
+        return previews
+
+    def _extract_sheet_preview(self, grid_data_list: list[GridData]) -> dict[str, Any]:
+        """Extract preview rows for a single sheet.
+
+        Args:
+            grid_data_list: List of GridData objects
+
+        Returns:
+            Dict with firstRows (up to 5) and lastRows (up to 3)
+        """
+        # Build the same sparse grid as in _transform_grid_to_tsv
+        cells: dict[tuple[int, int], str] = {}
+        max_row = -1
+        max_col = -1
+
+        for grid_data in grid_data_list:
+            start_row = grid_data.get("startRow", 0)
+            start_col = grid_data.get("startColumn", 0)
+
+            for row_idx, row_data in enumerate(grid_data.get("rowData", [])):
+                actual_row = start_row + row_idx
+                for col_idx, cell_data in enumerate(row_data.get("values", [])):
+                    actual_col = start_col + col_idx
+                    value = get_effective_value_string(cell_data)
+                    if value:
+                        cells[(actual_row, actual_col)] = value
+                        max_row = max(max_row, actual_row)
+                        max_col = max(max_col, actual_col)
+
+        if max_row < 0:
+            # No data
+            return {"firstRows": [], "lastRows": []}
+
+        total_rows = max_row + 1
+
+        def get_row_values(row: int) -> list[str]:
+            """Get all values for a row as a list."""
+            return [cells.get((row, col), "") for col in range(max_col + 1)]
+
+        # First 5 rows
+        first_count = min(5, total_rows)
+        first_rows = [get_row_values(r) for r in range(first_count)]
+
+        # Last 3 rows (non-overlapping with first rows)
+        last_rows: list[list[str]] = []
+        if total_rows > 5:
+            # Only include last rows if they don't overlap with first rows
+            last_start = max(5, total_rows - 3)
+            for r in range(last_start, total_rows):
+                last_rows.append(get_row_values(r))
+
+        return {"firstRows": first_rows, "lastRows": last_rows}
 
     def _transform_sheet(self, sheet: Sheet) -> dict[str, Any]:
         """Transform a single sheet into file representations.
