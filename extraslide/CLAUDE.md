@@ -8,6 +8,7 @@ Python library that converts Google Slides to/from SML (Slide Markup Language), 
 |------|---------|
 | `src/extraslide/transport.py` | `Transport` ABC, `GoogleSlidesTransport`, `LocalFileTransport` |
 | `src/extraslide/client.py` | `SlidesClient` - main interface for pull/diff/push operations |
+| `src/extraslide/compression.py` | ID removal with external mapping for cleaner SML |
 | `src/extraslide/parser.py` | Parses SML back to internal data structures |
 | `src/extraslide/generator.py` | Converts Google Slides API JSON to SML |
 | `src/extraslide/diff.py` | Compares original vs modified SML, generates change operations |
@@ -46,15 +47,20 @@ Also works via `uvx extraslide pull/diff/push`.
 After `pull`, the folder contains:
 ```
 <presentation_id>/
-  presentation.sml        # The editable SML file
-  presentation.json       # Metadata (title, presentation ID)
+  slides.sml              # Slides content (IDs removed for cleaner editing)
+  masters.sml             # Master slide definitions
+  layouts.sml             # Layout definitions
+  images.sml              # Image URL mappings
+  presentation.json       # Metadata (title, presentation ID, slide summaries)
+  .meta/
+    id_mapping.json       # ID mapping for diff/push restoration
   .raw/
     presentation.json     # Raw API response (for debugging)
   .pristine/
-    presentation.zip      # Original state for diff comparison
+    presentation.zip      # Zip of entire folder for diff comparison
 ```
 
-The agent edits `presentation.sml` in place. `diff` and `push` compare against `.pristine/` to determine changes.
+The agent edits `slides.sml` in place. `diff` and `push` compare against `.pristine/` to determine changes. IDs are restored from `.meta/id_mapping.json` before generating API requests.
 
 ## Development
 
@@ -99,7 +105,7 @@ def client():
 @pytest.mark.asyncio
 async def test_pull(client, tmp_path):
     files = await client.pull("simple_presentation", tmp_path)
-    assert (tmp_path / "simple_presentation" / "presentation.sml").exists()
+    assert (tmp_path / "simple_presentation" / "slides.sml").exists()
 ```
 
 ### Creating New Golden Files
@@ -130,18 +136,21 @@ async def test_pull(client, tmp_path):
 
 1. **Fetch** - `transport.get_presentation()` gets full presentation JSON
 2. **Transform** - `json_to_sml()` converts API response to SML
-3. **Write** - Save `presentation.sml` and `presentation.json` to disk
-4. **Save raw** - Optionally save `.raw/presentation.json`
-5. **Pristine copy** - Create `.pristine/presentation.zip` for diff/push
+3. **Split** - Separate SML into slides, masters, layouts, images
+4. **Remove IDs** - Strip verbose element IDs from slides, save mapping to `.meta/`
+5. **Write** - Save split SML files and `presentation.json` to disk
+6. **Save raw** - Optionally save `.raw/presentation.json`
+7. **Pristine copy** - Create `.pristine/presentation.zip` (zip of entire folder)
 
 ### Diff/Push Flow
 
-1. **Read pristine** - Extract SML from `.pristine/presentation.zip`
-2. **Read current** - Read `presentation.sml` from disk
-3. **Parse both** - Convert SML strings to internal structures
-4. **Diff** - Compare and generate change operations
-5. **Generate requests** - Convert operations to batchUpdate format
-6. **Push** (if not dry-run) - Send to `transport.batch_update()`
+1. **Read pristine** - Extract files from `.pristine/presentation.zip`
+2. **Read current** - Read split SML files from disk
+3. **Reconstruct** - Combine split files and restore IDs from `.meta/id_mapping.json`
+4. **Parse both** - Convert SML strings to internal structures
+5. **Diff** - Compare and generate change operations
+6. **Generate requests** - Convert operations to batchUpdate format
+7. **Push** (if not dry-run) - Send to `transport.batch_update()`
 
 ### Key Design Decisions
 
@@ -158,8 +167,10 @@ async def test_pull(client, tmp_path):
 
 ## Current Status
 
-The refactoring is complete. The library now uses:
+The library uses:
 - Transport-based architecture with dependency injection
+- Split file structure (slides, masters, layouts, images as separate files)
+- ID removal with external mapping for cleaner SML editing
 - Folder-based workflow (pull creates folder, diff/push use `.pristine/`)
 - Async methods throughout
 - Golden file testing

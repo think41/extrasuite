@@ -98,9 +98,10 @@ class RequestBuilder:
 
         # Collect all operations by phase
         creates: list[dict[str, Any]] = []
-        content_ops: list[dict[str, Any]] = []
+        text_deletes: list[dict[str, Any]] = []  # deleteText (before insertText)
+        content_ops: list[dict[str, Any]] = []  # insertText
         style_ops: list[dict[str, Any]] = []
-        deletes: list[dict[str, Any]] = []
+        struct_deletes: list[dict[str, Any]] = []  # deleteObject (last)
 
         for slide_change in diff.slide_changes:
             self.slide_id = slide_change.slide_id
@@ -120,7 +121,9 @@ class RequestBuilder:
 
             elif slide_change.change_type == ChangeType.DELETED:
                 # Delete elements first, then slide
-                deletes.append({"deleteObject": {"objectId": slide_change.slide_id}})
+                struct_deletes.append(
+                    {"deleteObject": {"objectId": slide_change.slide_id}}
+                )
 
             elif slide_change.change_type == ChangeType.MODIFIED:
                 # Handle slide property changes
@@ -142,7 +145,7 @@ class RequestBuilder:
                             )
 
                     elif elem_change.change_type == ChangeType.DELETED:
-                        deletes.append(
+                        struct_deletes.append(
                             {"deleteObject": {"objectId": elem_change.element_id}}
                         )
 
@@ -160,9 +163,9 @@ class RequestBuilder:
                             ops = self._text_change_requests(
                                 elem_change.element_id, para_change
                             )
+                            text_deletes.extend(ops.get("delete", []))
                             content_ops.extend(ops.get("content", []))
                             style_ops.extend(ops.get("style", []))
-                            deletes.extend(ops.get("delete", []))
 
         # Handle slide reordering
         if diff.slides_reordered:
@@ -177,8 +180,19 @@ class RequestBuilder:
                 }
             )
 
-        # Combine in correct order
-        self.requests = creates + content_ops + style_ops + list(reversed(deletes))
+        # Combine in correct order:
+        # 1. creates (slides, shapes)
+        # 2. text_deletes (deleteText - must be before insertText)
+        # 3. content_ops (insertText)
+        # 4. style_ops (updateTextStyle, updateShapeProperties, etc.)
+        # 5. struct_deletes (deleteObject - last, in reverse order)
+        self.requests = (
+            creates
+            + list(reversed(text_deletes))
+            + content_ops
+            + style_ops
+            + list(reversed(struct_deletes))
+        )
 
         return self.requests
 

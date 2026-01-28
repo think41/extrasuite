@@ -177,10 +177,10 @@ class TestFolderDiff:
         await client.pull("simple_presentation", tmp_path)
         pres_dir = tmp_path / "simple_presentation"
 
-        # Delete the SML file
-        (pres_dir / "presentation.sml").unlink()
+        # Delete slides.sml
+        (pres_dir / "slides.sml").unlink()
 
-        with pytest.raises(FileNotFoundError, match="SML file not found"):
+        with pytest.raises(FileNotFoundError, match=r"No slides\.sml found"):
             client.diff(pres_dir)
 
     async def test_diff_folder_missing_pristine_raises(

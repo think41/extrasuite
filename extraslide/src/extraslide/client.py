@@ -6,12 +6,20 @@ Provides the `pull`, `diff`, and `push` methods for the folder-based workflow.
 from __future__ import annotations
 
 import json
+import re
 import zipfile
 from pathlib import Path
 from typing import Any
 
+from extraslide.compression import (
+    load_metadata,
+    remove_ids,
+    restore_ids,
+    save_metadata,
+)
 from extraslide.diff import diff_sml
 from extraslide.generator import json_to_sml
+from extraslide.overview import generate_overview
 from extraslide.parser import parse_sml
 from extraslide.requests import generate_requests
 from extraslide.transport import (
@@ -31,10 +39,14 @@ __all__ = [
     "TransportError",
 ]
 
-# Metadata filename
-METADATA_FILE = "presentation.json"
-SML_FILE = "presentation.sml"
+# File names
+METADATA_FILE = "presentation.json"  # Overview + metadata
+SLIDES_FILE = "slides.sml"  # Slides only (IDs removed)
+MASTERS_FILE = "masters.sml"  # Master slides
+LAYOUTS_FILE = "layouts.sml"  # Layouts
+IMAGES_FILE = "images.sml"  # Image definitions
 RAW_DIR = ".raw"
+META_DIR = ".meta"
 PRISTINE_DIR = ".pristine"
 PRISTINE_ZIP = "presentation.zip"
 
@@ -75,10 +87,14 @@ class SlidesClient:
         """Pull a presentation and write to folder structure.
 
         Creates a folder with:
-        - presentation.sml: The editable SML file
-        - presentation.json: Metadata (title, presentation ID)
+        - slides.sml: Slides content (IDs removed for cleaner editing)
+        - masters.sml: Master slide definitions
+        - layouts.sml: Layout definitions
+        - images.sml: Image URL mappings
+        - presentation.json: Overview + metadata (slide summaries, title, ID)
+        - .meta/id_mapping.json: ID mapping for diff/push
         - .raw/presentation.json: Raw API response (optional)
-        - .pristine/presentation.zip: Original state for diff comparison
+        - .pristine/presentation.zip: Zip of entire folder for diff comparison
 
         Args:
             presentation_id: The ID of the presentation (from the URL)
@@ -102,20 +118,49 @@ class SlidesClient:
 
         written_files: list[Path] = []
 
-        # Generate SML
-        sml_content = json_to_sml(presentation_data.data)
-        sml_path = presentation_dir / SML_FILE
-        sml_path.write_text(sml_content, encoding="utf-8")
-        written_files.append(sml_path)
+        # Generate full SML
+        full_sml = json_to_sml(presentation_data.data)
 
-        # Write metadata
-        metadata = {
-            "presentationId": presentation_data.presentation_id,
-            "title": presentation_data.data.get("title", ""),
-        }
+        # Split SML into separate files
+        sml_parts = self._split_sml(full_sml)
+
+        # Write images.sml
+        if sml_parts["images"]:
+            images_path = presentation_dir / IMAGES_FILE
+            images_path.write_text(sml_parts["images"], encoding="utf-8")
+            written_files.append(images_path)
+
+        # Write masters.sml
+        if sml_parts["masters"]:
+            masters_path = presentation_dir / MASTERS_FILE
+            masters_path.write_text(sml_parts["masters"], encoding="utf-8")
+            written_files.append(masters_path)
+
+        # Write layouts.sml
+        if sml_parts["layouts"]:
+            layouts_path = presentation_dir / LAYOUTS_FILE
+            layouts_path.write_text(sml_parts["layouts"], encoding="utf-8")
+            written_files.append(layouts_path)
+
+        # Remove IDs and write slides.sml
+        slides_sml = sml_parts["slides_wrapper"]
+        slides_sml_no_ids, id_mapping = remove_ids(slides_sml)
+
+        slides_path = presentation_dir / SLIDES_FILE
+        slides_path.write_text(slides_sml_no_ids, encoding="utf-8")
+        written_files.append(slides_path)
+
+        # Save ID mapping for diff/push
+        meta_dir = presentation_dir / META_DIR
+        save_metadata({"id_mapping": id_mapping}, meta_dir)
+        written_files.append(meta_dir / "id_mapping.json")
+
+        # Generate presentation.json (overview + metadata)
+        overview = generate_overview(presentation_data.data)
+        overview["presentationId"] = presentation_data.presentation_id
         metadata_path = presentation_dir / METADATA_FILE
         metadata_path.write_text(
-            json.dumps(metadata, indent=2, ensure_ascii=False), encoding="utf-8"
+            json.dumps(overview, indent=2, ensure_ascii=False), encoding="utf-8"
         )
         written_files.append(metadata_path)
 
@@ -130,16 +175,47 @@ class SlidesClient:
             )
             written_files.append(raw_path)
 
-        # Create pristine copy for diff/push workflow
+        # Create pristine copy (zip of entire folder)
         pristine_path = self._create_pristine_copy(presentation_dir, written_files)
         written_files.append(pristine_path)
 
         return written_files
 
+    def _split_sml(self, full_sml: str) -> dict[str, str]:
+        """Split full SML into separate sections.
+
+        Returns dict with keys: images, masters, layouts, slides, slides_wrapper
+        - slides_wrapper includes the Presentation root with only Slides content
+        """
+        # Extract sections using regex
+        images_match = re.search(r"(<Images>.*?</Images>)", full_sml, re.DOTALL)
+        masters_match = re.search(r"(<Masters>.*?</Masters>)", full_sml, re.DOTALL)
+        layouts_match = re.search(r"(<Layouts>.*?</Layouts>)", full_sml, re.DOTALL)
+        slides_match = re.search(r"(<Slides>.*?</Slides>)", full_sml, re.DOTALL)
+
+        # Extract Presentation attributes from opening tag
+        pres_match = re.match(r"(<Presentation[^>]*>)", full_sml)
+        pres_open = pres_match.group(1) if pres_match else "<Presentation>"
+
+        # Build slides wrapper (Presentation with only Slides)
+        slides_content = slides_match.group(1) if slides_match else "<Slides/>"
+        slides_wrapper = f"{pres_open}\n\n  {slides_content}\n\n</Presentation>"
+
+        return {
+            "images": images_match.group(1) if images_match else "",
+            "masters": masters_match.group(1) if masters_match else "",
+            "layouts": layouts_match.group(1) if layouts_match else "",
+            "slides": slides_match.group(1) if slides_match else "",
+            "slides_wrapper": slides_wrapper,
+        }
+
     def diff(self, folder_path: Path) -> list[dict[str, Any]]:
         """Compare current SML against pristine copy and generate update requests.
 
         This is a local-only operation that does not call any APIs.
+
+        Reconstructs full SML from split files (slides.sml, masters.sml, etc.)
+        and compares against the pristine copy.
 
         Args:
             folder_path: Path to the presentation folder
@@ -153,11 +229,8 @@ class SlidesClient:
         """
         folder_path = Path(folder_path)
 
-        # Read current SML
-        current_sml_path = folder_path / SML_FILE
-        if not current_sml_path.exists():
-            raise FileNotFoundError(f"SML file not found: {current_sml_path}")
-        current_sml = current_sml_path.read_text(encoding="utf-8")
+        # Reconstruct current full SML from split files
+        current_sml = self._reconstruct_sml(folder_path)
 
         # Read pristine SML from zip
         pristine_sml = self._read_pristine_sml(folder_path)
@@ -171,6 +244,64 @@ class SlidesClient:
 
         # Generate API requests
         return generate_requests(diff_result)
+
+    def _reconstruct_sml(self, folder_path: Path) -> str:
+        """Reconstruct full SML from split files.
+
+        Reads slides.sml, masters.sml, layouts.sml, images.sml and combines
+        them into a full Presentation SML. Restores IDs from mapping.
+        """
+        slides_path = folder_path / SLIDES_FILE
+        if not slides_path.exists():
+            raise FileNotFoundError(f"No slides.sml found at {slides_path}")
+
+        # Read slides.sml and restore IDs
+        slides_sml = slides_path.read_text(encoding="utf-8")
+        meta_dir = folder_path / META_DIR
+        if meta_dir.exists():
+            metadata = load_metadata(meta_dir)
+            if "id_mapping" in metadata:
+                slides_sml = restore_ids(slides_sml, metadata["id_mapping"])
+
+        # Extract Presentation opening tag and Slides content
+        pres_match = re.match(r"(<Presentation[^>]*>)", slides_sml)
+        pres_open = pres_match.group(1) if pres_match else "<Presentation>"
+
+        slides_match = re.search(r"(<Slides>.*?</Slides>)", slides_sml, re.DOTALL)
+        slides_content = slides_match.group(1) if slides_match else "<Slides/>"
+
+        # Read other sections
+        images_content = ""
+        images_path = folder_path / IMAGES_FILE
+        if images_path.exists():
+            images_content = images_path.read_text(encoding="utf-8")
+
+        masters_content = ""
+        masters_path = folder_path / MASTERS_FILE
+        if masters_path.exists():
+            masters_content = masters_path.read_text(encoding="utf-8")
+
+        layouts_content = ""
+        layouts_path = folder_path / LAYOUTS_FILE
+        if layouts_path.exists():
+            layouts_content = layouts_path.read_text(encoding="utf-8")
+
+        # Reconstruct full SML
+        parts = [pres_open, ""]
+        if images_content:
+            parts.append(f"  {images_content}")
+            parts.append("")
+        if masters_content:
+            parts.append(f"  {masters_content}")
+            parts.append("")
+        if layouts_content:
+            parts.append(f"  {layouts_content}")
+            parts.append("")
+        parts.append(f"  {slides_content}")
+        parts.append("")
+        parts.append("</Presentation>")
+
+        return "\n".join(parts)
 
     async def push(self, folder_path: Path) -> dict[str, Any]:
         """Apply SML changes to the presentation.
@@ -217,8 +348,12 @@ class SlidesClient:
         """Create a pristine copy of the pulled files for diff/push workflow.
 
         Creates a .pristine/ directory containing a presentation.zip file
-        with all the pulled files (excluding .raw/). This zip is used by
-        diff/push to compare against the current state.
+        with all SML files and metadata. This zip is used by diff/push to
+        compare against the current state.
+
+        Includes: slides.sml, masters.sml, layouts.sml, images.sml,
+                  presentation.json, .meta/id_mapping.json
+        Excludes: .raw/, .pristine/
         """
         pristine_dir = presentation_dir / PRISTINE_DIR
         pristine_dir.mkdir(parents=True, exist_ok=True)
@@ -227,9 +362,10 @@ class SlidesClient:
 
         with zipfile.ZipFile(zip_path, "w", zipfile.ZIP_DEFLATED) as zf:
             for file_path in written_files:
-                # Skip .raw/ files - not part of canonical representation
-                if RAW_DIR in file_path.parts:
+                # Skip raw and pristine directories
+                if any(d in file_path.parts for d in [RAW_DIR, PRISTINE_DIR]):
                     continue
+
                 # Store with path relative to presentation directory
                 arcname = file_path.relative_to(presentation_dir)
                 zf.write(file_path, arcname)
@@ -237,10 +373,54 @@ class SlidesClient:
         return zip_path
 
     def _read_pristine_sml(self, folder_path: Path) -> str:
-        """Read the pristine SML from the zip file."""
+        """Reconstruct pristine SML from the zip file."""
         zip_path = folder_path / PRISTINE_DIR / PRISTINE_ZIP
         if not zip_path.exists():
             raise FileNotFoundError(f"Pristine zip not found: {zip_path}")
 
         with zipfile.ZipFile(zip_path, "r") as zf:
-            return zf.read(SML_FILE).decode("utf-8")
+            # Read slides.sml and restore IDs
+            slides_sml = zf.read(SLIDES_FILE).decode("utf-8")
+
+            # Load ID mapping if present
+            if f"{META_DIR}/id_mapping.json" in zf.namelist():
+                id_mapping_data = zf.read(f"{META_DIR}/id_mapping.json").decode("utf-8")
+                id_mapping = json.loads(id_mapping_data)
+                slides_sml = restore_ids(slides_sml, id_mapping)
+
+            # Extract Presentation opening tag and Slides content
+            pres_match = re.match(r"(<Presentation[^>]*>)", slides_sml)
+            pres_open = pres_match.group(1) if pres_match else "<Presentation>"
+
+            slides_match = re.search(r"(<Slides>.*?</Slides>)", slides_sml, re.DOTALL)
+            slides_content = slides_match.group(1) if slides_match else "<Slides/>"
+
+            # Read other sections from zip
+            images_content = ""
+            if IMAGES_FILE in zf.namelist():
+                images_content = zf.read(IMAGES_FILE).decode("utf-8")
+
+            masters_content = ""
+            if MASTERS_FILE in zf.namelist():
+                masters_content = zf.read(MASTERS_FILE).decode("utf-8")
+
+            layouts_content = ""
+            if LAYOUTS_FILE in zf.namelist():
+                layouts_content = zf.read(LAYOUTS_FILE).decode("utf-8")
+
+            # Reconstruct full SML
+            parts = [pres_open, ""]
+            if images_content:
+                parts.append(f"  {images_content}")
+                parts.append("")
+            if masters_content:
+                parts.append(f"  {masters_content}")
+                parts.append("")
+            if layouts_content:
+                parts.append(f"  {layouts_content}")
+                parts.append("")
+            parts.append(f"  {slides_content}")
+            parts.append("")
+            parts.append("</Presentation>")
+
+            return "\n".join(parts)

@@ -295,6 +295,7 @@ source = { editable = "." }
 dependencies = [
     { name = "extrasuite" },
     { name = "httpx" },
+    { name = "pyfpgrowth" },
 ]
 
 [package.optional-dependencies]
@@ -313,6 +314,7 @@ requires-dist = [
     { name = "httpx", specifier = ">=0.27.0" },
     { name = "mypy", marker = "extra == 'dev'", specifier = ">=1.0.0" },
     { name = "pre-commit", marker = "extra == 'dev'", specifier = ">=3.0.0" },
+    { name = "pyfpgrowth", specifier = ">=1.0" },
     { name = "pytest", marker = "extra == 'dev'", specifier = ">=7.0.0" },
     { name = "pytest-asyncio", marker = "extra == 'dev'", specifier = ">=0.23.0" },
     { name = "pytest-cov", marker = "extra == 'dev'", specifier = ">=4.0.0" },
@@ -687,6 +689,12 @@ sdist = { url = "https://files.pythonhosted.org/packages/1b/7d/92392ff7815c21062
 wheels = [
     { url = "https://files.pythonhosted.org/packages/0c/c3/44f3fbbfa403ea2a7c779186dc20772604442dde72947e7d01069cbe98e3/pycparser-3.0-py3-none-any.whl", hash = "sha256:b727414169a36b7d524c1c3e31839a521725078d7b2ff038656844266160a992", size = 48172, upload-time = "2026-01-21T14:26:50.693Z" },
 ]
+
+[[package]]
+name = "pyfpgrowth"
+version = "1.0"
+source = { registry = "https://pypi.org/simple" }
+sdist = { url = "https://files.pythonhosted.org/packages/d2/4c/8b7cd90b4118ff0286d6584909b99e1ca5642bdc9072fa5a8dd361c864a0/pyfpgrowth-1.0.tar.gz", hash = "sha256:a3e5780385241d90d3ae5cabcca767eb65427b0a908014d42164b3ea8899f1d0", size = 1641375, upload-time = "2016-04-27T13:41:13.797Z" }
 
 [[package]]
 name = "pygments"

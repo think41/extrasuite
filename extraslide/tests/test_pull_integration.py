@@ -39,13 +39,17 @@ class TestPull:
         # Check folder structure
         pres_dir = tmp_path / presentation_id
         assert pres_dir.exists()
-        assert (pres_dir / "presentation.sml").exists()
-        assert (pres_dir / "presentation.json").exists()
+        assert (pres_dir / "slides.sml").exists()  # Compressed slides
+        assert (pres_dir / "presentation.json").exists()  # Overview + metadata
         assert (pres_dir / ".raw" / "presentation.json").exists()
+        assert (pres_dir / ".meta" / "id_mapping.json").exists()
         assert (pres_dir / ".pristine" / "presentation.zip").exists()
 
-        # Check we got all expected files
-        assert len(files) == 4
+        # Optional files (may or may not exist depending on presentation)
+        # images.sml, masters.sml, layouts.sml
+
+        # Check we got at least the essential files
+        assert len(files) >= 5
 
     async def test_pull_without_raw(self, client: SlidesClient, tmp_path: Path) -> None:
         """Pull with save_raw=False skips the .raw/ folder."""
@@ -54,13 +58,14 @@ class TestPull:
         files = await client.pull(presentation_id, tmp_path, save_raw=False)
 
         pres_dir = tmp_path / presentation_id
-        assert (pres_dir / "presentation.sml").exists()
+        assert (pres_dir / "slides.sml").exists()
         assert (pres_dir / "presentation.json").exists()
         assert not (pres_dir / ".raw").exists()
+        assert (pres_dir / ".meta" / "id_mapping.json").exists()
         assert (pres_dir / ".pristine" / "presentation.zip").exists()
 
-        # Only 3 files (no raw)
-        assert len(files) == 3
+        # At least 4 files without raw
+        assert len(files) >= 4
 
     async def test_pull_sml_contains_presentation(
         self, client: SlidesClient, tmp_path: Path
@@ -70,7 +75,7 @@ class TestPull:
 
         await client.pull(presentation_id, tmp_path)
 
-        sml_path = tmp_path / presentation_id / "presentation.sml"
+        sml_path = tmp_path / presentation_id / "slides.sml"
         content = sml_path.read_text(encoding="utf-8")
 
         assert "<Presentation" in content
@@ -115,8 +120,8 @@ class TestDiff:
         await client.pull(presentation_id, tmp_path)
         pres_dir = tmp_path / presentation_id
 
-        # Modify the SML file - add a new slide
-        sml_path = pres_dir / "presentation.sml"
+        # Modify slides.sml - add a new slide
+        sml_path = pres_dir / "slides.sml"
         content = sml_path.read_text(encoding="utf-8")
 
         # Add a new slide before </Slides>
@@ -157,8 +162,8 @@ class TestPush:
         await client.pull(folder_name, tmp_path)
         pres_dir = tmp_path / folder_name
 
-        # Modify the SML file
-        sml_path = pres_dir / "presentation.sml"
+        # Modify slides.sml - add a new slide
+        sml_path = pres_dir / "slides.sml"
         content = sml_path.read_text(encoding="utf-8")
         new_slide = '    <Slide id="new_slide_for_push"/>\n  '
         modified = content.replace("</Slides>", f"{new_slide}</Slides>")

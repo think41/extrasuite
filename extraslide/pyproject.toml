@@ -23,6 +23,7 @@ classifiers = [
 dependencies = [
     "extrasuite>=0.1.0",
     "httpx>=0.27.0",
+    "pyfpgrowth>=1.0",
 ]
 
 [project.optional-dependencies]
@@ -76,6 +77,9 @@ ignore = [
 [tool.ruff.lint.per-file-ignores]
 # credentials.py uses intentional lazy imports for optional dependencies
 "src/extraslide/credentials.py" = ["PLC0415"]
+# compression.py and overview.py use Path at runtime (not just type hints)
+"src/extraslide/compression.py" = ["TCH003"]
+"src/extraslide/overview.py" = ["TCH003"]
 
 [tool.ruff.lint.isort]
 known-first-party = ["extraslide"]
