@@ -14,10 +14,10 @@ from slowapi.errors import RateLimitExceeded
 from slowapi.util import get_remote_address
 from starlette.middleware.sessions import SessionMiddleware
 
-from extrasuite_server import api, skills
-from extrasuite_server.config import get_settings
-from extrasuite_server.database import Database
-from extrasuite_server.logging import configure_logging
+from extrasuite.server import api, skills
+from extrasuite.server.config import get_settings
+from extrasuite.server.database import Database
+from extrasuite.server.logging import configure_logging
 
 
 async def unhandled_exception_handler(request: Request, exc: Exception) -> JSONResponse:

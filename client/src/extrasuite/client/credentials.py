@@ -574,7 +574,7 @@ def authenticate(
         Exception: If authentication fails.
 
     Example:
-        from extrasuite_client import authenticate
+        from extrasuite.client import authenticate
 
         token = authenticate()
         print(f"Token: {token.access_token[:50]}...")

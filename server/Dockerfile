@@ -16,7 +16,7 @@ RUN uv venv /app/.venv && \
     uv sync --frozen --no-dev --no-install-project
 
 # Copy source and install the package
-COPY extrasuite_server ./extrasuite_server
+COPY src ./src
 COPY README.md ./
 RUN uv sync --frozen --no-dev
 
@@ -35,14 +35,14 @@ WORKDIR /app
 
 # Copy virtual environment and source from builder
 COPY --from=builder /app/.venv /app/.venv
-COPY --from=builder /app/extrasuite_server /app/extrasuite_server
+COPY --from=builder /app/src /app/src
 
 # Copy skills folder (copied into build context by cloudbuild.yaml)
 COPY skills /app/skills
 
 # Set environment
 ENV PATH="/app/.venv/bin:$PATH"
-ENV PYTHONPATH="/app"
+ENV PYTHONPATH="/app/src"
 ENV PORT=8080
 ENV ENVIRONMENT=production
 ENV PYTHONUNBUFFERED=1
@@ -56,4 +56,4 @@ EXPOSE 8080
 HEALTHCHECK --interval=30s --timeout=10s --start-period=5s --retries=3 \
     CMD curl -f http://localhost:${PORT}/api/health || exit 1
 
-CMD ["uvicorn", "extrasuite_server.main:app", "--host", "0.0.0.0", "--port", "8080"]
+CMD ["uvicorn", "extrasuite.server.main:app", "--host", "0.0.0.0", "--port", "8080"]

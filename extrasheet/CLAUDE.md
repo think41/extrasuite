@@ -17,7 +17,7 @@ Instead of working with complex API responses, agents interact with simple files
 | `src/extrasheet/writer.py` | Writes transformed data to files |
 | `src/extrasheet/formula_compression.py` | Compresses formulas with relative references |
 | `src/extrasheet/format_compression.py` | Compresses cell formatting |
-| `src/extrasheet/credentials.py` | `CredentialsManager` from extrasuite-client |
+| `src/extrasheet/credentials.py` | `CredentialsManager` (copy from client/, will use `extrasuite.client` when published) |
 | `src/extrasheet/api_types.py` | TypedDict definitions for Google Sheets API |
 | `src/extrasheet/utils.py` | A1 notation parsing utilities |
 
@@ -85,7 +85,7 @@ Golden files: Store raw Google Sheets API responses in `tests/golden/<spreadshee
 1. **Pull flow**: `SheetsClient.pull()` → Google Sheets API → `Transformer` → `Writer` → files on disk
 2. **Formula compression**: Relative cell references are compressed (e.g., `=A1+B1` in C1 becomes `=RC[-2]+RC[-1]`)
 3. **Format compression**: Repeated formats are deduplicated and referenced by index
-4. **Credentials**: Uses `CredentialsManager` from extrasuite-client for OAuth token handling
+4. **Credentials**: Uses `CredentialsManager` (currently a local copy, will use `from extrasuite.client import CredentialsManager` when published to PyPI)
 
 ## Current Status
 

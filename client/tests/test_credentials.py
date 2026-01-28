@@ -10,7 +10,7 @@ from unittest import mock
 
 import pytest
 
-from extrasuite_client.credentials import (
+from extrasuite.client.credentials import (
     KEYRING_SERVICE,
     KEYRING_USERNAME,
     CredentialsManager,
@@ -606,7 +606,7 @@ class TestAuthenticateFunction:
             mock.patch("keyring.get_password", return_value=json.dumps(cached_token_data)),
             mock.patch("keyring.set_password"),
             mock.patch(
-                "extrasuite_client.credentials.CredentialsManager._authenticate_extrasuite",
+                "extrasuite.client.credentials.CredentialsManager._authenticate_extrasuite",
                 return_value=new_token,
             ),
         ):

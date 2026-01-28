@@ -9,7 +9,7 @@ FastAPI backend for ExtraSuite - secure OAuth token exchange for CLI tools.
 uv sync
 
 # Run server
-uv run uvicorn extrasuite_server.main:app --reload --port 8001
+uv run uvicorn extrasuite.server.main:app --reload --port 8001
 
 # Run tests
 uv run pytest tests/ -v

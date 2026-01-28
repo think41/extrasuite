@@ -1,5 +1,5 @@
 # Dockerfile for ExtraSuite Server
-# Build context: repository root (not extrasuite-server/)
+# Build context: repository root (not server/)
 # Skills are bundled as /app/skills.zip for enterprise deployment
 
 FROM python:3.12-slim AS builder
@@ -10,19 +10,19 @@ COPY --from=ghcr.io/astral-sh/uv:latest /uv /usr/local/bin/uv
 WORKDIR /app
 
 # Copy dependency files first for layer caching
-COPY extrasuite-server/pyproject.toml extrasuite-server/uv.lock ./
+COPY server/pyproject.toml server/uv.lock ./
 
 # Create venv and install dependencies (no dev deps)
 RUN uv venv /app/.venv && \
     uv sync --frozen --no-dev --no-install-project
 
 # Copy source and install the package
-COPY extrasuite-server/extrasuite_server ./extrasuite_server
-COPY extrasuite-server/README.md ./
+COPY server/src ./src
+COPY server/README.md ./
 RUN uv sync --frozen --no-dev
 
 # Copy skills folder and create skills.zip (exclude venv, __pycache__, etc.)
-COPY extrasuite-server/skills /app/skills-src
+COPY server/skills /app/skills-src
 RUN apt-get update && apt-get install -y --no-install-recommends zip \
     && cd /app/skills-src \
     && zip -r /app/skills.zip . -x "*/venv/*" -x "*/__pycache__/*" -x "*/.pytest_cache/*" -x "*/.git/*" \
@@ -44,12 +44,12 @@ WORKDIR /app
 
 # Copy virtual environment, source, and skills.zip from builder
 COPY --from=builder /app/.venv /app/.venv
-COPY --from=builder /app/extrasuite_server /app/extrasuite_server
+COPY --from=builder /app/src /app/src
 COPY --from=builder /app/skills.zip /app/skills.zip
 
 # Set environment
 ENV PATH="/app/.venv/bin:$PATH"
-ENV PYTHONPATH="/app"
+ENV PYTHONPATH="/app/src"
 ENV PORT=8080
 ENV ENVIRONMENT=production
 ENV PYTHONUNBUFFERED=1
@@ -68,4 +68,4 @@ LABEL org.opencontainers.image.source="https://github.com/think41/extrasuite"
 LABEL org.opencontainers.image.description="ExtraSuite Server - OAuth token exchange for CLI tools"
 LABEL org.opencontainers.image.licenses="MIT"
 
-CMD ["uvicorn", "extrasuite_server.main:app", "--host", "0.0.0.0", "--port", "8080"]
+CMD ["uvicorn", "extrasuite.server.main:app", "--host", "0.0.0.0", "--port", "8080"]

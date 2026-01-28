@@ -50,7 +50,7 @@ The [reference implementation](../deployment/index.md) uses Google OAuth and Clo
 
 | Benefit | Description |
 |---------|-------------|
-| Compatibility | Works with `extrasuite-client` and all ExtraSuite skills |
+| Compatibility | Works with `extrasuite` client library and all ExtraSuite skills |
 | Control | Full control over authentication and authorization |
 | Integration | Fits into your existing infrastructure |
 | Audit Trail | All actions attributed to user-specific service accounts |
@@ -68,10 +68,10 @@ See the [Deployment Guide](../deployment/index.md) to deploy the reference imple
 
 ## Client Library
 
-The `extrasuite-client` library implements the client side of this protocol:
+The `extrasuite` client library implements the client side of this protocol:
 
 ```python
-from extrasuite_client import CredentialsManager
+from extrasuite.client import CredentialsManager
 
 # Point to your endpoints
 manager = CredentialsManager(

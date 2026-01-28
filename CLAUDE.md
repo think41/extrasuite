@@ -10,15 +10,15 @@ ExtraSuite is an open source umbrella project (https://github.com/think41/extras
 
 ```
 ┌─────────────────┐     ┌──────────────────┐     ┌─────────────────┐
-│ extrasuite-     │     │ extrasheet/      │     │ Google APIs     │
-│ server          │────▶│ extraslide       │────▶│ (Sheets/Slides) │
-│ (auth tokens)   │     │ (pull/diff/push) │     │                 │
+│ server/         │     │ extrasheet/      │     │ Google APIs     │
+│ (auth tokens)   │────▶│ extraslide       │────▶│ (Sheets/Slides) │
+│                 │     │ (pull/diff/push) │     │                 │
 └─────────────────┘     └──────────────────┘     └─────────────────┘
         │                        │
         ▼                        ▼
 ┌─────────────────┐     ┌──────────────────┐
-│ extrasuite-     │     │ Local folder     │
-│ client (CLI)    │     │ (agent edits)    │
+│ client/         │     │ Local folder     │
+│ (CLI auth)      │     │ (agent edits)    │
 └─────────────────┘     └──────────────────┘
 ```
 
@@ -27,9 +27,9 @@ ExtraSuite is an open source umbrella project (https://github.com/think41/extras
 All commands work both as `python -m <module>` and via `uvx`:
 
 ```bash
-# Authentication (extrasuite-client)
-python -m extrasuite_client login      # or: uvx extrasuite-client login
-python -m extrasuite_client logout     # or: uvx extrasuite-client logout
+# Authentication (extrasuite.client)
+python -m extrasuite.client login      # or: uvx extrasuite login
+python -m extrasuite.client logout     # or: uvx extrasuite logout
 
 # Working with files (extrasheet/extraslide)
 python -m extrasheet pull <url> [output_dir]   # Downloads to ./<file_id>/ by default
@@ -60,15 +60,15 @@ The core workflow for editing Google files:
 
 | Package | Purpose |
 |---------|---------|
-| **extrasuite-server** | FastAPI server providing per-user service accounts and short-lived tokens. Deployed to Cloud Run. Also distributes agent skills. |
-| **extrasuite-client** | CLI for authentication (`login`/`logout`). Manages token caching via OS specific keyring. |
-| **extrasheet** | Converts Google Sheets to/from folder with TSV + JSON files. Implements pull/diff/push. |
-| **extraslide** | Converts Google Slides to/from SML (Slide Markup Language) XML. Implements pull/diff/push. Alpha quality. |
-| **website** | MkDocs documentation at https://extrasuite.think41.com |
+| **server/** | FastAPI server providing per-user service accounts and short-lived tokens. Deployed to Cloud Run. Also distributes agent skills. Uses `extrasuite.server` namespace. |
+| **client/** | CLI for authentication (`login`/`logout`). Manages token caching via OS specific keyring. Published to PyPI as `extrasuite`. Uses `extrasuite.client` namespace. |
+| **extrasheet/** | Converts Google Sheets to/from folder with TSV + JSON files. Implements pull/diff/push. |
+| **extraslide/** | Converts Google Slides to/from SML (Slide Markup Language) XML. Implements pull/diff/push. Alpha quality. |
+| **website/** | MkDocs documentation at https://extrasuite.think41.com |
 
 ## User Flow
 
-1. **One-time setup:** User logs into extrasuite-server, gets a dedicated service account created
+1. **One-time setup:** User logs into server, gets a dedicated service account created
 2. **Install skills:** User runs `curl <url> | sh` to install SKILL.md into their agent
 3. **Share file:** User shares Google file with their service account email
 4. **Agent workflow:** Agent runs `login` (if needed) → `pull` → edits files → `diff` (preview) → `push`
@@ -115,4 +115,4 @@ Tests verify the public API: `login`, `logout`, `pull`, `diff`, `push`.
 
 ## Skills
 
-Agent skills are markdown files (SKILL.md) that teach agents how to use extrasuite. Skills are distributed by extrasuite-server from the `extrasuite-server/skills/` directory. See https://agentskills.io/home for the agent skills standard.
+Agent skills are markdown files (SKILL.md) that teach agents how to use extrasuite. Skills are distributed by the server from the `server/skills/` directory. See https://agentskills.io/home for the agent skills standard.

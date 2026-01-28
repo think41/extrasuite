@@ -4,18 +4,18 @@ repos:
     hooks:
       - id: ruff
         args: [--fix]
-        files: ^(extrasuite-server|extrasuite-client|extraslide)/
+        files: ^(server|client|extraslide)/
       - id: ruff-format
-        files: ^(extrasuite-server|extrasuite-client|extraslide)/
+        files: ^(server|client|extraslide)/
 
   - repo: local
     hooks:
       - id: pyright
         name: pyright
-        entry: bash -c 'cd extrasuite-server && uv run pyright'
+        entry: bash -c 'cd server && uv run pyright'
         language: system
         types: [python]
-        files: ^extrasuite-server/
+        files: ^server/
         pass_filenames: false
       - id: mypy
         name: mypy (extraslide)

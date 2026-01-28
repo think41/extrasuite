@@ -6,12 +6,12 @@ FastAPI server that provides per-user service accounts and short-lived access to
 
 | File | Purpose |
 |------|---------|
-| `extrasuite_server/main.py` | FastAPI app entry point, middleware, exception handlers |
-| `extrasuite_server/api.py` | Route definitions for auth and token endpoints |
-| `extrasuite_server/token_generator.py` | Service account creation and token generation |
-| `extrasuite_server/database.py` | Firestore operations for user/service account data |
-| `extrasuite_server/config.py` | Environment configuration via pydantic-settings |
-| `extrasuite_server/skills.py` | Skill distribution endpoints |
+| `src/extrasuite/server/main.py` | FastAPI app entry point, middleware, exception handlers |
+| `src/extrasuite/server/api.py` | Route definitions for auth and token endpoints |
+| `src/extrasuite/server/token_generator.py` | Service account creation and token generation |
+| `src/extrasuite/server/database.py` | Firestore operations for user/service account data |
+| `src/extrasuite/server/config.py` | Environment configuration via pydantic-settings |
+| `src/extrasuite/server/skills.py` | Skill distribution endpoints |
 | `skills/` | Agent skill definitions (SKILL.md files) |
 
 ## API Endpoints
@@ -29,9 +29,9 @@ FastAPI server that provides per-user service accounts and short-lived access to
 ### Local Development
 
 ```bash
-cd extrasuite-server
+cd server
 uv sync
-uv run uvicorn extrasuite_server.main:app --reload --port 8001
+uv run uvicorn extrasuite.server.main:app --reload --port 8001
 ```
 
 ### Environment Setup

@@ -1,17 +1,32 @@
-# extrasuite-client
+# extrasuite
 
 Python client library for [ExtraSuite](https://github.com/think41/extrasuite) - secure OAuth token exchange for AI agents and CLI tools.
 
 ## Installation
 
 ```bash
-pip install extrasuite-client
+pip install extrasuite
 ```
 
 ## Quick Start
 
+### CLI Authentication
+
+```bash
+# Login (opens browser for OAuth)
+python -m extrasuite.client login
+
+# Or using the console script
+extrasuite login
+
+# Logout (clears cached credentials)
+python -m extrasuite.client logout
+```
+
+### Programmatic Usage
+
 ```python
-from extrasuite_client import authenticate
+from extrasuite.client import authenticate
 
 # Get a token - opens browser for authentication if needed
 token = authenticate()
@@ -46,7 +61,7 @@ Authentication can be configured via:
 For more control, use the `CredentialsManager` class directly:
 
 ```python
-from extrasuite_client import CredentialsManager
+from extrasuite.client import CredentialsManager
 
 manager = CredentialsManager(
     auth_url="https://your-server.example.com/api/token/auth",
@@ -63,7 +78,7 @@ print(f"Expires in: {token.expires_in_seconds()} seconds")
 For non-interactive environments, you can use a service account file:
 
 ```python
-from extrasuite_client import CredentialsManager
+from extrasuite.client import CredentialsManager
 
 manager = CredentialsManager(service_account_path="/path/to/service-account.json")
 token = manager.get_token()
@@ -98,7 +113,7 @@ Tokens are short-lived (1 hour) and automatically refreshed when expired.
 Convenience function to get a token with minimal code.
 
 ```python
-from extrasuite_client import authenticate
+from extrasuite.client import authenticate
 
 token = authenticate(
     auth_url=None,           # Optional: override auth URL

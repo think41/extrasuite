@@ -24,9 +24,9 @@ from pydantic import BaseModel, Field
 from slowapi import Limiter
 from slowapi.util import get_remote_address
 
-from extrasuite_server.config import Settings, get_settings
-from extrasuite_server.database import Database, get_database
-from extrasuite_server.token_generator import TokenGenerator
+from extrasuite.server.config import Settings, get_settings
+from extrasuite.server.database import Database, get_database
+from extrasuite.server.token_generator import TokenGenerator
 
 # Reduced OAuth scopes - only what we need to identify the user
 # We use server's ADC for SA impersonation, NOT user's OAuth credentials

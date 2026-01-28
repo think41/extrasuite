@@ -12,7 +12,7 @@ Python library that converts Google Slides to/from SML (Slide Markup Language), 
 | `src/extraslide/diff.py` | Compares original vs modified SML, generates batchUpdate requests |
 | `src/extraslide/requests.py` | Builds Google Slides API batchUpdate request objects |
 | `src/extraslide/classes.py` | Data classes for slide elements |
-| `src/extraslide/credentials.py` | `CredentialsManager` from extrasuite-client |
+| `src/extraslide/credentials.py` | `CredentialsManager` (copy from client/, will use `extrasuite.client` when published) |
 
 ## Documentation
 

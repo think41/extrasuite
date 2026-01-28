@@ -15,7 +15,7 @@ from fastapi.responses import FileResponse, PlainTextResponse
 from itsdangerous import BadSignature, SignatureExpired, URLSafeTimedSerializer
 from loguru import logger
 
-from extrasuite_server.config import Settings, get_settings
+from extrasuite.server.config import Settings, get_settings
 
 router = APIRouter()
 

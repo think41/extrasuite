@@ -8,7 +8,7 @@ Tokens are securely stored in the OS keyring (macOS Keychain, Windows Credential
 Locker, or Linux Secret Service).
 
 Example:
-    from extrasuite_client import authenticate
+    from extrasuite.client import authenticate
 
     # Configure via environment variables:
     # - EXTRASUITE_AUTH_URL and EXTRASUITE_EXCHANGE_URL for ExtraSuite protocol
@@ -23,7 +23,7 @@ Example:
     gc = gspread.authorize(creds)
 """
 
-from extrasuite_client.credentials import CredentialsManager, Token, authenticate
+from extrasuite.client.credentials import CredentialsManager, Token, authenticate
 
 __version__ = "0.1.0"
 __all__ = ["CredentialsManager", "Token", "authenticate"]

@@ -247,10 +247,10 @@ Use the included test script to verify authentication works:
 # Clear any cached token
 rm -f ~/.config/extrasuite/token.json
 
-# Run the test
-cd /path/to/extrasuite
-PYTHONPATH=extrasuite-client/src python3 extrasuite-client/examples/basic_usage.py \
-  --server https://YOUR_DOMAIN
+# Run the test using the CLI
+cd /path/to/extrasuite/client
+uv sync
+uv run python -m extrasuite.client login
 ```
 
 **Expected behavior:**

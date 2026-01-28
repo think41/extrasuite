@@ -401,7 +401,7 @@ expiry = target_credentials.expiry
 ## Client Implementation
 
 The reference client implementation is available at:
-[`extrasuite-client/src/extrasuite_client/credentials.py`](https://github.com/think41/extrasuite/blob/main/extrasuite-client/src/extrasuite_client/credentials.py)
+[`client/src/extrasuite/client/credentials.py`](https://github.com/think41/extrasuite/blob/main/client/src/extrasuite/client/credentials.py)
 
 ### Key Client Responsibilities
 
@@ -433,7 +433,7 @@ The reference implementation at [github.com/think41/extrasuite](https://github.c
 
 If you implement this specification, your server will be compatible with:
 
-- The `extrasuite-client` library
+- The `extrasuite` client library
 - All ExtraSuite skills (gsheetx, gslidex, gdocx)
 - Any AI agent that uses the ExtraSuite protocol
 

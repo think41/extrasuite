@@ -1,5 +1,5 @@
 [project]
-name = "extrasuite-client"
+name = "extrasuite"
 version = "0.1.0"
 description = "Client library for ExtraSuite - secure OAuth token exchange for CLI tools"
 readme = "README.md"
@@ -27,6 +27,8 @@ dependencies = [
     "certifi>=2024.0.0",
 ]
 
+[project.scripts]
+extrasuite = "extrasuite.client.__main__:main"
 
 [project.urls]
 Homepage = "https://github.com/think41/extrasuite"
@@ -42,12 +44,12 @@ build-backend = "hatchling.build"
 include = ["/src"]
 
 [tool.hatch.build.targets.wheel]
-packages = ["src/extrasuite_client"]
+packages = ["src/extrasuite"]
 
 [tool.ruff]
 target-version = "py310"
 line-length = 100
-src = ["src/extrasuite_client", "tests"]
+src = ["src/extrasuite/client", "tests"]
 
 [tool.ruff.lint]
 select = [
@@ -67,7 +69,7 @@ ignore = [
 ]
 
 [tool.ruff.lint.isort]
-known-first-party = ["extrasuite_client"]
+known-first-party = ["extrasuite"]
 
 [tool.ruff.format]
 quote-style = "double"

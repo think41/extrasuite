@@ -18,10 +18,9 @@ ExtraSuite lets CLI applications obtain short-lived service account tokens to ac
 ┌─────────────────────────────────────────────────────────────┐
 │                    CLI Tool (Python)                        │
 │  ┌─────────────────────────────────────────────────────┐   │
-│  │    ExtraSuiteClient.get_token()                     │   │
-│  │    - Loads cached token from ~/.config/extrasuite/  │   │
-│  │    - If expired, opens browser for OAuth            │   │
-│  │    - Returns short-lived SA token                   │   │
+│  │    python -m extrasuite.client login                │   │
+│  │    - Opens browser for OAuth authentication         │   │
+│  │    - Caches token securely in OS keyring            │   │
 │  └─────────────────────────────────────────────────────┘   │
 └─────────────────────────────────────────────────────────────┘
                               │
@@ -50,27 +49,35 @@ ExtraSuite lets CLI applications obtain short-lived service account tokens to ac
 ### Install the Client Library
 
 ```bash
-pip install extrasuite-client
+pip install extrasuite
+```
+
+### CLI Authentication
+
+```bash
+# Login (opens browser for OAuth)
+python -m extrasuite.client login
+
+# Or using the console script
+extrasuite login
+
+# Logout (clears cached credentials)
+python -m extrasuite.client logout
 ```
 
 ### Use in Your Code
 
 ```python
-from extrasuite_client import ExtraSuiteClient
-
-# Create client (server_url is required)
-client = ExtraSuiteClient(
-    server_url="https://your-extrasuite-server.example.com"
-)
+from extrasuite.client import authenticate
 
 # Get a token - opens browser for authentication if needed
-token = client.get_token()
+token = authenticate()
 
 # Use the token with Google APIs
 import gspread
 from google.oauth2.credentials import Credentials
 
-creds = Credentials(token)
+creds = Credentials(token.access_token)
 gc = gspread.authorize(creds)
 sheet = gc.open("My Spreadsheet").sheet1
 ```
@@ -79,42 +86,37 @@ sheet = gc.open("My Spreadsheet").sheet1
 
 ```
 extrasuite/
-├── extrasuite-client/             # Python client library (PyPI)
-│   ├── src/extrasuite_client/
+├── client/                       # Python client library (PyPI: extrasuite)
+│   ├── src/extrasuite/client/
 │   │   ├── __init__.py
-│   │   └── gateway.py             # ExtraSuiteClient class
-│   └── examples/
-│       └── basic_usage.py
+│   │   ├── __main__.py           # CLI: login/logout commands
+│   │   └── credentials.py        # CredentialsManager class
+│   └── pyproject.toml
 │
-├── extrasuite-server/             # FastAPI server (Cloud Run)
-│   ├── extrasuite_server/
+├── server/                       # FastAPI server (Cloud Run)
+│   ├── src/extrasuite/server/
 │   │   ├── main.py               # FastAPI app entry point
 │   │   ├── config.py             # Pydantic settings
 │   │   ├── database.py           # Async Firestore storage
-│   │   ├── google_auth.py        # OAuth callback handler
-│   │   ├── token_exchange.py     # Token exchange API
-│   │   └── service_account.py    # SA creation/impersonation
+│   │   ├── api.py                # OAuth callback handler
+│   │   └── token_generator.py    # SA creation/impersonation
 │   └── Dockerfile
 │
-├── docs/                          # Documentation
-│   ├── deployment.md             # Cloud Run deployment guide
-│   └── iam-permissions.md        # Required IAM permissions
-│
-└── LICENSE
+├── extrasheet/                   # Google Sheets to file converter
+├── extraslide/                   # Google Slides to file converter
+└── website/                      # MkDocs documentation
 ```
 
 ## Deploying the Server
 
-See [docs/deployment.md](docs/deployment.md) for Cloud Run deployment instructions.
+See the [deployment documentation](https://extrasuite.think41.com/deployment/) for Cloud Run deployment instructions.
 
 ### Prerequisites
 
 1. Google Cloud Project with billing enabled
 2. OAuth 2.0 credentials (Web application type)
 3. Firestore database for credential storage
-4. Required IAM permissions (see [docs/iam-permissions.md](docs/iam-permissions.md))
-
-**Note:** End users do not need any GCP project access or IAM roles. See [End-User Permissions](docs/iam-permissions.md#end-user-permissions-important) for details.
+4. Required IAM permissions
 
 ### Quick Deploy
 
@@ -134,15 +136,23 @@ gcloud run deploy extrasuite-server \
 ### Server Development
 
 ```bash
-cd extrasuite-server
+cd server
 uv sync
-uv run uvicorn extrasuite_server.main:app --reload --port 8001
+uv run uvicorn extrasuite.server.main:app --reload --port 8001
+```
+
+### Client Development
+
+```bash
+cd client
+uv sync
+uv run pytest tests/ -v
 ```
 
 ### Run Tests
 
 ```bash
-cd extrasuite-server
+cd server
 uv run pytest tests/ -v
 uv run ruff check .
 ```
@@ -152,31 +162,16 @@ uv run ruff check .
 | Method | Endpoint | Description |
 |--------|----------|-------------|
 | GET | `/api/token/auth?port=<port>` | Start OAuth flow for CLI |
+| POST | `/api/token/exchange` | Exchange auth code for token |
 | GET | `/api/auth/callback` | OAuth callback handler |
 | GET | `/api/health` | Health check |
-| GET | `/api/health/ready` | Readiness check |
-
-## Environment Variables
-
-### Server
-
-| Variable | Required | Default | Description |
-|----------|----------|---------|-------------|
-| `GOOGLE_CLIENT_ID` | Yes | - | OAuth 2.0 client ID |
-| `GOOGLE_CLIENT_SECRET` | Yes | - | OAuth 2.0 client secret |
-| `GOOGLE_CLOUD_PROJECT` | Yes | - | GCP project for service accounts |
-| `SECRET_KEY` | Yes | - | Key for signing state tokens |
-| `SERVER_URL` | No | `http://localhost:8001` | Base URL for server (OAuth redirect URI computed from this) |
-| `FIRESTORE_DATABASE` | No | `(default)` | Firestore database name |
-| `ALLOWED_EMAIL_DOMAINS` | No | - | Comma-separated list of allowed email domains |
-| `ENVIRONMENT` | No | `development` | `development` or `production` |
 
 ## Security
 
 - **Short-lived tokens**: Service account tokens expire after 1 hour
 - **Localhost redirects only**: CLI callbacks restricted to localhost
 - **OAuth state tokens**: CSRF protection with time-limited state (10 min)
-- **Server-side credential storage**: Refresh tokens stored securely in Firestore
+- **Secure token storage**: Tokens stored in OS keyring (macOS Keychain, Windows Credential Locker, Linux Secret Service)
 - **No private keys**: Service account keys are never downloaded
 
 ## License

@@ -5,7 +5,7 @@ from datetime import UTC, datetime, timedelta
 import pytest
 from google.auth.exceptions import RefreshError
 
-from extrasuite_server.token_generator import (
+from extrasuite.server.token_generator import (
     GeneratedToken,
     ImpersonationError,
     ServiceAccountCreationError,
