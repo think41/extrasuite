@@ -13,6 +13,19 @@ The extrasheet format provides all information needed for "fly-blind" editing:
 
 ---
 
+## Special Directories
+
+The pulled folder contains two special directories that should be handled carefully:
+
+| Directory | Purpose | Action |
+|-----------|---------|--------|
+| `.pristine/` | Contains a zip of the original pulled state. Used internally by `diff` and `push` commands. | **Ignore completely.** Never read, modify, or delete. |
+| `.raw/` | Contains raw JSON responses from the Google Sheets API (`metadata.json`, `data.json`). Useful for debugging. | **Read-only reference.** Do not modify. |
+
+Only read and modify the main files (`spreadsheet.json`, `data.tsv`, `formula.json`, etc.) in the sheet folders.
+
+---
+
 ## Essential IDs Reference
 
 Every update operation requires the correct ID. Extract these from the output files:
