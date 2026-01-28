@@ -1,198 +1,140 @@
 # extraslide
 
-A Python library that simplifies editing Google Slides through SML (Slide Markup Language) - an XML-based markup optimized for programmatic and LLM-driven slide editing.
+A Python library that converts Google Slides to/from SML (Slide Markup Language) - an XML-based format optimized for AI agent editing.
 
-## Core Concept
+## Overview
 
-Instead of working with complex Google Slides API requests, extraslide lets you:
+extraslide enables AI agents (Claude Code, Codex, etc.) to read and edit Google Slides through a simple workflow:
 
-1. Pull a presentation as SML to a file
-2. Modify the SML (programmatically, with an LLM, or in an editor)
-3. Diff and apply changes - the library handles the API calls
+1. **Pull** - Download a presentation as an editable SML file
+2. **Edit** - Agent modifies the SML based on user instructions
+3. **Diff** - Preview changes before applying (dry run)
+4. **Push** - Apply changes to Google Slides
 
-```python
-from extraslide import SlidesClient
+The library handles all the complexity of the Google Slides API - agents just edit XML.
 
-client = SlidesClient(gateway_url="https://your-gateway.example.com")
-url = "https://docs.google.com/presentation/d/your-presentation-id/edit"
+## Installation
 
-# Pull presentation to file
-client.pull(url, "presentation.sml")
-
-# Edit the file (manually, programmatically, or with an LLM)...
-
-# Preview changes (dry run)
-requests = client.diff("presentation.sml", "presentation_edited.sml")
-for req in requests:
-    print(req)
-
-# Apply changes to Google Slides
-client.apply(url, "presentation.sml", "presentation_edited.sml")
+```bash
+pip install extraslide
+# or
+uvx extraslide --help
 ```
 
-## Why SML?
+## Authentication
 
-Google Slides API operations are complex. SML provides:
+extraslide uses [extrasuite](https://github.com/think41/extrasuite) for authentication. Each user gets a dedicated service account:
 
-- **Compact representation**: All slide content in readable XML
-- **LLM-friendly**: Language models efficiently edit XML markup
-- **Diff-based updates**: Only changed elements are updated
-- **Complete coverage**: Supports all major Google Slides element types
+```bash
+# One-time login (opens browser)
+uvx extrasuite login
 
-## API Reference
-
-### SlidesClient
-
-```python
-from extraslide import SlidesClient
-
-client = SlidesClient(gateway_url="https://your-gateway.example.com")
+# Share your Google Slides file with the service account email shown after login
 ```
 
-### File-based API (Primary)
+## The Pull-Edit-Diff-Push Workflow
 
-#### `pull(url, path)`
+### Step 1: Pull
 
-Fetches a Google Slides presentation and saves it as SML to a file.
+Download a presentation to a local folder:
 
-```python
-client.pull("https://docs.google.com/presentation/d/ID/edit", "presentation.sml")
+```bash
+uvx extraslide pull "https://docs.google.com/presentation/d/1abc.../edit"
 ```
 
-#### `diff(original_path, edited_path) -> list`
+This creates a folder structure:
 
-Dry-run that returns the batchUpdate requests that would be generated without applying them.
-
-```python
-requests = client.diff("presentation.sml", "presentation_edited.sml")
-for req in requests:
-    print(f"{req['type']}: {req}")
+```
+1abc.../
+  presentation.sml        # The editable SML file
+  presentation.json       # Metadata (title, ID)
+  .pristine/
+    presentation.zip      # Original state for diff comparison
+  .raw/
+    presentation.json     # Raw API response (for debugging)
 ```
 
-#### `apply(url, original_path, edited_path) -> dict`
+### Step 2: Edit
 
-Applies changes to the presentation and returns the API response.
-
-```python
-result = client.apply(url, "presentation.sml", "presentation_edited.sml")
-```
-
-### String-based API
-
-For programmatic use, string-based variants are available with the `_s` suffix:
-
-#### `pull_s(url) -> str`
-
-Fetches a presentation and returns it as an SML string.
-
-```python
-sml = client.pull_s("https://docs.google.com/presentation/d/ID/edit")
-```
-
-#### `diff_s(original_sml, edited_sml) -> list`
-
-Diffs two SML strings and returns the batchUpdate requests.
-
-```python
-requests = client.diff_s(original_sml, edited_sml)
-```
-
-#### `apply_s(url, original_sml, edited_sml) -> dict`
-
-Applies SML string changes to the presentation.
-
-```python
-result = client.apply_s(url, original_sml, edited_sml)
-```
-
-## SML Structure
-
-SML uses an HTML-inspired syntax with Tailwind-style utility classes:
+The agent edits `presentation.sml` based on user instructions. SML uses an HTML-like syntax that's easy for LLMs to understand and modify:
 
 ```xml
-<Presentation id="abc123" title="My Presentation" w="720pt" h="405pt">
-
-  <Images>
-    <Img id="img1" url="https://example.com/image.png"/>
-  </Images>
-
-  <Masters>
-    <Master id="m1" name="Simple Light">
-      <!-- Master slide elements -->
-    </Master>
-  </Masters>
-
-  <Layouts>
-    <Layout id="l1" master="m1" name="Title Slide">
-      <!-- Layout template elements -->
-    </Layout>
-  </Layouts>
-
+<Presentation id="1abc..." title="Q3 Report" w="720pt" h="405pt">
   <Slides>
-    <Slide id="s1" layout="l1" master="m1">
-      <TextBox id="title1" class="x-100 y-50 w-500 h-80">
+    <Slide id="s1" layout="TITLE">
+      <TextBox id="title" class="x-100 y-50 w-500 h-80">
         <P class="text-align-center">
-          <T class="text-size-36 font-weight-bold text-color-#333333">
-            Slide Title
-          </T>
+          <T class="text-size-36 font-weight-bold">Quarterly Report</T>
         </P>
       </TextBox>
-
-      <Rect id="shape1" class="x-100 y-200 w-300 h-150 fill-#4285f4 stroke-#000000 stroke-w-1"/>
-
-      <Image id="img1" src="img1" class="x-450 y-200 w-200 h-150"/>
-    </Slide>
-
-    <Slide id="s2" layout="l1" master="m1">
-      <!-- Second slide -->
     </Slide>
   </Slides>
-
 </Presentation>
 ```
 
-### Supported Elements
+Common edits:
+- Change text content inside `<T>` tags
+- Modify styles via CSS-like classes (`text-size-24`, `fill-#4285f4`)
+- Add/remove slides or elements
+- Reposition elements (`x-100 y-200 w-300 h-150`)
+
+### Step 3: Diff (Preview)
+
+See what changes will be applied without modifying the original:
+
+```bash
+uvx extraslide diff 1abc.../
+```
+
+This compares `presentation.sml` against the `.pristine/` copy and outputs the Google Slides API requests that would be generated. No API calls are made.
+
+### Step 4: Push
+
+Apply the changes to Google Slides:
+
+```bash
+uvx extraslide push 1abc.../
+```
+
+The library sends a `batchUpdate` request to the Google Slides API. All edits appear in Google Drive version history with proper attribution.
+
+## SML Format
+
+SML represents slides as XML with Tailwind-style utility classes for styling.
+
+### Document Structure
+
+```xml
+<Presentation id="..." title="..." w="720pt" h="405pt">
+  <Images>
+    <Img id="img1" url="https://..."/>
+  </Images>
+
+  <Masters>...</Masters>
+  <Layouts>...</Layouts>
+
+  <Slides>
+    <Slide id="s1" layout="TITLE" master="m1">
+      <!-- Slide content -->
+    </Slide>
+  </Slides>
+</Presentation>
+```
+
+### Elements
 
 | Element | Description |
 |---------|-------------|
 | `<TextBox>` | Text container with paragraphs |
-| `<Rect>`, `<RoundRect>`, `<Ellipse>` | Basic shapes |
-| `<Triangle>`, `<Diamond>`, `<Pentagon>`, `<Hexagon>` | Polygons |
-| `<Star5>`, `<Heart>`, `<Cloud>` | Special shapes |
-| `<Image>` | Images (references `<Img>` in `<Images>`) |
+| `<Rect>`, `<Ellipse>`, `<RoundRect>` | Basic shapes |
 | `<Line>` | Lines and connectors |
-| `<Table>` | Tables with rows and cells |
-| `<Video>` | Embedded videos |
-| `<WordArt>` | Styled text art |
-| `<SheetsChart>` | Embedded Google Sheets charts |
+| `<Image>` | Images (references `<Img>` in `<Images>`) |
+| `<Table>` | Tables with `<Row>` and `<Cell>` |
 | `<Group>` | Grouped elements |
+| `<Video>` | Embedded videos |
+| `<SheetsChart>` | Linked Google Sheets charts |
 
-### Tailwind-Style Classes
-
-All styling uses utility classes:
-
-```xml
-<!-- Position and size (in points) -->
-<Rect class="x-100 y-200 w-300 h-150"/>
-
-<!-- Fill colors (with optional opacity) -->
-<Rect class="fill-#4285f4"/>
-<Rect class="fill-#4285f4/80"/>  <!-- 80% opacity -->
-
-<!-- Strokes -->
-<Rect class="stroke-#d1d5db stroke-w-2"/>
-
-<!-- Text styling -->
-<T class="text-size-24 text-color-#333333 font-family-roboto font-weight-bold"/>
-
-<!-- Paragraph alignment -->
-<P class="text-align-center"/>
-
-<!-- Content alignment within shapes -->
-<TextBox class="content-middle"/>
-```
-
-### Text Content Model
+### Text Content
 
 Text uses a paragraph (`<P>`) and text run (`<T>`) structure:
 
@@ -200,138 +142,100 @@ Text uses a paragraph (`<P>`) and text run (`<T>`) structure:
 <TextBox id="tb1" class="x-50 y-100 w-400 h-200">
   <P class="text-align-left">
     <T class="text-size-18">Regular text </T>
-    <T class="text-size-18 font-weight-bold">bold text </T>
-    <T class="text-size-18 font-style-italic">italic text</T>
+    <T class="text-size-18 font-weight-bold">bold text</T>
   </P>
-  <P class="text-align-left">
+  <P>
     <T class="text-size-14">Second paragraph</T>
   </P>
 </TextBox>
 ```
 
-## Examples
+### Styling Classes
 
-### Example 1: Text Replacement
-
-```python
-from extraslide import SlidesClient
-
-client = SlidesClient(gateway_url="https://gateway.example.com")
-url = "https://docs.google.com/presentation/d/ID/edit"
-
-# Pull to file
-client.pull(url, "presentation.sml")
-
-# Read, modify, and write back
-from pathlib import Path
-sml = Path("presentation.sml").read_text()
-modified = sml.replace("{{company_name}}", "Acme Corp")
-modified = modified.replace("{{date}}", "2024-01-15")
-Path("presentation_edited.sml").write_text(modified)
-
-# Apply changes
-client.apply(url, "presentation.sml", "presentation_edited.sml")
+Position and size (in points):
+```xml
+<Rect class="x-100 y-200 w-300 h-150"/>
 ```
 
-### Example 2: Using an LLM to Edit Slides
-
-```python
-from extraslide import SlidesClient
-
-client = SlidesClient(gateway_url="https://gateway.example.com")
-url = "https://docs.google.com/presentation/d/ID/edit"
-
-# Pull presentation
-client.pull(url, "presentation.sml")
-
-# Read SML for LLM editing
-from pathlib import Path
-original = Path("presentation.sml").read_text()
-
-# Send SML to an LLM for editing
-prompt = f"""Edit this presentation SML to:
-1. Change the title to "Q4 Results"
-2. Update the subtitle to "Financial Overview"
-
-{original}
-
-Return only the modified SML."""
-
-modified = llm.generate(prompt)
-Path("presentation_edited.sml").write_text(modified)
-
-# Preview before applying
-requests = client.diff("presentation.sml", "presentation_edited.sml")
-print(f"Will apply {len(requests)} changes")
-
-# Apply changes
-client.apply(url, "presentation.sml", "presentation_edited.sml")
+Fill colors (with optional opacity):
+```xml
+<Rect class="fill-#4285f4"/>
+<Rect class="fill-#4285f4/80"/>  <!-- 80% opacity -->
 ```
 
-### Example 3: Preview Changes (Dry Run)
-
-```python
-from extraslide import SlidesClient
-
-client = SlidesClient(gateway_url="https://gateway.example.com")
-url = "https://docs.google.com/presentation/d/ID/edit"
-
-# Pull and edit
-client.pull(url, "presentation.sml")
-
-from pathlib import Path
-sml = Path("presentation.sml").read_text()
-modified = sml.replace("Draft", "Final")
-Path("presentation_edited.sml").write_text(modified)
-
-# See what would change without applying
-requests = client.diff("presentation.sml", "presentation_edited.sml")
-for req in requests:
-    print(f"  {req}")
-
-# Apply if satisfied
-if input("Apply changes? (y/n): ").lower() == "y":
-    client.apply(url, "presentation.sml", "presentation_edited.sml")
+Strokes:
+```xml
+<Rect class="stroke-#000000 stroke-w-2"/>
 ```
 
-## Important: Single-Transaction Model
-
-After applying changes, always re-pull the SML before making more edits:
-
-```python
-# First edit
-client.pull(url, "original.sml")
-# ... edit to edited.sml ...
-client.apply(url, "original.sml", "edited.sml")
-
-# For next edit, re-pull (SML is now stale)
-client.pull(url, "original.sml")  # Required!
-# ... edit to edited.sml ...
-client.apply(url, "original.sml", "edited.sml")
+Text styling:
+```xml
+<T class="text-size-24 text-color-#333333 font-weight-bold font-style-italic"/>
 ```
 
-## Installation
+## CLI Reference
 
 ```bash
-pip install extraslide
+# Pull a presentation
+uvx extraslide pull <url_or_id> [output_dir]
+uvx extraslide pull "https://docs.google.com/presentation/d/1abc.../edit"
+uvx extraslide pull "https://docs.google.com/presentation/d/1abc.../edit" ./my-folder
+
+# Preview changes (dry run)
+uvx extraslide diff <folder>
+uvx extraslide diff ./1abc.../
+
+# Apply changes
+uvx extraslide push <folder>
+uvx extraslide push ./1abc.../
 ```
 
-## Requirements
+Also works as a Python module:
+```bash
+python -m extraslide pull ...
+python -m extraslide diff ...
+python -m extraslide push ...
+```
 
-- Python 3.9+
-- A gateway service for Google API authentication
+## Important Notes
+
+### Re-pull After Push
+
+After pushing changes, the local SML becomes stale. Always re-pull before making more edits:
+
+```bash
+uvx extraslide push ./1abc.../
+uvx extraslide pull "https://docs.google.com/presentation/d/1abc.../edit"  # Re-pull!
+# Now safe to edit again
+```
+
+### What Can Be Edited
+
+- ✅ Text content and styling
+- ✅ Shape properties (fill, stroke, position, size)
+- ✅ Add/delete slides
+- ✅ Add/delete elements
+- ✅ Tables (content and basic styling)
+- ⚠️ Images (can reference existing, limited creation support)
+- ⚠️ Charts (read-only, linked to source spreadsheet)
+
+### Masters and Layouts
+
+SML includes `<Masters>` and `<Layouts>` sections for reference, but editing them is not fully supported. Focus edits on the `<Slides>` section.
 
 ## Documentation
 
-- **[SML Syntax](./docs/markup-syntax-design.md)** - Complete SML specification
-- **[Reconciliation](./docs/sml-reconcilliation-spec.md)** - How diffs are computed and applied
-- **[Google Slides API](./docs/googleslides/index.md)** - Underlying API reference
+- [SML Syntax Specification](./docs/markup-syntax-design.md)
+- [Diff/Push Reconciliation](./docs/sml-reconciliation-spec.md)
+
+## Requirements
+
+- Python 3.10+
+- Google Slides file shared with your service account
 
 ## Project Status
 
-Under Development
-
-This library is functional but still evolving. The API may change.
+**Alpha** - The library is functional but still evolving. SML format and CLI may change.
 
 ## License
 
