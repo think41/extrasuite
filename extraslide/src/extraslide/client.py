@@ -1,351 +1,246 @@
-"""Google Slides client with SML abstraction.
+"""SlidesClient - Main API for extraslide.
 
-Minimal API for the SML workflow:
-1. pull() - Fetch presentation as SML and save to file
-2. diff() - Dry-run to see what changes would be applied
-3. apply() - Apply SML changes to the presentation
-
-String-based variants (_s suffix) are also available for programmatic use.
+Provides the `pull`, `diff`, and `push` methods for the folder-based workflow.
 """
 
 from __future__ import annotations
 
 import json
-import re
-import ssl
-import urllib.error
-import urllib.request
+import zipfile
 from pathlib import Path
 from typing import Any
 
-from extraslide.credentials import CredentialsManager
 from extraslide.diff import diff_sml
 from extraslide.generator import json_to_sml
 from extraslide.parser import parse_sml
 from extraslide.requests import generate_requests
+from extraslide.transport import (
+    APIError,
+    AuthenticationError,
+    NotFoundError,
+    Transport,
+    TransportError,
+)
 
-try:
-    import certifi
+# Re-export exceptions for backwards compatibility
+__all__ = [
+    "APIError",
+    "AuthenticationError",
+    "NotFoundError",
+    "SlidesClient",
+    "TransportError",
+]
 
-    SSL_CONTEXT = ssl.create_default_context(cafile=certifi.where())
-except ImportError:
-    SSL_CONTEXT = ssl.create_default_context()
+# Metadata filename
+METADATA_FILE = "presentation.json"
+SML_FILE = "presentation.sml"
+RAW_DIR = ".raw"
+PRISTINE_DIR = ".pristine"
+PRISTINE_ZIP = "presentation.zip"
 
 
 class SlidesClient:
-    """Client for interacting with Google Slides via SML.
+    """Client for transforming Google Slides to/from SML representation.
 
-    Example (default authentication - recommended):
-        client = SlidesClient()
-        url = "https://docs.google.com/presentation/d/abc123/edit"
+    This client uses a folder-based workflow:
+    1. pull() - Fetch presentation and save as SML in a folder
+    2. diff() - Compare current SML against pristine copy
+    3. push() - Apply changes to Google Slides
 
-        # Pull presentation to file
-        client.pull(url, "presentation.sml")
-
-        # Edit the file externally or programmatically...
-
-        # Preview changes (dry run)
-        requests = client.diff("presentation.sml", "presentation_edited.sml")
-        for req in requests:
-            print(req)
-
-        # Apply changes
-        client.apply(url, "presentation.sml", "presentation_edited.sml")
-
-    Example (with explicit access token):
-        client = SlidesClient(access_token="ya29...")
-        sml = client.pull_s("https://docs.google.com/presentation/d/abc123/edit")
+    Example:
+        >>> from extraslide.transport import GoogleSlidesTransport
+        >>> transport = GoogleSlidesTransport(access_token="ya29...")
+        >>> client = SlidesClient(transport)
+        >>> await client.pull("1abc...", "./output")
+        >>> # Edit ./output/1abc.../presentation.sml
+        >>> changes = client.diff(Path("./output/1abc..."))
+        >>> await client.push(Path("./output/1abc..."))
     """
 
-    def __init__(
-        self,
-        access_token: str | None = None,
-    ) -> None:
+    def __init__(self, transport: Transport) -> None:
         """Initialize the client.
 
         Args:
-            access_token: OAuth2 access token with slides scope.
-                If provided, this token is used directly without any credential management.
-
-        Note:
-            If access_token is not provided, authentication is handled automatically
-            via environment variables, gateway.json, or the ExtraSuite OAuth flow.
+            transport: Transport implementation for fetching/updating presentations
         """
-        self._access_token = access_token
-        self._credentials_manager: CredentialsManager | None = None
+        self._transport = transport
 
-    def _get_token(self) -> str:
-        """Get a valid access token.
+    async def pull(
+        self,
+        presentation_id: str,
+        output_path: str | Path,
+        *,
+        save_raw: bool = True,
+    ) -> list[Path]:
+        """Pull a presentation and write to folder structure.
 
-        Returns the configured token, or obtains one from the CredentialsManager.
-        """
-        if self._access_token:
-            return self._access_token
-
-        if self._credentials_manager is None:
-            self._credentials_manager = CredentialsManager()
-
-        return self._credentials_manager.get_token().access_token
-
-    # -------------------------------------------------------------------------
-    # File-based API (primary interface)
-    # -------------------------------------------------------------------------
-
-    def pull(self, url: str, path: str | Path) -> None:
-        """Fetch a presentation and save it as SML to a file.
+        Creates a folder with:
+        - presentation.sml: The editable SML file
+        - presentation.json: Metadata (title, presentation ID)
+        - .raw/presentation.json: Raw API response (optional)
+        - .pristine/presentation.zip: Original state for diff comparison
 
         Args:
-            url: Google Slides URL (e.g., https://docs.google.com/presentation/d/ID/edit)
-            path: File path to save the SML.
-
-        Raises:
-            ValueError: If URL format is invalid.
-            urllib.error.HTTPError: If API request fails.
-        """
-        sml = self.pull_s(url)
-        Path(path).write_text(sml, encoding="utf-8")
-
-    def diff(
-        self, original_path: str | Path, edited_path: str | Path
-    ) -> list[dict[str, Any]]:
-        """Preview changes between two SML files (dry run).
-
-        Diffs the original and edited SML files and returns the batchUpdate
-        requests that would be sent to the API.
-
-        Args:
-            original_path: Path to the original SML file.
-            edited_path: Path to the edited SML file.
+            presentation_id: The ID of the presentation (from the URL)
+            output_path: Directory to write files to
+            save_raw: If True, saves raw API response to .raw/ folder (default: True)
 
         Returns:
-            List of Google Slides API request objects.
+            List of paths to written files
+
+        Example:
+            >>> files = await client.pull("1abc...", "./output")
+            >>> print(f"Wrote {len(files)} files")
         """
-        original_sml = Path(original_path).read_text(encoding="utf-8")
-        edited_sml = Path(edited_path).read_text(encoding="utf-8")
-        return self.diff_s(original_sml, edited_sml)
+        # Fetch presentation data
+        presentation_data = await self._transport.get_presentation(presentation_id)
 
-    def apply(
-        self, url: str, original_path: str | Path, edited_path: str | Path
-    ) -> dict[str, Any]:
-        """Apply SML changes from files to the presentation.
+        # Create output directory
+        output_path = Path(output_path)
+        presentation_dir = output_path / presentation_id
+        presentation_dir.mkdir(parents=True, exist_ok=True)
 
-        Diffs the original and edited SML files, generates batchUpdate requests,
-        and sends them to the Google Slides API.
+        written_files: list[Path] = []
+
+        # Generate SML
+        sml_content = json_to_sml(presentation_data.data)
+        sml_path = presentation_dir / SML_FILE
+        sml_path.write_text(sml_content, encoding="utf-8")
+        written_files.append(sml_path)
+
+        # Write metadata
+        metadata = {
+            "presentationId": presentation_data.presentation_id,
+            "title": presentation_data.data.get("title", ""),
+        }
+        metadata_path = presentation_dir / METADATA_FILE
+        metadata_path.write_text(
+            json.dumps(metadata, indent=2, ensure_ascii=False), encoding="utf-8"
+        )
+        written_files.append(metadata_path)
+
+        # Save raw API response
+        if save_raw:
+            raw_dir = presentation_dir / RAW_DIR
+            raw_dir.mkdir(parents=True, exist_ok=True)
+            raw_path = raw_dir / "presentation.json"
+            raw_path.write_text(
+                json.dumps(presentation_data.data, indent=2, ensure_ascii=False),
+                encoding="utf-8",
+            )
+            written_files.append(raw_path)
+
+        # Create pristine copy for diff/push workflow
+        pristine_path = self._create_pristine_copy(presentation_dir, written_files)
+        written_files.append(pristine_path)
+
+        return written_files
+
+    def diff(self, folder_path: Path) -> list[dict[str, Any]]:
+        """Compare current SML against pristine copy and generate update requests.
+
+        This is a local-only operation that does not call any APIs.
 
         Args:
-            url: Google Slides URL.
-            original_path: Path to the original SML file.
-            edited_path: Path to the edited SML file.
+            folder_path: Path to the presentation folder
 
         Returns:
-            The API response from batchUpdate.
+            List of Google Slides API batchUpdate request objects
 
-        Raises:
-            ValueError: If no changes detected or URL is invalid.
-            urllib.error.HTTPError: If API request fails.
+        Example:
+            >>> changes = client.diff(Path("./output/1abc..."))
+            >>> print(f"Found {len(changes)} changes")
         """
-        original_sml = Path(original_path).read_text(encoding="utf-8")
-        edited_sml = Path(edited_path).read_text(encoding="utf-8")
-        return self.apply_s(url, original_sml, edited_sml)
+        folder_path = Path(folder_path)
 
-    # -------------------------------------------------------------------------
-    # String-based API (for programmatic use)
-    # -------------------------------------------------------------------------
+        # Read current SML
+        current_sml_path = folder_path / SML_FILE
+        if not current_sml_path.exists():
+            raise FileNotFoundError(f"SML file not found: {current_sml_path}")
+        current_sml = current_sml_path.read_text(encoding="utf-8")
 
-    def pull_s(self, url: str) -> str:
-        """Fetch a presentation and return it as SML string.
+        # Read pristine SML from zip
+        pristine_sml = self._read_pristine_sml(folder_path)
 
-        Args:
-            url: Google Slides URL (e.g., https://docs.google.com/presentation/d/ID/edit)
+        # Parse both
+        original = parse_sml(pristine_sml)
+        edited = parse_sml(current_sml)
 
-        Returns:
-            SML string representation of the presentation.
+        # Generate diff
+        diff_result = diff_sml(original, edited)
 
-        Raises:
-            ValueError: If URL format is invalid.
-            urllib.error.HTTPError: If API request fails.
-        """
-        presentation_json = self._fetch_json(url)
-        return json_to_sml(presentation_json)
+        # Generate API requests
+        return generate_requests(diff_result)
 
-    def diff_s(self, original_sml: str, edited_sml: str) -> list[dict[str, Any]]:
-        """Preview changes between two SML strings (dry run).
-
-        Diffs the original and edited SML and returns the batchUpdate
-        requests that would be sent to the API.
-
-        Args:
-            original_sml: The original SML string.
-            edited_sml: The edited SML string.
-
-        Returns:
-            List of Google Slides API request objects.
-        """
-        original = parse_sml(original_sml)
-        edited = parse_sml(edited_sml)
-        diff = diff_sml(original, edited)
-        return generate_requests(diff)
-
-    def apply_s(self, url: str, original_sml: str, edited_sml: str) -> dict[str, Any]:
+    async def push(self, folder_path: Path) -> dict[str, Any]:
         """Apply SML changes to the presentation.
 
-        Diffs the original and edited SML, generates batchUpdate requests,
-        and sends them to the Google Slides API.
+        Compares current SML against pristine copy, generates batchUpdate
+        requests, and sends them to the Google Slides API.
 
         Args:
-            url: Google Slides URL.
-            original_sml: The original SML string.
-            edited_sml: The edited SML string with changes.
+            folder_path: Path to the presentation folder
 
         Returns:
-            The API response from batchUpdate.
+            API response from batchUpdate
 
-        Raises:
-            ValueError: If no changes detected or URL is invalid.
-            urllib.error.HTTPError: If API request fails.
+        Example:
+            >>> response = await client.push(Path("./output/1abc..."))
+            >>> print(f"Applied {len(response.get('replies', []))} changes")
         """
-        requests = self.diff_s(original_sml, edited_sml)
+        folder_path = Path(folder_path)
+
+        # Get presentation ID from metadata
+        metadata_path = folder_path / METADATA_FILE
+        if not metadata_path.exists():
+            raise FileNotFoundError(f"Metadata file not found: {metadata_path}")
+
+        metadata = json.loads(metadata_path.read_text(encoding="utf-8"))
+        presentation_id = metadata.get("presentationId")
+        if not presentation_id:
+            raise ValueError("Presentation ID not found in metadata")
+
+        # Generate diff
+        requests = self.diff(folder_path)
 
         if not requests:
             return {"replies": [], "message": "No changes detected"}
 
-        presentation_id = self._extract_presentation_id(url)
-        return self._batch_update(presentation_id, requests)
+        # Send batch update
+        return await self._transport.batch_update(presentation_id, requests)
 
-    def thumbnail(
-        self, url: str, page_id: str, output_path: str | Path | None = None
-    ) -> dict[str, Any]:
-        """Get a thumbnail image for a specific slide.
+    def _create_pristine_copy(
+        self,
+        presentation_dir: Path,
+        written_files: list[Path],
+    ) -> Path:
+        """Create a pristine copy of the pulled files for diff/push workflow.
 
-        WARNING: This is an expensive operation that counts against API quotas.
-        Only use when you need to see how a slide actually looks, such as when
-        debugging formatting issues.
-
-        Args:
-            url: Google Slides URL.
-            page_id: The objectId of the slide/page (from SML id attribute).
-            output_path: Optional path to save the image. If not provided,
-                returns only the metadata without downloading.
-
-        Returns:
-            Dict containing:
-                - content_url: Temporary URL of the thumbnail (expires quickly)
-                - width: Thumbnail width in pixels
-                - height: Thumbnail height in pixels
-                - saved_to: Local path if output_path was provided
-
-        Raises:
-            urllib.error.HTTPError: If API request fails.
-
-        Example:
-            client = SlidesClient()
-            url = "https://docs.google.com/presentation/d/abc123/edit"
-
-            # Get metadata only
-            info = client.thumbnail(url, "g12345678")
-            print(f"Thumbnail: {info['width']}x{info['height']}")
-
-            # Download to file
-            info = client.thumbnail(url, "g12345678", "slide_preview.png")
-            print(f"Saved to: {info['saved_to']}")
+        Creates a .pristine/ directory containing a presentation.zip file
+        with all the pulled files (excluding .raw/). This zip is used by
+        diff/push to compare against the current state.
         """
-        presentation_id = self._extract_presentation_id(url)
-        token = self._get_token()
+        pristine_dir = presentation_dir / PRISTINE_DIR
+        pristine_dir.mkdir(parents=True, exist_ok=True)
 
-        api_url = (
-            f"https://slides.googleapis.com/v1/presentations/"
-            f"{presentation_id}/pages/{page_id}/thumbnail"
-        )
+        zip_path = pristine_dir / PRISTINE_ZIP
 
-        req = urllib.request.Request(
-            api_url,
-            headers={"Authorization": f"Bearer {token}"},
-            method="GET",
-        )
+        with zipfile.ZipFile(zip_path, "w", zipfile.ZIP_DEFLATED) as zf:
+            for file_path in written_files:
+                # Skip .raw/ files - not part of canonical representation
+                if RAW_DIR in file_path.parts:
+                    continue
+                # Store with path relative to presentation directory
+                arcname = file_path.relative_to(presentation_dir)
+                zf.write(file_path, arcname)
 
-        with urllib.request.urlopen(req, timeout=60, context=SSL_CONTEXT) as response:
-            data = json.loads(response.read().decode("utf-8"))
+        return zip_path
 
-        result: dict[str, Any] = {
-            "content_url": data.get("contentUrl"),
-            "width": data.get("width"),
-            "height": data.get("height"),
-        }
+    def _read_pristine_sml(self, folder_path: Path) -> str:
+        """Read the pristine SML from the zip file."""
+        zip_path = folder_path / PRISTINE_DIR / PRISTINE_ZIP
+        if not zip_path.exists():
+            raise FileNotFoundError(f"Pristine zip not found: {zip_path}")
 
-        # Download the image if output_path provided
-        if output_path and result["content_url"]:
-            img_req = urllib.request.Request(str(result["content_url"]))
-            with urllib.request.urlopen(
-                img_req, timeout=60, context=SSL_CONTEXT
-            ) as img_response:
-                img_data = img_response.read()
-
-            output_file = Path(output_path)
-            output_file.write_bytes(img_data)
-            result["saved_to"] = str(output_file.resolve())
-
-        return result
-
-    # -------------------------------------------------------------------------
-    # Private methods
-    # -------------------------------------------------------------------------
-
-    def _fetch_json(self, url: str) -> dict[str, Any]:
-        """Fetch the raw JSON representation of a presentation from the API."""
-        presentation_id = self._extract_presentation_id(url)
-        token = self._get_token()
-
-        api_url = f"https://slides.googleapis.com/v1/presentations/{presentation_id}"
-        req = urllib.request.Request(
-            api_url,
-            headers={"Authorization": f"Bearer {token}"},
-            method="GET",
-        )
-
-        with urllib.request.urlopen(req, timeout=60, context=SSL_CONTEXT) as response:
-            return dict(json.loads(response.read().decode("utf-8")))
-
-    def _batch_update(
-        self, presentation_id: str, requests: list[dict[str, Any]]
-    ) -> dict[str, Any]:
-        """Send batchUpdate request to the Google Slides API."""
-        token = self._get_token()
-
-        api_url = f"https://slides.googleapis.com/v1/presentations/{presentation_id}:batchUpdate"
-        body = json.dumps({"requests": requests}).encode("utf-8")
-
-        req = urllib.request.Request(
-            api_url,
-            data=body,
-            headers={
-                "Authorization": f"Bearer {token}",
-                "Content-Type": "application/json",
-            },
-            method="POST",
-        )
-
-        with urllib.request.urlopen(req, timeout=60, context=SSL_CONTEXT) as response:
-            return dict(json.loads(response.read().decode("utf-8")))
-
-    def _extract_presentation_id(self, url: str) -> str:
-        """Extract presentation ID from Google Slides URL.
-
-        Supports URLs like:
-        - https://docs.google.com/presentation/d/PRESENTATION_ID/edit
-        - https://docs.google.com/presentation/d/PRESENTATION_ID/edit#slide=id.xxx
-        - https://docs.google.com/presentation/d/PRESENTATION_ID/
-
-        Args:
-            url: Google Slides URL
-
-        Returns:
-            The presentation ID
-
-        Raises:
-            ValueError: If URL format is invalid
-        """
-        pattern = r"/presentation/d/([a-zA-Z0-9_-]+)"
-        match = re.search(pattern, url)
-        if not match:
-            raise ValueError(f"Invalid Google Slides URL: {url}")
-        return match.group(1)
+        with zipfile.ZipFile(zip_path, "r") as zf:
+            return zf.read(SML_FILE).decode("utf-8")

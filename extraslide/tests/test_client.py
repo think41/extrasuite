@@ -1,153 +1,197 @@
 """Tests for the SlidesClient API."""
 
+from pathlib import Path
+
 import pytest
 
-from extraslide.client import SlidesClient
+from extraslide import LocalFileTransport, SlidesClient
+from extraslide.diff import diff_sml
+from extraslide.parser import parse_sml
+from extraslide.requests import generate_requests
+
+GOLDEN_DIR = Path(__file__).parent / "golden"
 
 
-class TestExtractPresentationId:
-    """Test URL parsing."""
-
-    def test_extract_from_edit_url(self) -> None:
-        """Extract ID from /edit URL."""
-        client = SlidesClient(access_token="test_token")
-        url = "https://docs.google.com/presentation/d/abc123xyz/edit"
-        assert client._extract_presentation_id(url) == "abc123xyz"
-
-    def test_extract_from_edit_url_with_slide(self) -> None:
-        """Extract ID from /edit URL with slide fragment."""
-        client = SlidesClient(access_token="test_token")
-        url = "https://docs.google.com/presentation/d/abc123xyz/edit#slide=id.g123"
-        assert client._extract_presentation_id(url) == "abc123xyz"
-
-    def test_extract_from_trailing_slash(self) -> None:
-        """Extract ID from URL with trailing slash."""
-        client = SlidesClient(access_token="test_token")
-        url = "https://docs.google.com/presentation/d/abc123xyz/"
-        assert client._extract_presentation_id(url) == "abc123xyz"
-
-    def test_extract_with_hyphens_and_underscores(self) -> None:
-        """Extract ID containing hyphens and underscores."""
-        client = SlidesClient(access_token="test_token")
-        url = "https://docs.google.com/presentation/d/abc-123_xyz/edit"
-        assert client._extract_presentation_id(url) == "abc-123_xyz"
-
-    def test_invalid_url_raises(self) -> None:
-        """Invalid URL raises ValueError."""
-        client = SlidesClient(access_token="test_token")
-        with pytest.raises(ValueError, match="Invalid Google Slides URL"):
-            client._extract_presentation_id("https://example.com/not-a-slides-url")
+@pytest.fixture
+def transport() -> LocalFileTransport:
+    """Create a LocalFileTransport for testing."""
+    return LocalFileTransport(GOLDEN_DIR)
 
 
-class TestDiffS:
-    """Test diff_s (dry run) functionality."""
+@pytest.fixture
+def client(transport: LocalFileTransport) -> SlidesClient:
+    """Create a SlidesClient for testing."""
+    return SlidesClient(transport)
 
-    def test_diff_s_no_changes(self) -> None:
-        """diff_s with identical SML returns empty list."""
-        client = SlidesClient(access_token="test_token")
+
+class TestClientInitialization:
+    """Test client initialization."""
+
+    def test_client_with_transport(self, transport: LocalFileTransport) -> None:
+        """Client can be created with a transport."""
+        client = SlidesClient(transport)
+        assert client._transport is transport
+
+
+class TestDiff:
+    """Test diff functionality using SML strings directly.
+
+    These tests verify the underlying diff logic without needing
+    the full folder workflow.
+    """
+
+    def test_diff_no_changes(self) -> None:
+        """Identical SML returns empty request list."""
         sml = """<Presentation id="pres1">
-            <Slide id="slide1"/>
+            <Slides>
+                <Slide id="slide1"/>
+            </Slides>
         </Presentation>"""
 
-        requests = client.diff_s(sml, sml)
+        original = parse_sml(sml)
+        edited = parse_sml(sml)
+        diff_result = diff_sml(original, edited)
+        requests = generate_requests(diff_result)
+
         assert requests == []
 
-    def test_diff_s_add_shape(self) -> None:
-        """diff_s adding a shape returns createShape request."""
-        client = SlidesClient(access_token="test_token")
-
-        original = """<Presentation id="pres1">
-            <Slide id="slide1"/>
+    def test_diff_add_shape(self) -> None:
+        """Adding a shape returns createShape request."""
+        original_sml = """<Presentation id="pres1">
+            <Slides>
+                <Slide id="slide1"/>
+            </Slides>
         </Presentation>"""
 
-        edited = """<Presentation id="pres1">
-            <Slide id="slide1">
-                <Rect id="rect1" class="x-100 y-100 w-200 h-100"/>
-            </Slide>
+        edited_sml = """<Presentation id="pres1">
+            <Slides>
+                <Slide id="slide1">
+                    <Rect id="rect1" class="x-100 y-100 w-200 h-100"/>
+                </Slide>
+            </Slides>
         </Presentation>"""
 
-        requests = client.diff_s(original, edited)
+        original = parse_sml(original_sml)
+        edited = parse_sml(edited_sml)
+        diff_result = diff_sml(original, edited)
+        requests = generate_requests(diff_result)
 
         create_requests = [r for r in requests if "createShape" in r]
         assert len(create_requests) == 1
         assert create_requests[0]["createShape"]["objectId"] == "rect1"
 
-    def test_diff_s_delete_shape(self) -> None:
-        """diff_s deleting a shape returns deleteObject request."""
-        client = SlidesClient(access_token="test_token")
-
-        original = """<Presentation id="pres1">
-            <Slide id="slide1">
-                <Rect id="rect1" class="x-100 y-100 w-200 h-100"/>
-            </Slide>
+    def test_diff_delete_shape(self) -> None:
+        """Deleting a shape returns deleteObject request."""
+        original_sml = """<Presentation id="pres1">
+            <Slides>
+                <Slide id="slide1">
+                    <Rect id="rect1" class="x-100 y-100 w-200 h-100"/>
+                </Slide>
+            </Slides>
         </Presentation>"""
 
-        edited = """<Presentation id="pres1">
-            <Slide id="slide1"/>
+        edited_sml = """<Presentation id="pres1">
+            <Slides>
+                <Slide id="slide1"/>
+            </Slides>
         </Presentation>"""
 
-        requests = client.diff_s(original, edited)
+        original = parse_sml(original_sml)
+        edited = parse_sml(edited_sml)
+        diff_result = diff_sml(original, edited)
+        requests = generate_requests(diff_result)
 
         delete_requests = [r for r in requests if "deleteObject" in r]
         assert len(delete_requests) == 1
         assert delete_requests[0]["deleteObject"]["objectId"] == "rect1"
 
-    def test_diff_s_modify_fill(self) -> None:
-        """diff_s changing fill color returns updateShapeProperties."""
-        client = SlidesClient(access_token="test_token")
-
-        original = """<Presentation id="pres1">
-            <Slide id="slide1">
-                <Rect id="rect1" class="x-100 y-100 w-200 h-100 fill-#ffffff"/>
-            </Slide>
+    def test_diff_modify_fill(self) -> None:
+        """Changing fill color returns updateShapeProperties."""
+        original_sml = """<Presentation id="pres1">
+            <Slides>
+                <Slide id="slide1">
+                    <Rect id="rect1" class="x-100 y-100 w-200 h-100 fill-#ffffff"/>
+                </Slide>
+            </Slides>
         </Presentation>"""
 
-        edited = """<Presentation id="pres1">
-            <Slide id="slide1">
-                <Rect id="rect1" class="x-100 y-100 w-200 h-100 fill-#3b82f6"/>
-            </Slide>
+        edited_sml = """<Presentation id="pres1">
+            <Slides>
+                <Slide id="slide1">
+                    <Rect id="rect1" class="x-100 y-100 w-200 h-100 fill-#3b82f6"/>
+                </Slide>
+            </Slides>
         </Presentation>"""
 
-        requests = client.diff_s(original, edited)
+        original = parse_sml(original_sml)
+        edited = parse_sml(edited_sml)
+        diff_result = diff_sml(original, edited)
+        requests = generate_requests(diff_result)
 
         update_requests = [r for r in requests if "updateShapeProperties" in r]
         assert len(update_requests) >= 1
 
-    def test_diff_s_add_slide(self) -> None:
-        """diff_s adding a slide returns createSlide request."""
-        client = SlidesClient(access_token="test_token")
-
-        original = """<Presentation id="pres1">
-            <Slide id="slide1"/>
+    def test_diff_add_slide(self) -> None:
+        """Adding a slide returns createSlide request."""
+        original_sml = """<Presentation id="pres1">
+            <Slides>
+                <Slide id="slide1"/>
+            </Slides>
         </Presentation>"""
 
-        edited = """<Presentation id="pres1">
-            <Slide id="slide1"/>
-            <Slide id="slide2"/>
+        edited_sml = """<Presentation id="pres1">
+            <Slides>
+                <Slide id="slide1"/>
+                <Slide id="slide2"/>
+            </Slides>
         </Presentation>"""
 
-        requests = client.diff_s(original, edited)
+        original = parse_sml(original_sml)
+        edited = parse_sml(edited_sml)
+        diff_result = diff_sml(original, edited)
+        requests = generate_requests(diff_result)
 
         create_requests = [r for r in requests if "createSlide" in r]
         assert len(create_requests) == 1
         assert create_requests[0]["createSlide"]["objectId"] == "slide2"
 
 
-class TestClientInitialization:
-    """Test client initialization."""
+class TestFolderDiff:
+    """Test diff with the folder-based workflow."""
 
-    def test_access_token_stored(self) -> None:
-        """Access token is stored on client."""
-        client = SlidesClient(access_token="test_token_123")
-        assert client._access_token == "test_token_123"
+    async def test_diff_folder_no_changes(
+        self, client: SlidesClient, tmp_path: Path
+    ) -> None:
+        """Diff on unchanged folder returns empty list."""
+        await client.pull("simple_presentation", tmp_path)
+        pres_dir = tmp_path / "simple_presentation"
 
-    def test_credentials_manager_lazy_initialization(self) -> None:
-        """CredentialsManager is not initialized until accessed."""
-        client = SlidesClient(access_token="test_token")
-        assert client._credentials_manager is None
+        requests = client.diff(pres_dir)
 
-    def test_no_args_creates_client(self) -> None:
-        """Client can be created with no arguments (lazy initialization)."""
-        client = SlidesClient()
-        assert client._access_token is None
-        assert client._credentials_manager is None
+        assert requests == []
+
+    async def test_diff_folder_missing_sml_raises(
+        self, client: SlidesClient, tmp_path: Path
+    ) -> None:
+        """Diff raises FileNotFoundError if SML file is missing."""
+        await client.pull("simple_presentation", tmp_path)
+        pres_dir = tmp_path / "simple_presentation"
+
+        # Delete the SML file
+        (pres_dir / "presentation.sml").unlink()
+
+        with pytest.raises(FileNotFoundError, match="SML file not found"):
+            client.diff(pres_dir)
+
+    async def test_diff_folder_missing_pristine_raises(
+        self, client: SlidesClient, tmp_path: Path
+    ) -> None:
+        """Diff raises FileNotFoundError if pristine zip is missing."""
+        await client.pull("simple_presentation", tmp_path)
+        pres_dir = tmp_path / "simple_presentation"
+
+        # Delete the pristine zip
+        (pres_dir / ".pristine" / "presentation.zip").unlink()
+
+        with pytest.raises(FileNotFoundError, match="Pristine zip not found"):
+            client.diff(pres_dir)
