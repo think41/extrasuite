@@ -18,14 +18,27 @@ This document describes the current implementation's output format.
     ├── named_ranges.json          # Named ranges (if any exist)
     ├── developer_metadata.json    # Developer metadata (if any exist)
     ├── data_sources.json          # External data sources (if any exist)
-    └── <sheet_folder>/            # One folder per sheet
-        ├── data.tsv               # Cell values as tab-separated values
-        ├── formula.json           # Formulas (sparse representation)
-        ├── format.json            # Cell formatting
-        ├── feature.json           # Charts, pivots, filters, validation, etc.
-        ├── dimension.json         # Row/column sizing and groups
-        └── protection.json        # Protected ranges (if any exist)
+    ├── <sheet_folder>/            # One folder per sheet
+    │   ├── data.tsv               # Cell values as tab-separated values
+    │   ├── formula.json           # Formulas (sparse representation)
+    │   ├── format.json            # Cell formatting
+    │   ├── feature.json           # Charts, pivots, filters, validation, etc.
+    │   ├── dimension.json         # Row/column sizing and groups
+    │   └── protection.json        # Protected ranges (if any exist)
+    └── .pristine/
+        └── spreadsheet.zip        # Pristine copy for diff/push workflow
 ```
+
+### Pristine Copy
+
+The `.pristine/spreadsheet.zip` file contains an exact copy of all files as they were when pulled. This enables the diff/push workflow:
+
+1. **pull** - Creates files and stores pristine copy in `.pristine/spreadsheet.zip`
+2. **edit** - Agent modifies files in place
+3. **diff** - Compares current files against pristine copy to generate `batchUpdate` JSON
+4. **push** - Same as diff, but applies changes to Google Sheets API
+
+The zip contains all files with paths relative to the spreadsheet folder (e.g., `spreadsheet.json`, `Sheet1/data.tsv`). The `raw.json` file (if saved with `--save-raw`) is excluded from the pristine copy.
 
 ### Sheet Folder Naming
 

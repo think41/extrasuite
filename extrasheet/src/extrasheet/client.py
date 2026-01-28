@@ -10,6 +10,8 @@ import json
 import ssl
 import urllib.parse
 import urllib.request
+import zipfile
+from pathlib import Path
 from typing import TYPE_CHECKING, Any
 
 from extrasheet.credentials import CredentialsManager
@@ -17,8 +19,6 @@ from extrasheet.transformer import SpreadsheetTransformer
 from extrasheet.writer import FileWriter
 
 if TYPE_CHECKING:
-    from pathlib import Path
-
     from extrasheet.api_types import Spreadsheet
 
 
@@ -322,7 +322,49 @@ class SheetsClient:
             raw_path = writer.write_json(f"{spreadsheet_id}/raw.json", spreadsheet)
             written.append(raw_path)
 
+        # Create pristine copy for diff/push workflow
+        pristine_path = self._create_pristine_copy(output_path, spreadsheet_id, written)
+        written.append(pristine_path)
+
         return written
+
+    def _create_pristine_copy(
+        self,
+        output_path: str | Path,
+        spreadsheet_id: str,
+        written_files: list[Path],
+    ) -> Path:
+        """Create a pristine copy of the pulled files for diff/push workflow.
+
+        Creates a .pristine/ directory containing a spreadsheet.zip file
+        with all the pulled files. This zip is used by diff/push to compare
+        against the current state.
+
+        Args:
+            output_path: Base output directory
+            spreadsheet_id: The spreadsheet ID (used to find the output folder)
+            written_files: List of file paths that were written
+
+        Returns:
+            Path to the created spreadsheet.zip
+        """
+        output_path = Path(output_path)
+        spreadsheet_dir = output_path / spreadsheet_id
+        pristine_dir = spreadsheet_dir / ".pristine"
+        pristine_dir.mkdir(parents=True, exist_ok=True)
+
+        zip_path = pristine_dir / "spreadsheet.zip"
+
+        with zipfile.ZipFile(zip_path, "w", zipfile.ZIP_DEFLATED) as zf:
+            for file_path in written_files:
+                # Skip raw.json - it's not part of the canonical representation
+                if file_path.name == "raw.json":
+                    continue
+                # Store with path relative to spreadsheet directory
+                arcname = file_path.relative_to(spreadsheet_dir)
+                zf.write(file_path, arcname)
+
+        return zip_path
 
     def pull_to_dict(
         self,

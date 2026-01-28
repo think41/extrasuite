@@ -2,7 +2,7 @@
 CLI entry point for extrasheet.
 
 Usage:
-    python -m extrasheet download <spreadsheet_id_or_url> <output_dir>
+    python -m extrasheet pull <spreadsheet_id_or_url> [output_dir]
 """
 
 import argparse
@@ -26,10 +26,10 @@ def parse_spreadsheet_id(id_or_url: str) -> str:
     return id_or_url
 
 
-def cmd_download(args: argparse.Namespace) -> int:
-    """Download a spreadsheet to local files."""
+def cmd_pull(args: argparse.Namespace) -> int:
+    """Pull a spreadsheet to local files."""
     spreadsheet_id = parse_spreadsheet_id(args.spreadsheet)
-    output_path = Path(args.output)
+    output_path = Path(args.output) if args.output else Path()
 
     # Get token via CredentialsManager
     print("Authenticating...")
@@ -44,10 +44,10 @@ def cmd_download(args: argparse.Namespace) -> int:
     max_rows = None if args.no_limit else args.max_rows
     if max_rows:
         print(
-            f"Downloading spreadsheet: {spreadsheet_id} (limited to {max_rows} rows per sheet)"
+            f"Pulling spreadsheet: {spreadsheet_id} (limited to {max_rows} rows per sheet)"
         )
     else:
-        print(f"Downloading spreadsheet: {spreadsheet_id} (fetching all rows)")
+        print(f"Pulling spreadsheet: {spreadsheet_id} (fetching all rows)")
     client = SheetsClient(access_token=token_obj.access_token)
 
     try:
@@ -70,36 +70,38 @@ def main() -> int:
     )
     subparsers = parser.add_subparsers(dest="command", required=True)
 
-    # download subcommand
-    download_parser = subparsers.add_parser(
-        "download",
-        help="Download a spreadsheet to local files",
+    # pull subcommand
+    pull_parser = subparsers.add_parser(
+        "pull",
+        help="Pull a spreadsheet to local files",
     )
-    download_parser.add_argument(
+    pull_parser.add_argument(
         "spreadsheet",
         help="Spreadsheet ID or full Google Sheets URL",
     )
-    download_parser.add_argument(
+    pull_parser.add_argument(
         "output",
-        help="Output directory",
+        nargs="?",
+        default=None,
+        help="Output directory (defaults to ./<spreadsheet_id>/)",
     )
-    download_parser.add_argument(
+    pull_parser.add_argument(
         "--save-raw",
         action="store_true",
         help="Also save the raw API response",
     )
-    download_parser.add_argument(
+    pull_parser.add_argument(
         "--max-rows",
         type=int,
         default=100,
         help="Maximum number of rows to fetch per sheet (default: 100)",
     )
-    download_parser.add_argument(
+    pull_parser.add_argument(
         "--no-limit",
         action="store_true",
         help="Fetch all rows (may timeout on large spreadsheets)",
     )
-    download_parser.set_defaults(func=cmd_download)
+    pull_parser.set_defaults(func=cmd_pull)
 
     args = parser.parse_args()
     return args.func(args)

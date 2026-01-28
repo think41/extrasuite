@@ -39,21 +39,29 @@ client.pull("1BxiMVs0XRA5nFMdKvBdBZjgmUUqptlbs74OgvE2upms", "./output")
 # Files created:
 # ./output/1BxiMVs0XRA5nFMdKvBdBZjgmUUqptlbs74OgvE2upms/
 #   ├── spreadsheet.json     # Spreadsheet metadata
-#   └── Sheet1/
-#       ├── data.tsv         # Cell values
-#       ├── formula.json     # Cell formulas
-#       ├── format.json      # Cell formatting
-#       └── feature.json     # Charts, pivot tables, etc.
+#   ├── Sheet1/
+#   │   ├── data.tsv         # Cell values
+#   │   ├── formula.json     # Cell formulas
+#   │   ├── format.json      # Cell formatting
+#   │   └── feature.json     # Charts, pivot tables, etc.
+#   └── .pristine/
+#       └── spreadsheet.zip  # Pristine copy for diff/push
 ```
 
 ## CLI Usage
 
 ```bash
-# Download a spreadsheet to local files
-python -m extrasheet download <spreadsheet_id_or_url> <output_dir>
+# Pull a spreadsheet to local files (defaults to ./<spreadsheet_id>/)
+python -m extrasheet pull <spreadsheet_url_or_id> [output_dir]
 
 # Also save the raw API response
-python -m extrasheet download <spreadsheet_id_or_url> <output_dir> --save-raw
+python -m extrasheet pull <spreadsheet_url_or_id> [output_dir] --save-raw
+
+# Limit rows fetched per sheet (default: 100)
+python -m extrasheet pull <url> --max-rows 500
+
+# Fetch all rows (may timeout on large spreadsheets)
+python -m extrasheet pull <url> --no-limit
 ```
 
 ## Documentation

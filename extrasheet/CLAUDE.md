@@ -89,4 +89,4 @@ Golden files: Store raw Google Sheets API responses in `tests/golden/<spreadshee
 
 ## Current Status
 
-`pull` is implemented (currently as `download` command). `diff` and `push` do not exist yet - need to be implemented to complete the workflow. The `.pristine/` folder approach for tracking changes is not yet implemented.
+`pull` is fully implemented with `.pristine/` support. After pulling, a `.pristine/spreadsheet.zip` is created containing the original state. `diff` and `push` commands do not exist yet - they will compare against `.pristine/` to generate and apply changes.
