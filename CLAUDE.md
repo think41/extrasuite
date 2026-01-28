@@ -113,6 +113,34 @@ Tests verify the public API: `login`, `logout`, `pull`, `diff`, `push`.
 3. Verify the output looks correct
 4. Commit the raw responses as a new golden file
 
+## Releasing to PyPI
+
+Three packages are published to PyPI independently using tag-based releases with GitHub Actions and trusted publishing.
+
+| Package | PyPI Name | Tag Pattern | Workflow |
+|---------|-----------|-------------|----------|
+| client/ | `extrasuite` | `extrasuite-v*` | `publish-extrasuite.yml` |
+| extrasheet/ | `extrasheet` | `extrasheet-v*` | `publish-extrasheet.yml` |
+| extraslide/ | `extraslide` | `extraslide-v*` | `publish-extraslide.yml` |
+
+**Release process:**
+
+1. Update version in `<package>/pyproject.toml`
+2. Commit the version bump
+3. Create and push a tag matching the version:
+   ```bash
+   git tag extrasuite-v0.2.0 && git push origin extrasuite-v0.2.0
+   git tag extrasheet-v0.1.0 && git push origin extrasheet-v0.1.0
+   git tag extraslide-v0.1.0 && git push origin extraslide-v0.1.0
+   ```
+4. GitHub Actions will automatically build and publish to PyPI
+
+**Version validation:** The workflow aborts if the tag version doesn't match `pyproject.toml`. For example, tagging `extrasuite-v0.2.0` when `pyproject.toml` has `version = "0.1.0"` will fail.
+
+**Independent versioning:** Each package has its own version and release cycle. They don't need to be released together.
+
+**Trusted publishing:** Configured on PyPI to trust GitHub Actions. No API tokens needed - authentication uses OIDC with package-specific GitHub environments (`extrasuite`, `extrasheet`, `extraslide`).
+
 ## Skills
 
 Agent skills are markdown files (SKILL.md) that teach agents how to use extrasuite. Skills are distributed by the server from the `server/skills/` directory. See https://agentskills.io/home for the agent skills standard.
