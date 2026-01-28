@@ -1,7 +1,7 @@
 # Extrasheet On-Disk Format Specification
 
-Version: 2.0.0
-Last Updated: 2026-01-27
+Version: 2.1.0
+Last Updated: 2026-01-28
 
 ## Overview
 
@@ -25,9 +25,26 @@ This document describes the current implementation's output format.
     │   ├── feature.json           # Charts, pivots, filters, validation, etc.
     │   ├── dimension.json         # Row/column sizing and groups
     │   └── protection.json        # Protected ranges (if any exist)
+    ├── .raw/                      # Raw API responses (saved by default)
+    │   ├── metadata.json          # Metadata API response (no grid data)
+    │   └── data.json              # Data API response (with grid data)
     └── .pristine/
         └── spreadsheet.zip        # Pristine copy for diff/push workflow
 ```
+
+### Raw API Responses
+
+The `.raw/` folder contains the raw Google Sheets API responses, saved by default:
+
+- **metadata.json** - First API call response (spreadsheet metadata without grid data)
+- **data.json** - Second API call response (with grid data, limited by `--max-rows`)
+
+These files are useful for:
+- Debugging transformation issues
+- Creating golden files for testing
+- Understanding what data the API returned
+
+Use `--no-raw` to skip saving these files.
 
 ### Pristine Copy
 
@@ -38,7 +55,7 @@ The `.pristine/spreadsheet.zip` file contains an exact copy of all files as they
 3. **diff** - Compares current files against pristine copy to generate `batchUpdate` JSON
 4. **push** - Same as diff, but applies changes to Google Sheets API
 
-The zip contains all files with paths relative to the spreadsheet folder (e.g., `spreadsheet.json`, `Sheet1/data.tsv`). The `raw.json` file (if saved with `--save-raw`) is excluded from the pristine copy.
+The zip contains all files with paths relative to the spreadsheet folder (e.g., `spreadsheet.json`, `Sheet1/data.tsv`). The `.raw/` folder is excluded from the pristine copy since it's not part of the canonical representation.
 
 ### Sheet Folder Naming
 

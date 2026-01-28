@@ -28,13 +28,28 @@ uv add extrasheet
 ## Quick Start
 
 ```python
-from extrasheet import SheetsClient
+import asyncio
+from extrasheet import SheetsClient, GoogleSheetsTransport
 
-# Initialize client with access token
-client = SheetsClient(access_token="your_token")
+async def main():
+    # Create transport with access token
+    transport = GoogleSheetsTransport(access_token="your_token")
 
-# Pull spreadsheet to local files
-client.pull("1BxiMVs0XRA5nFMdKvBdBZjgmUUqptlbs74OgvE2upms", "./output")
+    # Initialize client with transport
+    client = SheetsClient(transport)
+
+    # Pull spreadsheet to local files
+    files = await client.pull(
+        "1BxiMVs0XRA5nFMdKvBdBZjgmUUqptlbs74OgvE2upms",
+        "./output",
+        max_rows=100,      # Default: 100 rows per sheet
+        save_raw=True,     # Default: saves raw API responses
+    )
+
+    # Clean up
+    await transport.close()
+
+asyncio.run(main())
 
 # Files created:
 # ./output/1BxiMVs0XRA5nFMdKvBdBZjgmUUqptlbs74OgvE2upms/
@@ -44,6 +59,9 @@ client.pull("1BxiMVs0XRA5nFMdKvBdBZjgmUUqptlbs74OgvE2upms", "./output")
 #   │   ├── formula.json     # Cell formulas
 #   │   ├── format.json      # Cell formatting
 #   │   └── feature.json     # Charts, pivot tables, etc.
+#   ├── .raw/
+#   │   ├── metadata.json    # Raw metadata API response
+#   │   └── data.json        # Raw data API response
 #   └── .pristine/
 #       └── spreadsheet.zip  # Pristine copy for diff/push
 ```
@@ -54,14 +72,63 @@ client.pull("1BxiMVs0XRA5nFMdKvBdBZjgmUUqptlbs74OgvE2upms", "./output")
 # Pull a spreadsheet to local files (defaults to ./<spreadsheet_id>/)
 python -m extrasheet pull <spreadsheet_url_or_id> [output_dir]
 
-# Also save the raw API response
-python -m extrasheet pull <spreadsheet_url_or_id> [output_dir] --save-raw
-
 # Limit rows fetched per sheet (default: 100)
 python -m extrasheet pull <url> --max-rows 500
 
 # Fetch all rows (may timeout on large spreadsheets)
 python -m extrasheet pull <url> --no-limit
+
+# Don't save raw API responses
+python -m extrasheet pull <url> --no-raw
+```
+
+## Architecture
+
+The library uses a transport-based architecture for clean separation of concerns:
+
+```
+┌─────────────────┐     ┌──────────────────┐     ┌─────────────────┐
+│ SheetsClient    │────▶│ Transport        │────▶│ Google API /    │
+│ (orchestration) │     │ (data fetching)  │     │ Local Files     │
+└─────────────────┘     └──────────────────┘     └─────────────────┘
+        │
+        ▼
+┌─────────────────┐     ┌──────────────────┐
+│ Transformer     │────▶│ FileWriter       │
+│ (API → files)   │     │ (disk I/O)       │
+└─────────────────┘     └──────────────────┘
+```
+
+**Transport implementations:**
+- `GoogleSheetsTransport` - Production transport using Google Sheets API
+- `LocalFileTransport` - Test transport reading from local golden files
+
+## Testing with Golden Files
+
+The library supports golden file testing without mocking:
+
+```python
+import pytest
+from pathlib import Path
+from extrasheet import SheetsClient, LocalFileTransport
+
+@pytest.fixture
+def client():
+    transport = LocalFileTransport(Path("tests/golden"))
+    return SheetsClient(transport)
+
+@pytest.mark.asyncio
+async def test_pull(client, tmp_path):
+    files = await client.pull("my_spreadsheet", tmp_path)
+    assert (tmp_path / "my_spreadsheet" / "Sheet1" / "data.tsv").exists()
+```
+
+Golden files are stored as:
+```
+tests/golden/
+  my_spreadsheet/
+    metadata.json    # First API call response
+    data.json        # Second API call response
 ```
 
 ## Documentation
@@ -74,7 +141,7 @@ python -m extrasheet pull <url> --no-limit
 
 ```bash
 cd extrasheet
-uv sync
+uv sync --all-extras
 uv run pytest tests/ -v
 uv run ruff check .
 uv run ruff format .

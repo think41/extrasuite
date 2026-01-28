@@ -1,0 +1,18 @@
+{
+  "spreadsheetId": "basic_spreadsheet",
+  "properties": {
+    "title": "Test Spreadsheet"
+  },
+  "sheets": [
+    {
+      "properties": {
+        "sheetId": 0,
+        "title": "Sheet1",
+        "gridProperties": {
+          "rowCount": 1000,
+          "columnCount": 26
+        }
+      }
+    }
+  ]
+}

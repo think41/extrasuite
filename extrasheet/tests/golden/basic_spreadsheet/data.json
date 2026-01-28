@@ -1,0 +1,74 @@
+{
+  "spreadsheetId": "basic_spreadsheet",
+  "properties": {
+    "title": "Test Spreadsheet"
+  },
+  "sheets": [
+    {
+      "properties": {
+        "sheetId": 0,
+        "title": "Sheet1",
+        "gridProperties": {
+          "rowCount": 1000,
+          "columnCount": 26
+        }
+      },
+      "data": [
+        {
+          "startRow": 0,
+          "startColumn": 0,
+          "rowData": [
+            {
+              "values": [
+                {
+                  "formattedValue": "Name",
+                  "effectiveValue": {"stringValue": "Name"}
+                },
+                {
+                  "formattedValue": "Age",
+                  "effectiveValue": {"stringValue": "Age"}
+                },
+                {
+                  "formattedValue": "City",
+                  "effectiveValue": {"stringValue": "City"}
+                }
+              ]
+            },
+            {
+              "values": [
+                {
+                  "formattedValue": "Alice",
+                  "effectiveValue": {"stringValue": "Alice"}
+                },
+                {
+                  "formattedValue": "30",
+                  "effectiveValue": {"numberValue": 30}
+                },
+                {
+                  "formattedValue": "NYC",
+                  "effectiveValue": {"stringValue": "NYC"}
+                }
+              ]
+            },
+            {
+              "values": [
+                {
+                  "formattedValue": "Bob",
+                  "effectiveValue": {"stringValue": "Bob"}
+                },
+                {
+                  "formattedValue": "25",
+                  "effectiveValue": {"numberValue": 25}
+                },
+                {
+                  "formattedValue": "LA",
+                  "effectiveValue": {"stringValue": "LA"}
+                }
+              ]
+            }
+          ]
+        }
+      ]
+    }
+  ]
+}

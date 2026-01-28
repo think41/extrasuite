@@ -1,17 +1,20 @@
-"""
-CLI entry point for extrasheet.
+"""CLI entry point for extrasheet.
 
 Usage:
     python -m extrasheet pull <spreadsheet_id_or_url> [output_dir]
 """
 
+from __future__ import annotations
+
 import argparse
+import asyncio
 import re
 import sys
 from pathlib import Path
 
-from extrasheet import SheetsClient
+from extrasheet.client import SheetsClient
 from extrasheet.credentials import CredentialsManager
+from extrasheet.transport import GoogleSheetsTransport
 
 
 def parse_spreadsheet_id(id_or_url: str) -> str:
@@ -26,7 +29,7 @@ def parse_spreadsheet_id(id_or_url: str) -> str:
     return id_or_url
 
 
-def cmd_pull(args: argparse.Namespace) -> int:
+async def cmd_pull(args: argparse.Namespace) -> int:
     """Pull a spreadsheet to local files."""
     spreadsheet_id = parse_spreadsheet_id(args.spreadsheet)
     output_path = Path(args.output) if args.output else Path()
@@ -40,19 +43,23 @@ def cmd_pull(args: argparse.Namespace) -> int:
         print(f"Authentication failed: {e}", file=sys.stderr)
         return 1
 
-    # Pull spreadsheet
-    max_rows = None if args.no_limit else args.max_rows
-    if max_rows:
-        print(
-            f"Pulling spreadsheet: {spreadsheet_id} (limited to {max_rows} rows per sheet)"
-        )
-    else:
-        print(f"Pulling spreadsheet: {spreadsheet_id} (fetching all rows)")
-    client = SheetsClient(access_token=token_obj.access_token)
+    # Create transport and client
+    transport = GoogleSheetsTransport(access_token=token_obj.access_token)
+    client = SheetsClient(transport)
+
+    # Determine max_rows
+    max_rows = args.max_rows
+    if args.no_limit:
+        max_rows = 1_000_000  # Effectively unlimited
+
+    print(f"Pulling spreadsheet: {spreadsheet_id} (max {max_rows} rows per sheet)")
 
     try:
-        files = client.pull(
-            spreadsheet_id, output_path, save_raw=args.save_raw, max_rows=max_rows
+        files = await client.pull(
+            spreadsheet_id,
+            output_path,
+            max_rows=max_rows,
+            save_raw=not args.no_raw,
         )
         print(f"\nWrote {len(files)} files to {output_path}:")
         for path in files:
@@ -61,9 +68,12 @@ def cmd_pull(args: argparse.Namespace) -> int:
     except Exception as e:
         print(f"Error: {e}", file=sys.stderr)
         return 1
+    finally:
+        await transport.close()
 
 
 def main() -> int:
+    """Main entry point."""
     parser = argparse.ArgumentParser(
         prog="extrasheet",
         description="Transform Google Sheets to LLM-friendly file format",
@@ -86,11 +96,6 @@ def main() -> int:
         help="Output directory (defaults to ./<spreadsheet_id>/)",
     )
     pull_parser.add_argument(
-        "--save-raw",
-        action="store_true",
-        help="Also save the raw API response",
-    )
-    pull_parser.add_argument(
         "--max-rows",
         type=int,
         default=100,
@@ -101,10 +106,16 @@ def main() -> int:
         action="store_true",
         help="Fetch all rows (may timeout on large spreadsheets)",
     )
+    pull_parser.add_argument(
+        "--no-raw",
+        action="store_true",
+        help="Don't save raw API responses to .raw/ folder",
+    )
     pull_parser.set_defaults(func=cmd_pull)
 
     args = parser.parse_args()
-    return args.func(args)
+    result: int = asyncio.run(args.func(args))
+    return result
 
 
 if __name__ == "__main__":
