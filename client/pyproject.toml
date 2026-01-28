@@ -47,7 +47,7 @@ include = ["/src"]
 packages = ["src/extrasuite"]
 
 [tool.ruff]
-target-version = "py39"
+target-version = "py310"
 line-length = 88
 src = ["src", "tests"]
 
@@ -74,6 +74,8 @@ ignore = [
 [tool.ruff.lint.per-file-ignores]
 # credentials.py uses intentional lazy imports for optional dependencies
 "src/extrasuite/client/credentials.py" = ["PLC0415"]
+# tests also use lazy imports to check if google-auth is available
+"tests/test_credentials.py" = ["PLC0415"]
 
 [tool.ruff.lint.isort]
 known-first-party = ["extrasuite"]

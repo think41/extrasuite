@@ -114,9 +114,7 @@ class SheetsClient:
             written.extend(raw_files)
 
         # Step 6: Create pristine copy for diff/push workflow
-        pristine_path = self._create_pristine_copy(
-            output_path, spreadsheet_id, written
-        )
+        pristine_path = self._create_pristine_copy(output_path, spreadsheet_id, written)
         written.append(pristine_path)
 
         return written

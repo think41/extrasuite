@@ -137,7 +137,9 @@ class TestCredentialsManagerInit:
 
     def test_init_with_service_account_path_param(self) -> None:
         """Constructor param for service_account_path works."""
-        with mock.patch.object(CredentialsManager, "GATEWAY_CONFIG_PATH", Path("/nonexistent")):
+        with mock.patch.object(
+            CredentialsManager, "GATEWAY_CONFIG_PATH", Path("/nonexistent")
+        ):
             manager = CredentialsManager(service_account_path="/path/to/sa.json")
             assert manager._sa_path == Path("/path/to/sa.json")
             assert manager._use_extrasuite is False
@@ -158,8 +160,12 @@ class TestCredentialsManagerInit:
     def test_init_with_env_var_service_account(self) -> None:
         """SERVICE_ACCOUNT_PATH env var is used."""
         with (
-            mock.patch.dict(os.environ, {"SERVICE_ACCOUNT_PATH": "/env/path/sa.json"}, clear=True),
-            mock.patch.object(CredentialsManager, "GATEWAY_CONFIG_PATH", Path("/nonexistent")),
+            mock.patch.dict(
+                os.environ, {"SERVICE_ACCOUNT_PATH": "/env/path/sa.json"}, clear=True
+            ),
+            mock.patch.object(
+                CredentialsManager, "GATEWAY_CONFIG_PATH", Path("/nonexistent")
+            ),
         ):
             manager = CredentialsManager()
             assert manager._sa_path == Path("/env/path/sa.json")
@@ -193,7 +199,9 @@ class TestCredentialsManagerInit:
         """ValueError raised when no auth method is configured."""
         with (
             mock.patch.dict(os.environ, {}, clear=True),
-            mock.patch.object(CredentialsManager, "GATEWAY_CONFIG_PATH", Path("/nonexistent")),
+            mock.patch.object(
+                CredentialsManager, "GATEWAY_CONFIG_PATH", Path("/nonexistent")
+            ),
         ):
             with pytest.raises(ValueError) as exc_info:
                 CredentialsManager()
@@ -203,7 +211,9 @@ class TestCredentialsManagerInit:
         """ValueError raised when only one URL is provided."""
         with (
             mock.patch.dict(os.environ, {}, clear=True),
-            mock.patch.object(CredentialsManager, "GATEWAY_CONFIG_PATH", Path("/nonexistent")),
+            mock.patch.object(
+                CredentialsManager, "GATEWAY_CONFIG_PATH", Path("/nonexistent")
+            ),
         ):
             # Missing exchange_url
             with pytest.raises(ValueError) as exc_info:
@@ -328,7 +338,9 @@ class TestCredentialsManagerExtraSuite:
         with (
             mock.patch("keyring.get_password", return_value=json.dumps(token_data)),
             mock.patch("keyring.set_password"),
-            mock.patch.object(manager, "_authenticate_extrasuite", return_value=new_token),
+            mock.patch.object(
+                manager, "_authenticate_extrasuite", return_value=new_token
+            ),
         ):
             token = manager.get_token(force_refresh=True)
             assert token.access_token == "new-token"
@@ -391,7 +403,9 @@ class TestCredentialsManagerServiceAccount:
 
     def test_service_account_file_not_found(self) -> None:
         """Raises FileNotFoundError when service account file doesn't exist."""
-        with mock.patch.object(CredentialsManager, "GATEWAY_CONFIG_PATH", Path("/nonexistent")):
+        with mock.patch.object(
+            CredentialsManager, "GATEWAY_CONFIG_PATH", Path("/nonexistent")
+        ):
             manager = CredentialsManager(
                 service_account_path="/nonexistent/path/sa.json",
             )
@@ -420,7 +434,9 @@ class TestCredentialsManagerServiceAccount:
             "service_account_email": "sa@example.com",
             "expires_at": time.time() + 3600,
         }
-        with mock.patch.object(CredentialsManager, "GATEWAY_CONFIG_PATH", Path("/nonexistent")):
+        with mock.patch.object(
+            CredentialsManager, "GATEWAY_CONFIG_PATH", Path("/nonexistent")
+        ):
             manager = CredentialsManager(
                 service_account_path="/path/to/sa.json",
             )
@@ -430,7 +446,9 @@ class TestCredentialsManagerServiceAccount:
 
     def test_service_account_missing_google_auth(self) -> None:
         """Raises ImportError with helpful message when google-auth not installed."""
-        with mock.patch.object(CredentialsManager, "GATEWAY_CONFIG_PATH", Path("/nonexistent")):
+        with mock.patch.object(
+            CredentialsManager, "GATEWAY_CONFIG_PATH", Path("/nonexistent")
+        ):
             manager = CredentialsManager(
                 service_account_path="/path/to/sa.json",
             )
@@ -457,7 +475,9 @@ class TestCredentialsManagerCallbackHandler:
         result_holder = {"code": None, "error": None, "done": False}
         result_lock = threading.Lock()
 
-        handler_class = CredentialsManager._create_handler_class(result_holder, result_lock)
+        handler_class = CredentialsManager._create_handler_class(
+            result_holder, result_lock
+        )
 
         # Simulate the handler receiving a code
         with mock.patch.object(handler_class, "__init__", lambda _self, *_args: None):
@@ -478,7 +498,9 @@ class TestCredentialsManagerCallbackHandler:
         result_holder = {"code": None, "error": None, "done": False}
         result_lock = threading.Lock()
 
-        handler_class = CredentialsManager._create_handler_class(result_holder, result_lock)
+        handler_class = CredentialsManager._create_handler_class(
+            result_holder, result_lock
+        )
 
         with mock.patch.object(handler_class, "__init__", lambda _self, *_args: None):
             handler = handler_class.__new__(handler_class)
@@ -539,9 +561,13 @@ class TestCredentialsManagerIntegration:
         )
 
         with (
-            mock.patch("keyring.get_password", return_value=json.dumps(expired_token_data)),
+            mock.patch(
+                "keyring.get_password", return_value=json.dumps(expired_token_data)
+            ),
             mock.patch("keyring.set_password") as mock_set,
-            mock.patch.object(manager, "_authenticate_extrasuite", return_value=new_token),
+            mock.patch.object(
+                manager, "_authenticate_extrasuite", return_value=new_token
+            ),
         ):
             token = manager.get_token()
 
@@ -603,7 +629,9 @@ class TestAuthenticateFunction:
         )
 
         with (
-            mock.patch("keyring.get_password", return_value=json.dumps(cached_token_data)),
+            mock.patch(
+                "keyring.get_password", return_value=json.dumps(cached_token_data)
+            ),
             mock.patch("keyring.set_password"),
             mock.patch(
                 "extrasuite.client.credentials.CredentialsManager._authenticate_extrasuite",

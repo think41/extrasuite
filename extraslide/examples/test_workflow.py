@@ -142,18 +142,18 @@ def main():
     for i, req in enumerate(requests):
         req_type = next(iter(req.keys()))
         if req_type == "createSlide":
-            print(f"  {i+1}. {req_type}: {req[req_type].get('objectId', 'N/A')}")
+            print(f"  {i + 1}. {req_type}: {req[req_type].get('objectId', 'N/A')}")
         elif req_type == "createShape":
             print(
-                f"  {i+1}. {req_type}: {req[req_type].get('objectId', 'N/A')} ({req[req_type].get('shapeType', 'N/A')})"
+                f"  {i + 1}. {req_type}: {req[req_type].get('objectId', 'N/A')} ({req[req_type].get('shapeType', 'N/A')})"
             )
         elif req_type == "insertText":
             text = req[req_type].get("text", "")[:30]
-            print(f"  {i+1}. {req_type}: '{text}...'")
+            print(f"  {i + 1}. {req_type}: '{text}...'")
         elif req_type == "deleteObject":
-            print(f"  {i+1}. {req_type}: {req[req_type].get('objectId', 'N/A')}")
+            print(f"  {i + 1}. {req_type}: {req[req_type].get('objectId', 'N/A')}")
         else:
-            print(f"  {i+1}. {req_type}")
+            print(f"  {i + 1}. {req_type}")
 
     # 5. Ask for confirmation before pushing
     print("\n" + "=" * 50)

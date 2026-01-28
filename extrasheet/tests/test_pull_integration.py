@@ -6,6 +6,7 @@ without making actual Google API calls.
 
 from __future__ import annotations
 
+import json
 from pathlib import Path
 
 import pytest
@@ -35,7 +36,7 @@ async def test_pull_basic_spreadsheet(
     tmp_path: Path,
 ) -> None:
     """Test pulling a basic spreadsheet from golden files."""
-    files = await client.pull(
+    await client.pull(
         "basic_spreadsheet",
         tmp_path,
         max_rows=100,
@@ -85,7 +86,7 @@ async def test_pull_without_raw(
     tmp_path: Path,
 ) -> None:
     """Test pulling without saving raw API responses."""
-    files = await client.pull(
+    await client.pull(
         "basic_spreadsheet",
         tmp_path,
         max_rows=100,
@@ -112,7 +113,7 @@ async def test_truncation_info(
 ) -> None:
     """Test that truncation info is included when max_rows < total rows."""
     # Golden file has 1000 rows, we fetch only 100
-    files = await client.pull(
+    await client.pull(
         "basic_spreadsheet",
         tmp_path,
         max_rows=100,
@@ -121,8 +122,6 @@ async def test_truncation_info(
     await local_transport.close()
 
     # Check spreadsheet.json for truncation info
-    import json
-
     spreadsheet_json = tmp_path / "basic_spreadsheet" / "spreadsheet.json"
     metadata = json.loads(spreadsheet_json.read_text())
 
