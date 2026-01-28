@@ -10,6 +10,7 @@ Compresses verbose per-cell formatting into compact cascading rules:
 from __future__ import annotations
 
 import json
+import re
 from collections import Counter
 from dataclasses import dataclass
 from typing import Any
@@ -375,8 +376,6 @@ def compress_cell_formats(
         return {"formatRules": []}
 
     # Parse A1 references to coordinates and optimize formats
-    import re
-
     cell_data: dict[tuple[int, int], dict[str, Any]] = {}
     for cell_a1, fmt in cell_formats.items():
         match = re.match(r"([A-Z]+)(\d+)", cell_a1)

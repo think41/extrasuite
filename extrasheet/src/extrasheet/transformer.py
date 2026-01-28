@@ -6,6 +6,7 @@ Converts Google Sheets API responses into the extrasheet file format.
 
 from __future__ import annotations
 
+import json
 from typing import TYPE_CHECKING, Any
 
 from extrasheet.format_compression import compress_cell_formats
@@ -539,8 +540,6 @@ class SpreadsheetTransformer:
                         cell_a1 = cell_to_a1(actual_row, actual_col)
 
                         # Use JSON string as key for grouping identical rules
-                        import json
-
                         rule_key = json.dumps(validation, sort_keys=True)
 
                         if rule_key not in validation_rules:
