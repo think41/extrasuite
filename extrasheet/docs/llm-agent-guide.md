@@ -1,6 +1,130 @@
 # LLM Agent Guide: Modifying Google Sheets via batchUpdate
 
-This guide explains how an LLM agent can use extrasheet output files to construct Google Sheets API `batchUpdate` requests without re-fetching the spreadsheet.
+This guide explains how an LLM agent can use extrasheet output files to modify Google Sheets.
+
+---
+
+## Two Workflows: Declarative and Imperative
+
+Extrasheet provides two workflows for modifying spreadsheets:
+
+### Declarative Workflow (90% of use cases)
+
+Edit files → diff → push. Order-independent, state-based.
+
+```bash
+# 1. Pull the spreadsheet
+extrasheet pull <url>
+
+# 2. Edit files directly (data.tsv, formula.json, format.json, etc.)
+# ... agent edits files ...
+
+# 3. Preview changes
+extrasheet diff <folder>
+
+# 4. Apply changes
+extrasheet push <folder>
+```
+
+**What you can do declaratively:**
+- **Create new sheets** (add folder + entry in spreadsheet.json)
+- **Delete sheets** (remove folder from disk)
+- **Insert rows/columns** (add rows/columns in data.tsv)
+- **Delete rows/columns** (remove rows/columns from data.tsv)
+- Modify cell values (edit data.tsv)
+- Add/modify/remove formulas (edit formula.json)
+- Change formatting, conditional formats, merges, notes (edit format.json)
+- Add/modify data validation, filters, banded ranges, filter views, charts (edit feature.json)
+- Update sheet/spreadsheet properties (edit spreadsheet.json)
+
+### Imperative Workflow (Complex Structural Changes)
+
+For complex structural operations, use `batchUpdate` with a JSON file:
+
+```bash
+# 1. Create requests.json with the structural changes
+# 2. Execute via batchUpdate
+extrasheet batchUpdate <url> requests.json
+
+# 3. Re-pull to get updated state
+extrasheet pull <url>
+
+# 4. Continue with declarative edits if needed
+```
+
+**When to use batchUpdate:**
+- Move rows/columns
+- Sort data
+- Complex multi-step structural changes
+
+### Interleaving Workflows
+
+You can freely interleave declarative and imperative operations:
+
+```
+Example: Add a "Status" column between B and C, fill it with data
+
+1. [Imperative] Create insert_column.json:
+   {
+     "requests": [{
+       "insertDimension": {
+         "range": {"sheetId": 0, "dimension": "COLUMNS", "startIndex": 2, "endIndex": 3}
+       }
+     }]
+   }
+   → extrasheet batchUpdate <url> insert_column.json
+
+2. [Re-pull] Get updated state with new column
+   → extrasheet pull <url>
+
+3. [Declarative] Fill the new column with values and formulas
+   → Edit data.tsv (add values to column C)
+   → Edit formula.json (add formulas if needed)
+   → extrasheet push <folder>
+```
+
+### Creating New Sheets Declaratively
+
+You can create entirely new sheets using the declarative workflow:
+
+```
+1. Create a new folder: <spreadsheet_id>/NewSheetName/
+2. Add files to the folder:
+   - data.tsv (required) - cell values
+   - formula.json (optional) - formulas
+   - format.json (optional) - formatting, conditional formats, merges, notes
+   - feature.json (optional) - data validation, filters, banded ranges
+3. Add entry to spreadsheet.json → sheets array:
+   {
+     "title": "NewSheetName",
+     "folder": "NewSheetName",
+     "sheetType": "GRID",
+     "gridProperties": {
+       "rowCount": 100,
+       "columnCount": 10,
+       "frozenRowCount": 1
+     }
+   }
+4. Run: extrasheet diff <folder>  # Preview
+5. Run: extrasheet push <folder>  # Creates sheet with all content
+```
+
+The diff command detects new sheets (folders in current that aren't in pristine) and generates:
+1. `addSheet` request to create the sheet
+2. All content requests (cells, formulas, formatting, etc.)
+
+**Note:** After creating a new sheet, re-pull to get the server-assigned sheetId.
+
+### Formula Ranges and AutoFill
+
+When modifying a formula range (e.g., `"C2:C100": "=A2+B2"` in formula.json), the push command:
+
+1. Updates the FIRST cell with the new formula
+2. Uses `autoFill` to extend it across the range
+
+This is efficient and ensures proper relative reference handling.
+
+---
 
 ## Overview
 
@@ -14,7 +138,18 @@ The extrasheet format provides all information needed for "fly-blind" editing:
 - **Preview data** (first 5 and last 3 rows of each sheet) to understand content at a glance
 - Only then read specific `<sheet>/data.tsv` files for full data when needed
 
-**Important:** After structural changes (insert/delete rows/columns, new sheets), recommend re-pulling the spreadsheet as references may have shifted.
+**Important:** After structural changes (insert/delete rows/columns, delete sheets), recommend re-pulling the spreadsheet as references may have shifted.
+
+### Declarative File Reference
+
+| File | What You Can Edit |
+|------|-------------------|
+| `spreadsheet.json` | Spreadsheet title, sheet titles, frozen rows/columns, new sheet entries |
+| `data.tsv` | Cell values (text, numbers, dates, booleans) |
+| `formula.json` | Cell formulas, range formulas |
+| `format.json` | Cell formatting (colors, fonts, alignment, number formats), conditional formatting rules, cell merges, cell notes, rich text (textFormatRuns) |
+| `feature.json` | Data validation (dropdowns, checkboxes), basic filters, banded ranges, filter views, charts |
+| `dimension.json` | Row heights, column widths |
 
 ---
 
@@ -189,9 +324,9 @@ Formulas are stored as a flat dictionary where keys are cell references or range
 | `numberFormat.type` | `NUMBER`, `CURRENCY`, `DATE`, `PERCENT`, etc. |
 | `numberFormat.pattern` | Format string (e.g., `$#,##0.00`) |
 
-### 4. Insert Rows/Columns
+### 4. Insert Rows/Columns (Imperative)
 
-**Files to read:** `spreadsheet.json` (grid dimensions), `formula.json` (to warn about reference shifts)
+Structural changes use `batchUpdate`. Create a JSON file with the requests, execute, then re-pull.
 
 **Insert rows:**
 ```json
@@ -212,30 +347,27 @@ Formulas are stored as a flat dictionary where keys are cell references or range
 }
 ```
 
-**Insert columns:**
+```bash
+extrasheet batchUpdate <url> insert_rows.json
+extrasheet pull <url>  # Re-pull after structural change
+```
+
+**Append rows/columns at the end:**
 ```json
 {
   "requests": [
     {
-      "insertDimension": {
-        "range": {
-          "sheetId": 0,
-          "dimension": "COLUMNS",
-          "startIndex": 2,
-          "endIndex": 4
-        },
-        "inheritFromBefore": false
+      "appendDimension": {
+        "sheetId": 0,
+        "dimension": "ROWS",
+        "length": 10
       }
     }
   ]
 }
 ```
 
-**Warning:** Inserting/deleting dimensions shifts formula references. After this operation, existing formulas in `formula.json` may have outdated cell references. Recommend re-pulling the spreadsheet.
-
-### 5. Delete Rows/Columns
-
-**Files to read:** `spreadsheet.json`, `formula.json`, `feature.json` (charts/pivots that may be affected)
+### 5. Delete Rows/Columns (Imperative)
 
 ```json
 {
@@ -252,6 +384,66 @@ Formulas are stored as a flat dictionary where keys are cell references or range
     }
   ]
 }
+```
+
+```bash
+extrasheet batchUpdate <url> delete_rows.json
+extrasheet pull <url>  # Re-pull after structural change
+```
+
+### 5.1 Move Rows/Columns (Imperative)
+
+```json
+{
+  "requests": [
+    {
+      "moveDimension": {
+        "source": {
+          "sheetId": 0,
+          "dimension": "ROWS",
+          "startIndex": 10,
+          "endIndex": 15
+        },
+        "destinationIndex": 2
+      }
+    }
+  ]
+}
+```
+
+```bash
+extrasheet batchUpdate <url> move_rows.json
+extrasheet pull <url>  # Re-pull after structural change
+```
+
+### 5.2 Sort Data (Imperative)
+
+Sorting reorders rows, so it requires the imperative workflow.
+
+```json
+{
+  "requests": [
+    {
+      "sortRange": {
+        "range": {
+          "sheetId": 0,
+          "startRowIndex": 1,
+          "endRowIndex": 100,
+          "startColumnIndex": 0,
+          "endColumnIndex": 5
+        },
+        "sortSpecs": [
+          { "dimensionIndex": 2, "sortOrder": "DESCENDING" }
+        ]
+      }
+    }
+  ]
+}
+```
+
+```bash
+extrasheet batchUpdate <url> sort.json
+extrasheet pull <url>  # Re-pull after structural change
 ```
 
 ### 6. Add Conditional Formatting
@@ -645,7 +837,11 @@ Formulas are stored as a flat dictionary where keys are cell references or range
 
 ### 14. Add/Delete Sheets
 
-**Add sheet:**
+**Add sheet (Declarative - Preferred):**
+
+See "Creating New Sheets Declaratively" above. Create folder + files + entry in spreadsheet.json, then push.
+
+**Add sheet (Imperative - if you need just an empty sheet):**
 ```json
 {
   "requests": [
@@ -664,7 +860,7 @@ Formulas are stored as a flat dictionary where keys are cell references or range
 }
 ```
 
-**Delete sheet:**
+**Delete sheet (Imperative only):**
 ```json
 {
   "requests": [
@@ -831,10 +1027,41 @@ The `fields` parameter in update requests specifies which properties to update. 
 
 ## Safety Recommendations
 
-### Before Structural Changes
-1. Note which formulas reference the affected area (`formula.json`)
-2. Check for charts/pivots with data in the area (`feature.json`)
-3. Warn user that references will shift
+### Declarative Workflow is Preferred
+
+Use the declarative workflow (edit files → diff → push) for most tasks. It's:
+- **Order-independent**: Edit files in any order
+- **Previewable**: Run `diff` to see what will change before pushing
+- **Safe**: Cannot accidentally change grid structure
+
+### When to Use batchUpdate
+
+Use `batchUpdate` for complex structural operations:
+- Moving rows or columns
+- Sorting data
+- Complex multi-step operations that need precise ordering
+
+**Note:** Simple insert/delete rows/columns can now be done declaratively by editing data.tsv directly.
+
+**Convention: Always re-pull after batchUpdate** to get the updated state.
+
+### Structural Changes with Formulas
+
+When inserting or deleting rows/columns declaratively, be aware of formula interactions:
+
+**For INSERTS:**
+- Edit data.tsv to add the new rows/columns
+- Update formula.json with formulas at POST-insert positions
+- Example: If inserting at row 5 and formula was at D14, put it at D15 in formula.json
+
+**For DELETES:**
+- Edit data.tsv to remove the rows/columns
+- Update formula.json with formulas at POST-delete positions
+- Example: If deleting row 8 and formula was at D14, put it at D13 in formula.json
+
+**Validation:**
+- If your formula changes conflict with structural changes, push will be BLOCKED
+- If your delete breaks existing formula references, you'll get a WARNING (use --force to proceed)
 
 ### After Creating New Objects
 - Charts, named ranges, sheets get server-assigned IDs

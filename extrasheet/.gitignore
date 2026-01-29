@@ -1,8 +1,16 @@
 # Output directories
 output/
 
+# Test output directories
+test_*/
+!tests/
+
 # Python
 __pycache__/
 *.py[cod]
 *.egg-info/
 .venv/
+
+# Coverage
+.coverage
+htmlcov/

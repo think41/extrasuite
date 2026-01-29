@@ -13,7 +13,7 @@ Instead of working with complex API responses, agents interact with simple files
 | File | Purpose |
 |------|---------|
 | `src/extrasheet/transport.py` | `Transport` ABC, `GoogleSheetsTransport`, `LocalFileTransport` |
-| `src/extrasheet/client.py` | `SheetsClient` - main interface with single `pull()` method |
+| `src/extrasheet/client.py` | `SheetsClient` - main interface with `pull()`, `diff()`, `push()` methods |
 | `src/extrasheet/transformer.py` | Transforms API response to on-disk format |
 | `src/extrasheet/writer.py` | Writes transformed data to files |
 | `src/extrasheet/formula_compression.py` | Compresses formulas with relative references |
@@ -21,6 +21,13 @@ Instead of working with complex API responses, agents interact with simple files
 | `src/extrasheet/credentials.py` | `CredentialsManager` for OAuth token handling |
 | `src/extrasheet/api_types.py` | TypedDict definitions for Google Sheets API |
 | `src/extrasheet/utils.py` | A1 notation parsing utilities |
+| `src/extrasheet/diff.py` | Core diff engine - compares pristine vs current |
+| `src/extrasheet/request_generator.py` | Generates batchUpdate requests from diff results |
+| `src/extrasheet/pristine.py` | Extracts .pristine/spreadsheet.zip |
+| `src/extrasheet/file_reader.py` | Reads current files from disk |
+| `src/extrasheet/exceptions.py` | Custom exceptions for diff/push |
+| `src/extrasheet/formula_refs.py` | Parses formula references for validation |
+| `src/extrasheet/structural_validation.py` | Validates structural changes (insert/delete rows/cols) |
 
 ## Documentation
 
@@ -39,16 +46,21 @@ python -m extrasheet pull <spreadsheet_url_or_id> [output_dir]
 #   --no-limit     Fetch all rows (may timeout on large spreadsheets)
 #   --no-raw       Don't save raw API responses to .raw/ folder
 
-# Preview changes (dry run) - NOT YET IMPLEMENTED
+# Preview changes (dry run)
 python -m extrasheet diff <folder>
 # Output: batchUpdate JSON to stdout
 
-# Apply changes to Google Sheets - NOT YET IMPLEMENTED
+# Apply changes to Google Sheets
 python -m extrasheet push <folder>
-# Output: API response
+# Output: Success message with number of changes applied
+
+# Execute batchUpdate requests directly (for structural changes)
+python -m extrasheet batchUpdate <spreadsheet_url_or_id> <requests.json>
+# Options:
+#   -v, --verbose  Print API response
 ```
 
-Also works via `uvx extrasheet pull/diff/push`.
+Also works via `uvx extrasheet pull/diff/push/batchUpdate`.
 
 ## Folder Structure
 
@@ -92,6 +104,10 @@ Tests are in `tests/` and focus on:
 - `test_formula_compression.py` - Formula compression/decompression
 - `test_utils.py` - A1 notation parsing
 - `test_pull_integration.py` - End-to-end pull tests using golden files
+- `test_diff.py` - Diff engine unit tests
+- `test_request_generator.py` - Request generation tests
+- `test_formula_refs.py` - Formula reference parsing for validation
+- `test_structural_validation.py` - Structural change validation tests
 
 ### Golden File Testing
 
@@ -139,7 +155,7 @@ async def test_pull(client, tmp_path):
 └─────────────────┘     └──────────────────┘     └─────────────────┘
 ```
 
-- `Transport` is an abstract base class with `get_metadata()`, `get_data()`, `close()`
+- `Transport` is an abstract base class with `get_metadata()`, `get_data()`, `batch_update()`, `close()`
 - `GoogleSheetsTransport` - Production: makes real API calls via `httpx`
 - `LocalFileTransport` - Testing: reads from local golden files
 - Access token is a transport concern, not a client concern
@@ -167,6 +183,59 @@ async def test_pull(client, tmp_path):
 - `certifi` - SSL certificates
 - `keyring` - OS keyring for token caching (via credentials.py)
 
+### Diff/Push Flow
+
+1. **Extract pristine** - `pristine.extract_pristine()` extracts `.pristine/spreadsheet.zip`
+2. **Read current** - `file_reader.read_current_files()` reads edited files
+3. **Diff** - `diff.diff()` compares and returns `DiffResult`
+4. **Generate requests** - `request_generator.generate_requests()` converts to batchUpdate JSON
+5. **Push** - `transport.batch_update()` sends to Google Sheets API
+
+### Declarative vs Imperative Workflow
+
+**Declarative (diff/push):** Edit files locally, then push. Works for almost everything:
+- Cell value changes
+- Formula changes (single cells and ranges with autoFill)
+- Sheet/spreadsheet property changes
+- Insert/delete rows/columns (with validation - see below)
+- Delete sheets (with validation)
+- All formatting and feature changes
+
+**Structural Change Validation:**
+When structural changes (insert/delete rows/columns, delete sheets) are detected, the diff engine validates them:
+- **BLOCK:** Formula edits + structural changes that conflict = silent bug prevention. Push fails.
+- **WARN:** Structural changes that break existing formulas (will show #REF! in cells). Use `--force` to proceed.
+- **SILENT:** Ambiguous but valid cases (e.g., appending rows beyond a formula's range). Proceeds without comment.
+
+**Imperative (batchUpdate):** Use direct batchUpdate for complex operations that require precise control:
+- Complex multi-step structural changes
+- Sorting data
+- Moving rows/columns
+
 ## Current Status
 
-`pull` is fully implemented with async support, transport-based architecture, and golden file testing. `diff` and `push` commands do not exist yet - they will compare against `.pristine/` to generate and apply changes.
+All core functionality is implemented:
+- `pull` - Downloads spreadsheet to local files
+- `diff` - Compares current vs pristine, outputs batchUpdate JSON
+- `push` - Applies changes to Google Sheets
+- `batchUpdate` - Executes raw batchUpdate requests
+
+**Supported change types:**
+- New sheet creation (add folder + entry in spreadsheet.json, diff/push will create it)
+- Delete sheets (remove folder from disk, validated for cross-sheet references)
+- Insert/delete rows (edit data.tsv, validated for formula conflicts)
+- Insert/delete columns (edit data.tsv, validated for formula conflicts)
+- Cell value changes (add, modify, delete)
+- Formula changes (single cells and ranges with autoFill)
+- Format rules (backgroundColor, numberFormat, textFormat, alignment)
+- Column/row dimensions (width/height changes)
+- Sheet/spreadsheet properties (title, frozen rows/columns, hidden)
+- Data validation (dropdowns, checkboxes, etc.)
+- textFormatRuns (rich text formatting within cells)
+- Cell notes
+- Cell merges
+- Conditional formatting (add, update, delete rules)
+- Basic filters (set, clear)
+- Banded ranges (alternating row/column colors)
+- Filter views (add, update, delete)
+- Charts (add, update spec, update position, delete)

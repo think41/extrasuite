@@ -122,6 +122,21 @@ class Transport(ABC):
         ...
 
     @abstractmethod
+    async def batch_update(
+        self, spreadsheet_id: str, requests: list[dict[str, Any]]
+    ) -> dict[str, Any]:
+        """Apply batchUpdate requests to a spreadsheet.
+
+        Args:
+            spreadsheet_id: The spreadsheet identifier
+            requests: List of batchUpdate request objects
+
+        Returns:
+            API response containing replies for each request
+        """
+        ...
+
+    @abstractmethod
     async def close(self) -> None:
         """Close any open connections."""
         ...
@@ -217,6 +232,14 @@ class GoogleSheetsTransport(Transport):
             truncation_info=truncation_info,
         )
 
+    async def batch_update(
+        self, spreadsheet_id: str, requests: list[dict[str, Any]]
+    ) -> dict[str, Any]:
+        """Apply batchUpdate requests to Google Sheets API."""
+        url = f"{API_BASE}/{spreadsheet_id}:batchUpdate"
+        body = {"requests": requests}
+        return await self._post_request(url, body)
+
     async def _request(self, url: str) -> dict[str, Any]:
         """Make an authenticated GET request."""
         try:
@@ -225,21 +248,39 @@ class GoogleSheetsTransport(Transport):
             result: dict[str, Any] = response.json()
             return result
         except httpx.HTTPStatusError as e:
-            status = e.response.status_code
-            if status == 401:
-                raise AuthenticationError("Invalid or expired access token") from e
-            if status == 403:
-                raise AuthenticationError(
-                    "Access denied. Check your scopes and permissions."
-                ) from e
-            if status == 404:
-                raise NotFoundError(
-                    "Spreadsheet not found. Check the ID and sharing permissions."
-                ) from e
-            body = e.response.text
-            raise APIError(f"API error ({status}): {body}", status_code=status) from e
+            self._handle_http_error(e)
+            raise  # unreachable, but makes type checker happy
         except httpx.RequestError as e:
             raise TransportError(f"Network error: {e}") from e
+
+    async def _post_request(self, url: str, body: dict[str, Any]) -> dict[str, Any]:
+        """Make an authenticated POST request."""
+        try:
+            response = await self._client.post(url, json=body)
+            response.raise_for_status()
+            result: dict[str, Any] = response.json()
+            return result
+        except httpx.HTTPStatusError as e:
+            self._handle_http_error(e)
+            raise  # unreachable, but makes type checker happy
+        except httpx.RequestError as e:
+            raise TransportError(f"Network error: {e}") from e
+
+    def _handle_http_error(self, e: httpx.HTTPStatusError) -> None:
+        """Handle HTTP errors and raise appropriate exceptions."""
+        status = e.response.status_code
+        if status == 401:
+            raise AuthenticationError("Invalid or expired access token") from e
+        if status == 403:
+            raise AuthenticationError(
+                "Access denied. Check your scopes and permissions."
+            ) from e
+        if status == 404:
+            raise NotFoundError(
+                "Spreadsheet not found. Check the ID and sharing permissions."
+            ) from e
+        body = e.response.text
+        raise APIError(f"API error ({status}): {body}", status_code=status) from e
 
     async def close(self) -> None:
         """Close the HTTP client."""
@@ -313,6 +354,15 @@ class LocalFileTransport(Transport):
             data=response,
             truncation_info=truncation_info,
         )
+
+    async def batch_update(
+        self, spreadsheet_id: str, requests: list[dict[str, Any]]
+    ) -> dict[str, Any]:
+        """Mock batch_update for testing - returns empty replies."""
+        return {
+            "spreadsheetId": spreadsheet_id,
+            "replies": [{} for _ in requests],
+        }
 
     async def close(self) -> None:
         """No-op for local file transport."""

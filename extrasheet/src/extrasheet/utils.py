@@ -125,6 +125,34 @@ def grid_range_to_a1(grid_range: GridRange) -> str:
     )
 
 
+def a1_range_to_grid_range(a1_range: str, sheet_id: int = 0) -> dict[str, int]:
+    """Convert A1 notation range to GridRange dict.
+
+    Args:
+        a1_range: A1 notation range like "A1:B5" or single cell "C3"
+        sheet_id: The sheet ID to include in the result
+
+    Returns:
+        GridRange dict with sheetId, startRowIndex, endRowIndex,
+        startColumnIndex, endColumnIndex
+    """
+    if ":" in a1_range:
+        start, end = a1_range.split(":")
+        start_row, start_col = a1_to_cell(start)
+        end_row, end_col = a1_to_cell(end)
+    else:
+        start_row, start_col = a1_to_cell(a1_range)
+        end_row, end_col = start_row, start_col
+
+    return {
+        "sheetId": sheet_id,
+        "startRowIndex": start_row,
+        "endRowIndex": end_row + 1,  # endRowIndex is exclusive
+        "startColumnIndex": start_col,
+        "endColumnIndex": end_col + 1,  # endColumnIndex is exclusive
+    }
+
+
 def sanitize_filename(name: str) -> str:
     """Sanitize a string for use as a filename.
 

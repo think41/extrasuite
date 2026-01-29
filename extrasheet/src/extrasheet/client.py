@@ -1,13 +1,21 @@
 """SheetsClient - Main API for extrasheet.
 
-Provides the `pull` method for transforming Google Sheets to file representation.
+Provides the `pull`, `diff`, and `push` methods for the pull-edit-diff-push workflow.
 """
 
 from __future__ import annotations
 
 import zipfile
+from dataclasses import dataclass
 from pathlib import Path
+from typing import Any
 
+from extrasheet.diff import DiffResult, diff
+from extrasheet.request_generator import generate_requests
+from extrasheet.structural_validation import (
+    ValidationResult,
+    validate_structural_changes,
+)
 from extrasheet.transformer import SpreadsheetTransformer
 from extrasheet.transport import (
     APIError,
@@ -25,9 +33,21 @@ __all__ = [
     "APIError",
     "AuthenticationError",
     "NotFoundError",
+    "PushResult",
     "SheetsClient",
     "TransportError",
 ]
+
+
+@dataclass
+class PushResult:
+    """Result of a push operation."""
+
+    success: bool
+    changes_applied: int
+    message: str
+    spreadsheet_id: str
+    response: dict[str, Any] | None = None
 
 
 class SheetsClient:
@@ -172,6 +192,110 @@ class SheetsClient:
                 zf.write(file_path, arcname)
 
         return zip_path
+
+    def diff(
+        self, folder: str | Path
+    ) -> tuple[DiffResult, list[dict[str, Any]], ValidationResult]:
+        """Compare current files against pristine and generate batchUpdate requests.
+
+        This is a dry-run operation that doesn't make any API calls.
+
+        Args:
+            folder: Path to the spreadsheet folder (containing spreadsheet.json)
+
+        Returns:
+            Tuple of (DiffResult, list of batchUpdate requests, ValidationResult)
+            The ValidationResult contains blocks (hard errors) and warnings.
+
+        Raises:
+            MissingPristineError: If .pristine/spreadsheet.zip doesn't exist
+            InvalidFileError: If files are corrupted
+
+        Example:
+            >>> diff_result, requests, validation = client.diff("./my_spreadsheet_id")
+            >>> if not validation.can_push:
+            ...     print("Blocked:", validation.blocks)
+            >>> print(f"Found {len(requests)} changes")
+        """
+        folder = Path(folder)
+
+        # Run structural validation first
+        validation = validate_structural_changes(folder)
+
+        # Generate diff and requests (even if blocked, for dry-run display)
+        diff_result = diff(folder)
+        requests = generate_requests(diff_result)
+
+        return diff_result, requests, validation
+
+    async def push(self, folder: str | Path, *, force: bool = False) -> PushResult:
+        """Apply changes to Google Sheets.
+
+        Compares current files against pristine, generates batchUpdate requests,
+        and sends them to the Google Sheets API.
+
+        Args:
+            folder: Path to the spreadsheet folder (containing spreadsheet.json)
+            force: If True, proceed despite warnings (blocks still stop push)
+
+        Returns:
+            PushResult with success status and details
+
+        Raises:
+            MissingPristineError: If .pristine/spreadsheet.zip doesn't exist
+            InvalidFileError: If files are corrupted
+            APIError: If the API call fails
+
+        Example:
+            >>> result = await client.push("./my_spreadsheet_id")
+            >>> if result.success:
+            ...     print(f"Applied {result.changes_applied} changes")
+        """
+        folder = Path(folder)
+
+        # Generate diff, requests, and validation
+        diff_result, requests, validation = self.diff(folder)
+
+        # Check for blocking errors
+        if not validation.can_push:
+            return PushResult(
+                success=False,
+                changes_applied=0,
+                message="Push blocked due to validation errors:\n"
+                + "\n".join(f"  - {b}" for b in validation.blocks),
+                spreadsheet_id=diff_result.spreadsheet_id,
+            )
+
+        # Check for warnings (unless force is True)
+        if validation.has_warnings and not force:
+            return PushResult(
+                success=False,
+                changes_applied=0,
+                message="Push blocked due to warnings (use --force to override):\n"
+                + "\n".join(f"  - {w}" for w in validation.warnings),
+                spreadsheet_id=diff_result.spreadsheet_id,
+            )
+
+        if not requests:
+            return PushResult(
+                success=True,
+                changes_applied=0,
+                message="No changes to apply",
+                spreadsheet_id=diff_result.spreadsheet_id,
+            )
+
+        # Send batchUpdate to API
+        response = await self._transport.batch_update(
+            diff_result.spreadsheet_id, requests
+        )
+
+        return PushResult(
+            success=True,
+            changes_applied=len(requests),
+            message=f"Applied {len(requests)} changes",
+            spreadsheet_id=diff_result.spreadsheet_id,
+            response=response,
+        )
 
 
 def _truncation_info_to_dict(
