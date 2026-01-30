@@ -8,6 +8,7 @@ from extrasheet.diff import (
     CellChange,
     ChartChange,
     ConditionalFormatChange,
+    DataSourceTableChange,
     DataValidationChange,
     DiffResult,
     DimensionChange,
@@ -15,11 +16,14 @@ from extrasheet.diff import (
     FormatRuleChange,
     FormulaChange,
     MergeChange,
+    NamedRangeChange,
     NoteChange,
     PivotTableChange,
     SheetDiff,
     SheetPropertyChange,
+    SlicerChange,
     SpreadsheetPropertyChange,
+    TableChange,
     TextFormatRunChange,
 )
 from extrasheet.request_generator import (
@@ -1772,3 +1776,429 @@ class TestGeneratePivotTableRequests:
         pivot = update["rows"][0]["values"][0]["pivotTable"]
         assert pivot["source"]["endRowIndex"] == 100
         assert "columns" in pivot
+
+
+class TestGenerateTableRequests:
+    """Tests for table request generation."""
+
+    def test_table_added(self) -> None:
+        """Test generating addTable."""
+        diff_result = DiffResult(
+            spreadsheet_id="test123",
+            sheet_diffs=[
+                SheetDiff(
+                    sheet_id=0,
+                    sheet_name="Sheet1",
+                    folder_name="Sheet1",
+                    table_changes=[
+                        TableChange(
+                            table_id=None,
+                            table_name="TestTable",
+                            change_type="added",
+                            old_table=None,
+                            new_table={
+                                "name": "TestTable",
+                                "range": {
+                                    "startRowIndex": 0,
+                                    "endRowIndex": 10,
+                                    "startColumnIndex": 0,
+                                    "endColumnIndex": 5,
+                                },
+                            },
+                        )
+                    ],
+                )
+            ],
+        )
+
+        requests = generate_requests(diff_result)
+
+        assert len(requests) == 1
+        req = requests[0]
+        assert "addTable" in req
+
+        table = req["addTable"]["table"]
+        assert table["name"] == "TestTable"
+        assert table["range"]["sheetId"] == 0
+        assert table["range"]["startRowIndex"] == 0
+        assert table["range"]["endRowIndex"] == 10
+
+    def test_table_deleted(self) -> None:
+        """Test generating deleteTable."""
+        diff_result = DiffResult(
+            spreadsheet_id="test123",
+            sheet_diffs=[
+                SheetDiff(
+                    sheet_id=0,
+                    sheet_name="Sheet1",
+                    folder_name="Sheet1",
+                    table_changes=[
+                        TableChange(
+                            table_id="table123",
+                            table_name="TestTable",
+                            change_type="deleted",
+                            old_table={
+                                "tableId": "table123",
+                                "name": "TestTable",
+                                "range": {},
+                            },
+                            new_table=None,
+                        )
+                    ],
+                )
+            ],
+        )
+
+        requests = generate_requests(diff_result)
+
+        assert len(requests) == 1
+        req = requests[0]
+        assert "deleteTable" in req
+        assert req["deleteTable"]["tableId"] == "table123"
+
+    def test_table_modified(self) -> None:
+        """Test generating updateTable."""
+        diff_result = DiffResult(
+            spreadsheet_id="test123",
+            sheet_diffs=[
+                SheetDiff(
+                    sheet_id=0,
+                    sheet_name="Sheet1",
+                    folder_name="Sheet1",
+                    table_changes=[
+                        TableChange(
+                            table_id="table456",
+                            table_name="NewName",
+                            change_type="modified",
+                            old_table={
+                                "tableId": "table456",
+                                "name": "OldName",
+                                "range": {},
+                            },
+                            new_table={
+                                "tableId": "table456",
+                                "name": "NewName",
+                                "range": {
+                                    "startRowIndex": 0,
+                                    "endRowIndex": 20,
+                                    "startColumnIndex": 0,
+                                    "endColumnIndex": 5,
+                                },
+                            },
+                        )
+                    ],
+                )
+            ],
+        )
+
+        requests = generate_requests(diff_result)
+
+        assert len(requests) == 1
+        req = requests[0]
+        assert "updateTable" in req
+
+        update = req["updateTable"]
+        assert update["table"]["tableId"] == "table456"
+        assert update["table"]["name"] == "NewName"
+        assert update["fields"] == "*"
+
+
+class TestGenerateNamedRangeRequests:
+    """Tests for named range request generation."""
+
+    def test_named_range_added(self) -> None:
+        """Test generating addNamedRange."""
+        diff_result = DiffResult(
+            spreadsheet_id="test123",
+            named_range_changes=[
+                NamedRangeChange(
+                    named_range_id=None,
+                    name="TestRange",
+                    change_type="added",
+                    old_range=None,
+                    new_range={
+                        "name": "TestRange",
+                        "range": {
+                            "sheetId": 0,
+                            "startRowIndex": 0,
+                            "endRowIndex": 10,
+                            "startColumnIndex": 0,
+                            "endColumnIndex": 1,
+                        },
+                    },
+                )
+            ],
+        )
+
+        requests = generate_requests(diff_result)
+
+        assert len(requests) == 1
+        req = requests[0]
+        assert "addNamedRange" in req
+
+        named_range = req["addNamedRange"]["namedRange"]
+        assert named_range["name"] == "TestRange"
+        assert named_range["range"]["sheetId"] == 0
+
+    def test_named_range_deleted(self) -> None:
+        """Test generating deleteNamedRange."""
+        diff_result = DiffResult(
+            spreadsheet_id="test123",
+            named_range_changes=[
+                NamedRangeChange(
+                    named_range_id="range123",
+                    name="TestRange",
+                    change_type="deleted",
+                    old_range={
+                        "namedRangeId": "range123",
+                        "name": "TestRange",
+                        "range": {},
+                    },
+                    new_range=None,
+                )
+            ],
+        )
+
+        requests = generate_requests(diff_result)
+
+        assert len(requests) == 1
+        req = requests[0]
+        assert "deleteNamedRange" in req
+        assert req["deleteNamedRange"]["namedRangeId"] == "range123"
+
+    def test_named_range_modified(self) -> None:
+        """Test generating updateNamedRange."""
+        diff_result = DiffResult(
+            spreadsheet_id="test123",
+            named_range_changes=[
+                NamedRangeChange(
+                    named_range_id="range456",
+                    name="NewName",
+                    change_type="modified",
+                    old_range={
+                        "namedRangeId": "range456",
+                        "name": "OldName",
+                        "range": {"sheetId": 0, "startRowIndex": 0, "endRowIndex": 5},
+                    },
+                    new_range={
+                        "namedRangeId": "range456",
+                        "name": "NewName",
+                        "range": {"sheetId": 0, "startRowIndex": 0, "endRowIndex": 10},
+                    },
+                )
+            ],
+        )
+
+        requests = generate_requests(diff_result)
+
+        assert len(requests) == 1
+        req = requests[0]
+        assert "updateNamedRange" in req
+
+        update = req["updateNamedRange"]
+        assert update["namedRange"]["namedRangeId"] == "range456"
+        assert update["namedRange"]["name"] == "NewName"
+        assert update["fields"] == "name,range"
+
+
+class TestGenerateSlicerRequests:
+    """Tests for slicer request generation."""
+
+    def test_slicer_added(self) -> None:
+        """Test generating addSlicer."""
+        diff_result = DiffResult(
+            spreadsheet_id="test123",
+            sheet_diffs=[
+                SheetDiff(
+                    sheet_id=0,
+                    sheet_name="Sheet1",
+                    folder_name="Sheet1",
+                    slicer_changes=[
+                        SlicerChange(
+                            slicer_id=None,
+                            change_type="added",
+                            old_slicer=None,
+                            new_slicer={
+                                "spec": {"title": "TestSlicer"},
+                                "position": {
+                                    "overlayPosition": {
+                                        "anchorCell": {"sheetId": 0, "rowIndex": 0, "columnIndex": 0}
+                                    }
+                                },
+                            },
+                        )
+                    ],
+                )
+            ],
+        )
+
+        requests = generate_requests(diff_result)
+
+        assert len(requests) == 1
+        req = requests[0]
+        assert "addSlicer" in req
+        assert req["addSlicer"]["slicer"]["spec"]["title"] == "TestSlicer"
+
+    def test_slicer_deleted(self) -> None:
+        """Test generating deleteEmbeddedObject for slicer."""
+        diff_result = DiffResult(
+            spreadsheet_id="test123",
+            sheet_diffs=[
+                SheetDiff(
+                    sheet_id=0,
+                    sheet_name="Sheet1",
+                    folder_name="Sheet1",
+                    slicer_changes=[
+                        SlicerChange(
+                            slicer_id=123,
+                            change_type="deleted",
+                            old_slicer={
+                                "slicerId": 123,
+                                "spec": {"title": "TestSlicer"},
+                            },
+                            new_slicer=None,
+                        )
+                    ],
+                )
+            ],
+        )
+
+        requests = generate_requests(diff_result)
+
+        assert len(requests) == 1
+        req = requests[0]
+        assert "deleteEmbeddedObject" in req
+        assert req["deleteEmbeddedObject"]["objectId"] == 123
+
+    def test_slicer_modified(self) -> None:
+        """Test generating updateSlicerSpec."""
+        diff_result = DiffResult(
+            spreadsheet_id="test123",
+            sheet_diffs=[
+                SheetDiff(
+                    sheet_id=0,
+                    sheet_name="Sheet1",
+                    folder_name="Sheet1",
+                    slicer_changes=[
+                        SlicerChange(
+                            slicer_id=456,
+                            change_type="modified",
+                            old_slicer={
+                                "slicerId": 456,
+                                "spec": {"title": "OldTitle"},
+                            },
+                            new_slicer={
+                                "slicerId": 456,
+                                "spec": {"title": "NewTitle"},
+                            },
+                        )
+                    ],
+                )
+            ],
+        )
+
+        requests = generate_requests(diff_result)
+
+        assert len(requests) == 1
+        req = requests[0]
+        assert "updateSlicerSpec" in req
+        assert req["updateSlicerSpec"]["slicerId"] == 456
+        assert req["updateSlicerSpec"]["spec"]["title"] == "NewTitle"
+
+
+class TestGenerateDataSourceTableRequests:
+    """Tests for data source table request generation."""
+
+    def test_data_source_table_modified(self) -> None:
+        """Test generating refreshDataSource for modified data source table."""
+        diff_result = DiffResult(
+            spreadsheet_id="test123",
+            sheet_diffs=[
+                SheetDiff(
+                    sheet_id=0,
+                    sheet_name="Sheet1",
+                    folder_name="Sheet1",
+                    data_source_table_changes=[
+                        DataSourceTableChange(
+                            anchor_cell="A1",
+                            change_type="modified",
+                            old_table={
+                                "anchorCell": "A1",
+                                "dataSourceId": "ds123",
+                                "columns": ["col1"],
+                            },
+                            new_table={
+                                "anchorCell": "A1",
+                                "dataSourceId": "ds123",
+                                "columns": ["col1", "col2"],
+                            },
+                        )
+                    ],
+                )
+            ],
+        )
+
+        requests = generate_requests(diff_result)
+
+        assert len(requests) == 1
+        req = requests[0]
+        assert "refreshDataSource" in req
+        assert req["refreshDataSource"]["dataSourceId"] == "ds123"
+
+    def test_data_source_table_added_no_request(self) -> None:
+        """Test that added data source tables don't generate requests (unsupported)."""
+        diff_result = DiffResult(
+            spreadsheet_id="test123",
+            sheet_diffs=[
+                SheetDiff(
+                    sheet_id=0,
+                    sheet_name="Sheet1",
+                    folder_name="Sheet1",
+                    data_source_table_changes=[
+                        DataSourceTableChange(
+                            anchor_cell="A1",
+                            change_type="added",
+                            old_table=None,
+                            new_table={
+                                "anchorCell": "A1",
+                                "dataSourceId": "ds123",
+                            },
+                        )
+                    ],
+                )
+            ],
+        )
+
+        requests = generate_requests(diff_result)
+
+        # Adding data source tables is not supported via batchUpdate
+        assert len(requests) == 0
+
+    def test_data_source_table_deleted_no_request(self) -> None:
+        """Test that deleted data source tables don't generate requests (unsupported)."""
+        diff_result = DiffResult(
+            spreadsheet_id="test123",
+            sheet_diffs=[
+                SheetDiff(
+                    sheet_id=0,
+                    sheet_name="Sheet1",
+                    folder_name="Sheet1",
+                    data_source_table_changes=[
+                        DataSourceTableChange(
+                            anchor_cell="A1",
+                            change_type="deleted",
+                            old_table={
+                                "anchorCell": "A1",
+                                "dataSourceId": "ds123",
+                            },
+                            new_table=None,
+                        )
+                    ],
+                )
+            ],
+        )
+
+        requests = generate_requests(diff_result)
+
+        # Deleting data source tables is not supported via batchUpdate
+        assert len(requests) == 0

@@ -81,6 +81,8 @@ After `pull`, the folder contains:
     filters.json          # Basic filter + filter views (optional)
     banded-ranges.json    # Alternating row/column colors (optional)
     data-validation.json  # Input validation rules (optional)
+    slicers.json          # Slicers for filtering (optional, rare)
+    data-source-tables.json  # Data source tables (optional, rare)
   .raw/
     metadata.json         # Raw metadata API response
     data.json             # Raw data API response (with grid data)
@@ -245,3 +247,7 @@ All core functionality is implemented:
 - Filter views (add, update, delete)
 - Charts (add, update spec, update position, delete)
 - Pivot tables (add, modify, delete)
+- Tables (add, update, delete)
+- Named ranges (add, update, delete)
+- Slicers (add, update spec, update position, delete)
+- Data source tables (refresh only - add/delete not supported via API)

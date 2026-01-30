@@ -167,6 +167,49 @@ class PivotTableChange:
 
 
 @dataclass
+class TableChange:
+    """Represents a change to a structured table."""
+
+    table_id: str | None  # ID for existing tables, None for new
+    table_name: str
+    change_type: Literal["added", "deleted", "modified"]
+    old_table: dict[str, Any] | None
+    new_table: dict[str, Any] | None
+
+
+@dataclass
+class NamedRangeChange:
+    """Represents a change to a named range."""
+
+    named_range_id: str | None  # ID for existing ranges, None for new
+    name: str
+    change_type: Literal["added", "deleted", "modified"]
+    old_range: dict[str, Any] | None
+    new_range: dict[str, Any] | None
+
+
+@dataclass
+class SlicerChange:
+    """Represents a change to a slicer."""
+
+    slicer_id: int | None  # ID for existing slicers, None for new
+    change_type: Literal["added", "deleted", "modified"]
+    old_slicer: dict[str, Any] | None
+    new_slicer: dict[str, Any] | None
+
+
+@dataclass
+class DataSourceTableChange:
+    """Represents a change to a data source table."""
+
+    # Data source tables are anchored at a cell position
+    anchor_cell: str  # A1 notation of anchor cell
+    change_type: Literal["added", "deleted", "modified"]
+    old_table: dict[str, Any] | None
+    new_table: dict[str, Any] | None
+
+
+@dataclass
 class GridChange:
     """Represents a change to the grid dimensions (row/column count)."""
 
@@ -222,6 +265,9 @@ class SheetDiff:
     filter_view_changes: list[FilterViewChange] = field(default_factory=list)
     chart_changes: list[ChartChange] = field(default_factory=list)
     pivot_table_changes: list[PivotTableChange] = field(default_factory=list)
+    table_changes: list[TableChange] = field(default_factory=list)
+    slicer_changes: list[SlicerChange] = field(default_factory=list)
+    data_source_table_changes: list[DataSourceTableChange] = field(default_factory=list)
     grid_changes: list[GridChange] = field(default_factory=list)
 
 
@@ -255,6 +301,7 @@ class DiffResult:
     sheet_property_changes: list[SheetPropertyChange] = field(default_factory=list)
     new_sheet_changes: list[NewSheetChange] = field(default_factory=list)
     deleted_sheet_changes: list[DeletedSheetChange] = field(default_factory=list)
+    named_range_changes: list[NamedRangeChange] = field(default_factory=list)
     errors: list[str] = field(default_factory=list)
 
     def has_changes(self) -> bool:
@@ -264,6 +311,7 @@ class DiffResult:
             or self.sheet_property_changes
             or self.new_sheet_changes
             or self.deleted_sheet_changes
+            or self.named_range_changes
         ):
             return True
         for sheet_diff in self.sheet_diffs:
@@ -282,6 +330,9 @@ class DiffResult:
                 or sheet_diff.filter_view_changes
                 or sheet_diff.chart_changes
                 or sheet_diff.pivot_table_changes
+                or sheet_diff.table_changes
+                or sheet_diff.slicer_changes
+                or sheet_diff.data_source_table_changes
                 or sheet_diff.grid_changes
             ):
                 return True
@@ -399,6 +450,9 @@ def diff(folder: Path) -> DiffResult:
                     sheet_id=pristine_sheet.get("sheetId", 0),
                 )
             )
+
+    # Diff named ranges (spreadsheet-level feature)
+    result.named_range_changes = _diff_named_ranges(pristine_files, current_files)
 
     return result
 
@@ -593,6 +647,17 @@ def _diff_sheet(
 
     # Diff pivot tables - from feature data
     sheet_diff.pivot_table_changes = _diff_pivot_tables(
+        pristine_feature, current_feature
+    )
+
+    # Diff tables - from feature data
+    sheet_diff.table_changes = _diff_tables(pristine_feature, current_feature)
+
+    # Diff slicers - from feature data
+    sheet_diff.slicer_changes = _diff_slicers(pristine_feature, current_feature)
+
+    # Diff data source tables - from feature data
+    sheet_diff.data_source_table_changes = _diff_data_source_tables(
         pristine_feature, current_feature
     )
 
@@ -1034,9 +1099,11 @@ def _diff_formulas(
             new_end_row = pristine_to_current_row(end_row)
             new_end_col = pristine_to_current_col(end_col)
 
-            if any(
-                v is None
-                for v in [new_start_row, new_start_col, new_end_row, new_end_col]
+            if (
+                new_start_row is None
+                or new_start_col is None
+                or new_end_row is None
+                or new_end_col is None
             ):
                 return None
 
@@ -2021,3 +2088,307 @@ def _read_feature_data(
     current_feature = read_current_features(current_files)
 
     return pristine_feature, current_feature
+
+
+def _diff_tables(
+    pristine_feature: dict[str, Any], current_feature: dict[str, Any]
+) -> list[TableChange]:
+    """Diff tables between pristine and current.
+
+    Tables are keyed by their tableId.
+    """
+    changes: list[TableChange] = []
+
+    pristine_tables = pristine_feature.get("tables", [])
+    current_tables = current_feature.get("tables", [])
+
+    # Build lookup by tableId
+    pristine_by_id = {t.get("tableId"): t for t in pristine_tables if t.get("tableId")}
+    current_by_id = {t.get("tableId"): t for t in current_tables if t.get("tableId")}
+
+    # Find deleted and modified tables
+    for table_id, pristine_table in pristine_by_id.items():
+        current_table = current_by_id.get(table_id)
+        if current_table is None:
+            # Table was deleted
+            changes.append(
+                TableChange(
+                    table_id=table_id,
+                    table_name=pristine_table.get("name", ""),
+                    change_type="deleted",
+                    old_table=pristine_table,
+                    new_table=None,
+                )
+            )
+        elif _tables_differ(pristine_table, current_table):
+            # Table was modified
+            changes.append(
+                TableChange(
+                    table_id=table_id,
+                    table_name=current_table.get("name", ""),
+                    change_type="modified",
+                    old_table=pristine_table,
+                    new_table=current_table,
+                )
+            )
+
+    # Find added tables (tables in current but not in pristine)
+    for table_id, current_table in current_by_id.items():
+        if table_id not in pristine_by_id:
+            changes.append(
+                TableChange(
+                    table_id=table_id,
+                    table_name=current_table.get("name", ""),
+                    change_type="added",
+                    old_table=None,
+                    new_table=current_table,
+                )
+            )
+
+    # Handle tables without tableId (new tables added by user)
+    # These won't have a tableId yet
+    current_without_id = [t for t in current_tables if not t.get("tableId")]
+    for table in current_without_id:
+        changes.append(
+            TableChange(
+                table_id=None,
+                table_name=table.get("name", ""),
+                change_type="added",
+                old_table=None,
+                new_table=table,
+            )
+        )
+
+    return changes
+
+
+def _tables_differ(table1: dict[str, Any], table2: dict[str, Any]) -> bool:
+    """Check if two tables differ."""
+    # Compare all fields
+    return table1 != table2
+
+
+def _diff_named_ranges(
+    pristine_files: dict[str, str | bytes],
+    current_files: dict[str, str],
+) -> list[NamedRangeChange]:
+    """Diff named ranges between pristine and current.
+
+    Named ranges are stored at the spreadsheet level in named_ranges.json.
+    """
+    changes: list[NamedRangeChange] = []
+
+    # Read named ranges from files
+    pristine_str = get_pristine_file(pristine_files, "named_ranges.json")
+    current_str = current_files.get("named_ranges.json")
+
+    pristine_data = json.loads(pristine_str) if pristine_str else {}
+    current_data = json.loads(current_str) if current_str else {}
+
+    pristine_ranges = pristine_data.get("namedRanges", [])
+    current_ranges = current_data.get("namedRanges", [])
+
+    # Build lookup by namedRangeId
+    pristine_by_id = {
+        r.get("namedRangeId"): r for r in pristine_ranges if r.get("namedRangeId")
+    }
+    current_by_id = {
+        r.get("namedRangeId"): r for r in current_ranges if r.get("namedRangeId")
+    }
+
+    # Find deleted and modified named ranges
+    for range_id, pristine_range in pristine_by_id.items():
+        current_range = current_by_id.get(range_id)
+        if current_range is None:
+            # Named range was deleted
+            changes.append(
+                NamedRangeChange(
+                    named_range_id=range_id,
+                    name=pristine_range.get("name", ""),
+                    change_type="deleted",
+                    old_range=pristine_range,
+                    new_range=None,
+                )
+            )
+        elif _named_ranges_differ(pristine_range, current_range):
+            # Named range was modified
+            changes.append(
+                NamedRangeChange(
+                    named_range_id=range_id,
+                    name=current_range.get("name", ""),
+                    change_type="modified",
+                    old_range=pristine_range,
+                    new_range=current_range,
+                )
+            )
+
+    # Find added named ranges (in current but not in pristine)
+    for range_id, current_range in current_by_id.items():
+        if range_id not in pristine_by_id:
+            changes.append(
+                NamedRangeChange(
+                    named_range_id=range_id,
+                    name=current_range.get("name", ""),
+                    change_type="added",
+                    old_range=None,
+                    new_range=current_range,
+                )
+            )
+
+    # Handle named ranges without namedRangeId (new ranges added by user)
+    current_without_id = [r for r in current_ranges if not r.get("namedRangeId")]
+    for named_range in current_without_id:
+        changes.append(
+            NamedRangeChange(
+                named_range_id=None,
+                name=named_range.get("name", ""),
+                change_type="added",
+                old_range=None,
+                new_range=named_range,
+            )
+        )
+
+    return changes
+
+
+def _named_ranges_differ(range1: dict[str, Any], range2: dict[str, Any]) -> bool:
+    """Check if two named ranges differ."""
+    # Compare all fields
+    return range1 != range2
+
+
+def _diff_slicers(
+    pristine_feature: dict[str, Any], current_feature: dict[str, Any]
+) -> list[SlicerChange]:
+    """Diff slicers between pristine and current.
+
+    Slicers are identified by their slicerId.
+    """
+    changes: list[SlicerChange] = []
+
+    pristine_slicers = pristine_feature.get("slicers", [])
+    current_slicers = current_feature.get("slicers", [])
+
+    # Build dicts keyed by slicerId
+    pristine_by_id = {s.get("slicerId"): s for s in pristine_slicers}
+    current_by_id = {s.get("slicerId"): s for s in current_slicers}
+
+    # Find deleted and modified slicers
+    for slicer_id, pristine_slicer in pristine_by_id.items():
+        current_slicer = current_by_id.get(slicer_id)
+        if current_slicer is None:
+            # Slicer was deleted
+            changes.append(
+                SlicerChange(
+                    slicer_id=slicer_id,
+                    change_type="deleted",
+                    old_slicer=pristine_slicer,
+                    new_slicer=None,
+                )
+            )
+        elif _slicers_differ(pristine_slicer, current_slicer):
+            # Slicer was modified
+            changes.append(
+                SlicerChange(
+                    slicer_id=slicer_id,
+                    change_type="modified",
+                    old_slicer=pristine_slicer,
+                    new_slicer=current_slicer,
+                )
+            )
+
+    # Find added slicers (in current but not in pristine)
+    for slicer_id, current_slicer in current_by_id.items():
+        if slicer_id not in pristine_by_id:
+            changes.append(
+                SlicerChange(
+                    slicer_id=slicer_id,
+                    change_type="added",
+                    old_slicer=None,
+                    new_slicer=current_slicer,
+                )
+            )
+
+    # Handle slicers without slicerId (new slicers added by user)
+    current_without_id = [s for s in current_slicers if not s.get("slicerId")]
+    for slicer in current_without_id:
+        changes.append(
+            SlicerChange(
+                slicer_id=None,
+                change_type="added",
+                old_slicer=None,
+                new_slicer=slicer,
+            )
+        )
+
+    return changes
+
+
+def _slicers_differ(slicer1: dict[str, Any], slicer2: dict[str, Any]) -> bool:
+    """Check if two slicers differ (ignoring slicerId)."""
+    s1 = {k: v for k, v in slicer1.items() if k != "slicerId"}
+    s2 = {k: v for k, v in slicer2.items() if k != "slicerId"}
+    return s1 != s2
+
+
+def _diff_data_source_tables(
+    pristine_feature: dict[str, Any], current_feature: dict[str, Any]
+) -> list[DataSourceTableChange]:
+    """Diff data source tables between pristine and current.
+
+    Data source tables are anchored at a cell position.
+    Each entry has an anchorCell key for identification.
+    """
+    changes: list[DataSourceTableChange] = []
+
+    pristine_tables = pristine_feature.get("dataSourceTables", [])
+    current_tables = current_feature.get("dataSourceTables", [])
+
+    # Build dicts keyed by anchorCell
+    pristine_by_anchor = {t.get("anchorCell"): t for t in pristine_tables}
+    current_by_anchor = {t.get("anchorCell"): t for t in current_tables}
+
+    # Find deleted and modified data source tables
+    for anchor, pristine_table in pristine_by_anchor.items():
+        current_table = current_by_anchor.get(anchor)
+        if current_table is None:
+            # Table was deleted
+            changes.append(
+                DataSourceTableChange(
+                    anchor_cell=anchor or "",
+                    change_type="deleted",
+                    old_table=pristine_table,
+                    new_table=None,
+                )
+            )
+        elif _data_source_tables_differ(pristine_table, current_table):
+            # Table was modified
+            changes.append(
+                DataSourceTableChange(
+                    anchor_cell=anchor or "",
+                    change_type="modified",
+                    old_table=pristine_table,
+                    new_table=current_table,
+                )
+            )
+
+    # Find added data source tables (in current but not in pristine)
+    for anchor, current_table in current_by_anchor.items():
+        if anchor not in pristine_by_anchor:
+            changes.append(
+                DataSourceTableChange(
+                    anchor_cell=anchor or "",
+                    change_type="added",
+                    old_table=None,
+                    new_table=current_table,
+                )
+            )
+
+    return changes
+
+
+def _data_source_tables_differ(
+    table1: dict[str, Any], table2: dict[str, Any]
+) -> bool:
+    """Check if two data source tables differ."""
+    return table1 != table2

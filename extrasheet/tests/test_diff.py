@@ -1097,3 +1097,667 @@ class TestDiffSplitFeatureFiles:
         assert len(sheet_diff.chart_changes) == 1
         assert sheet_diff.chart_changes[0].change_type == "added"
         assert sheet_diff.chart_changes[0].chart_id == 999
+
+
+class TestDiffTables:
+    """Tests for table diffing functionality."""
+
+    def test_table_added(self, tmp_path: Path) -> None:
+        """Test diff detects added tables."""
+        spreadsheet_json = json.dumps(
+            {
+                "spreadsheetId": "test123",
+                "title": "Test",
+                "sheets": [{"sheetId": 0, "title": "Sheet1", "folder": "Sheet1"}],
+            }
+        )
+        data_tsv = "Name\tValue\n1\t2\n"
+        tables_pristine = json.dumps({"tables": []})
+        tables_current = json.dumps(
+            {
+                "tables": [
+                    {
+                        "tableId": "table123",
+                        "name": "TestTable",
+                        "range": {
+                            "sheetId": 0,
+                            "startRowIndex": 0,
+                            "endRowIndex": 10,
+                            "startColumnIndex": 0,
+                            "endColumnIndex": 2,
+                        },
+                    }
+                ]
+            }
+        )
+
+        create_pristine_zip(
+            tmp_path,
+            {
+                "spreadsheet.json": spreadsheet_json,
+                "Sheet1/data.tsv": data_tsv,
+                "Sheet1/tables.json": tables_pristine,
+            },
+        )
+        write_current_files(
+            tmp_path,
+            {
+                "spreadsheet.json": spreadsheet_json,
+                "Sheet1/data.tsv": data_tsv,
+                "Sheet1/tables.json": tables_current,
+            },
+        )
+
+        result = diff(tmp_path)
+
+        assert len(result.sheet_diffs) == 1
+        sheet_diff = result.sheet_diffs[0]
+        assert len(sheet_diff.table_changes) == 1
+        assert sheet_diff.table_changes[0].change_type == "added"
+        assert sheet_diff.table_changes[0].table_id == "table123"
+        assert sheet_diff.table_changes[0].table_name == "TestTable"
+
+    def test_table_deleted(self, tmp_path: Path) -> None:
+        """Test diff detects deleted tables."""
+        spreadsheet_json = json.dumps(
+            {
+                "spreadsheetId": "test123",
+                "title": "Test",
+                "sheets": [{"sheetId": 0, "title": "Sheet1", "folder": "Sheet1"}],
+            }
+        )
+        data_tsv = "Name\tValue\n1\t2\n"
+        tables_pristine = json.dumps(
+            {
+                "tables": [
+                    {
+                        "tableId": "table123",
+                        "name": "TestTable",
+                        "range": {"sheetId": 0},
+                    }
+                ]
+            }
+        )
+        tables_current = json.dumps({"tables": []})
+
+        create_pristine_zip(
+            tmp_path,
+            {
+                "spreadsheet.json": spreadsheet_json,
+                "Sheet1/data.tsv": data_tsv,
+                "Sheet1/tables.json": tables_pristine,
+            },
+        )
+        write_current_files(
+            tmp_path,
+            {
+                "spreadsheet.json": spreadsheet_json,
+                "Sheet1/data.tsv": data_tsv,
+                "Sheet1/tables.json": tables_current,
+            },
+        )
+
+        result = diff(tmp_path)
+
+        assert len(result.sheet_diffs) == 1
+        sheet_diff = result.sheet_diffs[0]
+        assert len(sheet_diff.table_changes) == 1
+        assert sheet_diff.table_changes[0].change_type == "deleted"
+        assert sheet_diff.table_changes[0].table_id == "table123"
+
+    def test_table_modified(self, tmp_path: Path) -> None:
+        """Test diff detects modified tables."""
+        spreadsheet_json = json.dumps(
+            {
+                "spreadsheetId": "test123",
+                "title": "Test",
+                "sheets": [{"sheetId": 0, "title": "Sheet1", "folder": "Sheet1"}],
+            }
+        )
+        data_tsv = "Name\tValue\n1\t2\n"
+        tables_pristine = json.dumps(
+            {
+                "tables": [
+                    {
+                        "tableId": "table123",
+                        "name": "OldName",
+                        "range": {"sheetId": 0},
+                    }
+                ]
+            }
+        )
+        tables_current = json.dumps(
+            {
+                "tables": [
+                    {
+                        "tableId": "table123",
+                        "name": "NewName",
+                        "range": {"sheetId": 0},
+                    }
+                ]
+            }
+        )
+
+        create_pristine_zip(
+            tmp_path,
+            {
+                "spreadsheet.json": spreadsheet_json,
+                "Sheet1/data.tsv": data_tsv,
+                "Sheet1/tables.json": tables_pristine,
+            },
+        )
+        write_current_files(
+            tmp_path,
+            {
+                "spreadsheet.json": spreadsheet_json,
+                "Sheet1/data.tsv": data_tsv,
+                "Sheet1/tables.json": tables_current,
+            },
+        )
+
+        result = diff(tmp_path)
+
+        assert len(result.sheet_diffs) == 1
+        sheet_diff = result.sheet_diffs[0]
+        assert len(sheet_diff.table_changes) == 1
+        assert sheet_diff.table_changes[0].change_type == "modified"
+        assert sheet_diff.table_changes[0].table_name == "NewName"
+
+
+class TestDiffNamedRanges:
+    """Tests for named range diffing functionality."""
+
+    def test_named_range_added(self, tmp_path: Path) -> None:
+        """Test diff detects added named ranges."""
+        spreadsheet_json = json.dumps(
+            {
+                "spreadsheetId": "test123",
+                "title": "Test",
+                "sheets": [{"sheetId": 0, "title": "Sheet1", "folder": "Sheet1"}],
+            }
+        )
+        data_tsv = "Name\tValue\n1\t2\n"
+        named_ranges_pristine = json.dumps({"namedRanges": []})
+        named_ranges_current = json.dumps(
+            {
+                "namedRanges": [
+                    {
+                        "namedRangeId": "range123",
+                        "name": "TestRange",
+                        "range": {
+                            "sheetId": 0,
+                            "startRowIndex": 0,
+                            "endRowIndex": 10,
+                            "startColumnIndex": 0,
+                            "endColumnIndex": 1,
+                        },
+                    }
+                ]
+            }
+        )
+
+        create_pristine_zip(
+            tmp_path,
+            {
+                "spreadsheet.json": spreadsheet_json,
+                "Sheet1/data.tsv": data_tsv,
+                "named_ranges.json": named_ranges_pristine,
+            },
+        )
+        write_current_files(
+            tmp_path,
+            {
+                "spreadsheet.json": spreadsheet_json,
+                "Sheet1/data.tsv": data_tsv,
+                "named_ranges.json": named_ranges_current,
+            },
+        )
+
+        result = diff(tmp_path)
+
+        assert len(result.named_range_changes) == 1
+        assert result.named_range_changes[0].change_type == "added"
+        assert result.named_range_changes[0].named_range_id == "range123"
+        assert result.named_range_changes[0].name == "TestRange"
+
+    def test_named_range_deleted(self, tmp_path: Path) -> None:
+        """Test diff detects deleted named ranges."""
+        spreadsheet_json = json.dumps(
+            {
+                "spreadsheetId": "test123",
+                "title": "Test",
+                "sheets": [{"sheetId": 0, "title": "Sheet1", "folder": "Sheet1"}],
+            }
+        )
+        data_tsv = "Name\tValue\n1\t2\n"
+        named_ranges_pristine = json.dumps(
+            {
+                "namedRanges": [
+                    {
+                        "namedRangeId": "range123",
+                        "name": "TestRange",
+                        "range": {"sheetId": 0},
+                    }
+                ]
+            }
+        )
+        named_ranges_current = json.dumps({"namedRanges": []})
+
+        create_pristine_zip(
+            tmp_path,
+            {
+                "spreadsheet.json": spreadsheet_json,
+                "Sheet1/data.tsv": data_tsv,
+                "named_ranges.json": named_ranges_pristine,
+            },
+        )
+        write_current_files(
+            tmp_path,
+            {
+                "spreadsheet.json": spreadsheet_json,
+                "Sheet1/data.tsv": data_tsv,
+                "named_ranges.json": named_ranges_current,
+            },
+        )
+
+        result = diff(tmp_path)
+
+        assert len(result.named_range_changes) == 1
+        assert result.named_range_changes[0].change_type == "deleted"
+        assert result.named_range_changes[0].named_range_id == "range123"
+
+    def test_named_range_modified(self, tmp_path: Path) -> None:
+        """Test diff detects modified named ranges."""
+        spreadsheet_json = json.dumps(
+            {
+                "spreadsheetId": "test123",
+                "title": "Test",
+                "sheets": [{"sheetId": 0, "title": "Sheet1", "folder": "Sheet1"}],
+            }
+        )
+        data_tsv = "Name\tValue\n1\t2\n"
+        named_ranges_pristine = json.dumps(
+            {
+                "namedRanges": [
+                    {
+                        "namedRangeId": "range123",
+                        "name": "OldName",
+                        "range": {"sheetId": 0, "startRowIndex": 0, "endRowIndex": 5},
+                    }
+                ]
+            }
+        )
+        named_ranges_current = json.dumps(
+            {
+                "namedRanges": [
+                    {
+                        "namedRangeId": "range123",
+                        "name": "NewName",
+                        "range": {"sheetId": 0, "startRowIndex": 0, "endRowIndex": 10},
+                    }
+                ]
+            }
+        )
+
+        create_pristine_zip(
+            tmp_path,
+            {
+                "spreadsheet.json": spreadsheet_json,
+                "Sheet1/data.tsv": data_tsv,
+                "named_ranges.json": named_ranges_pristine,
+            },
+        )
+        write_current_files(
+            tmp_path,
+            {
+                "spreadsheet.json": spreadsheet_json,
+                "Sheet1/data.tsv": data_tsv,
+                "named_ranges.json": named_ranges_current,
+            },
+        )
+
+        result = diff(tmp_path)
+
+        assert len(result.named_range_changes) == 1
+        assert result.named_range_changes[0].change_type == "modified"
+        assert result.named_range_changes[0].name == "NewName"
+
+    def test_no_named_ranges_file(self, tmp_path: Path) -> None:
+        """Test diff works when named_ranges.json doesn't exist."""
+        spreadsheet_json = json.dumps(
+            {
+                "spreadsheetId": "test123",
+                "title": "Test",
+                "sheets": [{"sheetId": 0, "title": "Sheet1", "folder": "Sheet1"}],
+            }
+        )
+        data_tsv = "Name\tValue\n1\t2\n"
+
+        create_pristine_zip(
+            tmp_path,
+            {
+                "spreadsheet.json": spreadsheet_json,
+                "Sheet1/data.tsv": data_tsv,
+            },
+        )
+        write_current_files(
+            tmp_path,
+            {
+                "spreadsheet.json": spreadsheet_json,
+                "Sheet1/data.tsv": data_tsv,
+            },
+        )
+
+        result = diff(tmp_path)
+
+        # No named ranges changes when file doesn't exist
+        assert len(result.named_range_changes) == 0
+
+
+class TestDiffSlicers:
+    """Tests for slicer diffing."""
+
+    def test_slicer_added(self, tmp_path: Path) -> None:
+        """Test diff detects added slicers."""
+        spreadsheet_json = json.dumps(
+            {
+                "spreadsheetId": "test123",
+                "title": "Test",
+                "sheets": [{"sheetId": 0, "title": "Sheet1", "folder": "Sheet1"}],
+            }
+        )
+        data_tsv = "Name\tValue\n1\t2\n"
+        slicers_pristine = json.dumps({"slicers": []})
+        slicers_current = json.dumps(
+            {
+                "slicers": [
+                    {
+                        "slicerId": 123,
+                        "spec": {"title": "TestSlicer"},
+                        "position": {"overlayPosition": {"anchorCell": {"sheetId": 0}}},
+                    }
+                ]
+            }
+        )
+
+        create_pristine_zip(
+            tmp_path,
+            {
+                "spreadsheet.json": spreadsheet_json,
+                "Sheet1/data.tsv": data_tsv,
+                "Sheet1/slicers.json": slicers_pristine,
+            },
+        )
+        write_current_files(
+            tmp_path,
+            {
+                "spreadsheet.json": spreadsheet_json,
+                "Sheet1/data.tsv": data_tsv,
+                "Sheet1/slicers.json": slicers_current,
+            },
+        )
+
+        result = diff(tmp_path)
+
+        assert len(result.sheet_diffs) == 1
+        sheet_diff = result.sheet_diffs[0]
+        assert len(sheet_diff.slicer_changes) == 1
+        assert sheet_diff.slicer_changes[0].change_type == "added"
+        assert sheet_diff.slicer_changes[0].slicer_id == 123
+
+    def test_slicer_deleted(self, tmp_path: Path) -> None:
+        """Test diff detects deleted slicers."""
+        spreadsheet_json = json.dumps(
+            {
+                "spreadsheetId": "test123",
+                "title": "Test",
+                "sheets": [{"sheetId": 0, "title": "Sheet1", "folder": "Sheet1"}],
+            }
+        )
+        data_tsv = "Name\tValue\n1\t2\n"
+        slicers_pristine = json.dumps(
+            {
+                "slicers": [
+                    {
+                        "slicerId": 123,
+                        "spec": {"title": "TestSlicer"},
+                    }
+                ]
+            }
+        )
+        slicers_current = json.dumps({"slicers": []})
+
+        create_pristine_zip(
+            tmp_path,
+            {
+                "spreadsheet.json": spreadsheet_json,
+                "Sheet1/data.tsv": data_tsv,
+                "Sheet1/slicers.json": slicers_pristine,
+            },
+        )
+        write_current_files(
+            tmp_path,
+            {
+                "spreadsheet.json": spreadsheet_json,
+                "Sheet1/data.tsv": data_tsv,
+                "Sheet1/slicers.json": slicers_current,
+            },
+        )
+
+        result = diff(tmp_path)
+
+        assert len(result.sheet_diffs) == 1
+        sheet_diff = result.sheet_diffs[0]
+        assert len(sheet_diff.slicer_changes) == 1
+        assert sheet_diff.slicer_changes[0].change_type == "deleted"
+        assert sheet_diff.slicer_changes[0].slicer_id == 123
+
+    def test_slicer_modified(self, tmp_path: Path) -> None:
+        """Test diff detects modified slicers."""
+        spreadsheet_json = json.dumps(
+            {
+                "spreadsheetId": "test123",
+                "title": "Test",
+                "sheets": [{"sheetId": 0, "title": "Sheet1", "folder": "Sheet1"}],
+            }
+        )
+        data_tsv = "Name\tValue\n1\t2\n"
+        slicers_pristine = json.dumps(
+            {
+                "slicers": [
+                    {
+                        "slicerId": 123,
+                        "spec": {"title": "OldTitle"},
+                    }
+                ]
+            }
+        )
+        slicers_current = json.dumps(
+            {
+                "slicers": [
+                    {
+                        "slicerId": 123,
+                        "spec": {"title": "NewTitle"},
+                    }
+                ]
+            }
+        )
+
+        create_pristine_zip(
+            tmp_path,
+            {
+                "spreadsheet.json": spreadsheet_json,
+                "Sheet1/data.tsv": data_tsv,
+                "Sheet1/slicers.json": slicers_pristine,
+            },
+        )
+        write_current_files(
+            tmp_path,
+            {
+                "spreadsheet.json": spreadsheet_json,
+                "Sheet1/data.tsv": data_tsv,
+                "Sheet1/slicers.json": slicers_current,
+            },
+        )
+
+        result = diff(tmp_path)
+
+        assert len(result.sheet_diffs) == 1
+        sheet_diff = result.sheet_diffs[0]
+        assert len(sheet_diff.slicer_changes) == 1
+        assert sheet_diff.slicer_changes[0].change_type == "modified"
+        assert sheet_diff.slicer_changes[0].slicer_id == 123
+
+
+class TestDiffDataSourceTables:
+    """Tests for data source table diffing."""
+
+    def test_data_source_table_added(self, tmp_path: Path) -> None:
+        """Test diff detects added data source tables."""
+        spreadsheet_json = json.dumps(
+            {
+                "spreadsheetId": "test123",
+                "title": "Test",
+                "sheets": [{"sheetId": 0, "title": "Sheet1", "folder": "Sheet1"}],
+            }
+        )
+        data_tsv = "Name\tValue\n1\t2\n"
+        ds_tables_pristine = json.dumps({"dataSourceTables": []})
+        ds_tables_current = json.dumps(
+            {
+                "dataSourceTables": [
+                    {
+                        "anchorCell": "A1",
+                        "dataSourceId": "ds123",
+                    }
+                ]
+            }
+        )
+
+        create_pristine_zip(
+            tmp_path,
+            {
+                "spreadsheet.json": spreadsheet_json,
+                "Sheet1/data.tsv": data_tsv,
+                "Sheet1/data-source-tables.json": ds_tables_pristine,
+            },
+        )
+        write_current_files(
+            tmp_path,
+            {
+                "spreadsheet.json": spreadsheet_json,
+                "Sheet1/data.tsv": data_tsv,
+                "Sheet1/data-source-tables.json": ds_tables_current,
+            },
+        )
+
+        result = diff(tmp_path)
+
+        assert len(result.sheet_diffs) == 1
+        sheet_diff = result.sheet_diffs[0]
+        assert len(sheet_diff.data_source_table_changes) == 1
+        assert sheet_diff.data_source_table_changes[0].change_type == "added"
+        assert sheet_diff.data_source_table_changes[0].anchor_cell == "A1"
+
+    def test_data_source_table_deleted(self, tmp_path: Path) -> None:
+        """Test diff detects deleted data source tables."""
+        spreadsheet_json = json.dumps(
+            {
+                "spreadsheetId": "test123",
+                "title": "Test",
+                "sheets": [{"sheetId": 0, "title": "Sheet1", "folder": "Sheet1"}],
+            }
+        )
+        data_tsv = "Name\tValue\n1\t2\n"
+        ds_tables_pristine = json.dumps(
+            {
+                "dataSourceTables": [
+                    {
+                        "anchorCell": "A1",
+                        "dataSourceId": "ds123",
+                    }
+                ]
+            }
+        )
+        ds_tables_current = json.dumps({"dataSourceTables": []})
+
+        create_pristine_zip(
+            tmp_path,
+            {
+                "spreadsheet.json": spreadsheet_json,
+                "Sheet1/data.tsv": data_tsv,
+                "Sheet1/data-source-tables.json": ds_tables_pristine,
+            },
+        )
+        write_current_files(
+            tmp_path,
+            {
+                "spreadsheet.json": spreadsheet_json,
+                "Sheet1/data.tsv": data_tsv,
+                "Sheet1/data-source-tables.json": ds_tables_current,
+            },
+        )
+
+        result = diff(tmp_path)
+
+        assert len(result.sheet_diffs) == 1
+        sheet_diff = result.sheet_diffs[0]
+        assert len(sheet_diff.data_source_table_changes) == 1
+        assert sheet_diff.data_source_table_changes[0].change_type == "deleted"
+
+    def test_data_source_table_modified(self, tmp_path: Path) -> None:
+        """Test diff detects modified data source tables."""
+        spreadsheet_json = json.dumps(
+            {
+                "spreadsheetId": "test123",
+                "title": "Test",
+                "sheets": [{"sheetId": 0, "title": "Sheet1", "folder": "Sheet1"}],
+            }
+        )
+        data_tsv = "Name\tValue\n1\t2\n"
+        ds_tables_pristine = json.dumps(
+            {
+                "dataSourceTables": [
+                    {
+                        "anchorCell": "A1",
+                        "dataSourceId": "ds123",
+                        "columns": ["col1"],
+                    }
+                ]
+            }
+        )
+        ds_tables_current = json.dumps(
+            {
+                "dataSourceTables": [
+                    {
+                        "anchorCell": "A1",
+                        "dataSourceId": "ds123",
+                        "columns": ["col1", "col2"],
+                    }
+                ]
+            }
+        )
+
+        create_pristine_zip(
+            tmp_path,
+            {
+                "spreadsheet.json": spreadsheet_json,
+                "Sheet1/data.tsv": data_tsv,
+                "Sheet1/data-source-tables.json": ds_tables_pristine,
+            },
+        )
+        write_current_files(
+            tmp_path,
+            {
+                "spreadsheet.json": spreadsheet_json,
+                "Sheet1/data.tsv": data_tsv,
+                "Sheet1/data-source-tables.json": ds_tables_current,
+            },
+        )
+
+        result = diff(tmp_path)
+
+        assert len(result.sheet_diffs) == 1
+        sheet_diff = result.sheet_diffs[0]
+        assert len(sheet_diff.data_source_table_changes) == 1
+        assert sheet_diff.data_source_table_changes[0].change_type == "modified"

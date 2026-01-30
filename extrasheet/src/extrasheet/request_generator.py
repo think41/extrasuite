@@ -10,6 +10,7 @@ from extrasheet.diff import (
     CellChange,
     ChartChange,
     ConditionalFormatChange,
+    DataSourceTableChange,
     DataValidationChange,
     DeletedSheetChange,
     DiffResult,
@@ -18,12 +19,15 @@ from extrasheet.diff import (
     FormatRuleChange,
     FormulaChange,
     MergeChange,
+    NamedRangeChange,
     NewSheetChange,
     NoteChange,
     PivotTableChange,
     SheetDiff,
     SheetPropertyChange,
+    SlicerChange,
     SpreadsheetPropertyChange,
+    TableChange,
     TextFormatRunChange,
     range_to_indices,
 )
@@ -70,6 +74,9 @@ def generate_requests(diff_result: DiffResult) -> list[dict[str, Any]]:
     # Sheet content changes
     for sheet_diff in diff_result.sheet_diffs:
         requests.extend(_generate_sheet_requests(sheet_diff))
+
+    # Named range changes (spreadsheet-level)
+    requests.extend(_generate_named_range_requests(diff_result.named_range_changes))
 
     # Deleted sheets (must come last after all content is handled)
     requests.extend(_generate_deleted_sheet_requests(diff_result.deleted_sheet_changes))
@@ -330,6 +337,23 @@ def _generate_sheet_requests(sheet_diff: SheetDiff) -> list[dict[str, Any]]:
     requests.extend(
         _generate_pivot_table_requests(
             sheet_diff.pivot_table_changes, sheet_diff.sheet_id
+        )
+    )
+
+    # Table changes
+    requests.extend(
+        _generate_table_requests(sheet_diff.table_changes, sheet_diff.sheet_id)
+    )
+
+    # Slicer changes
+    requests.extend(
+        _generate_slicer_requests(sheet_diff.slicer_changes, sheet_diff.sheet_id)
+    )
+
+    # Data source table changes
+    requests.extend(
+        _generate_data_source_table_requests(
+            sheet_diff.data_source_table_changes, sheet_diff.sheet_id
         )
     )
 
@@ -1448,3 +1472,197 @@ def _build_pivot_table(pivot_data: dict[str, Any], sheet_id: int) -> dict[str, A
         result["source"]["sheetId"] = sheet_id
 
     return result
+
+
+def _generate_table_requests(
+    changes: list[TableChange], sheet_id: int
+) -> list[dict[str, Any]]:
+    """Generate requests for table changes.
+
+    Uses:
+    - addTable for new tables
+    - updateTable for modified tables
+    - deleteTable for deleted tables
+    """
+    requests: list[dict[str, Any]] = []
+
+    for change in changes:
+        if change.change_type == "deleted" and change.table_id:
+            # Delete table
+            requests.append({"deleteTable": {"tableId": change.table_id}})
+
+        elif change.change_type == "added" and change.new_table:
+            # Add new table
+            table = _build_table(change.new_table, sheet_id)
+            requests.append({"addTable": {"table": table}})
+
+        elif change.change_type == "modified" and change.new_table:
+            # Update existing table
+            table = _build_table(change.new_table, sheet_id)
+            # Include the tableId for the update
+            if change.table_id:
+                table["tableId"] = change.table_id
+
+            requests.append(
+                {
+                    "updateTable": {
+                        "table": table,
+                        "fields": "*",  # Update all fields
+                    }
+                }
+            )
+
+    return requests
+
+
+def _build_table(table_data: dict[str, Any], sheet_id: int) -> dict[str, Any]:
+    """Build a table for the API.
+
+    Ensures the range has the correct sheetId.
+    """
+    result: dict[str, Any] = dict(table_data)
+
+    # Ensure the range has sheetId
+    if "range" in result:
+        result["range"] = dict(result["range"])
+        result["range"]["sheetId"] = sheet_id
+
+    return result
+
+
+def _generate_named_range_requests(
+    changes: list[NamedRangeChange],
+) -> list[dict[str, Any]]:
+    """Generate requests for named range changes.
+
+    Uses:
+    - addNamedRange for new named ranges
+    - updateNamedRange for modified named ranges
+    - deleteNamedRange for deleted named ranges
+    """
+    requests: list[dict[str, Any]] = []
+
+    for change in changes:
+        if change.change_type == "deleted" and change.named_range_id:
+            # Delete named range
+            requests.append(
+                {"deleteNamedRange": {"namedRangeId": change.named_range_id}}
+            )
+
+        elif change.change_type == "added" and change.new_range:
+            # Add new named range
+            requests.append({"addNamedRange": {"namedRange": change.new_range}})
+
+        elif change.change_type == "modified" and change.new_range:
+            # Update existing named range
+            named_range = dict(change.new_range)
+            # Ensure namedRangeId is set
+            if change.named_range_id:
+                named_range["namedRangeId"] = change.named_range_id
+
+            requests.append(
+                {
+                    "updateNamedRange": {
+                        "namedRange": named_range,
+                        "fields": "name,range",  # Update name and range
+                    }
+                }
+            )
+
+    return requests
+
+
+def _generate_slicer_requests(
+    changes: list[SlicerChange], sheet_id: int
+) -> list[dict[str, Any]]:
+    """Generate requests for slicer changes.
+
+    Uses:
+    - addSlicer for new slicers
+    - updateSlicerSpec for modified slicers
+    - deleteDimensionGroup (no direct deleteSlicer, use deleteEmbeddedObject)
+    """
+    requests: list[dict[str, Any]] = []
+
+    for change in changes:
+        if change.change_type == "deleted" and change.slicer_id is not None:
+            # Delete slicer using deleteEmbeddedObject
+            # Note: Slicers are embedded objects, so we use deleteEmbeddedObject
+            requests.append(
+                {"deleteEmbeddedObject": {"objectId": change.slicer_id}}
+            )
+
+        elif change.change_type == "added" and change.new_slicer:
+            # Add new slicer
+            slicer = dict(change.new_slicer)
+            # Ensure position has sheetId
+            if "position" in slicer and "overlayPosition" in slicer["position"]:
+                overlay = slicer["position"]["overlayPosition"]
+                if "anchorCell" in overlay and "sheetId" not in overlay["anchorCell"]:
+                    overlay["anchorCell"]["sheetId"] = sheet_id
+
+            requests.append({"addSlicer": {"slicer": slicer}})
+
+        elif change.change_type == "modified" and change.new_slicer:
+            # Update slicer spec
+            if change.slicer_id is not None and "spec" in change.new_slicer:
+                requests.append(
+                    {
+                        "updateSlicerSpec": {
+                            "slicerId": change.slicer_id,
+                            "spec": change.new_slicer["spec"],
+                            "fields": "*",
+                        }
+                    }
+                )
+                # If position changed, also update position
+                if "position" in change.new_slicer:
+                    requests.append(
+                        {
+                            "updateEmbeddedObjectPosition": {
+                                "objectId": change.slicer_id,
+                                "newPosition": change.new_slicer["position"],
+                                "fields": "*",
+                            }
+                        }
+                    )
+
+    return requests
+
+
+def _generate_data_source_table_requests(
+    changes: list[DataSourceTableChange], sheet_id: int
+) -> list[dict[str, Any]]:
+    """Generate requests for data source table changes.
+
+    Data source tables are read-only snapshots from external data sources.
+    The API supports:
+    - refreshDataSource to refresh data
+    - updateDataSource to modify source configuration
+
+    Note: Direct add/delete of data source tables is limited in the API.
+    These tables are typically managed through the UI.
+    """
+    requests: list[dict[str, Any]] = []
+
+    for change in changes:
+        if change.change_type == "modified" and change.new_table:
+            # For data source tables, we can request a refresh
+            # The actual table spec modifications are limited
+            data_source_id = change.new_table.get("dataSourceId")
+            if data_source_id:
+                # Request refresh of the data source
+                requests.append(
+                    {
+                        "refreshDataSource": {
+                            "dataSourceId": data_source_id,
+                            "force": True,
+                        }
+                    }
+                )
+
+        # Note: Adding and deleting data source tables is complex
+        # and typically requires setting up the data source first.
+        # For now, we only support refresh operations.
+
+    return requests
