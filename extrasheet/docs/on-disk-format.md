@@ -1,7 +1,7 @@
 # Extrasheet On-Disk Format Specification
 
-Version: 2.2.0
-Last Updated: 2026-01-28
+Version: 2.3.0
+Last Updated: 2026-01-30
 
 ## Overview
 
@@ -23,7 +23,14 @@ This document describes the current implementation's output format.
     │   ├── data.tsv               # Cell values as tab-separated values
     │   ├── formula.json           # Formulas (sparse representation)
     │   ├── format.json            # Cell formatting
-    │   ├── feature.json           # Charts, pivots, filters, validation, etc.
+    │   ├── charts.json            # Embedded charts (if any)
+    │   ├── pivot-tables.json      # Pivot tables (if any)
+    │   ├── tables.json            # Structured tables (if any)
+    │   ├── filters.json           # Basic filter + filter views (if any)
+    │   ├── banded-ranges.json     # Alternating row/column colors (if any)
+    │   ├── data-validation.json   # Input validation rules (if any)
+    │   ├── slicers.json           # Interactive filter slicers (rare)
+    │   ├── data-source-tables.json # Data source tables (rare)
     │   ├── dimension.json         # Row/column sizing and groups
     │   └── protection.json        # Protected ranges (if any exist)
     ├── .raw/                      # Raw API responses (saved by default)
@@ -74,7 +81,14 @@ Files are only created when they contain meaningful data:
 - `theme.json` - Only if spreadsheet has defaultFormat or spreadsheetTheme
 - `formula.json` - Only if sheet has formulas
 - `format.json` - Only if sheet has non-default formatting, conditional formats, merges, text runs, or notes
-- `feature.json` - Only if sheet has charts, pivots, filters, tables, slicers, banded ranges, or data validation
+- `charts.json` - Only if sheet has embedded charts
+- `pivot-tables.json` - Only if sheet has pivot tables
+- `tables.json` - Only if sheet has structured tables
+- `filters.json` - Only if sheet has basic filter or filter views
+- `banded-ranges.json` - Only if sheet has alternating row/column colors
+- `data-validation.json` - Only if sheet has input validation rules
+- `slicers.json` - Only if sheet has interactive filter slicers
+- `data-source-tables.json` - Only if sheet has data source tables
 - `dimension.json` - Only if sheet has non-default row/column sizes, groups, or dimension metadata
 - `protection.json` - Only if sheet has protected ranges
 - `named_ranges.json` - Only if spreadsheet has named ranges
@@ -442,9 +456,15 @@ The `formatRules` array contains range-based formatting rules:
 | `booleanRule` | Condition + format for boolean rules |
 | `gradientRule` | Min/mid/max colors for gradient rules |
 
-### feature.json
+### Feature Files (Split Format)
 
-Advanced spreadsheet features including charts, pivot tables, filters, and data validation.
+Advanced spreadsheet features are stored in separate JSON files per feature type. This split format provides better organization and allows agents to read only the features they need.
+
+**Note:** The diff/push workflow supports both the new split format and the legacy `feature.json` for backward compatibility.
+
+#### charts.json
+
+Embedded charts with position and specification.
 
 ```json
 {
@@ -468,7 +488,16 @@ Advanced spreadsheet features including charts, pivot tables, filters, and data 
         }
       }
     }
-  ],
+  ]
+}
+```
+
+#### pivot-tables.json
+
+Pivot tables with anchor cell and configuration.
+
+```json
+{
   "pivotTables": [
     {
       "anchorCell": "G1",
@@ -477,7 +506,18 @@ Advanced spreadsheet features including charts, pivot tables, filters, and data 
       "columns": [...],
       "values": [...]
     }
-  ],
+  ]
+}
+```
+
+**Pivot Table Editing:** You can add, modify, or delete pivot tables by editing this file. The anchor cell (A1 notation) identifies each pivot table.
+
+#### tables.json
+
+Structured tables with column definitions.
+
+```json
+{
   "tables": [
     {
       "tableId": "1778223018",
@@ -488,7 +528,16 @@ Advanced spreadsheet features including charts, pivot tables, filters, and data 
         { "columnIndex": 1, "columnName": "Resource Type" }
       ]
     }
-  ],
+  ]
+}
+```
+
+#### filters.json
+
+Basic filter and filter views.
+
+```json
+{
   "basicFilter": {
     "range": { "sheetId": 0, "startRowIndex": 0, ... },
     "sortSpecs": [...],
@@ -501,17 +550,16 @@ Advanced spreadsheet features including charts, pivot tables, filters, and data 
       "range": { ... },
       "filterSpecs": [...]
     }
-  ],
-  "slicers": [
-    {
-      "slicerId": 456,
-      "position": { ... },
-      "spec": {
-        "dataRange": { ... },
-        "title": "Region Filter"
-      }
-    }
-  ],
+  ]
+}
+```
+
+#### banded-ranges.json
+
+Alternating row/column colors.
+
+```json
+{
   "bandedRanges": [
     {
       "bandedRangeId": 1778223018,
@@ -522,14 +570,16 @@ Advanced spreadsheet features including charts, pivot tables, filters, and data 
         "secondBandColor": { ... }
       }
     }
-  ],
-  "dataSourceTables": [
-    {
-      "anchorCell": "M1",
-      "dataSourceId": "datasource_abc",
-      "columns": [...]
-    }
-  ],
+  ]
+}
+```
+
+#### data-validation.json
+
+Input validation rules grouped by rule type.
+
+```json
+{
   "dataValidation": [
     {
       "range": "H2... (49 cells)",
@@ -549,23 +599,55 @@ Advanced spreadsheet features including charts, pivot tables, filters, and data 
 }
 ```
 
-**Feature Sections:**
-
-| Section | Source | Description |
-|---------|--------|-------------|
-| `charts` | `Sheet.charts[]` | Embedded charts with ID, position, and spec |
-| `pivotTables` | `CellData.pivotTable` | Pivot tables with anchor cell |
-| `tables` | `Sheet.tables[]` | Structured tables with column definitions |
-| `basicFilter` | `Sheet.basicFilter` | Active filter on the sheet |
-| `filterViews` | `Sheet.filterViews[]` | Saved filter views |
-| `slicers` | `Sheet.slicers[]` | Interactive filter slicers |
-| `bandedRanges` | `Sheet.bandedRanges[]` | Alternating row/column colors |
-| `dataSourceTables` | `CellData.dataSourceTable` | Tables from external data |
-| `dataValidation` | `CellData.dataValidation` | Input validation rules grouped by rule |
-
-**Data Validation Grouping:**
-
 Cells with identical validation rules are grouped together. The `cells` array lists all cells with that rule, and `range` provides a summary.
+
+#### slicers.json (rare)
+
+Interactive filter slicers.
+
+```json
+{
+  "slicers": [
+    {
+      "slicerId": 456,
+      "position": { ... },
+      "spec": {
+        "dataRange": { ... },
+        "title": "Region Filter"
+      }
+    }
+  ]
+}
+```
+
+#### data-source-tables.json (rare)
+
+Tables connected to external data sources.
+
+```json
+{
+  "dataSourceTables": [
+    {
+      "anchorCell": "M1",
+      "dataSourceId": "datasource_abc",
+      "columns": [...]
+    }
+  ]
+}
+```
+
+**Feature Files Summary:**
+
+| File | Content | Source |
+|------|---------|--------|
+| `charts.json` | Embedded charts | `Sheet.charts[]` |
+| `pivot-tables.json` | Pivot tables | `CellData.pivotTable` |
+| `tables.json` | Structured tables | `Sheet.tables[]` |
+| `filters.json` | Basic filter + filter views | `Sheet.basicFilter`, `Sheet.filterViews[]` |
+| `banded-ranges.json` | Alternating colors | `Sheet.bandedRanges[]` |
+| `data-validation.json` | Input validation | `CellData.dataValidation` |
+| `slicers.json` | Interactive slicers | `Sheet.slicers[]` |
+| `data-source-tables.json` | External data tables | `CellData.dataSourceTable` |
 
 ### dimension.json
 

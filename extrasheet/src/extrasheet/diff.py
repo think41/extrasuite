@@ -157,6 +157,16 @@ class ChartChange:
 
 
 @dataclass
+class PivotTableChange:
+    """Represents a change to a pivot table."""
+
+    anchor_cell: str  # A1 notation for the anchor cell
+    change_type: Literal["added", "deleted", "modified"]
+    old_pivot: dict[str, Any] | None
+    new_pivot: dict[str, Any] | None
+
+
+@dataclass
 class GridChange:
     """Represents a change to the grid dimensions (row/column count)."""
 
@@ -211,6 +221,7 @@ class SheetDiff:
     banded_range_changes: list[BandedRangeChange] = field(default_factory=list)
     filter_view_changes: list[FilterViewChange] = field(default_factory=list)
     chart_changes: list[ChartChange] = field(default_factory=list)
+    pivot_table_changes: list[PivotTableChange] = field(default_factory=list)
     grid_changes: list[GridChange] = field(default_factory=list)
 
 
@@ -270,6 +281,7 @@ class DiffResult:
                 or sheet_diff.banded_range_changes
                 or sheet_diff.filter_view_changes
                 or sheet_diff.chart_changes
+                or sheet_diff.pivot_table_changes
                 or sheet_diff.grid_changes
             ):
                 return True
@@ -329,7 +341,13 @@ def diff(folder: Path) -> DiffResult:
     # Detect new sheets (in current but not in pristine)
     # We use a counter to assign temporary sheetIds to new sheets
     # These IDs are specified in the addSheet request
-    next_new_sheet_id = 1000000  # Start high to avoid conflicts
+    # Start from max existing sheetId + 1 to avoid conflicts
+    all_sheet_ids = [
+        s.get("sheetId", 0)
+        for s in list(pristine_sheets.values()) + list(current_sheets.values())
+    ]
+    max_existing_id = max(all_sheet_ids) if all_sheet_ids else 0
+    next_new_sheet_id = max_existing_id + 1
 
     for folder_name, current_sheet in current_sheets.items():
         is_new_sheet = folder_name not in pristine_sheets
@@ -515,12 +533,12 @@ def _diff_sheet(
     current_format = json.loads(current_format_str) if current_format_str else {}
     sheet_diff.format_rule_changes = _diff_format_rules(pristine_format, current_format)
 
-    # Diff data validation (from feature.json)
-    feature_path = f"{folder_name}/feature.json"
-    pristine_feature_str = get_pristine_file(pristine_files, feature_path)
-    current_feature_str = current_files.get(feature_path)
-    pristine_feature = json.loads(pristine_feature_str) if pristine_feature_str else {}
-    current_feature = json.loads(current_feature_str) if current_feature_str else {}
+    # Read feature data (supports both legacy feature.json and new split format)
+    pristine_feature, current_feature = _read_feature_data(
+        pristine_files, current_files, folder_name
+    )
+
+    # Diff data validation
     sheet_diff.data_validation_changes = _diff_data_validation(
         pristine_feature, current_feature
     )
@@ -570,8 +588,13 @@ def _diff_sheet(
         pristine_feature, current_feature
     )
 
-    # Diff charts - from feature.json
+    # Diff charts - from feature data
     sheet_diff.chart_changes = _diff_charts(pristine_feature, current_feature)
+
+    # Diff pivot tables - from feature data
+    sheet_diff.pivot_table_changes = _diff_pivot_tables(
+        pristine_feature, current_feature
+    )
 
     return sheet_diff
 
@@ -1835,3 +1858,166 @@ def _charts_differ(chart1: dict[str, Any], chart2: dict[str, Any]) -> bool:
     c1 = {k: v for k, v in chart1.items() if k != "chartId"}
     c2 = {k: v for k, v in chart2.items() if k != "chartId"}
     return c1 != c2
+
+
+def _diff_pivot_tables(
+    pristine_feature: dict[str, Any], current_feature: dict[str, Any]
+) -> list[PivotTableChange]:
+    """Diff pivot tables between pristine and current.
+
+    Pivot tables are keyed by their anchorCell (A1 notation).
+    """
+    changes: list[PivotTableChange] = []
+
+    pristine_pivots = pristine_feature.get("pivotTables", [])
+    current_pivots = current_feature.get("pivotTables", [])
+
+    # Build dicts keyed by anchorCell
+    pristine_by_anchor = {p.get("anchorCell"): p for p in pristine_pivots}
+    current_by_anchor = {p.get("anchorCell"): p for p in current_pivots}
+
+    # Find deleted and modified pivot tables
+    for anchor_cell, pristine_pivot in pristine_by_anchor.items():
+        current_pivot = current_by_anchor.get(anchor_cell)
+        if current_pivot is None:
+            # Pivot table was deleted
+            changes.append(
+                PivotTableChange(
+                    anchor_cell=anchor_cell,
+                    change_type="deleted",
+                    old_pivot=pristine_pivot,
+                    new_pivot=None,
+                )
+            )
+        elif _pivot_tables_differ(pristine_pivot, current_pivot):
+            # Pivot table was modified
+            changes.append(
+                PivotTableChange(
+                    anchor_cell=anchor_cell,
+                    change_type="modified",
+                    old_pivot=pristine_pivot,
+                    new_pivot=current_pivot,
+                )
+            )
+
+    # Find added pivot tables (pivot tables in current but not in pristine)
+    for anchor_cell, current_pivot in current_by_anchor.items():
+        if anchor_cell not in pristine_by_anchor:
+            changes.append(
+                PivotTableChange(
+                    anchor_cell=anchor_cell,
+                    change_type="added",
+                    old_pivot=None,
+                    new_pivot=current_pivot,
+                )
+            )
+
+    return changes
+
+
+def _pivot_tables_differ(pivot1: dict[str, Any], pivot2: dict[str, Any]) -> bool:
+    """Check if two pivot tables differ (ignoring anchorCell)."""
+    # Compare everything except anchorCell
+    p1 = {k: v for k, v in pivot1.items() if k != "anchorCell"}
+    p2 = {k: v for k, v in pivot2.items() if k != "anchorCell"}
+    return p1 != p2
+
+
+def _read_feature_data(
+    pristine_files: dict[str, str | bytes],
+    current_files: dict[str, str],
+    folder_name: str,
+) -> tuple[dict[str, Any], dict[str, Any]]:
+    """Read feature data from separate files or legacy feature.json.
+
+    Supports both the new split format (charts.json, pivot-tables.json, etc.)
+    and the legacy feature.json format for backward compatibility.
+
+    New format files take precedence over legacy feature.json.
+
+    Args:
+        pristine_files: Files from the pristine zip
+        current_files: Files from the current folder
+        folder_name: Name of the sheet folder
+
+    Returns:
+        Tuple of (pristine_feature_data, current_feature_data)
+    """
+    # File mapping: new file name -> feature key
+    feature_files = {
+        "charts.json": "charts",
+        "pivot-tables.json": "pivotTables",
+        "tables.json": "tables",
+        "filters.json": None,  # Special handling for basicFilter + filterViews
+        "banded-ranges.json": "bandedRanges",
+        "data-validation.json": "dataValidation",
+        "slicers.json": "slicers",
+        "data-source-tables.json": "dataSourceTables",
+    }
+
+    def read_pristine_features(
+        files: dict[str, str | bytes],
+    ) -> dict[str, Any]:
+        """Read feature data from pristine files."""
+        result: dict[str, Any] = {}
+
+        # First, try to read from legacy feature.json
+        legacy_path = f"{folder_name}/feature.json"
+        legacy_str = get_pristine_file(files, legacy_path)
+
+        if legacy_str:
+            result = json.loads(legacy_str)
+
+        # Then, override with separate files if they exist
+        for filename, feature_key in feature_files.items():
+            file_path = f"{folder_name}/{filename}"
+            content_str = get_pristine_file(files, file_path)
+
+            if content_str:
+                content = json.loads(content_str)
+                if filename == "filters.json":
+                    # Special handling: filters.json contains basicFilter + filterViews
+                    if "basicFilter" in content:
+                        result["basicFilter"] = content["basicFilter"]
+                    if "filterViews" in content:
+                        result["filterViews"] = content["filterViews"]
+                elif feature_key and feature_key in content:
+                    result[feature_key] = content[feature_key]
+
+        return result
+
+    def read_current_features(
+        files: dict[str, str],
+    ) -> dict[str, Any]:
+        """Read feature data from current files."""
+        result: dict[str, Any] = {}
+
+        # First, try to read from legacy feature.json
+        legacy_path = f"{folder_name}/feature.json"
+        legacy_str = files.get(legacy_path)
+
+        if legacy_str:
+            result = json.loads(legacy_str)
+
+        # Then, override with separate files if they exist
+        for filename, feature_key in feature_files.items():
+            file_path = f"{folder_name}/{filename}"
+            content_str = files.get(file_path)
+
+            if content_str:
+                content = json.loads(content_str)
+                if filename == "filters.json":
+                    # Special handling: filters.json contains basicFilter + filterViews
+                    if "basicFilter" in content:
+                        result["basicFilter"] = content["basicFilter"]
+                    if "filterViews" in content:
+                        result["filterViews"] = content["filterViews"]
+                elif feature_key and feature_key in content:
+                    result[feature_key] = content[feature_key]
+
+        return result
+
+    pristine_feature = read_pristine_features(pristine_files)
+    current_feature = read_current_features(current_files)
+
+    return pristine_feature, current_feature

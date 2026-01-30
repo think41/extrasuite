@@ -343,9 +343,9 @@ class SpreadsheetTransformer:
                     result["dimension.json"] = dimensions
 
         # Features (charts, pivots, etc.) - applies to all sheet types
-        features = self._extract_features(sheet)
-        if self._has_feature_content(features):
-            result["feature.json"] = features
+        # Output as separate files instead of single feature.json
+        feature_files = self._extract_feature_files(sheet)
+        result.update(feature_files)
 
         # Protection
         protected_ranges = sheet.get("protectedRanges", [])
@@ -551,8 +551,77 @@ class SpreadsheetTransformer:
 
         return result
 
+    def _extract_feature_files(self, sheet: Sheet) -> dict[str, Any]:
+        """Extract features into separate files.
+
+        Instead of a single feature.json, outputs separate files:
+        - charts.json: Charts
+        - pivot-tables.json: Pivot tables
+        - tables.json: Tables
+        - filters.json: Basic filter + filter views
+        - banded-ranges.json: Banded ranges
+        - data-validation.json: Data validation rules
+        - slicers.json: Slicers (rare)
+        - data-source-tables.json: Data source tables (rare)
+
+        Only creates files if content exists.
+        """
+        result: dict[str, Any] = {}
+
+        # Charts
+        charts = sheet.get("charts", [])
+        if charts:
+            result["charts.json"] = {"charts": charts}
+
+        # Pivot tables - extracted from cells
+        pivot_tables = self._extract_pivot_tables(sheet)
+        if pivot_tables:
+            result["pivot-tables.json"] = {"pivotTables": pivot_tables}
+
+        # Tables
+        tables = sheet.get("tables", [])
+        if tables:
+            result["tables.json"] = {"tables": tables}
+
+        # Filters (basicFilter + filterViews)
+        basic_filter = sheet.get("basicFilter")
+        filter_views = sheet.get("filterViews", [])
+        if basic_filter or filter_views:
+            filters_data: dict[str, Any] = {}
+            if basic_filter:
+                filters_data["basicFilter"] = basic_filter
+            if filter_views:
+                filters_data["filterViews"] = filter_views
+            result["filters.json"] = filters_data
+
+        # Banded ranges
+        banded_ranges = sheet.get("bandedRanges", [])
+        if banded_ranges:
+            result["banded-ranges.json"] = {"bandedRanges": banded_ranges}
+
+        # Data validation - extracted from cells
+        data_validation = self._extract_data_validation(sheet)
+        if data_validation:
+            result["data-validation.json"] = {"dataValidation": data_validation}
+
+        # Slicers (rare)
+        slicers = sheet.get("slicers", [])
+        if slicers:
+            result["slicers.json"] = {"slicers": slicers}
+
+        # Data source tables - extracted from cells (rare)
+        ds_tables = self._extract_data_source_tables(sheet)
+        if ds_tables:
+            result["data-source-tables.json"] = {"dataSourceTables": ds_tables}
+
+        return result
+
     def _extract_features(self, sheet: Sheet) -> dict[str, Any]:
-        """Extract features (charts, pivots, filters, etc.) from sheet."""
+        """Extract features (charts, pivots, filters, etc.) from sheet.
+
+        DEPRECATED: This method is kept for backward compatibility.
+        Use _extract_feature_files() for the new split format.
+        """
         result: dict[str, Any] = {}
 
         # Charts

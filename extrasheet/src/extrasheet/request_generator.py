@@ -20,6 +20,7 @@ from extrasheet.diff import (
     MergeChange,
     NewSheetChange,
     NoteChange,
+    PivotTableChange,
     SheetDiff,
     SheetPropertyChange,
     SpreadsheetPropertyChange,
@@ -325,6 +326,13 @@ def _generate_sheet_requests(sheet_diff: SheetDiff) -> list[dict[str, Any]]:
         _generate_chart_requests(sheet_diff.chart_changes, sheet_diff.sheet_id)
     )
 
+    # Pivot table changes
+    requests.extend(
+        _generate_pivot_table_requests(
+            sheet_diff.pivot_table_changes, sheet_diff.sheet_id
+        )
+    )
+
     return requests
 
 
@@ -539,7 +547,9 @@ def _generate_formula_delete_requests(
     # Build rows with empty values
     rows: list[dict[str, Any]] = []
     for _ in range(num_rows):
-        row_values = [{"userEnteredValue": {}} for _ in range(num_cols)]
+        row_values: list[dict[str, Any]] = [
+            {"userEnteredValue": {}} for _ in range(num_cols)
+        ]
         rows.append({"values": row_values})
 
     return [
@@ -1371,5 +1381,70 @@ def _build_chart_position(
     # Handle newSheet position (creates a new sheet for the chart)
     if "newSheet" in position_data:
         result["newSheet"] = position_data["newSheet"]
+
+    return result
+
+
+def _generate_pivot_table_requests(
+    changes: list[PivotTableChange], sheet_id: int
+) -> list[dict[str, Any]]:
+    """Generate requests for pivot table changes.
+
+    Uses updateCells with fields: "pivotTable" to add/modify pivot tables.
+    For deletions, clears the pivot table field.
+    """
+    requests: list[dict[str, Any]] = []
+
+    for change in changes:
+        row, col = a1_to_cell(change.anchor_cell)
+
+        if change.change_type == "deleted":
+            # Delete pivot table by clearing the pivotTable field
+            requests.append(
+                {
+                    "updateCells": {
+                        "rows": [{"values": [{"pivotTable": None}]}],
+                        "fields": "pivotTable",
+                        "start": {
+                            "sheetId": sheet_id,
+                            "rowIndex": row,
+                            "columnIndex": col,
+                        },
+                    }
+                }
+            )
+        elif change.change_type in ("added", "modified") and change.new_pivot:
+            # Add or modify pivot table
+            pivot_table = _build_pivot_table(change.new_pivot, sheet_id)
+            requests.append(
+                {
+                    "updateCells": {
+                        "rows": [{"values": [{"pivotTable": pivot_table}]}],
+                        "fields": "pivotTable",
+                        "start": {
+                            "sheetId": sheet_id,
+                            "rowIndex": row,
+                            "columnIndex": col,
+                        },
+                    }
+                }
+            )
+
+    return requests
+
+
+def _build_pivot_table(pivot_data: dict[str, Any], sheet_id: int) -> dict[str, Any]:
+    """Build a pivot table for the API.
+
+    Strips the anchorCell (since it's specified in updateCells start)
+    and ensures the source range has the correct sheetId.
+    """
+    # Copy everything except anchorCell
+    result: dict[str, Any] = {k: v for k, v in pivot_data.items() if k != "anchorCell"}
+
+    # Ensure the source range has sheetId
+    if "source" in result:
+        result["source"] = dict(result["source"])
+        result["source"]["sheetId"] = sheet_id
 
     return result

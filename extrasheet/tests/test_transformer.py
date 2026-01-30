@@ -381,12 +381,12 @@ class TestSpreadsheetTransformer:
         transformer = SpreadsheetTransformer(spreadsheet)
         result = transformer.transform()
 
-        # Check feature.json has charts
-        assert "test123/Sheet1/feature.json" in result
-        features = result["test123/Sheet1/feature.json"]
-        assert "charts" in features
-        assert len(features["charts"]) == 1
-        assert features["charts"][0]["chartId"] == 12345
+        # Check charts.json (new split format)
+        assert "test123/Sheet1/charts.json" in result
+        charts_data = result["test123/Sheet1/charts.json"]
+        assert "charts" in charts_data
+        assert len(charts_data["charts"]) == 1
+        assert charts_data["charts"][0]["chartId"] == 12345
 
     def test_protected_ranges(self) -> None:
         """Test extracting protected ranges."""
@@ -457,5 +457,5 @@ class TestObjectSheets:
 
         # Should not have data.tsv for object sheets
         assert "test123/ChartSheet/data.tsv" not in result
-        # Should have feature.json with chart
-        assert "test123/ChartSheet/feature.json" in result
+        # Should have charts.json (new split format)
+        assert "test123/ChartSheet/charts.json" in result

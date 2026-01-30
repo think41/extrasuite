@@ -12,14 +12,14 @@ Usage:
 """
 
 import json
-from pathlib import Path
 from collections import defaultdict
+from pathlib import Path
 
 
 def load_discovery() -> dict:
     """Load the discovery.json file."""
     discovery_path = Path(__file__).parent.parent / "docs" / "discovery.json"
-    with open(discovery_path) as f:
+    with discovery_path.open() as f:
         return json.load(f)
 
 
@@ -223,7 +223,7 @@ def main():
 
     # Write JSON output
     output_path = Path(__file__).parent.parent / "docs" / "batch_operations.json"
-    with open(output_path, "w") as f:
+    with output_path.open("w") as f:
         json.dump(output, f, indent=2)
 
     print(f"\n\n{'=' * 80}")

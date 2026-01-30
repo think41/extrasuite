@@ -74,8 +74,13 @@ After `pull`, the folder contains:
     data.tsv              # Cell values
     formula.json          # Formulas (compressed)
     format.json           # Formatting (compressed)
-    feature.json          # Charts, pivot tables, etc.
     dimension.json        # Row/column sizes (optional)
+    charts.json           # Embedded charts (optional)
+    pivot-tables.json     # Pivot tables (optional)
+    tables.json           # Structured tables (optional)
+    filters.json          # Basic filter + filter views (optional)
+    banded-ranges.json    # Alternating row/column colors (optional)
+    data-validation.json  # Input validation rules (optional)
   .raw/
     metadata.json         # Raw metadata API response
     data.json             # Raw data API response (with grid data)
@@ -239,3 +244,4 @@ All core functionality is implemented:
 - Banded ranges (alternating row/column colors)
 - Filter views (add, update, delete)
 - Charts (add, update spec, update position, delete)
+- Pivot tables (add, modify, delete)

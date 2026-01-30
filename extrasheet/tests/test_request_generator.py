@@ -16,6 +16,7 @@ from extrasheet.diff import (
     FormulaChange,
     MergeChange,
     NoteChange,
+    PivotTableChange,
     SheetDiff,
     SheetPropertyChange,
     SpreadsheetPropertyChange,
@@ -1636,3 +1637,138 @@ class TestGenerateChartRequests:
         request_types = [next(iter(r.keys())) for r in requests]
         assert "updateChartSpec" in request_types
         assert "updateEmbeddedObjectPosition" in request_types
+
+
+class TestGeneratePivotTableRequests:
+    """Tests for pivot table request generation."""
+
+    def test_pivot_table_added(self) -> None:
+        """Test generating updateCells for added pivot table."""
+        diff_result = DiffResult(
+            spreadsheet_id="test123",
+            sheet_diffs=[
+                SheetDiff(
+                    sheet_id=0,
+                    sheet_name="Sheet1",
+                    folder_name="Sheet1",
+                    pivot_table_changes=[
+                        PivotTableChange(
+                            anchor_cell="G1",
+                            change_type="added",
+                            old_pivot=None,
+                            new_pivot={
+                                "anchorCell": "G1",
+                                "source": {
+                                    "startRowIndex": 0,
+                                    "endRowIndex": 100,
+                                    "startColumnIndex": 0,
+                                    "endColumnIndex": 5,
+                                },
+                                "rows": [{"sourceColumnOffset": 0}],
+                                "values": [
+                                    {
+                                        "summarizeFunction": "SUM",
+                                        "sourceColumnOffset": 1,
+                                    }
+                                ],
+                            },
+                        )
+                    ],
+                )
+            ],
+        )
+
+        requests = generate_requests(diff_result)
+
+        assert len(requests) == 1
+        req = requests[0]
+        assert "updateCells" in req
+
+        update = req["updateCells"]
+        assert update["fields"] == "pivotTable"
+        assert update["start"]["sheetId"] == 0
+        assert update["start"]["rowIndex"] == 0  # G1 is row 0
+        assert update["start"]["columnIndex"] == 6  # G is column 6
+
+        pivot = update["rows"][0]["values"][0]["pivotTable"]
+        assert pivot["source"]["sheetId"] == 0
+        assert pivot["rows"][0]["sourceColumnOffset"] == 0
+        assert "anchorCell" not in pivot  # Should be stripped
+
+    def test_pivot_table_deleted(self) -> None:
+        """Test generating updateCells to clear pivot table."""
+        diff_result = DiffResult(
+            spreadsheet_id="test123",
+            sheet_diffs=[
+                SheetDiff(
+                    sheet_id=0,
+                    sheet_name="Sheet1",
+                    folder_name="Sheet1",
+                    pivot_table_changes=[
+                        PivotTableChange(
+                            anchor_cell="H5",
+                            change_type="deleted",
+                            old_pivot={
+                                "anchorCell": "H5",
+                                "source": {"startRowIndex": 0, "endRowIndex": 50},
+                            },
+                            new_pivot=None,
+                        )
+                    ],
+                )
+            ],
+        )
+
+        requests = generate_requests(diff_result)
+
+        assert len(requests) == 1
+        req = requests[0]
+        assert "updateCells" in req
+
+        update = req["updateCells"]
+        assert update["fields"] == "pivotTable"
+        assert update["start"]["rowIndex"] == 4  # H5 is row 4
+        assert update["start"]["columnIndex"] == 7  # H is column 7
+        assert update["rows"][0]["values"][0]["pivotTable"] is None
+
+    def test_pivot_table_modified(self) -> None:
+        """Test generating updateCells for modified pivot table."""
+        diff_result = DiffResult(
+            spreadsheet_id="test123",
+            sheet_diffs=[
+                SheetDiff(
+                    sheet_id=0,
+                    sheet_name="Sheet1",
+                    folder_name="Sheet1",
+                    pivot_table_changes=[
+                        PivotTableChange(
+                            anchor_cell="G1",
+                            change_type="modified",
+                            old_pivot={
+                                "anchorCell": "G1",
+                                "source": {"startRowIndex": 0, "endRowIndex": 50},
+                                "rows": [{"sourceColumnOffset": 0}],
+                            },
+                            new_pivot={
+                                "anchorCell": "G1",
+                                "source": {"startRowIndex": 0, "endRowIndex": 100},
+                                "rows": [{"sourceColumnOffset": 0}],
+                                "columns": [{"sourceColumnOffset": 1}],
+                            },
+                        )
+                    ],
+                )
+            ],
+        )
+
+        requests = generate_requests(diff_result)
+
+        assert len(requests) == 1
+        req = requests[0]
+        assert "updateCells" in req
+
+        update = req["updateCells"]
+        assert update["fields"] == "pivotTable"
+        pivot = update["rows"][0]["values"][0]["pivotTable"]
+        assert pivot["source"]["endRowIndex"] == 100
+        assert "columns" in pivot

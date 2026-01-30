@@ -573,3 +573,527 @@ class TestDiffCharts:
         assert len(result.sheet_diffs) == 1
         sheet_diff = result.sheet_diffs[0]
         assert len(sheet_diff.chart_changes) == 0
+
+
+class TestDiffNewSheets:
+    """Tests for new sheet detection."""
+
+    def test_new_sheet_gets_unique_sheetid(self, tmp_path: Path) -> None:
+        """Test that new sheets get sheetIds that don't conflict with existing sheets.
+
+        Regression test for bug where new sheets were assigned sheetId starting at
+        1000000, which could conflict with existing sheets.
+        """
+        # Pristine has one sheet with sheetId 1000000
+        pristine_spreadsheet_json = json.dumps(
+            {
+                "spreadsheetId": "test123",
+                "title": "Test",
+                "sheets": [{"sheetId": 1000000, "title": "Fruits", "folder": "Fruits"}],
+            }
+        )
+
+        # Current adds a new sheet
+        current_spreadsheet_json = json.dumps(
+            {
+                "spreadsheetId": "test123",
+                "title": "Test",
+                "sheets": [
+                    {"sheetId": 1000000, "title": "Fruits", "folder": "Fruits"},
+                    {"sheetId": 999999, "title": "NewSheet", "folder": "NewSheet"},
+                ],
+            }
+        )
+
+        data_tsv = "A\tB\n1\t2\n"
+
+        create_pristine_zip(
+            tmp_path,
+            {
+                "spreadsheet.json": pristine_spreadsheet_json,
+                "Fruits/data.tsv": data_tsv,
+            },
+        )
+        write_current_files(
+            tmp_path,
+            {
+                "spreadsheet.json": current_spreadsheet_json,
+                "Fruits/data.tsv": data_tsv,
+                "NewSheet/data.tsv": data_tsv,
+            },
+        )
+
+        result = diff(tmp_path)
+
+        # Should have one new sheet change
+        assert len(result.new_sheet_changes) == 1
+        new_sheet = result.new_sheet_changes[0]
+        assert new_sheet.sheet_name == "NewSheet"
+
+        # The assigned sheetId should NOT be 1000000 (which is used by Fruits)
+        assigned_id = new_sheet.properties["sheetId"]
+        assert assigned_id != 1000000, (
+            f"New sheet got sheetId {assigned_id} which conflicts with existing sheet"
+        )
+        # Should be max(existing) + 1 = 1000001
+        assert assigned_id == 1000001
+
+    def test_new_sheet_sheetid_increments_for_multiple_new_sheets(
+        self, tmp_path: Path
+    ) -> None:
+        """Test that multiple new sheets get incrementing unique sheetIds."""
+        pristine_spreadsheet_json = json.dumps(
+            {
+                "spreadsheetId": "test123",
+                "title": "Test",
+                "sheets": [{"sheetId": 500, "title": "Sheet1", "folder": "Sheet1"}],
+            }
+        )
+
+        current_spreadsheet_json = json.dumps(
+            {
+                "spreadsheetId": "test123",
+                "title": "Test",
+                "sheets": [
+                    {"sheetId": 500, "title": "Sheet1", "folder": "Sheet1"},
+                    {"sheetId": 0, "title": "NewA", "folder": "NewA"},
+                    {"sheetId": 0, "title": "NewB", "folder": "NewB"},
+                ],
+            }
+        )
+
+        data_tsv = "A\tB\n1\t2\n"
+
+        create_pristine_zip(
+            tmp_path,
+            {
+                "spreadsheet.json": pristine_spreadsheet_json,
+                "Sheet1/data.tsv": data_tsv,
+            },
+        )
+        write_current_files(
+            tmp_path,
+            {
+                "spreadsheet.json": current_spreadsheet_json,
+                "Sheet1/data.tsv": data_tsv,
+                "NewA/data.tsv": data_tsv,
+                "NewB/data.tsv": data_tsv,
+            },
+        )
+
+        result = diff(tmp_path)
+
+        # Should have two new sheet changes
+        assert len(result.new_sheet_changes) == 2
+
+        # Extract assigned IDs
+        assigned_ids = [
+            change.properties["sheetId"] for change in result.new_sheet_changes
+        ]
+
+        # Both IDs should be > 500 (max existing)
+        assert all(id > 500 for id in assigned_ids)
+        # IDs should be unique
+        assert len(set(assigned_ids)) == 2
+        # Should be 501 and 502
+        assert sorted(assigned_ids) == [501, 502]
+
+
+class TestDiffPivotTables:
+    """Tests for pivot table diff functionality."""
+
+    def test_pivot_table_added(self, tmp_path: Path) -> None:
+        """Test detecting added pivot table."""
+        spreadsheet_json = json.dumps(
+            {
+                "spreadsheetId": "test123",
+                "title": "Test",
+                "sheets": [{"sheetId": 0, "title": "Sheet1", "folder": "Sheet1"}],
+            }
+        )
+        data_tsv = "A\tB\n1\t2\n"
+        feature_pristine = json.dumps({})
+        feature_current = json.dumps(
+            {
+                "pivotTables": [
+                    {
+                        "anchorCell": "G1",
+                        "source": {
+                            "startRowIndex": 0,
+                            "endRowIndex": 100,
+                            "startColumnIndex": 0,
+                            "endColumnIndex": 5,
+                        },
+                        "rows": [{"sourceColumnOffset": 0}],
+                        "values": [{"sourceColumnOffset": 1}],
+                    }
+                ]
+            }
+        )
+
+        create_pristine_zip(
+            tmp_path,
+            {
+                "spreadsheet.json": spreadsheet_json,
+                "Sheet1/data.tsv": data_tsv,
+                "Sheet1/feature.json": feature_pristine,
+            },
+        )
+        write_current_files(
+            tmp_path,
+            {
+                "spreadsheet.json": spreadsheet_json,
+                "Sheet1/data.tsv": data_tsv,
+                "Sheet1/feature.json": feature_current,
+            },
+        )
+
+        result = diff(tmp_path)
+
+        assert len(result.sheet_diffs) == 1
+        sheet_diff = result.sheet_diffs[0]
+        assert len(sheet_diff.pivot_table_changes) == 1
+        assert sheet_diff.pivot_table_changes[0].change_type == "added"
+        assert sheet_diff.pivot_table_changes[0].anchor_cell == "G1"
+        assert sheet_diff.pivot_table_changes[0].new_pivot is not None
+        assert "rows" in sheet_diff.pivot_table_changes[0].new_pivot
+
+    def test_pivot_table_deleted(self, tmp_path: Path) -> None:
+        """Test detecting deleted pivot table."""
+        spreadsheet_json = json.dumps(
+            {
+                "spreadsheetId": "test123",
+                "title": "Test",
+                "sheets": [{"sheetId": 0, "title": "Sheet1", "folder": "Sheet1"}],
+            }
+        )
+        data_tsv = "A\tB\n1\t2\n"
+        feature_pristine = json.dumps(
+            {
+                "pivotTables": [
+                    {
+                        "anchorCell": "H5",
+                        "source": {"startRowIndex": 0, "endRowIndex": 50},
+                        "rows": [{"sourceColumnOffset": 0}],
+                    }
+                ]
+            }
+        )
+        feature_current = json.dumps({})
+
+        create_pristine_zip(
+            tmp_path,
+            {
+                "spreadsheet.json": spreadsheet_json,
+                "Sheet1/data.tsv": data_tsv,
+                "Sheet1/feature.json": feature_pristine,
+            },
+        )
+        write_current_files(
+            tmp_path,
+            {
+                "spreadsheet.json": spreadsheet_json,
+                "Sheet1/data.tsv": data_tsv,
+                "Sheet1/feature.json": feature_current,
+            },
+        )
+
+        result = diff(tmp_path)
+
+        assert len(result.sheet_diffs) == 1
+        sheet_diff = result.sheet_diffs[0]
+        assert len(sheet_diff.pivot_table_changes) == 1
+        assert sheet_diff.pivot_table_changes[0].change_type == "deleted"
+        assert sheet_diff.pivot_table_changes[0].anchor_cell == "H5"
+
+    def test_pivot_table_modified(self, tmp_path: Path) -> None:
+        """Test detecting modified pivot table."""
+        spreadsheet_json = json.dumps(
+            {
+                "spreadsheetId": "test123",
+                "title": "Test",
+                "sheets": [{"sheetId": 0, "title": "Sheet1", "folder": "Sheet1"}],
+            }
+        )
+        data_tsv = "A\tB\n1\t2\n"
+        feature_pristine = json.dumps(
+            {
+                "pivotTables": [
+                    {
+                        "anchorCell": "G1",
+                        "source": {"startRowIndex": 0, "endRowIndex": 50},
+                        "rows": [{"sourceColumnOffset": 0}],
+                    }
+                ]
+            }
+        )
+        feature_current = json.dumps(
+            {
+                "pivotTables": [
+                    {
+                        "anchorCell": "G1",
+                        "source": {"startRowIndex": 0, "endRowIndex": 100},
+                        "rows": [{"sourceColumnOffset": 0}],
+                        "columns": [{"sourceColumnOffset": 1}],
+                    }
+                ]
+            }
+        )
+
+        create_pristine_zip(
+            tmp_path,
+            {
+                "spreadsheet.json": spreadsheet_json,
+                "Sheet1/data.tsv": data_tsv,
+                "Sheet1/feature.json": feature_pristine,
+            },
+        )
+        write_current_files(
+            tmp_path,
+            {
+                "spreadsheet.json": spreadsheet_json,
+                "Sheet1/data.tsv": data_tsv,
+                "Sheet1/feature.json": feature_current,
+            },
+        )
+
+        result = diff(tmp_path)
+
+        assert len(result.sheet_diffs) == 1
+        sheet_diff = result.sheet_diffs[0]
+        assert len(sheet_diff.pivot_table_changes) == 1
+        assert sheet_diff.pivot_table_changes[0].change_type == "modified"
+        assert sheet_diff.pivot_table_changes[0].anchor_cell == "G1"
+        # Verify the change
+        assert (
+            sheet_diff.pivot_table_changes[0].new_pivot["source"]["endRowIndex"] == 100
+        )
+        assert "columns" in sheet_diff.pivot_table_changes[0].new_pivot
+
+    def test_pivot_table_no_change(self, tmp_path: Path) -> None:
+        """Test no pivot table change detected when identical."""
+        spreadsheet_json = json.dumps(
+            {
+                "spreadsheetId": "test123",
+                "title": "Test",
+                "sheets": [{"sheetId": 0, "title": "Sheet1", "folder": "Sheet1"}],
+            }
+        )
+        data_tsv = "A\tB\n1\t2\n"
+        feature_json = json.dumps(
+            {
+                "pivotTables": [
+                    {
+                        "anchorCell": "G1",
+                        "source": {"startRowIndex": 0, "endRowIndex": 50},
+                        "rows": [{"sourceColumnOffset": 0}],
+                    }
+                ]
+            }
+        )
+
+        create_pristine_zip(
+            tmp_path,
+            {
+                "spreadsheet.json": spreadsheet_json,
+                "Sheet1/data.tsv": data_tsv,
+                "Sheet1/feature.json": feature_json,
+            },
+        )
+        write_current_files(
+            tmp_path,
+            {
+                "spreadsheet.json": spreadsheet_json,
+                "Sheet1/data.tsv": data_tsv,
+                "Sheet1/feature.json": feature_json,
+            },
+        )
+
+        result = diff(tmp_path)
+
+        assert len(result.sheet_diffs) == 1
+        sheet_diff = result.sheet_diffs[0]
+        assert len(sheet_diff.pivot_table_changes) == 0
+
+
+class TestDiffSplitFeatureFiles:
+    """Tests for reading from split feature files (new format)."""
+
+    def test_reads_from_pivot_tables_json(self, tmp_path: Path) -> None:
+        """Test that diff reads from pivot-tables.json."""
+        spreadsheet_json = json.dumps(
+            {
+                "spreadsheetId": "test123",
+                "title": "Test",
+                "sheets": [{"sheetId": 0, "title": "Sheet1", "folder": "Sheet1"}],
+            }
+        )
+        data_tsv = "A\tB\n1\t2\n"
+        pivot_pristine = json.dumps({"pivotTables": []})
+        pivot_current = json.dumps(
+            {
+                "pivotTables": [
+                    {
+                        "anchorCell": "G1",
+                        "source": {"startRowIndex": 0, "endRowIndex": 50},
+                    }
+                ]
+            }
+        )
+
+        create_pristine_zip(
+            tmp_path,
+            {
+                "spreadsheet.json": spreadsheet_json,
+                "Sheet1/data.tsv": data_tsv,
+                "Sheet1/pivot-tables.json": pivot_pristine,
+            },
+        )
+        write_current_files(
+            tmp_path,
+            {
+                "spreadsheet.json": spreadsheet_json,
+                "Sheet1/data.tsv": data_tsv,
+                "Sheet1/pivot-tables.json": pivot_current,
+            },
+        )
+
+        result = diff(tmp_path)
+
+        assert len(result.sheet_diffs) == 1
+        sheet_diff = result.sheet_diffs[0]
+        assert len(sheet_diff.pivot_table_changes) == 1
+        assert sheet_diff.pivot_table_changes[0].change_type == "added"
+
+    def test_reads_from_charts_json(self, tmp_path: Path) -> None:
+        """Test that diff reads from charts.json."""
+        spreadsheet_json = json.dumps(
+            {
+                "spreadsheetId": "test123",
+                "title": "Test",
+                "sheets": [{"sheetId": 0, "title": "Sheet1", "folder": "Sheet1"}],
+            }
+        )
+        data_tsv = "A\tB\n1\t2\n"
+        charts_pristine = json.dumps({"charts": []})
+        charts_current = json.dumps(
+            {
+                "charts": [
+                    {
+                        "chartId": 12345,
+                        "spec": {"title": "Test Chart"},
+                        "position": {},
+                    }
+                ]
+            }
+        )
+
+        create_pristine_zip(
+            tmp_path,
+            {
+                "spreadsheet.json": spreadsheet_json,
+                "Sheet1/data.tsv": data_tsv,
+                "Sheet1/charts.json": charts_pristine,
+            },
+        )
+        write_current_files(
+            tmp_path,
+            {
+                "spreadsheet.json": spreadsheet_json,
+                "Sheet1/data.tsv": data_tsv,
+                "Sheet1/charts.json": charts_current,
+            },
+        )
+
+        result = diff(tmp_path)
+
+        assert len(result.sheet_diffs) == 1
+        sheet_diff = result.sheet_diffs[0]
+        assert len(sheet_diff.chart_changes) == 1
+        assert sheet_diff.chart_changes[0].change_type == "added"
+
+    def test_reads_from_filters_json(self, tmp_path: Path) -> None:
+        """Test that diff reads from filters.json."""
+        spreadsheet_json = json.dumps(
+            {
+                "spreadsheetId": "test123",
+                "title": "Test",
+                "sheets": [{"sheetId": 0, "title": "Sheet1", "folder": "Sheet1"}],
+            }
+        )
+        data_tsv = "A\tB\n1\t2\n"
+        filters_pristine = json.dumps({})
+        filters_current = json.dumps(
+            {"basicFilter": {"range": {"startRowIndex": 0, "endRowIndex": 50}}}
+        )
+
+        create_pristine_zip(
+            tmp_path,
+            {
+                "spreadsheet.json": spreadsheet_json,
+                "Sheet1/data.tsv": data_tsv,
+                "Sheet1/filters.json": filters_pristine,
+            },
+        )
+        write_current_files(
+            tmp_path,
+            {
+                "spreadsheet.json": spreadsheet_json,
+                "Sheet1/data.tsv": data_tsv,
+                "Sheet1/filters.json": filters_current,
+            },
+        )
+
+        result = diff(tmp_path)
+
+        assert len(result.sheet_diffs) == 1
+        sheet_diff = result.sheet_diffs[0]
+        assert sheet_diff.basic_filter_change is not None
+        assert sheet_diff.basic_filter_change.change_type == "added"
+
+    def test_split_files_override_legacy_feature_json(self, tmp_path: Path) -> None:
+        """Test that split files take precedence over legacy feature.json."""
+        spreadsheet_json = json.dumps(
+            {
+                "spreadsheetId": "test123",
+                "title": "Test",
+                "sheets": [{"sheetId": 0, "title": "Sheet1", "folder": "Sheet1"}],
+            }
+        )
+        data_tsv = "A\tB\n1\t2\n"
+        # Legacy feature.json has no charts
+        feature_json = json.dumps({"charts": []})
+        # But charts.json has a chart - this should take precedence
+        charts_json = json.dumps(
+            {
+                "charts": [
+                    {"chartId": 999, "spec": {"title": "Override"}, "position": {}}
+                ]
+            }
+        )
+
+        create_pristine_zip(
+            tmp_path,
+            {
+                "spreadsheet.json": spreadsheet_json,
+                "Sheet1/data.tsv": data_tsv,
+                "Sheet1/feature.json": feature_json,
+            },
+        )
+        write_current_files(
+            tmp_path,
+            {
+                "spreadsheet.json": spreadsheet_json,
+                "Sheet1/data.tsv": data_tsv,
+                "Sheet1/feature.json": feature_json,
+                "Sheet1/charts.json": charts_json,
+            },
+        )
+
+        result = diff(tmp_path)
+
+        assert len(result.sheet_diffs) == 1
+        sheet_diff = result.sheet_diffs[0]
+        assert len(sheet_diff.chart_changes) == 1
+        assert sheet_diff.chart_changes[0].change_type == "added"
+        assert sheet_diff.chart_changes[0].chart_id == 999

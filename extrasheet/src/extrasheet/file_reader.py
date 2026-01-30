@@ -51,12 +51,22 @@ def read_current_files(folder: Path) -> dict[str, str]:
             continue
 
         # Read all files in sheet folder
+        # Include both legacy feature.json and new split feature files
         for filename in [
             "data.tsv",
             "formula.json",
             "format.json",
-            "feature.json",
+            "feature.json",  # Legacy format, kept for backward compatibility
             "dimension.json",
+            # New split feature files
+            "charts.json",
+            "pivot-tables.json",
+            "tables.json",
+            "filters.json",
+            "banded-ranges.json",
+            "data-validation.json",
+            "slicers.json",
+            "data-source-tables.json",
         ]:
             file_path = sheet_dir / filename
             if file_path.exists():
