@@ -2022,7 +2022,11 @@ class TestGenerateSlicerRequests:
                                 "spec": {"title": "TestSlicer"},
                                 "position": {
                                     "overlayPosition": {
-                                        "anchorCell": {"sheetId": 0, "rowIndex": 0, "columnIndex": 0}
+                                        "anchorCell": {
+                                            "sheetId": 0,
+                                            "rowIndex": 0,
+                                            "columnIndex": 0,
+                                        }
                                     }
                                 },
                             },

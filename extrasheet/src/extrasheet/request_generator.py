@@ -1588,9 +1588,7 @@ def _generate_slicer_requests(
         if change.change_type == "deleted" and change.slicer_id is not None:
             # Delete slicer using deleteEmbeddedObject
             # Note: Slicers are embedded objects, so we use deleteEmbeddedObject
-            requests.append(
-                {"deleteEmbeddedObject": {"objectId": change.slicer_id}}
-            )
+            requests.append({"deleteEmbeddedObject": {"objectId": change.slicer_id}})
 
         elif change.change_type == "added" and change.new_slicer:
             # Add new slicer
@@ -1603,35 +1601,39 @@ def _generate_slicer_requests(
 
             requests.append({"addSlicer": {"slicer": slicer}})
 
-        elif change.change_type == "modified" and change.new_slicer:
-            # Update slicer spec
-            if change.slicer_id is not None and "spec" in change.new_slicer:
+        elif (
+            change.change_type == "modified"
+            and change.new_slicer
+            and change.slicer_id is not None
+            and "spec" in change.new_slicer
+        ):
+            requests.append(
+                {
+                    "updateSlicerSpec": {
+                        "slicerId": change.slicer_id,
+                        "spec": change.new_slicer["spec"],
+                        "fields": "*",
+                    }
+                }
+            )
+            # If position changed, also update position
+            if "position" in change.new_slicer:
                 requests.append(
                     {
-                        "updateSlicerSpec": {
-                            "slicerId": change.slicer_id,
-                            "spec": change.new_slicer["spec"],
+                        "updateEmbeddedObjectPosition": {
+                            "objectId": change.slicer_id,
+                            "newPosition": change.new_slicer["position"],
                             "fields": "*",
                         }
                     }
                 )
-                # If position changed, also update position
-                if "position" in change.new_slicer:
-                    requests.append(
-                        {
-                            "updateEmbeddedObjectPosition": {
-                                "objectId": change.slicer_id,
-                                "newPosition": change.new_slicer["position"],
-                                "fields": "*",
-                            }
-                        }
-                    )
 
     return requests
 
 
 def _generate_data_source_table_requests(
-    changes: list[DataSourceTableChange], sheet_id: int
+    changes: list[DataSourceTableChange],
+    sheet_id: int,  # noqa: ARG001
 ) -> list[dict[str, Any]]:
     """Generate requests for data source table changes.
 

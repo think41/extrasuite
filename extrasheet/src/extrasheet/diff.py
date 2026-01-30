@@ -2387,8 +2387,6 @@ def _diff_data_source_tables(
     return changes
 
 
-def _data_source_tables_differ(
-    table1: dict[str, Any], table2: dict[str, Any]
-) -> bool:
+def _data_source_tables_differ(table1: dict[str, Any], table2: dict[str, Any]) -> bool:
     """Check if two data source tables differ."""
     return table1 != table2
