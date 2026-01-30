@@ -7,7 +7,7 @@ Provides coordinate conversion, filename sanitization, and other helpers.
 from __future__ import annotations
 
 import re
-from typing import TYPE_CHECKING
+from typing import TYPE_CHECKING, Any
 
 if TYPE_CHECKING:
     from extrasheet.api_types import GridRange
@@ -215,7 +215,7 @@ def format_json_number(value: float) -> str | float | int:
     return value
 
 
-def get_effective_value_string(cell_data: dict) -> str:
+def get_effective_value_string(cell_data: dict[str, Any]) -> str:
     """Extract the raw value from a CellData object.
 
     Uses effectiveValue to preserve type information for round-trip safety.
@@ -227,12 +227,12 @@ def get_effective_value_string(cell_data: dict) -> str:
     Returns:
         String representation of the cell value
     """
-    ev = cell_data.get("effectiveValue", {})
+    ev: dict[str, Any] = cell_data.get("effectiveValue", {})
     if not ev:
         return ""
 
     if "stringValue" in ev:
-        return ev["stringValue"]
+        return str(ev["stringValue"])
     elif "numberValue" in ev:
         num = ev["numberValue"]
         # Format integers without decimal point
@@ -242,17 +242,17 @@ def get_effective_value_string(cell_data: dict) -> str:
     elif "boolValue" in ev:
         return "TRUE" if ev["boolValue"] else "FALSE"
     elif "errorValue" in ev:
-        error = ev["errorValue"]
-        return error.get("message", "#ERROR!")
+        error: dict[str, Any] = ev["errorValue"]
+        return str(error.get("message", "#ERROR!"))
     elif "formulaValue" in ev:
         # Should not happen (formulas have effectiveValue)
-        return ev["formulaValue"]
+        return str(ev["formulaValue"])
 
     return ""
 
 
 def is_default_cell_format(
-    cell_format: dict, default_format: dict | None = None
+    cell_format: dict[str, Any], default_format: dict[str, Any] | None = None
 ) -> bool:
     """Check if a cell format is the default (no customization).
 
@@ -277,7 +277,7 @@ def is_default_cell_format(
     return len(non_default_keys) == 0
 
 
-def is_default_dimension(dimension: dict, is_row: bool = True) -> bool:
+def is_default_dimension(dimension: dict[str, Any], is_row: bool = True) -> bool:
     """Check if a dimension (row/column) has default properties.
 
     Args:
