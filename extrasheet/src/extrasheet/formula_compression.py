@@ -61,8 +61,8 @@ def _normalize_formula(formula: str, anchor_row: int, anchor_col: int) -> str | 
     # - (?![_\[]) ensures we don't match structured refs (e.g., "Table1_2[#ALL]")
     cell_ref_pattern = r"(?<![A-Za-z'])\$?[A-Za-z]{1,3}\$?\d+(?![_\[])"
 
-    def replace_ref(match: re.Match) -> str:
-        ref = match.group(0)
+    def replace_ref(match: re.Match[str]) -> str:
+        ref: str = match.group(0)
         col_str, col_abs, row_str, row_abs = _parse_cell_ref(ref)
         if not col_str or not row_str:
             return ref
@@ -101,8 +101,8 @@ def _normalize_formula(formula: str, anchor_row: int, anchor_col: int) -> str | 
 def _denormalize_formula(pattern: str, row: int, col: int) -> str:
     """Convert a normalized pattern back to a formula for a specific cell."""
 
-    def replace_placeholder(match: re.Match) -> str:
-        placeholder = match.group(0)
+    def replace_placeholder(match: re.Match[str]) -> str:
+        placeholder: str = match.group(0)
 
         # Handle column placeholder
         if placeholder == "{c}":

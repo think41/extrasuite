@@ -76,13 +76,13 @@ def find_largest_rectangle(cells: set[tuple[int, int]]) -> Range | None:
         return None
 
     if len(cells) == 1:
-        c = next(iter(cells))
-        return Range(c[0], c[1], c[0], c[1])
+        cell = next(iter(cells))
+        return Range(cell[0], cell[1], cell[0], cell[1])
 
-    min_row = min(c[0] for c in cells)
-    max_row = max(c[0] for c in cells)
-    min_col = min(c[1] for c in cells)
-    max_col = max(c[1] for c in cells)
+    min_row = min(cell[0] for cell in cells)
+    max_row = max(cell[0] for cell in cells)
+    min_col = min(cell[1] for cell in cells)
+    max_col = max(cell[1] for cell in cells)
 
     # Check if entire bounding box is filled
     bbox = Range(min_row, min_col, max_row, max_col)
@@ -152,7 +152,7 @@ def _is_empty_color(color: dict[str, Any] | None) -> bool:
     """Check if color is empty/black."""
     if not color:
         return True
-    return (
+    return bool(
         color.get("red", 0) == 0
         and color.get("green", 0) == 0
         and color.get("blue", 0) == 0
