@@ -215,30 +215,18 @@ def format_json_number(value: float) -> str | float | int:
     return value
 
 
-def get_effective_value_string(
-    cell_data: dict,
-    formatted_value: str | None = None,
-) -> str:
-    """Extract the display value from a CellData object.
+def get_effective_value_string(cell_data: dict) -> str:
+    """Extract the raw value from a CellData object.
 
-    Prefers formattedValue, falls back to effectiveValue.
+    Uses effectiveValue to preserve type information for round-trip safety.
+    This ensures numbers stay as numbers when pushed back to Google Sheets.
 
     Args:
         cell_data: CellData dictionary from Google Sheets API
-        formatted_value: Pre-extracted formatted value (optimization)
 
     Returns:
         String representation of the cell value
     """
-    # Prefer formatted value (human-readable)
-    if formatted_value is not None:
-        return formatted_value
-
-    fv = cell_data.get("formattedValue")
-    if fv is not None:
-        return str(fv)
-
-    # Fall back to effective value
     ev = cell_data.get("effectiveValue", {})
     if not ev:
         return ""
@@ -246,7 +234,11 @@ def get_effective_value_string(
     if "stringValue" in ev:
         return ev["stringValue"]
     elif "numberValue" in ev:
-        return str(ev["numberValue"])
+        num = ev["numberValue"]
+        # Format integers without decimal point
+        if num == int(num):
+            return str(int(num))
+        return str(num)
     elif "boolValue" in ev:
         return "TRUE" if ev["boolValue"] else "FALSE"
     elif "errorValue" in ev:

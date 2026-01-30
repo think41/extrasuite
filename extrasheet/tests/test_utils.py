@@ -164,10 +164,6 @@ class TestTsvEscaping:
 class TestEffectiveValueString:
     """Tests for extracting effective value strings from cell data."""
 
-    def test_formatted_value(self) -> None:
-        cell = {"formattedValue": "Hello"}
-        assert get_effective_value_string(cell) == "Hello"
-
     def test_string_value(self) -> None:
         cell = {"effectiveValue": {"stringValue": "Test"}}
         assert get_effective_value_string(cell) == "Test"
@@ -175,6 +171,10 @@ class TestEffectiveValueString:
     def test_number_value(self) -> None:
         cell = {"effectiveValue": {"numberValue": 42.5}}
         assert get_effective_value_string(cell) == "42.5"
+
+    def test_integer_value(self) -> None:
+        cell = {"effectiveValue": {"numberValue": 42.0}}
+        assert get_effective_value_string(cell) == "42"
 
     def test_bool_value(self) -> None:
         cell = {"effectiveValue": {"boolValue": True}}
@@ -190,12 +190,13 @@ class TestEffectiveValueString:
         assert get_effective_value_string({}) == ""
         assert get_effective_value_string({"effectiveValue": {}}) == ""
 
-    def test_formatted_value_precedence(self) -> None:
+    def test_uses_effective_value_not_formatted(self) -> None:
+        """Verify effectiveValue is used for round-trip safety, not formattedValue."""
         cell = {
             "formattedValue": "$1,234.56",
             "effectiveValue": {"numberValue": 1234.56},
         }
-        assert get_effective_value_string(cell) == "$1,234.56"
+        assert get_effective_value_string(cell) == "1234.56"
 
 
 class TestDefaultChecks:

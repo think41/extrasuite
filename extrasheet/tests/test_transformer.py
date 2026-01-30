@@ -45,14 +45,14 @@ class TestSpreadsheetTransformer:
                             "rowData": [
                                 {
                                     "values": [
-                                        {"formattedValue": "Name"},
-                                        {"formattedValue": "Value"},
+                                        {"effectiveValue": {"stringValue": "Name"}},
+                                        {"effectiveValue": {"stringValue": "Value"}},
                                     ]
                                 },
                                 {
                                     "values": [
-                                        {"formattedValue": "Alice"},
-                                        {"formattedValue": "100"},
+                                        {"effectiveValue": {"stringValue": "Alice"}},
+                                        {"effectiveValue": {"numberValue": 100}},
                                     ]
                                 },
                             ],
@@ -99,17 +99,17 @@ class TestSpreadsheetTransformer:
                             "rowData": [
                                 {
                                     "values": [
-                                        {"formattedValue": "A"},
-                                        {"formattedValue": "B"},
-                                        {"formattedValue": "Total"},
+                                        {"effectiveValue": {"stringValue": "A"}},
+                                        {"effectiveValue": {"stringValue": "B"}},
+                                        {"effectiveValue": {"stringValue": "Total"}},
                                     ]
                                 },
                                 {
                                     "values": [
-                                        {"formattedValue": "10"},
-                                        {"formattedValue": "20"},
+                                        {"effectiveValue": {"numberValue": 10}},
+                                        {"effectiveValue": {"numberValue": 20}},
                                         {
-                                            "formattedValue": "30",
+                                            "effectiveValue": {"numberValue": 30},
                                             "userEnteredValue": {
                                                 "formulaValue": "=A2+B2"
                                             },
@@ -152,7 +152,7 @@ class TestSpreadsheetTransformer:
                                 {
                                     "values": [
                                         {
-                                            "formattedValue": "Header",
+                                            "effectiveValue": {"stringValue": "Header"},
                                             "userEnteredFormat": {
                                                 "textFormat": {"bold": True}
                                             },
@@ -200,7 +200,9 @@ class TestSpreadsheetTransformer:
                                 {
                                     "values": [
                                         {
-                                            "formattedValue": "Cell with note",
+                                            "effectiveValue": {
+                                                "stringValue": "Cell with note"
+                                            },
                                             "note": "This is a note",
                                         }
                                     ]

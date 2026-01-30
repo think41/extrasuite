@@ -290,15 +290,13 @@ Bob	500	South	1200
 | Type | Representation |
 |------|----------------|
 | String | Raw text |
-| Number | Formatted per cell's NumberFormat |
+| Number | Raw numeric value (e.g., `1234.56` not `$1,234.56`) |
 | Boolean | `TRUE` or `FALSE` |
-| Date/Time | Formatted per cell's NumberFormat |
+| Date/Time | Serial number (days since 1899-12-30) |
 | Error | Error string (e.g., `#REF!`, `#N/A`, `#DIV/0!`) |
 | Empty | Empty string |
 
-**Source:** Values are extracted in priority order:
-1. `CellData.formattedValue` (human-readable, respects NumberFormat)
-2. `CellData.effectiveValue` (raw value converted to string)
+**Source:** Values are extracted from `CellData.effectiveValue` to preserve type information for round-trip safety. This means numbers appear as raw values without formatting (currency symbols, percentage signs, etc.). Formatting information is available in `format.json`.
 
 ### formula.json
 
