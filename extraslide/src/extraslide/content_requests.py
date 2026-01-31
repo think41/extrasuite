@@ -798,6 +798,31 @@ def _apply_style_requests(
         elif stroke.get("type") == "solid" or stroke.get("color"):
             requests.append(_create_outline_request(object_id, stroke))
 
+    # Apply autofit and contentAlignment settings
+    shape_props: dict[str, Any] = {}
+    fields: list[str] = []
+
+    # Note: autofit is read-only in Google Slides API (cannot be updated via API)
+    # We only extract it for informational purposes but don't try to set it
+
+    # Content alignment (vertical text alignment) - this IS writable
+    content_alignment = style.get("contentAlignment")
+    if content_alignment:
+        shape_props["contentAlignment"] = content_alignment
+        fields.append("contentAlignment")
+
+    # Apply shape properties if any
+    if fields:
+        requests.append(
+            {
+                "updateShapeProperties": {
+                    "objectId": object_id,
+                    "shapeProperties": shape_props,
+                    "fields": ",".join(fields),
+                }
+            }
+        )
+
     return requests
 
 
