@@ -41,7 +41,15 @@ When copying an element:
 
 ## Known Limitations
 
-### 1. Crop Properties (Read-Only)
+### 1. Autofit (Read-Only)
+
+The Google Slides API does not support setting `autofit.autofitType` via `updateShapeProperties`. Text boxes created via API default to `autofitType: NONE`, while manually created text boxes often use `SHAPE_AUTOFIT` which auto-sizes text to fit.
+
+**Impact**: Text in copied text boxes may appear truncated or differently wrapped than the original if the original used `SHAPE_AUTOFIT`.
+
+**Workaround**: After copying, manually adjust text box autofit settings in Google Slides UI (Format > Format Options > Text Fitting).
+
+### 2. Crop Properties (Read-Only)
 
 The Google Slides API does not support setting crop properties via `updateImageProperties`. If the original image has cropping applied, the copy will show the full uncropped image.
 

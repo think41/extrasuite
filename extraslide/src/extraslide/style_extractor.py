@@ -89,6 +89,24 @@ def _extract_element_style(node: RenderNode) -> dict[str, Any]:
         if shadow:
             style["shadow"] = shadow
 
+        # Autofit settings (important for text layout)
+        autofit = shape_props.get("autofit", {})
+        if autofit:
+            autofit_type = autofit.get("autofitType")
+            if autofit_type:
+                style["autofit"] = {"type": autofit_type}
+                font_scale = autofit.get("fontScale")
+                if font_scale is not None:
+                    style["autofit"]["fontScale"] = font_scale
+                line_spacing = autofit.get("lineSpacingReduction")
+                if line_spacing is not None:
+                    style["autofit"]["lineSpacingReduction"] = line_spacing
+
+        # Content alignment (vertical alignment of text)
+        content_alignment = shape_props.get("contentAlignment")
+        if content_alignment:
+            style["contentAlignment"] = content_alignment
+
         # Text styles
         if "text" in shape:
             text_style = _extract_text_style(shape["text"])
