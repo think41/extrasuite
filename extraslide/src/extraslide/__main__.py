@@ -15,7 +15,7 @@ import re
 import sys
 from pathlib import Path
 
-from extraslide.client import SlidesClient
+from extraslide.client_v2 import SlidesClientV2
 from extraslide.credentials import CredentialsManager
 from extraslide.transport import GoogleSlidesTransport, LocalFileTransport
 
@@ -52,7 +52,7 @@ async def cmd_pull(args: argparse.Namespace) -> int:
 
     # Create transport and client
     transport = GoogleSlidesTransport(access_token=token_obj.access_token)
-    client = SlidesClient(transport)
+    client = SlidesClientV2(transport)
 
     print(f"Pulling presentation: {presentation_id}")
 
@@ -74,7 +74,7 @@ async def cmd_pull(args: argparse.Namespace) -> int:
 
 
 async def cmd_diff(args: argparse.Namespace) -> int:
-    """Show changes between current SML and pristine copy."""
+    """Show changes between current content and pristine copy."""
     folder_path = Path(args.folder)
 
     if not folder_path.exists():
@@ -82,9 +82,8 @@ async def cmd_diff(args: argparse.Namespace) -> int:
         return 1
 
     # Create a dummy transport - diff doesn't need network access
-    # We just need a SlidesClient instance to call diff()
     transport = LocalFileTransport(folder_path.parent)
-    client = SlidesClient(transport)
+    client = SlidesClientV2(transport)
 
     try:
         requests = client.diff(folder_path)
@@ -120,7 +119,7 @@ async def cmd_push(args: argparse.Namespace) -> int:
 
     # Create transport and client
     transport = GoogleSlidesTransport(access_token=token_obj.access_token)
-    client = SlidesClient(transport)
+    client = SlidesClientV2(transport)
 
     print(f"Pushing changes from: {folder_path}")
 
@@ -145,7 +144,7 @@ def main() -> int:
     """Main entry point."""
     parser = argparse.ArgumentParser(
         prog="extraslide",
-        description="Transform Google Slides to/from SML (Slide Markup Language)",
+        description="Transform Google Slides to/from minimal SML format",
     )
     subparsers = parser.add_subparsers(dest="command", required=True)
 
