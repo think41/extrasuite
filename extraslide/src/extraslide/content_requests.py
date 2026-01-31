@@ -359,6 +359,8 @@ def _create_copy_requests(
                     slide_google_id,
                     position,
                     content_url,
+                    native_size=source_style.get("nativeSize"),
+                    native_scale=source_style.get("nativeScale"),
                 )
             )
             # Apply image properties like transparency
@@ -494,7 +496,12 @@ def _create_children_from_data(
             if content_url:
                 requests.append(
                     _create_image_request(
-                        child_obj_id, slide_google_id, abs_position, content_url
+                        child_obj_id,
+                        slide_google_id,
+                        abs_position,
+                        content_url,
+                        native_size=child_style.get("nativeSize"),
+                        native_scale=child_style.get("nativeScale"),
                     )
                 )
                 # Apply image properties like transparency
@@ -662,18 +669,61 @@ def _create_image_request(
     slide_id: str,
     position: dict[str, float],
     url: str,
+    native_size: dict[str, float] | None = None,
+    native_scale: dict[str, float] | None = None,
 ) -> dict[str, Any]:
     """Create a createImage request.
 
-    Unlike shapes, images use their NATIVE dimensions as the base size (determined
-    by the image file). We cannot predict this size, so we specify the target
-    visual size directly and use scaleX=1, scaleY=1.
+    For accurate image copying, we need to use the native image dimensions and
+    calculate appropriate scale factors. Google Slides uses native image size
+    as the base and applies scale factors from there.
 
-    Google will fetch the image, determine its native size, and then apply the
-    transform. With scale=1, the translateX/translateY give us exact positioning.
+    Args:
+        object_id: The new object ID
+        slide_id: Target slide ID
+        position: Target position {x, y, w, h} in points
+        url: Image URL
+        native_size: Native image dimensions {w, h} in EMU (from source style)
+        native_scale: Original scale factors {x, y} (from source style)
     """
     target_w_emu = pt_to_emu(position["w"])
     target_h_emu = pt_to_emu(position["h"])
+
+    if native_size and native_scale:
+        # Use native dimensions as base and calculate scale factors
+        # to achieve target visual size
+        native_w = native_size.get("w", 0)
+        native_h = native_size.get("h", 0)
+
+        if native_w > 0 and native_h > 0:
+            scale_x = target_w_emu / native_w
+            scale_y = target_h_emu / native_h
+
+            return {
+                "createImage": {
+                    "objectId": object_id,
+                    "url": url,
+                    "elementProperties": {
+                        "pageObjectId": slide_id,
+                        "size": {
+                            "width": {"magnitude": native_w, "unit": "EMU"},
+                            "height": {"magnitude": native_h, "unit": "EMU"},
+                        },
+                        "transform": {
+                            "scaleX": scale_x,
+                            "scaleY": scale_y,
+                            "translateX": pt_to_emu(position["x"]),
+                            "translateY": pt_to_emu(position["y"]),
+                            "unit": "EMU",
+                        },
+                    },
+                }
+            }
+
+    # Fallback: use standard base size approach (less accurate)
+    base_size_emu = 3000024
+    scale_x = target_w_emu / base_size_emu if base_size_emu > 0 else 1
+    scale_y = target_h_emu / base_size_emu if base_size_emu > 0 else 1
 
     return {
         "createImage": {
@@ -682,12 +732,12 @@ def _create_image_request(
             "elementProperties": {
                 "pageObjectId": slide_id,
                 "size": {
-                    "width": {"magnitude": target_w_emu, "unit": "EMU"},
-                    "height": {"magnitude": target_h_emu, "unit": "EMU"},
+                    "width": {"magnitude": base_size_emu, "unit": "EMU"},
+                    "height": {"magnitude": base_size_emu, "unit": "EMU"},
                 },
                 "transform": {
-                    "scaleX": 1,
-                    "scaleY": 1,
+                    "scaleX": scale_x,
+                    "scaleY": scale_y,
                     "translateX": pt_to_emu(position["x"]),
                     "translateY": pt_to_emu(position["y"]),
                     "unit": "EMU",

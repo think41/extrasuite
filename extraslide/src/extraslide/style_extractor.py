@@ -125,6 +125,23 @@ def _extract_element_style(node: RenderNode) -> dict[str, Any]:
         if image_props:
             style["imageProperties"] = _extract_image_properties(image_props)
 
+        # Store native image size and scale factors for accurate copy
+        size = elem.get("size", {})
+        transform = elem.get("transform", {})
+        if size and transform:
+            native_w = size.get("width", {}).get("magnitude", 0)
+            native_h = size.get("height", {}).get("magnitude", 0)
+            scale_x = transform.get("scaleX", 1)
+            scale_y = transform.get("scaleY", 1)
+            style["nativeSize"] = {
+                "w": native_w,  # EMU
+                "h": native_h,  # EMU
+            }
+            style["nativeScale"] = {
+                "x": scale_x,
+                "y": scale_y,
+            }
+
     return style
 
 
