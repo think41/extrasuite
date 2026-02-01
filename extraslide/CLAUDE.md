@@ -4,20 +4,39 @@ Python library that converts Google Slides to/from SML (Slide Markup Language), 
 
 ## Key Files
 
+### Core (both clients)
 | File | Purpose |
 |------|---------|
 | `src/extraslide/transport.py` | `Transport` ABC, `GoogleSlidesTransport`, `LocalFileTransport` |
-| `src/extraslide/client.py` | `SlidesClient` - main interface for pull/diff/push operations |
-| `src/extraslide/compression.py` | ID removal with external mapping for cleaner SML |
-| `src/extraslide/parser.py` | Parses SML back to internal data structures |
-| `src/extraslide/generator.py` | Converts Google Slides API JSON to SML |
-| `src/extraslide/diff.py` | Compares original vs modified SML, generates change operations |
-| `src/extraslide/requests.py` | Builds Google Slides API batchUpdate request objects |
 | `src/extraslide/classes.py` | Data classes for slide elements (Color, Fill, Stroke, etc.) |
 | `src/extraslide/credentials.py` | `CredentialsManager` for OAuth token handling |
+| `src/extraslide/units.py` | EMU/pt conversion utilities |
+
+### V2 Client (Copy-Based Workflow) - Recommended
+| File | Purpose |
+|------|---------|
+| `src/extraslide/client_v2.py` | `SlidesClientV2` - new client with copy support |
+| `src/extraslide/slide_processor.py` | Builds render trees, extracts styles |
+| `src/extraslide/content_generator.py` | Generates minimal SML from render trees |
+| `src/extraslide/content_parser.py` | Parses SML content files |
+| `src/extraslide/content_diff.py` | Detects copies, calculates translations |
+| `src/extraslide/content_requests.py` | Generates batchUpdate requests for copies |
+| `src/extraslide/style_extractor.py` | Extracts styles to JSON |
+| `src/extraslide/render_tree.py` | Visual containment hierarchy |
+
+### V1 Client (Legacy)
+| File | Purpose |
+|------|---------|
+| `src/extraslide/client.py` | `SlidesClient` - original client |
+| `src/extraslide/compression.py` | ID removal with external mapping |
+| `src/extraslide/parser.py` | Parses SML back to internal structures |
+| `src/extraslide/generator.py` | Converts API JSON to SML |
+| `src/extraslide/diff.py` | Compares SML, generates change operations |
+| `src/extraslide/requests.py` | Builds batchUpdate request objects |
 
 ## Documentation
 
+- `docs/copy-workflow.md` - Copy-based workflow for V2 client (recommended)
 - `docs/markup-syntax-design.md` - SML format specification
 - `docs/sml-reconciliation-spec.md` - How diff/push reconciles changes
 
@@ -44,23 +63,43 @@ Also works via `uvx extraslide pull/diff/push`.
 
 ## Folder Structure
 
-After `pull`, the folder contains:
+### V2 Format (Copy-Based Workflow)
+
+After `pull` with V2 client:
 ```
 <presentation_id>/
-  slides.sml              # Slides content (IDs removed for cleaner editing)
-  masters.sml             # Master slide definitions
-  layouts.sml             # Layout definitions
-  images.sml              # Image URL mappings
-  presentation.json       # Metadata (title, presentation ID, slide summaries)
-  .meta/
-    id_mapping.json       # ID mapping for diff/push restoration
+  presentation.json       # Metadata (title, presentation ID, dimensions)
+  id_mapping.json         # clean_id -> google_object_id
+  styles.json             # clean_id -> styles (position, fill, stroke, text)
+  slides/
+    01/content.sml        # Slide 1 content (minimal XML)
+    02/content.sml        # Slide 2 content
+    ...
   .raw/
     presentation.json     # Raw API response (for debugging)
   .pristine/
     presentation.zip      # Zip of entire folder for diff comparison
 ```
 
-The agent edits `slides.sml` in place. `diff` and `push` compare against `.pristine/` to determine changes. IDs are restored from `.meta/id_mapping.json` before generating API requests.
+Edit `slides/NN/content.sml` files. To copy elements, duplicate XML with same ID but only x,y (omit w,h). See `docs/copy-workflow.md`.
+
+### V1 Format (Legacy)
+
+After `pull` with V1 client:
+```
+<presentation_id>/
+  slides.sml              # Slides content (IDs removed)
+  masters.sml             # Master slide definitions
+  layouts.sml             # Layout definitions
+  images.sml              # Image URL mappings
+  presentation.json       # Metadata
+  .meta/
+    id_mapping.json       # ID mapping for restoration
+  .raw/
+    presentation.json     # Raw API response
+  .pristine/
+    presentation.zip      # Zip for diff comparison
+```
 
 ## Development
 
@@ -167,10 +206,21 @@ async def test_pull(client, tmp_path):
 
 ## Current Status
 
-The library uses:
-- Transport-based architecture with dependency injection
-- Split file structure (slides, masters, layouts, images as separate files)
-- ID removal with external mapping for cleaner SML editing
+The library has two clients:
+
+### V2 Client (Recommended for new work)
+- Per-slide content files (`slides/01/content.sml`, etc.)
+- Copy-based workflow: duplicate element XML with same ID, omit w/h
+- Translation-based child positioning for copies
+- Styles extracted to `styles.json`
+- Supports 100+ Google Slides shape types
+
+### V1 Client (Legacy)
+- Split SML files (slides.sml, masters.sml, etc.)
+- ID removal with external mapping
 - Folder-based workflow (pull creates folder, diff/push use `.pristine/`)
+
+Both clients use:
+- Transport-based architecture with dependency injection
 - Async methods throughout
 - Golden file testing
