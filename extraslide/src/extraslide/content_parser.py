@@ -1,6 +1,7 @@
-"""Parser for the new minimal SML content format.
+"""Parser for the minimal SML content format.
 
 Parses content.sml files back into structured data for diffing.
+Format: <Slide id="s1">...</Slide> with all elements having absolute positions.
 """
 
 from __future__ import annotations
@@ -21,14 +22,11 @@ class ParsedElement:
     # Element tag (Rect, TextBox, Group, etc.)
     tag: str
 
-    # Position (only for root elements)
+    # Absolute position (all elements have position now)
     x: float | None = None
     y: float | None = None
     w: float | None = None
     h: float | None = None
-
-    # Pattern hint
-    pattern_id: str | None = None
 
     # Text content (list of paragraph texts)
     paragraphs: list[str] = field(default_factory=list)
@@ -41,8 +39,19 @@ class ParsedElement:
 
     @property
     def has_position(self) -> bool:
-        """Check if this element has position attributes."""
+        """Check if this element has position attributes.
+
+        For copies, root has x/y but may omit w/h.
+        """
         return self.x is not None
+
+    @property
+    def has_full_position(self) -> bool:
+        """Check if element has complete position (x, y, w, h).
+
+        Copies only have x, y on root - missing w/h indicates a copy.
+        """
+        return self.x is not None and self.w is not None
 
     def to_dict(self) -> dict[str, Any]:
         """Convert to dictionary for JSON serialization."""
@@ -57,8 +66,6 @@ class ParsedElement:
                 "w": self.w,
                 "h": self.h,
             }
-        if self.pattern_id:
-            result["pattern"] = self.pattern_id
         if self.paragraphs:
             result["text"] = self.paragraphs
         if self.children:
@@ -70,37 +77,42 @@ def parse_slide_content(content: str) -> list[ParsedElement]:
     """Parse a slide's content.sml into structured elements.
 
     Args:
-        content: The content.sml XML string
+        content: The content.sml XML string (should have <Slide> root)
 
     Returns:
-        List of root ParsedElement objects
+        List of root ParsedElement objects (children of <Slide>)
     """
     if not content.strip():
         return []
 
-    # Wrap in a root element for valid XML
-    wrapped = f"<Root>{content}</Root>"
-
     try:
-        root = ET.fromstring(wrapped)
-    except ET.ParseError as e:
-        raise ValueError(f"Invalid content.sml XML: {e}") from e
+        root = ET.fromstring(content)
+    except ET.ParseError:
+        # Try wrapping in Root for backwards compatibility with old format
+        try:
+            wrapped = f"<Root>{content}</Root>"
+            root = ET.fromstring(wrapped)
+            return [_parse_element(child, None) for child in root]
+        except ET.ParseError as e:
+            raise ValueError(f"Invalid content.sml XML: {e}") from e
 
-    return [_parse_element(child, None) for child in root]
+    # If root is <Slide>, parse its children
+    if root.tag == "Slide":
+        return [_parse_element(child, None) for child in root]
+
+    # Otherwise treat root as a single element (shouldn't happen with new format)
+    return [_parse_element(root, None)]
 
 
 def _parse_element(elem: ET.Element, parent_id: str | None) -> ParsedElement:
     """Parse a single XML element."""
     clean_id = elem.get("id", "")
 
-    # Parse position attributes
+    # Parse position attributes (all elements have absolute position now)
     x = _parse_float(elem.get("x"))
     y = _parse_float(elem.get("y"))
     w = _parse_float(elem.get("w"))
     h = _parse_float(elem.get("h"))
-
-    # Parse pattern hint
-    pattern_id = elem.get("pattern")
 
     # Parse text paragraphs
     paragraphs = []
@@ -121,7 +133,6 @@ def _parse_element(elem: ET.Element, parent_id: str | None) -> ParsedElement:
         y=y,
         w=w,
         h=h,
-        pattern_id=pattern_id,
         paragraphs=paragraphs,
         children=children,
         parent_id=parent_id,
