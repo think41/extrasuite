@@ -6,40 +6,54 @@ This document describes how to copy elements between slides in extraslide.
 
 The copy workflow allows duplicating elements (shapes, groups, images, text boxes) to new positions. The copy operation:
 - Preserves all styling (fill, stroke, shadow, text formatting)
-- Correctly positions children relative to the parent
-- Applies native image dimensions for accurate sizing
+- Translates all children to maintain relative positions
+- Uses styles from `styles.json` for accurate recreation
 
 ## How to Copy Elements
 
-To copy an element, duplicate its XML entry in `content.sml` with the **same element ID** but a different position:
+To copy an element, duplicate its XML entry in `content.sml` with:
+1. The **same element ID**
+2. Only **x and y** position (omit w and h to signal this is a copy)
+3. Children unchanged from original
 
 ```xml
-<!-- Original element -->
-<Group id="g96" x="31.0" y="68.1" w="109.4" h="49.9" pattern="p31">
-  <RoundRect id="e1203" pattern="p32" />
-  <Image id="e1204" pattern="p6" />
+<!-- Original element (has x, y, w, h) -->
+<Group id="g96" x="31.0" y="68.1" w="109.4" h="49.9">
+  <RoundRect id="e1203" x="31.0" y="68.1" w="50.0" h="30.0" />
+  <TextBox id="e1204" x="85.0" y="68.1" w="55.0" h="30.0">
+    <P>Hello</P>
+  </TextBox>
 </Group>
 
-<!-- Copy - same IDs, different position -->
-<Group id="g96" x="200.0" y="68.1" w="109.4" h="49.9" pattern="p31">
-  <RoundRect id="e1203" pattern="p32" />
-  <Image id="e1204" pattern="p6" />
+<!-- Copy - same IDs, new position (x, y only, NO w, h) -->
+<Group id="g96" x="200.0" y="100.0">
+  <RoundRect id="e1203" x="31.0" y="68.1" w="50.0" h="30.0" />
+  <TextBox id="e1204" x="85.0" y="68.1" w="55.0" h="30.0">
+    <P>Hello</P>
+  </TextBox>
 </Group>
 ```
 
-The diff algorithm detects duplicate IDs and treats occurrences on different slides (or at different positions on the same slide) as copy operations.
+**Key convention**: The root element of a copy has only `x` and `y` attributes (no `w` and `h`). This signals to the diff algorithm that this is a copy operation. Children retain their original positions from the source.
+
+The diff algorithm detects this pattern and calculates the translation needed to position all elements correctly.
 
 ## How Copy Detection Works
 
-The diff algorithm identifies originals vs copies using these rules:
+The diff algorithm identifies copies using a simple rule:
 
-1. **Cross-slide copies**: If an element ID appears on multiple slides, the instance on the same slide as in pristine (the original pull) is the original. Instances on other slides are copies.
+**Missing dimensions = copy**: If an element has `x` and `y` but no `w` and `h`, it's a copy.
 
-2. **Same-slide copies**: If an element ID appears multiple times on the same slide, the instance at the original position (matching pristine x, y coordinates) is the original. Instances at different positions are copies.
+The algorithm then:
+1. Finds the source element by ID in the pristine data
+2. Calculates translation: `dx = copy.x - source.x`, `dy = copy.y - source.y`
+3. Applies translation to all children: `child_new_pos = child_orig_pos + (dx, dy)`
+4. Retrieves styles from `styles.json` for accurate recreation
 
 This means you can:
-- Copy an element from slide 16 to slide 118 by using the same element ID
-- Copy an element within the same slide by duplicating it with a different position
+- Copy an element from any slide to any other slide
+- Copy an element within the same slide to a different position
+- Copy entire groups with nested children
 
 ## Supported Shape Types
 
@@ -62,11 +76,12 @@ The following shape types can be copied:
 
 When copying an element:
 
-1. **Position**: The new position is taken from the copy's `x`, `y`, `w`, `h` attributes
-2. **Styles**: Fill, stroke, shadow are read from `styles.json` (referenced by pattern or ID)
-3. **Children**: For groups, all children are recreated with correct relative positions
-4. **Text**: Text content and styling (font, color, bold, etc.) are preserved
-5. **Images**: Native dimensions are used for accurate sizing
+1. **Position**: The new position is calculated from copy's `x`, `y` plus translation applied to all children
+2. **Dimensions**: Width and height are read from `styles.json` using the source element ID
+3. **Styles**: Fill, stroke, shadow are read from `styles.json`
+4. **Children**: For groups, all children are recreated with translated positions
+5. **Text**: Text content from the SML and text styling from `styles.json`
+6. **Images**: Dimensions from `styles.json` for accurate sizing
 
 ## Known Limitations
 
@@ -110,22 +125,25 @@ Image properties like transparency, brightness, and contrast are read-only in th
 
 ## Position Calculation
 
-For copied groups, children positions are calculated as:
-- Parent position: from the copy's x, y attributes
-- Child offset: from `styles.json` relative positions
-- Child absolute position = parent position + child offset
+For copies, all positions are calculated using translation:
+
+```
+translation = (copy.x - source.x, copy.y - source.y)
+child_new_position = child_original_position + translation
+```
 
 Example:
-- Parent copy at (200, 100)
-- Child has relative position (10, 20) in styles.json
-- Child created at absolute position (210, 120)
+- Source group at (31.0, 68.1)
+- Copy placed at (200.0, 100.0)
+- Translation: dx=169.0, dy=31.9
+- Child originally at (85.0, 68.1) → created at (254.0, 100.0)
 
-## Styles and Patterns
+## Styles
 
-The copy operation uses the pattern reference to look up styles in `styles.json`. This ensures:
-- Consistent styling across copies
-- Efficient diff/push (only position changes, not style definitions)
-- Pattern reuse for repeated elements
+The copy operation uses the element ID to look up styles in `styles.json`. This ensures:
+- Consistent styling across copies (fill, stroke, shadow, text formatting)
+- Efficient diff/push (styles are retrieved from source, not duplicated)
+- Accurate recreation of visual appearance
 
 ## Cross-Slide Copy Implementation
 
@@ -144,7 +162,7 @@ This means cross-slide copies are "deep copies" that recreate the element from s
 
 2. **Element IDs are local**: After push, Google assigns new IDs to created elements. The next pull will show different IDs than what you wrote.
 
-3. **Pattern references**: Use pattern references (`pattern="p21"`) rather than inline styles. This ensures copies inherit styles correctly from `styles.json`.
+3. **Copy convention**: To mark an element as a copy, include only `x` and `y` attributes (omit `w` and `h`). Keep all children unchanged from the source.
 
 ## Testing
 
