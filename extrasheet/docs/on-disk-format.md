@@ -381,10 +381,7 @@ Cell formatting is stored with range-based compression. Cells with identical for
     {
       "range": "A2:A23",
       "format": {
-        "backgroundColor": { "red": 1, "green": 0.85, "blue": 0.85 },
-        "backgroundColorStyle": {
-          "rgbColor": { "red": 1, "green": 0.85, "blue": 0.85 }
-        }
+        "backgroundColor": "#FFD9D9"
       }
     }
   ],
@@ -818,6 +815,129 @@ Sheets connected to external data sources:
 ### Large Spreadsheet Handling
 
 Splitting large sheets into multiple `data_*.tsv` files is **not currently implemented**. All data goes into a single `data.tsv` regardless of size.
+
+---
+
+## Known Limitations and Gotchas
+
+### Color Format Requirements
+
+**IMPORTANT:** Different contexts require different color formats:
+
+| Context | Format | Example |
+|---------|--------|---------|
+| `formatRules[].format.backgroundColor` | Hex string | `"#E6E6E6"` |
+| `formatRules[].format.textFormat.foregroundColor` | Hex string | `"#FF0000"` |
+| `conditionalFormats[].booleanRule.format.backgroundColor` | RGB dict | `{"red": 0.8, "green": 0.96, "blue": 0.8}` |
+| `conditionalFormats[].gradientRule.*.color` | RGB dict | `{"red": 0.96, "green": 0.8, "blue": 0.8}` |
+| `textFormatRuns[].format.foregroundColor` | RGB dict | `{"red": 0.07, "green": 0.33, "blue": 0.8}` |
+
+The pull command outputs hex strings for `formatRules` formatting. When editing `format.json`:
+- Use hex strings (e.g., `"#FF0000"`) for colors in `formatRules`
+- Use RGB dicts (e.g., `{"red": 1.0, "green": 0, "blue": 0}`) for colors in `conditionalFormats`
+
+Using the wrong format causes an unhelpful `'dict' object has no attribute 'lstrip'` error.
+
+### Pristine State Not Updated After Push
+
+After successfully pushing changes, the `.pristine/spreadsheet.zip` is **NOT** automatically updated. This means:
+
+1. If you push changes and then push again without re-pulling, the diff will compare against the OLD pristine state
+2. This may cause errors like `Sheet with id XXXX already exists` if you created sheets
+
+**Workaround:** Always re-pull the spreadsheet after pushing changes before making additional edits.
+
+### Sheet IDs May Change After Push
+
+When creating new sheets, you may specify a `sheetId` in `spreadsheet.json`. However, Google may assign different IDs after the sheet is created.
+
+**Example:**
+- You specify `sheetId: 100, 200, 300` in your new sheets
+- After push and re-pull, Google may have assigned `sheetId: 1101, 1102, 1103`
+
+**Impact:** Charts, filters, pivot tables, and other features reference sheets by `sheetId`. After creating sheets, re-pull to get the server-assigned IDs before adding features that reference them.
+
+### Index Numbering Conventions
+
+ExtraSheet uses multiple numbering conventions:
+
+| Context | Convention | Example |
+|---------|------------|---------|
+| data.tsv line numbers | 1-based | Line 5 = row 5 in spreadsheet |
+| A1 notation | 1-based | A1, B2, etc. |
+| GridRange indices in JSON | 0-based | `startRowIndex: 0` = row 1 |
+| GridRange end indices | Exclusive | `endRowIndex: 10` = rows 0-9 |
+
+**Gotcha:** When data.tsv shows content on line 5, the corresponding `startRowIndex` in JSON should be 4 (0-based).
+
+### Unsupported Data Validation Types
+
+The following validation types are **NOT** supported by the Google Sheets API despite appearing in some documentation:
+- `TEXT_IS_VALID_EMAIL`
+- `TEXT_IS_VALID_URL`
+
+Using these types causes: `API error (400): Invalid value at 'requests[X].setDataValidation.rule.condition.type'`
+
+**Workaround:** Use `CUSTOM_FORMULA` with a regex pattern instead.
+
+### Conditional Format Rule Index Required
+
+Each conditional format rule must have a `ruleIndex` field specifying its position:
+
+```json
+{
+  "conditionalFormats": [
+    {
+      "ruleIndex": 0,
+      "ranges": ["A1:A10"],
+      "booleanRule": {...}
+    }
+  ]
+}
+```
+
+The `ruleIndex` determines the order rules are applied (lower indices are applied first).
+
+### Chart Structure Varies by Type
+
+Different chart types have different JSON structures:
+
+**Basic charts (bar, line, scatter, area, column):**
+```json
+{
+  "spec": {
+    "basicChart": {
+      "chartType": "BAR",
+      "domains": [...],   // Note: plural, array
+      "series": [...]     // Note: array
+    }
+  }
+}
+```
+
+**Pie charts:**
+```json
+{
+  "spec": {
+    "pieChart": {
+      "domain": {...},    // Note: singular, object
+      "series": {...}     // Note: object, not array
+    }
+  }
+}
+```
+
+### No Pre-flight Validation
+
+There is no validation before push to catch common errors. Issues are only discovered when the API returns a 400 error, sometimes after partial changes have been applied.
+
+Common errors that are not caught until push:
+- Invalid color formats (hex vs RGB mismatch)
+- Invalid data validation types
+- Malformed JSON structures
+- Sheet ID conflicts
+
+**Recommendation:** Always run `diff` before `push` to preview the generated requests.
 
 ---
 
