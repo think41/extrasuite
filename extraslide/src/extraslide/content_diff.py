@@ -148,7 +148,19 @@ def diff_presentation(
     for elem_id, instances in edited_elements.items():
         if elem_id in known_ids and len(instances) > 1:
             # This is a copy - check if it's a group with children
-            for _, edited_elem in instances[1:]:  # Skip first (original)
+            # The original is on the same slide as in pristine
+            original_slide = pristine_slide_map[elem_id]
+            pristine_elem = pristine_elements[elem_id]
+
+            for slide_idx, edited_elem in instances:
+                # Skip the original instance - matches pristine slide and position
+                if (
+                    slide_idx == original_slide
+                    and edited_elem.x == pristine_elem.x
+                    and edited_elem.y == pristine_elem.y
+                ):
+                    continue
+                # This is a copy
                 if edited_elem.children:
                     copied_group_ids.add(elem_id)
                     # Collect all descendant IDs
@@ -170,35 +182,68 @@ def diff_presentation(
                 changes = _compare_elements(pristine_elem, edited_elem, slide_idx)
                 result.changes.extend(changes)
             else:
-                # Multiple instances - first is original, rest are copies
-                for i, (slide_idx, edited_elem) in enumerate(instances):
-                    if i == 0:
-                        # Original - check for modifications
-                        changes = _compare_elements(
-                            pristine_elem, edited_elem, slide_idx
-                        )
-                        result.changes.extend(changes)
-                    else:
-                        # Copy! Include children for groups
-                        children_data = None
-                        if edited_elem.children:
-                            children_data = _serialize_children(edited_elem.children)
+                # Multiple instances - identify original vs copies
+                # The original is the one on the same slide as in pristine
+                original_slide = pristine_slide_map[elem_id]
 
-                        result.changes.append(
-                            Change(
-                                change_type=ChangeType.COPY,
-                                target_id=f"{elem_id}_copy{i}",
-                                source_id=elem_id,
-                                slide_index=slide_idx,
-                                parent_id=edited_elem.parent_id,
-                                new_position=_get_position(edited_elem),
-                                new_text=edited_elem.paragraphs
-                                if edited_elem.paragraphs
-                                else None,
-                                children=children_data,
-                                tag=edited_elem.tag,
-                            )
+                original_instance: tuple[str, ParsedElement] | None = None
+                copy_instances: list[tuple[str, ParsedElement]] = []
+
+                # Find instances on the original slide vs other slides
+                same_slide_instances: list[tuple[str, ParsedElement]] = []
+                for slide_idx, edited_elem in instances:
+                    if slide_idx == original_slide:
+                        same_slide_instances.append((slide_idx, edited_elem))
+                    else:
+                        copy_instances.append((slide_idx, edited_elem))
+
+                # If multiple instances on the same slide, find the one matching
+                # pristine position (that's the original), rest are same-slide copies
+                if len(same_slide_instances) == 1:
+                    original_instance = same_slide_instances[0]
+                elif len(same_slide_instances) > 1:
+                    # Find the instance that matches pristine position
+                    for slide_idx, edited_elem in same_slide_instances:
+                        if (
+                            edited_elem.x == pristine_elem.x
+                            and edited_elem.y == pristine_elem.y
+                        ):
+                            original_instance = (slide_idx, edited_elem)
+                        else:
+                            copy_instances.append((slide_idx, edited_elem))
+                    # If no position match, use first one as original
+                    if original_instance is None and same_slide_instances:
+                        original_instance = same_slide_instances[0]
+                        copy_instances.extend(same_slide_instances[1:])
+
+                # Handle original (if it still exists on its original slide)
+                if original_instance:
+                    slide_idx, edited_elem = original_instance
+                    changes = _compare_elements(pristine_elem, edited_elem, slide_idx)
+                    result.changes.extend(changes)
+
+                # Handle copies
+                for i, (slide_idx, edited_elem) in enumerate(copy_instances):
+                    # Copy! Include children for groups
+                    children_data = None
+                    if edited_elem.children:
+                        children_data = _serialize_children(edited_elem.children)
+
+                    result.changes.append(
+                        Change(
+                            change_type=ChangeType.COPY,
+                            target_id=f"{elem_id}_copy{i}",
+                            source_id=elem_id,
+                            slide_index=slide_idx,
+                            parent_id=edited_elem.parent_id,
+                            new_position=_get_position(edited_elem),
+                            new_text=edited_elem.paragraphs
+                            if edited_elem.paragraphs
+                            else None,
+                            children=children_data,
+                            tag=edited_elem.tag,
                         )
+                    )
         else:
             # ID doesn't exist in pristine
             # Check if it looks like it was copied from another element

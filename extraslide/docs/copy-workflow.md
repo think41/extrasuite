@@ -27,7 +27,36 @@ To copy an element, duplicate its XML entry in `content.sml` with the **same ele
 </Group>
 ```
 
-The diff algorithm detects duplicate IDs and treats the second occurrence as a copy operation.
+The diff algorithm detects duplicate IDs and treats occurrences on different slides (or at different positions on the same slide) as copy operations.
+
+## How Copy Detection Works
+
+The diff algorithm identifies originals vs copies using these rules:
+
+1. **Cross-slide copies**: If an element ID appears on multiple slides, the instance on the same slide as in pristine (the original pull) is the original. Instances on other slides are copies.
+
+2. **Same-slide copies**: If an element ID appears multiple times on the same slide, the instance at the original position (matching pristine x, y coordinates) is the original. Instances at different positions are copies.
+
+This means you can:
+- Copy an element from slide 16 to slide 118 by using the same element ID
+- Copy an element within the same slide by duplicating it with a different position
+
+## Supported Shape Types
+
+The following shape types can be copied:
+
+| Shape Type | SML Tag | Description |
+|------------|---------|-------------|
+| RECTANGLE | `Rect` | Standard rectangle |
+| TEXT_BOX | `TextBox` | Text container |
+| ROUND_RECTANGLE | `RoundRect` | Rounded corner rectangle |
+| ELLIPSE | `Ellipse` | Circle or oval |
+| HOME_PLATE | `HOME_PLATE` | Chevron/arrow shape |
+| CHEVRON | `CHEVRON` | Chevron shape |
+| TRIANGLE | `TRIANGLE` | Triangle shape |
+| LINE | `Line` | Line connector |
+| IMAGE | `Image` | Image element |
+| GROUP | `Group` | Group of elements |
 
 ## What Gets Copied
 
@@ -97,6 +126,25 @@ The copy operation uses the pattern reference to look up styles in `styles.json`
 - Consistent styling across copies
 - Efficient diff/push (only position changes, not style definitions)
 - Pattern reuse for repeated elements
+
+## Cross-Slide Copy Implementation
+
+The Google Slides API's `duplicateObject` only works for copying elements within the same slide. For cross-slide copies, extraslide uses a different approach:
+
+1. **Create new shape**: Uses `createShape` with the same shape type as the source
+2. **Apply styles**: Copies fill, stroke, shadow properties from the source element's style
+3. **Insert text**: Adds text content with formatting from the source
+4. **Handle children**: For groups, recursively creates all child elements
+
+This means cross-slide copies are "deep copies" that recreate the element from scratch using the source's style definitions.
+
+## Important Notes
+
+1. **Pristine synchronization**: After a `push`, always `pull` again before making more edits. The `.pristine/` folder must reflect the current state of the presentation.
+
+2. **Element IDs are local**: After push, Google assigns new IDs to created elements. The next pull will show different IDs than what you wrote.
+
+3. **Pattern references**: Use pattern references (`pattern="p21"`) rather than inline styles. This ensures copies inherit styles correctly from `styles.json`.
 
 ## Testing
 
