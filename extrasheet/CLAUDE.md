@@ -32,7 +32,27 @@ Instead of working with complex API responses, agents interact with simple files
 ## Documentation
 
 - `docs/on-disk-format.md` - Complete specification of the file format
-- `docs/llm-agent-guide.md` - How to use extrasheet output for spreadsheet modifications
+- `docs/agent-guide/` - LLM agent guide with progressive disclosure:
+  - `README.md` - Start here: workflow, directory structure, quick reference
+  - `formatting.md` - Colors, fonts, conditional formatting
+  - `formulas.md` - Formula syntax and compression
+  - `features.md` - Charts, pivot tables, filters, validation
+  - `structural-changes.md` - Insert/delete rows/columns
+  - `batchupdate-reference.md` - All batchUpdate request types
+
+## Key Gotchas
+
+**Color formats:** Use hex strings (`"#FF0000"`) in `formatRules`, but RGB dicts (`{"red": 1.0, ...}`) in `conditionalFormats`.
+
+**formula.json structure:** Must be a flat dict (`{"C5": "=A5+B5"}`), NOT nested (`{"formulas": {...}}`).
+
+**format.json structure:** Must use `formatRules` array, NOT `cells` dict.
+
+**Pristine state:** Not updated after push. Always re-pull before making additional changes.
+
+**Sheet IDs:** Google may reassign IDs after creating sheets. Re-pull to get server-assigned IDs.
+
+See `docs/on-disk-format.md` "Known Limitations and Gotchas" section for complete details.
 
 ## CLI Interface
 
