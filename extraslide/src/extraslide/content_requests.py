@@ -69,7 +69,8 @@ def generate_batch_requests(
 
     # Generate createSlide requests for new slides (in order)
     for slide_index in sorted(new_slide_indices):
-        new_slide_id = f"new_slide_{slide_index}"
+        suffix = _get_unique_suffix()
+        new_slide_id = f"new_slide_{slide_index}_{suffix}"
         requests.append(_create_slide_request(new_slide_id))
         slide_ids[slide_index] = new_slide_id
 
