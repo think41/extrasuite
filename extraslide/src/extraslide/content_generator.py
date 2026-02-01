@@ -1,9 +1,9 @@
 """Generate minimal SML content from render trees.
 
 Produces clean, minimal XML with:
+- <Slide> root tag for valid XML
 - Clean IDs on all elements
-- Position only on root-level elements (children have no position)
-- Pattern hints as attributes
+- Absolute position (x, y, w, h) on ALL elements
 - Text content preserved
 - NO styling (that goes in styles.json)
 """
@@ -29,24 +29,26 @@ if TYPE_CHECKING:
 
 def generate_slide_content(
     roots: list[RenderNode],
-    pattern_hints: dict[str, str] | None = None,
+    slide_id: str = "s1",
 ) -> str:
     """Generate minimal SML content for a slide.
 
     Args:
         roots: Root nodes for this slide
-        pattern_hints: Optional mapping of clean_id to pattern_id
+        slide_id: The slide's clean ID (e.g., "s1")
 
     Returns:
-        Minimal SML XML string
+        Minimal SML XML string with <Slide> root tag
     """
-    if pattern_hints is None:
-        pattern_hints = {}
-
     lines: list[str] = []
 
+    # Add Slide root tag
+    lines.append(f'<Slide id="{slide_id}">')
+
     for root in roots:
-        _generate_node(root, lines, pattern_hints, indent=0, is_root=True)
+        _generate_node(root, lines, indent=1)
+
+    lines.append("</Slide>")
 
     return "\n".join(lines)
 
@@ -54,9 +56,7 @@ def generate_slide_content(
 def _generate_node(
     node: RenderNode,
     lines: list[str],
-    pattern_hints: dict[str, str],
     indent: int,
-    is_root: bool,
 ) -> None:
     """Generate XML for a single node and its children."""
     if not node.clean_id:
@@ -64,7 +64,7 @@ def _generate_node(
 
     prefix = "  " * indent
     tag = _get_tag_name(node)
-    attrs = _build_attributes(node, pattern_hints, is_root)
+    attrs = _build_attributes(node)
 
     # Check if this is a self-closing element (no text, no children)
     has_text = node.has_text
@@ -83,7 +83,7 @@ def _generate_node(
 
         # Add children
         for child in node.children:
-            _generate_node(child, lines, pattern_hints, indent + 1, is_root=False)
+            _generate_node(child, lines, indent + 1)
 
         # Closing tag
         lines.append(f"{prefix}</{tag}>")
@@ -94,7 +94,9 @@ def _get_tag_name(node: RenderNode) -> str:
     elem_type = node.element_type
 
     # Map Google Slides types to concise tag names
+    # Full spectrum of supported shapes
     tag_map = {
+        # Basic shapes
         "RECTANGLE": "Rect",
         "ELLIPSE": "Ellipse",
         "ROUND_RECTANGLE": "RoundRect",
@@ -105,36 +107,159 @@ def _get_tag_name(node: RenderNode) -> str:
         "TABLE": "Table",
         "VIDEO": "Video",
         "SHEETS_CHART": "Chart",
+        # Triangles
+        "TRIANGLE": "Triangle",
+        "RIGHT_TRIANGLE": "RightTriangle",
+        # Parallelograms
+        "PARALLELOGRAM": "Parallelogram",
+        "TRAPEZOID": "Trapezoid",
+        # Polygons
+        "PENTAGON": "Pentagon",
+        "HEXAGON": "Hexagon",
+        "HEPTAGON": "Heptagon",
+        "OCTAGON": "Octagon",
+        "DECAGON": "Decagon",
+        "DODECAGON": "Dodecagon",
+        # Stars
+        "STAR_4": "Star4",
+        "STAR_5": "Star5",
+        "STAR_6": "Star6",
+        "STAR_8": "Star8",
+        "STAR_10": "Star10",
+        "STAR_12": "Star12",
+        "STAR_16": "Star16",
+        "STAR_24": "Star24",
+        "STAR_32": "Star32",
+        # Other shapes
+        "DIAMOND": "Diamond",
+        "CHEVRON": "Chevron",
+        "HOME_PLATE": "HomePlate",
+        "PLUS": "Plus",
+        "DONUT": "Donut",
+        "PIE": "Pie",
+        "ARC": "Arc",
+        "CHORD": "Chord",
+        "BLOCK_ARC": "BlockArc",
+        "FRAME": "Frame",
+        "HALF_FRAME": "HalfFrame",
+        "CORNER": "Corner",
+        "DIAGONAL_STRIPE": "DiagonalStripe",
+        "L_SHAPE": "LShape",
+        "CAN": "Can",
+        "CUBE": "Cube",
+        "BEVEL": "Bevel",
+        "FOLDED_CORNER": "FoldedCorner",
+        "SMILEY_FACE": "SmileyFace",
+        "HEART": "Heart",
+        "LIGHTNING_BOLT": "LightningBolt",
+        "SUN": "Sun",
+        "MOON": "Moon",
+        "CLOUD": "Cloud",
+        "PLAQUE": "Plaque",
+        # Arrows
+        "ARROW": "Arrow",
+        "LEFT_ARROW": "ArrowLeft",
+        "RIGHT_ARROW": "ArrowRight",
+        "UP_ARROW": "ArrowUp",
+        "DOWN_ARROW": "ArrowDown",
+        "LEFT_RIGHT_ARROW": "ArrowLeftRight",
+        "UP_DOWN_ARROW": "ArrowUpDown",
+        "QUAD_ARROW": "ArrowQuad",
+        "LEFT_RIGHT_UP_ARROW": "ArrowLeftRightUp",
+        "BENT_ARROW": "ArrowBent",
+        "U_TURN_ARROW": "ArrowUTurn",
+        "CURVED_LEFT_ARROW": "ArrowCurvedLeft",
+        "CURVED_RIGHT_ARROW": "ArrowCurvedRight",
+        "CURVED_UP_ARROW": "ArrowCurvedUp",
+        "CURVED_DOWN_ARROW": "ArrowCurvedDown",
+        "STRIPED_RIGHT_ARROW": "ArrowStripedRight",
+        "NOTCHED_RIGHT_ARROW": "ArrowNotchedRight",
+        "PENTAGON_ARROW": "ArrowPentagon",
+        "CHEVRON_ARROW": "ArrowChevron",
+        "CIRCULAR_ARROW": "ArrowCircular",
+        # Callouts
+        "WEDGE_RECTANGLE_CALLOUT": "CalloutRect",
+        "WEDGE_ROUND_RECTANGLE_CALLOUT": "CalloutRoundRect",
+        "WEDGE_ELLIPSE_CALLOUT": "CalloutEllipse",
+        "CLOUD_CALLOUT": "CalloutCloud",
+        # Flowchart shapes
+        "FLOW_CHART_PROCESS": "FlowProcess",
+        "FLOW_CHART_DECISION": "FlowDecision",
+        "FLOW_CHART_INPUT_OUTPUT": "FlowInputOutput",
+        "FLOW_CHART_PREDEFINED_PROCESS": "FlowPredefinedProcess",
+        "FLOW_CHART_INTERNAL_STORAGE": "FlowInternalStorage",
+        "FLOW_CHART_DOCUMENT": "FlowDocument",
+        "FLOW_CHART_MULTIDOCUMENT": "FlowMultidocument",
+        "FLOW_CHART_TERMINATOR": "FlowTerminator",
+        "FLOW_CHART_PREPARATION": "FlowPreparation",
+        "FLOW_CHART_MANUAL_INPUT": "FlowManualInput",
+        "FLOW_CHART_MANUAL_OPERATION": "FlowManualOperation",
+        "FLOW_CHART_CONNECTOR": "FlowConnector",
+        "FLOW_CHART_PUNCHED_CARD": "FlowPunchedCard",
+        "FLOW_CHART_PUNCHED_TAPE": "FlowPunchedTape",
+        "FLOW_CHART_SUMMING_JUNCTION": "FlowSummingJunction",
+        "FLOW_CHART_OR": "FlowOr",
+        "FLOW_CHART_COLLATE": "FlowCollate",
+        "FLOW_CHART_SORT": "FlowSort",
+        "FLOW_CHART_EXTRACT": "FlowExtract",
+        "FLOW_CHART_MERGE": "FlowMerge",
+        "FLOW_CHART_ONLINE_STORAGE": "FlowOnlineStorage",
+        "FLOW_CHART_MAGNETIC_TAPE": "FlowMagneticTape",
+        "FLOW_CHART_MAGNETIC_DISK": "FlowMagneticDisk",
+        "FLOW_CHART_MAGNETIC_DRUM": "FlowMagneticDrum",
+        "FLOW_CHART_DISPLAY": "FlowDisplay",
+        "FLOW_CHART_DELAY": "FlowDelay",
+        "FLOW_CHART_ALTERNATE_PROCESS": "FlowAlternateProcess",
+        "FLOW_CHART_OFFPAGE_CONNECTOR": "FlowOffpageConnector",
+        "FLOW_CHART_DATA": "FlowData",
+        # Equation shapes
+        "MATH_PLUS": "MathPlus",
+        "MATH_MINUS": "MathMinus",
+        "MATH_MULTIPLY": "MathMultiply",
+        "MATH_DIVIDE": "MathDivide",
+        "MATH_EQUAL": "MathEqual",
+        "MATH_NOT_EQUAL": "MathNotEqual",
+        # Brackets
+        "LEFT_BRACKET": "BracketLeft",
+        "RIGHT_BRACKET": "BracketRight",
+        "LEFT_BRACE": "BraceLeft",
+        "RIGHT_BRACE": "BraceRight",
+        "BRACKET_PAIR": "BracketPair",
+        "BRACE_PAIR": "BracePair",
+        # Ribbons and banners
+        "RIBBON": "Ribbon",
+        "RIBBON_2": "Ribbon2",
+        # Rounded rectangles variants
+        "SNIP_ROUND_RECTANGLE": "SnipRoundRect",
+        "SNIP_2_SAME_RECTANGLE": "Snip2SameRect",
+        "SNIP_2_DIAGONAL_RECTANGLE": "Snip2DiagRect",
+        "ROUND_1_RECTANGLE": "Round1Rect",
+        "ROUND_2_SAME_RECTANGLE": "Round2SameRect",
+        "ROUND_2_DIAGONAL_RECTANGLE": "Round2DiagRect",
+        # Custom/unknown
+        "CUSTOM": "Custom",
         "SHAPE": "Shape",
-        # Add more as needed
     }
 
     return tag_map.get(elem_type, elem_type)
 
 
-def _build_attributes(
-    node: RenderNode,
-    pattern_hints: dict[str, str],
-    is_root: bool,
-) -> str:
-    """Build attribute string for an element."""
+def _build_attributes(node: RenderNode) -> str:
+    """Build attribute string for an element.
+
+    All elements get absolute x, y, w, h positions.
+    """
     attrs: list[str] = []
 
     # Always include clean ID
     attrs.append(f'id="{node.clean_id}"')
 
-    # Position - only for root elements
-    if is_root:
-        bounds = node.bounds
-        attrs.append(f'x="{round(bounds.x, 1)}"')
-        attrs.append(f'y="{round(bounds.y, 1)}"')
-        attrs.append(f'w="{round(bounds.w, 1)}"')
-        attrs.append(f'h="{round(bounds.h, 1)}"')
-
-    # Pattern hint if available
-    pattern_id = pattern_hints.get(node.clean_id)
-    if pattern_id:
-        attrs.append(f'pattern="{pattern_id}"')
+    # Absolute position for ALL elements
+    bounds = node.bounds
+    attrs.append(f'x="{round(bounds.x, 1)}"')
+    attrs.append(f'y="{round(bounds.y, 1)}"')
+    attrs.append(f'w="{round(bounds.w, 1)}"')
+    attrs.append(f'h="{round(bounds.h, 1)}"')
 
     if attrs:
         return " " + " ".join(attrs)
@@ -190,24 +315,19 @@ def _generate_text_content(
 
 def generate_presentation_content(
     slides_data: list[tuple[str, list[RenderNode]]],
-    pattern_hints: dict[str, str] | None = None,
 ) -> dict[str, str]:
     """Generate content for all slides in a presentation.
 
     Args:
         slides_data: List of (slide_clean_id, roots) tuples
-        pattern_hints: Optional mapping of clean_id to pattern_id
 
     Returns:
         Dictionary mapping slide_clean_id to content XML string
     """
-    if pattern_hints is None:
-        pattern_hints = {}
-
     result: dict[str, str] = {}
 
     for slide_id, roots in slides_data:
-        content = generate_slide_content(roots, pattern_hints)
+        content = generate_slide_content(roots, slide_id)
         result[slide_id] = content
 
     return result

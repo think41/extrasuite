@@ -1,10 +1,9 @@
-"""Slide processor for the new ID-based architecture.
+"""Slide processor for the copy-based workflow.
 
 Orchestrates the conversion from Google Slides API response to the new format:
 - id_mapping.json: clean_id -> google_object_id
-- styles.json: clean_id -> style properties (with relative positions for children)
-- slides/NN/content.sml: minimal XML with IDs, positions, text, pattern hints
-- slides/NN/thumbnail.png: visual reference (optional)
+- styles.json: clean_id -> style properties
+- slides/NN/content.sml: minimal XML with IDs, absolute positions, text
 """
 
 from __future__ import annotations
@@ -17,7 +16,6 @@ if TYPE_CHECKING:
 
 from extraslide.content_generator import generate_slide_content
 from extraslide.id_manager import assign_ids
-from extraslide.patterns import assign_pattern_hints
 from extraslide.render_tree import RenderNode, build_render_tree
 from extraslide.style_extractor import extract_styles
 from extraslide.units import emu_to_pt
@@ -36,14 +34,12 @@ def process_presentation(
         - id_mapping: dict mapping clean_id to google_object_id
         - styles: dict mapping clean_id to style properties
         - slides: list of dicts with slide_id and content
-        - patterns: dict mapping clean_id to pattern_id (hints)
         - presentation_info: basic presentation metadata
     """
     # Step 1: Assign clean IDs to all elements
     id_manager = assign_ids(presentation_data)
 
     # Step 2: Build render trees for all slides
-    all_slide_roots: list[RenderNode] = []
     slides_data: list[
         tuple[str, str, list[RenderNode]]
     ] = []  # (slide_id, index, roots)
@@ -59,21 +55,17 @@ def process_presentation(
         roots = build_render_tree(elements, id_manager)
 
         slides_data.append((slide_clean_id, f"{idx:02d}", roots))
-        all_slide_roots.extend(roots)
 
-    # Step 3: Detect patterns across all slides
-    pattern_hints = assign_pattern_hints(all_slide_roots)
-
-    # Step 4: Extract styles from all nodes
+    # Step 3: Extract styles from all nodes
     all_styles: dict[str, dict[str, Any]] = {}
     for _, _, roots in slides_data:
         slide_styles = extract_styles(roots)
         all_styles.update(slide_styles)
 
-    # Step 5: Generate content for each slide
+    # Step 4: Generate content for each slide
     slides_output: list[dict[str, Any]] = []
     for slide_id, slide_index, roots in slides_data:
-        content = generate_slide_content(roots, pattern_hints)
+        content = generate_slide_content(roots, slide_id)
         slides_output.append(
             {
                 "slide_id": slide_id,
@@ -82,7 +74,7 @@ def process_presentation(
             }
         )
 
-    # Step 6: Gather presentation info
+    # Step 5: Gather presentation info
     presentation_info = {
         "title": presentation_data.get("title", "Untitled"),
         "presentationId": presentation_data.get("presentationId", ""),
@@ -94,7 +86,6 @@ def process_presentation(
         "id_mapping": id_manager.to_dict(),
         "styles": all_styles,
         "slides": slides_output,
-        "patterns": pattern_hints,
         "presentation_info": presentation_info,
     }
 
