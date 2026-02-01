@@ -298,6 +298,7 @@ def _create_copy_requests(
         "FLOW_CHART_PROCESS",
         "TRIANGLE",
         "CHEVRON",
+        "HOME_PLATE",
         "ARC",
     ):
         requests.append(
@@ -574,6 +575,7 @@ def _tag_to_type(tag: str) -> str:
         "FLOW_CHART_PROCESS": "FLOW_CHART_PROCESS",
         "TRIANGLE": "TRIANGLE",
         "CHEVRON": "CHEVRON",
+        "HOME_PLATE": "HOME_PLATE",
         "ARC": "ARC",
     }
     return tag_map.get(tag, "RECTANGLE")
