@@ -263,6 +263,7 @@ def _create_copy_requests(
     the element with properties from the source.
 
     For groups, recursively creates all children and then groups them.
+    Uses translation (dx, dy) from change to calculate child positions.
     """
     requests: list[dict[str, Any]] = []
 
@@ -280,64 +281,19 @@ def _create_copy_requests(
             "h": source_pos.get("h", 100),
         }
 
+    # Get translation for child positioning
+    translation = change.translation or {"dx": 0, "dy": 0}
+
     # Generate a unique object ID for the new element
     # Include slide index and unique suffix to avoid collisions with existing IDs
     suffix = _get_unique_suffix()
     new_object_id = f"copy_{change.slide_index}_{suffix}"
 
     # Create element based on type
-    if elem_type in (
-        "RECTANGLE",
-        "TEXT_BOX",
-        "ROUND_RECTANGLE",
-        "ELLIPSE",
-        "CUSTOM",
-        "SNIP_ROUND_RECTANGLE",
-        "ROUND_2_SAME_RECTANGLE",
-        "FLOW_CHART_ALTERNATE_PROCESS",
-        "FLOW_CHART_PROCESS",
-        "TRIANGLE",
-        "CHEVRON",
-        "HOME_PLATE",
-        "ARC",
-    ):
-        requests.append(
-            _create_shape_request(
-                new_object_id,
-                slide_google_id,
-                elem_type,
-                position,
-            )
-        )
+    # Special types: LINE, IMAGE, GROUP need special handling
+    # Everything else is a shape that can be created with createShape
 
-        # Apply styling from source
-        style_requests = _apply_style_requests(new_object_id, source_style)
-        requests.extend(style_requests)
-
-        # Add text if provided
-        if change.new_text:
-            text_requests = _create_text_insert_requests(new_object_id, change.new_text)
-            requests.extend(text_requests)
-            # Apply text styling from source
-            text_style_info = source_style.get("text", {})
-            if text_style_info:
-                text_style_reqs = _apply_text_style_requests(
-                    new_object_id, change.new_text, text_style_info
-                )
-                requests.extend(text_style_reqs)
-
-        # Handle visual children (any element can have children in our format)
-        if change.children:
-            _create_children_from_data(
-                change.children,
-                position,
-                slide_google_id,
-                all_styles,
-                requests,
-                new_object_id,
-            )
-
-    elif elem_type == "LINE":
+    if elem_type == "LINE":
         requests.append(
             _create_line_request(
                 new_object_id,
@@ -370,12 +326,23 @@ def _create_copy_requests(
             )
             requests.extend(image_style_requests)
 
+        # Handle visual children for images (e.g., cropped images)
+        if change.children:
+            _create_children_from_data(
+                change.children,
+                translation,
+                slide_google_id,
+                all_styles,
+                requests,
+                new_object_id,
+            )
+
     elif elem_type == "GROUP":
         # Create children first, then group them
         if change.children:
             child_ids = _create_children_from_data(
                 change.children,
-                position,
+                translation,
                 slide_google_id,
                 all_styles,
                 requests,
@@ -392,12 +359,50 @@ def _create_copy_requests(
                     }
                 )
 
+    else:
+        # All other types are shapes (RECTANGLE, TEXT_BOX, ROUND_RECTANGLE, etc.)
+        requests.append(
+            _create_shape_request(
+                new_object_id,
+                slide_google_id,
+                elem_type,
+                position,
+            )
+        )
+
+        # Apply styling from source
+        style_requests = _apply_style_requests(new_object_id, source_style)
+        requests.extend(style_requests)
+
+        # Add text if provided
+        if change.new_text:
+            text_requests = _create_text_insert_requests(new_object_id, change.new_text)
+            requests.extend(text_requests)
+            # Apply text styling from source
+            text_style_info = source_style.get("text", {})
+            if text_style_info:
+                text_style_reqs = _apply_text_style_requests(
+                    new_object_id, change.new_text, text_style_info
+                )
+                requests.extend(text_style_reqs)
+
+        # Handle visual children (any element can have children in our format)
+        if change.children:
+            _create_children_from_data(
+                change.children,
+                translation,
+                slide_google_id,
+                all_styles,
+                requests,
+                new_object_id,
+            )
+
     return requests
 
 
 def _create_children_from_data(
     children: list[dict[str, Any]],
-    parent_position: dict[str, float],
+    translation: dict[str, float],
     slide_google_id: str,
     all_styles: dict[str, dict[str, Any]],
     requests: list[dict[str, Any]],
@@ -406,9 +411,13 @@ def _create_children_from_data(
 ) -> list[str]:
     """Create child elements from serialized children data.
 
+    Uses translation-based positioning:
+    - Children have their original absolute positions in child_data["position"]
+    - New position = original position + translation (dx, dy)
+
     Args:
         children: List of child data dicts from Change.children
-        parent_position: The parent's absolute position
+        translation: Translation offset {"dx": float, "dy": float}
         slide_google_id: Target slide ID
         all_styles: All element styles for styling lookup
         requests: List to append requests to
@@ -419,6 +428,8 @@ def _create_children_from_data(
         List of created child object IDs
     """
     child_ids: list[str] = []
+    dx = translation.get("dx", 0)
+    dy = translation.get("dy", 0)
 
     for i, child_data in enumerate(children):
         child_obj_id = f"{id_prefix}_c{depth}_{i}"
@@ -430,23 +441,25 @@ def _create_children_from_data(
         source_id = child_data.get("id", "")
         child_style = all_styles.get(source_id, {})
 
-        # Calculate absolute position
-        # Children in content.sml don't have positions, use style's relative position
-        child_rel_pos = child_style.get("position", {})
-        if child_rel_pos.get("relative", False):
+        # Calculate new position using translation
+        # Children have absolute positions in child_data["position"]
+        # New position = original position + translation
+        child_orig_pos = child_data.get("position", {})
+        if child_orig_pos:
             abs_position = {
-                "x": parent_position["x"] + child_rel_pos.get("x", 0),
-                "y": parent_position["y"] + child_rel_pos.get("y", 0),
-                "w": child_rel_pos.get("w", 50),
-                "h": child_rel_pos.get("h", 50),
+                "x": child_orig_pos.get("x", 0) + dx,
+                "y": child_orig_pos.get("y", 0) + dy,
+                "w": child_orig_pos.get("w", 50),
+                "h": child_orig_pos.get("h", 50),
             }
         else:
-            # If not relative, use parent position with small offset
+            # Fallback: use style's position if child_data doesn't have position
+            style_pos = child_style.get("position", {})
             abs_position = {
-                "x": parent_position["x"] + i * 10,
-                "y": parent_position["y"] + i * 10,
-                "w": child_rel_pos.get("w", 50),
-                "h": child_rel_pos.get("h", 50),
+                "x": style_pos.get("x", 0) + dx,
+                "y": style_pos.get("y", 0) + dy,
+                "w": style_pos.get("w", 50),
+                "h": style_pos.get("h", 50),
             }
 
         # Map tag to element type
@@ -454,9 +467,10 @@ def _create_children_from_data(
 
         if elem_type == "GROUP" and nested_children:
             # Create children first, then group them
+            # Pass the same translation - children already have absolute positions
             nested_child_ids = _create_children_from_data(
                 nested_children,
-                abs_position,
+                translation,
                 slide_google_id,
                 all_styles,
                 requests,
@@ -485,7 +499,7 @@ def _create_children_from_data(
             if nested_children:
                 _create_children_from_data(
                     nested_children,
-                    abs_position,
+                    translation,
                     slide_google_id,
                     all_styles,
                     requests,
@@ -515,7 +529,7 @@ def _create_children_from_data(
             if nested_children:
                 _create_children_from_data(
                     nested_children,
-                    abs_position,
+                    translation,
                     slide_google_id,
                     all_styles,
                     requests,
@@ -547,7 +561,7 @@ def _create_children_from_data(
             if nested_children:
                 _create_children_from_data(
                     nested_children,
-                    abs_position,
+                    translation,
                     slide_google_id,
                     all_styles,
                     requests,
@@ -559,24 +573,155 @@ def _create_children_from_data(
 
 
 def _tag_to_type(tag: str) -> str:
-    """Convert content.sml tag to element type."""
+    """Convert content.sml tag to Google Slides element type.
+
+    Reverse mapping of content_generator._get_tag_name().
+    Supports the full spectrum of Google Slides shape types.
+    """
     tag_map = {
+        # Basic shapes
         "Rect": "RECTANGLE",
-        "TextBox": "TEXT_BOX",
-        "RoundRect": "ROUND_RECTANGLE",
         "Ellipse": "ELLIPSE",
-        "Line": "LINE",
+        "RoundRect": "ROUND_RECTANGLE",
+        "TextBox": "TEXT_BOX",
         "Image": "IMAGE",
+        "Line": "LINE",
         "Group": "GROUP",
-        "CUSTOM": "RECTANGLE",  # Custom shapes become rectangles
-        "SNIP_ROUND_RECTANGLE": "SNIP_ROUND_RECTANGLE",
-        "ROUND_2_SAME_RECTANGLE": "RECTANGLE",
-        "FLOW_CHART_ALTERNATE_PROCESS": "FLOW_CHART_ALTERNATE_PROCESS",
-        "FLOW_CHART_PROCESS": "FLOW_CHART_PROCESS",
-        "TRIANGLE": "TRIANGLE",
-        "CHEVRON": "CHEVRON",
-        "HOME_PLATE": "HOME_PLATE",
-        "ARC": "ARC",
+        "Table": "TABLE",
+        "Video": "VIDEO",
+        "Chart": "SHEETS_CHART",
+        # Triangles
+        "Triangle": "TRIANGLE",
+        "RightTriangle": "RIGHT_TRIANGLE",
+        # Parallelograms
+        "Parallelogram": "PARALLELOGRAM",
+        "Trapezoid": "TRAPEZOID",
+        # Polygons
+        "Pentagon": "PENTAGON",
+        "Hexagon": "HEXAGON",
+        "Heptagon": "HEPTAGON",
+        "Octagon": "OCTAGON",
+        "Decagon": "DECAGON",
+        "Dodecagon": "DODECAGON",
+        # Stars
+        "Star4": "STAR_4",
+        "Star5": "STAR_5",
+        "Star6": "STAR_6",
+        "Star8": "STAR_8",
+        "Star10": "STAR_10",
+        "Star12": "STAR_12",
+        "Star16": "STAR_16",
+        "Star24": "STAR_24",
+        "Star32": "STAR_32",
+        # Other shapes
+        "Diamond": "DIAMOND",
+        "Chevron": "CHEVRON",
+        "HomePlate": "HOME_PLATE",
+        "Plus": "PLUS",
+        "Donut": "DONUT",
+        "Pie": "PIE",
+        "Arc": "ARC",
+        "Chord": "CHORD",
+        "BlockArc": "BLOCK_ARC",
+        "Frame": "FRAME",
+        "HalfFrame": "HALF_FRAME",
+        "Corner": "CORNER",
+        "DiagonalStripe": "DIAGONAL_STRIPE",
+        "LShape": "L_SHAPE",
+        "Can": "CAN",
+        "Cube": "CUBE",
+        "Bevel": "BEVEL",
+        "FoldedCorner": "FOLDED_CORNER",
+        "SmileyFace": "SMILEY_FACE",
+        "Heart": "HEART",
+        "LightningBolt": "LIGHTNING_BOLT",
+        "Sun": "SUN",
+        "Moon": "MOON",
+        "Cloud": "CLOUD",
+        "Plaque": "PLAQUE",
+        # Arrows
+        "Arrow": "ARROW",
+        "ArrowLeft": "LEFT_ARROW",
+        "ArrowRight": "RIGHT_ARROW",
+        "ArrowUp": "UP_ARROW",
+        "ArrowDown": "DOWN_ARROW",
+        "ArrowLeftRight": "LEFT_RIGHT_ARROW",
+        "ArrowUpDown": "UP_DOWN_ARROW",
+        "ArrowQuad": "QUAD_ARROW",
+        "ArrowLeftRightUp": "LEFT_RIGHT_UP_ARROW",
+        "ArrowBent": "BENT_ARROW",
+        "ArrowUTurn": "U_TURN_ARROW",
+        "ArrowCurvedLeft": "CURVED_LEFT_ARROW",
+        "ArrowCurvedRight": "CURVED_RIGHT_ARROW",
+        "ArrowCurvedUp": "CURVED_UP_ARROW",
+        "ArrowCurvedDown": "CURVED_DOWN_ARROW",
+        "ArrowStripedRight": "STRIPED_RIGHT_ARROW",
+        "ArrowNotchedRight": "NOTCHED_RIGHT_ARROW",
+        "ArrowPentagon": "PENTAGON_ARROW",
+        "ArrowChevron": "CHEVRON_ARROW",
+        "ArrowCircular": "CIRCULAR_ARROW",
+        # Callouts
+        "CalloutRect": "WEDGE_RECTANGLE_CALLOUT",
+        "CalloutRoundRect": "WEDGE_ROUND_RECTANGLE_CALLOUT",
+        "CalloutEllipse": "WEDGE_ELLIPSE_CALLOUT",
+        "CalloutCloud": "CLOUD_CALLOUT",
+        # Flowchart shapes
+        "FlowProcess": "FLOW_CHART_PROCESS",
+        "FlowDecision": "FLOW_CHART_DECISION",
+        "FlowInputOutput": "FLOW_CHART_INPUT_OUTPUT",
+        "FlowPredefinedProcess": "FLOW_CHART_PREDEFINED_PROCESS",
+        "FlowInternalStorage": "FLOW_CHART_INTERNAL_STORAGE",
+        "FlowDocument": "FLOW_CHART_DOCUMENT",
+        "FlowMultidocument": "FLOW_CHART_MULTIDOCUMENT",
+        "FlowTerminator": "FLOW_CHART_TERMINATOR",
+        "FlowPreparation": "FLOW_CHART_PREPARATION",
+        "FlowManualInput": "FLOW_CHART_MANUAL_INPUT",
+        "FlowManualOperation": "FLOW_CHART_MANUAL_OPERATION",
+        "FlowConnector": "FLOW_CHART_CONNECTOR",
+        "FlowPunchedCard": "FLOW_CHART_PUNCHED_CARD",
+        "FlowPunchedTape": "FLOW_CHART_PUNCHED_TAPE",
+        "FlowSummingJunction": "FLOW_CHART_SUMMING_JUNCTION",
+        "FlowOr": "FLOW_CHART_OR",
+        "FlowCollate": "FLOW_CHART_COLLATE",
+        "FlowSort": "FLOW_CHART_SORT",
+        "FlowExtract": "FLOW_CHART_EXTRACT",
+        "FlowMerge": "FLOW_CHART_MERGE",
+        "FlowOnlineStorage": "FLOW_CHART_ONLINE_STORAGE",
+        "FlowMagneticTape": "FLOW_CHART_MAGNETIC_TAPE",
+        "FlowMagneticDisk": "FLOW_CHART_MAGNETIC_DISK",
+        "FlowMagneticDrum": "FLOW_CHART_MAGNETIC_DRUM",
+        "FlowDisplay": "FLOW_CHART_DISPLAY",
+        "FlowDelay": "FLOW_CHART_DELAY",
+        "FlowAlternateProcess": "FLOW_CHART_ALTERNATE_PROCESS",
+        "FlowOffpageConnector": "FLOW_CHART_OFFPAGE_CONNECTOR",
+        "FlowData": "FLOW_CHART_DATA",
+        # Equation shapes
+        "MathPlus": "MATH_PLUS",
+        "MathMinus": "MATH_MINUS",
+        "MathMultiply": "MATH_MULTIPLY",
+        "MathDivide": "MATH_DIVIDE",
+        "MathEqual": "MATH_EQUAL",
+        "MathNotEqual": "MATH_NOT_EQUAL",
+        # Brackets
+        "BracketLeft": "LEFT_BRACKET",
+        "BracketRight": "RIGHT_BRACKET",
+        "BraceLeft": "LEFT_BRACE",
+        "BraceRight": "RIGHT_BRACE",
+        "BracketPair": "BRACKET_PAIR",
+        "BracePair": "BRACE_PAIR",
+        # Ribbons and banners
+        "Ribbon": "RIBBON",
+        "Ribbon2": "RIBBON_2",
+        # Rounded rectangles variants
+        "SnipRoundRect": "SNIP_ROUND_RECTANGLE",
+        "Snip2SameRect": "SNIP_2_SAME_RECTANGLE",
+        "Snip2DiagRect": "SNIP_2_DIAGONAL_RECTANGLE",
+        "Round1Rect": "ROUND_1_RECTANGLE",
+        "Round2SameRect": "ROUND_2_SAME_RECTANGLE",
+        "Round2DiagRect": "ROUND_2_DIAGONAL_RECTANGLE",
+        # Custom/unknown
+        "Custom": "CUSTOM",
+        "Shape": "SHAPE",
     }
     return tag_map.get(tag, "RECTANGLE")
 
@@ -593,18 +738,136 @@ def _create_shape_request(
     and applies scale factors to achieve the desired visual size. We calculate
     the scale factors to match the requested size.
     """
-    # Map our tag names back to Google shape types
-    shape_type_map = {
-        "RECTANGLE": "RECTANGLE",
-        "TEXT_BOX": "TEXT_BOX",
-        "ROUND_RECTANGLE": "ROUND_RECTANGLE",
-        "ELLIPSE": "ELLIPSE",
-        "Rect": "RECTANGLE",
-        "TextBox": "TEXT_BOX",
-        "RoundRect": "ROUND_RECTANGLE",
-        "Ellipse": "ELLIPSE",
+    # If shape_type is already a valid Google shape type (uppercase with underscores),
+    # use it directly. Otherwise, fall back to RECTANGLE.
+    # Valid Google shape types are uppercase like RECTANGLE, ROUND_RECTANGLE, etc.
+    valid_google_types = {
+        "RECTANGLE",
+        "ELLIPSE",
+        "ROUND_RECTANGLE",
+        "TEXT_BOX",
+        "TRIANGLE",
+        "RIGHT_TRIANGLE",
+        "PARALLELOGRAM",
+        "TRAPEZOID",
+        "PENTAGON",
+        "HEXAGON",
+        "HEPTAGON",
+        "OCTAGON",
+        "DECAGON",
+        "DODECAGON",
+        "STAR_4",
+        "STAR_5",
+        "STAR_6",
+        "STAR_8",
+        "STAR_10",
+        "STAR_12",
+        "STAR_16",
+        "STAR_24",
+        "STAR_32",
+        "DIAMOND",
+        "CHEVRON",
+        "HOME_PLATE",
+        "PLUS",
+        "DONUT",
+        "PIE",
+        "ARC",
+        "CHORD",
+        "BLOCK_ARC",
+        "FRAME",
+        "HALF_FRAME",
+        "CORNER",
+        "DIAGONAL_STRIPE",
+        "L_SHAPE",
+        "CAN",
+        "CUBE",
+        "BEVEL",
+        "FOLDED_CORNER",
+        "SMILEY_FACE",
+        "HEART",
+        "LIGHTNING_BOLT",
+        "SUN",
+        "MOON",
+        "CLOUD",
+        "PLAQUE",
+        "ARROW",
+        "LEFT_ARROW",
+        "RIGHT_ARROW",
+        "UP_ARROW",
+        "DOWN_ARROW",
+        "LEFT_RIGHT_ARROW",
+        "UP_DOWN_ARROW",
+        "QUAD_ARROW",
+        "LEFT_RIGHT_UP_ARROW",
+        "BENT_ARROW",
+        "U_TURN_ARROW",
+        "CURVED_LEFT_ARROW",
+        "CURVED_RIGHT_ARROW",
+        "CURVED_UP_ARROW",
+        "CURVED_DOWN_ARROW",
+        "STRIPED_RIGHT_ARROW",
+        "NOTCHED_RIGHT_ARROW",
+        "PENTAGON_ARROW",
+        "CHEVRON_ARROW",
+        "CIRCULAR_ARROW",
+        "WEDGE_RECTANGLE_CALLOUT",
+        "WEDGE_ROUND_RECTANGLE_CALLOUT",
+        "WEDGE_ELLIPSE_CALLOUT",
+        "CLOUD_CALLOUT",
+        "FLOW_CHART_PROCESS",
+        "FLOW_CHART_DECISION",
+        "FLOW_CHART_INPUT_OUTPUT",
+        "FLOW_CHART_PREDEFINED_PROCESS",
+        "FLOW_CHART_INTERNAL_STORAGE",
+        "FLOW_CHART_DOCUMENT",
+        "FLOW_CHART_MULTIDOCUMENT",
+        "FLOW_CHART_TERMINATOR",
+        "FLOW_CHART_PREPARATION",
+        "FLOW_CHART_MANUAL_INPUT",
+        "FLOW_CHART_MANUAL_OPERATION",
+        "FLOW_CHART_CONNECTOR",
+        "FLOW_CHART_PUNCHED_CARD",
+        "FLOW_CHART_PUNCHED_TAPE",
+        "FLOW_CHART_SUMMING_JUNCTION",
+        "FLOW_CHART_OR",
+        "FLOW_CHART_COLLATE",
+        "FLOW_CHART_SORT",
+        "FLOW_CHART_EXTRACT",
+        "FLOW_CHART_MERGE",
+        "FLOW_CHART_ONLINE_STORAGE",
+        "FLOW_CHART_MAGNETIC_TAPE",
+        "FLOW_CHART_MAGNETIC_DISK",
+        "FLOW_CHART_MAGNETIC_DRUM",
+        "FLOW_CHART_DISPLAY",
+        "FLOW_CHART_DELAY",
+        "FLOW_CHART_ALTERNATE_PROCESS",
+        "FLOW_CHART_OFFPAGE_CONNECTOR",
+        "FLOW_CHART_DATA",
+        "MATH_PLUS",
+        "MATH_MINUS",
+        "MATH_MULTIPLY",
+        "MATH_DIVIDE",
+        "MATH_EQUAL",
+        "MATH_NOT_EQUAL",
+        "LEFT_BRACKET",
+        "RIGHT_BRACKET",
+        "LEFT_BRACE",
+        "RIGHT_BRACE",
+        "BRACKET_PAIR",
+        "BRACE_PAIR",
+        "RIBBON",
+        "RIBBON_2",
+        "SNIP_ROUND_RECTANGLE",
+        "SNIP_2_SAME_RECTANGLE",
+        "SNIP_2_DIAGONAL_RECTANGLE",
+        "ROUND_1_RECTANGLE",
+        "ROUND_2_SAME_RECTANGLE",
+        "ROUND_2_DIAGONAL_RECTANGLE",
+        "CUSTOM",
+        "SHAPE",
     }
-    google_shape_type = shape_type_map.get(shape_type, "RECTANGLE")
+
+    google_shape_type = shape_type if shape_type in valid_google_types else "RECTANGLE"
 
     # Google Slides uses a base size of 3000024 EMU (236.2 pt) and applies
     # scale factors to get the visual size

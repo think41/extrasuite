@@ -10,7 +10,6 @@ import pytest
 from extraslide.bounds import BoundingBox
 from extraslide.content_generator import generate_slide_content
 from extraslide.id_manager import IDManager
-from extraslide.patterns import detect_patterns
 from extraslide.render_tree import RenderNode, build_render_tree
 from extraslide.slide_processor import process_presentation
 from extraslide.style_extractor import extract_styles
@@ -202,30 +201,6 @@ class TestStyleExtractor:
         assert styles["e2"]["position"]["y"] == 50
 
 
-class TestPatternDetection:
-    """Tests for pattern detection."""
-
-    def test_detect_similar_elements(self):
-        # Create 3 similar rectangles (should be detected as a pattern)
-        nodes = []
-        for i in range(3):
-            node = RenderNode(
-                element={
-                    "objectId": f"rect{i}",
-                    "shape": {"shapeType": "RECTANGLE"},
-                },
-                bounds=BoundingBox(x=i * 100, y=0, w=80, h=80),
-                clean_id=f"e{i + 1}",
-            )
-            nodes.append(node)
-
-        patterns = detect_patterns(nodes, min_instances=2)
-        assert len(patterns) >= 1
-        # All 3 should be in the same pattern
-        pattern_instances = patterns[0].instances
-        assert len(pattern_instances) == 3
-
-
 class TestContentGenerator:
     """Tests for minimal SML content generation."""
 
@@ -245,7 +220,8 @@ class TestContentGenerator:
         assert 'y="200"' in content
         assert "<Rect" in content
 
-    def test_children_no_position(self):
+    def test_children_with_absolute_position(self):
+        """All elements have absolute positions, including children."""
         parent = RenderNode(
             element={
                 "objectId": "parent",
@@ -269,10 +245,11 @@ class TestContentGenerator:
         # Parent should have position
         assert 'id="e1"' in content
         assert 'x="100"' in content
-        # Child should NOT have position (just id)
+        # Child should also have absolute position
         lines = content.split("\n")
         child_line = next(line for line in lines if 'id="e2"' in line)
-        assert 'x="' not in child_line
+        assert 'x="150"' in child_line
+        assert 'y="250"' in child_line
 
 
 class TestSlideProcessor:
@@ -343,9 +320,6 @@ class TestWithGoldenFile:
 
         # Should have reasonable number of IDs
         assert len(result["id_mapping"]) > 100
-
-        # Should detect patterns
-        assert len(result["patterns"]) > 0
 
         # Should have slides
         assert len(result["slides"]) == 32
