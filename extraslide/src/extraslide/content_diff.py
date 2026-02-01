@@ -1,7 +1,12 @@
-"""Diff algorithm for the new content format.
+"""Diff algorithm for the copy-based workflow.
 
 Compares pristine vs edited content and generates change operations.
-Key feature: Detects copy operations when the LLM duplicates elements.
+
+Copy detection:
+1. Element with same ID but missing w/h = COPY (new convention)
+2. Duplicate IDs at different positions = COPY (legacy detection)
+
+For copies, calculates translation from original position to apply to children.
 """
 
 from __future__ import annotations
@@ -48,8 +53,12 @@ class Change:
     # For COPY: source element ID
     source_id: str | None = None
 
-    # For MOVE: new position
+    # For MOVE/COPY: new position (x, y, and optionally w, h)
     new_position: dict[str, float] | None = None
+
+    # For COPY: translation from original position (dx, dy)
+    # Used to calculate child positions: child_new = child_orig + translation
+    translation: dict[str, float] | None = None
 
     # For TEXT_UPDATE: new text
     new_text: list[str] | None = None
@@ -61,7 +70,7 @@ class Change:
     parent_id: str | None = None
 
     # For GROUP COPY: list of child elements (recursive structure)
-    # Each child is a dict with: id, tag, position (relative), text, children
+    # Each child is a dict with: id, tag, position (absolute), text, children
     children: list[dict[str, Any]] | None = None
 
     # Element tag (for creates/copies)
@@ -177,10 +186,39 @@ def diff_presentation(
             pristine_elem = pristine_elements[elem_id]
 
             if len(instances) == 1:
-                # Single instance - check for modifications
+                # Single instance - check if it's a copy (missing w/h) or modification
                 slide_idx, edited_elem = instances[0]
-                changes = _compare_elements(pristine_elem, edited_elem, slide_idx)
-                result.changes.extend(changes)
+
+                # NEW CONVENTION: Missing w/h indicates a copy
+                if _is_copy_by_missing_dimensions(edited_elem):
+                    # This is a copy - element has x,y but no w,h
+                    translation = _calculate_translation(pristine_elem, edited_elem)
+                    children_data = None
+                    if edited_elem.children:
+                        children_data = _serialize_children(edited_elem.children)
+
+                    result.changes.append(
+                        Change(
+                            change_type=ChangeType.COPY,
+                            target_id=f"{elem_id}_copy0",
+                            source_id=elem_id,
+                            slide_index=slide_idx,
+                            parent_id=edited_elem.parent_id,
+                            new_position=_get_position_with_pristine_size(
+                                edited_elem, pristine_elem
+                            ),
+                            translation=translation,
+                            new_text=edited_elem.paragraphs
+                            if edited_elem.paragraphs
+                            else None,
+                            children=children_data,
+                            tag=edited_elem.tag,
+                        )
+                    )
+                else:
+                    # Normal modification check
+                    changes = _compare_elements(pristine_elem, edited_elem, slide_idx)
+                    result.changes.extend(changes)
             else:
                 # Multiple instances - identify original vs copies
                 # The original is the one on the same slide as in pristine
@@ -192,7 +230,10 @@ def diff_presentation(
                 # Find instances on the original slide vs other slides
                 same_slide_instances: list[tuple[str, ParsedElement]] = []
                 for slide_idx, edited_elem in instances:
-                    if slide_idx == original_slide:
+                    # Check if this is a copy by missing dimensions
+                    if _is_copy_by_missing_dimensions(edited_elem):
+                        copy_instances.append((slide_idx, edited_elem))
+                    elif slide_idx == original_slide:
                         same_slide_instances.append((slide_idx, edited_elem))
                     else:
                         copy_instances.append((slide_idx, edited_elem))
@@ -224,7 +265,10 @@ def diff_presentation(
 
                 # Handle copies
                 for i, (slide_idx, edited_elem) in enumerate(copy_instances):
-                    # Copy! Include children for groups
+                    # Calculate translation from original position
+                    translation = _calculate_translation(pristine_elem, edited_elem)
+
+                    # Include children for groups
                     children_data = None
                     if edited_elem.children:
                         children_data = _serialize_children(edited_elem.children)
@@ -236,7 +280,10 @@ def diff_presentation(
                             source_id=elem_id,
                             slide_index=slide_idx,
                             parent_id=edited_elem.parent_id,
-                            new_position=_get_position(edited_elem),
+                            new_position=_get_position_with_pristine_size(
+                                edited_elem, pristine_elem
+                            ),
+                            translation=translation,
                             new_text=edited_elem.paragraphs
                             if edited_elem.paragraphs
                             else None,
@@ -397,6 +444,47 @@ def _get_position(elem: ParsedElement) -> dict[str, float] | None:
         "y": elem.y or 0,
         "w": elem.w or 0,
         "h": elem.h or 0,
+    }
+
+
+def _is_copy_by_missing_dimensions(elem: ParsedElement) -> bool:
+    """Check if element is a copy based on missing w/h.
+
+    The copy convention: copies have x, y but omit w, h.
+    """
+    return elem.x is not None and elem.w is None
+
+
+def _calculate_translation(
+    pristine: ParsedElement, edited: ParsedElement
+) -> dict[str, float]:
+    """Calculate translation from pristine to edited position.
+
+    Returns dx, dy that can be applied to child positions.
+    """
+    pristine_x = pristine.x or 0
+    pristine_y = pristine.y or 0
+    edited_x = edited.x or 0
+    edited_y = edited.y or 0
+
+    return {
+        "dx": edited_x - pristine_x,
+        "dy": edited_y - pristine_y,
+    }
+
+
+def _get_position_with_pristine_size(
+    edited: ParsedElement, pristine: ParsedElement
+) -> dict[str, float]:
+    """Get position using edited x,y but pristine w,h.
+
+    For copies, the edited element may omit w,h, so we use pristine values.
+    """
+    return {
+        "x": edited.x or 0,
+        "y": edited.y or 0,
+        "w": edited.w if edited.w is not None else (pristine.w or 0),
+        "h": edited.h if edited.h is not None else (pristine.h or 0),
     }
 
 
