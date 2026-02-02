@@ -15,7 +15,7 @@ import re
 import sys
 from pathlib import Path
 
-from extraslide.client_v2 import SlidesClientV2
+from extraslide.client import SlidesClient
 from extraslide.credentials import CredentialsManager
 from extraslide.transport import GoogleSlidesTransport, LocalFileTransport
 
@@ -52,7 +52,7 @@ async def cmd_pull(args: argparse.Namespace) -> int:
 
     # Create transport and client
     transport = GoogleSlidesTransport(access_token=token_obj.access_token)
-    client = SlidesClientV2(transport)
+    client = SlidesClient(transport)
 
     print(f"Pulling presentation: {presentation_id}")
 
@@ -83,7 +83,7 @@ async def cmd_diff(args: argparse.Namespace) -> int:
 
     # Create a dummy transport - diff doesn't need network access
     transport = LocalFileTransport(folder_path.parent)
-    client = SlidesClientV2(transport)
+    client = SlidesClient(transport)
 
     try:
         requests = client.diff(folder_path)
@@ -119,7 +119,7 @@ async def cmd_push(args: argparse.Namespace) -> int:
 
     # Create transport and client
     transport = GoogleSlidesTransport(access_token=token_obj.access_token)
-    client = SlidesClientV2(transport)
+    client = SlidesClient(transport)
 
     print(f"Pushing changes from: {folder_path}")
 

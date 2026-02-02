@@ -4,39 +4,25 @@ Python library that converts Google Slides to/from SML (Slide Markup Language), 
 
 ## Key Files
 
-### Core (both clients)
 | File | Purpose |
 |------|---------|
+| `src/extraslide/client.py` | `SlidesClient` - main API with pull/diff/push |
+| `src/extraslide/slide_processor.py` | Builds render trees, extracts styles |
+| `src/extraslide/content_generator.py` | Generates minimal SML from render trees |
+| `src/extraslide/content_parser.py` | Parses SML content files |
+| `src/extraslide/content_diff.py` | Detects copies, calculates translations |
+| `src/extraslide/content_requests.py` | Generates batchUpdate requests |
+| `src/extraslide/style_extractor.py` | Extracts styles to JSON |
+| `src/extraslide/render_tree.py` | Visual containment hierarchy |
+| `src/extraslide/id_manager.py` | Clean ID assignment and mapping |
 | `src/extraslide/transport.py` | `Transport` ABC, `GoogleSlidesTransport`, `LocalFileTransport` |
 | `src/extraslide/classes.py` | Data classes for slide elements (Color, Fill, Stroke, etc.) |
 | `src/extraslide/credentials.py` | `CredentialsManager` for OAuth token handling |
 | `src/extraslide/units.py` | EMU/pt conversion utilities |
 
-### V2 Client (Copy-Based Workflow) - Recommended
-| File | Purpose |
-|------|---------|
-| `src/extraslide/client_v2.py` | `SlidesClientV2` - new client with copy support |
-| `src/extraslide/slide_processor.py` | Builds render trees, extracts styles |
-| `src/extraslide/content_generator.py` | Generates minimal SML from render trees |
-| `src/extraslide/content_parser.py` | Parses SML content files |
-| `src/extraslide/content_diff.py` | Detects copies, calculates translations |
-| `src/extraslide/content_requests.py` | Generates batchUpdate requests for copies |
-| `src/extraslide/style_extractor.py` | Extracts styles to JSON |
-| `src/extraslide/render_tree.py` | Visual containment hierarchy |
-
-### V1 Client (Legacy)
-| File | Purpose |
-|------|---------|
-| `src/extraslide/client.py` | `SlidesClient` - original client |
-| `src/extraslide/compression.py` | ID removal with external mapping |
-| `src/extraslide/parser.py` | Parses SML back to internal structures |
-| `src/extraslide/generator.py` | Converts API JSON to SML |
-| `src/extraslide/diff.py` | Compares SML, generates change operations |
-| `src/extraslide/requests.py` | Builds batchUpdate request objects |
-
 ## Documentation
 
-- `docs/copy-workflow.md` - Copy-based workflow for V2 client (recommended)
+- `docs/copy-workflow.md` - Copy-based editing workflow (agent guide)
 - `docs/markup-syntax-design.md` - SML format specification
 - `docs/sml-reconciliation-spec.md` - How diff/push reconciles changes
 
@@ -63,9 +49,7 @@ Also works via `uvx extraslide pull/diff/push`.
 
 ## Folder Structure
 
-### V2 Format (Copy-Based Workflow)
-
-After `pull` with V2 client:
+After `pull`:
 ```
 <presentation_id>/
   presentation.json       # Metadata (title, presentation ID, dimensions)
@@ -83,24 +67,6 @@ After `pull` with V2 client:
 
 Edit `slides/NN/content.sml` files. To copy elements, duplicate XML with same ID but only x,y (omit w,h). See `docs/copy-workflow.md`.
 
-### V1 Format (Legacy)
-
-After `pull` with V1 client:
-```
-<presentation_id>/
-  slides.sml              # Slides content (IDs removed)
-  masters.sml             # Master slide definitions
-  layouts.sml             # Layout definitions
-  images.sml              # Image URL mappings
-  presentation.json       # Metadata
-  .meta/
-    id_mapping.json       # ID mapping for restoration
-  .raw/
-    presentation.json     # Raw API response
-  .pristine/
-    presentation.zip      # Zip for diff comparison
-```
-
 ## Development
 
 ```bash
@@ -114,12 +80,11 @@ uv run mypy src/extraslide
 ## Testing
 
 Tests are in `tests/` and focus on:
-- `test_pull_integration.py` - End-to-end pull/diff/push tests using golden files
-- `test_client.py` - SlidesClient unit tests
+- `test_content_diff.py` - Copy detection and diff logic
+- `test_slide_processor.py` - Render tree building and SML generation
 - `test_transport.py` - Transport layer tests
-- `test_diff.py` - SML diffing logic
-- `test_parser.py` / `test_generator.py` - SML parsing and generation
-- `test_requests.py` - batchUpdate request generation
+- `test_classes.py` - Data class conversions
+- `test_units.py` - Unit conversions
 
 ### Golden File Testing
 
@@ -144,7 +109,7 @@ def client():
 @pytest.mark.asyncio
 async def test_pull(client, tmp_path):
     files = await client.pull("simple_presentation", tmp_path)
-    assert (tmp_path / "simple_presentation" / "slides.sml").exists()
+    assert (tmp_path / "simple_presentation" / "slides" / "01" / "content.sml").exists()
 ```
 
 ### Creating New Golden Files
@@ -174,53 +139,40 @@ async def test_pull(client, tmp_path):
 ### Pull Flow
 
 1. **Fetch** - `transport.get_presentation()` gets full presentation JSON
-2. **Transform** - `json_to_sml()` converts API response to SML
-3. **Split** - Separate SML into slides, masters, layouts, images
-4. **Remove IDs** - Strip verbose element IDs from slides, save mapping to `.meta/`
-5. **Write** - Save split SML files and `presentation.json` to disk
+2. **Process** - `slide_processor.process_presentation()` builds render trees
+3. **Extract styles** - Store styles (fill, stroke, text) in `styles.json`
+4. **Generate SML** - `content_generator` creates minimal XML per slide
+5. **Write** - Save files to `slides/NN/content.sml`
 6. **Save raw** - Optionally save `.raw/presentation.json`
 7. **Pristine copy** - Create `.pristine/presentation.zip` (zip of entire folder)
 
 ### Diff/Push Flow
 
 1. **Read pristine** - Extract files from `.pristine/presentation.zip`
-2. **Read current** - Read split SML files from disk
-3. **Reconstruct** - Combine split files and restore IDs from `.meta/id_mapping.json`
-4. **Parse both** - Convert SML strings to internal structures
-5. **Diff** - Compare and generate change operations
-6. **Generate requests** - Convert operations to batchUpdate format
-7. **Push** (if not dry-run) - Send to `transport.batch_update()`
+2. **Read current** - Read `slides/NN/content.sml` files
+3. **Parse both** - `content_parser` converts SML to internal structures
+4. **Diff** - `content_diff.diff_presentation()` detects changes and copies
+5. **Generate requests** - `content_requests.generate_batch_requests()` creates API requests
+6. **Push** (if not dry-run) - Send to `transport.batch_update()`
+
+### Copy Detection
+
+The copy-based workflow detects copies by:
+- Same element ID appearing multiple times
+- Copy has x,y but **omits w,h** (signals "copy from original")
+- System duplicates the element and moves to new position
 
 ### Key Design Decisions
 
 - **Async-first**: All transport and client methods are async
-- **Single API call for pull**: Unlike extrasheet, Slides API returns everything in one call
+- **Single API call for pull**: Slides API returns everything in one call
 - **save_raw=True default**: Always saves raw responses for debugging/testing
 - **No mocking in tests**: Use `LocalFileTransport` with golden files instead
+- **Per-slide files**: Each slide is a separate content.sml for easier editing
+- **Styles in JSON**: Styles stored separately, auto-applied on copy
 
 ### Dependencies
 
 - `httpx` - Async HTTP client for API calls
 - `certifi` - SSL certificates
 - `keyring` - OS keyring for token caching (via credentials.py)
-
-## Current Status
-
-The library has two clients:
-
-### V2 Client (Recommended for new work)
-- Per-slide content files (`slides/01/content.sml`, etc.)
-- Copy-based workflow: duplicate element XML with same ID, omit w/h
-- Translation-based child positioning for copies
-- Styles extracted to `styles.json`
-- Supports 100+ Google Slides shape types
-
-### V1 Client (Legacy)
-- Split SML files (slides.sml, masters.sml, etc.)
-- ID removal with external mapping
-- Folder-based workflow (pull creates folder, diff/push use `.pristine/`)
-
-Both clients use:
-- Transport-based architecture with dependency injection
-- Async methods throughout
-- Golden file testing
