@@ -1,0 +1,74 @@
+name: Extradoc CI
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - 'extradoc/**'
+      - '.github/workflows/extradoc-ci.yml'
+  pull_request:
+    branches: [main]
+    paths:
+      - 'extradoc/**'
+      - '.github/workflows/extradoc-ci.yml'
+
+jobs:
+  lint:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install uv
+        uses: astral-sh/setup-uv@v4
+        with:
+          version: "latest"
+
+      - name: Set up Python
+        run: uv python install 3.12
+
+      - name: Install dependencies
+        working-directory: extradoc
+        run: uv sync --all-extras
+
+      - name: Run ruff check
+        working-directory: extradoc
+        run: uv run ruff check src/
+
+      - name: Run ruff format check
+        working-directory: extradoc
+        run: uv run ruff format --check src/
+
+      - name: Run mypy
+        working-directory: extradoc
+        run: uv run mypy src/extradoc
+
+  test:
+    runs-on: ubuntu-latest
+    strategy:
+      matrix:
+        python-version: ["3.10", "3.11", "3.12", "3.13"]
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install uv
+        uses: astral-sh/setup-uv@v4
+        with:
+          version: "latest"
+
+      - name: Set up Python ${{ matrix.python-version }}
+        run: uv python install ${{ matrix.python-version }}
+
+      - name: Install dependencies
+        working-directory: extradoc
+        run: uv sync --all-extras
+
+      - name: Run tests
+        working-directory: extradoc
+        run: uv run pytest tests/ -v --cov=extradoc --cov-report=xml
+
+      - name: Upload coverage
+        uses: codecov/codecov-action@v4
+        if: matrix.python-version == '3.12'
+        with:
+          files: extradoc/coverage.xml
+          fail_ci_if_error: false

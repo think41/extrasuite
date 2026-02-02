@@ -1,0 +1,53 @@
+name: Publish extradoc to PyPI
+
+on:
+  push:
+    tags:
+      - 'extradoc-v*'
+
+jobs:
+  publish:
+    runs-on: ubuntu-latest
+    environment: extradoc
+    permissions:
+      id-token: write
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Extract version from tag
+        id: version
+        run: |
+          TAG="${GITHUB_REF#refs/tags/}"
+          VERSION="${TAG#extradoc-v}"
+          echo "tag=$TAG" >> $GITHUB_OUTPUT
+          echo "version=$VERSION" >> $GITHUB_OUTPUT
+
+      - name: Validate version matches pyproject.toml
+        run: |
+          PYPROJECT_VERSION=$(grep -E '^version = ' extradoc/pyproject.toml | head -1 | sed 's/version = "\(.*\)"/\1/')
+          TAG_VERSION="${{ steps.version.outputs.version }}"
+
+          echo "Tag version: $TAG_VERSION"
+          echo "pyproject.toml version: $PYPROJECT_VERSION"
+
+          if [[ "$TAG_VERSION" != "$PYPROJECT_VERSION" ]]; then
+            echo "::error::Version mismatch! Tag has '$TAG_VERSION' but pyproject.toml has '$PYPROJECT_VERSION'"
+            exit 1
+          fi
+
+          echo "Version validated successfully: $TAG_VERSION"
+
+      - name: Install uv
+        uses: astral-sh/setup-uv@v4
+
+      - name: Build package
+        working-directory: extradoc
+        run: uv build
+
+      - name: Publish to PyPI
+        uses: pypa/gh-action-pypi-publish@release/v1
+        with:
+          packages-dir: extradoc/dist/
+          print-hash: true

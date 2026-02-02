@@ -1,0 +1,3 @@
+# Golden test files go here
+# Each document should have its own subdirectory:
+#   golden/<document_id>/document.json
