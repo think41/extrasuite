@@ -205,7 +205,7 @@ def main() -> int:
     )
     diff_parser.add_argument(
         "folder",
-        help="Path to document folder (containing document.json)",
+        help="Path to document folder (containing document.html)",
     )
     diff_parser.set_defaults(func=cmd_diff)
 
@@ -216,7 +216,7 @@ def main() -> int:
     )
     push_parser.add_argument(
         "folder",
-        help="Path to document folder (containing document.json)",
+        help="Path to document folder (containing document.html)",
     )
     push_parser.add_argument(
         "-f",

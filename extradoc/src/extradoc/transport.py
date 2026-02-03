@@ -193,10 +193,9 @@ class GoogleDocsTransport(Transport):
 class LocalFileTransport(Transport):
     """Test transport that reads from local golden files.
 
-    Expected directory structure:
-        golden_dir/
-            <document_id>/
-                document.json
+    Supports two directory structures:
+    1. Directory format: golden_dir/<document_id>/document.json
+    2. Flat file format: golden_dir/<document_id>.json
     """
 
     def __init__(self, golden_dir: Path) -> None:
@@ -209,7 +208,14 @@ class LocalFileTransport(Transport):
 
     async def get_document(self, document_id: str) -> DocumentData:
         """Read document from local file."""
-        path = self._golden_dir / document_id / "document.json"
+        # Try directory format first
+        dir_path = self._golden_dir / document_id / "document.json"
+        if dir_path.exists():
+            path = dir_path
+        else:
+            # Fall back to flat file format
+            path = self._golden_dir / f"{document_id}.json"
+
         response = json.loads(path.read_text())
 
         return DocumentData(

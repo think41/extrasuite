@@ -1,8 +1,8 @@
 ## Overview
 
-Python library that transforms Google Docs into a file-based representation optimized for LLM agents. Implements the pull/diff/push workflow.
+Python library that transforms Google Docs into a file-based representation optimized for LLM agents. Implements the pull/diff/push workflow using clean HTML format with custom elements for Google Docs concepts.
 
-**Status:** Scaffold only - implementation pending.
+**Status:** Core pull/diff/push workflow implemented. Diff algorithm is placeholder (returns empty requests).
 
 ## Key Files
 
@@ -10,7 +10,14 @@ Python library that transforms Google Docs into a file-based representation opti
 |------|---------|
 | `src/extradoc/transport.py` | `Transport` ABC, `GoogleDocsTransport`, `LocalFileTransport` |
 | `src/extradoc/client.py` | `DocsClient` - main interface with `pull()`, `diff()`, `push()` methods |
+| `src/extradoc/indexer.py` | UTF-16 index calculation and validation |
+| `src/extradoc/html_converter.py` | Convert Google Docs JSON → HTML |
+| `src/extradoc/html_parser.py` | Parse HTML → structured form, generate batchUpdate requests |
 | `src/extradoc/__main__.py` | CLI entry point for pull/diff/push commands |
+
+## Documentation
+
+- `docs/html-format-design.md` - Complete HTML format specification, including custom elements, multi-tab support, headers/footers, and diff algorithm
 
 ## CLI Interface
 
@@ -19,9 +26,6 @@ Python library that transforms Google Docs into a file-based representation opti
 python -m extradoc pull <document_url_or_id> [output_dir]
 # Output: ./<document_id>/ or specified output_dir
 
-# Options:
-#   --no-raw       Don't save raw API responses to .raw/ folder
-
 # Preview changes (dry run)
 python -m extradoc diff <folder>
 # Output: batchUpdate JSON to stdout
@@ -29,9 +33,6 @@ python -m extradoc diff <folder>
 # Apply changes to Google Docs
 python -m extradoc push <folder>
 # Output: Success message with number of changes applied
-
-# Options:
-#   -f, --force    Push despite warnings (blocks still prevent push)
 ```
 
 Also works via `uvx extradoc pull/diff/push`.
@@ -41,13 +42,89 @@ Also works via `uvx extradoc pull/diff/push`.
 After `pull`, the folder will contain:
 ```
 <document_id>/
-  document.json           # Document metadata and content structure
-  content/                # Document content in LLM-friendly format (TBD)
+  document.html           # Main document content (all tabs, with embedded metadata)
+  styles.json             # Extracted styles (fonts, colors, spacing)
   .raw/
     document.json         # Raw API response
   .pristine/
     document.zip          # Original state for diff comparison
 ```
+
+Note: No separate `metadata.json` - document metadata is embedded in the HTML `<head>` as JSON.
+
+## HTML Format
+
+### Custom Elements (Atomic)
+
+Google Docs-specific concepts use custom self-closing elements to keep them atomic:
+
+| Google Docs | Custom Element | Index Cost |
+|-------------|----------------|------------|
+| HorizontalRule | `<hr/>` | 1 |
+| PageBreak | `<PageBreak/>` | 1 |
+| FootnoteReference | `<FootnoteRef id="..." num="..."/>` | 1 |
+| Person | `<Person email="..." name="..."/>` | 1 |
+| Image | `<Image src="..." width="..." height="..."/>` | 1 |
+| RichLink | `<RichLink url="..." title="..."/>` | 1 |
+| Date | `<Date/>` | 1 |
+| AutoText | `<AutoText type="..."/>` | variable |
+
+### Structural Elements
+
+| Google Docs | HTML |
+|-------------|------|
+| Tab | `<article id="..." data-title="...">` |
+| Header | `<Header id="...">` |
+| Footer | `<Footer id="...">` |
+| Footnote | `<Footnote id="...">` |
+| Body | `<main>` |
+| TOC | `<nav>` |
+
+### Standard HTML Elements
+
+| Google Docs | HTML |
+|-------------|------|
+| TITLE | `<h1 class="title">` |
+| SUBTITLE | `<p class="subtitle">` |
+| HEADING_1 | `<h1 id="...">` |
+| HEADING_2-6 | `<h2 id="...">`-`<h6 id="...">` |
+| NORMAL_TEXT | `<p>` |
+| Bulleted list | `<ul class="bullet"><li>` |
+| Numbered list | `<ol class="decimal|alpha|roman"><li>` |
+| Checkbox list | `<ul class="checkbox"><li>` |
+| Table | `<table>` |
+| Bold | `<strong>` |
+| Italic | `<em>` |
+| Link | `<a>` |
+
+See `docs/html-format-design.md` for complete specification.
+
+## Key Design Decisions
+
+1. **Custom elements for atomic items**: `<PageBreak/>`, `<Person/>` etc. are self-closing to prevent LLMs from breaking them
+2. **Standard HTML where possible**: `<hr/>` instead of custom element, `<article>` instead of `<Tab>`
+3. **Embedded metadata**: Document metadata in `<script type="application/json">` in `<head>`
+4. **Heading IDs preserved**: For internal links to work correctly
+5. **Multi-tab support**: Use `<article id="..." data-title="...">` for each tab
+6. **List types via class**: `<ul class="bullet">`, `<ol class="decimal">`, etc. for round-trip parity
+7. **Separate index spaces**: Headers, footers, and footnotes each have their own index space starting at 0
+
+## Index Calculation
+
+Google Docs uses UTF-16 code units for indexing. Key functions:
+
+```python
+from extradoc import utf16_len, validate_document
+
+# Calculate UTF-16 length
+length = utf16_len("Hello 😀")  # Returns 8 (6 + 2 for emoji)
+
+# Validate document indexes
+result = validate_document(document_json)
+assert result.is_valid
+```
+
+The core insight: **indexes can be derived from document structure without explicit tracking**.
 
 ## Development
 
@@ -61,18 +138,19 @@ uv run mypy src/extradoc
 
 ## Testing
 
-Tests are in `tests/` and will include:
-- `test_pull_integration.py` - End-to-end pull tests using golden files
-- `test_transport.py` - Transport layer unit tests
+Tests are in `tests/`:
+- `test_indexer.py` - Index calculation (14 tests passing)
+- `test_transport.py` - Transport layer (3 tests passing)
+- `test_pull_integration.py` - Pull/diff/push integration tests (5 tests passing)
 
 ### Golden File Testing
 
-Golden files enable testing without mocking or making real API calls:
+Golden files enable testing without API calls:
 
 ```
 tests/golden/
-  <document_id>/
-    document.json    # Raw API response
+  1tlHGpgjoibP0eVXRvCGSmkqrLATrXYTo7dUnmV7x01o.json  # R41 AI Support Agent
+  1arcBS-A_LqbvrstLAADAjCZj4kvTlqmQ0ztFNfyAEyc.json  # Sri-Document-Edit-Testing
 ```
 
 Use `LocalFileTransport` in tests:
@@ -84,64 +162,27 @@ from extradoc import DocsClient, LocalFileTransport
 def client():
     transport = LocalFileTransport(Path("tests/golden"))
     return DocsClient(transport)
-
-@pytest.mark.asyncio
-async def test_pull(client, tmp_path):
-    files = await client.pull("basic_document", tmp_path)
-    assert (tmp_path / "basic_document" / "document.json").exists()
 ```
 
-### Creating New Golden Files
+## Implementation Status
 
-1. Create a Google Docs file with the features to test
-2. Pull it: `python -m extradoc pull <url>` (raw files saved by default)
-3. Copy `.raw/document.json` to `tests/golden/<name>/document.json`
-4. Verify the output looks correct
-5. Commit the golden files
+### Completed
+- [x] Project structure and configuration
+- [x] Transport layer (GoogleDocsTransport + LocalFileTransport)
+- [x] Index validation engine (indexer.py)
+- [x] HTML conversion with custom elements
+- [x] Multi-tab support
+- [x] Header/footer/footnote support
+- [x] Table support with colspan/rowspan
+- [x] Format design document
+- [x] Golden file testing infrastructure
+- [x] DocsClient.pull() implementation
+- [x] DocsClient.diff() implementation (framework in place)
+- [x] DocsClient.push() implementation
+- [x] CLI entry point (pull/diff/push commands)
 
-## Architecture Notes
-
-### Transport-Based Design
-
-```
-┌─────────────────┐     ┌──────────────────┐     ┌─────────────────┐
-│ DocsClient      │────▶│ Transport        │────▶│ Google API /    │
-│ (orchestration) │     │ (data fetching)  │     │ Local Files     │
-└─────────────────┘     └──────────────────┘     └─────────────────┘
-```
-
-- `Transport` is an abstract base class with `get_document()`, `batch_update()`, `close()`
-- `GoogleDocsTransport` - Production: makes real API calls via `httpx`
-- `LocalFileTransport` - Testing: reads from local golden files
-- Access token is a transport concern, not a client concern
-
-### Pull Flow (To Be Implemented)
-
-1. **Document fetch** - `transport.get_document()` gets full document structure
-2. **Transform** - Convert API response to file format
-3. **Write** - Write files to disk
-4. **Save raw** - Optionally save `.raw/document.json`
-5. **Pristine copy** - Create `.pristine/document.zip` for diff/push
-
-### Diff/Push Flow (To Be Implemented)
-
-1. **Extract pristine** - Extract `.pristine/document.zip`
-2. **Read current** - Read edited files from disk
-3. **Diff** - Compare and generate batchUpdate requests
-4. **Validate** - Check for blocking issues
-5. **Push** - Send batchUpdate via transport
-
-### Dependencies
-
-- `httpx` - Async HTTP client for API calls
-- `certifi` - SSL certificates
-- `extrasuite` - Authentication via `extrasuite.client.CredentialsManager`
-
-## Implementation TODO
-
-1. Design on-disk file format for Google Docs content
-2. Implement document transformer (API response → file format)
-3. Implement file writer
-4. Implement diff engine
-5. Implement request generator (file changes → batchUpdate requests)
-6. Add validation for structural changes
+### Pending
+- [ ] Diff algorithm (diff_documents returns empty requests currently)
+- [ ] Style extraction to styles.json
+- [ ] Table merge/unmerge operations
+- [ ] Image insertion support
