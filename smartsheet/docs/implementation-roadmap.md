@@ -1,440 +1,274 @@
-# extrasmartsheet Implementation Roadmap
+# Smartsheet SQLite Sync - Implementation Roadmap
 
-This document outlines the implementation plan, challenges, and recommendations for building extrasmartsheet.
+This document outlines the implementation plan for `smartsheetsync`, a bidirectional sync tool between Smartsheet and local SQLite databases.
 
 ---
 
-## Feasibility Assessment: Summary
+## Design Philosophy
 
-**Verdict: Highly Feasible**
+**Key Insight:** Smartsheet is a typed database with a web UI, not a freeform spreadsheet.
 
-The Smartsheet API is well-designed for our pull-edit-diff-push workflow:
+The SQLite sync model is superior to the TSV-based extrasheet approach for Smartsheet because:
 
-| Requirement | Support Level | Notes |
-|-------------|---------------|-------|
-| Read all data | Excellent | GET /sheets/{id} returns everything |
-| Targeted updates | Good | PUT /rows supports bulk cell updates |
-| Formula support | Good | Set via cell.formula property |
-| Format support | Moderate | Format descriptors require translation |
-| Hierarchy | Excellent | Native parent-child row support |
-| Rate limits | Acceptable | 300 req/min, bulk operations help |
+| Requirement | SQLite Advantage |
+|-------------|-----------------|
+| Typed columns | Schema with constraints |
+| Large sheets (20k+ rows) | Efficient B-tree storage |
+| Incremental sync | Row-level updates via triggers |
+| Agent queries | SQL instead of file parsing |
+| Change detection | Built-in via triggers |
+| Conflict handling | Version tracking natural |
 
-The main adaptation needed is shifting from cell-centric (Google Sheets) to row-centric (Smartsheet) operations.
+---
+
+## Feasibility: Confirmed
+
+Smartsheet API provides excellent sync primitives:
+
+| Feature | API Support | Use Case |
+|---------|-------------|----------|
+| Version check | `GET /sheets/{id}/version` | Skip unchanged sheets (cheap) |
+| Incremental fetch | `rowsModifiedSince` param | Fetch only changed rows |
+| Bulk updates | `PUT /rows` with array | Efficient push |
+| Real-time events | Webhooks | Optional push notifications |
+| Stable row IDs | Always returned | Track rows across syncs |
 
 ---
 
 ## Implementation Phases
 
-### Phase 1: Core Workflow (MVP)
+### Phase 1: Core Sync (MVP)
 
-**Goal:** Basic pull-edit-diff-push for cell values
+**Goal:** Bidirectional sync of cell values
 
 **Deliverables:**
-1. `pull` command - Fetch sheet, create local folder
-2. `diff` command - Compare against pristine, show changes
-3. `push` command - Apply changes via API
+1. `pull` command - Full and incremental fetch to SQLite
+2. `push` command - Local changes to Smartsheet
+3. `status` command - Show sync state and pending changes
+4. Change tracking via SQLite triggers
 
-**Scope:**
-- sheet.json (metadata)
-- columns.json (column definitions)
-- data.tsv (cell values with row IDs)
-- .pristine/sheet.zip
-- Basic error handling and retry logic
+**Schema:**
+```sql
+-- Main data table (generated from Smartsheet columns)
+CREATE TABLE sheet_data (
+    _row_id INTEGER PRIMARY KEY,
+    _row_number INTEGER,
+    _parent_id INTEGER,
+    _modified_at TEXT,
+    -- ... user columns from schema
+);
 
-**Excludes:**
-- Formulas (show computed values only)
-- Formatting
-- Hierarchy (flat indent column only)
-- Attachments/Discussions
+-- Sync metadata
+CREATE TABLE _sync_meta (key TEXT PRIMARY KEY, value TEXT);
 
-**Estimated Effort:** Core module structure + 3 commands
+-- Change log
+CREATE TABLE _changes (
+    id INTEGER PRIMARY KEY,
+    row_id INTEGER,
+    operation TEXT,  -- INSERT/UPDATE/DELETE
+    column_name TEXT,
+    old_value TEXT,
+    new_value TEXT,
+    changed_at TEXT,
+    pushed INTEGER DEFAULT 0
+);
+```
+
+**API Operations:**
+- `GET /sheets/{id}` - Initial pull
+- `GET /sheets/{id}?rowsModifiedSince=...` - Incremental pull
+- `PUT /sheets/{id}/rows` - Update rows
+- `POST /sheets/{id}/rows` - Add rows
+- `DELETE /sheets/{id}/rows?ids=...` - Delete rows
 
 ---
 
-### Phase 2: Formulas and Hierarchy
+### Phase 2: Robust Sync
 
-**Goal:** Full formula support and hierarchy editing
+**Goal:** Handle edge cases and conflicts
 
 **Deliverables:**
-1. formulas.json - Sparse formula map
-2. hierarchy.json - Parent-child relationships
-3. Formula diff/push support
-4. Row add/delete support
-5. Indent/outdent support
+1. Deletion detection (compare row ID sets)
+2. Conflict detection and resolution
+3. `sync` command (pull + push with conflict handling)
+4. Retry logic with exponential backoff
 
-**Challenges:**
-- Detecting column formulas (no API flag)
-- Handling calculated columns in project sheets
-- Row position changes during push
-
-**Estimated Effort:** Formula engine + hierarchy tracking
+**Conflict Resolution Options:**
+- `--strategy=remote-wins` (default)
+- `--strategy=local-wins`
+- `--strategy=manual` (prompt)
+- `--strategy=merge` (column-level)
 
 ---
 
-### Phase 3: Formatting
+### Phase 3: Schema Features
 
-**Goal:** Preserve and edit cell/row formatting
+**Goal:** Support Smartsheet-specific features
 
 **Deliverables:**
-1. format.json with human-readable structure
-2. FormatTables caching and translation
-3. Format diff detection
-4. Format push support
+1. Hierarchy (parent/child rows)
+2. Formulas (store in `_formulas` table)
+3. Column types with constraints
+4. Picklist validation via CHECK constraints
 
-**Challenges:**
-- Format descriptor parsing
-- Color code mapping
-- Conditional format handling
+**Schema additions:**
+```sql
+CREATE TABLE _columns (
+    column_id INTEGER PRIMARY KEY,
+    title TEXT,
+    type TEXT,
+    options TEXT,  -- JSON for picklist
+    formula TEXT,  -- Column formula
+    read_only INTEGER
+);
 
-**Estimated Effort:** Format translation layer
+CREATE TABLE _formulas (
+    row_id INTEGER,
+    column_id INTEGER,
+    formula TEXT,
+    PRIMARY KEY (row_id, column_id)
+);
+```
 
 ---
 
-### Phase 4: Collaboration Features
+### Phase 4: Advanced Features
 
-**Goal:** Support attachments and discussions
+**Goal:** Full feature parity
 
 **Deliverables:**
-1. attachments.json - Metadata (not file contents)
-2. discussions.json - Comment threads
-3. Optional include/exclude flags
-
-**Challenges:**
-- File upload/download handling
-- Comment threading model
-- Rate limit impact (10x multiplier)
-
-**Estimated Effort:** Additional API integration
+1. Formatting support (`_formats` table)
+2. Webhook integration for real-time sync
+3. Multi-sheet workspace sync
+4. Attachments metadata
 
 ---
 
 ## Key Challenges and Solutions
 
-### Challenge 1: Row-Centric API Model
+### Challenge 1: Deletion Detection
 
-**Problem:**
-Google Sheets API supports cell-level operations. Smartsheet requires row-level operations.
+**Problem:** `rowsModifiedSince` doesn't report deleted rows.
 
-**Impact:**
-- Changing one cell requires sending the entire row
-- Multiple cells in same row must be batched
-- Cannot update cells independently
-
-**Solution:**
+**Solution:** Compare row ID sets on each pull:
 ```python
-# Aggregate cell changes by row
-def aggregate_changes(cell_changes: list[CellChange]) -> list[RowUpdate]:
-    rows = defaultdict(list)
-    for change in cell_changes:
-        rows[change.row_id].append({
-            "columnId": change.column_id,
-            "value": change.new_value
-        })
-    return [
-        {"id": row_id, "cells": cells}
-        for row_id, cells in rows.items()
-    ]
+remote_ids = set(fetch_all_row_ids(sheet_id))
+local_ids = set(db.execute("SELECT _row_id FROM sheet_data").fetchall())
+deleted_ids = local_ids - remote_ids
 ```
 
-**Agent Guidance:**
-- Teach agents that editing multiple cells in a row is efficient
-- Warn about editing same row in multiple diff/push cycles
+This is efficient because we only fetch IDs, not full row data.
 
 ---
 
-### Challenge 2: Save Collision (Error 4004)
+### Challenge 2: Save Collisions (Error 4004)
 
-**Problem:**
-Concurrent API calls to same sheet cause save collisions.
+**Problem:** Concurrent updates to same sheet fail.
 
-**Impact:**
-- Cannot parallelize updates
-- Background saves in UI can conflict
-- Rate limiting alone doesn't prevent this
-
-**Solution:**
+**Solution:** Serialize pushes with retry:
 ```python
-async def push_with_collision_handling(sheet_id: str, rows: list) -> Result:
-    max_retries = 5
-    base_delay = 1.0
-
+async def push_with_retry(sheet_id, rows, max_retries=5):
     for attempt in range(max_retries):
         try:
             return await api.update_rows(sheet_id, rows)
         except SaveCollisionError:
-            if attempt == max_retries - 1:
-                raise
-            delay = base_delay * (2 ** attempt) + random.uniform(0, 1)
-            await asyncio.sleep(delay)
+            await asyncio.sleep(2 ** attempt + random.uniform(0, 1))
         except RateLimitError:
             await asyncio.sleep(60)
-
-    raise PushFailedError("Max retries exceeded")
+    raise PushFailed("Max retries exceeded")
 ```
 
-**Recommendations:**
-1. Always serialize push operations
-2. Implement exponential backoff with jitter
-3. Consider adding `--force` flag to retry more aggressively
-4. Document that concurrent users/automations may cause retries
-
 ---
 
-### Challenge 3: System and Calculated Columns
+### Challenge 3: New Row ID Assignment
 
-**Problem:**
-Some columns cannot be modified:
-- System columns (Created Date, Modified By, etc.)
-- Calculated columns in project sheets (parent row roll-ups)
+**Problem:** New rows don't have Smartsheet IDs until pushed.
 
-**Impact:**
-- Agents may try to edit read-only values
-- Edits silently fail or are overwritten
-- Confusing behavior
-
-**Solution:**
-1. Detect and flag in sheet.json:
-   ```json
-   {
-     "readOnlyColumns": [666, 777, 888],
-     "calculatedColumns": {
-       "columns": ["Start Date", "End Date", "Duration"],
-       "note": "Auto-calculated for parent rows with dependencies"
-     }
-   }
-   ```
-
-2. Exclude from diff comparison:
-   ```python
-   def should_compare_cell(column_id: int, row: Row) -> bool:
-       if column_id in sheet.read_only_columns:
-           return False
-       if column_id in sheet.calculated_columns and row.has_children:
-           return False
-       return True
-   ```
-
-3. Warn agents in skill documentation
-
----
-
-### Challenge 4: Formula Syntax Differences
-
-**Problem:**
-Smartsheet formulas use column names, not A1 notation:
-- Google Sheets: `=A1+B1`
-- Smartsheet: `=[Cost]@row + [Revenue]@row`
-
-**Impact:**
-- Cannot reuse extrasheet formula logic
-- Agents familiar with Excel/Sheets may use wrong syntax
-- Cross-sheet references need explicit setup
-
-**Solution:**
-1. **Do not translate** - Use native Smartsheet syntax
-2. Document syntax in agent guide:
-   ```markdown
-   ## Smartsheet Formula Syntax
-
-   | Concept | Syntax | Example |
-   |---------|--------|---------|
-   | Same row | `@row` | `=[Column]@row` |
-   | Specific row | Row number | `=[Column]5` |
-   | Column range | `:` | `=[Column]:[Column]` |
-   | Hierarchy | Functions | `=SUM(CHILDREN([Cost]))` |
-   ```
-
-3. Validate formula syntax before push (basic check)
-
----
-
-### Challenge 5: Column Formula Detection
-
-**Problem:**
-API doesn't expose column-level formula attribute. Each cell shows its formula individually.
-
-**Impact:**
-- Cannot distinguish "column formula" from "same formula in every cell"
-- Inefficient storage if every cell formula stored
-
-**Solution:**
-Heuristic detection:
+**Solution:** Use negative temporary IDs locally:
 ```python
-def detect_column_formulas(sheet_data) -> dict[str, str]:
-    """Detect columns where all non-empty cells have equivalent formulas."""
-    column_formulas = {}
+# Insert with temp ID
+db.execute("INSERT INTO sheet_data (_row_id, ...) VALUES (-1, ...)")
 
-    for column in sheet_data.columns:
-        formulas = []
-        for row in sheet_data.rows:
-            cell = row.get_cell(column.id)
-            if cell.formula:
-                # Normalize @row references
-                normalized = cell.formula.replace(f"@row", "@row")
-                formulas.append(normalized)
-
-        if formulas and all(f == formulas[0] for f in formulas):
-            column_formulas[column.title] = formulas[0]
-
-    return column_formulas
+# After push, API returns real ID
+real_id = api_response.result[0].id
+db.execute("UPDATE sheet_data SET _row_id = ? WHERE _row_id = -1", [real_id])
+db.execute("UPDATE _changes SET row_id = ? WHERE row_id = -1", [real_id])
 ```
-
-Store detected column formulas separately in formulas.json.
 
 ---
 
-### Challenge 6: Format Descriptor Translation
+### Challenge 4: Schema Changes
 
-**Problem:**
-Smartsheet uses opaque format strings: `",,1,1,,,,,,,,,,,,,"`.
+**Problem:** What if Smartsheet columns change between syncs?
 
-**Impact:**
-- Not human-readable
-- Not agent-editable
-- Requires mapping tables
-
-**Solution:**
-1. Fetch FormatTables from `/serverinfo` on first pull
-2. Cache in `.smartsheet/format-tables.json`
-3. Translate to/from human-readable:
-
+**Solution:** Detect and handle schema drift:
 ```python
-# Format descriptor positions (from FormatTables)
-FORMAT_POSITIONS = {
-    0: "fontFamily",
-    1: "fontSize",
-    2: "bold",
-    3: "italic",
-    4: "underline",
-    5: "strikethrough",
-    # ... etc
-}
+def detect_schema_changes(db, remote_columns):
+    local_cols = db.execute("SELECT * FROM _columns").fetchall()
 
-def parse_format_descriptor(descriptor: str, tables: FormatTables) -> dict:
-    """Convert format descriptor to human-readable dict."""
-    parts = descriptor.split(",")
-    result = {}
+    added = [c for c in remote_columns if c.id not in local_col_ids]
+    removed = [c for c in local_cols if c.id not in remote_col_ids]
+    renamed = detect_renames(local_cols, remote_columns)
 
-    for i, value in enumerate(parts):
-        if value and i in FORMAT_POSITIONS:
-            key = FORMAT_POSITIONS[i]
-            if key in ["bold", "italic", "underline", "strikethrough"]:
-                result[key] = value == "1"
-            elif key == "fontFamily":
-                result[key] = tables.fonts[int(value)]
-            elif key == "fontSize":
-                result[key] = tables.font_sizes[int(value)]
-            # ... etc
-
-    return result
+    if added or removed or renamed:
+        prompt_user_for_migration()
 ```
 
 ---
 
-### Challenge 7: Large Sheets
+### Challenge 5: System/Calculated Columns
 
-**Problem:**
-Smartsheet sheets can have 20,000+ rows. Full pull may:
-- Take too long
-- Exceed memory limits
-- Create huge local files
+**Problem:** Some columns are read-only (Created Date, parent roll-ups).
 
-**Impact:**
-- Poor UX for large sheets
-- Token-inefficient for LLM agents
-
-**Solution:**
-1. **Pagination support:**
-   ```bash
-   python -m extrasmartsheet pull <url> --max-rows 500
-   ```
-
-2. **Row filtering:**
-   ```bash
-   python -m extrasmartsheet pull <url> --filter "Status=Active"
-   ```
-
-3. **Truncation indicator** in sheet.json:
-   ```json
-   {
-     "totalRowCount": 15000,
-     "pulledRowCount": 500,
-     "truncated": true,
-     "truncationNote": "Use --max-rows to pull more rows"
-   }
-   ```
-
-4. **Partial push** - Only push changed rows (already row-based)
+**Solution:** Mark in schema and exclude from push:
+```python
+def get_pushable_changes(db):
+    return db.execute("""
+        SELECT c.* FROM _changes c
+        JOIN _columns col ON c.column_name = col.title
+        WHERE c.pushed = 0
+          AND col.read_only = 0
+    """).fetchall()
+```
 
 ---
 
-### Challenge 8: Row ID Management
+## Architecture
 
-**Problem:**
-When adding new rows:
-- No row ID exists yet
-- ID assigned by API after creation
-- Subsequent operations need the new ID
+### Module Structure
 
-**Impact:**
-- Two-step process for add + modify
-- Agent must re-pull after adding rows
+```
+smartsheetsync/
+├── src/smartsheetsync/
+│   ├── __init__.py
+│   ├── __main__.py          # CLI entry point
+│   ├── client.py            # Main sync orchestrator
+│   ├── transport.py         # API abstraction
+│   ├── schema.py            # SQLite schema generation
+│   ├── triggers.py          # Change tracking setup
+│   ├── pull.py              # Pull operations
+│   ├── push.py              # Push operations
+│   ├── conflicts.py         # Conflict detection/resolution
+│   ├── credentials.py       # Auth token management
+│   └── types.py             # Type definitions
+├── tests/
+│   ├── golden/              # Cached API responses
+│   └── ...
+└── pyproject.toml
+```
 
-**Solution:**
-1. Use placeholder IDs for new rows:
-   ```tsv
-   _rowId	Task Name	Status
-   10001	Existing Task	Done
-   NEW_1	New Task	Pending
-   NEW_2	Another New Task	Pending
-   ```
-
-2. Push processes new rows first:
-   ```python
-   async def push_changes(changes: DiffResult):
-       # Step 1: Add new rows, get assigned IDs
-       new_row_ids = await add_new_rows(changes.new_rows)
-
-       # Step 2: Update existing rows (including formula refs to new rows)
-       await update_rows(changes.modified_rows, new_row_ids)
-
-       # Step 3: Delete removed rows
-       await delete_rows(changes.deleted_rows)
-   ```
-
-3. Return ID mapping for agent reference:
-   ```json
-   {
-     "created": {
-       "NEW_1": 10050,
-       "NEW_2": 10051
-     }
-   }
-   ```
-
----
-
-## Architecture Recommendations
-
-### 1. Reuse extrasheet Patterns
-
-| Pattern | Reuse Level | Notes |
-|---------|-------------|-------|
-| Transport abstraction | Full | Interface identical |
-| Pristine mechanism | Full | Same zip-based approach |
-| File writer | Partial | Adapt for single-sheet |
-| Diff engine | Partial | Row-based vs range-based |
-| Request generator | New | Different API structure |
-| CLI structure | Full | Same pull/diff/push pattern |
-
-### 2. Transport Interface
+### Transport Abstraction
 
 ```python
 from abc import ABC, abstractmethod
 
 class SmartsheetTransport(ABC):
     @abstractmethod
-    async def get_sheet(self, sheet_id: str, include: list[str]) -> SheetData:
+    async def get_sheet(self, sheet_id: str, modified_since: str = None) -> SheetData:
+        pass
+
+    @abstractmethod
+    async def get_version(self, sheet_id: str) -> int:
         pass
 
     @abstractmethod
@@ -449,126 +283,123 @@ class SmartsheetTransport(ABC):
     async def delete_rows(self, sheet_id: str, row_ids: list[int]) -> None:
         pass
 
+    @abstractmethod
+    async def get_row_ids(self, sheet_id: str) -> list[int]:
+        pass
+
 class SmartsheetAPITransport(SmartsheetTransport):
-    """Production implementation using Smartsheet API."""
+    """Production: calls real Smartsheet API"""
     pass
 
 class LocalFileTransport(SmartsheetTransport):
-    """Test implementation using golden files."""
+    """Testing: reads from golden files"""
     pass
 ```
 
-### 3. Use Official Python SDK
+---
 
-Smartsheet provides an official Python SDK with:
-- Built-in retry logic for rate limits
-- Request/response models
-- Logging and debugging support
+## CLI Design
 
-```python
-import smartsheet
+```bash
+# Authentication
+smartsheetsync login
+smartsheetsync logout
 
-client = smartsheet.Smartsheet(access_token)
-client.errors_as_exceptions(True)
+# Core operations
+smartsheetsync pull <sheet_url_or_id> [output.db]
+smartsheetsync pull <existing.db>  # Incremental
+smartsheetsync push <file.db>
+smartsheetsync sync <file.db>
 
-# Retry settings
-client.retry_max_retries = 5
-client.retry_wait_time = 2
+# Inspection
+smartsheetsync status <file.db>
+smartsheetsync changes <file.db>
+smartsheetsync schema <file.db>
+
+# Utilities
+smartsheetsync query <file.db> "<SQL>"
+smartsheetsync export <file.db> --format csv|json
 ```
 
-**Recommendation:** Use SDK for API calls, wrap in our transport interface.
+---
 
-### 4. Testing Strategy
+## Testing Strategy
+
+### Golden File Tests
 
 Same approach as extrasheet:
+1. Capture real API responses
+2. Store in `tests/golden/{sheet_id}/`
+3. Test against cached responses
 
-1. **Golden file tests:**
-   - Capture real API responses
-   - Store in `tests/golden/{sheet_id}/`
-   - Test pull against cached responses
+```python
+def test_pull_creates_correct_schema():
+    transport = LocalFileTransport("tests/golden/project_sheet/")
+    db = pull_sheet(transport, "123456")
 
-2. **Diff tests:**
-   - Start from golden pulled state
-   - Apply known edits
-   - Assert generated API request matches expected
+    # Verify schema
+    columns = db.execute("SELECT * FROM _columns").fetchall()
+    assert len(columns) == 8
+    assert columns[0].title == "Task Name"
+```
 
-3. **Integration tests:**
-   - Use test Smartsheet account
-   - Create/modify/delete real sheets
-   - Run sparingly (rate limits)
+### Sync Round-Trip Tests
+
+```python
+def test_push_round_trip():
+    # Pull
+    db = pull_sheet(transport, "123456")
+
+    # Modify
+    db.execute("UPDATE sheet_data SET Status = 'Complete' WHERE _row_id = 1")
+
+    # Push
+    changes = get_unpushed_changes(db)
+    assert len(changes) == 1
+    assert changes[0].operation == "UPDATE"
+    assert changes[0].column_name == "Status"
+```
 
 ---
 
-## SDK vs Direct API
+## Dependencies
 
-### Option A: Use Official Smartsheet Python SDK
+```toml
+[project]
+dependencies = [
+    "smartsheet-python-sdk>=3.0",  # Official SDK with retry logic
+    "sqlite-utils>=3.0",           # SQLite convenience library
+    "httpx>=0.24",                 # Async HTTP (if not using SDK)
+    "keyring>=24.0",               # Secure token storage
+]
 
-**Pros:**
-- Built-in retry logic
-- Type hints and models
-- Maintained by Smartsheet
-- Handles auth token refresh
-
-**Cons:**
-- Adds dependency
-- May lag behind API changes
-- Less control over request details
-
-### Option B: Direct HTTP (like extrasheet)
-
-**Pros:**
-- Full control
-- Consistent with extrasheet approach
-- Lighter dependency
-
-**Cons:**
-- Must implement retry logic
-- Must track API changes
-- More code to maintain
-
-**Recommendation:** Start with SDK, wrap in transport interface. Can swap to direct HTTP later if needed.
+[project.optional-dependencies]
+dev = [
+    "pytest>=7.0",
+    "pytest-asyncio>=0.21",
+    "ruff>=0.1",
+    "mypy>=1.0",
+]
+```
 
 ---
 
-## Authentication Integration
+## Open Questions
 
-### Approach 1: Reuse extrasuite.client
+1. **Package name:** `smartsheetsync` or `extrasmartsheet`?
+   - Leaning toward `smartsheetsync` since model is fundamentally different
 
-Extend the existing auth system:
-```bash
-uvx extrasuite login --service smartsheet
-```
+2. **Relationship to extrasuite:**
+   - Standalone package? Part of extrasuite monorepo?
+   - Share auth with extrasuite.client?
 
-Server issues Smartsheet OAuth tokens alongside Google tokens.
+3. **Webhook support:**
+   - Phase 4 or earlier?
+   - Requires server component - same as extrasuite.server?
 
-**Pros:**
-- Unified auth experience
-- Server manages tokens
-- Consistent with extrasheet
-
-**Cons:**
-- Requires server changes
-- More complex OAuth setup
-
-### Approach 2: Standalone Auth
-
-Separate token management:
-```bash
-uvx extrasmartsheet login
-```
-
-Store token in OS keyring under different key.
-
-**Pros:**
-- Independent of server
-- Simpler initial implementation
-- Users can use their own API tokens
-
-**Cons:**
-- Inconsistent UX
-- Multiple login commands
-
-**Recommendation:** Start with Approach 2 (standalone), migrate to Approach 1 later.
+4. **Binary compatibility:**
+   - SQLite files not git-diffable
+   - Should we support export to TSV for version control?
 
 ---
 
@@ -576,67 +407,41 @@ Store token in OS keyring under different key.
 
 | Risk | Probability | Impact | Mitigation |
 |------|-------------|--------|------------|
-| Rate limits hit frequently | Medium | Medium | Bulk operations, caching |
-| Save collisions in team use | High | Low | Retry logic, documentation |
-| Large sheet performance | Medium | Medium | Pagination, row limits |
-| Formula syntax confusion | Medium | Low | Clear documentation |
-| API changes | Low | Medium | SDK abstracts changes |
-| Calculated column edits fail | Medium | Low | Read-only flagging |
+| Rate limits | Medium | Medium | Bulk ops, incremental sync |
+| Save collisions | High | Low | Retry with backoff |
+| Deletion edge cases | Medium | Medium | Row ID comparison |
+| Schema drift | Low | High | Migration prompts |
+| Large sheets | Medium | Medium | SQLite handles well |
+| Offline conflicts | Medium | Medium | Clear conflict UX |
 
 ---
 
-## Success Metrics
+## Success Criteria
 
-1. **Pull works correctly** - All cell values, formulas, formatting preserved
-2. **Diff is accurate** - Detects all changes, no false positives
-3. **Push is reliable** - Handles retries, partial success
-4. **Agent usability** - Clear documentation, predictable behavior
-5. **Performance** - Reasonable time for 1000-row sheets
-
----
-
-## Timeline Suggestion
-
-| Phase | Estimated Duration | Dependencies |
-|-------|-------------------|--------------|
-| Phase 1 (Core) | 2-3 weeks | None |
-| Phase 2 (Formulas/Hierarchy) | 2 weeks | Phase 1 |
-| Phase 3 (Formatting) | 1-2 weeks | Phase 1 |
-| Phase 4 (Attachments) | 1 week | Phase 1 |
-| Documentation | Ongoing | All phases |
-| Testing | Ongoing | All phases |
+1. **Pull works:** Schema inferred, data correct, triggers installed
+2. **Change tracking works:** All local edits captured
+3. **Push works:** Changes applied, retries handle collisions
+4. **Incremental sync:** Only changed rows transferred
+5. **Conflicts detected:** User warned before data loss
+6. **Agent-friendly:** SQL queries work naturally
 
 ---
 
-## Open Questions for Stakeholders
+## Next Steps
 
-1. **Should extrasmartsheet be part of extrasuite or standalone package?**
-   - Standalone: `pip install extrasmartsheet`
-   - Bundled: Part of extrasuite monorepo
-
-2. **Authentication model?**
-   - Per-user Smartsheet tokens via extrasuite server
-   - Direct API token input
-   - OAuth flow within extrasmartsheet
-
-3. **Workspace/folder support?**
-   - Should we support pulling entire workspaces?
-   - Or stick to individual sheets only?
-
-4. **Priority of phases?**
-   - Is formatting important for initial release?
-   - Is hierarchy critical (most project sheets use it)?
+1. **Prototype pull:** Sheet → SQLite with schema inference
+2. **Add triggers:** Change tracking for INSERT/UPDATE/DELETE
+3. **Implement push:** Read _changes, call API, clear on success
+4. **Add incremental pull:** rowsModifiedSince optimization
+5. **Handle deletions:** Row ID comparison
+6. **Add conflict detection:** Compare versions before push
 
 ---
 
-## Conclusion
+## References
 
-Building extrasmartsheet is highly feasible. The Smartsheet API provides all necessary capabilities for a pull-edit-diff-push workflow. Key adaptations from extrasheet:
-
-1. **Row-centric operations** instead of cell-centric
-2. **Row IDs** instead of position-based addressing
-3. **Single sheet per folder** instead of multi-sheet
-4. **Save collision handling** with retry logic
-5. **Native formula syntax** (no translation)
-
-The architecture can closely follow extrasheet, with the transport layer abstracting API differences. Phase 1 can deliver a functional MVP quickly, with subsequent phases adding advanced features.
+- [SQLite sync model details](./sqlite-sync-model.md)
+- [API analysis](./smartsheet-integration-analysis.md)
+- [Smartsheet API docs](https://developers.smartsheet.com/)
+- [sqlite-utils library](https://sqlite-utils.datasette.io/)
+- [sqlite-history](https://github.com/simonw/sqlite-history)
