@@ -468,9 +468,13 @@ def _diff_spreadsheet_properties(
     """Diff spreadsheet-level properties like title."""
     changes: list[SpreadsheetPropertyChange] = []
 
+    # Get properties dict (title is nested under properties)
+    pristine_props = pristine_meta.get("properties", {})
+    current_props = current_meta.get("properties", {})
+
     # Check title
-    pristine_title = pristine_meta.get("title")
-    current_title = current_meta.get("title")
+    pristine_title = pristine_props.get("title")
+    current_title = current_props.get("title")
     if pristine_title != current_title:
         changes.append(
             SpreadsheetPropertyChange("title", pristine_title, current_title)

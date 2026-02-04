@@ -3,6 +3,7 @@
 import pytest
 
 from extrasheet.utils import (
+    a1_range_to_grid_range,
     a1_to_cell,
     cell_to_a1,
     column_index_to_letter,
@@ -12,6 +13,7 @@ from extrasheet.utils import (
     is_default_cell_format,
     is_default_dimension,
     letter_to_column_index,
+    parse_a1_with_sheet_prefix,
     range_to_a1,
     sanitize_filename,
     unescape_tsv_value,
@@ -214,3 +216,87 @@ class TestDefaultChecks:
         assert is_default_dimension({"pixelSize": 100}, is_row=False) is True
         assert is_default_dimension({"pixelSize": 200}, is_row=False) is False
         assert is_default_dimension({"hidden": True}, is_row=True) is False
+
+
+class TestParseA1WithSheetPrefix:
+    """Tests for parsing A1 references with optional sheet name prefix."""
+
+    def test_no_sheet_prefix(self) -> None:
+        sheet_name, range_part = parse_a1_with_sheet_prefix("A1:B5")
+        assert sheet_name is None
+        assert range_part == "A1:B5"
+
+    def test_simple_sheet_name(self) -> None:
+        sheet_name, range_part = parse_a1_with_sheet_prefix("Sheet1!A1:B5")
+        assert sheet_name == "Sheet1"
+        assert range_part == "A1:B5"
+
+    def test_quoted_sheet_name(self) -> None:
+        sheet_name, range_part = parse_a1_with_sheet_prefix("'My Sheet'!A1:B5")
+        assert sheet_name == "My Sheet"
+        assert range_part == "A1:B5"
+
+    def test_sheet_name_with_spaces(self) -> None:
+        sheet_name, range_part = parse_a1_with_sheet_prefix("'Git Commits'!A1:I41")
+        assert sheet_name == "Git Commits"
+        assert range_part == "A1:I41"
+
+    def test_single_cell_reference(self) -> None:
+        sheet_name, range_part = parse_a1_with_sheet_prefix("Sheet2!C3")
+        assert sheet_name == "Sheet2"
+        assert range_part == "C3"
+
+
+class TestA1RangeToGridRangeWithSheetPrefix:
+    """Tests for a1_range_to_grid_range with cross-sheet references."""
+
+    def test_simple_range_no_prefix(self) -> None:
+        result = a1_range_to_grid_range("A1:B5", sheet_id=123)
+        assert result == {
+            "sheetId": 123,
+            "startRowIndex": 0,
+            "endRowIndex": 5,
+            "startColumnIndex": 0,
+            "endColumnIndex": 2,
+        }
+
+    def test_single_cell_no_prefix(self) -> None:
+        result = a1_range_to_grid_range("C3", sheet_id=0)
+        assert result == {
+            "sheetId": 0,
+            "startRowIndex": 2,
+            "endRowIndex": 3,
+            "startColumnIndex": 2,
+            "endColumnIndex": 3,
+        }
+
+    def test_cross_sheet_reference(self) -> None:
+        sheet_name_to_id = {"Sheet1": 100, "Sheet2": 200}
+        result = a1_range_to_grid_range(
+            "Sheet2!A1:B5", sheet_id=0, sheet_name_to_id=sheet_name_to_id
+        )
+        assert result["sheetId"] == 200
+        assert result["startRowIndex"] == 0
+        assert result["endRowIndex"] == 5
+
+    def test_cross_sheet_reference_with_spaces(self) -> None:
+        sheet_name_to_id = {"Git Commits": 6, "Analytics": 7}
+        result = a1_range_to_grid_range(
+            "'Git Commits'!A1:I41", sheet_id=0, sheet_name_to_id=sheet_name_to_id
+        )
+        assert result["sheetId"] == 6
+        assert result["startRowIndex"] == 0
+        assert result["endRowIndex"] == 41
+        assert result["startColumnIndex"] == 0
+        assert result["endColumnIndex"] == 9  # I is column 8 (0-indexed), +1 exclusive
+
+    def test_cross_sheet_reference_missing_mapping(self) -> None:
+        with pytest.raises(ValueError, match="requires sheet_name_to_id mapping"):
+            a1_range_to_grid_range("Sheet2!A1:B5", sheet_id=0)
+
+    def test_cross_sheet_reference_unknown_sheet(self) -> None:
+        sheet_name_to_id = {"Sheet1": 100}
+        with pytest.raises(ValueError, match="Unknown sheet"):
+            a1_range_to_grid_range(
+                "Sheet2!A1:B5", sheet_id=0, sheet_name_to_id=sheet_name_to_id
+            )

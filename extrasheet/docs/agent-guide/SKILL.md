@@ -78,7 +78,11 @@ Alice	100	2024-01-15
 Bob	200	2024-01-16
 ```
 
-> **Important:** data.tsv contains raw values, not formatted display strings. Write `8000` not `$8,000`. Write `0.72` not `72%`. The display format is controlled by `format.json` (e.g., `numberFormat.type: "CURRENCY"`). Formulas are defined separately in `formula.json`.
+> **No headers:** The file has no special header row. Line 1 = Row 1 in Google Sheets, Line 2 = Row 2, etc. If your spreadsheet has a header row, it's simply the first line in data.tsv.
+
+> **Raw values only:** data.tsv contains raw values, not formatted display strings. Write `8000` not `$8,000`. Write `0.72` not `72%`. The display format is controlled by `format.json` (e.g., `numberFormat.type: "CURRENCY"`). Formulas are defined separately in `formula.json`.
+
+> **Formula errors:** After push, if a formula has an error (e.g., referencing text instead of numbers), the error message appears in data.tsv when you re-pull. For example: `Function DIVIDE parameter 1 expects number values. But 'Count' is a text...`
 
 **Editing:**
 - Change cell values directly

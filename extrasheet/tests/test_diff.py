@@ -346,6 +346,80 @@ class TestMissingPristine:
             diff(tmp_path)
 
 
+class TestSpreadsheetPropertyChanges:
+    """Tests for spreadsheet-level property changes (title, etc)."""
+
+    def test_spreadsheet_title_change_detected(self, tmp_path: Path) -> None:
+        """Test that changing spreadsheet title is detected.
+
+        The title is nested under properties.title in spreadsheet.json.
+        """
+        pristine_spreadsheet_json = json.dumps(
+            {
+                "spreadsheetId": "test123",
+                "properties": {"title": "Old Title"},
+                "sheets": [{"sheetId": 0, "title": "Sheet1", "folder": "Sheet1"}],
+            }
+        )
+
+        current_spreadsheet_json = json.dumps(
+            {
+                "spreadsheetId": "test123",
+                "properties": {"title": "New Title"},
+                "sheets": [{"sheetId": 0, "title": "Sheet1", "folder": "Sheet1"}],
+            }
+        )
+
+        data_tsv = "A\tB\n1\t2\n"
+
+        pristine_files = {
+            "spreadsheet.json": pristine_spreadsheet_json,
+            "Sheet1/data.tsv": data_tsv,
+        }
+
+        current_files = {
+            "spreadsheet.json": current_spreadsheet_json,
+            "Sheet1/data.tsv": data_tsv,
+        }
+
+        create_pristine_zip(tmp_path, pristine_files)
+        write_current_files(tmp_path, current_files)
+
+        result = diff(tmp_path)
+
+        assert result.has_changes()
+        assert len(result.spreadsheet_changes) == 1
+        change = result.spreadsheet_changes[0]
+        assert change.property_name == "title"
+        assert change.old_value == "Old Title"
+        assert change.new_value == "New Title"
+
+    def test_spreadsheet_title_no_change(self, tmp_path: Path) -> None:
+        """Test that unchanged spreadsheet title produces no diff."""
+        spreadsheet_json = json.dumps(
+            {
+                "spreadsheetId": "test123",
+                "properties": {"title": "Same Title"},
+                "sheets": [{"sheetId": 0, "title": "Sheet1", "folder": "Sheet1"}],
+            }
+        )
+
+        data_tsv = "A\tB\n1\t2\n"
+
+        files = {
+            "spreadsheet.json": spreadsheet_json,
+            "Sheet1/data.tsv": data_tsv,
+        }
+
+        create_pristine_zip(tmp_path, files)
+        write_current_files(tmp_path, files)
+
+        result = diff(tmp_path)
+
+        assert not result.has_changes()
+        assert len(result.spreadsheet_changes) == 0
+
+
 class TestRangeHelpers:
     """Tests for range helper functions."""
 

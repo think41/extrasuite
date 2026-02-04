@@ -429,6 +429,52 @@ def _update_local_sheet_ids(folder: Path, sheet_id_mapping: dict[int, int]) -> N
     with spreadsheet_json_path.open("w") as f:
         json.dump(spreadsheet_data, f, indent=2)
 
+    # Also update the pristine copy to keep it in sync
+    _update_pristine_sheet_ids(folder, sheet_id_mapping)
+
+
+def _update_pristine_sheet_ids(folder: Path, sheet_id_mapping: dict[int, int]) -> None:
+    """Update the pristine spreadsheet.zip with Google-assigned sheetIds.
+
+    This keeps the pristine copy in sync after structural changes (addSheet)
+    so that subsequent diffs don't see a mismatch between pristine and current.
+
+    Args:
+        folder: Path to the spreadsheet folder
+        sheet_id_mapping: Dict mapping local sheetId -> actual sheetId
+    """
+    pristine_zip_path = folder / ".pristine" / "spreadsheet.zip"
+
+    if not pristine_zip_path.exists():
+        return
+
+    # Read the existing zip contents
+    with zipfile.ZipFile(pristine_zip_path, "r") as zf:
+        # Extract all files to memory
+        files_content: dict[str, bytes] = {}
+        for name in zf.namelist():
+            if not name.endswith("/"):  # Skip directories
+                files_content[name] = zf.read(name)
+
+    # Update spreadsheet.json in the extracted contents
+    if "spreadsheet.json" in files_content:
+        spreadsheet_data = json.loads(files_content["spreadsheet.json"].decode("utf-8"))
+
+        # Update sheetIds in the sheets list
+        for sheet in spreadsheet_data.get("sheets", []):
+            old_id = sheet.get("sheetId")
+            if old_id in sheet_id_mapping:
+                sheet["sheetId"] = sheet_id_mapping[old_id]
+
+        files_content["spreadsheet.json"] = json.dumps(
+            spreadsheet_data, indent=2
+        ).encode("utf-8")
+
+    # Write the updated zip
+    with zipfile.ZipFile(pristine_zip_path, "w", zipfile.ZIP_DEFLATED) as zf:
+        for name, content in files_content.items():
+            zf.writestr(name, content)
+
 
 def _remap_sheet_ids(
     requests: list[dict[str, Any]], sheet_id_mapping: dict[int, int]

@@ -125,27 +125,73 @@ def grid_range_to_a1(grid_range: GridRange | dict[str, Any]) -> str:
     )
 
 
-def a1_range_to_grid_range(a1_range: str, sheet_id: int = 0) -> dict[str, int]:
+def parse_a1_with_sheet_prefix(a1_range: str) -> tuple[str | None, str]:
+    """Parse an A1 reference that may have a sheet name prefix.
+
+    Examples:
+        "A1:B5" -> (None, "A1:B5")
+        "Sheet1!A1:B5" -> ("Sheet1", "A1:B5")
+        "'My Sheet'!A1:B5" -> ("My Sheet", "A1:B5")
+
+    Returns:
+        Tuple of (sheet_name or None, range_part)
+    """
+    if "!" not in a1_range:
+        return None, a1_range
+
+    # Split on the last '!' to handle sheet names with '!' in them (rare but possible)
+    sheet_part, range_part = a1_range.rsplit("!", 1)
+
+    # Remove surrounding quotes from sheet name if present
+    sheet_name = sheet_part.strip("'")
+
+    return sheet_name, range_part
+
+
+def a1_range_to_grid_range(
+    a1_range: str,
+    sheet_id: int = 0,
+    sheet_name_to_id: dict[str, int] | None = None,
+) -> dict[str, int]:
     """Convert A1 notation range to GridRange dict.
 
     Args:
-        a1_range: A1 notation range like "A1:B5" or single cell "C3"
-        sheet_id: The sheet ID to include in the result
+        a1_range: A1 notation range like "A1:B5", single cell "C3",
+                  or cross-sheet reference like "'Other Sheet'!A1:B5"
+        sheet_id: The sheet ID to use if no sheet prefix is present
+        sheet_name_to_id: Optional mapping of sheet names to IDs for
+                          resolving cross-sheet references
 
     Returns:
         GridRange dict with sheetId, startRowIndex, endRowIndex,
         startColumnIndex, endColumnIndex
+
+    Raises:
+        ValueError: If a sheet prefix is present but not found in sheet_name_to_id
     """
-    if ":" in a1_range:
-        start, end = a1_range.split(":")
+    # Parse sheet prefix if present
+    sheet_name, range_part = parse_a1_with_sheet_prefix(a1_range)
+
+    actual_sheet_id = sheet_id
+    if sheet_name is not None:
+        if sheet_name_to_id is None:
+            raise ValueError(
+                f"Cross-sheet reference '{a1_range}' requires sheet_name_to_id mapping"
+            )
+        if sheet_name not in sheet_name_to_id:
+            raise ValueError(f"Unknown sheet in reference: '{sheet_name}'")
+        actual_sheet_id = sheet_name_to_id[sheet_name]
+
+    if ":" in range_part:
+        start, end = range_part.split(":")
         start_row, start_col = a1_to_cell(start)
         end_row, end_col = a1_to_cell(end)
     else:
-        start_row, start_col = a1_to_cell(a1_range)
+        start_row, start_col = a1_to_cell(range_part)
         end_row, end_col = start_row, start_col
 
     return {
-        "sheetId": sheet_id,
+        "sheetId": actual_sheet_id,
         "startRowIndex": start_row,
         "endRowIndex": end_row + 1,  # endRowIndex is exclusive
         "startColumnIndex": start_col,
