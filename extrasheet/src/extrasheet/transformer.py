@@ -176,9 +176,13 @@ class SpreadsheetTransformer:
             if sheet_props.get("rightToLeft"):
                 sheet_entry["rightToLeft"] = True
             if sheet_props.get("tabColorStyle"):
-                sheet_entry["tabColorStyle"] = sheet_props["tabColorStyle"]
+                sheet_entry["tabColorStyle"] = normalize_colors_to_hex(
+                    sheet_props["tabColorStyle"]
+                )
             elif sheet_props.get("tabColor"):
-                sheet_entry["tabColor"] = sheet_props["tabColor"]
+                sheet_entry["tabColor"] = normalize_colors_to_hex(
+                    sheet_props["tabColor"]
+                )
 
             # Add truncation info if this sheet was truncated
             if sheet_id in self.truncation_info:
@@ -212,6 +216,8 @@ class SpreadsheetTransformer:
     def _extract_theme(self) -> dict[str, Any]:
         """Extract theme information (defaultFormat, spreadsheetTheme) from properties.
 
+        Colors are normalized to hex format for consistency.
+
         Returns:
             Dict with defaultFormat and/or spreadsheetTheme, or empty dict if neither exists.
         """
@@ -219,9 +225,11 @@ class SpreadsheetTransformer:
         theme: dict[str, Any] = {}
 
         if "defaultFormat" in props:
-            theme["defaultFormat"] = props["defaultFormat"]
+            theme["defaultFormat"] = normalize_colors_to_hex(props["defaultFormat"])
         if "spreadsheetTheme" in props:
-            theme["spreadsheetTheme"] = props["spreadsheetTheme"]
+            theme["spreadsheetTheme"] = normalize_colors_to_hex(
+                props["spreadsheetTheme"]
+            )
 
         return theme
 

@@ -68,9 +68,7 @@ class TestNormalizeColorsToHex:
 
     def test_nested_dict(self):
         input_data = {
-            "format": {
-                "backgroundColor": {"red": 0.8, "green": 1.0, "blue": 0.8}
-            }
+            "format": {"backgroundColor": {"red": 0.8, "green": 1.0, "blue": 0.8}}
         }
         result = normalize_colors_to_hex(input_data)
         assert result == {"format": {"backgroundColor": "#CCFFCC"}}
@@ -95,9 +93,7 @@ class TestNormalizeColorsToHex:
         input_data = {
             "booleanRule": {
                 "condition": {"type": "NUMBER_GREATER"},
-                "format": {
-                    "backgroundColor": {"red": 0.8, "green": 1.0, "blue": 0.8}
-                },
+                "format": {"backgroundColor": {"red": 0.8, "green": 1.0, "blue": 0.8}},
             }
         }
         result = normalize_colors_to_hex(input_data)
@@ -113,11 +109,7 @@ class TestNormalizeColorsToRgb:
         assert result["blue"] == pytest.approx(0.0)
 
     def test_nested_dict(self):
-        input_data = {
-            "format": {
-                "backgroundColor": "#CCFFCC"
-            }
-        }
+        input_data = {"format": {"backgroundColor": "#CCFFCC"}}
         result = normalize_colors_to_rgb(input_data)
         assert "red" in result["format"]["backgroundColor"]
         assert result["format"]["backgroundColor"]["green"] == pytest.approx(1.0)

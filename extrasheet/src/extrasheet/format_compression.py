@@ -224,10 +224,7 @@ def _is_color_dict(obj: dict[str, Any]) -> bool:
     if obj_keys - color_keys:
         return False
     # Values must be numeric
-    for key in obj_keys:
-        if not isinstance(obj[key], (int, float)):
-            return False
-    return True
+    return all(isinstance(obj[key], (int, float)) for key in obj_keys)
 
 
 def _is_empty_color(color: dict[str, Any] | None) -> bool:
