@@ -1,6 +1,8 @@
 # Features Guide
 
-Advanced spreadsheet features stored in separate JSON files per sheet.
+Advanced spreadsheet features: charts, data validation, filters, pivot tables, and named ranges.
+
+---
 
 ## Charts (charts.json)
 
@@ -45,32 +47,52 @@ Advanced spreadsheet features stored in separate JSON files per sheet.
 
 **Chart types:** `BAR`, `COLUMN`, `LINE`, `PIE`, `SCATTER`, `AREA`, `COMBO`
 
-**Pie charts have different structure:**
+### Gotcha: Pie charts have different structure
+
+**Basic charts (bar, column, line, scatter, area):**
 ```json
 {
   "spec": {
-    "pieChart": {
-      "domain": {...},     // singular object, not array
-      "series": {...}      // singular object, not array
+    "basicChart": {
+      "chartType": "COLUMN",
+      "domains": [...],     // plural, array
+      "series": [...]       // plural, array
     }
   }
 }
 ```
 
+**Pie charts:**
+```json
+{
+  "spec": {
+    "pieChart": {
+      "domain": {...},     // singular, object
+      "series": {...}      // singular, object
+    }
+  }
+}
+```
+
+---
+
 ## Data Validation (data-validation.json)
+
+Create dropdowns, checkboxes, and input constraints.
 
 ```json
 {
   "dataValidation": [
     {
       "range": "H2:H100",
-      "cells": ["H2", "H3", "H4", "..."],
+      "cells": ["H2", "H3", "H4"],
       "rule": {
         "condition": {
           "type": "ONE_OF_LIST",
           "values": [
             {"userEnteredValue": "Option A"},
-            {"userEnteredValue": "Option B"}
+            {"userEnteredValue": "Option B"},
+            {"userEnteredValue": "Option C"}
           ]
         },
         "showCustomUi": true,
@@ -81,19 +103,60 @@ Advanced spreadsheet features stored in separate JSON files per sheet.
 }
 ```
 
-**Condition types:**
-- `ONE_OF_LIST` - Dropdown
-- `ONE_OF_RANGE` - Dropdown from cell range
-- `BOOLEAN` - Checkbox
-- `NUMBER_BETWEEN`, `NUMBER_GREATER`, `NUMBER_LESS`
-- `DATE_BEFORE`, `DATE_AFTER`
-- `CUSTOM_FORMULA`
+### Condition Types
 
-**NOT supported (will error):**
+| Type | Use Case |
+|------|----------|
+| `ONE_OF_LIST` | Dropdown with fixed values |
+| `ONE_OF_RANGE` | Dropdown from cell range |
+| `BOOLEAN` | Checkbox |
+| `NUMBER_BETWEEN` | Number in range |
+| `NUMBER_GREATER`, `NUMBER_LESS` | Number constraints |
+| `DATE_BEFORE`, `DATE_AFTER` | Date constraints |
+| `CUSTOM_FORMULA` | Custom validation |
+
+### Gotcha: Unsupported validation types
+
+These types will cause API errors:
 - `TEXT_IS_VALID_EMAIL`
 - `TEXT_IS_VALID_URL`
 
+**Workaround:** Use `CUSTOM_FORMULA` with a regex pattern instead.
+
+### Checkbox Example
+
+```json
+{
+  "range": "A2:A100",
+  "rule": {
+    "condition": {"type": "BOOLEAN"},
+    "showCustomUi": true
+  }
+}
+```
+
+### Dropdown from Range
+
+```json
+{
+  "range": "B2:B100",
+  "rule": {
+    "condition": {
+      "type": "ONE_OF_RANGE",
+      "values": [{"userEnteredValue": "='Lookup'!A:A"}]
+    },
+    "showCustomUi": true
+  }
+}
+```
+
+---
+
 ## Filters (filters.json)
+
+### Basic Filter
+
+Applies to the entire sheet:
 
 ```json
 {
@@ -105,17 +168,33 @@ Advanced spreadsheet features stored in separate JSON files per sheet.
         "condition": {"type": "TEXT_CONTAINS", "values": [{"userEnteredValue": "Active"}]}
       }
     }]
-  },
+  }
+}
+```
+
+### Filter Views
+
+Named filter configurations users can switch between:
+
+```json
+{
   "filterViews": [
     {
       "filterViewId": 789,
       "title": "Active Only",
-      "range": {...},
-      "filterSpecs": [...]
+      "range": {"sheetId": 0, "startRowIndex": 0, "endRowIndex": 100, "startColumnIndex": 0, "endColumnIndex": 5},
+      "filterSpecs": [{
+        "columnIndex": 2,
+        "filterCriteria": {
+          "condition": {"type": "TEXT_EQ", "values": [{"userEnteredValue": "Active"}]}
+        }
+      }]
     }
   ]
 }
 ```
+
+---
 
 ## Pivot Tables (pivot-tables.json)
 
@@ -133,46 +212,15 @@ Advanced spreadsheet features stored in separate JSON files per sheet.
 }
 ```
 
-## Banded Ranges (banded-ranges.json)
+**Summarize functions:** `SUM`, `COUNT`, `AVERAGE`, `MIN`, `MAX`, `COUNTA`, `COUNTUNIQUE`
 
-Alternating row/column colors:
+**sourceColumnOffset:** 0-based index into the source range columns.
 
-```json
-{
-  "bandedRanges": [
-    {
-      "bandedRangeId": 123,
-      "range": {"sheetId": 0, "startRowIndex": 0, "endRowIndex": 100},
-      "rowProperties": {
-        "headerColor": {"red": 0.2, "green": 0.4, "blue": 0.6},
-        "firstBandColor": {"red": 1, "green": 1, "blue": 1},
-        "secondBandColor": {"red": 0.95, "green": 0.95, "blue": 0.95}
-      }
-    }
-  ]
-}
-```
-
-## Dimension Sizing (dimension.json)
-
-```json
-{
-  "rowMetadata": [
-    {"index": 0, "pixelSize": 30},
-    {"index": 10, "pixelSize": 50, "hidden": true}
-  ],
-  "columnMetadata": [
-    {"index": 0, "pixelSize": 150},
-    {"index": 5, "pixelSize": 200}
-  ]
-}
-```
-
-Only non-default sizes are stored (default: 21px rows, 100px columns).
+---
 
 ## Named Ranges (named_ranges.json)
 
-At spreadsheet level, not per-sheet:
+**At spreadsheet level, not per-sheet.**
 
 ```json
 {
@@ -181,7 +229,30 @@ At spreadsheet level, not per-sheet:
       "namedRangeId": "abc123",
       "name": "SalesData",
       "range": {"sheetId": 0, "startRowIndex": 0, "endRowIndex": 100, "startColumnIndex": 0, "endColumnIndex": 5}
+    },
+    {
+      "namedRangeId": "def456",
+      "name": "Expenses",
+      "range": {"sheetId": 1, "startRowIndex": 0, "endRowIndex": 50, "startColumnIndex": 0, "endColumnIndex": 3}
     }
   ]
 }
+```
+
+Use in formulas: `=SUM(SalesData)`, `=AVERAGE(Expenses)`
+
+---
+
+## Index Numbering Reference
+
+| Context | Convention |
+|---------|------------|
+| data.tsv lines | 1-based (line 5 = row 5) |
+| A1 notation | 1-based |
+| GridRange JSON | 0-based (`startRowIndex: 0` = row 1) |
+| GridRange end | Exclusive (`endRowIndex: 10` = rows 0-9) |
+
+**Example:** Rows 1-10 in GridRange:
+```json
+{"startRowIndex": 0, "endRowIndex": 10}
 ```

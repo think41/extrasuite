@@ -31,14 +31,16 @@ Instead of working with complex API responses, agents interact with simple files
 
 ## Documentation
 
-- `docs/on-disk-format.md` - Complete specification of the file format
-- `docs/agent-guide/` - LLM agent guide with progressive disclosure:
-  - `README.md` - Start here: workflow, directory structure, quick reference
-  - `formatting.md` - Colors, fonts, conditional formatting
-  - `formulas.md` - Formula syntax and compression
-  - `features.md` - Charts, pivot tables, filters, validation
-  - `structural-changes.md` - Insert/delete rows/columns
-  - `batchupdate-reference.md` - All batchUpdate request types
+**For Engineers:**
+- `docs/architecture.md` - System overview and design decisions
+- `docs/on-disk-format.md` - Complete file format specification
+- `docs/diff-push-spec.md` - Diff/push implementation details
+
+**For LLM Agents:**
+- `docs/agent-guide/SKILL.md` - Start here: workflow, common operations
+- `docs/agent-guide/formatting.md` - Conditional formats, merges, rich text
+- `docs/agent-guide/features.md` - Charts, pivot tables, filters, validation
+- `docs/agent-guide/batchupdate.md` - Direct API operations (sort, move)
 
 ## Key Gotchas
 

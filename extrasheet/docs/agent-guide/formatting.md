@@ -1,18 +1,40 @@
 # Formatting Guide
 
+Advanced formatting operations for cells, conditional formats, merges, and rich text.
+
 ## format.json Structure
 
 ```json
 {
-  "formatRules": [
-    {"range": "A1:J1", "format": {"textFormat": {"bold": true}}}
-  ],
+  "formatRules": [...],
   "conditionalFormats": [...],
   "merges": [...],
-  "textFormatRuns": {...},
-  "notes": {...}
+  "notes": {...},
+  "textFormatRuns": {...}
 }
 ```
+
+### Gotcha: Use formatRules array, not cells dict
+
+**Wrong:**
+```json
+{
+  "cells": {
+    "A1": {"textFormat": {"bold": true}}
+  }
+}
+```
+
+**Correct:**
+```json
+{
+  "formatRules": [
+    {"range": "A1", "format": {"textFormat": {"bold": true}}}
+  ]
+}
+```
+
+---
 
 ## Color Formats (Critical!)
 
@@ -23,9 +45,17 @@
 | `formatRules[].format.backgroundColor` | Hex string | `"#E6E6E6"` |
 | `formatRules[].format.textFormat.foregroundColor` | Hex string | `"#FF0000"` |
 | `conditionalFormats[].*.format.backgroundColor` | RGB dict | `{"red": 0.8, "green": 1.0, "blue": 0.8}` |
+| `conditionalFormats[].gradientRule.*.color` | RGB dict | `{"red": 0.96, "green": 0.8, "blue": 0.8}` |
 | `textFormatRuns[].format.foregroundColor` | RGB dict | `{"red": 0, "green": 0, "blue": 1}` |
+| `bandedRanges[].rowProperties.*Color` | RGB dict | `{"red": 0.2, "green": 0.4, "blue": 0.6}` |
 
-Wrong format causes: `'dict' object has no attribute 'lstrip'`
+**Wrong format causes:** `'dict' object has no attribute 'lstrip'`
+
+**Rule of thumb:**
+- `formatRules` → hex strings
+- Everything else → RGB dicts
+
+---
 
 ## Format Rules
 
@@ -53,16 +83,27 @@ Apply formatting to cell ranges:
 ```
 
 **Common format properties:**
-- `backgroundColor` - Hex color
-- `textFormat.bold`, `textFormat.italic` - Boolean
-- `textFormat.fontSize` - Integer (points)
-- `textFormat.foregroundColor` - Hex color
-- `horizontalAlignment` - `LEFT`, `CENTER`, `RIGHT`
-- `verticalAlignment` - `TOP`, `MIDDLE`, `BOTTOM`
-- `numberFormat.type` - `NUMBER`, `CURRENCY`, `DATE`, `PERCENT`
-- `numberFormat.pattern` - Format string
+
+| Property | Values |
+|----------|--------|
+| `backgroundColor` | Hex color (`"#FF0000"`) |
+| `textFormat.bold` | `true` / `false` |
+| `textFormat.italic` | `true` / `false` |
+| `textFormat.fontSize` | Integer (points) |
+| `textFormat.foregroundColor` | Hex color |
+| `horizontalAlignment` | `LEFT`, `CENTER`, `RIGHT` |
+| `verticalAlignment` | `TOP`, `MIDDLE`, `BOTTOM` |
+| `numberFormat.type` | `NUMBER`, `CURRENCY`, `DATE`, `PERCENT`, `TEXT` |
+| `numberFormat.pattern` | Format string (e.g., `"$#,##0.00"`) |
+| `wrapStrategy` | `OVERFLOW_CELL`, `WRAP`, `CLIP` |
+
+---
 
 ## Conditional Formatting
+
+Highlight cells based on conditions. Uses **RGB dicts** for colors.
+
+### Boolean Rules
 
 ```json
 {
@@ -85,12 +126,26 @@ Apply formatting to cell ranges:
 ```
 
 **Condition types:**
-- `NUMBER_GREATER`, `NUMBER_LESS`, `NUMBER_BETWEEN`
-- `TEXT_CONTAINS`, `TEXT_STARTS_WITH`, `TEXT_ENDS_WITH`
+- `NUMBER_GREATER`, `NUMBER_LESS`, `NUMBER_BETWEEN`, `NUMBER_EQUAL`
+- `TEXT_CONTAINS`, `TEXT_STARTS_WITH`, `TEXT_ENDS_WITH`, `TEXT_EQ`
 - `DATE_BEFORE`, `DATE_AFTER`
-- `CUSTOM_FORMULA` - Custom formula returns TRUE
+- `BLANK`, `NOT_BLANK`
+- `CUSTOM_FORMULA` — custom formula returns TRUE
 
-**Gradient rules:**
+**Custom formula example:**
+```json
+{
+  "condition": {
+    "type": "CUSTOM_FORMULA",
+    "values": [{"userEnteredValue": "=A2>B2"}]
+  }
+}
+```
+
+### Gradient Rules
+
+Color scale based on values:
+
 ```json
 {
   "ruleIndex": 1,
@@ -101,6 +156,14 @@ Apply formatting to cell ranges:
   }
 }
 ```
+
+**Point types:** `MIN`, `MAX`, `NUMBER`, `PERCENT`, `PERCENTILE`
+
+### Gotcha: ruleIndex is required
+
+Each conditional format must have a `ruleIndex` field (0, 1, 2...) that determines the order rules are applied.
+
+---
 
 ## Cell Merges
 
@@ -118,7 +181,13 @@ Apply formatting to cell ranges:
 }
 ```
 
+**Note:** Both `range` (A1 notation) and coordinates (0-based) are included for clarity.
+
+---
+
 ## Cell Notes
+
+Simple key-value mapping:
 
 ```json
 {
@@ -129,9 +198,11 @@ Apply formatting to cell ranges:
 }
 ```
 
+---
+
 ## Rich Text (textFormatRuns)
 
-Apply different formatting to parts of a cell's text:
+Apply different formatting to parts of a cell's text. Uses **RGB dicts** for colors.
 
 ```json
 {
@@ -144,3 +215,51 @@ Apply different formatting to parts of a cell's text:
   }
 }
 ```
+
+This formats "Hello **World** <blue>Blue</blue>" where:
+- Characters 0-4: default
+- Characters 5-9: bold
+- Characters 10+: blue
+
+---
+
+## Banded Ranges
+
+Alternating row/column colors. Uses **RGB dicts** for colors.
+
+```json
+{
+  "bandedRanges": [
+    {
+      "bandedRangeId": 123,
+      "range": {"sheetId": 0, "startRowIndex": 0, "endRowIndex": 100},
+      "rowProperties": {
+        "headerColor": {"red": 0.2, "green": 0.4, "blue": 0.6},
+        "firstBandColor": {"red": 1, "green": 1, "blue": 1},
+        "secondBandColor": {"red": 0.95, "green": 0.95, "blue": 0.95}
+      }
+    }
+  ]
+}
+```
+
+---
+
+## Dimension Sizing
+
+Row heights and column widths in `dimension.json`:
+
+```json
+{
+  "rowMetadata": [
+    {"index": 0, "pixelSize": 30},
+    {"index": 10, "pixelSize": 50, "hidden": true}
+  ],
+  "columnMetadata": [
+    {"index": 0, "pixelSize": 150},
+    {"index": 5, "pixelSize": 200}
+  ]
+}
+```
+
+Only non-default sizes are stored (default: 21px rows, 100px columns).
