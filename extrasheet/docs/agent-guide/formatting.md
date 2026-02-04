@@ -14,46 +14,13 @@ Advanced formatting operations for cells, conditional formats, merges, and rich 
 }
 ```
 
-### Gotcha: Use formatRules array, not cells dict
-
-**Wrong:**
-```json
-{
-  "cells": {
-    "A1": {"textFormat": {"bold": true}}
-  }
-}
-```
-
-**Correct:**
-```json
-{
-  "formatRules": [
-    {"range": "A1", "format": {"textFormat": {"bold": true}}}
-  ]
-}
-```
-
 ---
 
-## Color Formats (Critical!)
+## Color Format
 
-**Different sections require different formats:**
+All colors use **hex strings**: `"#RRGGBB"`
 
-| Section | Format | Example |
-|---------|--------|---------|
-| `formatRules[].format.backgroundColor` | Hex string | `"#E6E6E6"` |
-| `formatRules[].format.textFormat.foregroundColor` | Hex string | `"#FF0000"` |
-| `conditionalFormats[].*.format.backgroundColor` | RGB dict | `{"red": 0.8, "green": 1.0, "blue": 0.8}` |
-| `conditionalFormats[].gradientRule.*.color` | RGB dict | `{"red": 0.96, "green": 0.8, "blue": 0.8}` |
-| `textFormatRuns[].format.foregroundColor` | RGB dict | `{"red": 0, "green": 0, "blue": 1}` |
-| `bandedRanges[].rowProperties.*Color` | RGB dict | `{"red": 0.2, "green": 0.4, "blue": 0.6}` |
-
-**Wrong format causes:** `'dict' object has no attribute 'lstrip'`
-
-**Rule of thumb:**
-- `formatRules` → hex strings
-- Everything else → RGB dicts
+Examples: `"#FF0000"` (red), `"#00FF00"` (green), `"#0000FF"` (blue), `"#FFFFFF"` (white)
 
 ---
 
@@ -117,7 +84,7 @@ Highlight cells based on conditions. Uses **RGB dicts** for colors.
           "values": [{"userEnteredValue": "1000"}]
         },
         "format": {
-          "backgroundColor": {"red": 0.8, "green": 1.0, "blue": 0.8}
+          "backgroundColor": "#CCFFCC"
         }
       }
     }
@@ -151,17 +118,15 @@ Color scale based on values:
   "ruleIndex": 1,
   "ranges": ["C2:C100"],
   "gradientRule": {
-    "minpoint": {"color": {"red": 1, "green": 0.8, "blue": 0.8}, "type": "MIN"},
-    "maxpoint": {"color": {"red": 0.8, "green": 1, "blue": 0.8}, "type": "MAX"}
+    "minpoint": {"color": "#FFCCCC", "type": "MIN"},
+    "maxpoint": {"color": "#CCFFCC", "type": "MAX"}
   }
 }
 ```
 
 **Point types:** `MIN`, `MAX`, `NUMBER`, `PERCENT`, `PERCENTILE`
 
-### Gotcha: ruleIndex is required
-
-Each conditional format must have a `ruleIndex` field (0, 1, 2...) that determines the order rules are applied.
+**Note:** `ruleIndex` determines rule order. If omitted, it will be auto-assigned.
 
 ---
 
@@ -202,7 +167,7 @@ Simple key-value mapping:
 
 ## Rich Text (textFormatRuns)
 
-Apply different formatting to parts of a cell's text. Uses **RGB dicts** for colors.
+Apply different formatting to parts of a cell's text.
 
 ```json
 {
@@ -210,7 +175,7 @@ Apply different formatting to parts of a cell's text. Uses **RGB dicts** for col
     "A1": [
       {"format": {}},
       {"startIndex": 5, "format": {"bold": true}},
-      {"startIndex": 10, "format": {"foregroundColor": {"red": 0, "green": 0, "blue": 1}}}
+      {"startIndex": 10, "format": {"foregroundColor": "#0000FF"}}
     ]
   }
 }
@@ -225,7 +190,7 @@ This formats "Hello **World** <blue>Blue</blue>" where:
 
 ## Banded Ranges
 
-Alternating row/column colors. Uses **RGB dicts** for colors.
+Alternating row/column colors.
 
 ```json
 {
@@ -234,9 +199,9 @@ Alternating row/column colors. Uses **RGB dicts** for colors.
       "bandedRangeId": 123,
       "range": {"sheetId": 0, "startRowIndex": 0, "endRowIndex": 100},
       "rowProperties": {
-        "headerColor": {"red": 0.2, "green": 0.4, "blue": 0.6},
-        "firstBandColor": {"red": 1, "green": 1, "blue": 1},
-        "secondBandColor": {"red": 0.95, "green": 0.95, "blue": 0.95}
+        "headerColor": "#336699",
+        "firstBandColor": "#FFFFFF",
+        "secondBandColor": "#F2F2F2"
       }
     }
   ]

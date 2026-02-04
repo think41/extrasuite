@@ -395,7 +395,7 @@ Cell formatting is stored with range-based compression. Cells with identical for
           "values": [{ "userEnteredValue": "1000" }]
         },
         "format": {
-          "backgroundColor": { "red": 0.8, "green": 1.0, "blue": 0.8 }
+          "backgroundColor": "#CCFFCC"
         }
       }
     }
@@ -415,7 +415,7 @@ Cell formatting is stored with range-based compression. Cells with identical for
       {
         "startIndex": 23,
         "format": {
-          "foregroundColor": { "red": 0.07, "green": 0.33, "blue": 0.8 },
+          "foregroundColor": "#1254CC",
           "underline": true,
           "link": { "uri": "https://example.com" }
         }
@@ -822,21 +822,19 @@ Splitting large sheets into multiple `data_*.tsv` files is **not currently imple
 
 ### Color Format Requirements
 
-**IMPORTANT:** Different contexts require different color formats:
+All colors in editable files use **hex strings**: `"#RRGGBB"`
 
-| Context | Format | Example |
-|---------|--------|---------|
-| `formatRules[].format.backgroundColor` | Hex string | `"#E6E6E6"` |
-| `formatRules[].format.textFormat.foregroundColor` | Hex string | `"#FF0000"` |
-| `conditionalFormats[].booleanRule.format.backgroundColor` | RGB dict | `{"red": 0.8, "green": 0.96, "blue": 0.8}` |
-| `conditionalFormats[].gradientRule.*.color` | RGB dict | `{"red": 0.96, "green": 0.8, "blue": 0.8}` |
-| `textFormatRuns[].format.foregroundColor` | RGB dict | `{"red": 0.07, "green": 0.33, "blue": 0.8}` |
+Examples: `"#FF0000"` (red), `"#00FF00"` (green), `"#0000FF"` (blue)
 
-The pull command outputs hex strings for `formatRules` formatting. When editing `format.json`:
-- Use hex strings (e.g., `"#FF0000"`) for colors in `formatRules`
-- Use RGB dicts (e.g., `{"red": 1.0, "green": 0, "blue": 0}`) for colors in `conditionalFormats`
+This applies to:
+- `formatRules[].format.backgroundColor`
+- `formatRules[].format.textFormat.foregroundColor`
+- `conditionalFormats[].booleanRule.format.backgroundColor`
+- `conditionalFormats[].gradientRule.*.color`
+- `textFormatRuns[].format.foregroundColor`
+- `bandedRanges[].rowProperties.*Color`
 
-Using the wrong format causes an unhelpful `'dict' object has no attribute 'lstrip'` error.
+The pull command normalizes all colors to hex. The push command converts hex to the API's RGB format internally.
 
 ### Pristine State Not Updated After Push
 

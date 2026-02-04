@@ -126,18 +126,6 @@ Formulas as a **flat dictionary** mapping cell addresses to formulas.
 
 **Cross-sheet references:** `"A1": "='Other Sheet'!B5"`
 
-### Gotcha: Structure must be flat
-
-**Wrong:**
-```json
-{"formulas": {"C5": "=A5+B5"}}
-```
-
-**Correct:**
-```json
-{"C5": "=A5+B5"}
-```
-
 ---
 
 ## Basic Formatting
@@ -196,7 +184,6 @@ Remove the sheet's folder from disk, then push.
 | Changes not applied after push | Re-pull before making more changes |
 | "Sheet already exists" error | Re-pull — pristine state is stale |
 | Sheet IDs changed | Google reassigns IDs — re-pull to get actual IDs |
-| `'dict' object has no attribute 'lstrip'` | Wrong JSON structure — check formula.json is flat, format.json uses `formatRules` array |
 
 ---
 

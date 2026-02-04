@@ -148,6 +148,88 @@ def _rgb_to_hex(color: dict[str, Any]) -> str:
     return f"#{r:02X}{g:02X}{b:02X}"
 
 
+# =============================================================================
+# Public color conversion functions (used by transformer and request_generator)
+# =============================================================================
+
+
+def rgb_to_hex(color: dict[str, Any]) -> str:
+    """Convert RGB dict to hex string. Public API."""
+    return _rgb_to_hex(color)
+
+
+def hex_to_rgb(hex_color: str) -> dict[str, float]:
+    """Convert hex color string to RGB dict for Google Sheets API.
+
+    Args:
+        hex_color: Color string like "#FF0000" or "FF0000"
+
+    Returns:
+        Dict like {"red": 1.0, "green": 0.0, "blue": 0.0}
+    """
+    hex_color = hex_color.lstrip("#")
+    r = int(hex_color[0:2], 16) / 255.0
+    g = int(hex_color[2:4], 16) / 255.0
+    b = int(hex_color[4:6], 16) / 255.0
+    return {"red": r, "green": g, "blue": b}
+
+
+def normalize_colors_to_hex(obj: Any) -> Any:
+    """Recursively convert all RGB color dicts to hex strings.
+
+    Used during pull to normalize all colors in API responses to hex format.
+    Handles nested dicts and lists. Identifies color dicts by having
+    'red', 'green', or 'blue' keys with numeric values.
+    """
+    if isinstance(obj, dict):
+        # Check if this is a color dict (has red/green/blue with float values)
+        if _is_color_dict(obj):
+            return _rgb_to_hex(obj)
+        # Otherwise recurse into dict
+        return {k: normalize_colors_to_hex(v) for k, v in obj.items()}
+    elif isinstance(obj, list):
+        return [normalize_colors_to_hex(item) for item in obj]
+    else:
+        return obj
+
+
+def normalize_colors_to_rgb(obj: Any) -> Any:
+    """Recursively convert all hex color strings to RGB dicts.
+
+    Used during push to convert hex colors back to API format.
+    Handles nested dicts and lists. Identifies hex colors by
+    string format starting with '#'.
+    """
+    if isinstance(obj, dict):
+        return {k: normalize_colors_to_rgb(v) for k, v in obj.items()}
+    elif isinstance(obj, list):
+        return [normalize_colors_to_rgb(item) for item in obj]
+    elif isinstance(obj, str) and obj.startswith("#") and len(obj) == 7:
+        # Looks like a hex color
+        try:
+            return hex_to_rgb(obj)
+        except (ValueError, IndexError):
+            return obj  # Not a valid hex color, return as-is
+    else:
+        return obj
+
+
+def _is_color_dict(obj: dict[str, Any]) -> bool:
+    """Check if a dict looks like an RGB color dict."""
+    color_keys = {"red", "green", "blue"}
+    obj_keys = set(obj.keys())
+    # Must have at least one color key and only color keys
+    if not (obj_keys & color_keys):
+        return False
+    if obj_keys - color_keys:
+        return False
+    # Values must be numeric
+    for key in obj_keys:
+        if not isinstance(obj[key], (int, float)):
+            return False
+    return True
+
+
 def _is_empty_color(color: dict[str, Any] | None) -> bool:
     """Check if color is empty/black."""
     if not color:

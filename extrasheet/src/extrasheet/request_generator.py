@@ -31,6 +31,7 @@ from extrasheet.diff import (
     TextFormatRunChange,
     range_to_indices,
 )
+from extrasheet.format_compression import hex_to_rgb, normalize_colors_to_rgb
 from extrasheet.utils import a1_range_to_grid_range, a1_to_cell
 
 
@@ -670,7 +671,7 @@ def _convert_to_cell_format(format_dict: dict[str, Any] | None) -> dict[str, Any
 
     # Background color (convert hex to RGB)
     if "backgroundColor" in format_dict:
-        cell_format["backgroundColor"] = _hex_to_rgb(format_dict["backgroundColor"])
+        cell_format["backgroundColor"] = hex_to_rgb(format_dict["backgroundColor"])
 
     # Text format (convert colors from hex to RGB)
     if "textFormat" in format_dict:
@@ -711,15 +712,6 @@ def _get_format_fields(format_dict: dict[str, Any] | None) -> str:
     return ",".join(fields)
 
 
-def _hex_to_rgb(hex_color: str) -> dict[str, float]:
-    """Convert hex color string to RGB dict for Google Sheets API."""
-    hex_color = hex_color.lstrip("#")
-    r = int(hex_color[0:2], 16) / 255.0
-    g = int(hex_color[2:4], 16) / 255.0
-    b = int(hex_color[4:6], 16) / 255.0
-    return {"red": r, "green": g, "blue": b}
-
-
 def _convert_text_format(text_format: dict[str, Any]) -> dict[str, Any]:
     """Convert text format, ensuring colors are in RGB format."""
     result = dict(text_format)
@@ -728,7 +720,7 @@ def _convert_text_format(text_format: dict[str, Any]) -> dict[str, Any]:
     if "foregroundColor" in result:
         color = result["foregroundColor"]
         if isinstance(color, str) and color.startswith("#"):
-            result["foregroundColor"] = _hex_to_rgb(color)
+            result["foregroundColor"] = hex_to_rgb(color)
 
     return result
 
@@ -910,10 +902,12 @@ def _generate_text_format_run_requests(
         elif (
             change.change_type in ("added", "modified") and change.new_runs is not None
         ):
+            # Convert hex colors to RGB for API
+            normalized_runs = normalize_colors_to_rgb(change.new_runs)
             requests.append(
                 {
                     "updateCells": {
-                        "rows": [{"values": [{"textFormatRuns": change.new_runs}]}],
+                        "rows": [{"values": [{"textFormatRuns": normalized_runs}]}],
                         "fields": "textFormatRuns",
                         "start": {
                             "sheetId": sheet_id,
@@ -1056,7 +1050,7 @@ def _build_conditional_format_rule(
 ) -> dict[str, Any]:
     """Build a ConditionalFormatRule for the API.
 
-    Converts A1 notation ranges to GridRange format.
+    Converts A1 notation ranges to GridRange format and hex colors to RGB.
     """
     rule: dict[str, Any] = {}
 
@@ -1066,11 +1060,11 @@ def _build_conditional_format_rule(
             a1_range_to_grid_range(r, sheet_id) for r in rule_data["ranges"]
         ]
 
-    # Copy booleanRule or gradientRule
+    # Copy booleanRule or gradientRule, converting colors from hex to RGB
     if "booleanRule" in rule_data:
-        rule["booleanRule"] = rule_data["booleanRule"]
+        rule["booleanRule"] = normalize_colors_to_rgb(rule_data["booleanRule"])
     if "gradientRule" in rule_data:
-        rule["gradientRule"] = rule_data["gradientRule"]
+        rule["gradientRule"] = normalize_colors_to_rgb(rule_data["gradientRule"])
 
     return rule
 
@@ -1161,7 +1155,7 @@ def _generate_banded_range_requests(
 def _build_banded_range(range_data: dict[str, Any], sheet_id: int) -> dict[str, Any]:
     """Build a BandedRange for the API.
 
-    Ensures the range has the correct sheetId.
+    Ensures the range has the correct sheetId and converts hex colors to RGB.
     """
     result: dict[str, Any] = {}
 
@@ -1174,13 +1168,15 @@ def _build_banded_range(range_data: dict[str, Any], sheet_id: int) -> dict[str, 
         result["range"] = dict(range_data["range"])
         result["range"]["sheetId"] = sheet_id
 
-    # Copy row properties
+    # Copy row properties, converting hex colors to RGB
     if "rowProperties" in range_data:
-        result["rowProperties"] = range_data["rowProperties"]
+        result["rowProperties"] = normalize_colors_to_rgb(range_data["rowProperties"])
 
-    # Copy column properties
+    # Copy column properties, converting hex colors to RGB
     if "columnProperties" in range_data:
-        result["columnProperties"] = range_data["columnProperties"]
+        result["columnProperties"] = normalize_colors_to_rgb(
+            range_data["columnProperties"]
+        )
 
     return result
 

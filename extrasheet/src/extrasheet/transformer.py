@@ -9,7 +9,7 @@ from __future__ import annotations
 import json
 from typing import TYPE_CHECKING, Any
 
-from extrasheet.format_compression import compress_cell_formats
+from extrasheet.format_compression import compress_cell_formats, normalize_colors_to_hex
 from extrasheet.formula_compression import compress_formulas
 from extrasheet.utils import (
     cell_to_a1,
@@ -495,10 +495,10 @@ class SpreadsheetTransformer:
                     ):
                         cell_formats[cell_a1] = user_format
 
-                    # Text format runs (rich text)
+                    # Text format runs (rich text) - normalize colors to hex
                     runs = cell_data.get("textFormatRuns")
                     if runs:
-                        text_format_runs[cell_a1] = runs
+                        text_format_runs[cell_a1] = normalize_colors_to_hex(runs)
 
                     # Cell notes
                     note = cell_data.get("note")
@@ -511,7 +511,7 @@ class SpreadsheetTransformer:
             if compressed.get("formatRules"):
                 result["formatRules"] = compressed["formatRules"]
 
-        # Conditional formats
+        # Conditional formats - normalize colors to hex
         cond_formats = sheet.get("conditionalFormats", [])
         if cond_formats:
             # Add rule index for fly-blind editing
@@ -524,6 +524,8 @@ class SpreadsheetTransformer:
                     rule_copy["ranges"] = [
                         grid_range_to_a1(r) for r in rule_copy["ranges"]
                     ]
+                # Normalize colors to hex
+                rule_copy = normalize_colors_to_hex(rule_copy)
                 indexed_formats.append(rule_copy)
             result["conditionalFormats"] = indexed_formats
 
@@ -594,10 +596,12 @@ class SpreadsheetTransformer:
                 filters_data["filterViews"] = filter_views
             result["filters.json"] = filters_data
 
-        # Banded ranges
+        # Banded ranges - normalize colors to hex
         banded_ranges = sheet.get("bandedRanges", [])
         if banded_ranges:
-            result["banded-ranges.json"] = {"bandedRanges": banded_ranges}
+            result["banded-ranges.json"] = {
+                "bandedRanges": normalize_colors_to_hex(banded_ranges)
+            }
 
         # Data validation - extracted from cells
         data_validation = self._extract_data_validation(sheet)
@@ -644,10 +648,10 @@ class SpreadsheetTransformer:
         if slicers:
             result["slicers"] = slicers
 
-        # Banded ranges
+        # Banded ranges - normalize colors to hex
         banded_ranges = sheet.get("bandedRanges", [])
         if banded_ranges:
-            result["bandedRanges"] = banded_ranges
+            result["bandedRanges"] = normalize_colors_to_hex(banded_ranges)
 
         # Tables
         tables = sheet.get("tables", [])

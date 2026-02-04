@@ -1639,18 +1639,53 @@ def _diff_merges(
     return changes
 
 
+def _auto_assign_rule_indices(
+    current_rules: list[dict[str, Any]], pristine_rules: list[dict[str, Any]]
+) -> list[dict[str, Any]]:
+    """Auto-assign ruleIndex to rules that don't have one.
+
+    New rules without ruleIndex get assigned indices starting after the
+    maximum existing index from both pristine and current rules.
+    """
+    # Find max existing ruleIndex
+    all_indices = [
+        r.get("ruleIndex")
+        for r in pristine_rules + current_rules
+        if r.get("ruleIndex") is not None
+    ]
+    next_index = max(all_indices, default=-1) + 1
+
+    # Process current rules, assigning indices where missing
+    result = []
+    for rule in current_rules:
+        if rule.get("ruleIndex") is None:
+            # Auto-assign index
+            rule_copy = dict(rule)
+            rule_copy["ruleIndex"] = next_index
+            next_index += 1
+            result.append(rule_copy)
+        else:
+            result.append(rule)
+
+    return result
+
+
 def _diff_conditional_formats(
     pristine_format: dict[str, Any], current_format: dict[str, Any]
 ) -> list[ConditionalFormatChange]:
     """Diff conditional format rules between pristine and current.
 
     Conditional formats are stored in format.json under 'conditionalFormats'.
-    Each rule has a ruleIndex for identification.
+    Each rule has a ruleIndex for identification. If ruleIndex is missing,
+    it will be auto-assigned.
     """
     changes: list[ConditionalFormatChange] = []
 
     pristine_rules = pristine_format.get("conditionalFormats", [])
     current_rules = current_format.get("conditionalFormats", [])
+
+    # Auto-assign ruleIndex to current rules that don't have one
+    current_rules = _auto_assign_rule_indices(current_rules, pristine_rules)
 
     # Build dicts keyed by ruleIndex
     pristine_by_idx = {r.get("ruleIndex"): r for r in pristine_rules}
