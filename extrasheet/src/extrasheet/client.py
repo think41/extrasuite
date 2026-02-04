@@ -5,6 +5,7 @@ Provides the `pull`, `diff`, and `push` methods for the pull-edit-diff-push work
 
 from __future__ import annotations
 
+import json
 import zipfile
 from dataclasses import dataclass
 from pathlib import Path
@@ -234,6 +235,11 @@ class SheetsClient:
         Compares current files against pristine, generates batchUpdate requests,
         and sends them to the Google Sheets API.
 
+        For new sheets, uses two-phase push:
+        1. Execute addSheet requests first
+        2. Update local files with Google-assigned sheetIds
+        3. Execute remaining requests with correct sheetIds
+
         Args:
             folder: Path to the spreadsheet folder (containing spreadsheet.json)
             force: If True, proceed despite warnings (blocks still stop push)
@@ -284,17 +290,46 @@ class SheetsClient:
                 spreadsheet_id=diff_result.spreadsheet_id,
             )
 
-        # Send batchUpdate to API
-        response = await self._transport.batch_update(
-            diff_result.spreadsheet_id, requests
-        )
+        # Separate structural requests (addSheet/deleteSheet) from content requests
+        structural_requests, content_requests = _separate_structural_requests(requests)
+
+        total_applied = 0
+        final_response: dict[str, Any] | None = None
+
+        # Phase 1: Execute structural requests if any
+        if structural_requests:
+            response = await self._transport.batch_update(
+                diff_result.spreadsheet_id, structural_requests
+            )
+            total_applied += len(structural_requests)
+            final_response = response
+
+            # Check if we created new sheets - need to update local sheetIds
+            sheet_id_mapping = _extract_sheet_id_mapping(
+                structural_requests, response.get("replies", [])
+            )
+
+            if sheet_id_mapping:
+                # Update local spreadsheet.json with actual sheetIds
+                _update_local_sheet_ids(folder, sheet_id_mapping)
+
+                # Remap sheetIds in content requests
+                content_requests = _remap_sheet_ids(content_requests, sheet_id_mapping)
+
+        # Phase 2: Execute content requests if any
+        if content_requests:
+            response = await self._transport.batch_update(
+                diff_result.spreadsheet_id, content_requests
+            )
+            total_applied += len(content_requests)
+            final_response = response
 
         return PushResult(
             success=True,
-            changes_applied=len(requests),
-            message=f"Applied {len(requests)} changes",
+            changes_applied=total_applied,
+            message=f"Applied {total_applied} changes",
             spreadsheet_id=diff_result.spreadsheet_id,
-            response=response,
+            response=final_response,
         )
 
 
@@ -310,3 +345,117 @@ def _truncation_info_to_dict(
             "truncated": True,
         }
     return result
+
+
+def _separate_structural_requests(
+    requests: list[dict[str, Any]],
+) -> tuple[list[dict[str, Any]], list[dict[str, Any]]]:
+    """Separate structural requests (addSheet/deleteSheet) from content requests.
+
+    Structural requests must execute first to ensure sheetIds are available
+    for content requests.
+
+    Returns:
+        Tuple of (structural_requests, content_requests)
+    """
+    structural_requests: list[dict[str, Any]] = []
+    content_requests: list[dict[str, Any]] = []
+
+    for request in requests:
+        if "addSheet" in request or "deleteSheet" in request:
+            structural_requests.append(request)
+        else:
+            content_requests.append(request)
+
+    return structural_requests, content_requests
+
+
+def _extract_sheet_id_mapping(
+    structural_requests: list[dict[str, Any]],
+    replies: list[dict[str, Any]],
+) -> dict[int, int]:
+    """Extract mapping from local sheetIds to Google-assigned sheetIds.
+
+    Args:
+        structural_requests: The addSheet/deleteSheet requests that were sent
+        replies: The API replies (one per request)
+
+    Returns:
+        Dict mapping local sheetId -> actual sheetId (only for new sheets)
+    """
+    mapping: dict[int, int] = {}
+
+    for i, request in enumerate(structural_requests):
+        if "addSheet" in request and i < len(replies):
+            reply = replies[i]
+            if "addSheet" in reply:
+                # Get the local sheetId from the request
+                local_sheet_id = request["addSheet"]["properties"].get("sheetId")
+                # Get the actual sheetId from the reply
+                actual_sheet_id = reply["addSheet"].get("properties", {}).get("sheetId")
+
+                if (
+                    local_sheet_id is not None
+                    and actual_sheet_id is not None
+                    and local_sheet_id != actual_sheet_id
+                ):
+                    mapping[local_sheet_id] = actual_sheet_id
+
+    return mapping
+
+
+def _update_local_sheet_ids(folder: Path, sheet_id_mapping: dict[int, int]) -> None:
+    """Update local spreadsheet.json with Google-assigned sheetIds.
+
+    Args:
+        folder: Path to the spreadsheet folder
+        sheet_id_mapping: Dict mapping local sheetId -> actual sheetId
+    """
+    spreadsheet_json_path = folder / "spreadsheet.json"
+
+    if not spreadsheet_json_path.exists():
+        return
+
+    with spreadsheet_json_path.open() as f:
+        spreadsheet_data = json.load(f)
+
+    # Update sheetIds in the sheets list
+    for sheet in spreadsheet_data.get("sheets", []):
+        old_id = sheet.get("sheetId")
+        if old_id in sheet_id_mapping:
+            sheet["sheetId"] = sheet_id_mapping[old_id]
+
+    # Write back
+    with spreadsheet_json_path.open("w") as f:
+        json.dump(spreadsheet_data, f, indent=2)
+
+
+def _remap_sheet_ids(
+    requests: list[dict[str, Any]], sheet_id_mapping: dict[int, int]
+) -> list[dict[str, Any]]:
+    """Recursively remap sheetIds in requests using the mapping.
+
+    Args:
+        requests: List of batchUpdate requests
+        sheet_id_mapping: Dict mapping local sheetId -> actual sheetId
+
+    Returns:
+        New list of requests with sheetIds remapped
+    """
+    return [_remap_sheet_ids_in_obj(req, sheet_id_mapping) for req in requests]
+
+
+def _remap_sheet_ids_in_obj(obj: Any, mapping: dict[int, int]) -> Any:
+    """Recursively remap sheetId values in an object."""
+    if isinstance(obj, dict):
+        result = {}
+        for key, value in obj.items():
+            if key == "sheetId" and isinstance(value, int) and value in mapping:
+                result[key] = mapping[value]
+            else:
+                result[key] = _remap_sheet_ids_in_obj(value, mapping)
+        return result
+    elif isinstance(obj, list):
+        return [_remap_sheet_ids_in_obj(item, mapping) for item in obj]
+    else:
+        return obj
