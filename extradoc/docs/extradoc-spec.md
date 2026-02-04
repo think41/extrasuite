@@ -146,6 +146,7 @@ List items are sugar for `<p>` with bullet properties:
   </tr>
   <tr>
     <td colspan="2"><p>A2-B2 merged</p></td>
+    <td><p></p></td>
     <td class="a40x2"><p>C2 styled</p></td>
   </tr>
 </table>
@@ -155,6 +156,17 @@ Table elements:
 - `<table>` - Container with `rows` and `cols` attributes
 - `<tr>` - Row (syntactic sugar, removed during diff)
 - `<td>` - Cell with optional `colspan`, `rowspan`, `class`
+
+**IMPORTANT: Physical Cell Structure**
+
+Each row always has exactly `cols` physical cells, regardless of colspan. The `colspan` attribute is visual metadata only - it doesn't reduce the number of `<td>` elements.
+
+For example, if `cols="5"` and a cell has `colspan="3"`:
+- The first `<td colspan="3">` contains the merged content
+- The next 2 `<td>` elements are empty (cells covered by the merge)
+- All 5 `<td>` elements must be present
+
+This matches Google Docs' internal structure where merged cells still exist as physical entities with separate indexes.
 
 **Note:** `<tr>` is sugar for LLM readability. During diff, cells are flattened with computed row/col positions.
 
@@ -166,6 +178,9 @@ Table elements:
 
 <!-- Page break (inside paragraph) -->
 <p><pagebreak/></p>
+
+<!-- Column break (inside paragraph) -->
+<p>Text before<columnbreak/>Text after</p>
 
 <!-- Image -->
 <p><image src="URL" width="100pt" height="50pt" alt="Description"/></p>
@@ -179,6 +194,8 @@ Table elements:
 <!-- Auto-generated text (page numbers, etc.) -->
 <p>Page <autotext type="PAGE_NUMBER"/></p>
 ```
+
+**Note:** Special elements like `<columnbreak/>`, `<pagebreak/>`, `<hr/>` each take exactly 1 index in Google Docs.
 
 ---
 

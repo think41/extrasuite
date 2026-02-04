@@ -50,20 +50,19 @@ async def test_pull_basic_document(
     document_dir = tmp_path / R41_DOC_ID
     assert document_dir.exists()
 
-    # Check document.html was created
-    document_html = document_dir / "document.html"
-    assert document_html.exists()
+    # Check document.xml was created
+    document_xml = document_dir / "document.xml"
+    assert document_xml.exists()
 
-    # Verify HTML has expected structure
-    html_content = document_html.read_text()
-    assert "<!DOCTYPE html>" in html_content
-    assert "<html>" in html_content
-    assert "doc-metadata" in html_content
-    assert R41_DOC_ID in html_content  # Document ID in metadata
+    # Verify XML has expected structure
+    xml_content = document_xml.read_text()
+    assert '<?xml version="1.0"' in xml_content
+    assert "<doc " in xml_content
+    assert R41_DOC_ID in xml_content  # Document ID in doc element
 
-    # Check styles.json was created
-    styles_json = document_dir / "styles.json"
-    assert styles_json.exists()
+    # Check styles.xml was created
+    styles_xml = document_dir / "styles.xml"
+    assert styles_xml.exists()
 
     # Check .raw folder was created
     raw_dir = document_dir / ".raw"
@@ -78,10 +77,10 @@ async def test_pull_basic_document(
     # Verify files list includes all created files
     assert (
         len(files) == 4
-    )  # document.html, styles.json, raw/document.json, pristine/document.zip
+    )  # document.xml, styles.xml, raw/document.json, pristine/document.zip
     file_names = {f.name for f in files}
-    assert "document.html" in file_names
-    assert "styles.json" in file_names
+    assert "document.xml" in file_names
+    assert "styles.xml" in file_names
     assert "document.json" in file_names  # raw file
     assert "document.zip" in file_names  # pristine file
 
@@ -106,9 +105,9 @@ async def test_pull_without_raw(
     raw_dir = document_dir / ".raw"
     assert not raw_dir.exists()
 
-    # But document.html and styles.json should still be pulled
-    assert (document_dir / "document.html").exists()
-    assert (document_dir / "styles.json").exists()
+    # But document.xml and styles.xml should still be pulled
+    assert (document_dir / "document.xml").exists()
+    assert (document_dir / "styles.xml").exists()
 
     # Pristine should still exist
     assert (document_dir / ".pristine" / "document.zip").exists()
@@ -118,12 +117,12 @@ async def test_pull_without_raw(
 
 
 @pytest.mark.asyncio
-async def test_pull_preserves_html_content(
+async def test_pull_preserves_xml_content(
     client: DocsClient,
     local_transport: LocalFileTransport,
     tmp_path: Path,
 ) -> None:
-    """Test that pulled HTML contains expected content elements."""
+    """Test that pulled XML contains expected content elements."""
     await client.pull(
         R41_DOC_ID,
         tmp_path,
@@ -132,16 +131,14 @@ async def test_pull_preserves_html_content(
     await local_transport.close()
 
     document_dir = tmp_path / R41_DOC_ID
-    html_content = (document_dir / "document.html").read_text()
+    xml_content = (document_dir / "document.xml").read_text()
 
-    # Check for basic HTML structure
-    assert "<head>" in html_content
-    assert "<body>" in html_content
-    assert "<main>" in html_content
+    # Check for basic XML structure
+    assert "<meta>" in xml_content
+    assert "<body" in xml_content
 
-    # Check for common elements
-    # hr is common in documents
-    assert "<hr/>" in html_content or "<p>" in html_content
+    # Check for common elements (at least paragraphs should exist)
+    assert "<p>" in xml_content or "<h1>" in xml_content or "<title>" in xml_content
 
 
 @pytest.mark.asyncio
@@ -194,3 +191,36 @@ async def test_push_no_changes(
     assert result.document_id == R41_DOC_ID
     assert result.changes_applied == 0
     assert "No changes" in result.message
+
+
+@pytest.mark.asyncio
+async def test_diff_detects_text_change(
+    client: DocsClient,
+    local_transport: LocalFileTransport,
+    tmp_path: Path,
+) -> None:
+    """Test diff detects changes when document.xml is modified."""
+    await client.pull(
+        R41_DOC_ID,
+        tmp_path,
+        save_raw=True,
+    )
+    await local_transport.close()
+
+    document_dir = tmp_path / R41_DOC_ID
+    document_xml = document_dir / "document.xml"
+
+    # Modify the document
+    content = document_xml.read_text()
+    modified = content.replace(
+        "</body>", "<p>New paragraph added by test.</p>\n</body>"
+    )
+    document_xml.write_text(modified)
+
+    # Run diff
+    diff_result, requests, validation = client.diff(document_dir)
+
+    # Should detect changes
+    assert diff_result.has_changes
+    assert len(requests) > 0
+    assert validation.can_push

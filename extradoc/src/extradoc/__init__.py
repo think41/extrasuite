@@ -1,7 +1,7 @@
 """extradoc - File-based Google Docs representation for LLM agents.
 
-This library transforms Google Docs into a file-based representation
-optimized for LLM agents, enabling efficient "fly-blind" editing.
+This library transforms Google Docs into a file-based XML representation
+optimized for LLM agents, enabling efficient editing with a pull/diff/push workflow.
 """
 
 __version__ = "0.1.0"
@@ -14,20 +14,15 @@ from extradoc.client import (
     ValidationError,
     ValidationResult,
 )
-from extradoc.html_converter import (
-    ConversionContext,
-    convert_document_to_html,
+from extradoc.desugar import (
+    DesugaredDocument,
+    Paragraph,
+    Section,
+    Table,
+    TextRun,
+    desugar_document,
 )
-from extradoc.html_parser import (
-    HTMLDocument,
-    HTMLParagraph,
-    HTMLTable,
-    TextSpan,
-    generate_delete_content_request,
-    generate_insert_text_request,
-    generate_update_text_style_request,
-    parse_html,
-)
+from extradoc.diff_engine import diff_documents
 from extradoc.indexer import (
     IndexCalculator,
     IndexMismatch,
@@ -36,6 +31,12 @@ from extradoc.indexer import (
     utf16_len,
     validate_document,
 )
+from extradoc.style_factorizer import (
+    FactorizedStyles,
+    StyleDefinition,
+    factorize_styles,
+)
+from extradoc.style_hash import style_id
 from extradoc.transport import (
     APIError,
     AuthenticationError,
@@ -45,36 +46,39 @@ from extradoc.transport import (
     Transport,
     TransportError,
 )
+from extradoc.xml_converter import convert_document_to_xml
 
 __all__ = [
     "APIError",
     "AuthenticationError",
-    "ConversionContext",
+    "DesugaredDocument",
     "DiffError",
     "DiffResult",
     "DocsClient",
+    "FactorizedStyles",
     "GoogleDocsTransport",
-    "HTMLDocument",
-    "HTMLParagraph",
-    "HTMLTable",
     "IndexCalculator",
     "IndexMismatch",
     "IndexValidationResult",
     "LocalFileTransport",
     "NotFoundError",
+    "Paragraph",
     "PushResult",
-    "TextSpan",
+    "Section",
+    "StyleDefinition",
+    "Table",
+    "TextRun",
     "Transport",
     "TransportError",
     "ValidationError",
     "ValidationResult",
     "__version__",
-    "convert_document_to_html",
-    "generate_delete_content_request",
-    "generate_insert_text_request",
-    "generate_update_text_style_request",
-    "parse_html",
+    "convert_document_to_xml",
+    "desugar_document",
+    "diff_documents",
+    "factorize_styles",
     "strip_indexes",
+    "style_id",
     "utf16_len",
     "validate_document",
 ]

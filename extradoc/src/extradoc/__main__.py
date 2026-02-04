@@ -172,7 +172,7 @@ def main() -> int:
     """Main entry point."""
     parser = argparse.ArgumentParser(
         prog="extradoc",
-        description="Transform Google Docs to LLM-friendly file format",
+        description="Transform Google Docs to LLM-friendly XML format",
     )
     subparsers = parser.add_subparsers(dest="command", required=True)
 
@@ -205,7 +205,7 @@ def main() -> int:
     )
     diff_parser.add_argument(
         "folder",
-        help="Path to document folder (containing document.html)",
+        help="Path to document folder (containing document.xml)",
     )
     diff_parser.set_defaults(func=cmd_diff)
 
@@ -216,7 +216,7 @@ def main() -> int:
     )
     push_parser.add_argument(
         "folder",
-        help="Path to document folder (containing document.html)",
+        help="Path to document folder (containing document.xml)",
     )
     push_parser.add_argument(
         "-f",

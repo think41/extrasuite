@@ -12,15 +12,15 @@ from dataclasses import dataclass, field
 from pathlib import Path
 from typing import TYPE_CHECKING, Any
 
-from extradoc.html_converter import convert_document_to_html
-from extradoc.html_parser import diff_documents, parse_html
+from extradoc.diff_engine import diff_documents as diff_xml_documents
+from extradoc.xml_converter import convert_document_to_xml
 
 if TYPE_CHECKING:
     from extradoc.transport import Transport
 
 # File and directory names
-DOCUMENT_HTML = "document.html"
-STYLES_FILE = "styles.json"
+DOCUMENT_XML = "document.xml"
+STYLES_XML = "styles.xml"
 RAW_DIR = ".raw"
 PRISTINE_DIR = ".pristine"
 PRISTINE_ZIP = "document.zip"
@@ -40,7 +40,6 @@ class DiffResult:
 
     document_id: str
     has_changes: bool
-    # Additional fields will be added when diff is implemented
 
 
 @dataclass
@@ -80,7 +79,7 @@ class DocsClient:
         # Pull a document
         files = await client.pull("document_id", Path("./output"))
 
-        # Make local edits...
+        # Make local edits to document.xml...
 
         # Preview changes
         diff_result, requests, validation = client.diff(Path("./output/document_id"))
@@ -107,11 +106,11 @@ class DocsClient:
         """Pull a Google Doc to local files.
 
         Downloads the document via the API, transforms it to the local
-        file format, and writes it to disk.
+        XML format, and writes it to disk.
 
         Creates a folder with:
-        - document.html: Main document content (all tabs, with embedded metadata)
-        - styles.json: Extracted styles (fonts, colors, spacing)
+        - document.xml: Main document content in ExtraDoc XML format
+        - styles.xml: Factorized style definitions
         - .raw/document.json: Raw API response (optional)
         - .pristine/document.zip: Original state for diff comparison
 
@@ -137,20 +136,17 @@ class DocsClient:
 
         written_files: list[Path] = []
 
-        # Convert to HTML format
-        html_content, styles = convert_document_to_html(document_data.raw)
+        # Convert to XML format
+        document_xml, styles_xml = convert_document_to_xml(document_data.raw)
 
-        # Write document.html
-        html_path = document_dir / DOCUMENT_HTML
-        html_path.write_text(html_content, encoding="utf-8")
-        written_files.append(html_path)
+        # Write document.xml
+        xml_path = document_dir / DOCUMENT_XML
+        xml_path.write_text(document_xml, encoding="utf-8")
+        written_files.append(xml_path)
 
-        # Write styles.json
-        styles_path = document_dir / STYLES_FILE
-        styles_path.write_text(
-            json.dumps(styles, indent=2, ensure_ascii=False),
-            encoding="utf-8",
-        )
+        # Write styles.xml
+        styles_path = document_dir / STYLES_XML
+        styles_path.write_text(styles_xml, encoding="utf-8")
         written_files.append(styles_path)
 
         # Save raw API response
@@ -211,7 +207,7 @@ class DocsClient:
         and generates batchUpdate requests.
 
         Args:
-            folder: Path to document folder (containing document.html)
+            folder: Path to document folder (containing document.xml)
 
         Returns:
             Tuple of (DiffResult, requests, ValidationResult) where:
@@ -224,24 +220,24 @@ class DocsClient:
         """
         folder = Path(folder)
 
-        # Read current HTML
-        current_html_path = folder / DOCUMENT_HTML
-        if not current_html_path.exists():
-            raise DiffError(f"document.html not found in {folder}")
-        current_html = current_html_path.read_text(encoding="utf-8")
+        # Read current XML files
+        current_xml_path = folder / DOCUMENT_XML
+        if not current_xml_path.exists():
+            raise DiffError(f"document.xml not found in {folder}")
+        current_xml = current_xml_path.read_text(encoding="utf-8")
 
-        # Read pristine HTML and raw JSON from zip
-        pristine_html, pristine_json = self._read_pristine(folder)
+        current_styles_path = folder / STYLES_XML
+        current_styles = None
+        if current_styles_path.exists():
+            current_styles = current_styles_path.read_text(encoding="utf-8")
 
-        # Get document ID from pristine JSON
-        document_id = pristine_json.get("documentId", folder.name)
+        # Read pristine XML from zip
+        pristine_xml, pristine_styles, document_id = self._read_pristine(folder)
 
-        # Parse both HTML documents
-        pristine_doc = parse_html(pristine_html)
-        current_doc = parse_html(current_html)
-
-        # Generate batchUpdate requests
-        requests = diff_documents(pristine_doc, current_doc, pristine_json)
+        # Generate batchUpdate requests using the diff engine
+        requests = diff_xml_documents(
+            pristine_xml, current_xml, pristine_styles, current_styles
+        )
 
         # Check if there are changes
         has_changes = len(requests) > 0
@@ -257,14 +253,14 @@ class DocsClient:
 
         return diff_result, requests, validation
 
-    def _read_pristine(self, folder: Path) -> tuple[str, dict[str, Any]]:
-        """Read pristine HTML and raw JSON from zip.
+    def _read_pristine(self, folder: Path) -> tuple[str, str | None, str]:
+        """Read pristine XML files from zip.
 
         Args:
             folder: Path to document folder
 
         Returns:
-            Tuple of (pristine_html, pristine_json)
+            Tuple of (pristine_xml, pristine_styles, document_id)
 
         Raises:
             DiffError: If pristine zip is missing or invalid
@@ -273,22 +269,29 @@ class DocsClient:
         if not zip_path.exists():
             raise DiffError(f"Pristine zip not found: {zip_path}")
 
-        pristine_html = ""
-        pristine_json: dict[str, Any] = {}
+        pristine_xml = ""
+        pristine_styles: str | None = None
 
         with zipfile.ZipFile(zip_path, "r") as zf:
-            # Read document.html
-            if DOCUMENT_HTML in zf.namelist():
-                pristine_html = zf.read(DOCUMENT_HTML).decode("utf-8")
+            # Read document.xml
+            if DOCUMENT_XML in zf.namelist():
+                pristine_xml = zf.read(DOCUMENT_XML).decode("utf-8")
             else:
-                raise DiffError(f"{DOCUMENT_HTML} not found in pristine zip")
+                raise DiffError(f"{DOCUMENT_XML} not found in pristine zip")
 
-        # Read raw JSON from .raw/ if it exists
-        raw_path = folder / RAW_DIR / "document.json"
-        if raw_path.exists():
-            pristine_json = json.loads(raw_path.read_text(encoding="utf-8"))
+            # Read styles.xml if present
+            if STYLES_XML in zf.namelist():
+                pristine_styles = zf.read(STYLES_XML).decode("utf-8")
 
-        return pristine_html, pristine_json
+        # Extract document ID from XML
+        document_id = folder.name
+        import re
+
+        match = re.search(r'<doc\s+id="([^"]+)"', pristine_xml)
+        if match:
+            document_id = match.group(1)
+
+        return pristine_xml, pristine_styles, document_id
 
     async def push(
         self,
@@ -301,7 +304,7 @@ class DocsClient:
         Runs diff internally, then sends batchUpdate requests to the API.
 
         Args:
-            folder: Path to document folder (containing document.html)
+            folder: Path to document folder (containing document.xml)
             force: If True, push despite warnings (blocks still prevent push)
 
         Returns:
