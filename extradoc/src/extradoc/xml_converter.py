@@ -266,6 +266,16 @@ def _convert_paragraph(para: dict[str, Any], ctx: ConversionContext) -> str:
     style = para.get("paragraphStyle", {})
     named_style = style.get("namedStyleType", "NORMAL_TEXT")
 
+    # If the paragraph is visually just a horizontal rule (no text/elements, only a
+    # bottom border), emit <hr/> directly.
+    border = style.get("borderBottom", {})
+    if (
+        not para.get("elements")
+        and border
+        and (border.get("width", {}).get("magnitude", 0) or border.get("color"))
+    ):
+        return "<p><hr/></p>"
+
     # Convert paragraph elements to inline content
     content = _convert_paragraph_elements(para.get("elements", []), ctx)
 

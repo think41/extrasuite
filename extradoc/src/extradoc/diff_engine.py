@@ -137,46 +137,107 @@ def diff_documents(
     pristine_styles: str | None = None,
     current_styles: str | None = None,
 ) -> list[dict[str, Any]]:
-    """Rebuild body content from current_xml.
+    """Rebuild each section (body, headers, footers, footnotes) from current_xml.
 
-    Strategy: delete the pristine body and reinsert the current body in order.
-    This avoids the unstable structural diff that was interleaving content.
+    Strategy: for every section, delete existing content for that segment and
+    reinsert the current content in order. This keeps indexes stable and avoids
+    interleaving structural diffs.
     """
     pristine = desugar_document(pristine_xml, pristine_styles)
     current = desugar_document(current_xml, current_styles)
 
-    pristine_body = next(
-        (s for s in pristine.sections if s.section_type == "body"), None
-    )
-    current_body = next((s for s in current.sections if s.section_type == "body"), None)
+    # Index sections by (type, id) for quick lookup. Body uses empty id.
+    def _key(section: Section) -> tuple[str, str]:
+        return (section.section_type, section.section_id or "")
 
-    if not current_body:
-        return []
+    pristine_map = {_key(s): s for s in pristine.sections}
 
     requests: list[dict[str, Any]] = []
 
-    if pristine_body and pristine_body.content:
-        flattened = _flatten_elements(pristine_body.content, "body")
-        end_index = max(1, flattened[-1][2] - 1)  # exclude terminal newline
-        if end_index > 1:
-            requests.append(
-                {
-                    "deleteContentRange": {
-                        "range": {
-                            "startIndex": 1,
-                            "endIndex": end_index,
-                        }
-                    }
-                }
-            )
-
-    cursor = 1
-    for elem in current_body.content:
-        elem_requests, added = _emit_element(elem, cursor, current_styles)
-        requests.extend(elem_requests)
-        cursor += added
+    for section in current.sections:
+        key = _key(section)
+        pristine_section = pristine_map.get(key)
+        section_requests = _rebuild_section(pristine_section, section, current_styles)
+        requests.extend(section_requests)
 
     return requests
+
+
+def _trim_trailing_empty_paragraphs(
+    elements: list[Paragraph | Table | SpecialElement],
+) -> list[Paragraph | Table | SpecialElement]:
+    """Remove trailing blank paragraphs (whitespace-only, no specials)."""
+    trimmed = list(elements)
+    while trimmed:
+        last = trimmed[-1]
+        if not isinstance(last, Paragraph):
+            break
+        has_special = any(run.styles.get("_special") for run in last.runs)
+        if has_special:
+            break
+        if last.text_content().strip() == "":
+            trimmed.pop()
+            continue
+        break
+    return trimmed
+
+
+def _rebuild_section(
+    pristine: Section | None, current: Section, _styles_xml: str | None
+) -> list[dict[str, Any]]:
+    """Delete & reinsert content for a single section."""
+    section_requests: list[dict[str, Any]] = []
+
+    segment_id = None if current.section_type == "body" else current.section_id
+    start_idx = 1 if current.section_type == "body" else 0
+
+    # If the section exists in pristine, delete its content first (element by element),
+    # skipping the terminal paragraph/newline and read-only specials (hr).
+    if current.section_type != "footnote" and pristine and pristine.content:
+        flattened = _flatten_elements(pristine.content, current.section_type)
+        last_start = flattened[-1][1]
+        # Leave the final paragraph intact and do not delete if only one element remains.
+        deletable_flat = flattened[:-1] if len(flattened) > 1 else []
+        deletions: list[tuple[int, int]] = []
+        for elem, s, e in deletable_flat:
+            if isinstance(elem, SpecialElement) and elem.element_type == "hr":
+                continue  # read-only; leave in place
+            # If this is the last element before the terminal paragraph, cap end one
+            # code unit earlier to avoid the trailing newline constraint.
+            capped_end = e
+            if e == last_start:
+                capped_end = max(s, e - 1)
+            deletions.append((s, capped_end))
+
+        for s, e in sorted(deletions, key=lambda x: x[0], reverse=True):
+            if e <= s:
+                continue
+            delete_range: dict[str, Any] = {"startIndex": s, "endIndex": e}
+            if segment_id:
+                delete_range["segmentId"] = segment_id
+            section_requests.append({"deleteContentRange": {"range": delete_range}})
+    elif not pristine:
+        # Section is new: for headers/footers, create the segment so we can write into it.
+        if current.section_type == "header":
+            section_requests.append({"createHeader": {"type": "DEFAULT"}})
+        elif current.section_type == "footer":
+            section_requests.append({"createFooter": {"type": "DEFAULT"}})
+        # Footnotes are created via createFootnote requests from the body; no
+        # precreation needed here.
+
+    content_to_emit = _trim_trailing_empty_paragraphs(current.content)
+
+    cursor = start_idx
+    for elem in content_to_emit:
+        if isinstance(elem, SpecialElement) and elem.element_type == "hr":
+            # Leave existing horizontal rules untouched (read-only)
+            cursor += elem.utf16_length()
+            continue
+        elem_requests, added = _emit_element(elem, cursor, segment_id)
+        section_requests.extend(elem_requests)
+        cursor += added
+
+    return section_requests
 
 
 def _find_matching_section(target: Section, sections: list[Section]) -> Section | None:
@@ -481,19 +542,11 @@ def _calculate_table_end(table: Table, start_idx: int) -> int:
             cell_obj = next((c for c in row_cells if c.col == col), None)
             current += 1  # cell marker
             if cell_obj and cell_obj.content:
-                last_para_empty = (
-                    isinstance(cell_obj.content[-1], Paragraph)
-                    and cell_obj.content[-1].text_content() == ""
-                )
                 for elem in cell_obj.content:
                     if isinstance(elem, Paragraph):
                         current += elem.utf16_length()
                     elif isinstance(elem, SpecialElement):
                         current += 1
-                # Docs keeps an empty paragraph at the end of the cell; skip if the
-                # content already ends with an empty paragraph.
-                if not last_para_empty:
-                    current += 1
             else:
                 current += 1  # default empty paragraph
 
@@ -571,16 +624,8 @@ def _table_length(table: Table) -> int:
             length += 1  # cell marker
             cell = cell_map.get((row, col))
             if cell and cell.content:
-                last_para_empty = (
-                    isinstance(cell.content[-1], Paragraph)
-                    and cell.content[-1].text_content() == ""
-                )
                 for item in cell.content:
                     length += _element_length(item)
-                # Docs keeps an empty paragraph at the end of each cell; if one is
-                # already present in content, don't double count it.
-                if not last_para_empty:
-                    length += 1
             else:
                 # Default empty paragraph
                 length += 1
@@ -610,24 +655,30 @@ def _table_cell_starts(
 
 
 def _emit_element(
-    elem: Paragraph | Table | SpecialElement, insert_idx: int, _styles_xml: str | None
+    elem: Paragraph | Table | SpecialElement,
+    insert_idx: int,
+    segment_id: str | None,
 ) -> tuple[list[dict[str, Any]], int]:
-    """Emit operations for an element at a given index and return (ops, length)."""
+    """Emit operations for an element at a given index and return (ops, length).
+
+    segment_id is passed through so header/footer/footnote content lands in the
+    correct segment.
+    """
     ops: list[DiffOperation] = []
     added = 0
 
     if isinstance(elem, Paragraph):
-        para_ops, para_len = _generate_paragraph_insert(elem, insert_idx, None)
+        para_ops, para_len = _generate_paragraph_insert(elem, insert_idx, segment_id)
         ops.extend(para_ops)
         added = para_len
 
     elif isinstance(elem, SpecialElement):
-        spec_ops, spec_len = _generate_special_insert(elem, insert_idx, None)
+        spec_ops, spec_len = _generate_special_insert(elem, insert_idx, segment_id)
         ops.extend(spec_ops)
         added = spec_len
 
     elif isinstance(elem, Table):
-        table_ops, table_len = _generate_table_insert(elem, insert_idx, None)
+        table_ops, table_len = _generate_table_insert(elem, insert_idx, segment_id)
         ops.extend(table_ops)
         added = table_len
 
@@ -790,16 +841,44 @@ def _generate_special_insert(
         )
         added = 2
     elif etype == "hr":
-        content = "—\n"
+        # Insert an empty paragraph and apply a bottom border to render as a rule.
         ops.append(
             DiffOperation(
                 op_type="insert",
                 index=insert_idx,
-                content=content,
+                content="\n",
                 segment_id=segment_id,
             )
         )
-        added = utf16_len(content)
+        ops.append(
+            DiffOperation(
+                op_type="update_paragraph_style",
+                index=insert_idx,
+                end_index=insert_idx + 1,
+                paragraph_style={
+                    "borderBottom": {
+                        "width": {"magnitude": 1, "unit": "PT"},
+                        "dashStyle": "SOLID",
+                        "color": {
+                            "color": {"rgbColor": {"red": 0, "green": 0, "blue": 0}}
+                        },
+                    }
+                },
+                fields="borderBottom",
+                segment_id=segment_id,
+            )
+        )
+        added = 1
+    elif etype == "footnoteref":
+        placeholder = elem.attributes.get("id", "")
+        ops.append(
+            DiffOperation(
+                op_type="create_footnote",
+                index=insert_idx,
+                content=placeholder,
+            )
+        )
+        added = 1
     elif etype == "person":
         email = elem.attributes.get("email", "")
         name = elem.attributes.get("name", email)
@@ -1152,6 +1231,17 @@ def _operation_to_request(op: DiffOperation) -> dict[str, Any]:
             range_obj["tabId"] = op.tab_id
 
         return {"deleteParagraphBullets": {"range": range_obj}}
+    elif op.op_type == "create_footnote":
+        req: dict[str, Any] = {
+            "createFootnote": {
+                "location": {
+                    "index": op.index,
+                }
+            }
+        }
+        if op.content:
+            req["_placeholderFootnoteId"] = op.content
+        return req
 
     # Fallback - should not happen
     return {}

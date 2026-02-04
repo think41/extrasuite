@@ -7,11 +7,13 @@ implementing the core workflow for Google Docs manipulation.
 from __future__ import annotations
 
 import json
+import re
 import zipfile
 from dataclasses import dataclass, field
 from pathlib import Path
 from typing import TYPE_CHECKING, Any
 
+from extradoc.desugar import SpecialElement, desugar_document
 from extradoc.diff_engine import diff_documents as diff_xml_documents
 from extradoc.xml_converter import convert_document_to_xml
 
@@ -239,6 +241,21 @@ class DocsClient:
             pristine_xml, current_xml, pristine_styles, current_styles
         )
 
+        # Basic validation: block if horizontal rules changed (unsupported insertion).
+        pristine_doc = desugar_document(pristine_xml, pristine_styles)
+        current_doc = desugar_document(current_xml, current_styles)
+
+        def _count_hr(doc: Any) -> int:
+            total = 0
+            for section in doc.sections:
+                for elem in section.content:
+                    if isinstance(elem, SpecialElement) and elem.element_type == "hr":
+                        total += 1
+            return total
+
+        hr_pristine = _count_hr(pristine_doc)
+        hr_current = _count_hr(current_doc)
+
         # Check if there are changes
         has_changes = len(requests) > 0
 
@@ -248,8 +265,13 @@ class DocsClient:
             has_changes=has_changes,
         )
 
-        # Validation (for now, always valid - can add checks later)
+        # Validation: block if HR count changed (read-only)
         validation = ValidationResult(can_push=True)
+        if hr_pristine != hr_current:
+            validation.can_push = False
+            validation.blocks.append(
+                "Horizontal rules are read-only; add/remove HR changes are not supported."
+            )
 
         return diff_result, requests, validation
 
@@ -285,8 +307,6 @@ class DocsClient:
 
         # Extract document ID from XML
         document_id = folder.name
-        import re
-
         match = re.search(r'<doc\s+id="([^"]+)"', pristine_xml)
         if match:
             document_id = match.group(1)
@@ -338,8 +358,167 @@ class DocsClient:
                 message="No changes to apply",
             )
 
-        # Send batchUpdate via transport
-        await self._transport.batch_update(diff_result.document_id, requests)
+        # Split out header/footer creation so we can capture generated IDs up front.
+        create_requests: list[dict[str, Any]] = []
+        other_requests: list[dict[str, Any]] = []
+        for req in requests:
+            if "createHeader" in req or "createFooter" in req:
+                create_requests.append(req)
+            else:
+                other_requests.append(req)
+
+        # Load current/pristine docs to identify new sections and footnotes.
+        current_xml = (folder / DOCUMENT_XML).read_text(encoding="utf-8")
+        current_styles = (
+            (folder / STYLES_XML).read_text(encoding="utf-8")
+            if (folder / STYLES_XML).exists()
+            else None
+        )
+        pristine_xml, pristine_styles, _ = self._read_pristine(folder)
+
+        current_doc = desugar_document(current_xml, current_styles)
+        pristine_doc = desugar_document(pristine_xml, pristine_styles)
+
+        def _new_section_ids(section_type: str) -> list[str]:
+            pristine_ids = {
+                s.section_id
+                for s in pristine_doc.sections
+                if s.section_type == section_type
+            }
+            return [
+                s.section_id
+                for s in current_doc.sections
+                if s.section_type == section_type and s.section_id not in pristine_ids
+            ]
+
+        new_headers = _new_section_ids("header")
+        new_footers = _new_section_ids("footer")
+        new_footnotes = _new_section_ids("footnote")
+        footnote_ids = {
+            s.section_id for s in current_doc.sections if s.section_type == "footnote"
+        }
+
+        header_id_map: dict[str, str] = {}
+        footer_id_map: dict[str, str] = {}
+        footnote_id_map: dict[str, str] = {}
+
+        if create_requests:
+            create_response = await self._transport.batch_update(
+                diff_result.document_id, create_requests
+            )
+            replies = create_response.get("replies", [])
+
+            h_idx = f_idx = 0
+            for rep in replies:
+                if "createHeader" in rep and h_idx < len(new_headers):
+                    real_id = rep["createHeader"].get("headerId")
+                    if real_id:
+                        header_id_map[new_headers[h_idx]] = real_id
+                    h_idx += 1
+                if "createFooter" in rep and f_idx < len(new_footers):
+                    real_id = rep["createFooter"].get("footerId")
+                    if real_id:
+                        footer_id_map[new_footers[f_idx]] = real_id
+                    f_idx += 1
+
+        def _rewrite(obj: Any, *, footnote_map: dict[str, str] | None = None) -> Any:
+            if isinstance(obj, dict):
+                rewritten: dict[str, Any] = {}
+                for k, v in obj.items():
+                    if k == "segmentId":
+                        if v in header_id_map:
+                            rewritten[k] = header_id_map[v]
+                            continue
+                        if v in footer_id_map:
+                            rewritten[k] = footer_id_map[v]
+                            continue
+                        if footnote_map and v in footnote_map:
+                            rewritten[k] = footnote_map[v]
+                            continue
+                    rewritten[k] = _rewrite(v, footnote_map=footnote_map)
+                return rewritten
+            if isinstance(obj, list):
+                return [_rewrite(x, footnote_map=footnote_map) for x in obj]
+            return obj
+
+        if header_id_map or footer_id_map:
+            other_requests = [_rewrite(r) for r in other_requests]
+
+        # Separate footnote-segment operations so we can rewrite them after we know real IDs.
+        def _has_segment_id(obj: Any, targets: set[str]) -> bool:
+            if isinstance(obj, dict):
+                if obj.get("segmentId") in targets:
+                    return True
+                return any(_has_segment_id(v, targets) for v in obj.values())
+            if isinstance(obj, list):
+                return any(_has_segment_id(v, targets) for v in obj)
+            return False
+
+        main_requests: list[dict[str, Any]] = []
+        footnote_requests: list[dict[str, Any]] = []
+        for req in other_requests:
+            if _has_segment_id(req, footnote_ids):
+                footnote_requests.append(req)
+            else:
+                main_requests.append(req)
+
+        # Strip placeholder markers from createFootnote and record ordering.
+        footnote_placeholders: list[str] = []
+        cleaned_main: list[dict[str, Any]] = []
+        for req in main_requests:
+            if "createFootnote" in req:
+                footnote_placeholders.append(req.pop("_placeholderFootnoteId", ""))
+            cleaned_main.append(req)
+        main_requests = cleaned_main
+
+        # Send body + header/footer content + createFootnote requests first.
+        main_response: dict[str, Any] = {}
+        if main_requests:
+            main_response = await self._transport.batch_update(
+                diff_result.document_id, main_requests
+            )
+
+        # Map placeholder footnote IDs to the actual IDs returned by the API.
+        replies = main_response.get("replies", [])
+        fn_idx = 0
+        for rep in replies:
+            if "createFootnote" in rep:
+                real_id = rep["createFootnote"].get("footnoteId")
+                placeholder = ""
+                if fn_idx < len(footnote_placeholders):
+                    placeholder = footnote_placeholders[fn_idx]
+                if not placeholder and fn_idx < len(new_footnotes):
+                    placeholder = new_footnotes[fn_idx]
+                if placeholder and real_id:
+                    footnote_id_map[placeholder] = real_id
+                fn_idx += 1
+
+        # Rewrite deferred footnote-segment requests now that we have real IDs.
+        if header_id_map or footer_id_map or footnote_id_map:
+            footnote_requests = [
+                _rewrite(r, footnote_map=footnote_id_map) for r in footnote_requests
+            ]
+
+        # For newly created footnotes, clear the default "space + newline" that the
+        # API inserts before writing our real content.
+        if footnote_requests:
+            cleanup_requests: list[dict[str, Any]] = []
+            for ph_id in new_footnotes:
+                real_id = footnote_id_map.get(ph_id, ph_id)
+                cleanup_requests.append(
+                    {
+                        "deleteContentRange": {
+                            "range": {
+                                "segmentId": real_id,
+                                "startIndex": 0,
+                                "endIndex": 2,  # default content length
+                            }
+                        }
+                    }
+                )
+            await self._transport.batch_update(
+                diff_result.document_id, cleanup_requests + footnote_requests
+            )
 
         return PushResult(
             success=True,
