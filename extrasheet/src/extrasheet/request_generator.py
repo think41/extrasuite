@@ -1077,6 +1077,28 @@ def _build_conditional_format_rule(
     return rule
 
 
+def _convert_filter_specs(filter_specs: list[dict[str, Any]]) -> list[dict[str, Any]]:
+    """Convert filter specs from on-disk format to API format.
+
+    Converts 'column' (letter notation) to 'columnIndex' (0-based integer).
+    Also normalizes condition values.
+    """
+    result = []
+    for spec in filter_specs:
+        new_spec = dict(spec)
+        # Convert column letter to columnIndex
+        if "column" in new_spec:
+            col_letter = new_spec.pop("column")
+            new_spec["columnIndex"] = letter_to_column_index(col_letter)
+        # Normalize filter criteria
+        if "filterCriteria" in new_spec:
+            new_spec["filterCriteria"] = normalize_condition_values(
+                new_spec["filterCriteria"]
+            )
+        result.append(new_spec)
+    return result
+
+
 def _generate_basic_filter_requests(
     change: BasicFilterChange, sheet_id: int
 ) -> list[dict[str, Any]]:
@@ -1109,7 +1131,7 @@ def _generate_basic_filter_requests(
                 change.new_filter["criteria"]
             )
         if "filterSpecs" in change.new_filter:
-            filter_spec["filterSpecs"] = normalize_condition_values(
+            filter_spec["filterSpecs"] = _convert_filter_specs(
                 change.new_filter["filterSpecs"]
             )
         if "sortSpecs" in change.new_filter:
@@ -1287,9 +1309,9 @@ def _build_filter_view(view_data: dict[str, Any], sheet_id: int) -> dict[str, An
     if "sortSpecs" in view_data:
         result["sortSpecs"] = view_data["sortSpecs"]
 
-    # Copy filter specs, normalizing condition values
+    # Copy filter specs, normalizing condition values and converting columns
     if "filterSpecs" in view_data:
-        result["filterSpecs"] = normalize_condition_values(view_data["filterSpecs"])
+        result["filterSpecs"] = _convert_filter_specs(view_data["filterSpecs"])
 
     # Copy criteria (legacy, but still supported), normalizing condition values
     if "criteria" in view_data:
@@ -1401,7 +1423,7 @@ def _build_chart(
 
     # Copy spec (convert A1 source ranges back to GridRange)
     if "spec" in chart_data:
-        result["spec"] = _convert_chart_spec_to_api(chart_data["spec"])
+        result["spec"] = _convert_chart_spec_to_api(chart_data["spec"], sheet_id)
 
     # Copy and fix position (add sheetId to anchorCell if needed)
     if "position" in chart_data:
@@ -1410,7 +1432,7 @@ def _build_chart(
     return result
 
 
-def _convert_chart_spec_to_api(spec: dict[str, Any]) -> dict[str, Any]:
+def _convert_chart_spec_to_api(spec: dict[str, Any], sheet_id: int) -> dict[str, Any]:
     """Convert chart spec with A1 source ranges to API format."""
     result = copy.deepcopy(spec)
 
@@ -1424,7 +1446,7 @@ def _convert_chart_spec_to_api(spec: dict[str, Any]) -> dict[str, Any]:
                     source_range = domain["domain"]["sourceRange"]
                     if "sources" in source_range:
                         source_range["sources"] = [
-                            _convert_chart_source_to_api(s)
+                            _convert_chart_source_to_api(s, sheet_id)
                             for s in source_range["sources"]
                         ]
 
@@ -1435,16 +1457,41 @@ def _convert_chart_spec_to_api(spec: dict[str, Any]) -> dict[str, Any]:
                     source_range = series_item["series"]["sourceRange"]
                     if "sources" in source_range:
                         source_range["sources"] = [
-                            _convert_chart_source_to_api(s)
+                            _convert_chart_source_to_api(s, sheet_id)
                             for s in source_range["sources"]
                         ]
+
+    # Handle pie charts (singular domain and series, not arrays)
+    if "pieChart" in result:
+        pie_chart = result["pieChart"]
+
+        # Convert domain (singular)
+        if "domain" in pie_chart and "sourceRange" in pie_chart["domain"]:
+            source_range = pie_chart["domain"]["sourceRange"]
+            if "sources" in source_range:
+                source_range["sources"] = [
+                    _convert_chart_source_to_api(s, sheet_id)
+                    for s in source_range["sources"]
+                ]
+
+        # Convert series (singular)
+        if "series" in pie_chart and "sourceRange" in pie_chart["series"]:
+            source_range = pie_chart["series"]["sourceRange"]
+            if "sources" in source_range:
+                source_range["sources"] = [
+                    _convert_chart_source_to_api(s, sheet_id)
+                    for s in source_range["sources"]
+                ]
 
     return result
 
 
-def _convert_chart_source_to_api(source: dict[str, Any]) -> dict[str, Any]:
+def _convert_chart_source_to_api(
+    source: dict[str, Any], default_sheet_id: int
+) -> dict[str, Any]:
     """Convert a chart source with A1 range back to GridRange."""
-    sheet_id = source.get("sheetId", 0)
+    # Use sheetId from source if present, otherwise use the default
+    sheet_id = source.get("sheetId", default_sheet_id)
 
     if "range" in source:
         # Has A1 notation - convert to GridRange
@@ -1559,8 +1606,14 @@ def _build_pivot_table(pivot_data: dict[str, Any], sheet_id: int) -> dict[str, A
 
     # Ensure the source range has sheetId
     if "source" in result:
-        result["source"] = dict(result["source"])
-        result["source"]["sheetId"] = sheet_id
+        source = result["source"]
+        if isinstance(source, str):
+            # A1 notation - convert to GridRange
+            result["source"] = a1_range_to_grid_range(source, sheet_id)
+        else:
+            # Already a dict, just ensure sheetId is set
+            result["source"] = dict(source)
+            result["source"]["sheetId"] = sheet_id
 
     return result
 
