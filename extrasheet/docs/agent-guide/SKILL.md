@@ -78,6 +78,8 @@ Alice	100	2024-01-15
 Bob	200	2024-01-16
 ```
 
+> **Important:** data.tsv contains raw values, not formatted display strings. Write `8000` not `$8,000`. Write `0.72` not `72%`. The display format is controlled by `format.json` (e.g., `numberFormat.type: "CURRENCY"`). Formulas are defined separately in `formula.json`.
+
 **Editing:**
 - Change cell values directly
 - Add rows by adding lines
@@ -156,6 +158,8 @@ For simple formatting, edit `format.json`:
 
 For advanced formatting (conditional formats, merges, rich text), see [formatting.md](formatting.md).
 
+> **Note:** `formatRules` uses `range` (singular string), but `conditionalFormats` uses `ranges` (plural array) because a single rule can apply to multiple disjoint ranges.
+
 ---
 
 ## Creating a New Sheet
@@ -184,6 +188,8 @@ Remove the sheet's folder from disk, then push.
 | Changes not applied after push | Re-pull before making more changes |
 | "Sheet already exists" error | Re-pull — pristine state is stale |
 | Sheet IDs changed | Google reassigns IDs — re-pull to get actual IDs |
+| Formula errors like "expects number values" | data.tsv has formatted text (`$8,000`) instead of raw numbers (`8000`) |
+| Conditional format not working | Use `ranges` (array) not `range` (string) for `conditionalFormats` |
 
 ---
 

@@ -1412,13 +1412,13 @@ def _diff_dimensions(
         """Get 0-based column index from column letter or index."""
         if "column" in col:
             return letter_to_column_index(col["column"])
-        return col.get("index", 0)
+        return int(col.get("index", 0))
 
     def get_row_index(row: dict[str, Any]) -> int:
         """Get 0-based row index from 1-based row number or index."""
         if "row" in row:
-            return row["row"] - 1  # Convert 1-based to 0-based
-        return row.get("index", 0)
+            return int(row["row"]) - 1  # Convert 1-based to 0-based
+        return int(row.get("index", 0))
 
     # Diff column dimensions
     pristine_cols = pristine_dimension.get("columnMetadata", [])
@@ -1681,11 +1681,11 @@ def _auto_assign_rule_indices(
     maximum existing index from both pristine and current rules.
     """
     # Find max existing ruleIndex
-    all_indices = [
-        r.get("ruleIndex")
-        for r in pristine_rules + current_rules
-        if r.get("ruleIndex") is not None
-    ]
+    all_indices: list[int] = []
+    for r in pristine_rules + current_rules:
+        idx = r.get("ruleIndex")
+        if idx is not None:
+            all_indices.append(int(idx))
     next_index = max(all_indices, default=-1) + 1
 
     # Process current rules, assigning indices where missing

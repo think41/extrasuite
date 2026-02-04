@@ -214,6 +214,51 @@ def normalize_colors_to_rgb(obj: Any) -> Any:
         return obj
 
 
+def normalize_condition_values(obj: Any) -> Any:
+    """Recursively normalize condition values in booleanRule conditions.
+
+    The Google Sheets API requires condition values to be objects like:
+    - {"userEnteredValue": "text"} for text/number values
+    - {"relativeDate": "TODAY"} for date-relative conditions
+
+    This function allows agents to use simpler formats:
+    - Plain strings: "1000" → {"userEnteredValue": "1000"}
+    - Full objects: {"userEnteredValue": "..."} or {"relativeDate": "..."} → passed through
+
+    Used during push to normalize the on-disk format to API format.
+    """
+    if isinstance(obj, dict):
+        result = {}
+        for k, v in obj.items():
+            if k == "values" and isinstance(v, list):
+                # Normalize each value in the values array
+                result[k] = [_normalize_single_condition_value(item) for item in v]
+            else:
+                result[k] = normalize_condition_values(v)
+        return result
+    elif isinstance(obj, list):
+        return [normalize_condition_values(item) for item in obj]
+    else:
+        return obj
+
+
+def _normalize_single_condition_value(value: Any) -> dict[str, Any]:
+    """Normalize a single condition value to API format.
+
+    - String → {"userEnteredValue": string}
+    - Dict with userEnteredValue or relativeDate → pass through
+    - Other dict → pass through (API will validate)
+    """
+    if isinstance(value, str):
+        return {"userEnteredValue": value}
+    elif isinstance(value, dict):
+        # Already in object form - pass through
+        return value
+    else:
+        # Unknown type - pass through, let API validate
+        return {"userEnteredValue": str(value)}
+
+
 def _is_color_dict(obj: dict[str, Any]) -> bool:
     """Check if a dict looks like an RGB color dict."""
     color_keys = {"red", "green", "blue"}

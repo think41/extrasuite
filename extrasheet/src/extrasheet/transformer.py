@@ -215,10 +215,10 @@ class SpreadsheetTransformer:
         converted: list[dict[str, Any]] = []
 
         for nr in named_ranges:
-            nr_copy = dict(nr)
+            nr_copy: dict[str, Any] = dict(nr)
             if "range" in nr_copy:
                 # Convert GridRange to A1 notation
-                range_data = nr_copy["range"]
+                range_data: dict[str, Any] = nr_copy["range"]
                 nr_copy["range"] = grid_range_to_a1(range_data)
                 # Keep sheetId separately for reference
                 if "sheetId" in range_data:
@@ -376,9 +376,7 @@ class SpreadsheetTransformer:
 
         return result
 
-    def _transform_grid_to_tsv(
-        self, grid_data_list: list[GridData], props: dict[str, Any]
-    ) -> str:
+    def _transform_grid_to_tsv(self, grid_data_list: list[GridData], props: Any) -> str:
         """Transform grid data to TSV format.
 
         Args:
@@ -539,13 +537,12 @@ class SpreadsheetTransformer:
             # Add rule index for fly-blind editing
             indexed_formats = []
             for idx, rule in enumerate(cond_formats):
-                rule_copy = dict(rule)
+                rule_copy: dict[str, Any] = dict(rule)
                 rule_copy["ruleIndex"] = idx
                 # Convert ranges to A1 notation
                 if "ranges" in rule_copy:
-                    rule_copy["ranges"] = [
-                        grid_range_to_a1(r) for r in rule_copy["ranges"]
-                    ]
+                    ranges_list: list[Any] = rule_copy["ranges"]
+                    rule_copy["ranges"] = [grid_range_to_a1(r) for r in ranges_list]
                 # Normalize colors to hex
                 rule_copy = normalize_colors_to_hex(rule_copy)
                 indexed_formats.append(rule_copy)
@@ -866,9 +863,7 @@ class SpreadsheetTransformer:
         """Check if dimensions dict has any meaningful content."""
         return bool(dimensions)
 
-    def _convert_charts_to_a1(
-        self, charts: list[dict[str, Any]]
-    ) -> list[dict[str, Any]]:
+    def _convert_charts_to_a1(self, charts: list[Any]) -> list[dict[str, Any]]:
         """Convert chart positions and source ranges from 0-based to A1 notation."""
 
         converted: list[dict[str, Any]] = []
@@ -963,9 +958,7 @@ class SpreadsheetTransformer:
 
         return result
 
-    def _convert_tables_to_a1(
-        self, tables: list[dict[str, Any]]
-    ) -> list[dict[str, Any]]:
+    def _convert_tables_to_a1(self, tables: list[Any]) -> list[dict[str, Any]]:
         """Convert table ranges and column indices to A1 notation."""
 
         converted: list[dict[str, Any]] = []
@@ -997,7 +990,7 @@ class SpreadsheetTransformer:
 
         return converted
 
-    def _convert_filter_to_a1(self, basic_filter: dict[str, Any]) -> dict[str, Any]:
+    def _convert_filter_to_a1(self, basic_filter: Any) -> dict[str, Any]:
         """Convert basic filter range to A1 notation."""
         result = dict(basic_filter)
 
@@ -1006,7 +999,7 @@ class SpreadsheetTransformer:
 
         return result
 
-    def _convert_filter_view_to_a1(self, filter_view: dict[str, Any]) -> dict[str, Any]:
+    def _convert_filter_view_to_a1(self, filter_view: Any) -> dict[str, Any]:
         """Convert filter view range to A1 notation."""
         result = dict(filter_view)
 
@@ -1016,7 +1009,7 @@ class SpreadsheetTransformer:
         return result
 
     def _convert_banded_ranges_to_a1(
-        self, banded_ranges: list[dict[str, Any]]
+        self, banded_ranges: list[Any]
     ) -> list[dict[str, Any]]:
         """Convert banded range ranges to A1 notation and normalize colors."""
         converted: list[dict[str, Any]] = []
@@ -1032,9 +1025,7 @@ class SpreadsheetTransformer:
 
         return converted
 
-    def _convert_slicers_to_a1(
-        self, slicers: list[dict[str, Any]]
-    ) -> list[dict[str, Any]]:
+    def _convert_slicers_to_a1(self, slicers: list[Any]) -> list[dict[str, Any]]:
         """Convert slicer positions and data ranges to A1 notation."""
         converted: list[dict[str, Any]] = []
 
@@ -1070,9 +1061,7 @@ class SpreadsheetTransformer:
 
         return converted
 
-    def _convert_row_groups_to_a1(
-        self, row_groups: list[dict[str, Any]]
-    ) -> list[dict[str, Any]]:
+    def _convert_row_groups_to_a1(self, row_groups: list[Any]) -> list[dict[str, Any]]:
         """Convert row group ranges to 1-based row numbers."""
         converted: list[dict[str, Any]] = []
 
@@ -1088,9 +1077,7 @@ class SpreadsheetTransformer:
 
         return converted
 
-    def _convert_col_groups_to_a1(
-        self, col_groups: list[dict[str, Any]]
-    ) -> list[dict[str, Any]]:
+    def _convert_col_groups_to_a1(self, col_groups: list[Any]) -> list[dict[str, Any]]:
         """Convert column group ranges to column letters."""
 
         converted: list[dict[str, Any]] = []

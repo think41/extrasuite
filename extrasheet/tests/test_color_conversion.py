@@ -6,6 +6,7 @@ from extrasheet.format_compression import (
     hex_to_rgb,
     normalize_colors_to_hex,
     normalize_colors_to_rgb,
+    normalize_condition_values,
     rgb_to_hex,
 )
 
@@ -153,3 +154,113 @@ class TestRoundtrip:
         as_rgb = normalize_colors_to_rgb(original)
         back_to_hex = normalize_colors_to_hex(as_rgb)
         assert back_to_hex == original
+
+
+class TestNormalizeConditionValues:
+    """Tests for normalizing condition values in booleanRule conditions."""
+
+    def test_plain_string_to_user_entered_value(self):
+        """Plain string should be wrapped in userEnteredValue."""
+        input_data = {
+            "condition": {
+                "type": "NUMBER_GREATER",
+                "values": ["1000"],
+            }
+        }
+        result = normalize_condition_values(input_data)
+        assert result["condition"]["values"] == [{"userEnteredValue": "1000"}]
+
+    def test_user_entered_value_passthrough(self):
+        """Already-formatted userEnteredValue should pass through unchanged."""
+        input_data = {
+            "condition": {
+                "type": "TEXT_CONTAINS",
+                "values": [{"userEnteredValue": "test"}],
+            }
+        }
+        result = normalize_condition_values(input_data)
+        assert result["condition"]["values"] == [{"userEnteredValue": "test"}]
+
+    def test_relative_date_passthrough(self):
+        """relativeDate format should pass through unchanged."""
+        input_data = {
+            "condition": {
+                "type": "DATE_BEFORE",
+                "values": [{"relativeDate": "TODAY"}],
+            }
+        }
+        result = normalize_condition_values(input_data)
+        assert result["condition"]["values"] == [{"relativeDate": "TODAY"}]
+
+    def test_multiple_values_mixed(self):
+        """Multiple values with mixed formats should all be normalized."""
+        input_data = {
+            "condition": {
+                "type": "NUMBER_BETWEEN",
+                "values": ["100", {"userEnteredValue": "200"}],
+            }
+        }
+        result = normalize_condition_values(input_data)
+        assert result["condition"]["values"] == [
+            {"userEnteredValue": "100"},
+            {"userEnteredValue": "200"},
+        ]
+
+    def test_nested_boolean_rule(self):
+        """Full booleanRule structure should be normalized."""
+        input_data = {
+            "booleanRule": {
+                "condition": {
+                    "type": "NUMBER_GREATER",
+                    "values": ["50"],
+                },
+                "format": {"backgroundColor": "#00FF00"},
+            }
+        }
+        result = normalize_condition_values(input_data)
+        assert result["booleanRule"]["condition"]["values"] == [
+            {"userEnteredValue": "50"}
+        ]
+        # Other fields preserved
+        assert result["booleanRule"]["format"]["backgroundColor"] == "#00FF00"
+
+    def test_list_of_rules(self):
+        """List of conditional format rules should all be normalized."""
+        input_data = [
+            {"condition": {"type": "TEXT_EQ", "values": ["Yes"]}},
+            {"condition": {"type": "TEXT_EQ", "values": [{"userEnteredValue": "No"}]}},
+        ]
+        result = normalize_condition_values(input_data)
+        assert result[0]["condition"]["values"] == [{"userEnteredValue": "Yes"}]
+        assert result[1]["condition"]["values"] == [{"userEnteredValue": "No"}]
+
+    def test_numeric_value_converted_to_string(self):
+        """Numeric values should be converted to string in userEnteredValue."""
+        input_data = {"condition": {"values": [42]}}
+        result = normalize_condition_values(input_data)
+        assert result["condition"]["values"] == [{"userEnteredValue": "42"}]
+
+    def test_preserves_non_values_fields(self):
+        """Fields other than 'values' should be preserved unchanged."""
+        input_data = {
+            "condition": {
+                "type": "CUSTOM_FORMULA",
+                "values": ["=A1>B1"],
+            },
+            "format": {"bold": True},
+        }
+        result = normalize_condition_values(input_data)
+        assert result["condition"]["type"] == "CUSTOM_FORMULA"
+        assert result["format"]["bold"] is True
+
+    def test_empty_values_list(self):
+        """Empty values list should remain empty."""
+        input_data = {"condition": {"type": "BLANK", "values": []}}
+        result = normalize_condition_values(input_data)
+        assert result["condition"]["values"] == []
+
+    def test_no_values_key(self):
+        """Conditions without values should pass through."""
+        input_data = {"condition": {"type": "NOT_BLANK"}}
+        result = normalize_condition_values(input_data)
+        assert result == {"condition": {"type": "NOT_BLANK"}}

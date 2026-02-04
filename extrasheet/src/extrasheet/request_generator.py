@@ -32,7 +32,11 @@ from extrasheet.diff import (
     TextFormatRunChange,
     range_to_indices,
 )
-from extrasheet.format_compression import hex_to_rgb, normalize_colors_to_rgb
+from extrasheet.format_compression import (
+    hex_to_rgb,
+    normalize_colors_to_rgb,
+    normalize_condition_values,
+)
 from extrasheet.utils import a1_range_to_grid_range, a1_to_cell, letter_to_column_index
 
 
@@ -1061,9 +1065,12 @@ def _build_conditional_format_rule(
             a1_range_to_grid_range(r, sheet_id) for r in rule_data["ranges"]
         ]
 
-    # Copy booleanRule or gradientRule, converting colors from hex to RGB
+    # Copy booleanRule or gradientRule, converting colors and normalizing values
     if "booleanRule" in rule_data:
-        rule["booleanRule"] = normalize_colors_to_rgb(rule_data["booleanRule"])
+        # Normalize condition values (string → {userEnteredValue: string})
+        # and convert colors from hex to RGB
+        normalized = normalize_condition_values(rule_data["booleanRule"])
+        rule["booleanRule"] = normalize_colors_to_rgb(normalized)
     if "gradientRule" in rule_data:
         rule["gradientRule"] = normalize_colors_to_rgb(rule_data["gradientRule"])
 
@@ -1096,11 +1103,15 @@ def _generate_basic_filter_requests(
                 filter_spec["range"] = dict(range_data)
                 filter_spec["range"]["sheetId"] = sheet_id
 
-        # Copy filter criteria
+        # Copy filter criteria, normalizing condition values
         if "criteria" in change.new_filter:
-            filter_spec["criteria"] = change.new_filter["criteria"]
+            filter_spec["criteria"] = normalize_condition_values(
+                change.new_filter["criteria"]
+            )
         if "filterSpecs" in change.new_filter:
-            filter_spec["filterSpecs"] = change.new_filter["filterSpecs"]
+            filter_spec["filterSpecs"] = normalize_condition_values(
+                change.new_filter["filterSpecs"]
+            )
         if "sortSpecs" in change.new_filter:
             filter_spec["sortSpecs"] = change.new_filter["sortSpecs"]
 
@@ -1276,13 +1287,13 @@ def _build_filter_view(view_data: dict[str, Any], sheet_id: int) -> dict[str, An
     if "sortSpecs" in view_data:
         result["sortSpecs"] = view_data["sortSpecs"]
 
-    # Copy filter specs
+    # Copy filter specs, normalizing condition values
     if "filterSpecs" in view_data:
-        result["filterSpecs"] = view_data["filterSpecs"]
+        result["filterSpecs"] = normalize_condition_values(view_data["filterSpecs"])
 
-    # Copy criteria (legacy, but still supported)
+    # Copy criteria (legacy, but still supported), normalizing condition values
     if "criteria" in view_data:
-        result["criteria"] = view_data["criteria"]
+        result["criteria"] = normalize_condition_values(view_data["criteria"])
 
     # Copy named range ID if present
     if "namedRangeId" in view_data:

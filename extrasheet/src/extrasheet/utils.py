@@ -115,7 +115,7 @@ def range_to_a1(
     return ""
 
 
-def grid_range_to_a1(grid_range: GridRange) -> str:
+def grid_range_to_a1(grid_range: GridRange | dict[str, Any]) -> str:
     """Convert a GridRange object to A1 notation."""
     return range_to_a1(
         grid_range.get("startRowIndex"),
@@ -215,7 +215,7 @@ def format_json_number(value: float) -> str | float | int:
     return value
 
 
-def get_effective_value_string(cell_data: dict[str, Any]) -> str:
+def get_effective_value_string(cell_data: Any) -> str:
     """Extract the raw value from a CellData object.
 
     Uses effectiveValue to preserve type information for round-trip safety.
@@ -227,7 +227,7 @@ def get_effective_value_string(cell_data: dict[str, Any]) -> str:
     Returns:
         String representation of the cell value
     """
-    ev: dict[str, Any] = cell_data.get("effectiveValue", {})
+    ev: dict[str, Any] = cell_data.get("effectiveValue", {}) if cell_data else {}
     if not ev:
         return ""
 
@@ -251,9 +251,7 @@ def get_effective_value_string(cell_data: dict[str, Any]) -> str:
     return ""
 
 
-def is_default_cell_format(
-    cell_format: dict[str, Any], default_format: dict[str, Any] | None = None
-) -> bool:
+def is_default_cell_format(cell_format: Any, default_format: Any | None = None) -> bool:
     """Check if a cell format is the default (no customization).
 
     Args:
@@ -268,7 +266,7 @@ def is_default_cell_format(
 
     # If we have a default to compare against
     if default_format:
-        return cell_format == default_format
+        return bool(cell_format == default_format)
 
     # Common default values - if only these are present, consider it default
     default_keys = {"wrapStrategy", "verticalAlignment", "horizontalAlignment"}
@@ -277,7 +275,7 @@ def is_default_cell_format(
     return len(non_default_keys) == 0
 
 
-def is_default_dimension(dimension: dict[str, Any], is_row: bool = True) -> bool:
+def is_default_dimension(dimension: Any, is_row: bool = True) -> bool:
     """Check if a dimension (row/column) has default properties.
 
     Args:
