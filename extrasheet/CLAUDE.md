@@ -44,17 +44,13 @@ Instead of working with complex API responses, agents interact with simple files
 
 ## Key Gotchas
 
-**Color formats:** Use hex strings (`"#FF0000"`) in `formatRules`, but RGB dicts (`{"red": 1.0, ...}`) in `conditionalFormats`.
+**Color format:** All colors use hex strings (`"#FF0000"`). This applies everywhere: `formatRules`, `conditionalFormats`, `textFormatRuns`, `bandedRanges`, `theme.json`.
 
-**formula.json structure:** Must be a flat dict (`{"C5": "=A5+B5"}`), NOT nested (`{"formulas": {...}}`).
-
-**format.json structure:** Must use `formatRules` array, NOT `cells` dict.
+**Conditional format ruleIndex:** Optional. If omitted, auto-assigned during diff.
 
 **Pristine state:** Not updated after push. Always re-pull before making additional changes.
 
-**Sheet IDs:** Google may reassign IDs after creating sheets. Re-pull to get server-assigned IDs.
-
-See `docs/on-disk-format.md` "Known Limitations and Gotchas" section for complete details.
+See `docs/on-disk-format.md` for complete file format specification.
 
 ## CLI Interface
 
