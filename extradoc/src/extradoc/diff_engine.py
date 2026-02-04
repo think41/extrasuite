@@ -466,26 +466,36 @@ def _flatten_elements(
 
 def _calculate_table_end(table: Table, start_idx: int) -> int:
     """Calculate the end index of a table."""
-    # Align with _calculate_table_cell_indexes counting:
-    # table start (1) + first row marker (1)
-    current = start_idx + 2
+    current = start_idx + 1  # table start marker
 
-    # Group cells by row
+    # Build lookup for cells by row to respect ordering
     cells_by_row: dict[int, list[TableCell]] = {}
     for cell in table.cells:
         cells_by_row.setdefault(cell.row, []).append(cell)
 
-    for row in sorted(cells_by_row.keys()):
-        if row > 0:
-            current += 1  # row marker for subsequent rows
-        row_cells = sorted(cells_by_row[row], key=lambda c: c.col)
-        for cell in row_cells:
-            current += 1  # cell start
-            for elem in cell.content:
-                if isinstance(elem, Paragraph):
-                    current += elem.utf16_length()
-                elif isinstance(elem, SpecialElement):
+    for row in range(table.rows):
+        current += 1  # row marker
+        row_cells = sorted(cells_by_row.get(row, []), key=lambda c: c.col)
+        for col in range(table.cols):
+            # Each physical cell slot, even if empty, exists
+            cell_obj = next((c for c in row_cells if c.col == col), None)
+            current += 1  # cell marker
+            if cell_obj and cell_obj.content:
+                last_para_empty = (
+                    isinstance(cell_obj.content[-1], Paragraph)
+                    and cell_obj.content[-1].text_content() == ""
+                )
+                for elem in cell_obj.content:
+                    if isinstance(elem, Paragraph):
+                        current += elem.utf16_length()
+                    elif isinstance(elem, SpecialElement):
+                        current += 1
+                # Docs keeps an empty paragraph at the end of the cell; skip if the
+                # content already ends with an empty paragraph.
+                if not last_para_empty:
                     current += 1
+            else:
+                current += 1  # default empty paragraph
 
     return current + 1  # table end marker
 
@@ -561,8 +571,16 @@ def _table_length(table: Table) -> int:
             length += 1  # cell marker
             cell = cell_map.get((row, col))
             if cell and cell.content:
+                last_para_empty = (
+                    isinstance(cell.content[-1], Paragraph)
+                    and cell.content[-1].text_content() == ""
+                )
                 for item in cell.content:
                     length += _element_length(item)
+                # Docs keeps an empty paragraph at the end of each cell; if one is
+                # already present in content, don't double count it.
+                if not last_para_empty:
+                    length += 1
             else:
                 # Default empty paragraph
                 length += 1
@@ -620,11 +638,16 @@ def _generate_paragraph_insert(
     para: Paragraph,
     insert_idx: int,
     segment_id: str | None,
+    *,
+    reuse_existing_newline: bool = False,
 ) -> tuple[list[DiffOperation], int]:
     """Insert a paragraph with styles and bullets. Returns (ops, length)."""
     ops: list[DiffOperation] = []
     cursor = insert_idx
-    add_trailing_newline = True
+    # When reusing the default empty paragraph inside a table cell, Google Docs
+    # already provides a trailing newline. In that case, avoid adding another and
+    # advance past the existing newline instead.
+    add_trailing_newline = not reuse_existing_newline
 
     # Insert runs sequentially to keep order with specials
     for idx, run in enumerate(para.runs):
@@ -725,6 +748,12 @@ def _generate_paragraph_insert(
                     segment_id=segment_id,
                 )
             )
+
+    # If we skipped adding our own newline because we are reusing the existing
+    # default paragraph newline, advance past it so subsequent inserts land in
+    # the next paragraph.
+    if reuse_existing_newline and not add_trailing_newline:
+        cursor += 1
 
     return ops, cursor - insert_idx
 
@@ -831,12 +860,19 @@ def _emit_cell_content(
     """Emit operations for the content of a single table cell."""
     ops: list[DiffOperation] = []
     cursor = insert_idx
+    first_para_in_cell = True
 
     for elem in cell.content:
         if isinstance(elem, Paragraph):
-            para_ops, para_len = _generate_paragraph_insert(elem, cursor, segment_id)
+            para_ops, para_len = _generate_paragraph_insert(
+                elem,
+                cursor,
+                segment_id,
+                reuse_existing_newline=first_para_in_cell,
+            )
             ops.extend(para_ops)
             cursor += para_len
+            first_para_in_cell = False
         elif isinstance(elem, SpecialElement):
             spec_ops, spec_len = _generate_special_insert(elem, cursor, segment_id)
             ops.extend(spec_ops)
