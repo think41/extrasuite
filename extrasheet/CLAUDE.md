@@ -44,6 +44,14 @@ Instead of working with complex API responses, agents interact with simple files
 
 ## Key Gotchas
 
+**A1 notation everywhere:** All ranges, cell references, and positions use A1 notation (e.g., `"A1:B5"`, `"F1"`). This includes:
+- `format.json` merges: `{"range": "K50:L51"}`
+- `tables.json` range and column letters: `{"range": "A1:J47", "columnProperties": [{"column": "A", ...}]}`
+- `filters.json` / `banded-ranges.json` ranges: `{"range": "A1:J47"}`
+- `charts.json` anchor cells and source ranges: `{"anchorCell": "F1", "range": "A2:A13"}`
+- `dimension.json` uses column letters and 1-based rows: `{"column": "A", "pixelSize": 180}`, `{"row": 5, "pixelSize": 40}`
+- The diff engine automatically converts A1 notation to 0-based indices when generating API requests.
+
 **Color format:** All colors use hex strings (`"#FF0000"`). This applies everywhere: `formatRules`, `conditionalFormats`, `textFormatRuns`, `bandedRanges`, `theme.json`.
 
 **Conditional format ruleIndex:** Optional. If omitted, auto-assigned during diff.

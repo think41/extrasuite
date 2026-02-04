@@ -17,7 +17,12 @@ from extrasheet.exceptions import (
 from extrasheet.file_reader import parse_tsv, read_current_files
 from extrasheet.formula_compression import expand_formulas
 from extrasheet.pristine import extract_pristine, get_pristine_file
-from extrasheet.utils import a1_to_cell, cell_to_a1
+from extrasheet.utils import (
+    a1_range_to_grid_range,
+    a1_to_cell,
+    cell_to_a1,
+    letter_to_column_index,
+)
 
 
 @dataclass
@@ -1395,15 +1400,36 @@ def _diff_data_validation(
 def _diff_dimensions(
     pristine_dimension: dict[str, Any], current_dimension: dict[str, Any]
 ) -> list[DimensionChange]:
-    """Diff row/column dimensions between pristine and current."""
+    """Diff row/column dimensions between pristine and current.
+
+    Handles both old format (0-based index) and new A1 format:
+    - Columns: use "column" (letter like "A") or "index" (0-based)
+    - Rows: use "row" (1-based number) or "index" (0-based)
+    """
     changes: list[DimensionChange] = []
+
+    def get_col_index(col: dict[str, Any]) -> int:
+        """Get 0-based column index from column letter or index."""
+        if "column" in col:
+            return letter_to_column_index(col["column"])
+        return col.get("index", 0)
+
+    def get_row_index(row: dict[str, Any]) -> int:
+        """Get 0-based row index from 1-based row number or index."""
+        if "row" in row:
+            return row["row"] - 1  # Convert 1-based to 0-based
+        return row.get("index", 0)
 
     # Diff column dimensions
     pristine_cols = pristine_dimension.get("columnMetadata", [])
     current_cols = current_dimension.get("columnMetadata", [])
 
-    pristine_cols_by_idx = {col["index"]: col["pixelSize"] for col in pristine_cols}
-    current_cols_by_idx = {col["index"]: col["pixelSize"] for col in current_cols}
+    pristine_cols_by_idx = {
+        get_col_index(col): col.get("pixelSize") for col in pristine_cols
+    }
+    current_cols_by_idx = {
+        get_col_index(col): col.get("pixelSize") for col in current_cols
+    }
 
     all_col_indices = set(pristine_cols_by_idx.keys()) | set(current_cols_by_idx.keys())
 
@@ -1446,8 +1472,12 @@ def _diff_dimensions(
     pristine_rows = pristine_dimension.get("rowMetadata", [])
     current_rows = current_dimension.get("rowMetadata", [])
 
-    pristine_rows_by_idx = {row["index"]: row["pixelSize"] for row in pristine_rows}
-    current_rows_by_idx = {row["index"]: row["pixelSize"] for row in current_rows}
+    pristine_rows_by_idx = {
+        get_row_index(row): row.get("pixelSize") for row in pristine_rows
+    }
+    current_rows_by_idx = {
+        get_row_index(row): row.get("pixelSize") for row in current_rows
+    }
 
     all_row_indices = set(pristine_rows_by_idx.keys()) | set(current_rows_by_idx.keys())
 
@@ -1593,7 +1623,8 @@ def _diff_merges(
 ) -> list[MergeChange]:
     """Diff merged cell ranges between pristine and current.
 
-    Merges are stored in format.json under 'merges', with range and indices.
+    Merges are stored in format.json under 'merges' with A1 notation range.
+    We parse the A1 range to get 0-based indices for the API.
     """
     changes: list[MergeChange] = []
 
@@ -1611,27 +1642,29 @@ def _diff_merges(
         current_merge = current_by_range.get(range_key)
 
         if pristine_merge is None and current_merge is not None:
-            # New merge
+            # New merge - parse A1 range to get indices
+            grid_range = a1_range_to_grid_range(range_key)
             changes.append(
                 MergeChange(
                     range_key=range_key,
                     change_type="added",
-                    start_row=current_merge["startRow"],
-                    end_row=current_merge["endRow"],
-                    start_col=current_merge["startColumn"],
-                    end_col=current_merge["endColumn"],
+                    start_row=grid_range["startRowIndex"],
+                    end_row=grid_range["endRowIndex"],
+                    start_col=grid_range["startColumnIndex"],
+                    end_col=grid_range["endColumnIndex"],
                 )
             )
         elif pristine_merge is not None and current_merge is None:
-            # Deleted merge
+            # Deleted merge - parse A1 range to get indices
+            grid_range = a1_range_to_grid_range(range_key)
             changes.append(
                 MergeChange(
                     range_key=range_key,
                     change_type="deleted",
-                    start_row=pristine_merge["startRow"],
-                    end_row=pristine_merge["endRow"],
-                    start_col=pristine_merge["startColumn"],
-                    end_col=pristine_merge["endColumn"],
+                    start_row=grid_range["startRowIndex"],
+                    end_row=grid_range["endRowIndex"],
+                    start_col=grid_range["startColumnIndex"],
+                    end_col=grid_range["endColumnIndex"],
                 )
             )
         # Note: merges don't have "modified" - same range means same merge

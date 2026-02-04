@@ -13,6 +13,7 @@ from extrasheet.format_compression import compress_cell_formats, normalize_color
 from extrasheet.formula_compression import compress_formulas
 from extrasheet.utils import (
     cell_to_a1,
+    column_index_to_letter,
     escape_tsv_value,
     get_effective_value_string,
     grid_range_to_a1,
@@ -210,8 +211,21 @@ class SpreadsheetTransformer:
         return result
 
     def _transform_named_ranges(self, named_ranges: list[NamedRange]) -> dict[str, Any]:
-        """Transform named ranges."""
-        return {"namedRanges": named_ranges}
+        """Transform named ranges to use A1 notation."""
+        converted: list[dict[str, Any]] = []
+
+        for nr in named_ranges:
+            nr_copy = dict(nr)
+            if "range" in nr_copy:
+                # Convert GridRange to A1 notation
+                range_data = nr_copy["range"]
+                nr_copy["range"] = grid_range_to_a1(range_data)
+                # Keep sheetId separately for reference
+                if "sheetId" in range_data:
+                    nr_copy["sheetId"] = range_data["sheetId"]
+            converted.append(nr_copy)
+
+        return {"namedRanges": converted}
 
     def _extract_theme(self) -> dict[str, Any]:
         """Extract theme information (defaultFormat, spreadsheetTheme) from properties.
@@ -537,20 +551,12 @@ class SpreadsheetTransformer:
                 indexed_formats.append(rule_copy)
             result["conditionalFormats"] = indexed_formats
 
-        # Merged cells
+        # Merged cells - use A1 notation only
         merges = sheet.get("merges", [])
         if merges:
             merge_ranges = []
             for merge in merges:
-                merge_ranges.append(
-                    {
-                        "range": grid_range_to_a1(merge),
-                        "startRow": merge.get("startRowIndex"),
-                        "endRow": merge.get("endRowIndex"),
-                        "startColumn": merge.get("startColumnIndex"),
-                        "endColumn": merge.get("endColumnIndex"),
-                    }
-                )
+                merge_ranges.append({"range": grid_range_to_a1(merge)})
             result["merges"] = merge_ranges
 
         if text_format_runs:
@@ -578,37 +584,39 @@ class SpreadsheetTransformer:
         """
         result: dict[str, Any] = {}
 
-        # Charts
+        # Charts - convert to A1 notation
         charts = sheet.get("charts", [])
         if charts:
-            result["charts.json"] = {"charts": charts}
+            result["charts.json"] = {"charts": self._convert_charts_to_a1(charts)}
 
-        # Pivot tables - extracted from cells
+        # Pivot tables - extracted from cells (already uses A1 for anchorCell)
         pivot_tables = self._extract_pivot_tables(sheet)
         if pivot_tables:
             result["pivot-tables.json"] = {"pivotTables": pivot_tables}
 
-        # Tables
+        # Tables - convert to A1 notation
         tables = sheet.get("tables", [])
         if tables:
-            result["tables.json"] = {"tables": tables}
+            result["tables.json"] = {"tables": self._convert_tables_to_a1(tables)}
 
-        # Filters (basicFilter + filterViews)
+        # Filters (basicFilter + filterViews) - convert to A1 notation
         basic_filter = sheet.get("basicFilter")
         filter_views = sheet.get("filterViews", [])
         if basic_filter or filter_views:
             filters_data: dict[str, Any] = {}
             if basic_filter:
-                filters_data["basicFilter"] = basic_filter
+                filters_data["basicFilter"] = self._convert_filter_to_a1(basic_filter)
             if filter_views:
-                filters_data["filterViews"] = filter_views
+                filters_data["filterViews"] = [
+                    self._convert_filter_view_to_a1(fv) for fv in filter_views
+                ]
             result["filters.json"] = filters_data
 
-        # Banded ranges - normalize colors to hex
+        # Banded ranges - normalize colors to hex and convert to A1 notation
         banded_ranges = sheet.get("bandedRanges", [])
         if banded_ranges:
             result["banded-ranges.json"] = {
-                "bandedRanges": normalize_colors_to_hex(banded_ranges)
+                "bandedRanges": self._convert_banded_ranges_to_a1(banded_ranges)
             }
 
         # Data validation - extracted from cells
@@ -616,10 +624,10 @@ class SpreadsheetTransformer:
         if data_validation:
             result["data-validation.json"] = {"dataValidation": data_validation}
 
-        # Slicers (rare)
+        # Slicers (rare) - convert to A1 notation
         slicers = sheet.get("slicers", [])
         if slicers:
-            result["slicers.json"] = {"slicers": slicers}
+            result["slicers.json"] = {"slicers": self._convert_slicers_to_a1(slicers)}
 
         # Data source tables - extracted from cells (rare)
         ds_tables = self._extract_data_source_tables(sheet)
@@ -770,7 +778,13 @@ class SpreadsheetTransformer:
     def _extract_dimensions(
         self, grid_data_list: list[GridData], sheet: Sheet
     ) -> dict[str, Any]:
-        """Extract dimension metadata (row/column sizes, groups)."""
+        """Extract dimension metadata (row/column sizes, groups).
+
+        Uses A1-style notation:
+        - Rows use 1-based numbers (row 1, 2, 3...)
+        - Columns use letters (A, B, C...)
+        """
+
         result: dict[str, Any] = {}
 
         # Row metadata (sparse - only non-default)
@@ -778,11 +792,12 @@ class SpreadsheetTransformer:
         col_metadata: list[dict[str, Any]] = []
 
         for grid_data in grid_data_list:
-            # Row metadata
+            # Row metadata - use 1-based row numbers
             for idx, dim in enumerate(grid_data.get("rowMetadata", [])):
                 if not is_default_dimension(dim, is_row=True):
                     actual_idx = grid_data.get("startRow", 0) + idx
-                    row_entry: dict[str, Any] = {"index": actual_idx}
+                    # Use 1-based row number
+                    row_entry: dict[str, Any] = {"row": actual_idx + 1}
                     if dim.get("pixelSize"):
                         row_entry["pixelSize"] = dim["pixelSize"]
                     if dim.get("hidden"):
@@ -791,11 +806,14 @@ class SpreadsheetTransformer:
                         row_entry["developerMetadata"] = dim["developerMetadata"]
                     row_metadata.append(row_entry)
 
-            # Column metadata
+            # Column metadata - use column letters
             for idx, dim in enumerate(grid_data.get("columnMetadata", [])):
                 if not is_default_dimension(dim, is_row=False):
                     actual_idx = grid_data.get("startColumn", 0) + idx
-                    col_entry: dict[str, Any] = {"index": actual_idx}
+                    # Use column letter (A, B, C, ...)
+                    col_entry: dict[str, Any] = {
+                        "column": column_index_to_letter(actual_idx)
+                    }
                     if dim.get("pixelSize"):
                         col_entry["pixelSize"] = dim["pixelSize"]
                     if dim.get("hidden"):
@@ -809,15 +827,15 @@ class SpreadsheetTransformer:
         if col_metadata:
             result["columnMetadata"] = col_metadata
 
-        # Row groups
+        # Row groups - convert to 1-based rows
         row_groups = sheet.get("rowGroups", [])
         if row_groups:
-            result["rowGroups"] = row_groups
+            result["rowGroups"] = self._convert_row_groups_to_a1(row_groups)
 
-        # Column groups
+        # Column groups - convert to column letters
         col_groups = sheet.get("columnGroups", [])
         if col_groups:
-            result["columnGroups"] = col_groups
+            result["columnGroups"] = self._convert_col_groups_to_a1(col_groups)
 
         # Developer metadata at sheet level (dimension-related)
         dev_metadata = sheet.get("developerMetadata", [])
@@ -847,3 +865,245 @@ class SpreadsheetTransformer:
     def _has_dimension_content(self, dimensions: dict[str, Any]) -> bool:
         """Check if dimensions dict has any meaningful content."""
         return bool(dimensions)
+
+    def _convert_charts_to_a1(
+        self, charts: list[dict[str, Any]]
+    ) -> list[dict[str, Any]]:
+        """Convert chart positions and source ranges from 0-based to A1 notation."""
+
+        converted: list[dict[str, Any]] = []
+
+        for chart in charts:
+            chart_copy = dict(chart)
+
+            # Convert anchor cell position
+            if "position" in chart_copy:
+                position = dict(chart_copy["position"])
+                if "overlayPosition" in position:
+                    overlay = dict(position["overlayPosition"])
+                    if "anchorCell" in overlay:
+                        anchor = overlay["anchorCell"]
+                        row_idx = anchor.get("rowIndex", 0)
+                        col_idx = anchor.get("columnIndex", 0)
+                        # Replace with A1 notation
+                        overlay["anchorCell"] = cell_to_a1(row_idx, col_idx)
+                    position["overlayPosition"] = overlay
+                chart_copy["position"] = position
+
+            # Convert source ranges in spec.basicChart.domains and series
+            if "spec" in chart_copy:
+                spec = dict(chart_copy["spec"])
+                if "basicChart" in spec:
+                    basic_chart = dict(spec["basicChart"])
+                    # Convert domains
+                    if "domains" in basic_chart:
+                        basic_chart["domains"] = [
+                            self._convert_chart_domain_to_a1(d)
+                            for d in basic_chart["domains"]
+                        ]
+                    # Convert series
+                    if "series" in basic_chart:
+                        basic_chart["series"] = [
+                            self._convert_chart_series_to_a1(s)
+                            for s in basic_chart["series"]
+                        ]
+                    spec["basicChart"] = basic_chart
+                chart_copy["spec"] = spec
+
+            converted.append(chart_copy)
+
+        return converted
+
+    def _convert_chart_domain_to_a1(self, domain: dict[str, Any]) -> dict[str, Any]:
+        """Convert a chart domain's source ranges to A1 notation."""
+        result = dict(domain)
+
+        if "domain" in result:
+            domain_inner = dict(result["domain"])
+            if "sourceRange" in domain_inner:
+                source_range = dict(domain_inner["sourceRange"])
+                if "sources" in source_range:
+                    source_range["sources"] = [
+                        self._convert_grid_range_in_source(s)
+                        for s in source_range["sources"]
+                    ]
+                domain_inner["sourceRange"] = source_range
+            result["domain"] = domain_inner
+
+        return result
+
+    def _convert_chart_series_to_a1(self, series: dict[str, Any]) -> dict[str, Any]:
+        """Convert a chart series' source ranges to A1 notation."""
+        result = dict(series)
+
+        if "series" in result:
+            series_inner = dict(result["series"])
+            if "sourceRange" in series_inner:
+                source_range = dict(series_inner["sourceRange"])
+                if "sources" in source_range:
+                    source_range["sources"] = [
+                        self._convert_grid_range_in_source(s)
+                        for s in source_range["sources"]
+                    ]
+                series_inner["sourceRange"] = source_range
+            result["series"] = series_inner
+
+        return result
+
+    def _convert_grid_range_in_source(self, source: dict[str, Any]) -> dict[str, Any]:
+        """Convert a grid range source to A1 notation, keeping sheetId."""
+        result: dict[str, Any] = {}
+
+        # Keep sheetId for cross-sheet references
+        if "sheetId" in source:
+            result["sheetId"] = source["sheetId"]
+
+        # Convert to A1 notation range
+        result["range"] = grid_range_to_a1(source)
+
+        return result
+
+    def _convert_tables_to_a1(
+        self, tables: list[dict[str, Any]]
+    ) -> list[dict[str, Any]]:
+        """Convert table ranges and column indices to A1 notation."""
+
+        converted: list[dict[str, Any]] = []
+
+        for table in tables:
+            table_copy = dict(table)
+
+            # Convert range to A1 notation
+            if "range" in table_copy:
+                range_data = table_copy["range"]
+                table_copy["range"] = grid_range_to_a1(range_data)
+
+            # Convert columnProperties indices to column letters
+            if "columnProperties" in table_copy:
+                new_col_props = []
+                for col_prop in table_copy["columnProperties"]:
+                    col_copy = dict(col_prop)
+                    if "columnIndex" in col_copy:
+                        col_idx = col_copy["columnIndex"]
+                        col_copy["column"] = column_index_to_letter(col_idx)
+                        del col_copy["columnIndex"]
+                    elif not col_copy.get("column"):
+                        # First column (index 0) doesn't have columnIndex
+                        col_copy["column"] = "A"
+                    new_col_props.append(col_copy)
+                table_copy["columnProperties"] = new_col_props
+
+            converted.append(table_copy)
+
+        return converted
+
+    def _convert_filter_to_a1(self, basic_filter: dict[str, Any]) -> dict[str, Any]:
+        """Convert basic filter range to A1 notation."""
+        result = dict(basic_filter)
+
+        if "range" in result:
+            result["range"] = grid_range_to_a1(result["range"])
+
+        return result
+
+    def _convert_filter_view_to_a1(self, filter_view: dict[str, Any]) -> dict[str, Any]:
+        """Convert filter view range to A1 notation."""
+        result = dict(filter_view)
+
+        if "range" in result:
+            result["range"] = grid_range_to_a1(result["range"])
+
+        return result
+
+    def _convert_banded_ranges_to_a1(
+        self, banded_ranges: list[dict[str, Any]]
+    ) -> list[dict[str, Any]]:
+        """Convert banded range ranges to A1 notation and normalize colors."""
+        converted: list[dict[str, Any]] = []
+
+        for banded in banded_ranges:
+            banded_copy = normalize_colors_to_hex(dict(banded))
+
+            # Convert range to A1 notation
+            if "range" in banded_copy:
+                banded_copy["range"] = grid_range_to_a1(banded_copy["range"])
+
+            converted.append(banded_copy)
+
+        return converted
+
+    def _convert_slicers_to_a1(
+        self, slicers: list[dict[str, Any]]
+    ) -> list[dict[str, Any]]:
+        """Convert slicer positions and data ranges to A1 notation."""
+        converted: list[dict[str, Any]] = []
+
+        for slicer in slicers:
+            slicer_copy = dict(slicer)
+
+            # Convert position anchor cell
+            if "position" in slicer_copy:
+                position = dict(slicer_copy["position"])
+                if "overlayPosition" in position:
+                    overlay = dict(position["overlayPosition"])
+                    if "anchorCell" in overlay:
+                        anchor = overlay["anchorCell"]
+                        row_idx = anchor.get("rowIndex", 0)
+                        col_idx = anchor.get("columnIndex", 0)
+                        overlay["anchorCell"] = cell_to_a1(row_idx, col_idx)
+                    position["overlayPosition"] = overlay
+                slicer_copy["position"] = position
+
+            # Convert spec data range and column
+            if "spec" in slicer_copy:
+                spec = dict(slicer_copy["spec"])
+                # Convert dataRange GridRange to A1
+                if "dataRange" in spec and isinstance(spec["dataRange"], dict):
+                    spec["dataRange"] = grid_range_to_a1(spec["dataRange"])
+                # Convert columnIndex to column letter
+                if "columnIndex" in spec:
+                    spec["column"] = column_index_to_letter(spec["columnIndex"])
+                    del spec["columnIndex"]
+                slicer_copy["spec"] = spec
+
+            converted.append(slicer_copy)
+
+        return converted
+
+    def _convert_row_groups_to_a1(
+        self, row_groups: list[dict[str, Any]]
+    ) -> list[dict[str, Any]]:
+        """Convert row group ranges to 1-based row numbers."""
+        converted: list[dict[str, Any]] = []
+
+        for group in row_groups:
+            group_copy = dict(group)
+            if "range" in group_copy:
+                range_data = group_copy["range"]
+                # Convert to 1-based row range like "2:10"
+                start = range_data.get("startIndex", 0) + 1
+                end = range_data.get("endIndex", start)
+                group_copy["range"] = f"{start}:{end}"
+            converted.append(group_copy)
+
+        return converted
+
+    def _convert_col_groups_to_a1(
+        self, col_groups: list[dict[str, Any]]
+    ) -> list[dict[str, Any]]:
+        """Convert column group ranges to column letters."""
+
+        converted: list[dict[str, Any]] = []
+
+        for group in col_groups:
+            group_copy = dict(group)
+            if "range" in group_copy:
+                range_data = group_copy["range"]
+                # Convert to column letter range like "B:D"
+                start = column_index_to_letter(range_data.get("startIndex", 0))
+                end_idx = range_data.get("endIndex", 1) - 1  # exclusive to inclusive
+                end = column_index_to_letter(end_idx if end_idx >= 0 else 0)
+                group_copy["range"] = f"{start}:{end}"
+            converted.append(group_copy)
+
+        return converted

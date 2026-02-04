@@ -136,17 +136,13 @@ Color scale based on values:
 {
   "merges": [
     {
-      "range": "A1:D1",
-      "startRow": 0,
-      "endRow": 1,
-      "startColumn": 0,
-      "endColumn": 4
+      "range": "A1:D1"
     }
   ]
 }
 ```
 
-**Note:** Both `range` (A1 notation) and coordinates (0-based) are included for clarity.
+Merges use A1 notation for the range. The diff engine automatically converts this to 0-based indices when generating API requests.
 
 ---
 
@@ -197,7 +193,7 @@ Alternating row/column colors.
   "bandedRanges": [
     {
       "bandedRangeId": 123,
-      "range": {"sheetId": 0, "startRowIndex": 0, "endRowIndex": 100},
+      "range": "A1:J100",
       "rowProperties": {
         "headerColor": "#336699",
         "firstBandColor": "#FFFFFF",
@@ -217,14 +213,17 @@ Row heights and column widths in `dimension.json`:
 ```json
 {
   "rowMetadata": [
-    {"index": 0, "pixelSize": 30},
-    {"index": 10, "pixelSize": 50, "hidden": true}
+    {"row": 1, "pixelSize": 30},
+    {"row": 11, "pixelSize": 50, "hidden": true}
   ],
   "columnMetadata": [
-    {"index": 0, "pixelSize": 150},
-    {"index": 5, "pixelSize": 200}
+    {"column": "A", "pixelSize": 150},
+    {"column": "F", "pixelSize": 200}
   ]
 }
 ```
+
+- **rowMetadata**: Uses 1-based row numbers (`"row": 1` = first row)
+- **columnMetadata**: Uses column letters (`"column": "A"`)
 
 Only non-default sizes are stored (default: 21px rows, 100px columns).

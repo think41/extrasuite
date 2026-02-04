@@ -208,19 +208,13 @@ Contains all named ranges defined in the spreadsheet.
     {
       "namedRangeId": "abc123",
       "name": "SalesData",
-      "range": {
-        "sheetId": 0,
-        "startRowIndex": 0,
-        "endRowIndex": 100,
-        "startColumnIndex": 0,
-        "endColumnIndex": 5
-      }
+      "range": "Sheet1!A1:E100"
     }
   ]
 }
 ```
 
-**Note:** Range indices are zero-based and half-open (`[start, end)`).
+**Note:** Ranges use A1 notation with sheet name prefix.
 
 ### developer_metadata.json
 
@@ -402,11 +396,7 @@ Cell formatting is stored with range-based compression. Cells with identical for
   ],
   "merges": [
     {
-      "range": "A1:D1",
-      "startRow": 0,
-      "endRow": 1,
-      "startColumn": 0,
-      "endColumn": 4
+      "range": "A1:D1"
     }
   ],
   "textFormatRuns": {
@@ -470,7 +460,7 @@ Embedded charts with position and specification.
       "chartId": 123456,
       "position": {
         "overlayPosition": {
-          "anchorCell": { "sheetId": 0, "rowIndex": 0, "columnIndex": 5 },
+          "anchorCell": "F1",
           "widthPixels": 400,
           "heightPixels": 300
         }
@@ -480,8 +470,8 @@ Embedded charts with position and specification.
         "basicChart": {
           "chartType": "BAR",
           "axis": [...],
-          "domains": [...],
-          "series": [...]
+          "domains": [{"domain": {"sourceRange": {"sources": [{"range": "A2:A10"}]}}}],
+          "series": [{"series": {"sourceRange": {"sources": [{"range": "B2:B10"}]}}}]
         }
       }
     }
@@ -498,7 +488,7 @@ Pivot tables with anchor cell and configuration.
   "pivotTables": [
     {
       "anchorCell": "G1",
-      "source": { "sheetId": 0, "startRowIndex": 0, "endRowIndex": 100, ... },
+      "source": "A1:E100",
       "rows": [...],
       "columns": [...],
       "values": [...]
@@ -519,10 +509,10 @@ Structured tables with column definitions.
     {
       "tableId": "1778223018",
       "name": "Table1",
-      "range": { "startRowIndex": 0, "endRowIndex": 47, ... },
+      "range": "A1:J47",
       "columnProperties": [
-        { "columnName": "Category" },
-        { "columnIndex": 1, "columnName": "Resource Type" }
+        { "column": "A", "columnName": "Category" },
+        { "column": "B", "columnName": "Resource Type" }
       ]
     }
   ]
@@ -536,16 +526,16 @@ Basic filter and filter views.
 ```json
 {
   "basicFilter": {
-    "range": { "sheetId": 0, "startRowIndex": 0, ... },
+    "range": "A1:E100",
     "sortSpecs": [...],
-    "filterSpecs": [...]
+    "filterSpecs": [{"column": "C", "filterCriteria": {...}}]
   },
   "filterViews": [
     {
       "filterViewId": 789,
       "title": "Top Performers",
-      "range": { ... },
-      "filterSpecs": [...]
+      "range": "A1:E100",
+      "filterSpecs": [{"column": "B", "filterCriteria": {...}}]
     }
   ]
 }
@@ -560,11 +550,11 @@ Alternating row/column colors.
   "bandedRanges": [
     {
       "bandedRangeId": 1778223018,
-      "range": { ... },
+      "range": "A1:E100",
       "rowProperties": {
-        "headerColor": { ... },
-        "firstBandColor": { ... },
-        "secondBandColor": { ... }
+        "headerColor": "#336699",
+        "firstBandColor": "#FFFFFF",
+        "secondBandColor": "#F2F2F2"
       }
     }
   ]
@@ -607,10 +597,17 @@ Interactive filter slicers.
   "slicers": [
     {
       "slicerId": 456,
-      "position": { ... },
+      "position": {
+        "overlayPosition": {
+          "anchorCell": "M1",
+          "widthPixels": 200,
+          "heightPixels": 300
+        }
+      },
       "spec": {
-        "dataRange": { ... },
-        "title": "Region Filter"
+        "dataRange": "A1:E100",
+        "title": "Region Filter",
+        "column": "C"
       }
     }
   ]
@@ -653,25 +650,25 @@ Row and column metadata including sizes, visibility, and groups.
 ```json
 {
   "rowMetadata": [
-    { "index": 0, "pixelSize": 21 },
-    { "index": 10, "pixelSize": 50 },
-    { "index": 15, "pixelSize": 21, "hidden": true }
+    { "row": 1, "pixelSize": 21 },
+    { "row": 11, "pixelSize": 50 },
+    { "row": 16, "pixelSize": 21, "hidden": true }
   ],
   "columnMetadata": [
-    { "index": 0, "pixelSize": 100 },
-    { "index": 1, "pixelSize": 80 },
-    { "index": 5, "pixelSize": 150 }
+    { "column": "A", "pixelSize": 100 },
+    { "column": "B", "pixelSize": 80 },
+    { "column": "F", "pixelSize": 150 }
   ],
   "rowGroups": [
     {
-      "range": { "dimension": "ROWS", "startIndex": 5, "endIndex": 10 },
+      "range": "6:10",
       "depth": 1,
       "collapsed": false
     }
   ],
   "columnGroups": [
     {
-      "range": { "dimension": "COLUMNS", "startIndex": 2, "endIndex": 5 },
+      "range": "C:E",
       "depth": 1,
       "collapsed": true
     }
@@ -687,6 +684,11 @@ Row and column metadata including sizes, visibility, and groups.
   ]
 }
 ```
+
+**Key conventions:**
+- **rowMetadata**: Uses 1-based row numbers (`"row": 5` = row 5)
+- **columnMetadata**: Uses column letters (`"column": "A"`)
+- **rowGroups/columnGroups range**: Uses A1-style notation (`"6:10"` for rows, `"C:E"` for columns)
 
 **Sparse Representation:**
 
@@ -708,7 +710,7 @@ Protected ranges and their permissions.
   "protectedRanges": [
     {
       "protectedRangeId": 12345,
-      "range": { "sheetId": 0, "startRowIndex": 0, "endRowIndex": 1, ... },
+      "range": "A1:J1",
       "description": "Header row - do not modify",
       "warningOnly": false,
       "requestingUserCanEdit": true,
@@ -855,18 +857,22 @@ When creating new sheets, you may specify a `sheetId` in `spreadsheet.json`. How
 
 **Impact:** Charts, filters, pivot tables, and other features reference sheets by `sheetId`. After creating sheets, re-pull to get the server-assigned IDs before adding features that reference them.
 
-### Index Numbering Conventions
+### A1 Notation Throughout
 
-ExtraSheet uses multiple numbering conventions:
+ExtraSheet uses A1 notation consistently across all file formats:
 
 | Context | Convention | Example |
 |---------|------------|---------|
 | data.tsv line numbers | 1-based | Line 5 = row 5 in spreadsheet |
-| A1 notation | 1-based | A1, B2, etc. |
-| GridRange indices in JSON | 0-based | `startRowIndex: 0` = row 1 |
-| GridRange end indices | Exclusive | `endRowIndex: 10` = rows 0-9 |
+| Cell references | A1 notation | `"A1"`, `"B5"`, `"AA100"` |
+| Range references | A1 notation | `"A1:B5"`, `"Sheet1!C3:D10"` |
+| Merges | A1 range | `{"range": "K50:L51"}` |
+| Tables/filters/banded ranges | A1 range | `{"range": "A1:J47"}` |
+| Chart anchor cells | A1 notation | `{"anchorCell": "F1"}` |
+| Chart source ranges | A1 range | `{"range": "A2:A13"}` |
+| Dimension metadata | Column letter / 1-based row | `{"column": "A"}`, `{"row": 5}` |
 
-**Gotcha:** When data.tsv shows content on line 5, the corresponding `startRowIndex` in JSON should be 4 (0-based).
+The diff engine automatically converts A1 notation to 0-based indices when generating Google Sheets API requests. You never need to work with 0-based indices directly.
 
 ### Unsupported Data Validation Types
 

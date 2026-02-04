@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import copy
 from typing import Any
 
 from extrasheet.diff import (
@@ -32,7 +33,7 @@ from extrasheet.diff import (
     range_to_indices,
 )
 from extrasheet.format_compression import hex_to_rgb, normalize_colors_to_rgb
-from extrasheet.utils import a1_range_to_grid_range, a1_to_cell
+from extrasheet.utils import a1_range_to_grid_range, a1_to_cell, letter_to_column_index
 
 
 def generate_requests(diff_result: DiffResult) -> list[dict[str, Any]]:
@@ -1156,6 +1157,7 @@ def _build_banded_range(range_data: dict[str, Any], sheet_id: int) -> dict[str, 
     """Build a BandedRange for the API.
 
     Ensures the range has the correct sheetId and converts hex colors to RGB.
+    Handles both A1 notation (string) and GridRange (dict) for the range field.
     """
     result: dict[str, Any] = {}
 
@@ -1165,8 +1167,14 @@ def _build_banded_range(range_data: dict[str, Any], sheet_id: int) -> dict[str, 
 
     # Copy and fix range (add sheetId)
     if "range" in range_data:
-        result["range"] = dict(range_data["range"])
-        result["range"]["sheetId"] = sheet_id
+        range_value = range_data["range"]
+        if isinstance(range_value, str):
+            # A1 notation - convert to GridRange
+            result["range"] = a1_range_to_grid_range(range_value, sheet_id)
+        else:
+            # Already a GridRange - copy and add sheetId
+            result["range"] = dict(range_value)
+            result["range"]["sheetId"] = sheet_id
 
     # Copy row properties, converting hex colors to RGB
     if "rowProperties" in range_data:
@@ -1241,6 +1249,7 @@ def _build_filter_view(view_data: dict[str, Any], sheet_id: int) -> dict[str, An
     """Build a FilterView for the API.
 
     Ensures the range has the correct sheetId.
+    Handles both A1 notation (string) and GridRange (dict) for the range field.
     """
     result: dict[str, Any] = {}
 
@@ -1254,8 +1263,14 @@ def _build_filter_view(view_data: dict[str, Any], sheet_id: int) -> dict[str, An
 
     # Copy and fix range (add sheetId)
     if "range" in view_data:
-        result["range"] = dict(view_data["range"])
-        result["range"]["sheetId"] = sheet_id
+        range_value = view_data["range"]
+        if isinstance(range_value, str):
+            # A1 notation - convert to GridRange
+            result["range"] = a1_range_to_grid_range(range_value, sheet_id)
+        else:
+            # Already a GridRange - copy and add sheetId
+            result["range"] = dict(range_value)
+            result["range"]["sheetId"] = sheet_id
 
     # Copy sort specs
     if "sortSpecs" in view_data:
@@ -1360,6 +1375,7 @@ def _build_chart(
     """Build a Chart for the API.
 
     Ensures position has the correct sheetId.
+    Converts A1 notation back to GridRange for source ranges.
 
     Args:
         chart_data: Chart data from feature.json
@@ -1372,9 +1388,9 @@ def _build_chart(
     if include_chart_id and "chartId" in chart_data:
         result["chartId"] = chart_data["chartId"]
 
-    # Copy spec
+    # Copy spec (convert A1 source ranges back to GridRange)
     if "spec" in chart_data:
-        result["spec"] = chart_data["spec"]
+        result["spec"] = _convert_chart_spec_to_api(chart_data["spec"])
 
     # Copy and fix position (add sheetId to anchorCell if needed)
     if "position" in chart_data:
@@ -1383,19 +1399,87 @@ def _build_chart(
     return result
 
 
+def _convert_chart_spec_to_api(spec: dict[str, Any]) -> dict[str, Any]:
+    """Convert chart spec with A1 source ranges to API format."""
+    result = copy.deepcopy(spec)
+
+    if "basicChart" in result:
+        basic_chart = result["basicChart"]
+
+        # Convert domains
+        if "domains" in basic_chart:
+            for domain in basic_chart["domains"]:
+                if "domain" in domain and "sourceRange" in domain["domain"]:
+                    source_range = domain["domain"]["sourceRange"]
+                    if "sources" in source_range:
+                        source_range["sources"] = [
+                            _convert_chart_source_to_api(s)
+                            for s in source_range["sources"]
+                        ]
+
+        # Convert series
+        if "series" in basic_chart:
+            for series_item in basic_chart["series"]:
+                if "series" in series_item and "sourceRange" in series_item["series"]:
+                    source_range = series_item["series"]["sourceRange"]
+                    if "sources" in source_range:
+                        source_range["sources"] = [
+                            _convert_chart_source_to_api(s)
+                            for s in source_range["sources"]
+                        ]
+
+    return result
+
+
+def _convert_chart_source_to_api(source: dict[str, Any]) -> dict[str, Any]:
+    """Convert a chart source with A1 range back to GridRange."""
+    sheet_id = source.get("sheetId", 0)
+
+    if "range" in source:
+        # Has A1 notation - convert to GridRange
+        grid_range = a1_range_to_grid_range(source["range"], sheet_id)
+        return grid_range
+    else:
+        # Already in API format
+        return source
+
+
 def _build_chart_position(
     position_data: dict[str, Any], sheet_id: int
 ) -> dict[str, Any]:
-    """Build chart position with correct sheetId."""
+    """Build chart position with correct sheetId.
+
+    Handles both A1 notation (string) and GridCoordinate (dict) for anchorCell.
+    """
     result: dict[str, Any] = {}
 
     # Handle overlayPosition (most common)
     if "overlayPosition" in position_data:
         overlay = dict(position_data["overlayPosition"])
-        # Ensure anchorCell has sheetId
+        # Handle anchorCell
         if "anchorCell" in overlay:
-            overlay["anchorCell"] = dict(overlay["anchorCell"])
-            overlay["anchorCell"]["sheetId"] = sheet_id
+            anchor = overlay["anchorCell"]
+            if isinstance(anchor, str):
+                # A1 notation - convert to GridCoordinate
+                row, col = a1_to_cell(anchor)
+                overlay["anchorCell"] = {
+                    "sheetId": sheet_id,
+                    "rowIndex": row,
+                    "columnIndex": col,
+                }
+            else:
+                # Already a dict - ensure sheetId
+                overlay["anchorCell"] = dict(anchor)
+                overlay["anchorCell"]["sheetId"] = sheet_id
+        # Copy other overlay properties
+        if "widthPixels" in position_data["overlayPosition"]:
+            overlay["widthPixels"] = position_data["overlayPosition"]["widthPixels"]
+        if "heightPixels" in position_data["overlayPosition"]:
+            overlay["heightPixels"] = position_data["overlayPosition"]["heightPixels"]
+        if "offsetXPixels" in position_data["overlayPosition"]:
+            overlay["offsetXPixels"] = position_data["overlayPosition"]["offsetXPixels"]
+        if "offsetYPixels" in position_data["overlayPosition"]:
+            overlay["offsetYPixels"] = position_data["overlayPosition"]["offsetYPixels"]
         result["overlayPosition"] = overlay
 
     # Handle newSheet position (creates a new sheet for the chart)
@@ -1515,13 +1599,32 @@ def _build_table(table_data: dict[str, Any], sheet_id: int) -> dict[str, Any]:
     """Build a table for the API.
 
     Ensures the range has the correct sheetId.
+    Handles both A1 notation (string) and GridRange (dict) for the range field.
+    Converts column letters back to columnIndex in columnProperties.
     """
     result: dict[str, Any] = dict(table_data)
 
-    # Ensure the range has sheetId
+    # Convert range from A1 notation if needed
     if "range" in result:
-        result["range"] = dict(result["range"])
-        result["range"]["sheetId"] = sheet_id
+        range_value = result["range"]
+        if isinstance(range_value, str):
+            # A1 notation - convert to GridRange
+            result["range"] = a1_range_to_grid_range(range_value, sheet_id)
+        else:
+            # Already a GridRange - copy and add sheetId
+            result["range"] = dict(range_value)
+            result["range"]["sheetId"] = sheet_id
+
+    # Convert column letters back to columnIndex in columnProperties
+    if "columnProperties" in result:
+        new_col_props = []
+        for col_prop in result["columnProperties"]:
+            col_copy = dict(col_prop)
+            if "column" in col_copy:
+                col_copy["columnIndex"] = letter_to_column_index(col_copy["column"])
+                del col_copy["column"]
+            new_col_props.append(col_copy)
+        result["columnProperties"] = new_col_props
 
     return result
 
@@ -1535,6 +1638,8 @@ def _generate_named_range_requests(
     - addNamedRange for new named ranges
     - updateNamedRange for modified named ranges
     - deleteNamedRange for deleted named ranges
+
+    Handles both A1 notation (string) and GridRange (dict) for the range field.
     """
     requests: list[dict[str, Any]] = []
 
@@ -1546,12 +1651,13 @@ def _generate_named_range_requests(
             )
 
         elif change.change_type == "added" and change.new_range:
-            # Add new named range
-            requests.append({"addNamedRange": {"namedRange": change.new_range}})
+            # Add new named range - convert A1 to GridRange if needed
+            named_range = _build_named_range(change.new_range)
+            requests.append({"addNamedRange": {"namedRange": named_range}})
 
         elif change.change_type == "modified" and change.new_range:
             # Update existing named range
-            named_range = dict(change.new_range)
+            named_range = _build_named_range(change.new_range)
             # Ensure namedRangeId is set
             if change.named_range_id:
                 named_range["namedRangeId"] = change.named_range_id
@@ -1568,6 +1674,34 @@ def _generate_named_range_requests(
     return requests
 
 
+def _build_named_range(range_data: dict[str, Any]) -> dict[str, Any]:
+    """Build a NamedRange for the API.
+
+    Handles both A1 notation (string) and GridRange (dict) for the range field.
+    """
+    result: dict[str, Any] = dict(range_data)
+
+    # Get sheetId from the data (may be stored separately)
+    sheet_id = range_data.get("sheetId", 0)
+
+    # Convert range from A1 notation if needed
+    if "range" in result:
+        range_value = result["range"]
+        if isinstance(range_value, str):
+            # A1 notation - convert to GridRange
+            result["range"] = a1_range_to_grid_range(range_value, sheet_id)
+        elif isinstance(range_value, dict) and "sheetId" not in range_value:
+            # GridRange without sheetId - add it
+            result["range"] = dict(range_value)
+            result["range"]["sheetId"] = sheet_id
+
+    # Remove the separate sheetId field (it's in the range now)
+    if "sheetId" in result and "range" in result:
+        del result["sheetId"]
+
+    return result
+
+
 def _generate_slicer_requests(
     changes: list[SlicerChange], sheet_id: int
 ) -> list[dict[str, Any]]:
@@ -1577,6 +1711,8 @@ def _generate_slicer_requests(
     - addSlicer for new slicers
     - updateSlicerSpec for modified slicers
     - deleteDimensionGroup (no direct deleteSlicer, use deleteEmbeddedObject)
+
+    Handles A1 notation for anchor cells.
     """
     requests: list[dict[str, Any]] = []
 
@@ -1587,14 +1723,8 @@ def _generate_slicer_requests(
             requests.append({"deleteEmbeddedObject": {"objectId": change.slicer_id}})
 
         elif change.change_type == "added" and change.new_slicer:
-            # Add new slicer
-            slicer = dict(change.new_slicer)
-            # Ensure position has sheetId
-            if "position" in slicer and "overlayPosition" in slicer["position"]:
-                overlay = slicer["position"]["overlayPosition"]
-                if "anchorCell" in overlay and "sheetId" not in overlay["anchorCell"]:
-                    overlay["anchorCell"]["sheetId"] = sheet_id
-
+            # Add new slicer - convert A1 anchor cell if needed
+            slicer = _build_slicer_for_api(change.new_slicer, sheet_id)
             requests.append({"addSlicer": {"slicer": slicer}})
 
         elif (
@@ -1612,19 +1742,68 @@ def _generate_slicer_requests(
                     }
                 }
             )
-            # If position changed, also update position
+            # If position changed, also update position (convert A1 if needed)
             if "position" in change.new_slicer:
+                position = _build_slicer_position(
+                    change.new_slicer["position"], sheet_id
+                )
                 requests.append(
                     {
                         "updateEmbeddedObjectPosition": {
                             "objectId": change.slicer_id,
-                            "newPosition": change.new_slicer["position"],
+                            "newPosition": position,
                             "fields": "*",
                         }
                     }
                 )
 
     return requests
+
+
+def _build_slicer_for_api(slicer_data: dict[str, Any], sheet_id: int) -> dict[str, Any]:
+    """Build a Slicer for the API, converting A1 notation to API format."""
+    result = copy.deepcopy(slicer_data)
+
+    # Convert position if present
+    if "position" in result:
+        result["position"] = _build_slicer_position(result["position"], sheet_id)
+
+    # Convert spec if present
+    if "spec" in result:
+        spec = result["spec"]
+        # Convert dataRange from A1 to GridRange
+        if "dataRange" in spec and isinstance(spec["dataRange"], str):
+            spec["dataRange"] = a1_range_to_grid_range(spec["dataRange"], sheet_id)
+        # Convert column letter to columnIndex
+        if "column" in spec:
+            spec["columnIndex"] = letter_to_column_index(spec["column"])
+            del spec["column"]
+
+    return result
+
+
+def _build_slicer_position(
+    position_data: dict[str, Any], sheet_id: int
+) -> dict[str, Any]:
+    """Build slicer position, converting A1 anchor cells."""
+    result = copy.deepcopy(position_data)
+
+    if "overlayPosition" in result:
+        overlay = result["overlayPosition"]
+        if "anchorCell" in overlay:
+            anchor = overlay["anchorCell"]
+            if isinstance(anchor, str):
+                # A1 notation - convert to GridCoordinate
+                row, col = a1_to_cell(anchor)
+                overlay["anchorCell"] = {
+                    "sheetId": sheet_id,
+                    "rowIndex": row,
+                    "columnIndex": col,
+                }
+            elif isinstance(anchor, dict) and "sheetId" not in anchor:
+                anchor["sheetId"] = sheet_id
+
+    return result
 
 
 def _generate_data_source_table_requests(
