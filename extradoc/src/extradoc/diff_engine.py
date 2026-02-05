@@ -226,9 +226,14 @@ def diff_documents(
     # 1. Element-level changes use bottom-up processing (handled by generation order)
     # 2. Within each element (change_group), operations must be ordered:
     #    a) Paragraph style updates for EXISTING paragraphs FIRST (use pristine range)
-    #    b) Deletes second (descending index for bottom-up within element)
-    #    c) Inserts third (ascending index)
+    #    b) Deletes second (descending index for bottom-up)
+    #    c) Inserts third (DESCENDING index - higher indexes processed first!)
     #    d) Post-insert style updates LAST (for newly created content)
+    #
+    # CRITICAL: Inserts use DESCENDING index (negative) so that:
+    # - Inserts at higher indexes are applied first
+    # - This prevents index drift for table cells and multi-element inserts
+    # - For bulk inserts at SAME position, sequence number determines order
     #
     # The is_post_insert flag distinguishes:
     # - Modifications: update_paragraph_style on existing paragraph (run BEFORE delete)
@@ -239,7 +244,7 @@ def diff_documents(
     # change_group N = top of doc (lowest index).
     # We want bottom operations (low change_group) applied first.
     #
-    # Sort key: (change_group ASC, op_priority, index for ordering, sequence)
+    # Sort key: (change_group ASC, op_priority, -index for desc, sequence)
     def sort_key(op: DiffOperation) -> tuple[int, int, int, int]:
         # Lower change_group = bottom of document = apply first
         group_key = op.change_group
@@ -247,16 +252,16 @@ def diff_documents(
         if op.op_type == "update_paragraph_style" and not op.is_post_insert:
             # Paragraph style updates for EXISTING paragraphs FIRST
             # They use pristine range which becomes invalid after delete shrinks it
-            return (group_key, 0, op.index, op.sequence)
+            return (group_key, 0, -op.index, op.sequence)
         elif op.op_type == "delete":
             # Deletes second: sort by descending index (higher indexes first)
             return (group_key, 1, -op.index, op.sequence)
         elif op.op_type == "insert":
-            # Inserts third (ascending index)
-            return (group_key, 2, op.index, op.sequence)
+            # Inserts third: DESCENDING index (higher indexes first to avoid drift)
+            return (group_key, 2, -op.index, op.sequence)
         else:
             # Everything else (text style updates, post-insert paragraph styles) last
-            return (group_key, 3, op.index, op.sequence)
+            return (group_key, 3, -op.index, op.sequence)
 
     operations.sort(key=sort_key)
 
@@ -354,8 +359,10 @@ def _diff_section(pristine: Section | None, current: Section) -> list[DiffOperat
                                 )
                                 operations.extend(ops)
                                 # Each element gets its own change_group
+                                # BUT don't overwrite if already set (e.g., table cells)
                                 for op in operations[elem_ops_start:]:
-                                    op.change_group = current_change_group
+                                    if op.change_group == 0:
+                                        op.change_group = current_change_group
                                 current_change_group += 1
                                 break
 
@@ -995,9 +1002,15 @@ def _diff_table(
     p_cells = {(c.row, c.col): c for c in pristine.cells}
     c_cells = {(c.row, c.col): c for c in current.cells}
 
-    # Calculate cell start indexes
+    # Calculate cell start indexes based on PRISTINE table
     cell_starts = _calculate_table_cell_indexes(pristine, p_start)
 
+    # Table cells are diffed independently. The sort_key in diff_documents
+    # handles correct ordering by using DESCENDING index for all operations,
+    # so higher-index cells' operations run first, avoiding index drift.
+    #
+    # Change_group is NOT set here - let section-level processing set it.
+    # This ensures table operations run in proper document order (bottom-up).
     for pos, c_cell in c_cells.items():
         p_cell = p_cells.get(pos)
         if p_cell and pos in cell_starts:
@@ -1615,10 +1628,12 @@ def _emit_table(
     )
 
     # Compute base cell starts for the freshly inserted empty table
+    # Each cell starts with an empty paragraph (just a newline character)
     cell_starts, _ = _table_cell_starts(table, insert_idx, default_cell_len=1)
     cell_map = {(cell.row, cell.col): cell for cell in table.cells}
 
     # Populate cells that have content, processing from later indexes first
+    # (reverse order so earlier insertions don't shift later cell positions)
     for (row, col), start in sorted(
         cell_starts.items(), key=lambda item: item[1], reverse=True
     ):
@@ -1626,8 +1641,10 @@ def _emit_table(
         if not cell or not cell.content:
             continue
 
-        # Offset by 1 to land inside the default empty paragraph for the cell
-        cell_ops = _emit_cell_content(cell, start + 1, segment_id)
+        # Insert at 'start' which is where the cell's empty paragraph newline is
+        # The cell content will be inserted BEFORE this newline, and the last
+        # paragraph's trailing newline will serve as the structural newline
+        cell_ops = _emit_cell_content(cell, start, segment_id)
         ops.extend(cell_ops)
 
     # Final length accounts for actual cell content
@@ -1638,13 +1655,26 @@ def _emit_table(
 def _emit_cell_content(
     cell: TableCell, insert_idx: int, segment_id: str | None
 ) -> list[DiffOperation]:
-    """Emit operations for the content of a single table cell."""
+    """Emit operations for the content of a single table cell.
+
+    When inserting into a newly created table, each cell already has an empty
+    paragraph (just a newline). We insert content BEFORE this newline:
+    - For multi-paragraph cells, each paragraph except the last gets its own newline
+    - The last paragraph does NOT add a trailing newline, relying on the existing
+      structural newline in the cell
+    """
     ops: list[DiffOperation] = []
     cursor = insert_idx
+    num_elements = len(cell.content)
 
-    for elem in cell.content:
+    for i, elem in enumerate(cell.content):
+        is_last = i == num_elements - 1
+
         if isinstance(elem, Paragraph):
-            para_ops, para_len = _emit_paragraph(elem, cursor, segment_id)
+            # For the last paragraph, don't add trailing newline (cell has one)
+            para_ops, para_len = _emit_paragraph_for_cell(
+                elem, cursor, segment_id, skip_trailing_newline=is_last
+            )
             ops.extend(para_ops)
             cursor += para_len
         elif isinstance(elem, SpecialElement):
@@ -1657,6 +1687,165 @@ def _emit_cell_content(
             cursor += table_len
 
     return ops
+
+
+def _emit_paragraph_for_cell(
+    para: Paragraph,
+    insert_idx: int,
+    segment_id: str | None,
+    skip_trailing_newline: bool = False,
+) -> tuple[list[DiffOperation], int]:
+    """Emit a paragraph for table cell insertion.
+
+    Similar to _emit_paragraph but with option to skip trailing newline
+    for the last paragraph in a cell (the cell already has a structural newline).
+    """
+    ops: list[DiffOperation] = []
+    cursor = insert_idx
+
+    # Check if we can do a simple single-insert (no special elements)
+    has_specials = any("_special" in run.styles for run in para.runs)
+
+    if not has_specials and para.runs:
+        # Collect all text and insert at once
+        all_text = "".join(run.text for run in para.runs)
+        if not skip_trailing_newline:
+            all_text += "\n"
+
+        ops.append(
+            DiffOperation(
+                op_type="insert",
+                index=cursor,
+                content=all_text,
+                segment_id=segment_id,
+                sequence=_next_sequence(),
+            )
+        )
+
+        # Apply styles to each run's range
+        run_cursor = cursor
+        for run in para.runs:
+            if run.text:
+                run_len = utf16_len(run.text)
+                style_info = _full_run_text_style(run.styles)
+                if style_info:
+                    text_style, fields = style_info
+                    ops.append(
+                        DiffOperation(
+                            op_type="update_text_style",
+                            index=run_cursor,
+                            end_index=run_cursor + run_len,
+                            text_style=text_style,
+                            fields=fields,
+                            segment_id=segment_id,
+                            sequence=_next_sequence(),
+                        )
+                    )
+                run_cursor += run_len
+
+        cursor = run_cursor + (0 if skip_trailing_newline else 1)
+    else:
+        # Complex case: handle special elements individually
+        for run in para.runs:
+            if "_special" in run.styles:
+                special_ops, special_len = _emit_special(
+                    SpecialElement(run.styles["_special"], dict(run.styles)),
+                    cursor,
+                    segment_id,
+                )
+                ops.extend(special_ops)
+                cursor += special_len
+                continue
+
+            if run.text:
+                ops.append(
+                    DiffOperation(
+                        op_type="insert",
+                        index=cursor,
+                        content=run.text,
+                        segment_id=segment_id,
+                        sequence=_next_sequence(),
+                    )
+                )
+                run_len = utf16_len(run.text)
+
+                style_info = _full_run_text_style(run.styles)
+                if style_info:
+                    text_style, fields = style_info
+                    ops.append(
+                        DiffOperation(
+                            op_type="update_text_style",
+                            index=cursor,
+                            end_index=cursor + run_len,
+                            text_style=text_style,
+                            fields=fields,
+                            segment_id=segment_id,
+                            sequence=_next_sequence(),
+                        )
+                    )
+
+                cursor += run_len
+
+        # Append newline unless skipping for last paragraph
+        if not skip_trailing_newline:
+            ops.append(
+                DiffOperation(
+                    op_type="insert",
+                    index=cursor,
+                    content="\n",
+                    segment_id=segment_id,
+                    sequence=_next_sequence(),
+                )
+            )
+            cursor += 1
+
+    # Paragraph style
+    end_cursor = cursor + (1 if skip_trailing_newline else 0)
+    ops.append(
+        DiffOperation(
+            op_type="update_paragraph_style",
+            index=insert_idx,
+            end_index=end_cursor,
+            paragraph_style={"namedStyleType": para.named_style},
+            fields="namedStyleType",
+            segment_id=segment_id,
+            sequence=_next_sequence(),
+            is_post_insert=True,
+        )
+    )
+
+    # Bullets
+    if para.bullet_type:
+        preset = _bullet_type_to_preset(para.bullet_type)
+        ops.append(
+            DiffOperation(
+                op_type="create_bullets",
+                index=insert_idx,
+                end_index=end_cursor,
+                bullet_preset=preset,
+                segment_id=segment_id,
+                sequence=_next_sequence(),
+            )
+        )
+        if para.bullet_level > 0:
+            indent_pt = 36 * para.bullet_level
+            ops.append(
+                DiffOperation(
+                    op_type="update_paragraph_style",
+                    index=insert_idx,
+                    end_index=end_cursor,
+                    paragraph_style={
+                        "indentStart": {"magnitude": indent_pt, "unit": "PT"},
+                        "indentFirstLine": {"magnitude": 0, "unit": "PT"},
+                    },
+                    fields="indentStart,indentFirstLine",
+                    segment_id=segment_id,
+                    is_post_insert=True,
+                    sequence=_next_sequence(),
+                )
+            )
+
+    return ops, cursor - insert_idx
 
 
 # --- Bullet preset mapping ---
