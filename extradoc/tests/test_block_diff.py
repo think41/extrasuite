@@ -1,7 +1,5 @@
 """Tests for block-level diff detection."""
 
-import pytest
-
 from extradoc.block_diff import (
     Block,
     BlockChange,
@@ -36,11 +34,16 @@ class TestBlockParsing:
 
         body = tree.children[0]
         assert body.block_type == BlockType.BODY
-        assert len(body.children) == 1  # one ContentBlock for consecutive paragraphs
+        # Each paragraph is now parsed as its own PARAGRAPH block
+        assert len(body.children) == 2  # two individual paragraphs
 
-        content_block = body.children[0]
-        assert content_block.block_type == BlockType.CONTENT_BLOCK
-        assert content_block.attributes["paragraph_count"] == 2
+        para1 = body.children[0]
+        assert para1.block_type == BlockType.PARAGRAPH
+        assert para1.attributes["tag"] == "p"
+
+        para2 = body.children[1]
+        assert para2.block_type == BlockType.PARAGRAPH
+        assert para2.attributes["tag"] == "p"
 
     def test_parse_mixed_content(self):
         """Parse a document with paragraphs and tables."""
@@ -61,11 +64,12 @@ class TestBlockParsing:
         tree = detector._parse_to_block_tree(xml)
 
         body = tree.children[0]
-        assert len(body.children) == 3  # ContentBlock, Table, ContentBlock
+        # Now: Paragraph, Table, Paragraph
+        assert len(body.children) == 3
 
-        assert body.children[0].block_type == BlockType.CONTENT_BLOCK
+        assert body.children[0].block_type == BlockType.PARAGRAPH
         assert body.children[1].block_type == BlockType.TABLE
-        assert body.children[2].block_type == BlockType.CONTENT_BLOCK
+        assert body.children[2].block_type == BlockType.PARAGRAPH
 
     def test_parse_table_with_cells(self):
         """Parse table cells as recursive containers."""
@@ -95,11 +99,11 @@ class TestBlockParsing:
         cell_00 = table.children[0]
         assert cell_00.block_type == BlockType.TABLE_CELL
         assert cell_00.block_id == "0,0"
-        assert len(cell_00.children) == 1  # ContentBlock
-        assert cell_00.children[0].block_type == BlockType.CONTENT_BLOCK
+        assert len(cell_00.children) == 1  # single Paragraph
+        assert cell_00.children[0].block_type == BlockType.PARAGRAPH
 
     def test_parse_headings(self):
-        """Parse headings as paragraphs in content blocks."""
+        """Parse headings as individual paragraph blocks."""
         xml = """<?xml version="1.0" encoding="UTF-8"?>
 <doc id="test-doc" revision="r1">
   <meta><title>Test</title></meta>
@@ -114,10 +118,17 @@ class TestBlockParsing:
         tree = detector._parse_to_block_tree(xml)
 
         body = tree.children[0]
-        # All consecutive paragraph-like elements grouped into one ContentBlock
-        assert len(body.children) == 1
-        assert body.children[0].block_type == BlockType.CONTENT_BLOCK
-        assert body.children[0].attributes["paragraph_count"] == 3
+        # Each paragraph-like element is now its own PARAGRAPH block
+        assert len(body.children) == 3
+
+        assert body.children[0].block_type == BlockType.PARAGRAPH
+        assert body.children[0].attributes["tag"] == "h1"
+
+        assert body.children[1].block_type == BlockType.PARAGRAPH
+        assert body.children[1].attributes["tag"] == "p"
+
+        assert body.children[2].block_type == BlockType.PARAGRAPH
+        assert body.children[2].attributes["tag"] == "h2"
 
     def test_parse_headers_footers_footnotes(self):
         """Parse headers, footers, and footnotes."""
@@ -628,3 +639,111 @@ class TestFormatChanges:
         assert "table" in output
         assert "table_cell" in output
         assert "child changes" in output
+
+
+class TestParagraphLevelGranularity:
+    """Tests for paragraph-level diff granularity."""
+
+    def test_only_modified_paragraph_in_change(self):
+        """Only the modified paragraph should be in the change, not all paragraphs."""
+        pristine = """<?xml version="1.0" encoding="UTF-8"?>
+<doc id="test-doc" revision="r1">
+  <meta><title>Test</title></meta>
+  <body class="_base">
+    <p>Paragraph 1 unchanged</p>
+    <p>Paragraph 2 unchanged</p>
+    <p>Paragraph 3 to modify</p>
+    <p>Paragraph 4 unchanged</p>
+    <p>Paragraph 5 unchanged</p>
+  </body>
+</doc>"""
+
+        current = """<?xml version="1.0" encoding="UTF-8"?>
+<doc id="test-doc" revision="r1">
+  <meta><title>Test</title></meta>
+  <body class="_base">
+    <p>Paragraph 1 unchanged</p>
+    <p>Paragraph 2 unchanged</p>
+    <p>Paragraph 3 MODIFIED</p>
+    <p>Paragraph 4 unchanged</p>
+    <p>Paragraph 5 unchanged</p>
+  </body>
+</doc>"""
+
+        changes = diff_documents_block_level(pristine, current)
+
+        # Should have exactly one change - just paragraph 3
+        assert len(changes) == 1
+        assert changes[0].change_type == ChangeType.MODIFIED
+        assert changes[0].block_type == BlockType.CONTENT_BLOCK
+        assert "Paragraph 3 to modify" in changes[0].before_xml
+        assert "Paragraph 3 MODIFIED" in changes[0].after_xml
+        # Unchanged paragraphs should NOT be in the change
+        assert "Paragraph 1" not in changes[0].before_xml
+        assert "Paragraph 4" not in changes[0].before_xml
+
+    def test_multiple_separate_changes(self):
+        """Non-consecutive modified paragraphs should result in separate changes."""
+        pristine = """<?xml version="1.0" encoding="UTF-8"?>
+<doc id="test-doc" revision="r1">
+  <meta><title>Test</title></meta>
+  <body class="_base">
+    <p>First modified</p>
+    <p>Unchanged middle</p>
+    <p>Second modified</p>
+  </body>
+</doc>"""
+
+        current = """<?xml version="1.0" encoding="UTF-8"?>
+<doc id="test-doc" revision="r1">
+  <meta><title>Test</title></meta>
+  <body class="_base">
+    <p>First CHANGED</p>
+    <p>Unchanged middle</p>
+    <p>Second CHANGED</p>
+  </body>
+</doc>"""
+
+        changes = diff_documents_block_level(pristine, current)
+
+        # Should have exactly 2 separate changes
+        assert len(changes) == 2
+        assert all(c.change_type == ChangeType.MODIFIED for c in changes)
+        assert all(c.block_type == BlockType.CONTENT_BLOCK for c in changes)
+
+    def test_consecutive_modified_grouped(self):
+        """Consecutive modified paragraphs should be grouped into one change."""
+        pristine = """<?xml version="1.0" encoding="UTF-8"?>
+<doc id="test-doc" revision="r1">
+  <meta><title>Test</title></meta>
+  <body class="_base">
+    <p>Para 1 unchanged</p>
+    <p>Para 2 modified</p>
+    <p>Para 3 modified</p>
+    <p>Para 4 unchanged</p>
+  </body>
+</doc>"""
+
+        current = """<?xml version="1.0" encoding="UTF-8"?>
+<doc id="test-doc" revision="r1">
+  <meta><title>Test</title></meta>
+  <body class="_base">
+    <p>Para 1 unchanged</p>
+    <p>Para 2 CHANGED</p>
+    <p>Para 3 CHANGED</p>
+    <p>Para 4 unchanged</p>
+  </body>
+</doc>"""
+
+        changes = diff_documents_block_level(pristine, current)
+
+        # Should have exactly one grouped change for para 2 and 3
+        assert len(changes) == 1
+        assert changes[0].change_type == ChangeType.MODIFIED
+        assert changes[0].block_type == BlockType.CONTENT_BLOCK
+        # Both modified paragraphs should be in the change
+        assert "Para 2" in changes[0].before_xml
+        assert "Para 3" in changes[0].before_xml
+        # Unchanged should not be
+        assert "Para 1" not in changes[0].before_xml
+        assert "Para 4" not in changes[0].before_xml

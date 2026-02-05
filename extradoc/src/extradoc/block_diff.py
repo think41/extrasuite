@@ -30,8 +30,11 @@ from typing import Any
 class BlockType(Enum):
     """Types of block-level nodes in the document tree."""
 
-    # Composite node: consecutive sequence of paragraphs
+    # Composite node: consecutive sequence of paragraphs (used in changes)
     CONTENT_BLOCK = "content_block"
+
+    # Individual paragraph (used during parsing/diffing)
+    PARAGRAPH = "paragraph"
 
     # Individual structural elements (not grouped)
     TABLE = "table"
@@ -90,6 +93,10 @@ class Block:
         elif self.block_type == BlockType.CONTENT_BLOCK:
             # For content blocks, use a simple indicator
             return "CONTENT_BLOCK"
+        elif self.block_type == BlockType.PARAGRAPH:
+            # For paragraphs, include the tag type (p, h1, li, etc.)
+            tag = self.attributes.get("tag", "p")
+            return f"PARAGRAPH:{tag}"
         elif self.block_type == BlockType.TABLE_OF_CONTENTS:
             return "TOC"
         elif self.block_type == BlockType.SECTION_BREAK:
@@ -232,16 +239,18 @@ class BlockDiffDetector:
         return block
 
     def _parse_structural_elements(self, parent: ET.Element) -> list[Block]:
-        """Parse structural elements, grouping consecutive paragraphs.
+        """Parse structural elements into individual blocks.
 
-        This is the key method that implements the grouping logic:
-        - Consecutive paragraphs (p, h1-h6, title, subtitle, li) -> ContentBlock
+        This is the key method that implements the parsing logic:
+        - Each paragraph (p, h1-h6, title, subtitle, li) -> Individual PARAGRAPH block
         - table -> Table block
         - toc -> TableOfContents block
         - Other elements are handled appropriately
+
+        During diffing, consecutive paragraphs with the same change status
+        will be grouped into ContentBlock changes.
         """
         blocks: list[Block] = []
-        current_paragraph_group: list[ET.Element] = []
 
         # Tags that represent paragraph-like elements
         paragraph_tags = {
@@ -257,39 +266,29 @@ class BlockDiffDetector:
             "li",
         }
 
-        def flush_paragraph_group() -> None:
-            """Flush accumulated paragraphs into a ContentBlock."""
-            if current_paragraph_group:
-                # Build XML content for the group
-                xml_parts = [
-                    ET.tostring(p, encoding="unicode") for p in current_paragraph_group
-                ]
-                content_block = Block(
-                    block_type=BlockType.CONTENT_BLOCK,
-                    xml_content="\n".join(xml_parts),
-                    attributes={"paragraph_count": len(current_paragraph_group)},
-                    start_index=len(blocks),
-                )
-                blocks.append(content_block)
-                current_paragraph_group.clear()
+        def add_paragraph(elem: ET.Element) -> None:
+            """Add a single paragraph as its own block."""
+            para_block = Block(
+                block_type=BlockType.PARAGRAPH,
+                xml_content=ET.tostring(elem, encoding="unicode"),
+                attributes={"tag": elem.tag},
+                start_index=len(blocks),
+            )
+            blocks.append(para_block)
 
         for child in parent:
             tag = child.tag
 
             if tag in paragraph_tags:
-                # Accumulate paragraphs
-                current_paragraph_group.append(child)
+                # Each paragraph is its own block
+                add_paragraph(child)
 
             elif tag == "table":
-                # Flush any accumulated paragraphs first
-                flush_paragraph_group()
                 # Add table as its own block
                 table_block = self._parse_table(child)
                 blocks.append(table_block)
 
             elif tag == "toc":
-                # Flush paragraphs
-                flush_paragraph_group()
                 # TOC is a single block (its internal paragraphs are part of TOC)
                 toc_block = Block(
                     block_type=BlockType.TABLE_OF_CONTENTS,
@@ -302,18 +301,14 @@ class BlockDiffDetector:
                 # Style wrapper - process children
                 for styled_child in child:
                     if styled_child.tag in paragraph_tags:
-                        current_paragraph_group.append(styled_child)
+                        add_paragraph(styled_child)
                     elif styled_child.tag == "table":
-                        flush_paragraph_group()
                         table_block = self._parse_table(styled_child)
                         blocks.append(table_block)
                     # Other styled elements treated similarly
 
             # Note: sectionBreak is usually handled at conversion time,
             # but if present in XML, we'd handle it here
-
-        # Flush any remaining paragraphs
-        flush_paragraph_group()
 
         return blocks
 
@@ -444,8 +439,13 @@ class BlockDiffDetector:
         current_children: list[Block],
         path: list[str],
     ) -> list[BlockChange]:
-        """Diff two lists of child blocks using LCS-based alignment."""
-        changes: list[BlockChange] = []
+        """Diff two lists of child blocks using LCS-based alignment.
+
+        For paragraph-level changes, consecutive paragraphs with the same
+        change status are grouped into ContentBlock changes.
+        """
+        # Use None as a sentinel for UNCHANGED to properly separate groups
+        raw_changes: list[tuple[ChangeType | None, Block | None, Block | None]] = []
 
         # Build alignment using structural keys and content
         alignment = self._align_blocks(pristine_children, current_children)
@@ -454,38 +454,142 @@ class BlockDiffDetector:
             if p_idx is None and c_idx is not None:
                 # Addition
                 added_block = current_children[c_idx]
-                changes.append(
-                    BlockChange(
-                        change_type=ChangeType.ADDED,
-                        block_type=added_block.block_type,
-                        block_id=added_block.block_id,
-                        after_xml=added_block.xml_content,
-                        container_path=path,
-                    )
-                )
+                raw_changes.append((ChangeType.ADDED, None, added_block))
 
             elif p_idx is not None and c_idx is None:
                 # Deletion
                 deleted_block = pristine_children[p_idx]
-                changes.append(
-                    BlockChange(
-                        change_type=ChangeType.DELETED,
-                        block_type=deleted_block.block_type,
-                        block_id=deleted_block.block_id,
-                        before_xml=deleted_block.xml_content,
-                        container_path=path,
-                    )
-                )
+                raw_changes.append((ChangeType.DELETED, deleted_block, None))
 
             elif p_idx is not None and c_idx is not None:
-                # Potential modification - compare content
+                # Both exist - compare content
                 p_block = pristine_children[p_idx]
                 c_block = current_children[c_idx]
 
-                block_changes = self._diff_single_block(p_block, c_block, path)
-                changes.extend(block_changes)
+                if p_block.xml_content != c_block.xml_content:
+                    raw_changes.append((ChangeType.MODIFIED, p_block, c_block))
+                else:
+                    # Unchanged - use None as change_type to act as separator
+                    raw_changes.append((None, p_block, c_block))
 
-        return changes
+        # Group consecutive paragraph changes into ContentBlock changes
+        return self._group_paragraph_changes(raw_changes, path)
+
+    def _group_paragraph_changes(
+        self,
+        raw_changes: list[tuple[ChangeType | None, Block | None, Block | None]],
+        path: list[str],
+    ) -> list[BlockChange]:
+        """Group consecutive paragraph changes into ContentBlock changes.
+
+        Non-paragraph changes (tables, TOC, etc.) are passed through as-is.
+        Consecutive paragraphs with the same change status are grouped.
+        Unchanged blocks (change_type=None) act as separators between groups.
+        """
+        if not raw_changes:
+            return []
+
+        grouped_changes: list[BlockChange] = []
+        current_group: list[tuple[ChangeType, Block | None, Block | None]] = []
+        current_group_type: ChangeType | None = None
+
+        def flush_group() -> None:
+            """Flush the current group of paragraph changes."""
+            nonlocal current_group, current_group_type
+            if not current_group:
+                return
+
+            # Combine all paragraphs in the group
+            before_parts: list[str] = []
+            after_parts: list[str] = []
+            for _change_type, p_block, c_block in current_group:
+                if p_block and p_block.xml_content:
+                    before_parts.append(p_block.xml_content)
+                if c_block and c_block.xml_content:
+                    after_parts.append(c_block.xml_content)
+
+            assert current_group_type is not None
+            grouped_changes.append(
+                BlockChange(
+                    change_type=current_group_type,
+                    block_type=BlockType.CONTENT_BLOCK,
+                    before_xml="\n".join(before_parts) if before_parts else None,
+                    after_xml="\n".join(after_parts) if after_parts else None,
+                    container_path=path,
+                )
+            )
+
+            current_group = []
+            current_group_type = None
+
+        for change_type, p_block, c_block in raw_changes:
+            # Handle unchanged blocks (None change_type) - they just flush the group
+            if change_type is None:
+                flush_group()
+                continue
+
+            # Determine if this is a paragraph
+            block = c_block if c_block else p_block
+            assert block is not None
+            is_paragraph = block.block_type == BlockType.PARAGRAPH
+
+            if is_paragraph:
+                # Check if we can add to current group
+                if current_group_type == change_type:
+                    current_group.append((change_type, p_block, c_block))
+                else:
+                    # Flush existing group and start new one
+                    flush_group()
+                    current_group = [(change_type, p_block, c_block)]
+                    current_group_type = change_type
+            else:
+                # Non-paragraph: flush any pending paragraphs first
+                flush_group()
+
+                # Handle non-paragraph changes directly
+                if change_type == ChangeType.ADDED:
+                    assert c_block is not None
+                    grouped_changes.append(
+                        BlockChange(
+                            change_type=ChangeType.ADDED,
+                            block_type=c_block.block_type,
+                            block_id=c_block.block_id,
+                            after_xml=c_block.xml_content,
+                            container_path=path,
+                        )
+                    )
+                elif change_type == ChangeType.DELETED:
+                    assert p_block is not None
+                    grouped_changes.append(
+                        BlockChange(
+                            change_type=ChangeType.DELETED,
+                            block_type=p_block.block_type,
+                            block_id=p_block.block_id,
+                            before_xml=p_block.xml_content,
+                            container_path=path,
+                        )
+                    )
+                elif change_type == ChangeType.MODIFIED:
+                    assert p_block is not None and c_block is not None
+                    # For tables, check for cell-level changes
+                    if p_block.block_type == BlockType.TABLE:
+                        table_changes = self._diff_single_block(p_block, c_block, path)
+                        grouped_changes.extend(table_changes)
+                    else:
+                        grouped_changes.append(
+                            BlockChange(
+                                change_type=ChangeType.MODIFIED,
+                                block_type=p_block.block_type,
+                                before_xml=p_block.xml_content,
+                                after_xml=c_block.xml_content,
+                                container_path=path,
+                            )
+                        )
+
+        # Flush any remaining paragraphs
+        flush_group()
+
+        return grouped_changes
 
     def _diff_single_block(
         self,
@@ -530,8 +634,11 @@ class BlockDiffDetector:
                             )
                         )
 
-            elif pristine.block_type == BlockType.CONTENT_BLOCK:
-                # Content block modified
+            elif pristine.block_type in (
+                BlockType.CONTENT_BLOCK,
+                BlockType.PARAGRAPH,
+            ):
+                # Content block or paragraph modified
                 changes.append(
                     BlockChange(
                         change_type=ChangeType.MODIFIED,
