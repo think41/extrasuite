@@ -10,6 +10,7 @@ specified in extradoc-spec.md, with:
 from __future__ import annotations
 
 import html
+import re
 from dataclasses import dataclass, field
 from typing import Any
 
@@ -536,7 +537,9 @@ def _convert_table(
             cell_content = cell.get("content", [])
             cell_xml = _convert_body_content(cell_content, lists, ctx, indent=0)
 
-            if "\n" in cell_xml:
+            # Check for multiple block-level elements
+            para_tags = len(re.findall(r"</(?:p|h[1-6]|li|title|subtitle)>", cell_xml))
+            if para_tags > 1 or "\n" in cell_xml:
                 # Multi-line cell content
                 parts.append(f"    <td{attr_str}>")
                 for line in cell_xml.split("\n"):
