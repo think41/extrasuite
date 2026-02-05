@@ -1,6 +1,13 @@
 """Diff engine for ExtraDoc XML.
 
-Compares pristine and edited documents to generate Google Docs batchUpdate requests.
+Compares pristine and edited documents to generate minimal Google Docs
+batchUpdate requests using a true diff algorithm.
+
+The strategy is:
+1. Parse both documents into desugared form
+2. For each section, use sequence diffing to find changes
+3. For modified elements, generate minimal update operations
+4. Sort operations in descending index order for safe application
 """
 
 from __future__ import annotations
@@ -18,6 +25,12 @@ from .desugar import (
     desugar_document,
 )
 from .indexer import utf16_len
+from .sequence_diff import (
+    diff_text,
+    elements_match,
+    sections_are_identical,
+    sequence_diff,
+)
 
 # --- Helpers for style mapping ---
 
@@ -131,366 +144,649 @@ class DiffOperation:
     sequence: int = 0  # Generation sequence for stable sorting of same-index ops
 
 
+# Global sequence counter for stable sorting
+_sequence_counter = 0
+
+
+def _next_sequence() -> int:
+    """Get next sequence number for operation ordering."""
+    global _sequence_counter
+    _sequence_counter += 1
+    return _sequence_counter
+
+
 def diff_documents(
     pristine_xml: str,
     current_xml: str,
     pristine_styles: str | None = None,
     current_styles: str | None = None,
 ) -> list[dict[str, Any]]:
-    """Rebuild each section (body, headers, footers, footnotes) from current_xml.
+    """Generate minimal batchUpdate requests via true diff.
 
-    Strategy: for every section, delete existing content for that segment and
-    reinsert the current content in order. This keeps indexes stable and avoids
-    interleaving structural diffs.
+    Compares pristine and current documents section by section,
+    generating only the operations needed to transform pristine into current.
+
+    Args:
+        pristine_xml: The original document XML
+        current_xml: The modified document XML
+        pristine_styles: Optional styles.xml for pristine
+        current_styles: Optional styles.xml for current
+
+    Returns:
+        List of batchUpdate request dictionaries
     """
+    global _sequence_counter
+    _sequence_counter = 0
+
     pristine = desugar_document(pristine_xml, pristine_styles)
     current = desugar_document(current_xml, current_styles)
 
-    # Index sections by (type, id) for quick lookup. Body uses empty id.
+    # Index sections by (type, id) for quick lookup
     def _key(section: Section) -> tuple[str, str]:
         return (section.section_type, section.section_id or "")
 
     pristine_map = {_key(s): s for s in pristine.sections}
+    current_map = {_key(s): s for s in current.sections}
 
-    requests: list[dict[str, Any]] = []
+    operations: list[DiffOperation] = []
 
+    # Process sections that exist in current
     for section in current.sections:
         key = _key(section)
         pristine_section = pristine_map.get(key)
-        section_requests = _rebuild_section(pristine_section, section, current_styles)
-        requests.extend(section_requests)
+        section_ops = _diff_section(pristine_section, section)
+        operations.extend(section_ops)
 
-    return requests
+    # Handle deleted sections (headers/footers that no longer exist)
+    for key, pristine_section in pristine_map.items():
+        if key not in current_map:
+            # Section was deleted
+            if pristine_section.section_type == "header":
+                operations.append(
+                    DiffOperation(
+                        op_type="delete_header",
+                        index=0,
+                        segment_id=pristine_section.section_id,
+                        sequence=_next_sequence(),
+                    )
+                )
+            elif pristine_section.section_type == "footer":
+                operations.append(
+                    DiffOperation(
+                        op_type="delete_footer",
+                        index=0,
+                        segment_id=pristine_section.section_id,
+                        sequence=_next_sequence(),
+                    )
+                )
+
+    # Sort by descending index, then by sequence for stable ordering
+    operations.sort(key=lambda op: (-op.index, -op.sequence))
+
+    return [_operation_to_request(op) for op in operations if op.op_type]
 
 
-def _trim_trailing_empty_paragraphs(
-    elements: list[Paragraph | Table | SpecialElement],
-) -> list[Paragraph | Table | SpecialElement]:
-    """Remove trailing blank paragraphs (whitespace-only, no specials)."""
-    trimmed = list(elements)
-    while trimmed:
-        last = trimmed[-1]
-        if not isinstance(last, Paragraph):
-            break
-        has_special = any(run.styles.get("_special") for run in last.runs)
-        if has_special:
-            break
-        if last.text_content().strip() == "":
-            trimmed.pop()
-            continue
-        break
-    return trimmed
-
-
-def _rebuild_section(
-    pristine: Section | None, current: Section, _styles_xml: str | None
-) -> list[dict[str, Any]]:
-    """Delete & reinsert content for a single section."""
-    section_requests: list[dict[str, Any]] = []
-
+def _diff_section(pristine: Section | None, current: Section) -> list[DiffOperation]:
+    """Diff a single section, returning minimal operations."""
     segment_id = None if current.section_type == "body" else current.section_id
     start_idx = 1 if current.section_type == "body" else 0
 
-    # If the section exists in pristine, delete its content first (element by element),
-    # skipping the terminal paragraph/newline and read-only specials (hr).
-    if current.section_type != "footnote" and pristine and pristine.content:
-        flattened = _flatten_elements(pristine.content, current.section_type)
-        last_start = flattened[-1][1]
-        # Leave the final paragraph intact and do not delete if only one element remains.
-        deletable_flat = flattened[:-1] if len(flattened) > 1 else []
-        deletions: list[tuple[int, int]] = []
-        for elem, s, e in deletable_flat:
-            if isinstance(elem, SpecialElement) and elem.element_type == "hr":
-                continue  # read-only; leave in place
-            # If this is the last element before the terminal paragraph, cap end one
-            # code unit earlier to avoid the trailing newline constraint.
-            capped_end = e
-            if e == last_start:
-                capped_end = max(s, e - 1)
-            deletions.append((s, capped_end))
-
-        for s, e in sorted(deletions, key=lambda x: x[0], reverse=True):
-            if e <= s:
-                continue
-            delete_range: dict[str, Any] = {"startIndex": s, "endIndex": e}
-            if segment_id:
-                delete_range["segmentId"] = segment_id
-            section_requests.append({"deleteContentRange": {"range": delete_range}})
-    elif not pristine:
-        # Section is new: for headers/footers, create the segment so we can write into it.
+    # New section: create it and emit all content
+    if pristine is None:
+        ops: list[DiffOperation] = []
         if current.section_type == "header":
-            section_requests.append({"createHeader": {"type": "DEFAULT"}})
+            ops.append(
+                DiffOperation(
+                    op_type="create_header",
+                    index=0,
+                    sequence=_next_sequence(),
+                )
+            )
         elif current.section_type == "footer":
-            section_requests.append({"createFooter": {"type": "DEFAULT"}})
-        # Footnotes are created via createFootnote requests from the body; no
-        # precreation needed here.
+            ops.append(
+                DiffOperation(
+                    op_type="create_footer",
+                    index=0,
+                    sequence=_next_sequence(),
+                )
+            )
 
-    content_to_emit = _trim_trailing_empty_paragraphs(current.content)
+        # Emit content for new section
+        cursor = start_idx
+        for elem in current.content:
+            if isinstance(elem, SpecialElement) and elem.element_type == "hr":
+                cursor += elem.utf16_length()
+                continue
+            elem_ops, added = _emit_element(elem, cursor, segment_id)
+            ops.extend(elem_ops)
+            cursor += added
 
-    cursor = start_idx
-    for elem in content_to_emit:
-        if isinstance(elem, SpecialElement) and elem.element_type == "hr":
-            # Leave existing horizontal rules untouched (read-only)
-            cursor += elem.utf16_length()
-            continue
-        elem_requests, added = _emit_element(elem, cursor, segment_id)
-        section_requests.extend(elem_requests)
-        cursor += added
+        return ops
 
-    return section_requests
+    # Fast path: sections are identical
+    if sections_are_identical(pristine.content, current.content):
+        return []
+
+    # Flatten both sections to sequences with index ranges
+    p_elements = _flatten_elements(pristine.content, current.section_type)
+    c_elements = _flatten_elements(current.content, current.section_type)
+
+    # Run sequence diff to find adds/deletes/modifications
+    diff_result = sequence_diff(p_elements, c_elements)
+
+    operations: list[DiffOperation] = []
+
+    for change in diff_result:
+        if change.type == "equal":
+            # Check if elements have subtle differences (like style changes)
+            for i, p_elem in enumerate(change.pristine_elements):
+                if i < len(change.current_elements):
+                    c_elem = change.current_elements[i]
+                    if not elements_match(p_elem, c_elem):
+                        # Elements have same signature but different details
+                        p_flat = [(p_elem, p_elements[0][1], p_elements[0][2])]
+                        c_flat = [(c_elem, c_elements[0][1], c_elements[0][2])]
+                        # Find actual indexes
+                        for pe, ps, pend in p_elements:
+                            if pe is p_elem:
+                                p_flat = [(pe, ps, pend)]
+                                break
+                        for ce, cs, cend in c_elements:
+                            if ce is c_elem:
+                                c_flat = [(ce, cs, cend)]
+                                break
+                        ops = _diff_element(p_flat[0], c_flat[0], segment_id)
+                        operations.extend(ops)
+
+        elif change.type == "delete":
+            # Delete elements from pristine
+            for p_elem in change.pristine_elements:
+                # Find the element's index range
+                for elem, start, end in p_elements:
+                    if elem is p_elem:
+                        # Skip HR (read-only)
+                        if (
+                            isinstance(elem, SpecialElement)
+                            and elem.element_type == "hr"
+                        ):
+                            continue
+                        operations.append(
+                            DiffOperation(
+                                op_type="delete",
+                                index=start,
+                                end_index=end,
+                                segment_id=segment_id,
+                                sequence=_next_sequence(),
+                            )
+                        )
+                        break
+
+        elif change.type == "insert":
+            # Insert new elements from current
+            insert_idx = change.pristine_start
+            for c_elem in change.current_elements:
+                if isinstance(c_elem, SpecialElement) and c_elem.element_type == "hr":
+                    insert_idx += c_elem.utf16_length()
+                    continue
+                elem_ops, added = _emit_element(c_elem, insert_idx, segment_id)
+                operations.extend(elem_ops)
+                insert_idx += added
+
+        elif change.type == "replace":
+            # Replace: if same element count and types, diff element-by-element
+            # Otherwise, delete old + insert new
+            if len(change.pristine_elements) == len(change.current_elements):
+                # Try element-by-element diff for matching types
+                can_diff = all(
+                    isinstance(p, type(c))
+                    for p, c in zip(
+                        change.pristine_elements, change.current_elements, strict=False
+                    )
+                )
+                if can_diff:
+                    # Diff each pair of elements
+                    for p_elem, c_elem in zip(
+                        change.pristine_elements, change.current_elements, strict=False
+                    ):
+                        # Find the pristine element's index range
+                        for elem, start, end in p_elements:
+                            if elem is p_elem:
+                                ops = _diff_element(
+                                    (p_elem, start, end),
+                                    (c_elem, start, end),  # Use pristine indexes
+                                    segment_id,
+                                )
+                                operations.extend(ops)
+                                break
+                    continue
+
+            # Fallback: delete old + insert new
+            # First, delete pristine elements (in reverse order for index stability)
+            for p_elem in reversed(change.pristine_elements):
+                for elem, start, end in p_elements:
+                    if elem is p_elem:
+                        if (
+                            isinstance(elem, SpecialElement)
+                            and elem.element_type == "hr"
+                        ):
+                            continue
+                        operations.append(
+                            DiffOperation(
+                                op_type="delete",
+                                index=start,
+                                end_index=end,
+                                segment_id=segment_id,
+                                sequence=_next_sequence(),
+                            )
+                        )
+                        break
+
+            # Then insert current elements at the start of the replaced range
+            insert_idx = change.pristine_start
+            for c_elem in change.current_elements:
+                if isinstance(c_elem, SpecialElement) and c_elem.element_type == "hr":
+                    insert_idx += c_elem.utf16_length()
+                    continue
+                elem_ops, added = _emit_element(c_elem, insert_idx, segment_id)
+                operations.extend(elem_ops)
+                insert_idx += added
+
+    # Handle last paragraph rule - don't delete the final paragraph
+    operations = _enforce_last_paragraph_rule(operations, pristine, current, segment_id)
+
+    return operations
 
 
-def _find_matching_section(target: Section, sections: list[Section]) -> Section | None:
-    """Find a section in the list that matches the target."""
-    for section in sections:
-        if section.section_type == target.section_type:
-            if section.section_id == target.section_id:
-                return section
-            # For body sections without IDs, match by type
-            if not target.section_id and not section.section_id:
-                return section
-    return None
+def _enforce_last_paragraph_rule(
+    operations: list[DiffOperation],
+    pristine: Section,
+    current: Section,
+    _segment_id: str | None,
+) -> list[DiffOperation]:
+    """Enforce Google Docs rule that last paragraph cannot be deleted.
+
+    If operations would delete all content, we need to preserve the final
+    paragraph/newline.
+    """
+    if not pristine.content:
+        return operations
+
+    # Find the last deletable element's end index
+    p_flat = _flatten_elements(pristine.content, current.section_type)
+    if not p_flat:
+        return operations
+
+    _last_elem, last_start, last_end = p_flat[-1]
+
+    # Filter out deletion of the last element
+    filtered = []
+    for op in operations:
+        if op.op_type == "delete":
+            # If this delete would remove the last element entirely, skip it
+            if op.index == last_start and op.end_index == last_end:
+                continue
+            # If this delete would extend past the last element's start,
+            # truncate it to not delete the last paragraph
+            if op.end_index > last_start and op.index < last_start:
+                op = DiffOperation(
+                    op_type=op.op_type,
+                    index=op.index,
+                    end_index=last_start,
+                    segment_id=op.segment_id,
+                    sequence=op.sequence,
+                )
+        filtered.append(op)
+
+    return filtered
 
 
-def _diff_section(_pristine: Section, _current: Section) -> list[DiffOperation]:
-    """Legacy diff (unused in rebuild strategy)."""
-    return []
+def _diff_element(
+    pristine: tuple[Paragraph | Table | SpecialElement, int, int],
+    current: tuple[Paragraph | Table | SpecialElement, int, int],
+    segment_id: str | None,
+) -> list[DiffOperation]:
+    """Diff a single element that exists in both versions."""
+    p_elem, p_start, p_end = pristine
+    c_elem, _c_start, _c_end = current
+
+    if isinstance(p_elem, Paragraph) and isinstance(c_elem, Paragraph):
+        return _diff_paragraph(p_elem, c_elem, p_start, p_end, segment_id)
+
+    if isinstance(p_elem, Table) and isinstance(c_elem, Table):
+        return _diff_table(p_elem, c_elem, p_start, segment_id)
+
+    # For other types or mismatched types, delete and reinsert
+    ops: list[DiffOperation] = []
+    ops.append(
+        DiffOperation(
+            op_type="delete",
+            index=p_start,
+            end_index=p_end,
+            segment_id=segment_id,
+            sequence=_next_sequence(),
+        )
+    )
+    elem_ops, _ = _emit_element(c_elem, p_start, segment_id)
+    ops.extend(elem_ops)
+    return ops
 
 
-def _element_to_key(elem: Paragraph | Table | SpecialElement) -> str:
-    """Generate a structural key for element matching (ignores content)."""
-    if isinstance(elem, Paragraph):
-        prefix = ""
-        if elem.named_style != "NORMAL_TEXT":
-            prefix = f"[{elem.named_style}]"
-        if elem.bullet_type:
-            prefix = f"[{elem.bullet_type}:{elem.bullet_level}]"
-        return f"P{prefix}"
-    elif isinstance(elem, Table):
-        return f"TABLE:{elem.rows}x{elem.cols}"
-    elif isinstance(elem, SpecialElement):
-        return f"SPECIAL:{elem.element_type}"
-    return ""
-
-
-def _diff_element_content(
-    pristine: Paragraph | Table | SpecialElement,
-    current: Paragraph | Table | SpecialElement,
+def _diff_paragraph(
+    pristine: Paragraph,
+    current: Paragraph,
     p_start: int,
     p_end: int,
     segment_id: str | None,
-    section_type: str,
 ) -> list[DiffOperation]:
-    """Diff content within structurally matching elements."""
-    operations: list[DiffOperation] = []
+    """Diff paragraph content and styles."""
+    ops: list[DiffOperation] = []
 
-    if isinstance(pristine, Paragraph) and isinstance(current, Paragraph):
-        # Diff paragraph text content
-        p_text = pristine.text_content()
-        c_text = current.text_content()
+    # 1. Check named style (heading level)
+    if pristine.named_style != current.named_style:
+        ops.append(
+            DiffOperation(
+                op_type="update_paragraph_style",
+                index=p_start,
+                end_index=p_end,
+                paragraph_style={"namedStyleType": current.named_style},
+                fields="namedStyleType",
+                segment_id=segment_id,
+                sequence=_next_sequence(),
+            )
+        )
 
-        if p_text != c_text:
-            # Replace entire paragraph content (including newline)
-            operations.append(
+    # 2. Check bullet changes
+    if pristine.bullet_type != current.bullet_type:
+        if current.bullet_type:
+            preset = _bullet_type_to_preset(current.bullet_type)
+            ops.append(
                 DiffOperation(
-                    op_type="delete",
+                    op_type="create_bullets",
+                    index=p_start,
+                    end_index=p_end,
+                    bullet_preset=preset,
+                    segment_id=segment_id,
+                    sequence=_next_sequence(),
+                )
+            )
+            # Handle nested levels
+            if current.bullet_level > 0:
+                indent_pt = 36 * current.bullet_level
+                ops.append(
+                    DiffOperation(
+                        op_type="update_paragraph_style",
+                        index=p_start,
+                        end_index=p_end,
+                        paragraph_style={
+                            "indentStart": {"magnitude": indent_pt, "unit": "PT"},
+                            "indentFirstLine": {"magnitude": 0, "unit": "PT"},
+                        },
+                        fields="indentStart,indentFirstLine",
+                        segment_id=segment_id,
+                        sequence=_next_sequence(),
+                    )
+                )
+        else:
+            ops.append(
+                DiffOperation(
+                    op_type="delete_bullets",
                     index=p_start,
                     end_index=p_end,
                     segment_id=segment_id,
+                    sequence=_next_sequence(),
                 )
             )
-            # Legacy path unused
 
-        # Check for style changes
-        style_ops = _diff_element_styles(
-            (pristine, p_start, p_end),
-            (current, p_start, p_end),
-            segment_id,
-        )
-        operations.extend(style_ops)
+    # 3. Diff text content
+    p_text = pristine.text_content()
+    c_text = current.text_content()
 
-    elif isinstance(pristine, Table) and isinstance(current, Table):
-        # Diff table cell by cell
-        table_ops = _diff_table_content(
-            pristine, current, p_start, segment_id, section_type
-        )
-        operations.extend(table_ops)
+    if p_text != c_text:
+        # Use character-level diff
+        text_ops = diff_text(p_text, c_text)
+        for op_type, start, end, text in reversed(text_ops):
+            if op_type == "delete":
+                ops.append(
+                    DiffOperation(
+                        op_type="delete",
+                        index=p_start + start,
+                        end_index=p_start + end,
+                        segment_id=segment_id,
+                        sequence=_next_sequence(),
+                    )
+                )
+            elif op_type == "insert":
+                ops.append(
+                    DiffOperation(
+                        op_type="insert",
+                        index=p_start + start,
+                        content=text,
+                        segment_id=segment_id,
+                        sequence=_next_sequence(),
+                    )
+                )
+                # Apply styles to inserted text
+                if current.runs:
+                    # Find which run this text belongs to
+                    style_ops = _apply_styles_to_inserted_text(
+                        current, p_start + start, text, segment_id
+                    )
+                    ops.extend(style_ops)
 
-    return operations
+    elif _runs_have_style_changes(pristine.runs, current.runs):
+        # Same text, different styling
+        style_ops = _diff_run_styles(pristine, current, p_start, segment_id)
+        ops.extend(style_ops)
+
+    return ops
 
 
-def _diff_table_content(
+def _apply_styles_to_inserted_text(
+    paragraph: Paragraph,
+    insert_idx: int,
+    text: str,
+    segment_id: str | None,
+) -> list[DiffOperation]:
+    """Apply appropriate styles to inserted text based on context."""
+    ops: list[DiffOperation] = []
+    text_len = utf16_len(text)
+
+    # For now, apply styles from the first non-special run
+    for run in paragraph.runs:
+        if "_special" not in run.styles:
+            style_info = _full_run_text_style(run.styles)
+            if style_info:
+                text_style, fields = style_info
+                ops.append(
+                    DiffOperation(
+                        op_type="update_text_style",
+                        index=insert_idx,
+                        end_index=insert_idx + text_len,
+                        text_style=text_style,
+                        fields=fields,
+                        segment_id=segment_id,
+                        sequence=_next_sequence(),
+                    )
+                )
+            break
+
+    return ops
+
+
+def _runs_have_style_changes(pristine_runs: list[Any], current_runs: list[Any]) -> bool:
+    """Check if runs have style differences with same text."""
+    if len(pristine_runs) != len(current_runs):
+        return True
+
+    for p_run, c_run in zip(pristine_runs, current_runs, strict=False):
+        if p_run.text != c_run.text:
+            return True
+        # Compare styles excluding transient keys
+        p_styles = {k: v for k, v in p_run.styles.items() if not k.startswith("_")}
+        c_styles = {k: v for k, v in c_run.styles.items() if not k.startswith("_")}
+        if p_styles != c_styles:
+            return True
+
+    return False
+
+
+def _diff_run_styles(
+    pristine: Paragraph,
+    current: Paragraph,
+    p_start: int,
+    segment_id: str | None,
+) -> list[DiffOperation]:
+    """Generate style update operations for run-level changes."""
+    ops: list[DiffOperation] = []
+
+    # Track position through runs
+    cursor = p_start
+
+    for p_run, c_run in zip(pristine.runs, current.runs, strict=False):
+        run_len = p_run.utf16_length()
+
+        # Skip special elements
+        if "_special" in p_run.styles or "_special" in c_run.styles:
+            cursor += run_len
+            continue
+
+        # Compare styles
+        p_styles = {k: v for k, v in p_run.styles.items() if not k.startswith("_")}
+        c_styles = {k: v for k, v in c_run.styles.items() if not k.startswith("_")}
+
+        if p_styles != c_styles:
+            style_diff = _compute_style_diff(p_styles, c_styles)
+            if style_diff:
+                text_style, fields = style_diff
+                ops.append(
+                    DiffOperation(
+                        op_type="update_text_style",
+                        index=cursor,
+                        end_index=cursor + run_len,
+                        text_style=text_style,
+                        fields=fields,
+                        segment_id=segment_id,
+                        sequence=_next_sequence(),
+                    )
+                )
+
+        cursor += run_len
+
+    return ops
+
+
+def _compute_style_diff(
+    pristine: dict[str, str], current: dict[str, str]
+) -> tuple[dict[str, Any], str] | None:
+    """Compute the style difference between two run styles."""
+    changes: dict[str, Any] = {}
+    fields: list[str] = []
+
+    # Check each style key
+    for key in ("bold", "italic", "underline", "strikethrough"):
+        p_val = pristine.get(key, "")
+        c_val = current.get(key, "")
+        if p_val != c_val:
+            changes[key] = c_val == "1"
+            fields.append(key)
+
+    # Handle link separately
+    p_link = pristine.get("link", "")
+    c_link = current.get("link", "")
+    if p_link != c_link:
+        changes["link"] = {"url": c_link} if c_link else None
+        fields.append("link")
+
+    # Handle superscript/subscript
+    p_super = pristine.get("superscript") == "1"
+    p_sub = pristine.get("subscript") == "1"
+    c_super = current.get("superscript") == "1"
+    c_sub = current.get("subscript") == "1"
+
+    if p_super != c_super or p_sub != c_sub:
+        if c_super:
+            changes["baselineOffset"] = "SUPERSCRIPT"
+        elif c_sub:
+            changes["baselineOffset"] = "SUBSCRIPT"
+        else:
+            changes["baselineOffset"] = "NONE"
+        fields.append("baselineOffset")
+
+    if changes:
+        return changes, ",".join(fields)
+    return None
+
+
+def _diff_table(
     pristine: Table,
     current: Table,
-    table_start: int,
+    p_start: int,
     segment_id: str | None,
-    _section_type: str,
 ) -> list[DiffOperation]:
-    """Diff table content cell by cell, comparing paragraphs individually."""
-    operations: list[DiffOperation] = []
+    """Diff table structure and cell content."""
+    ops: list[DiffOperation] = []
 
-    # Build cell lookup by position
+    # If structure changed, delete and reinsert the whole table
+    if pristine.rows != current.rows or pristine.cols != current.cols:
+        p_end = p_start + _table_length(pristine)
+        ops.append(
+            DiffOperation(
+                op_type="delete",
+                index=p_start,
+                end_index=p_end,
+                segment_id=segment_id,
+                sequence=_next_sequence(),
+            )
+        )
+        table_ops, _ = _emit_table(current, p_start, segment_id)
+        ops.extend(table_ops)
+        return ops
+
+    # Same structure: diff cell by cell
     p_cells = {(c.row, c.col): c for c in pristine.cells}
     c_cells = {(c.row, c.col): c for c in current.cells}
 
-    # Calculate cell start indexes for pristine table
-    cell_indexes = _calculate_table_cell_indexes(pristine, table_start)
+    # Calculate cell start indexes
+    cell_starts = _calculate_table_cell_indexes(pristine, p_start)
 
-    # Compare cells at same positions
-    for pos, p_cell in p_cells.items():
-        if pos not in c_cells:
-            continue
+    for pos, c_cell in c_cells.items():
+        p_cell = p_cells.get(pos)
+        if p_cell and pos in cell_starts:
+            cell_ops = _diff_cell_content(p_cell, c_cell, cell_starts[pos], segment_id)
+            ops.extend(cell_ops)
 
-        c_cell = c_cells[pos]
-        cell_start = cell_indexes.get(pos, table_start)
-
-        # Get paragraphs from both cells
-        p_paras = [e for e in p_cell.content if isinstance(e, Paragraph)]
-        c_paras = [e for e in c_cell.content if isinstance(e, Paragraph)]
-
-        # Diff paragraphs within cell
-        cell_ops = _diff_cell_paragraphs(p_paras, c_paras, cell_start, segment_id)
-        operations.extend(cell_ops)
-
-    return operations
+    return ops
 
 
-def _diff_cell_paragraphs(
-    pristine_paras: list[Paragraph],
-    current_paras: list[Paragraph],
+def _diff_cell_content(
+    pristine: TableCell,
+    current: TableCell,
     cell_start: int,
     segment_id: str | None,
 ) -> list[DiffOperation]:
-    """Diff paragraphs within a cell, preserving paragraph structure."""
-    operations: list[DiffOperation] = []
+    """Diff the content of a single table cell."""
+    ops: list[DiffOperation] = []
 
-    # Calculate paragraph start indexes for pristine
-    para_indexes: list[tuple[int, int]] = []  # (start, end) for each paragraph
-    current_idx = cell_start
-    for para in pristine_paras:
-        para_start = current_idx
-        para_end = para_start + para.utf16_length()
-        para_indexes.append((para_start, para_end))
-        current_idx = para_end
+    # Check colspan/rowspan changes (would need merge/unmerge operations)
+    # For now, skip if merge attributes differ
 
-    # Compare paragraphs up to the minimum length
-    min_len = min(len(pristine_paras), len(current_paras))
-
-    for i in range(min_len):
-        p_para = pristine_paras[i]
-        c_para = current_paras[i]
-        p_start, _p_end = para_indexes[i]
-
-        p_text = p_para.text_content()
-        c_text = c_para.text_content()
-
-        if p_text != c_text:
-            # Text changed - delete old text (not newline), insert new text
-            text_end = p_start + utf16_len(p_text)
-            if p_text:
-                operations.append(
-                    DiffOperation(
-                        op_type="delete",
-                        index=p_start,
-                        end_index=text_end,
-                        segment_id=segment_id,
+    # Diff cell content element by element
+    if len(pristine.content) == len(current.content):
+        cursor = cell_start
+        for p_elem, c_elem in zip(pristine.content, current.content, strict=False):
+            if isinstance(p_elem, Paragraph) and isinstance(c_elem, Paragraph):
+                p_len = p_elem.utf16_length()
+                if not elements_match(p_elem, c_elem):
+                    para_ops = _diff_paragraph(
+                        p_elem, c_elem, cursor, cursor + p_len, segment_id
                     )
-                )
-            if c_text:
-                operations.append(
-                    DiffOperation(
-                        op_type="insert",
-                        index=p_start,
-                        content=c_text,
-                        segment_id=segment_id,
-                    )
-                )
+                    ops.extend(para_ops)
+                cursor += p_len
 
-    # Handle extra paragraphs in current (content added)
-    # For now, we append to the last paragraph - full implementation would insert new paragraphs
-    if len(current_paras) > len(pristine_paras) and pristine_paras:
-        # Get the end of the last pristine paragraph (before its newline)
-        last_para = pristine_paras[-1]
-        last_start, _last_end = para_indexes[-1]
-        insert_idx = last_start + utf16_len(last_para.text_content())
-
-        # Collect text from extra paragraphs
-        extra_text_parts = []
-        for para in current_paras[len(pristine_paras) :]:
-            text = para.text_content()
-            if text:
-                extra_text_parts.append("\n" + text)
-
-        if extra_text_parts:
-            operations.append(
-                DiffOperation(
-                    op_type="insert",
-                    index=insert_idx,
-                    content="".join(extra_text_parts),
-                    segment_id=segment_id,
-                )
-            )
-
-    return operations
+    return ops
 
 
-def _calculate_table_cell_indexes(
-    table: Table, table_start: int
-) -> dict[tuple[int, int], int]:
-    """Calculate the start index of text content in each table cell.
-
-    Google Docs table structure (observed from API):
-    - Table start marker: 1 index
-    - First row marker: 1 index (combined with table = 2 indexes before first cell)
-    - Each subsequent row: 1 row marker index
-    - Cell structure: 1 index for cell start, then paragraph content
-    - Each paragraph in cell includes +1 for newline
-    """
-    cell_indexes: dict[tuple[int, int], int] = {}
-
-    # Table start (1) + first row marker (1) = 2 indexes before first cell
-    current_idx = table_start + 2
-
-    # Group cells by row
-    cells_by_row: dict[int, list[TableCell]] = {}
-    for cell in table.cells:
-        cells_by_row.setdefault(cell.row, []).append(cell)
-
-    for row in sorted(cells_by_row.keys()):
-        if row > 0:
-            current_idx += 1  # Row marker for subsequent rows
-
-        row_cells = sorted(cells_by_row[row], key=lambda c: c.col)
-        for cell in row_cells:
-            # Cell start marker takes 1 index, then paragraph content starts
-            current_idx += 1  # Cell content start marker
-
-            # Record where paragraph text starts
-            cell_indexes[(cell.row, cell.col)] = current_idx
-
-            # Calculate content length (each paragraph includes +1 for newline)
-            for elem in cell.content:
-                if isinstance(elem, Paragraph):
-                    current_idx += elem.utf16_length()
-
-    return cell_indexes
-
-
-def _get_cell_text(cell: TableCell) -> str:
-    """Get text content of a cell, preserving paragraph breaks.
-
-    Each paragraph in Google Docs ends with a newline character.
-    We must preserve these for proper diffing and insertion.
-    """
-    parts = []
-    for elem in cell.content:
-        if isinstance(elem, Paragraph):
-            text = elem.text_content()
-            # Each paragraph ends with newline in Google Docs
-            if text and not text.endswith("\n"):
-                text += "\n"
-            parts.append(text)
-    return "".join(parts)
+# --- Element flattening ---
 
 
 def _flatten_elements(
@@ -512,8 +808,7 @@ def _flatten_elements(
             current_idx = end_idx
 
         elif isinstance(elem, Table):
-            # Simplified table index calculation
-            end_idx = _calculate_table_end(elem, start_idx)
+            end_idx = start_idx + _table_length(elem)
             result.append((elem, start_idx, end_idx))
             current_idx = end_idx
 
@@ -525,81 +820,7 @@ def _flatten_elements(
     return result
 
 
-def _calculate_table_end(table: Table, start_idx: int) -> int:
-    """Calculate the end index of a table."""
-    current = start_idx + 1  # table start marker
-
-    # Build lookup for cells by row to respect ordering
-    cells_by_row: dict[int, list[TableCell]] = {}
-    for cell in table.cells:
-        cells_by_row.setdefault(cell.row, []).append(cell)
-
-    for row in range(table.rows):
-        current += 1  # row marker
-        row_cells = sorted(cells_by_row.get(row, []), key=lambda c: c.col)
-        for col in range(table.cols):
-            # Each physical cell slot, even if empty, exists
-            cell_obj = next((c for c in row_cells if c.col == col), None)
-            current += 1  # cell marker
-            if cell_obj and cell_obj.content:
-                for elem in cell_obj.content:
-                    if isinstance(elem, Paragraph):
-                        current += elem.utf16_length()
-                    elif isinstance(elem, SpecialElement):
-                        current += 1
-            else:
-                current += 1  # default empty paragraph
-
-    return current + 1  # table end marker
-
-
-def _element_to_text(elem: Paragraph | Table | SpecialElement) -> str:
-    """Convert an element to a text representation for comparison."""
-    if isinstance(elem, Paragraph):
-        text = elem.text_content()
-        # Include structural info in the comparison key
-        prefix = ""
-        if elem.named_style != "NORMAL_TEXT":
-            prefix = f"[{elem.named_style}]"
-        if elem.bullet_type:
-            prefix = f"[{elem.bullet_type}:{elem.bullet_level}]"
-        return prefix + text
-
-    elif isinstance(elem, Table):
-        # Use a simple representation for tables
-        parts = ["[TABLE]"]
-        for cell in elem.cells:
-            cell_text = ""
-            for ce in cell.content:
-                if isinstance(ce, Paragraph):
-                    cell_text += ce.text_content()
-            parts.append(f"[{cell.row},{cell.col}]{cell_text}")
-        return "|".join(parts)
-
-    elif isinstance(elem, SpecialElement):
-        return f"[{elem.element_type}]"
-
-    return ""
-
-
-def _element_to_insert_text(elem: Paragraph | Table | SpecialElement) -> str:
-    """Convert an element to the text to insert."""
-    if isinstance(elem, Paragraph):
-        # Get text content with newline
-        text = elem.text_content()
-        if not text.endswith("\n"):
-            text += "\n"
-        return text
-
-    elif isinstance(elem, SpecialElement):
-        # Special elements are handled differently
-        return ""
-
-    elif isinstance(elem, Table):
-        # Tables need special handling
-        return ""
-
-    return ""
+# --- Length calculations ---
 
 
 def _element_length(elem: Paragraph | Table | SpecialElement) -> int:
@@ -633,14 +854,35 @@ def _table_length(table: Table) -> int:
     return length
 
 
+def _calculate_table_cell_indexes(
+    table: Table, table_start: int
+) -> dict[tuple[int, int], int]:
+    """Calculate the start index of text content in each table cell."""
+    cell_indexes: dict[tuple[int, int], int] = {}
+    cell_map = {(cell.row, cell.col): cell for cell in table.cells}
+
+    current_idx = table_start + 1  # Skip table start marker
+
+    for row in range(table.rows):
+        current_idx += 1  # Row marker
+        for col in range(table.cols):
+            current_idx += 1  # Cell marker
+            cell_indexes[(row, col)] = current_idx
+
+            cell = cell_map.get((row, col))
+            if cell and cell.content:
+                for elem in cell.content:
+                    current_idx += _element_length(elem)
+            else:
+                current_idx += 1  # Default empty paragraph
+
+    return cell_indexes
+
+
 def _table_cell_starts(
     table: Table, base_index: int, default_cell_len: int = 1
 ) -> tuple[dict[tuple[int, int], int], int]:
-    """Return cell start indexes (first content char) and base length.
-
-    Indexes are computed for the freshly inserted table with default
-    empty-paragraph content (length = default_cell_len per cell).
-    """
+    """Return cell start indexes (first content char) and base length."""
     starts: dict[tuple[int, int], int] = {}
     idx = base_index
     idx += 1  # table start
@@ -654,64 +896,45 @@ def _table_cell_starts(
     return starts, idx - base_index
 
 
+# --- Element emission ---
+
+
 def _emit_element(
     elem: Paragraph | Table | SpecialElement,
     insert_idx: int,
     segment_id: str | None,
-) -> tuple[list[dict[str, Any]], int]:
-    """Emit operations for an element at a given index and return (ops, length).
-
-    segment_id is passed through so header/footer/footnote content lands in the
-    correct segment.
-    """
-    ops: list[DiffOperation] = []
-    added = 0
-
+) -> tuple[list[DiffOperation], int]:
+    """Emit operations for an element at a given index and return (ops, length)."""
     if isinstance(elem, Paragraph):
-        para_ops, para_len = _generate_paragraph_insert(elem, insert_idx, segment_id)
-        ops.extend(para_ops)
-        added = para_len
-
+        return _emit_paragraph(elem, insert_idx, segment_id)
     elif isinstance(elem, SpecialElement):
-        spec_ops, spec_len = _generate_special_insert(elem, insert_idx, segment_id)
-        ops.extend(spec_ops)
-        added = spec_len
-
+        return _emit_special(elem, insert_idx, segment_id)
     elif isinstance(elem, Table):
-        table_ops, table_len = _generate_table_insert(elem, insert_idx, segment_id)
-        ops.extend(table_ops)
-        added = table_len
-
-    return [_operation_to_request(op) for op in ops], added
+        return _emit_table(elem, insert_idx, segment_id)
+    return [], 0
 
 
-def _generate_paragraph_insert(
+def _emit_paragraph(
     para: Paragraph,
     insert_idx: int,
     segment_id: str | None,
-    *,
-    reuse_existing_newline: bool = False,
 ) -> tuple[list[DiffOperation], int]:
     """Insert a paragraph with styles and bullets. Returns (ops, length)."""
     ops: list[DiffOperation] = []
     cursor = insert_idx
-    # When reusing the default empty paragraph inside a table cell, Google Docs
-    # already provides a trailing newline. In that case, avoid adding another and
-    # advance past the existing newline instead.
-    add_trailing_newline = not reuse_existing_newline
+    add_trailing_newline = True
 
     # Insert runs sequentially to keep order with specials
     for idx, run in enumerate(para.runs):
         if "_special" in run.styles:
-            special_ops, special_len = _generate_special_insert(
+            special_ops, special_len = _emit_special(
                 SpecialElement(run.styles["_special"], dict(run.styles)),
                 cursor,
                 segment_id,
             )
             ops.extend(special_ops)
             cursor += special_len
-            # If a column break is the last thing in the paragraph, skip the trailing
-            # newline. The section break itself ends the paragraph.
+            # If a column break is the last thing, skip trailing newline
             if (
                 run.styles.get("_special") == "columnbreak"
                 and idx == len(para.runs) - 1
@@ -726,6 +949,7 @@ def _generate_paragraph_insert(
                     index=cursor,
                     content=run.text,
                     segment_id=segment_id,
+                    sequence=_next_sequence(),
                 )
             )
             run_len = utf16_len(run.text)
@@ -741,12 +965,13 @@ def _generate_paragraph_insert(
                         text_style=text_style,
                         fields=fields,
                         segment_id=segment_id,
+                        sequence=_next_sequence(),
                     )
                 )
 
             cursor += run_len
 
-    # Append newline to terminate paragraph (unless suppressed for column break)
+    # Append newline to terminate paragraph
     if add_trailing_newline:
         ops.append(
             DiffOperation(
@@ -754,6 +979,7 @@ def _generate_paragraph_insert(
                 index=cursor,
                 content="\n",
                 segment_id=segment_id,
+                sequence=_next_sequence(),
             )
         )
         cursor += 1
@@ -768,6 +994,7 @@ def _generate_paragraph_insert(
                 paragraph_style={"namedStyleType": para.named_style},
                 fields="namedStyleType",
                 segment_id=segment_id,
+                sequence=_next_sequence(),
             )
         )
 
@@ -781,6 +1008,7 @@ def _generate_paragraph_insert(
                 end_index=cursor,
                 bullet_preset=preset,
                 segment_id=segment_id,
+                sequence=_next_sequence(),
             )
         )
         # Indent nested levels
@@ -797,19 +1025,14 @@ def _generate_paragraph_insert(
                     },
                     fields="indentStart,indentFirstLine",
                     segment_id=segment_id,
+                    sequence=_next_sequence(),
                 )
             )
-
-    # If we skipped adding our own newline because we are reusing the existing
-    # default paragraph newline, advance past it so subsequent inserts land in
-    # the next paragraph.
-    if reuse_existing_newline and not add_trailing_newline:
-        cursor += 1
 
     return ops, cursor - insert_idx
 
 
-def _generate_special_insert(
+def _emit_special(
     elem: SpecialElement,
     insert_idx: int,
     segment_id: str | None,
@@ -825,29 +1048,29 @@ def _generate_special_insert(
                 op_type="insert_page_break",
                 index=insert_idx,
                 segment_id=segment_id,
+                sequence=_next_sequence(),
             )
         )
         added = 1
     elif etype == "columnbreak":
-        # Insert a continuous section break inline. Docs also inserts a newline
-        # before the break, so account for two characters of length.
         ops.append(
             DiffOperation(
                 op_type="insert_section_break",
                 index=insert_idx,
                 segment_id=segment_id,
                 fields="CONTINUOUS",
+                sequence=_next_sequence(),
             )
         )
         added = 2
     elif etype == "hr":
-        # Insert an empty paragraph and apply a bottom border to render as a rule.
         ops.append(
             DiffOperation(
                 op_type="insert",
                 index=insert_idx,
                 content="\n",
                 segment_id=segment_id,
+                sequence=_next_sequence(),
             )
         )
         ops.append(
@@ -866,6 +1089,7 @@ def _generate_special_insert(
                 },
                 fields="borderBottom",
                 segment_id=segment_id,
+                sequence=_next_sequence(),
             )
         )
         added = 1
@@ -876,6 +1100,7 @@ def _generate_special_insert(
                 op_type="create_footnote",
                 index=insert_idx,
                 content=placeholder,
+                sequence=_next_sequence(),
             )
         )
         added = 1
@@ -889,6 +1114,7 @@ def _generate_special_insert(
                 index=insert_idx,
                 content=content,
                 segment_id=segment_id,
+                sequence=_next_sequence(),
             )
         )
         added = utf16_len(content)
@@ -898,7 +1124,7 @@ def _generate_special_insert(
     return ops, added
 
 
-def _generate_table_insert(
+def _emit_table(
     table: Table, insert_idx: int, segment_id: str | None
 ) -> tuple[list[DiffOperation], int]:
     """Insert a table and populate cell content. Returns (ops, length)."""
@@ -909,6 +1135,7 @@ def _generate_table_insert(
             index=insert_idx,
             content=json.dumps({"rows": table.rows, "cols": table.cols}),
             segment_id=segment_id,
+            sequence=_next_sequence(),
         )
     )
 
@@ -925,7 +1152,7 @@ def _generate_table_insert(
             continue
 
         # Offset by 1 to land inside the default empty paragraph for the cell
-        cell_ops, _ = _emit_cell_content(cell, start + 1, segment_id)
+        cell_ops = _emit_cell_content(cell, start + 1, segment_id)
         ops.extend(cell_ops)
 
     # Final length accounts for actual cell content
@@ -935,171 +1162,29 @@ def _generate_table_insert(
 
 def _emit_cell_content(
     cell: TableCell, insert_idx: int, segment_id: str | None
-) -> tuple[list[DiffOperation], int]:
+) -> list[DiffOperation]:
     """Emit operations for the content of a single table cell."""
     ops: list[DiffOperation] = []
     cursor = insert_idx
-    first_para_in_cell = True
 
     for elem in cell.content:
         if isinstance(elem, Paragraph):
-            para_ops, para_len = _generate_paragraph_insert(
-                elem,
-                cursor,
-                segment_id,
-                reuse_existing_newline=first_para_in_cell,
-            )
+            para_ops, para_len = _emit_paragraph(elem, cursor, segment_id)
             ops.extend(para_ops)
             cursor += para_len
-            first_para_in_cell = False
         elif isinstance(elem, SpecialElement):
-            spec_ops, spec_len = _generate_special_insert(elem, cursor, segment_id)
+            spec_ops, spec_len = _emit_special(elem, cursor, segment_id)
             ops.extend(spec_ops)
             cursor += spec_len
         elif isinstance(elem, Table):
-            table_ops, table_len = _generate_table_insert(elem, cursor, segment_id)
+            table_ops, table_len = _emit_table(elem, cursor, segment_id)
             ops.extend(table_ops)
             cursor += table_len
 
-    return ops, cursor - insert_idx
+    return ops
 
 
-def _diff_element_styles(
-    pristine: tuple[Paragraph | Table | SpecialElement, int, int],
-    current: tuple[Paragraph | Table | SpecialElement, int, int],
-    segment_id: str | None,
-) -> list[DiffOperation]:
-    """Diff styles between two elements."""
-    operations: list[DiffOperation] = []
-
-    pristine_elem, pristine_start, pristine_end = pristine
-    current_elem, _, _ = current
-
-    if not isinstance(pristine_elem, Paragraph) or not isinstance(
-        current_elem, Paragraph
-    ):
-        return operations
-
-    # Check for named style changes
-    if pristine_elem.named_style != current_elem.named_style:
-        operations.append(
-            DiffOperation(
-                op_type="update_paragraph_style",
-                index=pristine_start,
-                end_index=pristine_end,
-                paragraph_style={"namedStyleType": current_elem.named_style},
-                fields="namedStyleType",
-                segment_id=segment_id,
-            )
-        )
-
-    # Check for bullet changes
-    if pristine_elem.bullet_type != current_elem.bullet_type:
-        if current_elem.bullet_type:
-            # Add bullet
-            preset = _bullet_type_to_preset(current_elem.bullet_type)
-            operations.append(
-                DiffOperation(
-                    op_type="create_bullets",
-                    index=pristine_start,
-                    end_index=pristine_end,
-                    bullet_preset=preset,
-                    segment_id=segment_id,
-                )
-            )
-        else:
-            # Remove bullet
-            operations.append(
-                DiffOperation(
-                    op_type="delete_bullets",
-                    index=pristine_start,
-                    end_index=pristine_end,
-                    segment_id=segment_id,
-                )
-            )
-
-    # Check for text style changes within runs
-    # This is a simplified comparison - a full implementation would do character-level diff
-    pristine_runs = pristine_elem.runs
-    current_runs = current_elem.runs
-
-    if len(pristine_runs) == len(current_runs):
-        run_start = pristine_start
-        for p_run, c_run in zip(pristine_runs, current_runs, strict=False):
-            run_end = run_start + p_run.utf16_length()
-
-            # Compare styles
-            style_diff = _diff_run_styles(p_run.styles, c_run.styles)
-            if style_diff:
-                text_style, fields = style_diff
-                operations.append(
-                    DiffOperation(
-                        op_type="update_text_style",
-                        index=run_start,
-                        end_index=run_end,
-                        text_style=text_style,
-                        fields=fields,
-                        segment_id=segment_id,
-                    )
-                )
-
-            run_start = run_end
-
-    return operations
-
-
-def _diff_run_styles(
-    pristine: dict[str, str], current: dict[str, str]
-) -> tuple[dict[str, Any], str] | None:
-    """Diff text run styles and return (style_dict, fields) if changed."""
-    changes: dict[str, Any] = {}
-    fields: list[str] = []
-
-    # Check for added/changed styles
-    for key, value in current.items():
-        if key == "_special":
-            continue
-        if key not in pristine or pristine[key] != value:
-            if key == "bold":
-                changes["bold"] = value == "1"
-                fields.append("bold")
-            elif key == "italic":
-                changes["italic"] = value == "1"
-                fields.append("italic")
-            elif key == "underline":
-                changes["underline"] = value == "1"
-                fields.append("underline")
-            elif key == "strikethrough":
-                changes["strikethrough"] = value == "1"
-                fields.append("strikethrough")
-            elif key == "link":
-                changes["link"] = {"url": value}
-                fields.append("link")
-
-    # Check for removed styles
-    for key, _value in pristine.items():
-        if key == "_special":
-            continue
-        if key not in current:
-            if key == "bold":
-                changes["bold"] = False
-                fields.append("bold")
-            elif key == "italic":
-                changes["italic"] = False
-                fields.append("italic")
-            elif key == "underline":
-                changes["underline"] = False
-                fields.append("underline")
-            elif key == "strikethrough":
-                changes["strikethrough"] = False
-                fields.append("strikethrough")
-            elif key == "link":
-                changes["link"] = None
-                fields.append("link")
-
-    if changes:
-        return changes, ",".join(fields)
-    return None
+# --- Bullet preset mapping ---
 
 
 def _bullet_type_to_preset(bullet_type: str) -> str:
@@ -1112,6 +1197,9 @@ def _bullet_type_to_preset(bullet_type: str) -> str:
         "checkbox": "BULLET_CHECKBOX",
     }
     return presets.get(bullet_type, "BULLET_DISC_CIRCLE_SQUARE")
+
+
+# --- Operation to request conversion ---
 
 
 def _operation_to_request(op: DiffOperation) -> dict[str, Any]:
@@ -1231,6 +1319,7 @@ def _operation_to_request(op: DiffOperation) -> dict[str, Any]:
             range_obj["tabId"] = op.tab_id
 
         return {"deleteParagraphBullets": {"range": range_obj}}
+
     elif op.op_type == "create_footnote":
         req: dict[str, Any] = {
             "createFootnote": {
@@ -1242,6 +1331,18 @@ def _operation_to_request(op: DiffOperation) -> dict[str, Any]:
         if op.content:
             req["_placeholderFootnoteId"] = op.content
         return req
+
+    elif op.op_type == "create_header":
+        return {"createHeader": {"type": "DEFAULT"}}
+
+    elif op.op_type == "create_footer":
+        return {"createFooter": {"type": "DEFAULT"}}
+
+    elif op.op_type == "delete_header":
+        return {"deleteHeader": {"headerId": op.segment_id}}
+
+    elif op.op_type == "delete_footer":
+        return {"deleteFooter": {"footerId": op.segment_id}}
 
     # Fallback - should not happen
     return {}
