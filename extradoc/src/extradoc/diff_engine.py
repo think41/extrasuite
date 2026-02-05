@@ -527,6 +527,9 @@ def _generate_table_modify_requests(
 
     Processes child_changes which contain TABLE_ROW changes.
     Row changes may contain TABLE_CELL changes.
+
+    Note: Column operations affect entire columns, so we deduplicate them
+    (only generate one insertTableColumn per unique column index).
     """
     requests: list[dict[str, Any]] = []
 
@@ -537,6 +540,12 @@ def _generate_table_modify_requests(
     if table_start_index == 0:
         # No startIndex found - can't generate structural requests
         return []
+
+    # Track column operations to deduplicate
+    # When a column is added/deleted, every row has the cell change,
+    # but we only need ONE insertTableColumn/deleteTableColumn request
+    columns_added: set[int] = set()
+    columns_deleted: set[int] = set()
 
     # Process child changes (TABLE_ROW changes)
     # Sort by row index descending for bottom-up processing
@@ -584,20 +593,24 @@ def _generate_table_modify_requests(
                 col_index = _get_col_index_from_change(cell_change)
 
                 if cell_change.change_type == ChangeType.ADDED:
-                    # Cell added = column added
-                    requests.append(
-                        _generate_insert_table_column_request(
-                            table_start_index, row_index, col_index, segment_id
+                    # Cell added = column added (deduplicate)
+                    if col_index not in columns_added:
+                        columns_added.add(col_index)
+                        requests.append(
+                            _generate_insert_table_column_request(
+                                table_start_index, row_index, col_index, segment_id
+                            )
                         )
-                    )
 
                 elif cell_change.change_type == ChangeType.DELETED:
-                    # Cell deleted = column deleted
-                    requests.append(
-                        _generate_delete_table_column_request(
-                            table_start_index, row_index, col_index, segment_id
+                    # Cell deleted = column deleted (deduplicate)
+                    if col_index not in columns_deleted:
+                        columns_deleted.add(col_index)
+                        requests.append(
+                            _generate_delete_table_column_request(
+                                table_start_index, row_index, col_index, segment_id
+                            )
                         )
-                    )
 
                 elif cell_change.change_type == ChangeType.MODIFIED:
                     # Cell content modified - this is Phase 3 (ContentBlock)
@@ -662,8 +675,19 @@ def _get_row_index_from_change(change: BlockChange) -> int:
 
 
 def _get_col_index_from_change(change: BlockChange) -> int:
-    """Extract column index from a TABLE_CELL change."""
-    # Try to extract from block_id if it's position-based like "0,1"
+    """Extract column index from a TABLE_CELL change.
+
+    The column index is extracted from the container_path which includes "col_idx:N".
+    """
+    # Get from container path (e.g., ["body:body", "table:abc", "row_idx:1", "col_idx:2"])
+    for part in change.container_path:
+        if part.startswith("col_idx:"):
+            try:
+                return int(part.split(":")[1])
+            except (ValueError, IndexError):
+                pass
+
+    # Fallback: try to extract from block_id if it's position-based like "0,1"
     if "," in change.block_id:
         try:
             _, col = change.block_id.split(",", 1)
@@ -735,21 +759,45 @@ def _generate_insert_table_column_request(
     col_index: int,
     segment_id: str | None,
 ) -> dict[str, Any]:
-    """Generate insertTableColumn request."""
-    cell_location: dict[str, Any] = {
-        "tableStartLocation": {"index": table_start_index},
-        "rowIndex": row_index,
-        "columnIndex": col_index,
-    }
-    if segment_id:
-        cell_location["tableStartLocation"]["segmentId"] = segment_id
+    """Generate insertTableColumn request.
 
-    return {
-        "insertTableColumn": {
-            "tableCellLocation": cell_location,
-            "insertRight": True,
+    The col_index is the NEW column's desired position. We need to convert this
+    to a valid existing column reference:
+    - For col_index > 0: insert to the right of column col_index - 1
+    - For col_index == 0: insert to the left of column 0
+    """
+    if col_index == 0:
+        # Insert as first column - insert to left of column 0
+        cell_location: dict[str, Any] = {
+            "tableStartLocation": {"index": table_start_index},
+            "rowIndex": row_index,
+            "columnIndex": 0,
         }
-    }
+        if segment_id:
+            cell_location["tableStartLocation"]["segmentId"] = segment_id
+
+        return {
+            "insertTableColumn": {
+                "tableCellLocation": cell_location,
+                "insertRight": False,
+            }
+        }
+    else:
+        # Insert to the right of the previous column
+        cell_location = {
+            "tableStartLocation": {"index": table_start_index},
+            "rowIndex": row_index,
+            "columnIndex": col_index - 1,
+        }
+        if segment_id:
+            cell_location["tableStartLocation"]["segmentId"] = segment_id
+
+        return {
+            "insertTableColumn": {
+                "tableCellLocation": cell_location,
+                "insertRight": True,
+            }
+        }
 
 
 def _generate_delete_table_column_request(

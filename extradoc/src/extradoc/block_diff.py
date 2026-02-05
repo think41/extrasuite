@@ -782,6 +782,9 @@ class BlockDiffDetector:
             p_cell = pristine_cells[col_idx] if col_idx < len(pristine_cells) else None
             c_cell = current_cells[col_idx] if col_idx < len(current_cells) else None
 
+            # Include col_idx in path for column operations
+            cell_path = [*row_path, f"col_idx:{col_idx}"]
+
             if p_cell is None and c_cell is not None:
                 # Cell added (column added)
                 changes.append(
@@ -789,7 +792,7 @@ class BlockDiffDetector:
                         change_type=ChangeType.ADDED,
                         block_type=BlockType.TABLE_CELL,
                         block_id=c_cell.block_id,
-                        container_path=row_path,
+                        container_path=cell_path,
                         after_xml=c_cell.xml_content,
                     )
                 )
@@ -800,7 +803,7 @@ class BlockDiffDetector:
                         change_type=ChangeType.DELETED,
                         block_type=BlockType.TABLE_CELL,
                         block_id=p_cell.block_id,
-                        container_path=row_path,
+                        container_path=cell_path,
                         before_xml=p_cell.xml_content,
                     )
                 )
@@ -815,14 +818,14 @@ class BlockDiffDetector:
                     child_changes = self._diff_child_lists(
                         p_cell.children,
                         c_cell.children,
-                        [*row_path, f"cell:{p_cell.block_id}"],
+                        [*cell_path, f"cell:{p_cell.block_id}"],
                     )
                     changes.append(
                         BlockChange(
                             change_type=ChangeType.MODIFIED,
                             block_type=BlockType.TABLE_CELL,
                             block_id=p_cell.block_id,
-                            container_path=row_path,
+                            container_path=cell_path,
                             before_xml=p_cell.xml_content,
                             after_xml=c_cell.xml_content,
                             child_changes=child_changes,
