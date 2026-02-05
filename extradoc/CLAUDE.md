@@ -1,23 +1,42 @@
 ## Overview
 
-Python library that transforms Google Docs into a file-based representation optimized for LLM agents. Implements the pull/diff/push workflow using clean HTML format with custom elements for Google Docs concepts.
+Python library that transforms Google Docs into an XML-based format optimized for LLM agents. Implements the pull/diff/push workflow.
 
-**Status:** Core pull/diff/push workflow implemented. Diff algorithm is placeholder (returns empty requests).
+Instead of working with complex API responses, agents interact with clean XML files:
+- **document.xml** - Document content with semantic markup (`<h1>`, `<p>`, `<li>`, `<table>`)
+- **styles.xml** - Factorized style definitions (minimal, referenced by class attribute)
 
 ## Key Files
 
 | File | Purpose |
 |------|---------|
-| `src/extradoc/transport.py` | `Transport` ABC, `GoogleDocsTransport`, `LocalFileTransport` |
 | `src/extradoc/client.py` | `DocsClient` - main interface with `pull()`, `diff()`, `push()` methods |
+| `src/extradoc/transport.py` | `Transport` ABC, `GoogleDocsTransport`, `LocalFileTransport` |
+| `src/extradoc/xml_converter.py` | Converts Google Docs JSON to ExtraDoc XML format |
+| `src/extradoc/desugar.py` | Transforms sugar XML back to internal representation for diffing |
+| `src/extradoc/block_diff.py` | Block-level diff detection (NEW) |
+| `src/extradoc/diff_engine.py` | Generates batchUpdate requests from diffs |
 | `src/extradoc/indexer.py` | UTF-16 index calculation and validation |
-| `src/extradoc/html_converter.py` | Convert Google Docs JSON → HTML |
-| `src/extradoc/html_parser.py` | Parse HTML → structured form, generate batchUpdate requests |
-| `src/extradoc/__main__.py` | CLI entry point for pull/diff/push commands |
+| `src/extradoc/style_factorizer.py` | Extracts and minimizes styles |
+| `src/extradoc/style_hash.py` | Deterministic style ID generation |
 
 ## Documentation
 
-- `docs/html-format-design.md` - Complete HTML format specification, including custom elements, multi-tab support, headers/footers, and diff algorithm
+- `docs/extradoc-spec.md` - Complete XML format specification
+- `docs/implementation-gap.md` - Gap analysis and implementation roadmap
+- `docs/googledocs/` - Google Docs API reference (120+ pages)
+
+## Key Gotchas
+
+**UTF-16 indexes:** Google Docs uses UTF-16 code unit indexes, not character counts. Emoji and certain Unicode characters count as 2 units. The `indexer.py` module handles this.
+
+**Separate index spaces:** Headers, footers, and footnotes each have their own index space starting at 0. The body is yet another index space.
+
+**Syntactic sugar:** The XML uses sugar elements like `<h1>`, `<li type="bullet">` for readability. These are desugared to internal representation (`<p style="HEADING_1">`, `<p bullet="...">`) before diffing.
+
+**HR is read-only:** Horizontal rules cannot be added or deleted via the API - only their content can be modified.
+
+**Pristine state:** After push, always re-pull before making additional changes.
 
 ## CLI Interface
 
@@ -26,12 +45,15 @@ Python library that transforms Google Docs into a file-based representation opti
 python -m extradoc pull <document_url_or_id> [output_dir]
 # Output: ./<document_id>/ or specified output_dir
 
+# Options:
+#   --no-raw       Don't save raw API response to .raw/ folder
+
 # Preview changes (dry run)
 python -m extradoc diff <folder>
 # Output: batchUpdate JSON to stdout
 
 # Apply changes to Google Docs
-python -m extradoc push <folder>
+python -m extradoc push <folder> [-f|--force]
 # Output: Success message with number of changes applied
 ```
 
@@ -39,92 +61,39 @@ Also works via `uvx extradoc pull/diff/push`.
 
 ## Folder Structure
 
-After `pull`, the folder will contain:
+After `pull`, the folder contains:
 ```
 <document_id>/
-  document.html           # Main document content (all tabs, with embedded metadata)
-  styles.json             # Extracted styles (fonts, colors, spacing)
+  document.xml          # ExtraDoc XML (main content)
+  styles.xml            # Factorized style definitions
   .raw/
-    document.json         # Raw API response
+    document.json       # Raw Google Docs API response
   .pristine/
-    document.zip          # Original state for diff comparison
+    document.zip        # Original state for diff comparison
 ```
 
-Note: No separate `metadata.json` - document metadata is embedded in the HTML `<head>` as JSON.
-
-## HTML Format
-
-### Custom Elements (Atomic)
-
-Google Docs-specific concepts use custom self-closing elements to keep them atomic:
-
-| Google Docs | Custom Element | Index Cost |
-|-------------|----------------|------------|
-| HorizontalRule | `<hr/>` | 1 |
-| PageBreak | `<PageBreak/>` | 1 |
-| FootnoteReference | `<FootnoteRef id="..." num="..."/>` | 1 |
-| Person | `<Person email="..." name="..."/>` | 1 |
-| Image | `<Image src="..." width="..." height="..."/>` | 1 |
-| RichLink | `<RichLink url="..." title="..."/>` | 1 |
-| Date | `<Date/>` | 1 |
-| AutoText | `<AutoText type="..."/>` | variable |
-
-### Structural Elements
-
-| Google Docs | HTML |
-|-------------|------|
-| Tab | `<article id="..." data-title="...">` |
-| Header | `<Header id="...">` |
-| Footer | `<Footer id="...">` |
-| Footnote | `<Footnote id="...">` |
-| Body | `<main>` |
-| TOC | `<nav>` |
-
-### Standard HTML Elements
-
-| Google Docs | HTML |
-|-------------|------|
-| TITLE | `<h1 class="title">` |
-| SUBTITLE | `<p class="subtitle">` |
-| HEADING_1 | `<h1 id="...">` |
-| HEADING_2-6 | `<h2 id="...">`-`<h6 id="...">` |
-| NORMAL_TEXT | `<p>` |
-| Bulleted list | `<ul class="bullet"><li>` |
-| Numbered list | `<ol class="decimal|alpha|roman"><li>` |
-| Checkbox list | `<ul class="checkbox"><li>` |
-| Table | `<table>` |
-| Bold | `<strong>` |
-| Italic | `<em>` |
-| Link | `<a>` |
-
-See `docs/html-format-design.md` for complete specification.
-
-## Key Design Decisions
-
-1. **Custom elements for atomic items**: `<PageBreak/>`, `<Person/>` etc. are self-closing to prevent LLMs from breaking them
-2. **Standard HTML where possible**: `<hr/>` instead of custom element, `<article>` instead of `<Tab>`
-3. **Embedded metadata**: Document metadata in `<script type="application/json">` in `<head>`
-4. **Heading IDs preserved**: For internal links to work correctly
-5. **Multi-tab support**: Use `<article id="..." data-title="...">` for each tab
-6. **List types via class**: `<ul class="bullet">`, `<ol class="decimal">`, etc. for round-trip parity
-7. **Separate index spaces**: Headers, footers, and footnotes each have their own index space starting at 0
-
-## Index Calculation
-
-Google Docs uses UTF-16 code units for indexing. Key functions:
-
-```python
-from extradoc import utf16_len, validate_document
-
-# Calculate UTF-16 length
-length = utf16_len("Hello 😀")  # Returns 8 (6 + 2 for emoji)
-
-# Validate document indexes
-result = validate_document(document_json)
-assert result.is_valid
+**document.xml structure:**
+```xml
+<?xml version="1.0" encoding="UTF-8"?>
+<doc id="DOCUMENT_ID" revision="REVISION_ID">
+  <meta>
+    <title>Document Title</title>
+  </meta>
+  <body class="_base">
+    <h1>Heading</h1>
+    <p>Paragraph text.</p>
+    <li type="bullet" level="0">Bullet point</li>
+    <table rows="2" cols="2">
+      <tr><td><p>Cell</p></td><td><p>Cell</p></td></tr>
+    </table>
+  </body>
+  <header id="kix.abc123" class="_base">...</header>
+  <footer id="kix.def456" class="_base">...</footer>
+  <footnote id="kix.fn1">...</footnote>
+</doc>
 ```
 
-The core insight: **indexes can be derived from document structure without explicit tracking**.
+The agent edits files in place. `diff` and `push` compare against `.pristine/` to determine changes.
 
 ## Development
 
@@ -138,51 +107,235 @@ uv run mypy src/extradoc
 
 ## Testing
 
-Tests are in `tests/`:
-- `test_indexer.py` - Index calculation (14 tests passing)
-- `test_transport.py` - Transport layer (3 tests passing)
-- `test_pull_integration.py` - Pull/diff/push integration tests (5 tests passing)
+Tests are end-to-end and work against real Google Docs. Always pull to the `extradoc/output/` directory (gitignored).
+
+**Test workflow:**
+1. **Pull** the document to `output/`
+2. **Edit** the XML files
+3. **Diff** to preview changes - save diff output in same folder for debugging
+4. **Push** to apply changes
+5. **Pull again** to confirm changes were applied correctly
+
+If push fails or subsequent pull doesn't match expectations, the saved diff helps debug.
 
 ### Golden File Testing
 
-Golden files enable testing without API calls:
+Golden files store raw API responses for reproducible testing:
 
 ```
 tests/golden/
-  1tlHGpgjoibP0eVXRvCGSmkqrLATrXYTo7dUnmV7x01o.json  # R41 AI Support Agent
-  1arcBS-A_LqbvrstLAADAjCZj4kvTlqmQ0ztFNfyAEyc.json  # Sri-Document-Edit-Testing
+  <document_id>.json    # Raw Google Docs API response
 ```
 
 Use `LocalFileTransport` in tests:
 
 ```python
-from extradoc import DocsClient, LocalFileTransport
+from extradoc import DocsClient
+from extradoc.transport import LocalFileTransport
 
 @pytest.fixture
 def client():
     transport = LocalFileTransport(Path("tests/golden"))
     return DocsClient(transport)
+
+@pytest.mark.asyncio
+async def test_pull(client, tmp_path):
+    await client.pull("document_id", tmp_path)
+    assert (tmp_path / "document_id" / "document.xml").exists()
 ```
 
-## Implementation Status
+### Creating New Golden Files
 
-### Completed
-- [x] Project structure and configuration
-- [x] Transport layer (GoogleDocsTransport + LocalFileTransport)
-- [x] Index validation engine (indexer.py)
-- [x] HTML conversion with custom elements
-- [x] Multi-tab support
-- [x] Header/footer/footnote support
-- [x] Table support with colspan/rowspan
-- [x] Format design document
-- [x] Golden file testing infrastructure
-- [x] DocsClient.pull() implementation
-- [x] DocsClient.diff() implementation (framework in place)
-- [x] DocsClient.push() implementation
-- [x] CLI entry point (pull/diff/push commands)
+1. Create a Google Doc with the features to test
+2. Pull it: `python -m extradoc pull <url> output/`
+3. Copy `.raw/document.json` to `tests/golden/<document_id>.json`
+4. Verify the output looks correct
+5. Commit the golden file
 
-### Pending
-- [ ] Diff algorithm (diff_documents returns empty requests currently)
-- [ ] Style extraction to styles.json
-- [ ] Table merge/unmerge operations
-- [ ] Image insertion support
+## Architecture Notes
+
+### Transport-Based Design
+
+```
+┌─────────────────┐     ┌──────────────────┐     ┌─────────────────┐
+│ DocsClient      │────▶│ Transport        │────▶│ Google API /    │
+│ (orchestration) │     │ (data fetching)  │     │ Local Files     │
+└─────────────────┘     └──────────────────┘     └─────────────────┘
+```
+
+- `Transport` is an abstract base class with `get_document()`, `batch_update()`, `close()`
+- `GoogleDocsTransport` - Production: makes real API calls via httpx
+- `LocalFileTransport` - Testing: reads from local golden files
+
+### Pull Flow
+
+1. **Fetch document** - `transport.get_document()` gets full document JSON
+2. **Convert to XML** - `convert_document_to_xml()` transforms to ExtraDoc format
+3. **Write files** - Save `document.xml`, `styles.xml` to disk
+4. **Save raw** - Optionally save `.raw/document.json`
+5. **Pristine copy** - Create `.pristine/document.zip` for diff/push
+
+## Block-Level Diff Architecture
+
+The diff workflow uses a tree-based decomposition to ensure index stability.
+
+### Block Types
+
+The `block_diff.py` module parses XML into a block tree:
+
+| Block Type | Description | Handling |
+|------------|-------------|----------|
+| `DOCUMENT` | Root container | Contains body, headers, footers, footnotes |
+| `BODY` | Document body | Contains structural elements |
+| `TAB` | Multi-tab document tab | Contains body content |
+| `HEADER` | Page header | Separate index space starting at 0 |
+| `FOOTER` | Page footer | Separate index space starting at 0 |
+| `FOOTNOTE` | Footnote content | Separate index space starting at 0 |
+| `CONTENT_BLOCK` | **Consecutive paragraphs** | Grouped for efficient diffing |
+| `TABLE` | Table element | Has recursive TABLE_CELL children |
+| `TABLE_CELL` | Table cell | Contains nested content |
+| `TABLE_OF_CONTENTS` | TOC element | Treated as single block |
+
+**Key insight:** Consecutive paragraphs (p, h1-h6, title, subtitle, li) are grouped into a single `CONTENT_BLOCK`. This allows efficient text diffing without worrying about paragraph boundaries.
+
+### Tree-Based Resolution
+
+```
+Document
+├── Body
+│   ├── ContentBlock (paragraphs 1-3)
+│   ├── Table
+│   │   ├── TableCell (0,0)
+│   │   │   └── ContentBlock
+│   │   └── TableCell (0,1)
+│   │       └── ContentBlock
+│   └── ContentBlock (paragraphs 4-5)
+├── Header (kix.hdr1)
+│   └── ContentBlock
+└── Footer (kix.ftr1)
+    └── ContentBlock
+```
+
+### Block Change Detection
+
+The `BlockDiffDetector` uses LCS-based alignment:
+
+```python
+from extradoc import diff_documents_block_level, format_changes
+
+changes = diff_documents_block_level(pristine_xml, current_xml)
+print(format_changes(changes))
+```
+
+Each `BlockChange` contains:
+- `change_type`: ADDED, DELETED, or MODIFIED
+- `block_type`: The type of block affected
+- `before_xml`: Original XML (for DELETE/MODIFY)
+- `after_xml`: New XML (for ADD/MODIFY)
+- `container_path`: Path to container (e.g., `["body:"]`, `["header:kix.hdr1"]`)
+- `child_changes`: Nested changes (for tables)
+
+### ContentBlock Diff Resolution
+
+For MODIFIED `ContentBlock` changes, the resolution follows these steps:
+
+1. **Text Resolution First**
+   - Compare text content between before and after
+   - Generate `InsertTextRequest` / `DeleteContentRangeRequest` to match content
+   - Use minimal edit distance algorithm
+
+2. **Formatting Resolution Second** (after text matches)
+   - Compare paragraph styles (headings, bullets, indents)
+   - Compare text run styles (bold, italic, links)
+   - Generate `UpdateTextStyleRequest` / `UpdateParagraphStyleRequest`
+   - Generate `CreateParagraphBulletsRequest` / `DeleteParagraphBulletsRequest`
+
+3. **Index Ranges**
+   - Calculate ranges based on UTF-16 code units
+   - Apply formatting to specific ranges within the ContentBlock
+
+### Bottom-Up Processing
+
+**Critical:** Process changes from the END of the document toward the BEGINNING.
+
+```
+Document body indexes: [1, 10, 25, 40, 60]
+                        ↑   ↑   ↑   ↑   ↑
+                        │   │   │   │   └─ Process 5th (last)
+                        │   │   │   └───── Process 4th
+                        │   │   └───────── Process 3rd
+                        │   └───────────── Process 2nd
+                        └───────────────── Process 1st (first)
+```
+
+**Why this works:**
+- Changes at higher indexes don't affect lower indexes
+- If we insert 10 characters at index 50, indexes 1-49 stay the same
+- If individual ContentBlock diffs are correct, overall diff is guaranteed correct
+
+### Block vs ContentBlock Changes
+
+| Change Type | What Changed | Generated Requests |
+|-------------|--------------|-------------------|
+| Block ADD | New table/header/footer/footnote | `insertTable` / `createHeader` / `createFooter` / `createFootnote` |
+| Block DELETE | Remove table/header/footer | `deleteContentRange` covering entire block |
+| ContentBlock ADD | New paragraph sequence | `insertText` + `updateTextStyle` + `createParagraphBullets` |
+| ContentBlock DELETE | Remove paragraphs | `deleteContentRange` |
+| ContentBlock MODIFY | Text or formatting changed | Text ops first, then style updates on ranges |
+
+## Request Generation
+
+The `diff_engine.py` module converts `BlockChange` objects to batchUpdate requests:
+
+```python
+from extradoc import diff_documents
+
+requests = diff_documents(pristine_xml, current_xml, pristine_styles, current_styles)
+# Returns: list[dict] of batchUpdate requests
+```
+
+### Request Ordering
+
+Requests are sorted by:
+1. **Descending index** - Higher indexes processed first (bottom-up)
+2. **Delete before insert** - At same index, deletions come first
+3. **Style after text** - Text changes first, then formatting
+
+### Segment ID Handling
+
+For headers/footers/footnotes, requests include `segmentId`:
+
+```json
+{
+  "insertText": {
+    "location": {
+      "index": 5,
+      "segmentId": "kix.hdr1"
+    },
+    "text": "Header text"
+  }
+}
+```
+
+## Current Status
+
+**Working:**
+- `pull` - Downloads document to local XML files
+- Transport layer (GoogleDocsTransport + LocalFileTransport)
+- XML conversion with semantic markup
+- Style factorization
+- Multi-tab document support
+- Header/footer/footnote support
+- Block-level diff detection (`block_diff.py`)
+
+**In Progress:**
+- ContentBlock text diffing (within block text resolution)
+- ContentBlock style diffing (within block style resolution)
+- Integration of block_diff output with request generation
+
+**Next Steps:**
+1. Implement text diff algorithm for ContentBlock (difflib-based)
+2. Generate InsertText/DeleteContentRange from text diff
+3. Generate style update requests for modified ranges
+4. Connect block_diff.py → diff_engine.py → batchUpdate requests
+5. End-to-end test with real documents
