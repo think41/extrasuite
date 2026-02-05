@@ -26,7 +26,6 @@ from .desugar import (
 )
 from .indexer import utf16_len
 from .sequence_diff import (
-    diff_text,
     elements_match,
     sections_are_identical,
     sequence_diff,
@@ -142,6 +141,8 @@ class DiffOperation:
     bullet_preset: str | None = None  # For list operations
     fields: str = ""  # Field mask for style updates
     sequence: int = 0  # Generation sequence for stable sorting of same-index ops
+    change_group: int = 0  # Which change block this operation belongs to
+    is_post_insert: bool = False  # True for style ops that must run AFTER their insert
 
 
 # Global sequence counter for stable sorting
@@ -220,20 +221,42 @@ def diff_documents(
                     )
                 )
 
-    # Sort operations for correct application order:
-    # 1. Deletes in descending index order (highest first, so later deletions
-    #    don't shift indexes of earlier content)
-    # 2. Inserts/updates in ascending index order (lowest first, so earlier
-    #    inserts expand the document before later operations)
+    # Hybrid sorting for correct operation ordering:
     #
-    # Within each group, use sequence for stable ordering.
-    def sort_key(op: DiffOperation) -> tuple[int, int, int]:
-        # Deletes: sort by descending index (negate)
-        # Non-deletes: sort by ascending index
-        if op.op_type == "delete":
-            return (0, -op.index, op.sequence)  # Deletes first, descending index
+    # 1. Element-level changes use bottom-up processing (handled by generation order)
+    # 2. Within each element (change_group), operations must be ordered:
+    #    a) Paragraph style updates for EXISTING paragraphs FIRST (use pristine range)
+    #    b) Deletes second (descending index for bottom-up within element)
+    #    c) Inserts third (ascending index)
+    #    d) Post-insert style updates LAST (for newly created content)
+    #
+    # The is_post_insert flag distinguishes:
+    # - Modifications: update_paragraph_style on existing paragraph (run BEFORE delete)
+    # - Insertions: update_paragraph_style on new paragraph (run AFTER insert)
+    #
+    # The change_group field groups operations by their source change block.
+    # During bottom-up processing, change_group 1 = bottom of doc (highest index),
+    # change_group N = top of doc (lowest index).
+    # We want bottom operations (low change_group) applied first.
+    #
+    # Sort key: (change_group ASC, op_priority, index for ordering, sequence)
+    def sort_key(op: DiffOperation) -> tuple[int, int, int, int]:
+        # Lower change_group = bottom of document = apply first
+        group_key = op.change_group
+
+        if op.op_type == "update_paragraph_style" and not op.is_post_insert:
+            # Paragraph style updates for EXISTING paragraphs FIRST
+            # They use pristine range which becomes invalid after delete shrinks it
+            return (group_key, 0, op.index, op.sequence)
+        elif op.op_type == "delete":
+            # Deletes second: sort by descending index (higher indexes first)
+            return (group_key, 1, -op.index, op.sequence)
+        elif op.op_type == "insert":
+            # Inserts third (ascending index)
+            return (group_key, 2, op.index, op.sequence)
         else:
-            return (1, op.index, op.sequence)  # Non-deletes second, ascending index
+            # Everything else (text style updates, post-insert paragraph styles) last
+            return (group_key, 3, op.index, op.sequence)
 
     operations.sort(key=sort_key)
 
@@ -241,9 +264,15 @@ def diff_documents(
 
 
 def _diff_section(pristine: Section | None, current: Section) -> list[DiffOperation]:
-    """Diff a single section, returning minimal operations."""
+    """Diff a single section using bottom-up processing to avoid index drift.
+
+    The key insight: process changes from bottom of document upward. Changes
+    at higher indexes don't affect lower indexes. After processing each change,
+    we update a working copy of elements to track the evolving document state.
+    """
     segment_id = None if current.section_type == "body" else current.section_id
     start_idx = 1 if current.section_type == "body" else 0
+    section_type = current.section_type
 
     # New section: create it and emit all content
     if pristine is None:
@@ -282,91 +311,135 @@ def _diff_section(pristine: Section | None, current: Section) -> list[DiffOperat
         return []
 
     # Flatten both sections to sequences with index ranges
-    p_elements = _flatten_elements(pristine.content, current.section_type)
-    c_elements = _flatten_elements(current.content, current.section_type)
+    p_elements = _flatten_elements(pristine.content, section_type)
+    c_elements = _flatten_elements(current.content, section_type)
 
     # Run sequence diff to find adds/deletes/modifications
     diff_result = sequence_diff(p_elements, c_elements)
 
+    # === BOTTOM-UP PROCESSING ===
+    # Process change blocks from bottom to top. This ensures that when we
+    # generate operations for a change block, all indexes below it are
+    # still at their pristine positions.
+
     operations: list[DiffOperation] = []
 
-    for change in diff_result:
+    # Working elements: a mutable copy that tracks document state as we process
+    # Each entry is [elem, start, end] - using lists for mutability
+    working: list[list[Any]] = [[elem, start, end] for elem, start, end in p_elements]
+
+    # Track change group for proper ordering
+    # Higher change_group = processed earlier (bottom-up) = should be applied first
+    current_change_group = 0
+
+    # Process changes in reverse order (bottom-up by pristine position)
+    for change in reversed(diff_result):
+        current_change_group += 1
+
         if change.type == "equal":
-            # Check if elements have subtle differences (like style changes)
+            # Check for style-only differences within "equal" blocks
+            # Each element with changes gets its own change_group
             for i, p_elem in enumerate(change.pristine_elements):
                 if i < len(change.current_elements):
                     c_elem = change.current_elements[i]
                     if not elements_match(p_elem, c_elem):
-                        # Elements have same signature but different details
-                        p_flat = [(p_elem, p_elements[0][1], p_elements[0][2])]
-                        c_flat = [(c_elem, c_elements[0][1], c_elements[0][2])]
-                        # Find actual indexes
-                        for pe, ps, pend in p_elements:
+                        # Find PRISTINE indexes for this element
+                        for pe, ps, pe_end in p_elements:
                             if pe is p_elem:
-                                p_flat = [(pe, ps, pend)]
+                                elem_ops_start = len(operations)
+                                ops = _diff_element(
+                                    (p_elem, ps, pe_end),
+                                    (c_elem, ps, pe_end),
+                                    segment_id,
+                                )
+                                operations.extend(ops)
+                                # Each element gets its own change_group
+                                for op in operations[elem_ops_start:]:
+                                    op.change_group = current_change_group
+                                current_change_group += 1
                                 break
-                        for ce, cs, cend in c_elements:
-                            if ce is c_elem:
-                                c_flat = [(ce, cs, cend)]
-                                break
-                        ops = _diff_element(p_flat[0], c_flat[0], segment_id)
-                        operations.extend(ops)
 
         elif change.type == "delete":
-            # Delete elements from pristine
-            for p_elem in change.pristine_elements:
-                # Find the element's index range
-                for elem, start, end in p_elements:
-                    if elem is p_elem:
-                        # Skip HR (read-only)
-                        if (
-                            isinstance(elem, SpecialElement)
-                            and elem.element_type == "hr"
-                        ):
-                            continue
+            # Delete elements using PRISTINE indexes
+            # Bottom-up processing ensures higher-index changes don't affect lower indexes
+            # Each delete gets its own change_group for correct ordering
+            for p_elem in reversed(change.pristine_elements):
+                # Skip HR (read-only)
+                if isinstance(p_elem, SpecialElement) and p_elem.element_type == "hr":
+                    continue
+
+                # Find PRISTINE index for this element
+                for pe, ps, pe_end in p_elements:
+                    if pe is p_elem:
                         operations.append(
                             DiffOperation(
                                 op_type="delete",
-                                index=start,
-                                end_index=end,
+                                index=ps,
+                                end_index=pe_end,
                                 segment_id=segment_id,
                                 sequence=_next_sequence(),
+                                change_group=current_change_group,
                             )
                         )
+                        current_change_group += 1
                         break
 
         elif change.type == "insert":
-            # Insert new elements from current
+            # Use PRISTINE insert index from the change
             insert_idx = change.pristine_start
 
             # Detect end-of-segment insertion
-            # Google Docs requires insert index < segment end, and the last
-            # character is always a structural newline. To append new paragraphs,
-            # we insert "\n{content}" before the structural newline.
             is_end_insert = False
-            if p_elements:
-                last_elem_end = p_elements[-1][2]
+            if working:
+                last_elem_end = working[-1][2]
                 if insert_idx >= last_elem_end:
                     is_end_insert = True
-                    insert_idx = last_elem_end - 1  # Position of structural newline
+                    insert_idx = last_elem_end - 1  # Before structural newline
 
+            # Insert elements in REVERSE order at the same position
+            # Each insert pushes previous inserts to the right
+            # First, calculate the final position for each element's styles
+            elem_lengths = []
             for c_elem in change.current_elements:
                 if isinstance(c_elem, SpecialElement) and c_elem.element_type == "hr":
-                    insert_idx += c_elem.utf16_length()
+                    elem_lengths.append(0)
+                else:
+                    elem_lengths.append(_element_length(c_elem))
+
+            # Insert in reverse order, but track style positions
+            # All elements in this insert block share the SAME change_group
+            # so all inserts happen before any styles
+            block_ops_start = len(operations)
+            for i, c_elem in enumerate(reversed(change.current_elements)):
+                if isinstance(c_elem, SpecialElement) and c_elem.element_type == "hr":
                     continue
-                elem_ops, added = _emit_element(
-                    c_elem, insert_idx, segment_id, prepend_newline=is_end_insert
+
+                # Reverse index
+                rev_idx = len(change.current_elements) - 1 - i
+                # Calculate where this element's styles should be applied
+                # Elements before this one (in forward order) take up space
+                style_offset = sum(elem_lengths[:rev_idx])
+
+                elem_ops, added = _emit_element_with_style_offset(
+                    c_elem,
+                    insert_idx,
+                    style_offset,
+                    segment_id,
+                    prepend_newline=is_end_insert,
                 )
                 operations.extend(elem_ops)
-                insert_idx += added
-                # After first element, subsequent inserts are no longer "end inserts"
+                # Only first element needs prepend_newline for end-of-segment
                 is_end_insert = False
 
+            # All elements in this block share the same change_group
+            for op in operations[block_ops_start:]:
+                op.change_group = current_change_group
+            current_change_group += 1
+            # NOTE: Don't update working or recompute - pristine indexes are used
+
         elif change.type == "replace":
-            # Replace: if same element count and types, diff element-by-element
-            # Otherwise, delete old + insert new
+            # Try element-by-element diff if same count and compatible types
             if len(change.pristine_elements) == len(change.current_elements):
-                # Try element-by-element diff for matching types
                 can_diff = all(
                     isinstance(p, type(c))
                     for p, c in zip(
@@ -374,52 +447,90 @@ def _diff_section(pristine: Section | None, current: Section) -> list[DiffOperat
                     )
                 )
                 if can_diff:
-                    # Diff each pair of elements
-                    for p_elem, c_elem in zip(
-                        change.pristine_elements, change.current_elements, strict=False
-                    ):
-                        # Find the pristine element's index range
-                        for elem, start, end in p_elements:
-                            if elem is p_elem:
+                    # Diff each pair using PRISTINE indexes from p_elements
+                    # Process in REVERSE order (bottom-up) so higher-indexed elements
+                    # get lower change_groups and are processed first.
+                    paired = list(
+                        zip(
+                            change.pristine_elements,
+                            change.current_elements,
+                            strict=False,
+                        )
+                    )
+                    for p_elem, c_elem in reversed(paired):
+                        elem_ops_start = len(operations)
+                        # Find pristine index for this element
+                        for pe, ps, pe_end in p_elements:
+                            if pe is p_elem:
                                 ops = _diff_element(
-                                    (p_elem, start, end),
-                                    (c_elem, start, end),  # Use pristine indexes
+                                    (p_elem, ps, pe_end),
+                                    (c_elem, ps, pe_end),
                                     segment_id,
                                 )
                                 operations.extend(ops)
                                 break
+                        # Each element gets its own change_group
+                        for op in operations[elem_ops_start:]:
+                            op.change_group = current_change_group
+                        current_change_group += 1
                     continue
 
-            # Fallback: delete old + insert new
-            # First, delete pristine elements (in reverse order for index stability)
+            # Fallback: delete old elements, then insert new
+            # Use PRISTINE indexes throughout
+            # Each element gets its own change_group
+
+            # Delete pristine elements (bottom-up)
             for p_elem in reversed(change.pristine_elements):
-                for elem, start, end in p_elements:
-                    if elem is p_elem:
-                        if (
-                            isinstance(elem, SpecialElement)
-                            and elem.element_type == "hr"
-                        ):
-                            continue
+                if isinstance(p_elem, SpecialElement) and p_elem.element_type == "hr":
+                    continue
+
+                # Find pristine index for this element
+                for pe, ps, pe_end in p_elements:
+                    if pe is p_elem:
                         operations.append(
                             DiffOperation(
                                 op_type="delete",
-                                index=start,
-                                end_index=end,
+                                index=ps,
+                                end_index=pe_end,
                                 segment_id=segment_id,
                                 sequence=_next_sequence(),
+                                change_group=current_change_group,
                             )
                         )
+                        current_change_group += 1
                         break
 
-            # Then insert current elements at the start of the replaced range
+            # Insert at PRISTINE start index in reverse order with style offset
             insert_idx = change.pristine_start
+
+            # Calculate element lengths for style offset
+            elem_lengths = []
             for c_elem in change.current_elements:
                 if isinstance(c_elem, SpecialElement) and c_elem.element_type == "hr":
-                    insert_idx += c_elem.utf16_length()
+                    elem_lengths.append(0)
+                else:
+                    elem_lengths.append(_element_length(c_elem))
+
+            # Insert in reverse order with calculated style offsets
+            # All elements share the same change_group for inserts
+            insert_block_ops_start = len(operations)
+            for i, c_elem in enumerate(reversed(change.current_elements)):
+                if isinstance(c_elem, SpecialElement) and c_elem.element_type == "hr":
                     continue
-                elem_ops, added = _emit_element(c_elem, insert_idx, segment_id)
+
+                rev_idx = len(change.current_elements) - 1 - i
+                style_offset = sum(elem_lengths[:rev_idx])
+
+                elem_ops, added = _emit_element_with_style_offset(
+                    c_elem, insert_idx, style_offset, segment_id, prepend_newline=False
+                )
                 operations.extend(elem_ops)
-                insert_idx += added
+
+            # All insert operations share the same change_group
+            for op in operations[insert_block_ops_start:]:
+                op.change_group = current_change_group
+            current_change_group += 1
+            # NOTE: Don't update working or recompute - pristine indexes are used
 
     # Handle last paragraph rule - don't delete the final paragraph
     operations = _enforce_last_paragraph_rule(operations, pristine, current, segment_id)
@@ -431,40 +542,89 @@ def _enforce_last_paragraph_rule(
     operations: list[DiffOperation],
     pristine: Section,
     current: Section,
-    _segment_id: str | None,
+    segment_id: str | None,
 ) -> list[DiffOperation]:
-    """Enforce Google Docs rule that last paragraph cannot be deleted.
+    """Enforce Google Docs rule about structural newlines.
 
-    If operations would delete all content, we need to preserve the final
-    paragraph/newline.
+    Google Docs has two related constraints:
+    1. Every segment must have at least one paragraph (can't delete all content)
+    2. The newline at the very end of a segment is "structural" and cannot be
+       deleted by any operation
+
+    This function handles both by:
+    - Truncating deletes that would extend to the segment end (preserve structural newline)
+    - Skipping deletes of the last element when current has no content (preserve paragraph)
+    - Resetting the last paragraph's style to NORMAL_TEXT if it had a different style
+      and new content is being inserted (prevents style inheritance)
     """
     if not pristine.content:
         return operations
 
-    # Find the last deletable element's end index
+    # Find the segment end (last element's end index)
     p_flat = _flatten_elements(pristine.content, current.section_type)
     if not p_flat:
         return operations
 
-    _last_elem, last_start, last_end = p_flat[-1]
+    last_elem, last_start, segment_end = p_flat[-1]
+    # The structural newline is at segment_end - 1
+    structural_newline_idx = segment_end - 1
 
-    # Filter out deletion of the last element
+    # Check if the last pristine paragraph has a non-NORMAL_TEXT style
+    # If so, and we're inserting content, we need to reset its style first
+    # This prevents inserted text from inheriting the old paragraph's style
+    last_para_style_reset_needed = False
+    if isinstance(last_elem, Paragraph) and last_elem.named_style != "NORMAL_TEXT":
+        # Check if there are any insert operations (meaning content is being added)
+        has_inserts = any(op.op_type == "insert" for op in operations)
+        if has_inserts:
+            last_para_style_reset_needed = True
+
     filtered = []
+
+    # If we need to reset the last paragraph's style, add that operation FIRST
+    # (before any deletes or inserts) so it runs in the correct order
+    if last_para_style_reset_needed:
+        # Reset the trailing paragraph to NORMAL_TEXT
+        # This must happen BEFORE inserts so that inserted text doesn't inherit
+        # the old heading style
+        filtered.append(
+            DiffOperation(
+                op_type="update_paragraph_style",
+                index=last_start,
+                end_index=segment_end,
+                paragraph_style={"namedStyleType": "NORMAL_TEXT"},
+                fields="namedStyleType",
+                segment_id=segment_id,
+                sequence=_next_sequence(),
+                change_group=-1,  # Very low change_group to run first
+                is_post_insert=False,  # Run before inserts
+            )
+        )
+
     for op in operations:
         if op.op_type == "delete":
-            # If this delete would remove the last element entirely, skip it
-            if op.index == last_start and op.end_index == last_end:
-                continue
-            # If this delete would extend past the last element's start,
-            # truncate it to not delete the last paragraph
-            if op.end_index > last_start and op.index < last_start:
+            # Rule 1: Never delete the structural newline at segment end
+            if op.end_index > structural_newline_idx:
+                # Truncate delete to preserve the structural newline
+                if op.index >= structural_newline_idx:
+                    # This delete is entirely within the structural newline - skip it
+                    continue
                 op = DiffOperation(
                     op_type=op.op_type,
                     index=op.index,
-                    end_index=last_start,
+                    end_index=structural_newline_idx,
                     segment_id=op.segment_id,
                     sequence=op.sequence,
                 )
+
+            # Rule 2: If current has no content, don't delete the last paragraph
+            if (
+                not current.content
+                and op.index == last_start
+                and op.end_index >= structural_newline_idx
+            ):
+                continue
+
         filtered.append(op)
 
     return filtered
@@ -572,37 +732,54 @@ def _diff_paragraph(
     c_text = current.text_content()
 
     if p_text != c_text:
-        # Use character-level diff
-        # Process in forward order - the final sort will handle ordering
-        text_ops = diff_text(p_text, c_text)
-        for op_type, start, end, text in text_ops:
-            if op_type == "delete":
-                ops.append(
-                    DiffOperation(
-                        op_type="delete",
-                        index=p_start + start,
-                        end_index=p_start + end,
-                        segment_id=segment_id,
-                        sequence=_next_sequence(),
-                    )
+        # Simple approach: delete old text, insert new text
+        # This avoids index drift issues from fine-grained character-level diffing.
+        # The delete removes the text content (not the newline), then insert adds new text.
+        p_text_len = utf16_len(p_text)
+        if p_text_len > 0:
+            ops.append(
+                DiffOperation(
+                    op_type="delete",
+                    index=p_start,
+                    end_index=p_start + p_text_len,
+                    segment_id=segment_id,
+                    sequence=_next_sequence(),
                 )
-            elif op_type == "insert":
-                ops.append(
-                    DiffOperation(
-                        op_type="insert",
-                        index=p_start + start,
-                        content=text,
-                        segment_id=segment_id,
-                        sequence=_next_sequence(),
-                    )
+            )
+
+        if c_text:
+            ops.append(
+                DiffOperation(
+                    op_type="insert",
+                    index=p_start,
+                    content=c_text,
+                    segment_id=segment_id,
+                    sequence=_next_sequence(),
                 )
-                # Apply styles to inserted text
-                if current.runs:
-                    # Find which run this text belongs to
-                    style_ops = _apply_styles_to_inserted_text(
-                        current, p_start + start, text, segment_id
+            )
+
+        # Apply styles for all runs in current paragraph
+        cursor = p_start
+        for run in current.runs:
+            if "_special" in run.styles:
+                continue
+            if run.text:
+                run_len = utf16_len(run.text)
+                style_info = _full_run_text_style(run.styles)
+                if style_info:
+                    text_style, fields = style_info
+                    ops.append(
+                        DiffOperation(
+                            op_type="update_text_style",
+                            index=cursor,
+                            end_index=cursor + run_len,
+                            text_style=text_style,
+                            fields=fields,
+                            segment_id=segment_id,
+                            sequence=_next_sequence(),
+                        )
                     )
-                    ops.extend(style_ops)
+                cursor += run_len
 
     elif _runs_have_style_changes(pristine.runs, current.runs):
         # Same text, different styling
@@ -995,6 +1172,150 @@ def _emit_element(
     return [], 0
 
 
+def _emit_element_with_style_offset(
+    elem: Paragraph | Table | SpecialElement,
+    insert_idx: int,
+    style_offset: int,
+    segment_id: str | None,
+    prepend_newline: bool = False,
+) -> tuple[list[DiffOperation], int]:
+    """Emit element with style operations offset from insert position.
+
+    When inserting multiple elements in reverse order at the same position,
+    each element's style operations need to be at a different offset because
+    the final positions differ from the insert position.
+
+    Args:
+        elem: The element to emit
+        insert_idx: The index at which to insert (always the same for reverse inserts)
+        style_offset: Offset to add to style operation indexes
+        segment_id: Optional segment ID for headers/footers
+        prepend_newline: If True, emit "\\n{content}" instead of "{content}\\n"
+    """
+    if isinstance(elem, Paragraph):
+        return _emit_paragraph_with_style_offset(
+            elem, insert_idx, style_offset, segment_id, prepend_newline
+        )
+    elif isinstance(elem, SpecialElement):
+        # Special elements don't have styles
+        return _emit_special(elem, insert_idx, segment_id)
+    elif isinstance(elem, Table):
+        # Tables are complex - for now, don't offset (may need fixing later)
+        return _emit_table(elem, insert_idx, segment_id)
+    return [], 0
+
+
+def _emit_paragraph_with_style_offset(
+    para: Paragraph,
+    insert_idx: int,
+    style_offset: int,
+    segment_id: str | None,
+    prepend_newline: bool = False,
+) -> tuple[list[DiffOperation], int]:
+    """Insert paragraph with style operations at offset position."""
+    ops: list[DiffOperation] = []
+    cursor = insert_idx
+    style_cursor = insert_idx + style_offset  # Where styles actually apply
+    add_trailing_newline = not prepend_newline
+
+    has_specials = any("_special" in run.styles for run in para.runs)
+
+    if not has_specials and para.runs:
+        all_text = "".join(run.text for run in para.runs)
+        if prepend_newline:
+            all_text = "\n" + all_text
+        elif add_trailing_newline:
+            all_text += "\n"
+
+        ops.append(
+            DiffOperation(
+                op_type="insert",
+                index=cursor,  # Insert at original position
+                content=all_text,
+                segment_id=segment_id,
+                sequence=_next_sequence(),
+            )
+        )
+
+        # Apply styles at OFFSET position
+        run_style_cursor = style_cursor + (1 if prepend_newline else 0)
+        for run in para.runs:
+            if run.text:
+                run_len = utf16_len(run.text)
+                style_info = _full_run_text_style(run.styles)
+                if style_info:
+                    text_style, fields = style_info
+                    ops.append(
+                        DiffOperation(
+                            op_type="update_text_style",
+                            index=run_style_cursor,
+                            end_index=run_style_cursor + run_len,
+                            text_style=text_style,
+                            fields=fields,
+                            segment_id=segment_id,
+                            sequence=_next_sequence(),
+                        )
+                    )
+                run_style_cursor += run_len
+
+        cursor = (
+            style_cursor
+            + utf16_len(all_text.rstrip("\n"))
+            + (1 if add_trailing_newline else 0)
+        )
+        if prepend_newline:
+            cursor = run_style_cursor
+
+    # Paragraph style at OFFSET position
+    para_end = style_cursor + para.utf16_length()
+    if para.named_style != "NORMAL_TEXT":
+        ops.append(
+            DiffOperation(
+                op_type="update_paragraph_style",
+                index=style_cursor,
+                end_index=para_end,
+                paragraph_style={"namedStyleType": para.named_style},
+                fields="namedStyleType",
+                segment_id=segment_id,
+                sequence=_next_sequence(),
+                is_post_insert=True,
+            )
+        )
+
+    # Bullets at OFFSET position
+    if para.bullet_type:
+        preset = _bullet_type_to_preset(para.bullet_type)
+        ops.append(
+            DiffOperation(
+                op_type="create_bullets",
+                index=style_cursor,
+                end_index=para_end,
+                bullet_preset=preset,
+                segment_id=segment_id,
+                sequence=_next_sequence(),
+            )
+        )
+        if para.bullet_level > 0:
+            indent_pt = 36 * para.bullet_level
+            ops.append(
+                DiffOperation(
+                    op_type="update_paragraph_style",
+                    index=style_cursor,
+                    end_index=para_end,
+                    paragraph_style={
+                        "indentStart": {"magnitude": indent_pt, "unit": "PT"},
+                        "indentFirstLine": {"magnitude": 0, "unit": "PT"},
+                    },
+                    fields="indentStart,indentFirstLine",
+                    segment_id=segment_id,
+                    sequence=_next_sequence(),
+                    is_post_insert=True,
+                )
+            )
+
+    return ops, para.utf16_length()
+
+
 def _emit_paragraph(
     para: Paragraph,
     insert_idx: int,
@@ -1135,7 +1456,7 @@ def _emit_paragraph(
             )
             cursor += 1
 
-    # Paragraph style (headings)
+    # Paragraph style (headings) - must run AFTER insert creates the paragraph
     if para.named_style != "NORMAL_TEXT":
         ops.append(
             DiffOperation(
@@ -1146,6 +1467,7 @@ def _emit_paragraph(
                 fields="namedStyleType",
                 segment_id=segment_id,
                 sequence=_next_sequence(),
+                is_post_insert=True,  # Must run after insert
             )
         )
 
@@ -1162,7 +1484,7 @@ def _emit_paragraph(
                 sequence=_next_sequence(),
             )
         )
-        # Indent nested levels
+        # Indent nested levels - must run AFTER insert creates the paragraph
         if para.bullet_level > 0:
             indent_pt = 36 * para.bullet_level
             ops.append(
@@ -1176,6 +1498,7 @@ def _emit_paragraph(
                     },
                     fields="indentStart,indentFirstLine",
                     segment_id=segment_id,
+                    is_post_insert=True,  # Must run after insert
                     sequence=_next_sequence(),
                 )
             )
