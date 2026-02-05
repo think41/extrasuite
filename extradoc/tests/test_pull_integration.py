@@ -15,9 +15,8 @@ from extradoc.transport import LocalFileTransport
 
 GOLDEN_DIR = Path(__file__).parent / "golden"
 
-# Actual golden file document IDs
-R41_DOC_ID = "1tlHGpgjoibP0eVXRvCGSmkqrLATrXYTo7dUnmV7x01o"
-SRI_DOC_ID = "1arcBS-A_LqbvrstLAADAjCZj4kvTlqmQ0ztFNfyAEyc"
+# Golden file document ID - ExtraDoc Showcase document
+SHOWCASE_DOC_ID = "15dNMijQYl3juFdu8LqLvJoh3K10DREbtUm82489hgAs"
 
 
 @pytest.fixture
@@ -40,14 +39,14 @@ async def test_pull_basic_document(
 ) -> None:
     """Test pulling a basic document from golden files."""
     files = await client.pull(
-        R41_DOC_ID,
+        SHOWCASE_DOC_ID,
         tmp_path,
         save_raw=True,
     )
     await local_transport.close()
 
     # Verify files were created
-    document_dir = tmp_path / R41_DOC_ID
+    document_dir = tmp_path / SHOWCASE_DOC_ID
     assert document_dir.exists()
 
     # Check document.xml was created
@@ -58,7 +57,7 @@ async def test_pull_basic_document(
     xml_content = document_xml.read_text()
     assert '<?xml version="1.0"' in xml_content
     assert "<doc " in xml_content
-    assert R41_DOC_ID in xml_content  # Document ID in doc element
+    assert SHOWCASE_DOC_ID in xml_content  # Document ID in doc element
 
     # Check styles.xml was created
     styles_xml = document_dir / "styles.xml"
@@ -93,13 +92,13 @@ async def test_pull_without_raw(
 ) -> None:
     """Test pulling without saving raw API responses."""
     files = await client.pull(
-        R41_DOC_ID,
+        SHOWCASE_DOC_ID,
         tmp_path,
         save_raw=False,
     )
     await local_transport.close()
 
-    document_dir = tmp_path / R41_DOC_ID
+    document_dir = tmp_path / SHOWCASE_DOC_ID
 
     # Check .raw folder was NOT created
     raw_dir = document_dir / ".raw"
@@ -124,13 +123,13 @@ async def test_pull_preserves_xml_content(
 ) -> None:
     """Test that pulled XML contains expected content elements."""
     await client.pull(
-        R41_DOC_ID,
+        SHOWCASE_DOC_ID,
         tmp_path,
         save_raw=False,
     )
     await local_transport.close()
 
-    document_dir = tmp_path / R41_DOC_ID
+    document_dir = tmp_path / SHOWCASE_DOC_ID
     xml_content = (document_dir / "document.xml").read_text()
 
     # Check for basic XML structure
@@ -149,19 +148,19 @@ async def test_diff_no_changes(
 ) -> None:
     """Test diff shows no changes immediately after pull."""
     await client.pull(
-        R41_DOC_ID,
+        SHOWCASE_DOC_ID,
         tmp_path,
         save_raw=True,
     )
     await local_transport.close()
 
-    document_dir = tmp_path / R41_DOC_ID
+    document_dir = tmp_path / SHOWCASE_DOC_ID
 
     # Run diff on the freshly pulled document
     diff_result, requests, validation = client.diff(document_dir)
 
     # Should have no changes
-    assert diff_result.document_id == R41_DOC_ID
+    assert diff_result.document_id == SHOWCASE_DOC_ID
     assert not diff_result.has_changes
     assert len(requests) == 0
     assert validation.can_push
@@ -175,12 +174,12 @@ async def test_push_no_changes(
 ) -> None:
     """Test push works with no changes (noop)."""
     await client.pull(
-        R41_DOC_ID,
+        SHOWCASE_DOC_ID,
         tmp_path,
         save_raw=True,
     )
 
-    document_dir = tmp_path / R41_DOC_ID
+    document_dir = tmp_path / SHOWCASE_DOC_ID
 
     # Push without changes
     result = await client.push(document_dir)
@@ -188,7 +187,7 @@ async def test_push_no_changes(
 
     # Should succeed with 0 changes
     assert result.success
-    assert result.document_id == R41_DOC_ID
+    assert result.document_id == SHOWCASE_DOC_ID
     assert result.changes_applied == 0
     assert "No changes" in result.message
 
@@ -201,13 +200,13 @@ async def test_diff_detects_text_change(
 ) -> None:
     """Test diff detects changes when document.xml is modified."""
     await client.pull(
-        R41_DOC_ID,
+        SHOWCASE_DOC_ID,
         tmp_path,
         save_raw=True,
     )
     await local_transport.close()
 
-    document_dir = tmp_path / R41_DOC_ID
+    document_dir = tmp_path / SHOWCASE_DOC_ID
     document_xml = document_dir / "document.xml"
 
     # Modify the document
