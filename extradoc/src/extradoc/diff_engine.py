@@ -227,6 +227,8 @@ def _generate_requests_for_change(
         requests.extend(_handle_header_footer_change(change))
     elif change.block_type == BlockType.FOOTNOTE:
         requests.extend(_handle_footnote_change(change))
+    elif change.block_type == BlockType.TAB:
+        requests.extend(_handle_tab_change(change))
 
     # Recursively handle child changes
     for child_change in change.child_changes:
@@ -358,7 +360,13 @@ def _handle_table_change(
 
 
 def _handle_header_footer_change(change: BlockChange) -> list[dict[str, Any]]:
-    """Handle header/footer add/delete changes."""
+    """Handle header/footer add/delete changes.
+
+    Supported operations:
+    - ADDED: createHeader/createFooter with type DEFAULT
+    - DELETED: deleteHeader/deleteFooter with the segment ID
+    - MODIFIED: Handled via child ContentBlock changes (Phase 3)
+    """
     requests: list[dict[str, Any]] = []
 
     if change.change_type == ChangeType.ADDED:
@@ -368,8 +376,12 @@ def _handle_header_footer_change(change: BlockChange) -> list[dict[str, Any]]:
             requests.append({"createFooter": {"type": "DEFAULT"}})
 
     elif change.change_type == ChangeType.DELETED:
-        # Headers/footers can't be deleted via API, only content cleared
-        pass
+        # Extract the header/footer ID from the block_id
+        segment_id = change.block_id
+        if change.block_type == BlockType.HEADER and segment_id:
+            requests.append({"deleteHeader": {"headerId": segment_id}})
+        elif change.block_type == BlockType.FOOTER and segment_id:
+            requests.append({"deleteFooter": {"footerId": segment_id}})
 
     return requests
 
@@ -385,6 +397,41 @@ def _handle_footnote_change(change: BlockChange) -> list[dict[str, Any]]:
     elif change.change_type == ChangeType.DELETED:
         # Footnotes are deleted by removing the reference in the body
         pass
+
+    return requests
+
+
+def _handle_tab_change(change: BlockChange) -> list[dict[str, Any]]:
+    """Handle document tab add/delete changes.
+
+    Supported operations:
+    - ADDED: addDocumentTab to create a new tab
+    - DELETED: deleteTab to remove a tab (and its child tabs)
+    - MODIFIED: Handled via child ContentBlock changes (Phase 3)
+    """
+    requests: list[dict[str, Any]] = []
+
+    if change.change_type == ChangeType.ADDED:
+        # Create a new tab - tabProperties are optional
+        # Extract title from the change's XML if available
+        tab_properties: dict[str, Any] = {}
+        if change.after_xml:
+            import xml.etree.ElementTree as ET
+
+            try:
+                root = ET.fromstring(change.after_xml)
+                title = root.get("title")
+                if title:
+                    tab_properties["title"] = title
+            except ET.ParseError:
+                pass
+        requests.append({"addDocumentTab": {"tabProperties": tab_properties}})
+
+    elif change.change_type == ChangeType.DELETED:
+        # Delete the tab by ID
+        tab_id = change.block_id
+        if tab_id:
+            requests.append({"deleteTab": {"tabId": tab_id}})
 
     return requests
 
