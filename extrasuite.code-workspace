@@ -16,6 +16,10 @@
 			"name": "extrasheet",
 			"path": "extrasheet"
 		},
+{
+			"name": "extradoc",
+			"path": "extradoc"
+		},
 		{
 			"name": "website",
 			"path": "website"
