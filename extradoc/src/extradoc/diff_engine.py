@@ -96,8 +96,17 @@ def _styles_to_text_style(styles: dict[str, str]) -> tuple[dict[str, Any], str] 
     return None
 
 
-def _full_run_text_style(styles: dict[str, str]) -> tuple[dict[str, Any], str]:
-    """Return a complete textStyle for a run, resetting unspecified props."""
+def _full_run_text_style(
+    styles: dict[str, str], reset_font_size: bool = False
+) -> tuple[dict[str, Any], str]:
+    """Return a complete textStyle for a run, resetting unspecified props.
+
+    Args:
+        styles: The run styles from the XML
+        reset_font_size: If True, include fontSize reset to default (11pt).
+                        This is needed when inserting into areas that may have
+                        inherited larger font sizes (e.g., after headings).
+    """
     ts: dict[str, Any] = {}
     fields: list[str] = []
 
@@ -122,6 +131,18 @@ def _full_run_text_style(styles: dict[str, str]) -> tuple[dict[str, Any], str]:
         add("link", {"url": link})
     else:
         add("link", None)
+
+    # Reset font size if requested (prevents inheritance from headings)
+    if reset_font_size:
+        # Use the size from styles if specified, otherwise default to 11pt
+        if "size" in styles:
+            try:
+                size_pt = float(styles["size"].rstrip("pt"))
+                add("fontSize", {"magnitude": size_pt, "unit": "PT"})
+            except ValueError:
+                add("fontSize", {"magnitude": 11, "unit": "PT"})
+        else:
+            add("fontSize", {"magnitude": 11, "unit": "PT"})
 
     return ts, ",".join(fields)
 
@@ -1723,11 +1744,12 @@ def _emit_paragraph_for_cell(
         )
 
         # Apply styles to each run's range
+        # Use reset_font_size=True to prevent inheriting heading font sizes
         run_cursor = cursor
         for run in para.runs:
             if run.text:
                 run_len = utf16_len(run.text)
-                style_info = _full_run_text_style(run.styles)
+                style_info = _full_run_text_style(run.styles, reset_font_size=True)
                 if style_info:
                     text_style, fields = style_info
                     ops.append(
@@ -1769,7 +1791,8 @@ def _emit_paragraph_for_cell(
                 )
                 run_len = utf16_len(run.text)
 
-                style_info = _full_run_text_style(run.styles)
+                # Use reset_font_size=True to prevent inheriting heading font sizes
+                style_info = _full_run_text_style(run.styles, reset_font_size=True)
                 if style_info:
                     text_style, fields = style_info
                     ops.append(
