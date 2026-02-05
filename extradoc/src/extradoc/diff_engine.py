@@ -174,15 +174,76 @@ def diff_documents(
     table_indexes = calculate_table_indexes(pristine_doc.sections)
 
     # Generate requests from block changes
-    requests: list[dict[str, Any]] = []
+    # Sort by pristine_start_index descending (bottom-up) to maintain index stability
+    sorted_changes = sorted(
+        block_changes,
+        key=lambda c: c.pristine_start_index,
+        reverse=True,
+    )
 
-    for change in block_changes:
+    all_requests: list[dict[str, Any]] = []
+
+    for change in sorted_changes:
         change_requests = _generate_requests_for_change(
             change, pristine_doc, current_doc, table_indexes
         )
-        requests.extend(change_requests)
+        all_requests.extend(change_requests)
 
-    return requests
+    # Reorder requests: DELETEs first, then INSERTs, then UPDATEs
+    # This ensures deletes don't affect inserted content
+    delete_requests: list[dict[str, Any]] = []
+    insert_requests: list[dict[str, Any]] = []
+    update_requests: list[dict[str, Any]] = []
+
+    for req in all_requests:
+        if (
+            "deleteContentRange" in req
+            or "deleteTableRow" in req
+            or "deleteTableColumn" in req
+        ):
+            delete_requests.append(req)
+        elif (
+            "insertText" in req
+            or "insertPageBreak" in req
+            or "insertSectionBreak" in req
+            or "insertTable" in req
+            or "insertTableRow" in req
+            or "insertTableColumn" in req
+        ):
+            insert_requests.append(req)
+        else:
+            update_requests.append(req)
+
+    # Sort deletes by start index descending
+    def get_delete_index(req: dict[str, Any]) -> int:
+        if "deleteContentRange" in req:
+            return int(req["deleteContentRange"]["range"].get("startIndex", 0))
+        if "deleteTableRow" in req:
+            return int(
+                req["deleteTableRow"]
+                .get("tableCellLocation", {})
+                .get("tableStartLocation", {})
+                .get("index", 0)
+            )
+        return 0
+
+    delete_requests.sort(key=get_delete_index, reverse=True)
+
+    # Sort inserts by index descending
+    def get_insert_index(req: dict[str, Any]) -> int:
+        if "insertText" in req:
+            return int(req["insertText"]["location"].get("index", 0))
+        if "insertPageBreak" in req:
+            return int(req["insertPageBreak"]["location"].get("index", 0))
+        if "insertSectionBreak" in req:
+            return int(req["insertSectionBreak"]["location"].get("index", 0))
+        if "insertTable" in req:
+            return int(req["insertTable"]["location"].get("index", 0))
+        return 0
+
+    insert_requests.sort(key=get_insert_index, reverse=True)
+
+    return delete_requests + insert_requests + update_requests
 
 
 def _generate_requests_for_change(
@@ -327,6 +388,12 @@ def _handle_content_block_change(
                 if change.pristine_start_index > 0
                 else (1 if segment_id is None else 0)
             )
+            # Adjust if at segment end - can't insert at the final newline position
+            if (
+                change.segment_end_index > 0
+                and insert_index >= change.segment_end_index
+            ):
+                insert_index = change.segment_end_index - 1
             requests.extend(
                 _generate_content_insert_requests(
                     change.after_xml, segment_id, insert_index
