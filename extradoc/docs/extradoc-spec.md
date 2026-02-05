@@ -58,10 +58,8 @@ ExtraDoc converts Google Docs to a flat XML format optimized for LLM editing and
     ...content...
   </footer>
 
-  <!-- Footnotes (separate index space) -->
-  <footnote id="kix.fn1">
-    ...content...
-  </footnote>
+  <!-- Footnotes are inline in the body where the reference appears -->
+  <!-- See Section 3.6 for footnote format -->
 </doc>
 ```
 
@@ -188,14 +186,28 @@ This matches Google Docs' internal structure where merged cells still exist as p
 <!-- Person mention -->
 <p>Contact <person email="foo@example.com" name="Foo Bar"/> for details.</p>
 
-<!-- Footnote reference -->
-<p>See note<footnoteref id="kix.fn1" num="1"/>.</p>
-
 <!-- Auto-generated text (page numbers, etc.) -->
 <p>Page <autotext type="PAGE_NUMBER"/></p>
 ```
 
 **Note:** Special elements like `<columnbreak/>`, `<pagebreak/>`, `<hr/>` each take exactly 1 index in Google Docs.
+
+### 3.6 Footnotes (Inline Model)
+
+Footnotes use an inline model where the `<footnote>` tag appears at the reference location and contains the footnote content:
+
+```xml
+<p>See note<footnote id="kix.fn1"><p>This is the footnote content.</p></footnote> for details.</p>
+```
+
+The inline model provides:
+- **Position:** Where the `<footnote>` tag appears indicates the reference location
+- **Content:** The content inside is the footnote text (structured like `<td>` content)
+- **ID:** The `id` attribute links to Google Docs' internal footnote ID
+
+This differs from `<footnoteref>` which only stores a reference. The inline model captures both reference position and content in one element, enabling proper diff detection for footnote additions, deletions, and content modifications.
+
+**Index Space:** Footnotes have their own index space starting at 0. The footnote reference in the body takes 1 index. The content inside `<footnote>` uses the footnote's separate index space.
 
 ---
 
@@ -887,7 +899,7 @@ def utf16_len(text: str) -> int:
 | `<pagebreak/>` | Page break | - |
 | `<image/>` | Image | `src`, `width`, `height`, `alt`, `title` |
 | `<person/>` | Person mention | `email`, `name` |
-| `<footnoteref/>` | Footnote reference | `id`, `num` |
+| `<footnote>` | Inline footnote (contains content) | `id` |
 | `<autotext/>` | Auto-generated text | `type` |
 
 #### Structural Elements
@@ -900,5 +912,4 @@ def utf16_len(text: str) -> int:
 | `<tab>` | Document tab | `id`, `title`, `class` |
 | `<header>` | Header section | `id`, `class` |
 | `<footer>` | Footer section | `id`, `class` |
-| `<footnote>` | Footnote content | `id` |
 | `<style>` | Style wrapper | `class` |

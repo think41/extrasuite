@@ -263,31 +263,50 @@ Result:
 
 | Change Type | What Changed | Generated Requests |
 |-------------|--------------|-------------------|
-| Block ADD | New table/header/footer/footnote | `insertTable` / `createHeader` / `createFooter` / `createFootnote` |
-| Block DELETE | Remove table/header/footer | `deleteContentRange` covering entire block |
-| ContentBlock ADD | New paragraph sequence | `insertText` + `updateTextStyle` + `createParagraphBullets` |
-| ContentBlock DELETE | Remove paragraphs | `deleteContentRange` |
-| ContentBlock MODIFY | Text or formatting changed | Text ops first, then style updates on ranges |
+| Table ADD | New table | `insertTable` |
+| Table DELETE | Remove table | `deleteContentRange` covering entire block |
+| Table Row ADD | New row | `insertTableRow` |
+| Table Row DELETE | Remove row | `deleteTableRow` |
+| Table Column ADD | New column | `insertTableColumn` (deduplicated) |
+| Table Column DELETE | Remove column | `deleteTableColumn` (deduplicated) |
+| Header ADD | New header | `createHeader` |
+| Header DELETE | Remove header | `deleteHeader` |
+| Footer ADD | New footer | `createFooter` |
+| Footer DELETE | Remove footer | `deleteFooter` |
+| Tab ADD | New tab | `addDocumentTab` |
+| Tab DELETE | Remove tab | `deleteTab` |
+| Footnote ADD | New footnote | `createFootnote` (at end of body) |
+| Footnote DELETE | Remove footnote | `deleteContentRange` (1 char at ref position) |
+| ContentBlock ADD | New paragraph sequence | `insertText` + styling (Phase 3) |
+| ContentBlock DELETE | Remove paragraphs | `deleteContentRange` (Phase 3) |
+| ContentBlock MODIFY | Text or formatting changed | Delete + Insert (Phase 3) |
 
 ## Current Status
 
-**Working:**
+**Working (Pull):**
 - `pull` - Downloads document to local XML files
 - Transport layer (GoogleDocsTransport + LocalFileTransport)
 - XML conversion with semantic markup
 - Style factorization
 - Multi-tab document support
-- Header/footer/footnote support
+- Header/footer/footnote support (inline footnote model)
 - Block-level diff detection with paragraph-level granularity (`block_diff.py`)
 
-**In Progress:**
-- ContentBlock request generation (Phase 3)
-- Integration of block_diff output with batchUpdate request generation
+**Working (Structural Operations - Phase 2):**
+- Table operations: `insertTable`, `insertTableRow`, `deleteTableRow`, `insertTableColumn`, `deleteTableColumn`
+- Header/footer operations: `createHeader`, `deleteHeader`, `createFooter`, `deleteFooter`
+- Tab operations: `addDocumentTab`, `deleteTab`
+- Footnote operations: `createFootnote` (at end), `deleteContentRange` (for deletion)
+
+**In Progress (Phase 3):**
+- ContentBlock request generation for text content changes
+- Precise footnote positioning (requires text content to exist first)
 
 **Next Steps:**
-1. Implement `_generate_content_insert_requests()` for ContentBlock additions
-2. Implement `_generate_content_delete_requests()` for ContentBlock deletions
-3. Handle MODIFIED ContentBlocks with delete + insert strategy
-4. End-to-end test with real documents
+1. Implement `ParsedContentBlock` extraction from XML
+2. Implement `_generate_content_insert_requests()` for text/styling
+3. Implement `_generate_content_delete_requests()` for deletions
+4. Handle MODIFIED ContentBlocks with delete + insert strategy
+5. End-to-end test with real documents
 
 See `docs/diff-implementation-plan.md` for detailed implementation plan.
