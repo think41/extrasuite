@@ -26,6 +26,8 @@ from dataclasses import dataclass, field
 from enum import Enum
 from typing import Any
 
+from .indexer import utf16_len
+
 
 class BlockType(Enum):
     """Types of block-level nodes in the document tree."""
@@ -73,7 +75,8 @@ class Block:
         xml_content: The raw XML content of this block
         children: Child blocks (for containers like body, table cells)
         attributes: Additional attributes (e.g., table rows/cols)
-        start_index: Starting character index in parent (for ordering)
+        start_index: Starting character index in document (UTF-16)
+        end_index: Ending character index in document (UTF-16)
     """
 
     block_type: BlockType
@@ -82,6 +85,7 @@ class Block:
     children: list[Block] = field(default_factory=list)
     attributes: dict[str, Any] = field(default_factory=dict)
     start_index: int = 0
+    end_index: int = 0
 
     def content_hash(self) -> str:
         """Generate a hash of the content for quick comparison."""
@@ -126,6 +130,9 @@ class BlockChange:
         after_xml: XML content after the change (None for deletions)
         container_path: Path to the container (e.g., ["body"], ["table_cell", "0,1"])
         child_changes: For modified containers, changes to children
+        pristine_start_index: Start index in pristine document (for delete/modify)
+        pristine_end_index: End index in pristine document (for delete/modify)
+        segment_end_index: End index of the containing segment (for segment-end detection)
     """
 
     change_type: ChangeType
@@ -135,6 +142,9 @@ class BlockChange:
     after_xml: str | None = None
     container_path: list[str] = field(default_factory=list)
     child_changes: list[BlockChange] = field(default_factory=list)
+    pristine_start_index: int = 0
+    pristine_end_index: int = 0
+    segment_end_index: int = 0
 
     def __repr__(self) -> str:
         path_str = "/".join(self.container_path) if self.container_path else "root"
@@ -176,6 +186,9 @@ class BlockDiffDetector:
         """
         pristine_tree = self._parse_to_block_tree(pristine_xml)
         current_tree = self._parse_to_block_tree(current_xml)
+
+        # Calculate indexes for pristine tree (needed for delete/modify operations)
+        self._calculate_block_indexes(pristine_tree)
 
         return self._diff_blocks(pristine_tree, current_tree, [])
 
@@ -233,6 +246,128 @@ class BlockDiffDetector:
             doc_block.children.append(footnote_block)
 
         return doc_block
+
+    def _calculate_block_indexes(self, doc_block: Block) -> None:
+        """Calculate and set start_index/end_index for all blocks in the tree.
+
+        Index spaces:
+        - BODY starts at index 1 (after initial sectionBreak)
+        - HEADER/FOOTER/FOOTNOTE start at index 0
+
+        For each block type:
+        - PARAGRAPH: text length + 1 (newline)
+        - TABLE: table_start(1) + rows*(row_marker(1) + cells) + table_end(1)
+        - Special elements (hr, pagebreak): 1 index each
+        """
+        for child in doc_block.children:
+            if child.block_type in (BlockType.BODY, BlockType.TAB):
+                self._calculate_section_indexes(child, start_index=1)
+            elif child.block_type in (
+                BlockType.HEADER,
+                BlockType.FOOTER,
+                BlockType.FOOTNOTE,
+            ):
+                self._calculate_section_indexes(child, start_index=0)
+
+    def _calculate_section_indexes(self, section: Block, start_index: int) -> int:
+        """Calculate indexes for blocks within a section.
+
+        Returns the ending index after processing all blocks.
+        """
+        current_index = start_index
+        section.start_index = current_index
+
+        for block in section.children:
+            block.start_index = current_index
+            block_length = self._calculate_block_length(block)
+            block.end_index = current_index + block_length
+            current_index = block.end_index
+
+        section.end_index = current_index
+        return current_index
+
+    def _calculate_block_length(self, block: Block) -> int:
+        """Calculate the UTF-16 length of a block.
+
+        PARAGRAPH: text content + 1 (newline)
+        TABLE: complex structure with markers
+        TABLE_OF_CONTENTS: treat as single element for now
+        """
+        if block.block_type == BlockType.PARAGRAPH:
+            return self._calculate_paragraph_length(block.xml_content)
+        elif block.block_type == BlockType.TABLE:
+            return self._calculate_table_length(block)
+        elif block.block_type == BlockType.TABLE_OF_CONTENTS:
+            # TOC is typically read-only, estimate a minimal length
+            return 1
+        else:
+            return 0
+
+    def _calculate_paragraph_length(self, xml_content: str) -> int:
+        """Calculate UTF-16 length of a paragraph from its XML.
+
+        Length = text_content + special_elements + newline
+        """
+        try:
+            root = ET.fromstring(xml_content)
+        except ET.ParseError:
+            return 1  # Minimum: just the newline
+
+        # Extract text content
+        text_length = self._extract_text_length(root)
+
+        # Count special elements (each takes 1 index)
+        special_tags = {"hr", "pagebreak", "columnbreak", "image", "footnote"}
+        special_count = sum(1 for _ in root.iter() if _.tag in special_tags)
+
+        # +1 for paragraph newline
+        return text_length + special_count + 1
+
+    def _extract_text_length(self, elem: ET.Element) -> int:
+        """Extract text content length from an element, ignoring special elements."""
+        length = 0
+        special_tags = {"hr", "pagebreak", "columnbreak", "image", "footnote"}
+
+        if elem.text:
+            length += utf16_len(elem.text)
+
+        for child in elem:
+            if child.tag not in special_tags:
+                length += self._extract_text_length(child)
+            if child.tail:
+                length += utf16_len(child.tail)
+
+        return length
+
+    def _calculate_table_length(self, table_block: Block) -> int:
+        """Calculate UTF-16 length of a table.
+
+        Structure:
+        - 1 for table start marker
+        - For each row: 1 for row marker
+        - For each cell: 1 for cell marker + cell content length
+        - 1 for table end marker
+        """
+        try:
+            root = ET.fromstring(table_block.xml_content)
+        except ET.ParseError:
+            return 2  # Minimum: start + end markers
+
+        length = 1  # Table start marker
+
+        for tr in root.findall("tr"):
+            length += 1  # Row marker
+            for td in tr.findall("td"):
+                length += 1  # Cell marker
+                # Calculate cell content length
+                for child in td:
+                    if child.tag in ("p", "h1", "h2", "h3", "h4", "h5", "h6", "li"):
+                        length += self._calculate_paragraph_length(
+                            ET.tostring(child, encoding="unicode")
+                        )
+
+        length += 1  # Table end marker
+        return length
 
     def _parse_container(
         self, elem: ET.Element, block_type: BlockType, block_id: str
@@ -418,6 +553,7 @@ class BlockDiffDetector:
                 pristine.children,
                 current.children,
                 [*path, f"{pristine.block_type.value}:{pristine.block_id}"],
+                segment_end_index=pristine.end_index,
             )
             changes.extend(child_changes)
 
@@ -482,6 +618,7 @@ class BlockDiffDetector:
         pristine_children: list[Block],
         current_children: list[Block],
         path: list[str],
+        segment_end_index: int = 0,
     ) -> list[BlockChange]:
         """Diff two lists of child blocks using LCS-based alignment.
 
@@ -517,18 +654,21 @@ class BlockDiffDetector:
                     raw_changes.append((None, p_block, c_block))
 
         # Group consecutive paragraph changes into ContentBlock changes
-        return self._group_paragraph_changes(raw_changes, path)
+        return self._group_paragraph_changes(raw_changes, path, segment_end_index)
 
     def _group_paragraph_changes(
         self,
         raw_changes: list[tuple[ChangeType | None, Block | None, Block | None]],
         path: list[str],
+        segment_end_index: int = 0,
     ) -> list[BlockChange]:
         """Group consecutive paragraph changes into ContentBlock changes.
 
         Non-paragraph changes (tables, TOC, etc.) are passed through as-is.
         Consecutive paragraphs with the same change status are grouped.
         Unchanged blocks (change_type=None) act as separators between groups.
+
+        Tracks last_pristine_end_index to calculate insert positions for additions.
         """
         if not raw_changes:
             return []
@@ -537,9 +677,13 @@ class BlockDiffDetector:
         current_group: list[tuple[ChangeType, Block | None, Block | None]] = []
         current_group_type: ChangeType | None = None
 
+        # Track the last known pristine end index for calculating insert positions
+        # Start with base index (1 for body, will be adjusted based on path)
+        last_pristine_end_index = 1 if "body" in str(path) else 0
+
         def flush_group() -> None:
             """Flush the current group of paragraph changes."""
-            nonlocal current_group, current_group_type
+            nonlocal current_group, current_group_type, last_pristine_end_index
             if not current_group:
                 return
 
@@ -548,11 +692,26 @@ class BlockDiffDetector:
             after_parts: list[str] = []
             footnote_changes: list[BlockChange] = []
 
+            # Track pristine indexes from the group
+            pristine_start = 0
+            pristine_end = 0
+
             for _change_type, p_block, c_block in current_group:
                 if p_block and p_block.xml_content:
                     before_parts.append(p_block.xml_content)
+                    # Track indexes from pristine blocks
+                    if pristine_start == 0:
+                        pristine_start = p_block.start_index
+                    pristine_end = p_block.end_index
+                    # Update last known pristine position
+                    last_pristine_end_index = p_block.end_index
                 if c_block and c_block.xml_content:
                     after_parts.append(c_block.xml_content)
+
+            # For ADDED blocks with no pristine reference, use last_pristine_end_index
+            if pristine_start == 0 and current_group_type == ChangeType.ADDED:
+                pristine_start = last_pristine_end_index
+                pristine_end = last_pristine_end_index
 
                 # Check for footnote changes within paragraphs
                 p_footnotes = {
@@ -617,6 +776,9 @@ class BlockDiffDetector:
                     after_xml="\n".join(after_parts) if after_parts else None,
                     container_path=path,
                     child_changes=footnote_changes,  # Attach footnote changes
+                    pristine_start_index=pristine_start,
+                    pristine_end_index=pristine_end,
+                    segment_end_index=segment_end_index,
                 )
             )
 
@@ -625,8 +787,12 @@ class BlockDiffDetector:
 
         for change_type, p_block, c_block in raw_changes:
             # Handle unchanged blocks (None change_type) - they just flush the group
+            # and update the last pristine position
             if change_type is None:
                 flush_group()
+                # Update last pristine position from unchanged block
+                if p_block and p_block.end_index > 0:
+                    last_pristine_end_index = p_block.end_index
                 continue
 
             # Determine if this is a paragraph
@@ -657,6 +823,10 @@ class BlockDiffDetector:
                             block_id=c_block.block_id,
                             after_xml=c_block.xml_content,
                             container_path=path,
+                            # Use last pristine position for insert location
+                            pristine_start_index=last_pristine_end_index,
+                            pristine_end_index=last_pristine_end_index,
+                            segment_end_index=segment_end_index,
                         )
                     )
                 elif change_type == ChangeType.DELETED:
@@ -668,8 +838,13 @@ class BlockDiffDetector:
                             block_id=p_block.block_id,
                             before_xml=p_block.xml_content,
                             container_path=path,
+                            pristine_start_index=p_block.start_index,
+                            pristine_end_index=p_block.end_index,
+                            segment_end_index=segment_end_index,
                         )
                     )
+                    # Update last pristine position after deletion
+                    last_pristine_end_index = p_block.end_index
                 elif change_type == ChangeType.MODIFIED:
                     assert p_block is not None and c_block is not None
                     # For tables, check for cell-level changes
@@ -684,6 +859,7 @@ class BlockDiffDetector:
                                 before_xml=p_block.xml_content,
                                 after_xml=c_block.xml_content,
                                 container_path=path,
+                                segment_end_index=segment_end_index,
                             )
                         )
 
@@ -893,6 +1069,7 @@ class BlockDiffDetector:
                         p_cell.children,
                         c_cell.children,
                         [*cell_path, f"cell:{p_cell.block_id}"],
+                        segment_end_index=p_cell.end_index,
                     )
                     changes.append(
                         BlockChange(
@@ -961,6 +1138,7 @@ class BlockDiffDetector:
                     p_cell.children,
                     c_cell.children,
                     cell_path,
+                    segment_end_index=p_cell.end_index,
                 )
 
                 if child_changes:

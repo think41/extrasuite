@@ -704,6 +704,84 @@ Requests are sorted by index **descending** to prevent cascade effects:
 ]
 ```
 
+### 9.4 ContentBlock Insert Algorithm
+
+Content insert receives a sequence of paragraphs that may include text runs, headings, inline styles, and special elements. The key insight is that `insertText` with newlines automatically creates multiple paragraphs.
+
+**Algorithm:**
+
+1. **Strip special elements and formatting**
+   - Extract plain text with `\n` between paragraphs
+   - Track special element positions (pagebreak, hr, etc.) with their relative offsets
+   - Track formatting/styling positions relative to the ContentBlock start
+
+2. **Insert plain text**
+   - Call `insertText` with the plain text (newlines create paragraph breaks)
+   - This establishes the paragraph structure
+
+3. **Insert special elements (highest offset first)**
+   - Work from highest index to lowest
+   - Each special element (pagebreak, columnbreak) consumes 1 index
+   - After this step, the styling indexes align with the document
+
+4. **Apply formatting and styling**
+   - Apply paragraph styles (headings via `updateParagraphStyle`)
+   - Apply bullets (`createParagraphBullets`)
+   - Apply text styles (`updateTextStyle` for bold, italic, links)
+   - These operations don't change indexes
+
+**Critical: Process blocks from highest index to lowest.** This eliminates the need to track index shifts.
+
+### 9.5 ContentBlock Position Tracking
+
+ContentBlock positions are always calculated against the **pristine** document. Since we process changes from highest index to lowest (bottom-up), pristine indexes remain stable throughout the update.
+
+Each `BlockChange` carries:
+- `pristine_start_index`: Start position in pristine document
+- `pristine_end_index`: End position in pristine document
+
+For **DELETED** and **MODIFIED** blocks, use these indexes directly for delete operations.
+
+For **ADDED** blocks, the insert position is calculated from neighboring elements in the pristine document (the end_index of the preceding element).
+
+### 9.6 ContentBlock Operations Summary
+
+| Operation | Strategy |
+|-----------|----------|
+| **ADDED** | Insert at calculated position using the algorithm above |
+| **DELETED** | `deleteContentRange` using pristine indexes |
+| **MODIFIED** | Delete (using pristine indexes) then Insert (at same position) |
+
+### 9.7 Segment-End Constraint
+
+Google Docs API does not allow deleting the final newline character of a segment (body, header, footer, footnote, or table cell). This impacts ContentBlock operations at segment boundaries.
+
+**Constraint:**
+```
+"The range cannot include the newline character at the end of the segment."
+```
+
+**How it manifests:** In our XML model, every `</p>` has an implicit `\n`. When a ContentBlock is at the end of a segment, its `end_index` equals the `segment_end_index`. A naive delete of the full range fails.
+
+**Solution:**
+
+1. **Track segment end index** in `BlockChange.segment_end_index`
+2. **For DELETE at segment end:** Reduce `end_index` by 1 to preserve the final newline. Result: empty paragraph remains at segment end.
+3. **For MODIFY at segment end:**
+   - Delete from `start_index` to `end_index - 1` (preserve final newline)
+   - Insert new content **without** trailing newline
+   - The preserved newline becomes the terminator for the new content
+
+**Example:**
+```
+Segment: [table (2-14), paragraph (14-16)]
+segment_end_index = 16
+
+To modify the paragraph:
+1. deleteContentRange(14, 15)  # Not 16 - preserve final newline
+2. insertText(14, "New text")  # No trailing \n
+```
+
 ---
 
 ## 10. Three-Way Merge

@@ -36,6 +36,8 @@ Instead of working with complex API responses, agents interact with clean XML fi
 
 **HR is read-only:** Horizontal rules cannot be added or deleted via the API - only their content can be modified.
 
+**Segment-end newline:** Google Docs API forbids deleting the final newline of a segment (body, header, footer, footnote, table cell). When deleting content at segment end, the delete range must exclude the final newline, and insert operations should not include a trailing newline.
+
 **Pristine state:** After push, always re-pull before making additional changes.
 
 ## CLI Interface

@@ -286,20 +286,25 @@ def _find_section(
 
 def _handle_content_block_change(
     change: BlockChange,
-    pristine_section: Section | None,
-    current_section: Section | None,
+    pristine_section: Section | None,  # noqa: ARG001 - Kept for API consistency
+    current_section: Section | None,  # noqa: ARG001 - Kept for API consistency
     segment_id: str | None,
 ) -> list[dict[str, Any]]:
     """Handle ContentBlock add/delete/modify changes.
 
     For MODIFIED content blocks, we use a simple delete + insert strategy.
     Also handles footnote child_changes which require special index calculation.
+
+    Uses pristine_start_index/pristine_end_index from the BlockChange for positioning.
     """
     requests: list[dict[str, Any]] = []
 
     # Handle footnote child_changes first (they need the ContentBlock context)
-    # Footnotes in the body start at index 1
-    base_index = 1 if segment_id is None else 0
+    base_index = (
+        change.pristine_start_index
+        if change.pristine_start_index > 0
+        else (1 if segment_id is None else 0)
+    )
 
     for child_change in change.child_changes:
         if child_change.block_type == BlockType.FOOTNOTE:
@@ -313,38 +318,59 @@ def _handle_content_block_change(
                 _handle_footnote_change(child_change, content_xml, base_index)
             )
 
-    # Skip normal content handling for now if only footnote changes
-    # (Phase 3 will implement full content handling)
     if change.change_type == ChangeType.ADDED:
-        # Insert new content at the appropriate position
-        if current_section and change.after_xml:
-            # Parse the after_xml to get content
-            # For now, use a simple rebuild approach
+        # Insert new content - for additions, insert at pristine_start_index
+        # (where the preceding element ends, or at the base index)
+        if change.after_xml:
+            insert_index = (
+                change.pristine_start_index
+                if change.pristine_start_index > 0
+                else (1 if segment_id is None else 0)
+            )
             requests.extend(
-                _generate_content_insert_requests(change.after_xml, segment_id)
+                _generate_content_insert_requests(
+                    change.after_xml, segment_id, insert_index
+                )
             )
 
     elif change.change_type == ChangeType.DELETED:
-        # Delete the content range
-        if pristine_section and change.before_xml:
+        # Delete content using pristine indexes from BlockChange
+        if change.before_xml and change.pristine_start_index > 0:
             requests.extend(
-                _generate_content_delete_requests(
-                    change.before_xml, pristine_section, segment_id
+                _generate_content_delete_requests_by_index(
+                    change.pristine_start_index,
+                    change.pristine_end_index,
+                    segment_id,
+                    change.segment_end_index,
                 )
             )
 
     elif change.change_type == ChangeType.MODIFIED:
-        # For modified blocks, delete old content and insert new
-        # This is the simple strategy; can be optimized later
-        if pristine_section and change.before_xml:
+        # For modified blocks, delete old content and insert new at same position
+        # Check if we're at segment end (delete range would hit segment boundary)
+        at_segment_end = (
+            change.segment_end_index > 0
+            and change.pristine_end_index >= change.segment_end_index
+        )
+        if change.before_xml and change.pristine_start_index > 0:
             requests.extend(
-                _generate_content_delete_requests(
-                    change.before_xml, pristine_section, segment_id
+                _generate_content_delete_requests_by_index(
+                    change.pristine_start_index,
+                    change.pristine_end_index,
+                    segment_id,
+                    change.segment_end_index,
                 )
             )
-        if current_section and change.after_xml:
+        if change.after_xml:
+            # Insert at the same position where we deleted
+            # If at segment end, strip trailing newline from content
             requests.extend(
-                _generate_content_insert_requests(change.after_xml, segment_id)
+                _generate_content_insert_requests(
+                    change.after_xml,
+                    segment_id,
+                    change.pristine_start_index,
+                    strip_trailing_newline=at_segment_end,
+                )
             )
 
     return requests
@@ -546,31 +572,565 @@ def _handle_tab_change(change: BlockChange) -> list[dict[str, Any]]:
     return requests
 
 
+@dataclass
+class ParsedContent:
+    """Parsed content block ready for request generation.
+
+    Attributes:
+        plain_text: Text content with newlines between paragraphs (no special elements)
+        special_elements: List of (offset, element_type, attributes) for special elements
+        paragraph_styles: List of (start_offset, end_offset, named_style) for headings
+        bullets: List of (start_offset, end_offset, bullet_type, level) for list items
+        text_styles: List of (start_offset, end_offset, styles_dict) for inline formatting
+    """
+
+    plain_text: str
+    special_elements: list[tuple[int, str, dict[str, str]]]
+    paragraph_styles: list[tuple[int, int, str]]
+    bullets: list[tuple[int, int, str, int]]
+    text_styles: list[tuple[int, int, dict[str, str]]]
+
+
+def _parse_content_block_xml(xml_content: str) -> ParsedContent:
+    """Parse ContentBlock XML into structured data for request generation.
+
+    The XML content is a sequence of paragraph elements (p, h1, li, etc.).
+    This function extracts:
+    - Plain text with newlines between paragraphs
+    - Special element positions (pagebreak, hr, etc.)
+    - Paragraph styles (headings)
+    - Bullet list info
+    - Text run styles (bold, italic, links)
+    """
+    # Wrap in a root element for parsing
+    wrapped = f"<root>{xml_content}</root>"
+    root = ET.fromstring(wrapped)
+
+    plain_text_parts: list[str] = []
+    special_elements: list[tuple[int, str, dict[str, str]]] = []
+    paragraph_styles: list[tuple[int, int, str]] = []
+    bullets: list[tuple[int, int, str, int]] = []
+    text_styles: list[tuple[int, int, dict[str, str]]] = []
+
+    current_offset = 0  # UTF-16 offset tracking
+
+    for para_elem in root:
+        tag = para_elem.tag
+        para_start = current_offset
+
+        # Determine paragraph type
+        named_style = "NORMAL_TEXT"
+        bullet_type = None
+        bullet_level = 0
+
+        if tag in HEADING_STYLES:
+            named_style = HEADING_STYLES[tag]
+        elif tag == "li":
+            bullet_type = para_elem.get("type", "bullet")
+            bullet_level = int(para_elem.get("level", "0"))
+
+        # Extract text runs from this paragraph
+        para_text, para_specials, para_text_styles = _extract_paragraph_content(
+            para_elem, current_offset
+        )
+
+        plain_text_parts.append(para_text)
+        special_elements.extend(para_specials)
+        text_styles.extend(para_text_styles)
+
+        # Calculate paragraph end (after newline)
+        para_end = current_offset + utf16_len(para_text) + 1  # +1 for newline
+
+        # Track paragraph style if not normal
+        if named_style != "NORMAL_TEXT":
+            paragraph_styles.append((para_start, para_end, named_style))
+
+        # Track bullets
+        if bullet_type:
+            bullets.append((para_start, para_end, bullet_type, bullet_level))
+
+        # Update offset (text + newline)
+        current_offset = para_end
+
+    # Join paragraphs with newlines
+    plain_text = "\n".join(plain_text_parts)
+    if plain_text_parts:
+        plain_text += "\n"  # Trailing newline for last paragraph
+
+    return ParsedContent(
+        plain_text=plain_text,
+        special_elements=special_elements,
+        paragraph_styles=paragraph_styles,
+        bullets=bullets,
+        text_styles=text_styles,
+    )
+
+
+# Heading tag to named style mapping (duplicated from desugar for independence)
+HEADING_STYLES = {
+    "title": "TITLE",
+    "subtitle": "SUBTITLE",
+    "h1": "HEADING_1",
+    "h2": "HEADING_2",
+    "h3": "HEADING_3",
+    "h4": "HEADING_4",
+    "h5": "HEADING_5",
+    "h6": "HEADING_6",
+}
+
+# Inline formatting tags
+INLINE_STYLE_TAGS = {
+    "b": "bold",
+    "i": "italic",
+    "u": "underline",
+    "s": "strikethrough",
+    "sup": "superscript",
+    "sub": "subscript",
+}
+
+# Special elements that consume 1 index
+SPECIAL_ELEMENT_TAGS = {"hr", "pagebreak", "columnbreak", "image", "footnote"}
+
+
+def _extract_paragraph_content(
+    para_elem: ET.Element, base_offset: int
+) -> tuple[
+    str, list[tuple[int, str, dict[str, str]]], list[tuple[int, int, dict[str, str]]]
+]:
+    """Extract text, special elements, and text styles from a paragraph element.
+
+    Returns:
+        - plain_text: Text content (no special elements)
+        - special_elements: List of (offset, element_type, attributes)
+        - text_styles: List of (start_offset, end_offset, styles_dict)
+    """
+    plain_text_parts: list[str] = []
+    special_elements: list[tuple[int, str, dict[str, str]]] = []
+    text_styles: list[tuple[int, int, dict[str, str]]] = []
+
+    current_offset = base_offset
+
+    def process_node(node: ET.Element, inherited_styles: dict[str, str]) -> None:
+        nonlocal current_offset
+
+        tag = node.tag
+        node_styles = inherited_styles.copy()
+
+        # Update styles based on tag
+        if tag in INLINE_STYLE_TAGS:
+            node_styles[INLINE_STYLE_TAGS[tag]] = "1"
+        elif tag == "a":
+            href = node.get("href", "")
+            if href:
+                node_styles["link"] = href
+        elif tag == "span":
+            # Span with class - would need style resolution
+            # For now, just track the class
+            class_name = node.get("class")
+            if class_name:
+                node_styles["class"] = class_name
+
+        # Handle text content
+        if node.text:
+            text = node.text
+            text_len = utf16_len(text)
+            plain_text_parts.append(text)
+
+            # Track styles if any non-trivial styles
+            style_dict = {k: v for k, v in node_styles.items() if v}
+            if style_dict:
+                text_styles.append(
+                    (current_offset, current_offset + text_len, style_dict)
+                )
+
+            current_offset += text_len
+
+        # Process children
+        for child in node:
+            child_tag = child.tag
+
+            # Special elements
+            if child_tag in SPECIAL_ELEMENT_TAGS:
+                # Track position and attributes
+                attrs = dict(child.attrib)
+                special_elements.append((current_offset, child_tag, attrs))
+                # Don't add to plain_text - will be inserted separately
+            else:
+                # Recurse for inline formatting
+                process_node(child, node_styles)
+
+            # Handle tail text
+            if child.tail:
+                tail = child.tail
+                tail_len = utf16_len(tail)
+                plain_text_parts.append(tail)
+
+                # Tail inherits parent styles (not child's)
+                style_dict = {k: v for k, v in node_styles.items() if v}
+                if style_dict:
+                    text_styles.append(
+                        (current_offset, current_offset + tail_len, style_dict)
+                    )
+
+                current_offset += tail_len
+
+    # Start processing from para element children
+    # Handle para element's direct text
+    if para_elem.text:
+        text = para_elem.text
+        text_len = utf16_len(text)
+        plain_text_parts.append(text)
+        current_offset += text_len
+
+    # Process children
+    for child in para_elem:
+        child_tag = child.tag
+
+        if child_tag in SPECIAL_ELEMENT_TAGS:
+            attrs = dict(child.attrib)
+            special_elements.append((current_offset, child_tag, attrs))
+        else:
+            process_node(child, {})
+
+        if child.tail:
+            tail = child.tail
+            tail_len = utf16_len(tail)
+            plain_text_parts.append(tail)
+            current_offset += tail_len
+
+    return "".join(plain_text_parts), special_elements, text_styles
+
+
 def _generate_content_insert_requests(
-    xml_content: str,  # noqa: ARG001 - Will be used in Phase 3
-    segment_id: str | None,  # noqa: ARG001 - Will be used in Phase 3
+    xml_content: str,
+    segment_id: str | None,
+    insert_index: int = 1,
+    strip_trailing_newline: bool = False,
 ) -> list[dict[str, Any]]:
     """Generate insert requests for content XML.
 
-    This is a placeholder - full implementation needs to parse the XML
-    and generate appropriate insertText/updateTextStyle requests.
+    Strategy:
+    1. Parse XML to extract plain text (with newlines), special elements, and styles
+    2. Insert plain text - newlines automatically create paragraphs
+    3. Insert special elements from highest offset to lowest
+    4. Apply paragraph styles (headings)
+    5. Apply bullets
+    6. Apply text styles (bold, italic, links)
+
+    Args:
+        xml_content: The ContentBlock XML (sequence of paragraph elements)
+        segment_id: The segment ID (header/footer/footnote ID, or None for body)
+        insert_index: The index at which to insert (default 1 for body start)
+        strip_trailing_newline: If True, strip the trailing newline from the text.
+            Used when modifying content at segment end where we preserve the
+            existing final newline rather than inserting a new one.
+
+    Returns:
+        List of batchUpdate requests
     """
-    # For now, return empty - will be implemented in Phase 3
-    return []
+    if not xml_content or not xml_content.strip():
+        return []
+
+    requests: list[dict[str, Any]] = []
+
+    # Parse the content
+    parsed = _parse_content_block_xml(xml_content)
+
+    # Strip trailing newline if at segment end
+    if strip_trailing_newline and parsed.plain_text.endswith("\n"):
+        parsed = ParsedContent(
+            plain_text=parsed.plain_text[:-1],
+            special_elements=parsed.special_elements,
+            paragraph_styles=parsed.paragraph_styles,
+            bullets=parsed.bullets,
+            text_styles=parsed.text_styles,
+        )
+
+    if not parsed.plain_text:
+        return []
+
+    # Build location for requests
+    def make_location(index: int) -> dict[str, Any]:
+        loc: dict[str, Any] = {"index": insert_index + index}
+        if segment_id:
+            loc["segmentId"] = segment_id
+        return loc
+
+    def make_range(start: int, end: int) -> dict[str, Any]:
+        rng: dict[str, Any] = {
+            "startIndex": insert_index + start,
+            "endIndex": insert_index + end,
+        }
+        if segment_id:
+            rng["segmentId"] = segment_id
+        return rng
+
+    # 1. Insert plain text
+    requests.append(
+        {
+            "insertText": {
+                "location": make_location(0),
+                "text": parsed.plain_text,
+            }
+        }
+    )
+
+    # 2. Insert special elements (highest offset first)
+    for offset, elem_type, _attrs in sorted(
+        parsed.special_elements, key=lambda x: x[0], reverse=True
+    ):
+        if elem_type == "pagebreak":
+            requests.append(
+                {
+                    "insertPageBreak": {
+                        "location": make_location(offset),
+                    }
+                }
+            )
+        elif elem_type == "columnbreak":
+            # Column break is inserted via insertSectionBreak with CONTINUOUS type
+            requests.append(
+                {
+                    "insertSectionBreak": {
+                        "location": make_location(offset),
+                        "sectionType": "CONTINUOUS",
+                    }
+                }
+            )
+        # Note: hr, image, footnote require different handling
+        # hr: Can't be inserted directly, handled via paragraph border
+        # image: Requires separate upload flow (attrs contains src, width, height)
+        # footnote: Already handled in _handle_footnote_change
+
+    # 3. Apply paragraph styles (headings)
+    for start, end, named_style in parsed.paragraph_styles:
+        requests.append(
+            {
+                "updateParagraphStyle": {
+                    "range": make_range(start, end),
+                    "paragraphStyle": {
+                        "namedStyleType": named_style,
+                    },
+                    "fields": "namedStyleType",
+                }
+            }
+        )
+
+    # 4. Apply bullets
+    for start, end, bullet_type, _level in parsed.bullets:
+        # Map bullet_type to Google Docs preset
+        preset = _bullet_type_to_preset(bullet_type)
+        requests.append(
+            {
+                "createParagraphBullets": {
+                    "range": make_range(start, end),
+                    "bulletPreset": preset,
+                }
+            }
+        )
+        # TODO: Handle nested bullets (level > 0) with updateParagraphStyle indentation
+
+    # 5. Apply text styles (bold, italic, links)
+    for start, end, styles in parsed.text_styles:
+        text_style, fields = _styles_to_text_style_request(styles)
+        if text_style and fields:
+            requests.append(
+                {
+                    "updateTextStyle": {
+                        "range": make_range(start, end),
+                        "textStyle": text_style,
+                        "fields": fields,
+                    }
+                }
+            )
+
+    return requests
+
+
+def _bullet_type_to_preset(bullet_type: str) -> str:
+    """Convert bullet type to Google Docs bullet preset."""
+    presets = {
+        "bullet": "BULLET_DISC_CIRCLE_SQUARE",
+        "decimal": "NUMBERED_DECIMAL_NESTED",
+        "alpha": "NUMBERED_UPPERCASE_ALPHA",
+        "roman": "NUMBERED_UPPERCASE_ROMAN",
+        "checkbox": "BULLET_CHECKBOX",
+    }
+    return presets.get(bullet_type, "BULLET_DISC_CIRCLE_SQUARE")
+
+
+def _styles_to_text_style_request(styles: dict[str, str]) -> tuple[dict[str, Any], str]:
+    """Convert style dict to Google Docs textStyle and fields string."""
+    text_style: dict[str, Any] = {}
+    fields: list[str] = []
+
+    if styles.get("bold") == "1":
+        text_style["bold"] = True
+        fields.append("bold")
+
+    if styles.get("italic") == "1":
+        text_style["italic"] = True
+        fields.append("italic")
+
+    if styles.get("underline") == "1":
+        text_style["underline"] = True
+        fields.append("underline")
+
+    if styles.get("strikethrough") == "1":
+        text_style["strikethrough"] = True
+        fields.append("strikethrough")
+
+    if styles.get("superscript") == "1":
+        text_style["baselineOffset"] = "SUPERSCRIPT"
+        fields.append("baselineOffset")
+
+    if styles.get("subscript") == "1":
+        text_style["baselineOffset"] = "SUBSCRIPT"
+        fields.append("baselineOffset")
+
+    if "link" in styles:
+        text_style["link"] = {"url": styles["link"]}
+        fields.append("link")
+
+    return text_style, ",".join(fields)
+
+
+def _generate_content_delete_requests_by_index(
+    start_index: int,
+    end_index: int,
+    segment_id: str | None,
+    segment_end_index: int = 0,
+) -> list[dict[str, Any]]:
+    """Generate delete request using pre-calculated indexes.
+
+    Args:
+        start_index: Start index in the document
+        end_index: End index in the document
+        segment_id: The segment ID (header/footer/footnote ID, or None for body)
+        segment_end_index: End index of the containing segment (for boundary detection)
+
+    Returns:
+        List containing a single deleteContentRange request
+
+    Note:
+        Google Docs API does not allow deleting the final newline of a segment
+        (body, header, footer, footnote, table cell). If end_index equals
+        segment_end_index, we reduce it by 1 to preserve that final newline.
+    """
+    # Adjust end_index if it would delete the segment's final newline
+    if segment_end_index > 0 and end_index >= segment_end_index:
+        end_index = segment_end_index - 1
+
+    if start_index >= end_index:
+        return []
+
+    range_spec: dict[str, Any] = {
+        "startIndex": start_index,
+        "endIndex": end_index,
+    }
+    if segment_id:
+        range_spec["segmentId"] = segment_id
+
+    return [
+        {
+            "deleteContentRange": {
+                "range": range_spec,
+            }
+        }
+    ]
 
 
 def _generate_content_delete_requests(
-    xml_content: str,  # noqa: ARG001 - Will be used in Phase 3
-    section: Section,  # noqa: ARG001 - Will be used in Phase 3
-    segment_id: str | None,  # noqa: ARG001 - Will be used in Phase 3
+    xml_content: str,
+    section: Section,
+    segment_id: str | None,
 ) -> list[dict[str, Any]]:
     """Generate delete requests for content XML.
 
-    This is a placeholder - full implementation needs to calculate
-    the index range of the content to delete.
+    Calculates the index range of the content to delete by parsing
+    the XML and computing UTF-16 lengths.
+
+    Args:
+        xml_content: The ContentBlock XML to delete
+        section: The section containing this content (for base index)
+        segment_id: The segment ID (header/footer/footnote ID, or None for body)
+
+    Returns:
+        List containing a single deleteContentRange request
     """
-    # For now, return empty - will be implemented in Phase 3
-    return []
+    if not xml_content or not xml_content.strip():
+        return []
+
+    # Calculate the UTF-16 length of the content
+    content_length = _calculate_content_length(xml_content)
+    if content_length == 0:
+        return []
+
+    # Body starts at index 1, headers/footers/footnotes start at 0
+    base_index = 1 if section.section_type == "body" else 0
+
+    # Build the delete range
+    range_spec: dict[str, Any] = {
+        "startIndex": base_index,
+        "endIndex": base_index + content_length,
+    }
+    if segment_id:
+        range_spec["segmentId"] = segment_id
+
+    return [
+        {
+            "deleteContentRange": {
+                "range": range_spec,
+            }
+        }
+    ]
+
+
+def _calculate_content_length(xml_content: str) -> int:
+    """Calculate the UTF-16 length of content XML.
+
+    Includes text content, newlines between paragraphs, and special elements.
+    """
+    # Wrap in root for parsing
+    wrapped = f"<root>{xml_content}</root>"
+    try:
+        root = ET.fromstring(wrapped)
+    except ET.ParseError:
+        return 0
+
+    total_length = 0
+
+    for para_elem in root:
+        # Get text content length
+        text_content = _get_element_text(para_elem)
+        total_length += utf16_len(text_content)
+
+        # Count special elements (each takes 1 index)
+        for special_tag in SPECIAL_ELEMENT_TAGS:
+            total_length += len(list(para_elem.iter(special_tag)))
+
+        # Add 1 for paragraph newline
+        total_length += 1
+
+    return total_length
+
+
+def _get_element_text(elem: ET.Element) -> str:
+    """Get all text content from an element, excluding special element markers."""
+    parts: list[str] = []
+
+    if elem.text:
+        parts.append(elem.text)
+
+    for child in elem:
+        # Skip special elements
+        if child.tag not in SPECIAL_ELEMENT_TAGS:
+            parts.append(_get_element_text(child))
+
+        if child.tail:
+            parts.append(child.tail)
+
+    return "".join(parts)
 
 
 # --- Table request generation (Phase 2) ---
@@ -980,18 +1540,6 @@ def _generate_delete_table_column_request(
 
 
 # --- Request generation helpers (kept from original) ---
-
-
-def _bullet_type_to_preset(bullet_type: str) -> str:
-    """Convert bullet type to Google Docs preset name."""
-    presets = {
-        "bullet": "BULLET_DISC_CIRCLE_SQUARE",
-        "decimal": "NUMBERED_DECIMAL_NESTED",
-        "alpha": "NUMBERED_DECIMAL_ALPHA_ROMAN",
-        "roman": "NUMBERED_DECIMAL_ALPHA_ROMAN",
-        "checkbox": "BULLET_CHECKBOX",
-    }
-    return presets.get(bullet_type, "BULLET_DISC_CIRCLE_SQUARE")
 
 
 def _operation_to_request(op: DiffOperation) -> dict[str, Any]:
