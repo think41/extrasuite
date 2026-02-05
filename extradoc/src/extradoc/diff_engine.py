@@ -220,9 +220,22 @@ def diff_documents(
                     )
                 )
 
-    # Sort by descending index (for safe deletion order), then by ascending
-    # sequence (so inserts come before their style updates at the same index)
-    operations.sort(key=lambda op: (-op.index, op.sequence))
+    # Sort operations for correct application order:
+    # 1. Deletes in descending index order (highest first, so later deletions
+    #    don't shift indexes of earlier content)
+    # 2. Inserts/updates in ascending index order (lowest first, so earlier
+    #    inserts expand the document before later operations)
+    #
+    # Within each group, use sequence for stable ordering.
+    def sort_key(op: DiffOperation) -> tuple[int, int, int]:
+        # Deletes: sort by descending index (negate)
+        # Non-deletes: sort by ascending index
+        if op.op_type == "delete":
+            return (0, -op.index, op.sequence)  # Deletes first, descending index
+        else:
+            return (1, op.index, op.sequence)  # Non-deletes second, ascending index
+
+    operations.sort(key=sort_key)
 
     return [_operation_to_request(op) for op in operations if op.op_type]
 
@@ -325,13 +338,29 @@ def _diff_section(pristine: Section | None, current: Section) -> list[DiffOperat
         elif change.type == "insert":
             # Insert new elements from current
             insert_idx = change.pristine_start
+
+            # Detect end-of-segment insertion
+            # Google Docs requires insert index < segment end, and the last
+            # character is always a structural newline. To append new paragraphs,
+            # we insert "\n{content}" before the structural newline.
+            is_end_insert = False
+            if p_elements:
+                last_elem_end = p_elements[-1][2]
+                if insert_idx >= last_elem_end:
+                    is_end_insert = True
+                    insert_idx = last_elem_end - 1  # Position of structural newline
+
             for c_elem in change.current_elements:
                 if isinstance(c_elem, SpecialElement) and c_elem.element_type == "hr":
                     insert_idx += c_elem.utf16_length()
                     continue
-                elem_ops, added = _emit_element(c_elem, insert_idx, segment_id)
+                elem_ops, added = _emit_element(
+                    c_elem, insert_idx, segment_id, prepend_newline=is_end_insert
+                )
                 operations.extend(elem_ops)
                 insert_idx += added
+                # After first element, subsequent inserts are no longer "end inserts"
+                is_end_insert = False
 
         elif change.type == "replace":
             # Replace: if same element count and types, diff element-by-element
@@ -946,10 +975,19 @@ def _emit_element(
     elem: Paragraph | Table | SpecialElement,
     insert_idx: int,
     segment_id: str | None,
+    prepend_newline: bool = False,
 ) -> tuple[list[DiffOperation], int]:
-    """Emit operations for an element at a given index and return (ops, length)."""
+    """Emit operations for an element at a given index and return (ops, length).
+
+    Args:
+        elem: The element to emit
+        insert_idx: The index at which to insert
+        segment_id: Optional segment ID for headers/footers
+        prepend_newline: If True, emit "\\n{content}" instead of "{content}\\n".
+                        Used when appending at end of segment.
+    """
     if isinstance(elem, Paragraph):
-        return _emit_paragraph(elem, insert_idx, segment_id)
+        return _emit_paragraph(elem, insert_idx, segment_id, prepend_newline)
     elif isinstance(elem, SpecialElement):
         return _emit_special(elem, insert_idx, segment_id)
     elif isinstance(elem, Table):
@@ -961,71 +999,141 @@ def _emit_paragraph(
     para: Paragraph,
     insert_idx: int,
     segment_id: str | None,
+    prepend_newline: bool = False,
 ) -> tuple[list[DiffOperation], int]:
-    """Insert a paragraph with styles and bullets. Returns (ops, length)."""
+    """Insert a paragraph with styles and bullets. Returns (ops, length).
+
+    Args:
+        para: The paragraph to emit
+        insert_idx: The index at which to insert
+        segment_id: Optional segment ID for headers/footers
+        prepend_newline: If True, emit "\\n{content}" instead of "{content}\\n".
+                        Used when appending at end of segment.
+    """
     ops: list[DiffOperation] = []
     cursor = insert_idx
-    add_trailing_newline = True
+    add_trailing_newline = not prepend_newline  # Don't add trailing if prepending
 
-    # Insert runs sequentially to keep order with specials
-    for idx, run in enumerate(para.runs):
-        if "_special" in run.styles:
-            special_ops, special_len = _emit_special(
-                SpecialElement(run.styles["_special"], dict(run.styles)),
-                cursor,
-                segment_id,
-            )
-            ops.extend(special_ops)
-            cursor += special_len
-            # If a column break is the last thing, skip trailing newline
-            if (
-                run.styles.get("_special") == "columnbreak"
-                and idx == len(para.runs) - 1
-            ):
-                add_trailing_newline = False
-            continue
+    # Check if we can do a simple single-insert (no special elements, uniform style)
+    has_specials = any("_special" in run.styles for run in para.runs)
 
-        if run.text:
-            ops.append(
-                DiffOperation(
-                    op_type="insert",
-                    index=cursor,
-                    content=run.text,
-                    segment_id=segment_id,
-                    sequence=_next_sequence(),
-                )
-            )
-            run_len = utf16_len(run.text)
+    if not has_specials and para.runs:
+        # Collect all text and insert at once (including newline)
+        all_text = "".join(run.text for run in para.runs)
+        if prepend_newline:
+            all_text = "\n" + all_text
+        elif add_trailing_newline:
+            all_text += "\n"
 
-            style_info = _full_run_text_style(run.styles)
-            if style_info:
-                text_style, fields = style_info
-                ops.append(
-                    DiffOperation(
-                        op_type="update_text_style",
-                        index=cursor,
-                        end_index=cursor + run_len,
-                        text_style=text_style,
-                        fields=fields,
-                        segment_id=segment_id,
-                        sequence=_next_sequence(),
-                    )
-                )
-
-            cursor += run_len
-
-    # Append newline to terminate paragraph
-    if add_trailing_newline:
         ops.append(
             DiffOperation(
                 op_type="insert",
                 index=cursor,
-                content="\n",
+                content=all_text,
                 segment_id=segment_id,
                 sequence=_next_sequence(),
             )
         )
-        cursor += 1
+
+        # Apply styles to each run's range
+        # If prepending newline, text starts after the newline
+        run_cursor = cursor + (1 if prepend_newline else 0)
+        for run in para.runs:
+            if run.text:
+                run_len = utf16_len(run.text)
+                style_info = _full_run_text_style(run.styles)
+                if style_info:
+                    text_style, fields = style_info
+                    ops.append(
+                        DiffOperation(
+                            op_type="update_text_style",
+                            index=run_cursor,
+                            end_index=run_cursor + run_len,
+                            text_style=text_style,
+                            fields=fields,
+                            segment_id=segment_id,
+                            sequence=_next_sequence(),
+                        )
+                    )
+                run_cursor += run_len
+
+        # Calculate final cursor position
+        cursor = run_cursor + (1 if add_trailing_newline else 0)
+        if prepend_newline:
+            cursor = run_cursor  # Already accounted for newline at start
+    else:
+        # Complex case: handle special elements individually
+        # If prepending newline, insert it first
+        if prepend_newline:
+            ops.append(
+                DiffOperation(
+                    op_type="insert",
+                    index=cursor,
+                    content="\n",
+                    segment_id=segment_id,
+                    sequence=_next_sequence(),
+                )
+            )
+            cursor += 1
+
+        for idx, run in enumerate(para.runs):
+            if "_special" in run.styles:
+                special_ops, special_len = _emit_special(
+                    SpecialElement(run.styles["_special"], dict(run.styles)),
+                    cursor,
+                    segment_id,
+                )
+                ops.extend(special_ops)
+                cursor += special_len
+                # If a column break is the last thing, skip trailing newline
+                if (
+                    run.styles.get("_special") == "columnbreak"
+                    and idx == len(para.runs) - 1
+                ):
+                    add_trailing_newline = False
+                continue
+
+            if run.text:
+                ops.append(
+                    DiffOperation(
+                        op_type="insert",
+                        index=cursor,
+                        content=run.text,
+                        segment_id=segment_id,
+                        sequence=_next_sequence(),
+                    )
+                )
+                run_len = utf16_len(run.text)
+
+                style_info = _full_run_text_style(run.styles)
+                if style_info:
+                    text_style, fields = style_info
+                    ops.append(
+                        DiffOperation(
+                            op_type="update_text_style",
+                            index=cursor,
+                            end_index=cursor + run_len,
+                            text_style=text_style,
+                            fields=fields,
+                            segment_id=segment_id,
+                            sequence=_next_sequence(),
+                        )
+                    )
+
+                cursor += run_len
+
+        # Append newline to terminate paragraph
+        if add_trailing_newline:
+            ops.append(
+                DiffOperation(
+                    op_type="insert",
+                    index=cursor,
+                    content="\n",
+                    segment_id=segment_id,
+                    sequence=_next_sequence(),
+                )
+            )
+            cursor += 1
 
     # Paragraph style (headings)
     if para.named_style != "NORMAL_TEXT":
