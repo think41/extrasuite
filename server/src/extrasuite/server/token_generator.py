@@ -30,12 +30,14 @@ from google.cloud.iam_admin_v1.types import (
 from loguru import logger
 
 # Scopes granted to the generated token
-# Read/write for sheets, docs, slides; read-only for drive
+# Read/write for sheets, docs, slides, drive, calendar, forms
 TOKEN_SCOPES = [
     "https://www.googleapis.com/auth/spreadsheets",
     "https://www.googleapis.com/auth/documents",
     "https://www.googleapis.com/auth/presentations",
-    "https://www.googleapis.com/auth/drive.readonly",
+    "https://www.googleapis.com/auth/drive",
+    "https://www.googleapis.com/auth/calendar",
+    "https://www.googleapis.com/auth/forms.body",
 ]
 
 # Delay after SA creation to allow GCP propagation (seconds)
