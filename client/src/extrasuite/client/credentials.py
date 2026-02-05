@@ -13,6 +13,7 @@ import os
 import select
 import socket
 import ssl
+import stat
 import sys
 import threading
 import time
@@ -24,14 +25,13 @@ from datetime import datetime
 from pathlib import Path
 from typing import Any
 
-import certifi
-import keyring
+# Try to use certifi for SSL certificates (common on macOS)
+try:
+    import certifi
 
-SSL_CONTEXT = ssl.create_default_context(cafile=certifi.where())
-
-# Keyring service name for storing tokens
-KEYRING_SERVICE = "extrasuite"
-KEYRING_USERNAME = "token"
+    SSL_CONTEXT = ssl.create_default_context(cafile=certifi.where())
+except ImportError:
+    SSL_CONTEXT = ssl.create_default_context()
 
 
 @dataclass
@@ -89,14 +89,16 @@ class CredentialsManager:
     4. service_account_path constructor parameter
     5. SERVICE_ACCOUNT_PATH environment variable
 
-    Tokens are securely cached in the OS keyring (macOS Keychain, Windows Credential
-    Locker, or Linux Secret Service).
+    Tokens are cached in ~/.config/extrasuite/token.json with secure file
+    permissions (readable only by owner). This follows the same pattern used
+    by gcloud, aws-cli, and other CLI tools that store short-lived tokens.
 
     Args:
         auth_url: URL to start authentication (e.g., "https://server.com/api/token/auth").
             The port parameter will be appended as a query string.
         exchange_url: URL to exchange auth code for token (e.g., "https://server.com/api/token/exchange").
         service_account_path: Path to service account JSON file (optional).
+        token_cache_path: Path to cache tokens. Defaults to ~/.config/extrasuite/token.json
 
     Example:
         # Using explicit URLs
@@ -111,6 +113,7 @@ class CredentialsManager:
         token = manager.get_token()
     """
 
+    DEFAULT_CACHE_PATH = Path.home() / ".config" / "extrasuite" / "token.json"
     GATEWAY_CONFIG_PATH = Path.home() / ".config" / "extrasuite" / "gateway.json"
     DEFAULT_CALLBACK_TIMEOUT = 300  # 5 minutes for headless mode
 
@@ -119,6 +122,7 @@ class CredentialsManager:
         auth_url: str | None = None,
         exchange_url: str | None = None,
         service_account_path: str | Path | None = None,
+        token_cache_path: str | Path | None = None,
     ) -> None:
         """Initialize the credentials manager.
 
@@ -126,6 +130,7 @@ class CredentialsManager:
             auth_url: URL to start authentication flow.
             exchange_url: URL to exchange auth code for token.
             service_account_path: Path to service account JSON file.
+            token_cache_path: Path to cache tokens.
 
         Raises:
             ValueError: If neither auth_url/exchange_url nor service_account_path
@@ -167,10 +172,19 @@ class CredentialsManager:
         # ExtraSuite protocol takes precedence if both are configured
         self._use_extrasuite = has_extrasuite
 
+        self._token_cache_path = (
+            Path(token_cache_path) if token_cache_path else self.DEFAULT_CACHE_PATH
+        )
+
     @property
     def auth_mode(self) -> str:
         """Return the active authentication mode."""
         return "extrasuite" if self._use_extrasuite else "service_account"
+
+    @property
+    def token_cache_path(self) -> Path:
+        """Return the path where tokens are cached."""
+        return self._token_cache_path
 
     def get_token(self, force_refresh: bool = False) -> Token:
         """Get a valid access token, authenticating if necessary.
@@ -271,13 +285,12 @@ class CredentialsManager:
         return token
 
     def _load_cached_token(self) -> Token | None:
-        """Load cached token from OS keyring if it exists and is still valid."""
-        try:
-            token_json = keyring.get_password(KEYRING_SERVICE, KEYRING_USERNAME)
-            if not token_json:
-                return None
+        """Load cached token if it exists and is still valid."""
+        if not self._token_cache_path.exists():
+            return None
 
-            data = json.loads(token_json)
+        try:
+            data = json.loads(self._token_cache_path.read_text())
             token = Token.from_dict(data)
             if token.is_valid():
                 return token
@@ -289,10 +302,17 @@ class CredentialsManager:
             return None
 
     def _save_token(self, token: Token) -> None:
-        """Save token securely to OS keyring."""
-        token_json = json.dumps(token.to_dict())
-        keyring.set_password(KEYRING_SERVICE, KEYRING_USERNAME, token_json)
-        print("Token saved to OS keyring")
+        """Save token to cache file with secure permissions."""
+        # Create parent directory with secure permissions (0700)
+        self._token_cache_path.parent.mkdir(parents=True, exist_ok=True)
+        self._token_cache_path.parent.chmod(stat.S_IRWXU)
+
+        # Write to temp file, set permissions, then rename atomically
+        temp_path = self._token_cache_path.with_suffix(".tmp")
+        temp_path.write_text(json.dumps(token.to_dict(), indent=2))
+        temp_path.chmod(stat.S_IRUSR | stat.S_IWUSR)  # 0600
+        temp_path.rename(self._token_cache_path)
+        print(f"Token saved to {self._token_cache_path}")
 
     def _load_gateway_config(self) -> dict[str, str] | None:
         """Load endpoint URLs from gateway.json if it exists.
