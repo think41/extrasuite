@@ -601,8 +601,8 @@
     ]
   },
   "headers": {
-    "kix.ksdocqbwx50p": {
-      "headerId": "kix.ksdocqbwx50p",
+    "kix.ley74agigdtg": {
+      "headerId": "kix.ley74agigdtg",
       "content": [
         {
           "endIndex": 1,
@@ -610,71 +610,6 @@
             "elements": [
               {
                 "endIndex": 1,
-                "textRun": {
-                  "content": "\n",
-                  "textStyle": {}
-                }
-              }
-            ],
-            "paragraphStyle": {
-              "namedStyleType": "NORMAL_TEXT",
-              "direction": "LEFT_TO_RIGHT"
-            }
-          }
-        },
-        {
-          "startIndex": 1,
-          "endIndex": 2,
-          "paragraph": {
-            "elements": [
-              {
-                "startIndex": 1,
-                "endIndex": 2,
-                "textRun": {
-                  "content": "\n",
-                  "textStyle": {}
-                }
-              }
-            ],
-            "paragraphStyle": {
-              "namedStyleType": "NORMAL_TEXT",
-              "direction": "LEFT_TO_RIGHT"
-            }
-          }
-        }
-      ]
-    }
-  },
-  "footers": {
-    "kix.ncaj1qqg4bgz": {
-      "footerId": "kix.ncaj1qqg4bgz",
-      "content": [
-        {
-          "endIndex": 1,
-          "paragraph": {
-            "elements": [
-              {
-                "endIndex": 1,
-                "textRun": {
-                  "content": "\n",
-                  "textStyle": {}
-                }
-              }
-            ],
-            "paragraphStyle": {
-              "namedStyleType": "NORMAL_TEXT",
-              "direction": "LEFT_TO_RIGHT"
-            }
-          }
-        },
-        {
-          "startIndex": 1,
-          "endIndex": 2,
-          "paragraph": {
-            "elements": [
-              {
-                "startIndex": 1,
-                "endIndex": 2,
                 "textRun": {
                   "content": "\n",
                   "textStyle": {}
@@ -694,8 +629,7 @@
     "background": {
       "color": {}
     },
-    "defaultHeaderId": "kix.ksdocqbwx50p",
-    "defaultFooterId": "kix.ncaj1qqg4bgz",
+    "defaultHeaderId": "kix.ley74agigdtg",
     "pageNumberStart": 1,
     "marginTop": {
       "magnitude": 72.00000000000001,
@@ -10470,7 +10404,7 @@
       }
     }
   },
-  "revisionId": "AONSffzCvagbZs_6IDfBlMq7yTkuiQCxnkpX5R-1Ky10ZKOsY3MCG_2WWgOcnjKPrpJgibQqfSbhO6AxDwLDyJT5Kxam_KgrKVfU_N96QoAMvDs",
+  "revisionId": "AONSffy8pCtbeh8hb2NISiOBuTkm8Uzns6NkqcIkc4UuvzAgp0w46B1uDEFFeDCwrFWC1q7tpyiYsDucCXEignnVRybWBrcznUPH25RpcoCHPGg",
   "suggestionsViewMode": "SUGGESTIONS_INLINE",
   "documentId": "15dNMijQYl3juFdu8LqLvJoh3K10DREbtUm82489hgAs"
 }
