@@ -1,0 +1,83 @@
+{
+  "formId": "1FAIpQLSdTest123",
+  "revisionId": "00000001",
+  "responderUri": "https://docs.google.com/forms/d/e/1FAIpQLSdTest123/viewform",
+  "info": {
+    "title": "Simple Test Form",
+    "documentTitle": "Simple Test Form",
+    "description": "A simple form for testing"
+  },
+  "settings": {
+    "quizSettings": {
+      "isQuiz": false
+    }
+  },
+  "items": [
+    {
+      "itemId": "4c89b2a1",
+      "title": "What is your name?",
+      "questionItem": {
+        "question": {
+          "questionId": "2d67e3f0",
+          "required": true,
+          "textQuestion": {
+            "paragraph": false
+          }
+        }
+      }
+    },
+    {
+      "itemId": "5d9ac3b2",
+      "title": "Favorite color?",
+      "questionItem": {
+        "question": {
+          "questionId": "3e78f4g1",
+          "choiceQuestion": {
+            "type": "RADIO",
+            "options": [
+              { "value": "Red" },
+              { "value": "Blue" },
+              { "value": "Green" },
+              { "value": "Other", "isOther": true }
+            ],
+            "shuffle": false
+          }
+        }
+      }
+    },
+    {
+      "itemId": "6eabd4c3",
+      "title": "Rate your experience",
+      "questionItem": {
+        "question": {
+          "questionId": "4f89g5h2",
+          "scaleQuestion": {
+            "low": 1,
+            "high": 5,
+            "lowLabel": "Poor",
+            "highLabel": "Excellent"
+          }
+        }
+      }
+    },
+    {
+      "itemId": "7fbce5d4",
+      "title": "Additional Information",
+      "description": "Please provide any additional details",
+      "pageBreakItem": {}
+    },
+    {
+      "itemId": "8gcdf6e5",
+      "title": "Comments",
+      "description": "Any other feedback?",
+      "questionItem": {
+        "question": {
+          "questionId": "5g9ah6i3",
+          "textQuestion": {
+            "paragraph": true
+          }
+        }
+      }
+    }
+  ]
+}

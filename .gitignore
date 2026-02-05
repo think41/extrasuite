@@ -77,6 +77,7 @@ htmlcov/
 !.vscode/settings.json
 !*/.vscode/settings.json
 !**/tests/golden/**/*.json
+!**/schema/*.json
 !*.code-workspace
 credentials/
 

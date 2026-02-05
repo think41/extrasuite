@@ -1,0 +1,343 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://extrasuite.think41.com/schemas/extraform/form.schema.json",
+  "title": "ExtraForm Form Schema",
+  "description": "Schema for Google Forms - derived from forms.googleapis.com discovery document",
+  "type": "object",
+  "required": ["formId", "info", "items"],
+  "properties": {
+    "formId": {
+      "type": "string",
+      "readOnly": true,
+      "description": "Output only. Unique identifier for the form"
+    },
+    "revisionId": {
+      "type": "string",
+      "readOnly": true,
+      "description": "Output only. Revision ID for concurrency control (valid 24h)"
+    },
+    "responderUri": {
+      "type": "string",
+      "format": "uri",
+      "readOnly": true,
+      "description": "Output only. Public URL for form submission"
+    },
+    "linkedSheetId": {
+      "type": "string",
+      "readOnly": true,
+      "description": "Output only. ID of linked Google Sheet for responses"
+    },
+    "info": { "$ref": "#/$defs/Info" },
+    "settings": { "$ref": "#/$defs/FormSettings" },
+    "publishSettings": { "$ref": "#/$defs/PublishSettings" },
+    "items": {
+      "type": "array",
+      "items": { "$ref": "#/$defs/Item" },
+      "description": "Required. List of form items (questions, sections, media)"
+    }
+  },
+  "$defs": {
+    "Info": {
+      "type": "object",
+      "required": ["title"],
+      "properties": {
+        "title": { "type": "string", "description": "Required. Title visible to responders" },
+        "documentTitle": { "type": "string", "readOnly": true, "description": "Output only. Title in Drive" },
+        "description": { "type": "string", "description": "Form description" }
+      }
+    },
+    "FormSettings": {
+      "type": "object",
+      "properties": {
+        "quizSettings": { "$ref": "#/$defs/QuizSettings" },
+        "emailCollectionType": {
+          "type": "string",
+          "enum": ["EMAIL_COLLECTION_TYPE_UNSPECIFIED", "DO_NOT_COLLECT", "VERIFIED", "RESPONDER_INPUT"],
+          "description": "Whether form collects email addresses"
+        }
+      }
+    },
+    "QuizSettings": {
+      "type": "object",
+      "properties": {
+        "isQuiz": { "type": "boolean", "description": "Whether form is a quiz (false deletes all grading)" }
+      }
+    },
+    "PublishSettings": {
+      "type": "object",
+      "readOnly": true,
+      "properties": {
+        "publishState": { "$ref": "#/$defs/PublishState" }
+      }
+    },
+    "PublishState": {
+      "type": "object",
+      "properties": {
+        "isPublished": { "type": "boolean", "description": "Whether form is published" },
+        "isAcceptingResponses": { "type": "boolean", "description": "Whether form accepts responses" }
+      }
+    },
+    "Item": {
+      "type": "object",
+      "properties": {
+        "itemId": { "type": "string", "description": "Item ID (read-only after creation)" },
+        "title": { "type": "string", "description": "Item title" },
+        "description": { "type": "string", "description": "Item description" },
+        "questionItem": { "$ref": "#/$defs/QuestionItem" },
+        "questionGroupItem": { "$ref": "#/$defs/QuestionGroupItem" },
+        "pageBreakItem": { "$ref": "#/$defs/PageBreakItem" },
+        "textItem": { "$ref": "#/$defs/TextItem" },
+        "imageItem": { "$ref": "#/$defs/ImageItem" },
+        "videoItem": { "$ref": "#/$defs/VideoItem" }
+      }
+    },
+    "QuestionItem": {
+      "type": "object",
+      "required": ["question"],
+      "properties": {
+        "question": { "$ref": "#/$defs/Question" },
+        "image": { "$ref": "#/$defs/Image", "description": "Image displayed within the question" }
+      }
+    },
+    "Question": {
+      "type": "object",
+      "properties": {
+        "questionId": { "type": "string", "readOnly": true, "description": "Output only. Question ID" },
+        "required": { "type": "boolean", "description": "Whether question must be answered" },
+        "grading": { "$ref": "#/$defs/Grading", "description": "Grading setup (quiz mode only)" },
+        "textQuestion": { "$ref": "#/$defs/TextQuestion" },
+        "choiceQuestion": { "$ref": "#/$defs/ChoiceQuestion" },
+        "scaleQuestion": { "$ref": "#/$defs/ScaleQuestion" },
+        "dateQuestion": { "$ref": "#/$defs/DateQuestion" },
+        "timeQuestion": { "$ref": "#/$defs/TimeQuestion" },
+        "fileUploadQuestion": { "$ref": "#/$defs/FileUploadQuestion" },
+        "rowQuestion": { "$ref": "#/$defs/RowQuestion" },
+        "ratingQuestion": { "$ref": "#/$defs/RatingQuestion" }
+      }
+    },
+    "TextQuestion": {
+      "type": "object",
+      "properties": {
+        "paragraph": { "type": "boolean", "description": "true=long answer, false=short answer" }
+      }
+    },
+    "ChoiceQuestion": {
+      "type": "object",
+      "required": ["type", "options"],
+      "properties": {
+        "type": {
+          "type": "string",
+          "enum": ["CHOICE_TYPE_UNSPECIFIED", "RADIO", "CHECKBOX", "DROP_DOWN"],
+          "description": "Required. Type of choice question"
+        },
+        "options": {
+          "type": "array",
+          "items": { "$ref": "#/$defs/Option" },
+          "description": "Required. List of options"
+        },
+        "shuffle": { "type": "boolean", "description": "Randomize option order" }
+      }
+    },
+    "Option": {
+      "type": "object",
+      "required": ["value"],
+      "properties": {
+        "value": { "type": "string", "description": "Required. The choice text" },
+        "isOther": { "type": "boolean", "description": "Whether this is the 'Other' option" },
+        "image": { "$ref": "#/$defs/Image", "description": "Display image as option" },
+        "goToAction": {
+          "type": "string",
+          "enum": ["GO_TO_ACTION_UNSPECIFIED", "NEXT_SECTION", "RESTART_FORM", "SUBMIT_FORM"],
+          "description": "Section navigation action"
+        },
+        "goToSectionId": { "type": "string", "description": "Item ID of section to navigate to" }
+      }
+    },
+    "ScaleQuestion": {
+      "type": "object",
+      "required": ["low", "high"],
+      "properties": {
+        "low": { "type": "integer", "minimum": 0, "maximum": 1, "description": "Required. Lowest value" },
+        "high": { "type": "integer", "minimum": 2, "maximum": 10, "description": "Required. Highest value" },
+        "lowLabel": { "type": "string", "description": "Label for lowest point" },
+        "highLabel": { "type": "string", "description": "Label for highest point" }
+      }
+    },
+    "DateQuestion": {
+      "type": "object",
+      "properties": {
+        "includeTime": { "type": "boolean", "description": "Include time input" },
+        "includeYear": { "type": "boolean", "description": "Include year input" }
+      }
+    },
+    "TimeQuestion": {
+      "type": "object",
+      "properties": {
+        "duration": { "type": "boolean", "description": "true=elapsed time, false=time of day" }
+      }
+    },
+    "FileUploadQuestion": {
+      "type": "object",
+      "description": "NOTE: API does NOT support CREATING file upload questions",
+      "properties": {
+        "folderId": { "type": "string", "description": "Required. Drive folder ID for uploads" },
+        "types": {
+          "type": "array",
+          "items": {
+            "type": "string",
+            "enum": ["FILE_TYPE_UNSPECIFIED", "ANY", "DOCUMENT", "PRESENTATION", "SPREADSHEET", "DRAWING", "PDF", "IMAGE", "VIDEO", "AUDIO"]
+          },
+          "description": "Accepted file types"
+        },
+        "maxFiles": { "type": "integer", "minimum": 1, "maximum": 10, "description": "Max files per response" },
+        "maxFileSize": { "type": "string", "format": "int64", "description": "Max bytes per file" }
+      }
+    },
+    "RowQuestion": {
+      "type": "object",
+      "description": "A row in a QuestionGroupItem grid",
+      "properties": {
+        "title": { "type": "string", "description": "Required. Row title" }
+      }
+    },
+    "RatingQuestion": {
+      "type": "object",
+      "description": "Rating with icons (stars, hearts, thumbs up)",
+      "required": ["iconType", "ratingScaleLevel"],
+      "properties": {
+        "iconType": {
+          "type": "string",
+          "enum": ["RATING_ICON_TYPE_UNSPECIFIED", "STAR", "HEART", "THUMB_UP"],
+          "description": "Required. The icon type"
+        },
+        "ratingScaleLevel": { "type": "integer", "description": "Required. Number of icons (scale level)" }
+      }
+    },
+    "Grading": {
+      "type": "object",
+      "properties": {
+        "pointValue": { "type": "integer", "description": "Required. Max points for correct answer" },
+        "correctAnswers": { "$ref": "#/$defs/CorrectAnswers", "description": "Required. The answer key" },
+        "whenRight": { "$ref": "#/$defs/Feedback", "description": "Feedback for correct responses" },
+        "whenWrong": { "$ref": "#/$defs/Feedback", "description": "Feedback for incorrect responses" },
+        "generalFeedback": { "$ref": "#/$defs/Feedback", "description": "Feedback for all answers" }
+      }
+    },
+    "CorrectAnswers": {
+      "type": "object",
+      "properties": {
+        "answers": {
+          "type": "array",
+          "items": { "$ref": "#/$defs/CorrectAnswer" },
+          "description": "List of correct answers"
+        }
+      }
+    },
+    "CorrectAnswer": {
+      "type": "object",
+      "properties": {
+        "value": { "type": "string", "description": "Required. The correct answer value" }
+      }
+    },
+    "Feedback": {
+      "type": "object",
+      "properties": {
+        "text": { "type": "string", "description": "Required. Main feedback text" },
+        "material": {
+          "type": "array",
+          "items": { "$ref": "#/$defs/ExtraMaterial" },
+          "description": "Additional material (links, videos)"
+        }
+      }
+    },
+    "ExtraMaterial": {
+      "type": "object",
+      "properties": {
+        "text": { "$ref": "#/$defs/TextLink", "description": "Text link feedback" },
+        "video": { "$ref": "#/$defs/VideoLink", "description": "Video link feedback" }
+      }
+    },
+    "TextLink": {
+      "type": "object",
+      "properties": {
+        "displayText": { "type": "string", "description": "Required. Display text" },
+        "uri": { "type": "string", "format": "uri", "description": "Required. The URI" }
+      }
+    },
+    "VideoLink": {
+      "type": "object",
+      "properties": {
+        "displayText": { "type": "string", "description": "Required. Display text" },
+        "youtubeUri": { "type": "string", "format": "uri", "description": "YouTube video URI" }
+      }
+    },
+    "QuestionGroupItem": {
+      "type": "object",
+      "description": "Multiple questions grouped together (grid/checkbox grid)",
+      "properties": {
+        "questions": {
+          "type": "array",
+          "items": { "$ref": "#/$defs/Question" },
+          "description": "Required. Questions in this group"
+        },
+        "grid": { "$ref": "#/$defs/Grid", "description": "Grid configuration" },
+        "image": { "$ref": "#/$defs/Image", "description": "Image above questions" }
+      }
+    },
+    "Grid": {
+      "type": "object",
+      "properties": {
+        "columns": { "$ref": "#/$defs/ChoiceQuestion", "description": "Required. Column choices shared by rows" },
+        "shuffleQuestions": { "type": "boolean", "description": "Randomize row order" }
+      }
+    },
+    "PageBreakItem": {
+      "type": "object",
+      "description": "Section divider (starts new page)"
+    },
+    "TextItem": {
+      "type": "object",
+      "description": "Static text/instructions (no input)"
+    },
+    "ImageItem": {
+      "type": "object",
+      "properties": {
+        "image": { "$ref": "#/$defs/Image", "description": "Required. The image" }
+      }
+    },
+    "Image": {
+      "type": "object",
+      "properties": {
+        "sourceUri": { "type": "string", "format": "uri", "description": "Input only. Source URI for upload" },
+        "contentUri": { "type": "string", "format": "uri", "readOnly": true, "description": "Output only. Download URI" },
+        "altText": { "type": "string", "description": "Alt text for accessibility" },
+        "properties": { "$ref": "#/$defs/MediaProperties" }
+      }
+    },
+    "VideoItem": {
+      "type": "object",
+      "properties": {
+        "video": { "$ref": "#/$defs/Video", "description": "Required. The video" },
+        "caption": { "type": "string", "description": "Caption below video" }
+      }
+    },
+    "Video": {
+      "type": "object",
+      "properties": {
+        "youtubeUri": { "type": "string", "format": "uri", "description": "Required. YouTube URI" },
+        "properties": { "$ref": "#/$defs/MediaProperties" }
+      }
+    },
+    "MediaProperties": {
+      "type": "object",
+      "properties": {
+        "width": { "type": "integer", "minimum": 0, "maximum": 740, "description": "Width in pixels" },
+        "alignment": {
+          "type": "string",
+          "enum": ["ALIGNMENT_UNSPECIFIED", "LEFT", "RIGHT", "CENTER"],
+          "description": "Position alignment"
+        }
+      }
+    }
+  }
+}
