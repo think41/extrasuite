@@ -11,8 +11,6 @@ from unittest import mock
 import pytest
 
 from extrasuite.client.credentials import (
-    KEYRING_SERVICE,
-    KEYRING_USERNAME,
     CredentialsManager,
     Token,
     authenticate,
@@ -226,107 +224,130 @@ class TestCredentialsManagerInit:
             assert "auth_url is missing" in str(exc_info.value)
 
 
-class TestCredentialsManagerKeyringCache:
-    """Tests for keyring-based token caching functionality."""
+class TestCredentialsManagerFileCache:
+    """Tests for file-based token caching functionality."""
 
-    def test_load_cached_token_no_entry(self) -> None:
-        """Returns None when no token in keyring."""
+    def test_load_cached_token_no_file(self, tmp_path: Path) -> None:
+        """Returns None when no token file exists."""
         manager = CredentialsManager(
             auth_url="https://auth.example.com/api/token/auth",
             exchange_url="https://auth.example.com/api/token/exchange",
+            token_cache_path=tmp_path / "token.json",
         )
-        with mock.patch("keyring.get_password", return_value=None):
-            assert manager._load_cached_token() is None
+        assert manager._load_cached_token() is None
 
-    def test_load_cached_token_valid(self) -> None:
-        """Returns Token when keyring contains valid token."""
+    def test_load_cached_token_valid(self, tmp_path: Path) -> None:
+        """Returns Token when file contains valid token."""
+        token_path = tmp_path / "token.json"
         token_data = {
             "access_token": "cached-token",
             "service_account_email": "sa@example.com",
             "expires_at": time.time() + 3600,
         }
+        token_path.write_text(json.dumps(token_data))
+
         manager = CredentialsManager(
             auth_url="https://auth.example.com/api/token/auth",
             exchange_url="https://auth.example.com/api/token/exchange",
+            token_cache_path=token_path,
         )
-        with mock.patch("keyring.get_password", return_value=json.dumps(token_data)):
-            token = manager._load_cached_token()
-            assert token is not None
-            assert token.access_token == "cached-token"
+        token = manager._load_cached_token()
+        assert token is not None
+        assert token.access_token == "cached-token"
 
-    def test_load_cached_token_expired(self) -> None:
+    def test_load_cached_token_expired(self, tmp_path: Path) -> None:
         """Returns None when cached token is expired."""
+        token_path = tmp_path / "token.json"
         token_data = {
             "access_token": "expired-token",
             "service_account_email": "sa@example.com",
             "expires_at": time.time() - 100,  # Expired
         }
-        manager = CredentialsManager(
-            auth_url="https://auth.example.com/api/token/auth",
-            exchange_url="https://auth.example.com/api/token/exchange",
-        )
-        with mock.patch("keyring.get_password", return_value=json.dumps(token_data)):
-            assert manager._load_cached_token() is None
+        token_path.write_text(json.dumps(token_data))
 
-    def test_load_cached_token_invalid_json(self) -> None:
-        """Returns None when keyring contains invalid JSON."""
         manager = CredentialsManager(
             auth_url="https://auth.example.com/api/token/auth",
             exchange_url="https://auth.example.com/api/token/exchange",
+            token_cache_path=token_path,
         )
-        with mock.patch("keyring.get_password", return_value="not valid json"):
-            assert manager._load_cached_token() is None
+        assert manager._load_cached_token() is None
 
-    def test_save_token_to_keyring(self) -> None:
-        """save_token stores token in keyring."""
+    def test_load_cached_token_invalid_json(self, tmp_path: Path) -> None:
+        """Returns None when file contains invalid JSON."""
+        token_path = tmp_path / "token.json"
+        token_path.write_text("not valid json")
+
         manager = CredentialsManager(
             auth_url="https://auth.example.com/api/token/auth",
             exchange_url="https://auth.example.com/api/token/exchange",
+            token_cache_path=token_path,
+        )
+        assert manager._load_cached_token() is None
+
+    def test_save_token_to_file(self, tmp_path: Path) -> None:
+        """save_token stores token in file with secure permissions."""
+        token_path = tmp_path / "extrasuite" / "token.json"
+        manager = CredentialsManager(
+            auth_url="https://auth.example.com/api/token/auth",
+            exchange_url="https://auth.example.com/api/token/exchange",
+            token_cache_path=token_path,
         )
         token = Token(
             access_token="new-token",
             service_account_email="sa@example.com",
             expires_at=time.time() + 3600,
         )
-        with mock.patch("keyring.set_password") as mock_set:
-            manager._save_token(token)
-            mock_set.assert_called_once()
-            call_args = mock_set.call_args
-            assert call_args[0][0] == KEYRING_SERVICE
-            assert call_args[0][1] == KEYRING_USERNAME
-            # Verify the stored JSON is valid
-            stored_data = json.loads(call_args[0][2])
-            assert stored_data["access_token"] == "new-token"
+        manager._save_token(token)
+
+        # Verify file was created
+        assert token_path.exists()
+
+        # Verify content
+        stored_data = json.loads(token_path.read_text())
+        assert stored_data["access_token"] == "new-token"
+
+        # Verify permissions (0600 = owner read/write only)
+        import stat
+
+        mode = token_path.stat().st_mode
+        assert mode & 0o777 == stat.S_IRUSR | stat.S_IWUSR
 
 
 class TestCredentialsManagerExtraSuite:
     """Tests for ExtraSuite authentication flow."""
 
-    def test_get_token_uses_cache(self) -> None:
+    def test_get_token_uses_cache(self, tmp_path: Path) -> None:
         """get_token returns cached token when valid."""
+        token_path = tmp_path / "token.json"
         token_data = {
             "access_token": "cached-token",
             "service_account_email": "sa@example.com",
             "expires_at": time.time() + 3600,
         }
-        manager = CredentialsManager(
-            auth_url="https://auth.example.com/api/token/auth",
-            exchange_url="https://auth.example.com/api/token/exchange",
-        )
-        with mock.patch("keyring.get_password", return_value=json.dumps(token_data)):
-            token = manager.get_token()
-            assert token.access_token == "cached-token"
+        token_path.write_text(json.dumps(token_data))
 
-    def test_get_token_force_refresh_ignores_cache(self) -> None:
+        manager = CredentialsManager(
+            auth_url="https://auth.example.com/api/token/auth",
+            exchange_url="https://auth.example.com/api/token/exchange",
+            token_cache_path=token_path,
+        )
+        token = manager.get_token()
+        assert token.access_token == "cached-token"
+
+    def test_get_token_force_refresh_ignores_cache(self, tmp_path: Path) -> None:
         """get_token with force_refresh ignores cached token."""
+        token_path = tmp_path / "token.json"
         token_data = {
             "access_token": "cached-token",
             "service_account_email": "sa@example.com",
             "expires_at": time.time() + 3600,
         }
+        token_path.write_text(json.dumps(token_data))
+
         manager = CredentialsManager(
             auth_url="https://auth.example.com/api/token/auth",
             exchange_url="https://auth.example.com/api/token/exchange",
+            token_cache_path=token_path,
         )
 
         # Mock the authentication to return a new token
@@ -335,12 +356,8 @@ class TestCredentialsManagerExtraSuite:
             service_account_email="sa@example.com",
             expires_at=time.time() + 3600,
         )
-        with (
-            mock.patch("keyring.get_password", return_value=json.dumps(token_data)),
-            mock.patch("keyring.set_password"),
-            mock.patch.object(
-                manager, "_authenticate_extrasuite", return_value=new_token
-            ),
+        with mock.patch.object(
+            manager, "_authenticate_extrasuite", return_value=new_token
         ):
             token = manager.get_token(force_refresh=True)
             assert token.access_token == "new-token"
@@ -401,70 +418,72 @@ class TestCredentialsManagerExtraSuite:
 class TestCredentialsManagerServiceAccount:
     """Tests for service account authentication."""
 
-    def test_service_account_file_not_found(self) -> None:
+    def test_service_account_file_not_found(self, tmp_path: Path) -> None:
         """Raises FileNotFoundError when service account file doesn't exist."""
         with mock.patch.object(
             CredentialsManager, "GATEWAY_CONFIG_PATH", Path("/nonexistent")
         ):
             manager = CredentialsManager(
                 service_account_path="/nonexistent/path/sa.json",
+                token_cache_path=tmp_path / "token.json",
             )
-        # Mock keyring to return no cached token
-        with mock.patch("keyring.get_password", return_value=None):
-            # The file check happens after the import check
-            try:
-                import google.auth  # noqa: F401
+        # The file check happens after the import check
+        try:
+            import google.auth  # noqa: F401
 
-                google_auth_available = True
-            except ImportError:
-                google_auth_available = False
+            google_auth_available = True
+        except ImportError:
+            google_auth_available = False
 
-            if google_auth_available:
-                with pytest.raises(FileNotFoundError):
-                    manager.get_token()
-            else:
-                # Without google-auth, we get ImportError first
-                with pytest.raises(ImportError):
-                    manager.get_token()
+        if google_auth_available:
+            with pytest.raises(FileNotFoundError):
+                manager.get_token()
+        else:
+            # Without google-auth, we get ImportError first
+            with pytest.raises(ImportError):
+                manager.get_token()
 
-    def test_service_account_uses_cache(self) -> None:
-        """Service account mode also uses keyring cache."""
+    def test_service_account_uses_cache(self, tmp_path: Path) -> None:
+        """Service account mode also uses file cache."""
+        token_path = tmp_path / "token.json"
         token_data = {
             "access_token": "cached-sa-token",
             "service_account_email": "sa@example.com",
             "expires_at": time.time() + 3600,
         }
+        token_path.write_text(json.dumps(token_data))
+
         with mock.patch.object(
             CredentialsManager, "GATEWAY_CONFIG_PATH", Path("/nonexistent")
         ):
             manager = CredentialsManager(
                 service_account_path="/path/to/sa.json",
+                token_cache_path=token_path,
             )
-        with mock.patch("keyring.get_password", return_value=json.dumps(token_data)):
-            token = manager.get_token()
-            assert token.access_token == "cached-sa-token"
+        token = manager.get_token()
+        assert token.access_token == "cached-sa-token"
 
-    def test_service_account_missing_google_auth(self) -> None:
+    def test_service_account_missing_google_auth(self, tmp_path: Path) -> None:
         """Raises ImportError with helpful message when google-auth not installed."""
         with mock.patch.object(
             CredentialsManager, "GATEWAY_CONFIG_PATH", Path("/nonexistent")
         ):
             manager = CredentialsManager(
                 service_account_path="/path/to/sa.json",
+                token_cache_path=tmp_path / "token.json",
             )
 
         # Without a cached token, attempting to get a token should try to import google-auth
-        with mock.patch("keyring.get_password", return_value=None):
-            try:
-                import google.auth  # noqa: F401
+        try:
+            import google.auth  # noqa: F401
 
-                # google-auth is installed, skip this test
-                pytest.skip("google-auth is installed, cannot test ImportError case")
-            except ImportError:
-                # google-auth is not installed, this is the case we want to test
-                with pytest.raises(ImportError) as exc_info:
-                    manager.get_token()
-                assert "google-auth" in str(exc_info.value)
+            # google-auth is installed, skip this test
+            pytest.skip("google-auth is installed, cannot test ImportError case")
+        except ImportError:
+            # google-auth is not installed, this is the case we want to test
+            with pytest.raises(ImportError) as exc_info:
+                manager.get_token()
+            assert "google-auth" in str(exc_info.value)
 
 
 class TestCredentialsManagerCallbackHandler:
@@ -519,38 +538,43 @@ class TestCredentialsManagerCallbackHandler:
 class TestCredentialsManagerIntegration:
     """Integration-style tests for complete flows."""
 
-    def test_full_extrasuite_flow_with_cached_token(self) -> None:
-        """Complete flow: load from keyring cache, return token."""
+    def test_full_extrasuite_flow_with_cached_token(self, tmp_path: Path) -> None:
+        """Complete flow: load from file cache, return token."""
+        token_path = tmp_path / "token.json"
         token_data = {
             "access_token": "cached-access-token",
             "service_account_email": "sa@project.iam.gserviceaccount.com",
             "expires_at": time.time() + 3600,
             "token_type": "Bearer",
         }
+        token_path.write_text(json.dumps(token_data))
 
         manager = CredentialsManager(
             auth_url="https://auth.example.com/api/token/auth",
             exchange_url="https://auth.example.com/api/token/exchange",
+            token_cache_path=token_path,
         )
 
-        with mock.patch("keyring.get_password", return_value=json.dumps(token_data)):
-            token = manager.get_token()
+        token = manager.get_token()
 
         assert token.access_token == "cached-access-token"
         assert token.service_account_email == "sa@project.iam.gserviceaccount.com"
         assert token.is_valid()
 
-    def test_expired_cache_triggers_auth(self) -> None:
+    def test_expired_cache_triggers_auth(self, tmp_path: Path) -> None:
         """Expired cache should trigger re-authentication."""
+        token_path = tmp_path / "token.json"
         expired_token_data = {
             "access_token": "expired-token",
             "service_account_email": "sa@project.iam.gserviceaccount.com",
             "expires_at": time.time() - 100,  # Expired
         }
+        token_path.write_text(json.dumps(expired_token_data))
 
         manager = CredentialsManager(
             auth_url="https://auth.example.com/api/token/auth",
             exchange_url="https://auth.example.com/api/token/exchange",
+            token_cache_path=token_path,
         )
 
         # Mock authentication to return new token
@@ -560,35 +584,33 @@ class TestCredentialsManagerIntegration:
             expires_at=time.time() + 3600,
         )
 
-        with (
-            mock.patch(
-                "keyring.get_password", return_value=json.dumps(expired_token_data)
-            ),
-            mock.patch("keyring.set_password") as mock_set,
-            mock.patch.object(
-                manager, "_authenticate_extrasuite", return_value=new_token
-            ),
+        with mock.patch.object(
+            manager, "_authenticate_extrasuite", return_value=new_token
         ):
             token = manager.get_token()
 
         assert token.access_token == "fresh-token"
-        # Verify keyring was updated
-        mock_set.assert_called_once()
-        stored_data = json.loads(mock_set.call_args[0][2])
+
+        # Verify file was updated
+        stored_data = json.loads(token_path.read_text())
         assert stored_data["access_token"] == "fresh-token"
 
 
 class TestAuthenticateFunction:
     """Tests for the authenticate() convenience function."""
 
-    def test_authenticate_returns_token(self) -> None:
+    def test_authenticate_returns_token(self, tmp_path: Path) -> None:
         """authenticate() returns a valid token."""
+        token_path = tmp_path / "token.json"
         token_data = {
             "access_token": "test-token",
             "service_account_email": "sa@example.com",
             "expires_at": time.time() + 3600,
         }
+        token_path.write_text(json.dumps(token_data))
+
         with (
+            mock.patch.object(CredentialsManager, "DEFAULT_CACHE_PATH", token_path),
             mock.patch.dict(
                 os.environ,
                 {
@@ -596,32 +618,37 @@ class TestAuthenticateFunction:
                     "EXTRASUITE_EXCHANGE_URL": "https://auth.example.com/exchange",
                 },
             ),
-            mock.patch("keyring.get_password", return_value=json.dumps(token_data)),
         ):
             token = authenticate()
             assert token.access_token == "test-token"
 
-    def test_authenticate_with_explicit_urls(self) -> None:
+    def test_authenticate_with_explicit_urls(self, tmp_path: Path) -> None:
         """authenticate() works with explicit URLs."""
+        token_path = tmp_path / "token.json"
         token_data = {
             "access_token": "explicit-token",
             "service_account_email": "sa@example.com",
             "expires_at": time.time() + 3600,
         }
-        with mock.patch("keyring.get_password", return_value=json.dumps(token_data)):
+        token_path.write_text(json.dumps(token_data))
+
+        with mock.patch.object(CredentialsManager, "DEFAULT_CACHE_PATH", token_path):
             token = authenticate(
                 auth_url="https://explicit.example.com/auth",
                 exchange_url="https://explicit.example.com/exchange",
             )
             assert token.access_token == "explicit-token"
 
-    def test_authenticate_force_refresh(self) -> None:
+    def test_authenticate_force_refresh(self, tmp_path: Path) -> None:
         """authenticate() with force_refresh ignores cache."""
+        token_path = tmp_path / "token.json"
         cached_token_data = {
             "access_token": "cached-token",
             "service_account_email": "sa@example.com",
             "expires_at": time.time() + 3600,
         }
+        token_path.write_text(json.dumps(cached_token_data))
+
         new_token = Token(
             access_token="new-token",
             service_account_email="sa@example.com",
@@ -629,13 +656,9 @@ class TestAuthenticateFunction:
         )
 
         with (
-            mock.patch(
-                "keyring.get_password", return_value=json.dumps(cached_token_data)
-            ),
-            mock.patch("keyring.set_password"),
-            mock.patch(
-                "extrasuite.client.credentials.CredentialsManager._authenticate_extrasuite",
-                return_value=new_token,
+            mock.patch.object(CredentialsManager, "DEFAULT_CACHE_PATH", token_path),
+            mock.patch.object(
+                CredentialsManager, "_authenticate_extrasuite", return_value=new_token
             ),
         ):
             token = authenticate(

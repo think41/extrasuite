@@ -1,6 +1,6 @@
 [project]
 name = "extrasuite"
-version = "0.1.0"
+version = "0.2.0"
 description = "Client library for ExtraSuite - secure OAuth token exchange for CLI tools"
 readme = "README.md"
 requires-python = ">=3.10"
@@ -22,10 +22,11 @@ classifiers = [
     "Topic :: Internet :: WWW/HTTP :: Session",
 ]
 
-dependencies = [
-    "keyring>=25.0.0",
-    "certifi>=2024.0.0",
-]
+dependencies = []
+
+[project.optional-dependencies]
+# certifi is recommended for macOS SSL certificate handling
+ssl = ["certifi>=2024.0.0"]
 
 [project.scripts]
 extrasuite = "extrasuite.client.__main__:main"

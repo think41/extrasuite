@@ -4,8 +4,9 @@ This library provides a simple interface to obtain short-lived Google service
 account tokens via the ExtraSuite protocol or service account files. It handles
 the OAuth flow automatically, including browser-based authentication and token caching.
 
-Tokens are securely stored in the OS keyring (macOS Keychain, Windows Credential
-Locker, or Linux Secret Service).
+Tokens are cached in ~/.config/extrasuite/token.json with secure file permissions
+(readable only by owner). This follows the same pattern used by gcloud, aws-cli,
+and other CLI tools that store short-lived credentials.
 
 Example:
     from extrasuite.client import authenticate
@@ -25,5 +26,5 @@ Example:
 
 from extrasuite.client.credentials import CredentialsManager, Token, authenticate
 
-__version__ = "0.1.0"
+__version__ = "0.2.0"
 __all__ = ["CredentialsManager", "Token", "authenticate"]

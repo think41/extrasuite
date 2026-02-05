@@ -8,13 +8,7 @@ Usage:
 import argparse
 import sys
 
-import keyring
-
-from extrasuite.client.credentials import (
-    KEYRING_SERVICE,
-    KEYRING_USERNAME,
-    CredentialsManager,
-)
+from extrasuite.client.credentials import CredentialsManager
 
 
 def cmd_login(args: argparse.Namespace) -> int:
@@ -36,20 +30,16 @@ def cmd_login(args: argparse.Namespace) -> int:
 
 
 def cmd_logout(_args: argparse.Namespace) -> int:
-    """Clear cached credentials from keyring."""
+    """Clear cached credentials from token file."""
+    token_path = CredentialsManager.DEFAULT_CACHE_PATH
     try:
-        # Check if there's a token to delete
-        existing = keyring.get_password(KEYRING_SERVICE, KEYRING_USERNAME)
-        if existing:
-            keyring.delete_password(KEYRING_SERVICE, KEYRING_USERNAME)
-            print("Credentials cleared from keyring.")
+        if token_path.exists():
+            token_path.unlink()
+            print(f"Credentials cleared from {token_path}")
         else:
             print("No cached credentials found.")
         return 0
-    except keyring.errors.PasswordDeleteError:
-        print("No cached credentials found.")
-        return 0
-    except Exception as e:
+    except OSError as e:
         print(f"Failed to clear credentials: {e}", file=sys.stderr)
         return 1
 
@@ -90,7 +80,7 @@ def main() -> int:
     # logout subcommand
     logout_parser = subparsers.add_parser(
         "logout",
-        help="Clear cached credentials from keyring",
+        help="Clear cached credentials",
     )
     logout_parser.set_defaults(func=cmd_logout)
 
