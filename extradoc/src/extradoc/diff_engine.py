@@ -1266,21 +1266,22 @@ def _emit_paragraph_with_style_offset(
         if prepend_newline:
             cursor = run_style_cursor
 
-    # Paragraph style at OFFSET position
+    # Paragraph style at OFFSET position - ALWAYS emit to prevent style inheritance
+    # When inserting paragraphs near headings, text can inherit the heading style
+    # unless we explicitly set the paragraph style (even for NORMAL_TEXT)
     para_end = style_cursor + para.utf16_length()
-    if para.named_style != "NORMAL_TEXT":
-        ops.append(
-            DiffOperation(
-                op_type="update_paragraph_style",
-                index=style_cursor,
-                end_index=para_end,
-                paragraph_style={"namedStyleType": para.named_style},
-                fields="namedStyleType",
-                segment_id=segment_id,
-                sequence=_next_sequence(),
-                is_post_insert=True,
-            )
+    ops.append(
+        DiffOperation(
+            op_type="update_paragraph_style",
+            index=style_cursor,
+            end_index=para_end,
+            paragraph_style={"namedStyleType": para.named_style},
+            fields="namedStyleType",
+            segment_id=segment_id,
+            sequence=_next_sequence(),
+            is_post_insert=True,
         )
+    )
 
     # Bullets at OFFSET position
     if para.bullet_type:
@@ -1456,20 +1457,20 @@ def _emit_paragraph(
             )
             cursor += 1
 
-    # Paragraph style (headings) - must run AFTER insert creates the paragraph
-    if para.named_style != "NORMAL_TEXT":
-        ops.append(
-            DiffOperation(
-                op_type="update_paragraph_style",
-                index=insert_idx,
-                end_index=cursor,
-                paragraph_style={"namedStyleType": para.named_style},
-                fields="namedStyleType",
-                segment_id=segment_id,
-                sequence=_next_sequence(),
-                is_post_insert=True,  # Must run after insert
-            )
+    # Paragraph style - must run AFTER insert creates the paragraph
+    # ALWAYS emit to prevent style inheritance from surrounding headings
+    ops.append(
+        DiffOperation(
+            op_type="update_paragraph_style",
+            index=insert_idx,
+            end_index=cursor,
+            paragraph_style={"namedStyleType": para.named_style},
+            fields="namedStyleType",
+            segment_id=segment_id,
+            sequence=_next_sequence(),
+            is_post_insert=True,  # Must run after insert
         )
+    )
 
     # Bullets
     if para.bullet_type:
