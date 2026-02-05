@@ -7,6 +7,7 @@ Uses block-level diff detection for structural changes.
 from __future__ import annotations
 
 import json
+import xml.etree.ElementTree as ET
 from dataclasses import dataclass
 from typing import Any
 
@@ -24,7 +25,7 @@ from .desugar import (
     TableCell,
     desugar_document,
 )
-from .indexer import utf16_len
+from .indexer import calculate_table_indexes, utf16_len
 
 # --- Helpers for style mapping ---
 
@@ -168,12 +169,15 @@ def diff_documents(
     pristine_doc = desugar_document(pristine_xml, pristine_styles)
     current_doc = desugar_document(current_xml, current_styles)
 
+    # Calculate table indexes from pristine document
+    table_indexes = calculate_table_indexes(pristine_doc.sections)
+
     # Generate requests from block changes
     requests: list[dict[str, Any]] = []
 
     for change in block_changes:
         change_requests = _generate_requests_for_change(
-            change, pristine_doc, current_doc
+            change, pristine_doc, current_doc, table_indexes
         )
         requests.extend(change_requests)
 
@@ -184,6 +188,7 @@ def _generate_requests_for_change(
     change: BlockChange,
     pristine_doc: Any,
     current_doc: Any,
+    table_indexes: dict[str, int],
 ) -> list[dict[str, Any]]:
     """Generate batchUpdate requests for a single block change.
 
@@ -191,6 +196,7 @@ def _generate_requests_for_change(
         change: The BlockChange describing what changed
         pristine_doc: Desugared pristine document
         current_doc: Desugared current document
+        table_indexes: Map of table positions to start indexes
 
     Returns:
         List of batchUpdate request dicts
@@ -213,7 +219,9 @@ def _generate_requests_for_change(
         )
     elif change.block_type == BlockType.TABLE:
         requests.extend(
-            _handle_table_change(change, pristine_section, current_section, segment_id)
+            _handle_table_change(
+                change, pristine_section, current_section, segment_id, table_indexes
+            )
         )
     elif change.block_type in (BlockType.HEADER, BlockType.FOOTER):
         requests.extend(_handle_header_footer_change(change))
@@ -223,7 +231,7 @@ def _generate_requests_for_change(
     # Recursively handle child changes
     for child_change in change.child_changes:
         child_requests = _generate_requests_for_change(
-            child_change, pristine_doc, current_doc
+            child_change, pristine_doc, current_doc, table_indexes
         )
         requests.extend(child_requests)
 
@@ -315,22 +323,36 @@ def _handle_content_block_change(
 
 def _handle_table_change(
     change: BlockChange,
-    pristine_section: Section | None,  # noqa: ARG001 - Will be used in Phase 2
-    current_section: Section | None,  # noqa: ARG001 - Will be used in Phase 2
-    segment_id: str | None,  # noqa: ARG001 - Will be used in Phase 2
+    pristine_section: Section | None,  # noqa: ARG001 - Reserved for Phase 3
+    current_section: Section | None,  # noqa: ARG001 - Reserved for Phase 3
+    segment_id: str | None,
+    table_indexes: dict[str, int],
 ) -> list[dict[str, Any]]:
-    """Handle Table add/delete/modify changes."""
+    """Handle Table add/delete/modify changes.
+
+    For MODIFIED tables, we process child_changes which contain row/cell changes.
+    Row/column operations use the table's startIndex calculated from document structure.
+    """
     requests: list[dict[str, Any]] = []
 
     if change.change_type == ChangeType.ADDED:
-        # For now, skip - table insertion requires complex handling
-        pass
+        # Table insertion: need to parse dimensions and insertion point
+        if change.after_xml:
+            requests.extend(_generate_table_add_requests(change.after_xml, segment_id))
+
     elif change.change_type == ChangeType.DELETED:
-        # For now, skip - table deletion requires finding the exact range
-        pass
+        # Table deletion: need to calculate the range from before_xml
+        if change.before_xml:
+            requests.extend(
+                _generate_table_delete_requests(change.before_xml, segment_id)
+            )
+
     elif change.change_type == ChangeType.MODIFIED:
-        # Table structure same, content changed - handled via child_changes
-        pass
+        # Table modified - process row/cell changes from child_changes
+        # The child_changes contain TABLE_ROW and TABLE_CELL changes
+        requests.extend(
+            _generate_table_modify_requests(change, segment_id, table_indexes)
+        )
 
     return requests
 
@@ -392,6 +414,364 @@ def _generate_content_delete_requests(
     """
     # For now, return empty - will be implemented in Phase 3
     return []
+
+
+# --- Table request generation (Phase 2) ---
+
+
+def _parse_table_xml(xml_content: str) -> dict[str, Any]:
+    """Parse table XML to extract attributes needed for requests.
+
+    Returns dict with:
+    - rows: int (derived from structure)
+    - cols: int (derived from structure)
+    - id: str
+    """
+    root = ET.fromstring(xml_content)
+
+    # Derive dimensions from structure
+    tr_elements = list(root.iter("tr"))
+    num_rows = len(tr_elements)
+    num_cols = 0
+    if tr_elements:
+        num_cols = len(list(tr_elements[0].iter("td")))
+
+    return {
+        "rows": num_rows,
+        "cols": num_cols,
+        "id": root.get("id", ""),
+    }
+
+
+def _generate_table_add_requests(
+    after_xml: str,
+    segment_id: str | None,
+) -> list[dict[str, Any]]:
+    """Generate requests to add a new table.
+
+    For new tables, we need to:
+    1. Insert the table structure with insertTable
+    2. Populate cell content (handled by child_changes)
+    """
+    requests: list[dict[str, Any]] = []
+    table_info = _parse_table_xml(after_xml)
+
+    # Note: For ADDED tables, we don't have a startIndex from the pristine doc
+    # The insertion point needs to be calculated based on surrounding content
+    # For now, we return a placeholder request
+    # Full implementation needs integration with index calculation
+
+    location: dict[str, Any] = {}
+    if segment_id:
+        location["segmentId"] = segment_id
+
+    # InsertTable requires either location.index or endOfSegmentLocation
+    # For now, we use endOfSegmentLocation as a fallback
+    requests.append(
+        {
+            "insertTable": {
+                "rows": table_info["rows"],
+                "columns": table_info["cols"],
+                "endOfSegmentLocation": location if location else {"segmentId": ""},
+            }
+        }
+    )
+
+    return requests
+
+
+def _generate_table_delete_requests(
+    before_xml: str,
+    segment_id: str | None,
+) -> list[dict[str, Any]]:
+    """Generate requests to delete a table.
+
+    Uses deleteContentRange with the table's index range.
+    The table's startIndex and size determine the range.
+    """
+    requests: list[dict[str, Any]] = []
+    table_info = _parse_table_xml(before_xml)
+
+    start_index = table_info["startIndex"]
+    if start_index == 0:
+        # No startIndex stored - can't generate delete request
+        return []
+
+    # Calculate table end index by parsing the table content
+    # For a simple approximation, use structural calculation:
+    # table_start + 1 (table marker) + rows * (1 (row) + cols * (1 (cell) + 1 (newline))) + 1 (table end)
+    # This is approximate - proper calculation needs full content parsing
+    rows = table_info["rows"]
+    cols = table_info["cols"]
+    # Minimum table size: table markers + row/cell markers + minimum cell content
+    table_size = 1 + rows * (1 + cols * 2) + 1
+
+    range_obj: dict[str, Any] = {
+        "startIndex": start_index,
+        "endIndex": start_index + table_size,
+    }
+    if segment_id:
+        range_obj["segmentId"] = segment_id
+
+    requests.append({"deleteContentRange": {"range": range_obj}})
+
+    return requests
+
+
+def _generate_table_modify_requests(
+    change: BlockChange,
+    segment_id: str | None,
+    table_indexes: dict[str, int],
+) -> list[dict[str, Any]]:
+    """Generate requests for table modifications (row/column/cell changes).
+
+    Processes child_changes which contain TABLE_ROW changes.
+    Row changes may contain TABLE_CELL changes.
+    """
+    requests: list[dict[str, Any]] = []
+
+    # Get table startIndex from the calculated indexes
+    # The table position is in the container_path
+    table_start_index = _get_table_start_index(change.container_path, table_indexes)
+
+    if table_start_index == 0:
+        # No startIndex found - can't generate structural requests
+        return []
+
+    # Process child changes (TABLE_ROW changes)
+    # Sort by row index descending for bottom-up processing
+    row_changes = [
+        c for c in change.child_changes if c.block_type == BlockType.TABLE_ROW
+    ]
+    row_changes.sort(key=lambda c: _get_row_index_from_change(c), reverse=True)
+
+    for row_change in row_changes:
+        row_index = _get_row_index_from_change(row_change)
+
+        if row_change.change_type == ChangeType.ADDED:
+            # Insert new row - insert below row_index - 1 (the previous row)
+            # If row_index is 0, insert above row 0 (insertBelow=False)
+            if row_index == 0:
+                requests.append(
+                    _generate_insert_table_row_request(
+                        table_start_index, 0, segment_id, insert_below=False
+                    )
+                )
+            else:
+                requests.append(
+                    _generate_insert_table_row_request(
+                        table_start_index, row_index - 1, segment_id, insert_below=True
+                    )
+                )
+
+        elif row_change.change_type == ChangeType.DELETED:
+            # Delete row
+            requests.append(
+                _generate_delete_table_row_request(
+                    table_start_index, row_index, segment_id
+                )
+            )
+
+        elif row_change.change_type == ChangeType.MODIFIED:
+            # Row modified - check for cell changes
+            cell_changes = [
+                c
+                for c in row_change.child_changes
+                if c.block_type == BlockType.TABLE_CELL
+            ]
+
+            for cell_change in cell_changes:
+                col_index = _get_col_index_from_change(cell_change)
+
+                if cell_change.change_type == ChangeType.ADDED:
+                    # Cell added = column added
+                    requests.append(
+                        _generate_insert_table_column_request(
+                            table_start_index, row_index, col_index, segment_id
+                        )
+                    )
+
+                elif cell_change.change_type == ChangeType.DELETED:
+                    # Cell deleted = column deleted
+                    requests.append(
+                        _generate_delete_table_column_request(
+                            table_start_index, row_index, col_index, segment_id
+                        )
+                    )
+
+                elif cell_change.change_type == ChangeType.MODIFIED:
+                    # Cell content modified - this is Phase 3 (ContentBlock)
+                    # The cell's child_changes contain the content changes
+                    pass
+
+    return requests
+
+
+def _get_table_start_index(
+    container_path: list[str],
+    table_indexes: dict[str, int],
+) -> int:
+    """Get the table's start index from the calculated index map.
+
+    The container_path contains the section type and table position.
+    Example path: ["body:body", "table:abc123", "row_idx:2"]
+
+    Args:
+        container_path: The path to the changed element
+        table_indexes: Map of "section:position" -> startIndex
+
+    Returns:
+        The table's start index, or 0 if not found
+    """
+    # Extract section type from path
+    section_type = "body"
+    for part in container_path:
+        if ":" in part:
+            prefix = part.split(":")[0]
+            if prefix in ("body", "header", "footer", "footnote"):
+                section_type = prefix
+                break
+
+    # Find table position - count tables in the section
+    # For now, we assume single table per section (position 0)
+    # TODO: Track table position in block_diff for multi-table sections
+    table_key = f"{section_type}:0"
+
+    return table_indexes.get(table_key, 0)
+
+
+def _get_row_index_from_change(change: BlockChange) -> int:
+    """Extract row index from a TABLE_ROW change.
+
+    The row index is extracted from the container_path which includes "row_idx:N".
+    """
+    # Get from container path (e.g., ["body:body", "table:abc", "row_idx:2"])
+    for part in change.container_path:
+        if part.startswith("row_idx:"):
+            try:
+                return int(part.split(":")[1])
+            except (ValueError, IndexError):
+                pass
+
+    # Fallback: try to extract from block_id if it's a position-based ID like "r0"
+    if change.block_id.startswith("r") and change.block_id[1:].isdigit():
+        return int(change.block_id[1:])
+
+    # Default to 0
+    return 0
+
+
+def _get_col_index_from_change(change: BlockChange) -> int:
+    """Extract column index from a TABLE_CELL change."""
+    # Try to extract from block_id if it's position-based like "0,1"
+    if "," in change.block_id:
+        try:
+            _, col = change.block_id.split(",", 1)
+            return int(col)
+        except ValueError:
+            pass
+
+    # Fallback: try XML attributes
+    if change.before_xml or change.after_xml:
+        xml = change.before_xml or change.after_xml
+        assert xml is not None  # Guaranteed by if condition
+        try:
+            root = ET.fromstring(xml)
+            if root.get("col"):
+                return int(root.get("col", "0"))
+        except ET.ParseError:
+            pass
+
+    return 0
+
+
+def _generate_insert_table_row_request(
+    table_start_index: int,
+    row_index: int,
+    segment_id: str | None,
+    insert_below: bool = True,
+) -> dict[str, Any]:
+    """Generate insertTableRow request."""
+    cell_location: dict[str, Any] = {
+        "tableStartLocation": {"index": table_start_index},
+        "rowIndex": row_index,
+        "columnIndex": 0,  # Any valid column works
+    }
+    if segment_id:
+        cell_location["tableStartLocation"]["segmentId"] = segment_id
+
+    return {
+        "insertTableRow": {
+            "tableCellLocation": cell_location,
+            "insertBelow": insert_below,
+        }
+    }
+
+
+def _generate_delete_table_row_request(
+    table_start_index: int,
+    row_index: int,
+    segment_id: str | None,
+) -> dict[str, Any]:
+    """Generate deleteTableRow request."""
+    cell_location: dict[str, Any] = {
+        "tableStartLocation": {"index": table_start_index},
+        "rowIndex": row_index,
+        "columnIndex": 0,
+    }
+    if segment_id:
+        cell_location["tableStartLocation"]["segmentId"] = segment_id
+
+    return {
+        "deleteTableRow": {
+            "tableCellLocation": cell_location,
+        }
+    }
+
+
+def _generate_insert_table_column_request(
+    table_start_index: int,
+    row_index: int,
+    col_index: int,
+    segment_id: str | None,
+) -> dict[str, Any]:
+    """Generate insertTableColumn request."""
+    cell_location: dict[str, Any] = {
+        "tableStartLocation": {"index": table_start_index},
+        "rowIndex": row_index,
+        "columnIndex": col_index,
+    }
+    if segment_id:
+        cell_location["tableStartLocation"]["segmentId"] = segment_id
+
+    return {
+        "insertTableColumn": {
+            "tableCellLocation": cell_location,
+            "insertRight": True,
+        }
+    }
+
+
+def _generate_delete_table_column_request(
+    table_start_index: int,
+    row_index: int,
+    col_index: int,
+    segment_id: str | None,
+) -> dict[str, Any]:
+    """Generate deleteTableColumn request."""
+    cell_location: dict[str, Any] = {
+        "tableStartLocation": {"index": table_start_index},
+        "rowIndex": row_index,
+        "columnIndex": col_index,
+    }
+    if segment_id:
+        cell_location["tableStartLocation"]["segmentId"] = segment_id
+
+    return {
+        "deleteTableColumn": {
+            "tableCellLocation": cell_location,
+        }
+    }
 
 
 # --- Request generation helpers (kept from original) ---

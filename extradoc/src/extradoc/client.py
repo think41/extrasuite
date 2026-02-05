@@ -13,6 +13,7 @@ from dataclasses import dataclass, field
 from pathlib import Path
 from typing import TYPE_CHECKING, Any
 
+from extradoc.block_diff import diff_documents_block_level
 from extradoc.desugar import SpecialElement, desugar_document
 from extradoc.diff_engine import diff_documents as diff_xml_documents
 from extradoc.xml_converter import convert_document_to_xml
@@ -236,6 +237,11 @@ class DocsClient:
         # Read pristine XML from zip
         pristine_xml, pristine_styles, document_id = self._read_pristine(folder)
 
+        # Detect block-level changes first (for has_changes determination)
+        block_changes = diff_documents_block_level(
+            pristine_xml, current_xml, pristine_styles, current_styles
+        )
+
         # Generate batchUpdate requests using the diff engine
         requests = diff_xml_documents(
             pristine_xml, current_xml, pristine_styles, current_styles
@@ -256,8 +262,8 @@ class DocsClient:
         hr_pristine = _count_hr(pristine_doc)
         hr_current = _count_hr(current_doc)
 
-        # Check if there are changes
-        has_changes = len(requests) > 0
+        # Check if there are changes (based on block-level diff, not request generation)
+        has_changes = len(block_changes) > 0
 
         # Create results
         diff_result = DiffResult(

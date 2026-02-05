@@ -571,6 +571,91 @@ def validate_document(document: dict[str, Any]) -> IndexValidationResult:
     return calculator.validate()
 
 
+def calculate_table_indexes(
+    sections: list[Any],
+) -> dict[str, int]:
+    """Calculate start indexes for all tables in the document.
+
+    Walks through the desugared document sections and calculates where
+    each table starts based on cumulative content lengths.
+
+    Args:
+        sections: List of Section objects from desugar_document()
+
+    Returns:
+        Dict mapping table position (section_type:index) to startIndex
+        e.g., {"body:0": 2, "body:1": 50} for 1st and 2nd tables in body
+    """
+    # Import here to avoid circular dependency
+    from extradoc.desugar import (
+        Paragraph,
+        SpecialElement,
+        Table,
+    )
+
+    table_indexes: dict[str, int] = {}
+
+    for section in sections:
+        section_type = section.section_type
+        # Each section has its own index space starting at 0
+        # Body starts at 1 (after initial sectionBreak)
+        current_index = 1 if section_type == "body" else 0
+
+        table_count = 0
+        for elem in section.content:
+            if isinstance(elem, Paragraph | SpecialElement):
+                current_index += elem.utf16_length()
+            elif isinstance(elem, Table):
+                # Record this table's start index
+                key = f"{section_type}:{table_count}"
+                table_indexes[key] = current_index
+
+                # Calculate table length and advance
+                current_index += _calculate_table_length(elem)
+                table_count += 1
+
+    return table_indexes
+
+
+def _calculate_table_length(table: Any) -> int:
+    """Calculate the UTF-16 length of a table including structure markers.
+
+    Table structure:
+    - 1 index for table start marker
+    - For each row: 1 index for row marker
+    - For each cell: 1 index for cell marker + cell content length
+    - 1 index for table end marker
+    """
+    from extradoc.desugar import (
+        Paragraph,
+        SpecialElement,
+        Table,
+    )
+
+    length = 1  # Table start marker
+
+    # Build cell lookup
+    cell_map = {(cell.row, cell.col): cell for cell in table.cells}
+
+    for row in range(table.rows):
+        length += 1  # Row marker
+        for col in range(table.cols):
+            length += 1  # Cell marker
+            cell = cell_map.get((row, col))
+            if cell and cell.content:
+                for item in cell.content:
+                    if isinstance(item, Paragraph | SpecialElement):
+                        length += item.utf16_length()
+                    elif isinstance(item, Table):
+                        length += _calculate_table_length(item)
+            else:
+                # Empty cell has default paragraph with newline
+                length += 1
+
+    length += 1  # Table end marker
+    return length
+
+
 def strip_indexes(document: dict[str, Any]) -> dict[str, Any]:
     """Create a copy of the document with all indexes removed.
 

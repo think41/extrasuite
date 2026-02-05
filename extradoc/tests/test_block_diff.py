@@ -72,7 +72,7 @@ class TestBlockParsing:
         assert body.children[2].block_type == BlockType.PARAGRAPH
 
     def test_parse_table_with_cells(self):
-        """Parse table cells as recursive containers."""
+        """Parse table rows and cells as recursive containers."""
         xml = """<?xml version="1.0" encoding="UTF-8"?>
 <doc id="test-doc" revision="r1">
   <meta><title>Test</title></meta>
@@ -91,14 +91,18 @@ class TestBlockParsing:
         table = body.children[0]
 
         assert table.block_type == BlockType.TABLE
-        assert table.attributes["rows"] == 2
-        assert table.attributes["cols"] == 2
-        assert len(table.children) == 4  # 4 cells
+        # Dimensions are now derived from structure, not stored as attributes
+        assert len(table.children) == 2  # 2 rows
+
+        # Check row structure
+        row_0 = table.children[0]
+        assert row_0.block_type == BlockType.TABLE_ROW
+        assert len(row_0.children) == 2  # 2 cells in first row
 
         # Check cell structure
-        cell_00 = table.children[0]
+        cell_00 = row_0.children[0]
         assert cell_00.block_type == BlockType.TABLE_CELL
-        assert cell_00.block_id == "0,0"
+        assert cell_00.block_id == "0,0"  # Fallback position-based ID
         assert len(cell_00.children) == 1  # single Paragraph
         assert cell_00.children[0].block_type == BlockType.PARAGRAPH
 
@@ -383,9 +387,14 @@ class TestBlockDiff:
         assert changes[0].change_type == ChangeType.MODIFIED
         assert changes[0].block_type == BlockType.TABLE
 
-        # Check child changes
+        # Check child changes - now table → row → cell hierarchy
         assert len(changes[0].child_changes) >= 1
-        cell_change = changes[0].child_changes[0]
+        row_change = changes[0].child_changes[0]
+        assert row_change.block_type == BlockType.TABLE_ROW
+
+        # The row contains the cell change
+        assert len(row_change.child_changes) >= 1
+        cell_change = row_change.child_changes[0]
         assert cell_change.block_type == BlockType.TABLE_CELL
         assert cell_change.block_id == "0,0"
 

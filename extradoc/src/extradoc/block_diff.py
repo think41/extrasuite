@@ -41,6 +41,10 @@ class BlockType(Enum):
     TABLE_OF_CONTENTS = "toc"
     SECTION_BREAK = "section_break"
 
+    # Table structure elements (for row/column changes)
+    TABLE_ROW = "table_row"
+    TABLE_COLUMN = "table_column"
+
     # Container nodes (for recursive processing)
     DOCUMENT = "document"
     BODY = "body"
@@ -85,11 +89,16 @@ class Block:
         return self.xml_content
 
     def structural_key(self) -> str:
-        """Generate a key for structural matching (ignores content variations)."""
+        """Generate a key for structural matching (ignores content variations).
+
+        For tables, we match by type only (not dimensions) so that tables with
+        different row/col counts are still matched and compared structurally.
+        The row/column differences are detected in _diff_table_structure.
+        """
         if self.block_type == BlockType.TABLE:
-            rows = self.attributes.get("rows", 0)
-            cols = self.attributes.get("cols", 0)
-            return f"TABLE:{rows}x{cols}"
+            # Match tables by type only, not by dimensions
+            # This allows detecting row/column additions/deletions
+            return "TABLE"
         elif self.block_type == BlockType.CONTENT_BLOCK:
             # For content blocks, use a simple indicator
             return "CONTENT_BLOCK"
@@ -313,20 +322,36 @@ class BlockDiffDetector:
         return blocks
 
     def _parse_table(self, table_elem: ET.Element) -> Block:
-        """Parse a table element into a Block with cell children."""
-        rows = int(table_elem.get("rows", "0"))
-        cols = int(table_elem.get("cols", "0"))
+        """Parse a table element into a Block with row and cell children.
+
+        Reads content-based IDs from table/tr/td elements for matching:
+        - Table ID: from <table id="...">
+        - Row ID: from <tr id="...">
+        - Cell ID: from <td id="...">
+
+        Falls back to position-based IDs if not present (for backwards compat).
+        """
+        table_id = table_elem.get("id", "")
 
         table_block = Block(
             block_type=BlockType.TABLE,
+            block_id=table_id,
             xml_content=ET.tostring(table_elem, encoding="unicode"),
-            attributes={"rows": rows, "cols": cols},
         )
 
-        # Parse table cells recursively
+        # Parse rows, then cells within rows
         for row_idx, tr in enumerate(table_elem.findall("tr")):
+            row_id = tr.get("id", f"r{row_idx}")  # Fallback to position
+
+            row_block = Block(
+                block_type=BlockType.TABLE_ROW,
+                block_id=row_id,
+                xml_content=ET.tostring(tr, encoding="unicode"),
+                attributes={"row_index": row_idx},
+            )
+
             for col_idx, td in enumerate(tr.findall("td")):
-                cell_id = f"{row_idx},{col_idx}"
+                cell_id = td.get("id", f"{row_idx},{col_idx}")  # Fallback to position
                 cell_block = Block(
                     block_type=BlockType.TABLE_CELL,
                     block_id=cell_id,
@@ -338,9 +363,11 @@ class BlockDiffDetector:
                         "rowspan": int(td.get("rowspan", "1")),
                     },
                 )
-                # Recursively parse cell content
+                # Recursively parse cell content (can contain nested tables)
                 cell_block.children = self._parse_structural_elements(td)
-                table_block.children.append(cell_block)
+                row_block.children.append(cell_block)
+
+            table_block.children.append(row_block)
 
         return table_block
 
@@ -604,11 +631,9 @@ class BlockDiffDetector:
         if pristine.xml_content != current.xml_content:
             # For container types (TABLE), check if it's a structural or content change
             if pristine.block_type == BlockType.TABLE:
-                # Compare table structure
-                if pristine.attributes.get("rows") != current.attributes.get(
-                    "rows"
-                ) or pristine.attributes.get("cols") != current.attributes.get("cols"):
-                    # Structural change to table
+                # Always diff tables recursively to detect row/column/cell changes
+                table_changes = self._diff_table_structure(pristine, current, path)
+                if table_changes:
                     changes.append(
                         BlockChange(
                             change_type=ChangeType.MODIFIED,
@@ -616,23 +641,9 @@ class BlockDiffDetector:
                             before_xml=pristine.xml_content,
                             after_xml=current.xml_content,
                             container_path=path,
+                            child_changes=table_changes,
                         )
                     )
-                else:
-                    # Same structure, check cell contents recursively
-                    cell_changes = self._diff_table_cells(pristine, current, path)
-                    if cell_changes:
-                        # Create a modified change with child changes
-                        changes.append(
-                            BlockChange(
-                                change_type=ChangeType.MODIFIED,
-                                block_type=BlockType.TABLE,
-                                before_xml=pristine.xml_content,
-                                after_xml=current.xml_content,
-                                container_path=path,
-                                child_changes=cell_changes,
-                            )
-                        )
 
             elif pristine.block_type in (
                 BlockType.CONTENT_BLOCK,
@@ -663,13 +674,170 @@ class BlockDiffDetector:
 
         return changes
 
+    def _diff_table_structure(
+        self,
+        pristine_table: Block,
+        current_table: Block,
+        path: list[str],
+    ) -> list[BlockChange]:
+        """Diff table structure (rows, cells) using ID-based matching.
+
+        Table structure: table -> rows -> cells
+
+        Matching strategy:
+        - Match rows by position (1st row ↔ 1st row)
+        - Compare row IDs to detect changes:
+          - Same ID = row unchanged (but may have cell changes)
+          - Different ID = row modified
+          - Missing in current = row deleted
+          - Extra in current = row added
+
+        Same logic applies to cells within each row.
+        """
+        changes: list[BlockChange] = []
+        table_path = [*path, f"table:{pristine_table.block_id}"]
+
+        pristine_rows = pristine_table.children  # List of TABLE_ROW blocks
+        current_rows = current_table.children
+
+        # Match rows by position
+        max_rows = max(len(pristine_rows), len(current_rows))
+
+        for row_idx in range(max_rows):
+            p_row = pristine_rows[row_idx] if row_idx < len(pristine_rows) else None
+            c_row = current_rows[row_idx] if row_idx < len(current_rows) else None
+
+            # Include row index in path for request generation
+            row_path = [*table_path, f"row_idx:{row_idx}"]
+
+            if p_row is None and c_row is not None:
+                # Row added
+                changes.append(
+                    BlockChange(
+                        change_type=ChangeType.ADDED,
+                        block_type=BlockType.TABLE_ROW,
+                        block_id=c_row.block_id,
+                        container_path=row_path,
+                        after_xml=c_row.xml_content,
+                    )
+                )
+            elif p_row is not None and c_row is None:
+                # Row deleted
+                changes.append(
+                    BlockChange(
+                        change_type=ChangeType.DELETED,
+                        block_type=BlockType.TABLE_ROW,
+                        block_id=p_row.block_id,
+                        container_path=row_path,
+                        before_xml=p_row.xml_content,
+                    )
+                )
+            elif p_row is not None and c_row is not None:
+                # Both exist - compare by ID and content
+                id_differs = p_row.block_id != c_row.block_id
+                content_differs = p_row.xml_content != c_row.xml_content
+
+                # Always check for cell-level changes
+                cell_changes = self._diff_row_cells(p_row, c_row, row_path)
+
+                if id_differs or content_differs or cell_changes:
+                    # Row was modified
+                    changes.append(
+                        BlockChange(
+                            change_type=ChangeType.MODIFIED,
+                            block_type=BlockType.TABLE_ROW,
+                            block_id=p_row.block_id,
+                            container_path=row_path,
+                            before_xml=p_row.xml_content,
+                            after_xml=c_row.xml_content,
+                            child_changes=cell_changes,
+                        )
+                    )
+
+        return changes
+
+    def _diff_row_cells(
+        self,
+        pristine_row: Block,
+        current_row: Block,
+        table_path: list[str],
+    ) -> list[BlockChange]:
+        """Diff cells within a row using ID and content comparison.
+
+        Change detection:
+        - Different IDs → definitely modified (content-based IDs changed)
+        - Same IDs but different content → modified (fallback position IDs)
+        - Same IDs and same content → unchanged
+        """
+        changes: list[BlockChange] = []
+        row_path = [*table_path, f"row:{pristine_row.block_id}"]
+
+        pristine_cells = pristine_row.children  # List of TABLE_CELL blocks
+        current_cells = current_row.children
+
+        # Match cells by position (column index)
+        max_cells = max(len(pristine_cells), len(current_cells))
+
+        for col_idx in range(max_cells):
+            p_cell = pristine_cells[col_idx] if col_idx < len(pristine_cells) else None
+            c_cell = current_cells[col_idx] if col_idx < len(current_cells) else None
+
+            if p_cell is None and c_cell is not None:
+                # Cell added (column added)
+                changes.append(
+                    BlockChange(
+                        change_type=ChangeType.ADDED,
+                        block_type=BlockType.TABLE_CELL,
+                        block_id=c_cell.block_id,
+                        container_path=row_path,
+                        after_xml=c_cell.xml_content,
+                    )
+                )
+            elif p_cell is not None and c_cell is None:
+                # Cell deleted (column deleted)
+                changes.append(
+                    BlockChange(
+                        change_type=ChangeType.DELETED,
+                        block_type=BlockType.TABLE_CELL,
+                        block_id=p_cell.block_id,
+                        container_path=row_path,
+                        before_xml=p_cell.xml_content,
+                    )
+                )
+            elif p_cell is not None and c_cell is not None:
+                # Both exist - compare by ID and content
+                id_differs = p_cell.block_id != c_cell.block_id
+                content_differs = p_cell.xml_content != c_cell.xml_content
+
+                if id_differs or content_differs:
+                    # Cell content changed
+                    # Recurse into cell content for nested changes
+                    child_changes = self._diff_child_lists(
+                        p_cell.children,
+                        c_cell.children,
+                        [*row_path, f"cell:{p_cell.block_id}"],
+                    )
+                    changes.append(
+                        BlockChange(
+                            change_type=ChangeType.MODIFIED,
+                            block_type=BlockType.TABLE_CELL,
+                            block_id=p_cell.block_id,
+                            container_path=row_path,
+                            before_xml=p_cell.xml_content,
+                            after_xml=c_cell.xml_content,
+                            child_changes=child_changes,
+                        )
+                    )
+
+        return changes
+
     def _diff_table_cells(
         self,
         pristine_table: Block,
         current_table: Block,
         path: list[str],
     ) -> list[BlockChange]:
-        """Diff table cells recursively."""
+        """Diff table cells recursively (legacy method, now uses _diff_table_structure)."""
         changes: list[BlockChange] = []
 
         # Build cell lookup by position

@@ -9,6 +9,7 @@ specified in extradoc-spec.md, with:
 
 from __future__ import annotations
 
+import hashlib
 import html
 from dataclasses import dataclass, field
 from typing import Any
@@ -18,6 +19,35 @@ from .style_factorizer import (
     extract_text_style,
     factorize_styles,
 )
+
+# Base62 characters for content-based ID generation
+_BASE62_CHARS = "0123456789abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ"
+
+
+def _int_to_base62(num: int, min_length: int = 3) -> str:
+    """Convert integer to base62 string with minimum length."""
+    if num == 0:
+        return "0" * min_length
+    base = len(_BASE62_CHARS)
+    result = []
+    while num > 0:
+        result.append(_BASE62_CHARS[num % base])
+        num //= base
+    while len(result) < min_length:
+        result.append("0")
+    return "".join(reversed(result))
+
+
+def content_hash_id(content: str) -> str:
+    """Generate a short content-based ID using hash.
+
+    Uses SHA256 hash of content, then encodes first 5 bytes as base62
+    to create a 4+ character stable ID. IDs are stable across pulls
+    if content is unchanged.
+    """
+    h = hashlib.sha256(content.encode()).digest()
+    num = int.from_bytes(h[:5], "big")
+    return _int_to_base62(num, min_length=4)
 
 
 @dataclass
@@ -244,7 +274,8 @@ def _convert_body_content(
                 parts.append(prefix + para_xml)
 
         elif "table" in element:
-            table_xml = _convert_table(element["table"], lists, ctx)
+            table_start_index = element.get("startIndex", 0)
+            table_xml = _convert_table(element["table"], lists, ctx, table_start_index)
             for line in table_xml.split("\n"):
                 parts.append(prefix + line)
 
@@ -506,47 +537,76 @@ def _convert_inline_object(obj: dict[str, Any], obj_id: str) -> str:
 
 
 def _convert_table(
-    table: dict[str, Any], lists: dict[str, Any], ctx: ConversionContext
+    table: dict[str, Any],
+    lists: dict[str, Any],
+    ctx: ConversionContext,
+    table_start_index: int = 0,  # noqa: ARG001 - kept for API compatibility
 ) -> str:
-    """Convert a table to XML."""
-    rows = table.get("tableRows", [])
-    num_rows = len(rows)
-    num_cols = table.get("columns", 0)
+    """Convert a table to XML with content-based IDs.
 
-    parts: list[str] = [f'<table rows="{num_rows}" cols="{num_cols}">']
+    IDs are computed from content hash:
+    - Cell ID: hash of cell content
+    - Row ID: hash of row content (all cells)
+    - Table ID: hash of table content (all rows)
+
+    This ensures stable IDs across pulls if content is unchanged.
+    Table dimensions (rows/cols) and indexes are NOT stored in XML -
+    they can be derived from structure at diff time.
+    """
+    rows = table.get("tableRows", [])
+
+    # Build rows with content-based IDs (bottom-up: cells first, then rows)
+    row_parts: list[str] = []
 
     for row in rows:
-        parts.append("  <tr>")
-
+        cell_parts: list[str] = []
         cells = row.get("tableCells", [])
+
         for cell in cells:
             cell_style = cell.get("tableCellStyle", {})
             colspan = cell_style.get("columnSpan", 1)
             rowspan = cell_style.get("rowSpan", 1)
 
-            attrs = []
+            # Convert cell content first (without ID)
+            cell_content = cell.get("content", [])
+            cell_xml = _convert_body_content(cell_content, lists, ctx, indent=0)
+
+            # Compute cell ID from content
+            cell_id = content_hash_id(cell_xml)
+
+            # Build cell attributes
+            attrs = [f'id="{cell_id}"']
             if colspan > 1:
                 attrs.append(f'colspan="{colspan}"')
             if rowspan > 1:
                 attrs.append(f'rowspan="{rowspan}"')
-
-            attr_str = " " + " ".join(attrs) if attrs else ""
-
-            # Convert cell content
-            cell_content = cell.get("content", [])
-            cell_xml = _convert_body_content(cell_content, lists, ctx, indent=0)
+            attr_str = " ".join(attrs)
 
             if "\n" in cell_xml:
                 # Multi-line cell content
-                parts.append(f"    <td{attr_str}>")
+                cell_lines = [f"    <td {attr_str}>"]
                 for line in cell_xml.split("\n"):
                     if line:
-                        parts.append(f"      {line}")
-                parts.append("    </td>")
+                        cell_lines.append(f"      {line}")
+                cell_lines.append("    </td>")
+                cell_parts.append("\n".join(cell_lines))
             else:
-                parts.append(f"    <td{attr_str}>{cell_xml}</td>")
+                cell_parts.append(f"    <td {attr_str}>{cell_xml}</td>")
 
-        parts.append("  </tr>")
+        # Compute row ID from all cells content
+        row_content = "\n".join(cell_parts)
+        row_id = content_hash_id(row_content)
+        row_parts.append(f'  <tr id="{row_id}">')
+        row_parts.extend(cell_parts)
+        row_parts.append("  </tr>")
 
+    # Compute table ID from all rows content
+    table_content = "\n".join(row_parts)
+    table_id = content_hash_id(table_content)
+
+    # Only include the content-based ID - no rows/cols/startIndex
+    parts: list[str] = [f'<table id="{table_id}">']
+    parts.extend(row_parts)
     parts.append("</table>")
+
     return "\n".join(parts)
