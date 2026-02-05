@@ -14,7 +14,8 @@ Instead of working with complex API responses, agents interact with clean XML fi
 | `src/extradoc/transport.py` | `Transport` ABC, `GoogleDocsTransport`, `LocalFileTransport` |
 | `src/extradoc/xml_converter.py` | Converts Google Docs JSON to ExtraDoc XML format |
 | `src/extradoc/desugar.py` | Transforms sugar XML back to internal representation for diffing |
-| `src/extradoc/diff_engine.py` | Generates batchUpdate requests from XML differences |
+| `src/extradoc/block_diff.py` | Block-level diff detection |
+| `src/extradoc/diff_engine.py` | Generates batchUpdate requests from diffs |
 | `src/extradoc/indexer.py` | UTF-16 index calculation and validation |
 | `src/extradoc/style_factorizer.py` | Extracts and minimizes styles |
 | `src/extradoc/style_hash.py` | Deterministic style ID generation |
@@ -22,7 +23,7 @@ Instead of working with complex API responses, agents interact with clean XML fi
 ## Documentation
 
 - `docs/extradoc-spec.md` - Complete XML format specification
-- `docs/implementation-gap.md` - Gap analysis and implementation roadmap
+- `docs/diff-implementation-plan.md` - Diff implementation plan and status
 - `docs/googledocs/` - Google Docs API reference (120+ pages)
 
 ## Key Gotchas
@@ -174,39 +175,99 @@ async def test_pull(client, tmp_path):
 4. **Save raw** - Optionally save `.raw/document.json`
 5. **Pristine copy** - Create `.pristine/document.zip` for diff/push
 
-## Diff/Push Workflow
+## Block-Level Diff Architecture
 
-The diff workflow operates as a tree, processing from bottom to top to preserve indexes.
+The diff workflow uses a tree-based decomposition to ensure index stability.
+
+### Block Types
+
+The `block_diff.py` module parses XML into a block tree:
+
+| Block Type | Description | Handling |
+|------------|-------------|----------|
+| `DOCUMENT` | Root container | Contains body, headers, footers, footnotes |
+| `BODY` | Document body | Contains structural elements |
+| `TAB` | Multi-tab document tab | Contains body content |
+| `HEADER` | Page header | Separate index space starting at 0 |
+| `FOOTER` | Page footer | Separate index space starting at 0 |
+| `FOOTNOTE` | Footnote content | Separate index space starting at 0 |
+| `PARAGRAPH` | Individual paragraph | Parsed individually, grouped in changes |
+| `CONTENT_BLOCK` | Grouped paragraphs | Change output for consecutive same-status paragraphs |
+| `TABLE` | Table element | Has recursive TABLE_CELL children |
+| `TABLE_CELL` | Table cell | Contains nested content |
+| `TABLE_OF_CONTENTS` | TOC element | Treated as single block |
+
+**Key insight:** Each paragraph is parsed individually, then during diffing, consecutive paragraphs with the same change status are grouped into `CONTENT_BLOCK` changes. This allows surgical updates where only modified paragraphs are included.
 
 ### Tree-Based Resolution
 
-1. **Resolve top-level components** - Identify changes at body/header/footer/footnote level
-2. **Localize changes** - Within each component, identify changed ContentBlocks
-3. **Resolve ContentBlocks** - For each block:
-   - First use InsertText/DeleteText/ReplaceText to match text content
-   - Then update formatting (styles, lists, textruns) on specific ranges within that block
+```
+Document
+├── Body
+│   ├── Paragraph (title)
+│   ├── Paragraph (subtitle) → MODIFIED
+│   ├── Paragraph (p1) → unchanged (acts as separator)
+│   ├── Paragraph (p2) → MODIFIED
+│   ├── Table
+│   │   ├── TableCell (0,0)
+│   │   └── TableCell (0,1)
+│   └── Paragraph (p3)
+├── Header (kix.hdr1)
+│   └── Paragraph
+└── Footer (kix.ftr1)
+    └── Paragraph
+```
+
+### Block Change Detection
+
+The `BlockDiffDetector` uses LCS-based alignment with paragraph-level granularity:
+
+```python
+from extradoc import diff_documents_block_level, format_changes
+
+changes = diff_documents_block_level(pristine_xml, current_xml)
+print(format_changes(changes))
+```
+
+Each `BlockChange` contains:
+- `change_type`: ADDED, DELETED, or MODIFIED
+- `block_type`: The type of block affected
+- `before_xml`: Original XML (for DELETE/MODIFY)
+- `after_xml`: New XML (for ADD/MODIFY)
+- `container_path`: Path to container (e.g., `["body:body"]`, `["header:kix.hdr1"]`)
+- `child_changes`: Nested changes (for tables)
+
+### Paragraph-Level Granularity
+
+Only modified paragraphs are included in changes:
+
+```
+pristine: [title, subtitle, p1, p2]
+current:  [title, subtitle', p1, p2']
+
+Result:
+- ContentBlock([subtitle]) → MODIFIED (title unchanged, not included)
+- ContentBlock([p2]) → MODIFIED (p1 unchanged, acts as separator)
+```
 
 ### Bottom-Up Processing
 
-Process changes from the end of the document toward the beginning. This ensures:
-- Earlier indexes remain stable as we make changes
-- If individual ContentBlock diffs are correct, the overall diff is guaranteed correct
+**Critical:** Process changes from the END of the document toward the BEGINNING.
+
+**Why this works:**
+- Changes at higher indexes don't affect lower indexes
+- If we insert 10 characters at index 50, indexes 1-49 stay the same
+- If individual ContentBlock diffs are correct, overall diff is guaranteed correct
 
 ### Block vs ContentBlock Changes
 
-| Change Type | Operation |
-|-------------|-----------|
-| Block changes (table, row, cell, tab, header, footer, footnote) | Insert or delete entire block |
-| ContentBlock edits | Complete insert, complete delete, or incremental edits |
-| Incremental edits | Text operations first, then style/formatting updates |
-
-### Request Generation
-
-For each ContentBlock edit:
-1. Calculate text diff → InsertTextRequest / DeleteContentRangeRequest
-2. Calculate style diff → UpdateTextStyleRequest / UpdateParagraphStyleRequest
-3. Calculate list diff → CreateParagraphBulletsRequest / DeleteParagraphBulletsRequest
-4. Order requests: deletions before insertions, bottom-up by index
+| Change Type | What Changed | Generated Requests |
+|-------------|--------------|-------------------|
+| Block ADD | New table/header/footer/footnote | `insertTable` / `createHeader` / `createFooter` / `createFootnote` |
+| Block DELETE | Remove table/header/footer | `deleteContentRange` covering entire block |
+| ContentBlock ADD | New paragraph sequence | `insertText` + `updateTextStyle` + `createParagraphBullets` |
+| ContentBlock DELETE | Remove paragraphs | `deleteContentRange` |
+| ContentBlock MODIFY | Text or formatting changed | Text ops first, then style updates on ranges |
 
 ## Current Status
 
@@ -217,9 +278,16 @@ For each ContentBlock edit:
 - Style factorization
 - Multi-tab document support
 - Header/footer/footnote support
+- Block-level diff detection with paragraph-level granularity (`block_diff.py`)
 
 **In Progress:**
-- `diff` - Framework exists, tree-based algorithm being implemented
-- `push` - Framework exists, depends on diff completion
+- ContentBlock request generation (Phase 3)
+- Integration of block_diff output with batchUpdate request generation
 
-See branch `claude/refactor-diff-detection-Rh2ku` for current diff implementation work.
+**Next Steps:**
+1. Implement `_generate_content_insert_requests()` for ContentBlock additions
+2. Implement `_generate_content_delete_requests()` for ContentBlock deletions
+3. Handle MODIFIED ContentBlocks with delete + insert strategy
+4. End-to-end test with real documents
+
+See `docs/diff-implementation-plan.md` for detailed implementation plan.

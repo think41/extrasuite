@@ -47,10 +47,24 @@ from extradoc.transport import (
     TransportError,
 )
 from extradoc.xml_converter import convert_document_to_xml
+from extradoc.block_diff import (
+    Block,
+    BlockChange,
+    BlockDiffDetector,
+    BlockType,
+    ChangeType,
+    diff_documents_block_level,
+    format_changes,
+)
 
 __all__ = [
     "APIError",
     "AuthenticationError",
+    "Block",
+    "BlockChange",
+    "BlockDiffDetector",
+    "BlockType",
+    "ChangeType",
     "DesugaredDocument",
     "DiffError",
     "DiffResult",
@@ -76,7 +90,9 @@ __all__ = [
     "convert_document_to_xml",
     "desugar_document",
     "diff_documents",
+    "diff_documents_block_level",
     "factorize_styles",
+    "format_changes",
     "strip_indexes",
     "style_id",
     "utf16_len",
