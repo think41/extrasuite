@@ -56,6 +56,8 @@ class ConversionContext:
 
     styles: FactorizedStyles
     inline_objects: dict[str, dict[str, Any]] = field(default_factory=dict)
+    footnotes: dict[str, dict[str, Any]] = field(default_factory=dict)
+    lists: dict[str, Any] = field(default_factory=dict)
     current_tab_id: str | None = None
 
 
@@ -106,7 +108,11 @@ def convert_document_to_xml(
         footers = document.get("footers", {})
         footnotes = document.get("footnotes", {})
 
-        # Convert body
+        # Set context for footnote inlining
+        ctx.footnotes = footnotes
+        ctx.lists = lists
+
+        # Convert body (footnotes are inlined where references appear)
         parts.append('  <body class="_base">')
         body_xml = _convert_body_content(content, lists, ctx, indent=4)
         parts.append(body_xml)
@@ -126,10 +132,8 @@ def convert_document_to_xml(
             )
             parts.append(footer_xml)
 
-        # Convert footnotes
-        for fn_id, footnote in footnotes.items():
-            fn_xml = _convert_footnote(footnote, fn_id, lists, ctx)
-            parts.append(fn_xml)
+        # Note: Footnotes are NOT converted separately - they are inlined
+        # in the body where the footnote reference appears
 
     parts.append("</doc>")
 
@@ -185,6 +189,9 @@ def _convert_tab(
     footnotes = doc_tab.get("footnotes", {})
 
     ctx.current_tab_id = tab_id
+    # Set context for footnote inlining
+    ctx.footnotes = footnotes
+    ctx.lists = lists
 
     parts: list[str] = []
 
@@ -193,9 +200,9 @@ def _convert_tab(
     if tab_title:
         attrs.append(f'title="{_escape(tab_title)}"')
     attrs.append('class="_base"')
-    parts.append(f'  <tab {" ".join(attrs)}>')
+    parts.append(f"  <tab {' '.join(attrs)}>")
 
-    # Body content
+    # Body content (footnotes are inlined where references appear)
     parts.append("    <body>")
     body_xml = _convert_body_content(content, lists, ctx, indent=6)
     parts.append(body_xml)
@@ -213,10 +220,8 @@ def _convert_tab(
         footer_xml = _convert_header_or_footer(footer, footer_id, "footer", lists, ctx)
         parts.append(footer_xml)
 
-    # Footnotes
-    for fn_id, footnote in footnotes.items():
-        fn_xml = _convert_footnote(footnote, fn_id, lists, ctx)
-        parts.append(fn_xml)
+    # Note: Footnotes are NOT converted separately - they are inlined
+    # in the body where the footnote reference appears
 
     return "\n".join(parts)
 
@@ -401,10 +406,18 @@ def _convert_paragraph_elements(
         elif "footnoteReference" in elem:
             ref = elem["footnoteReference"]
             fn_id = ref.get("footnoteId", "")
-            fn_num = ref.get("footnoteNumber", "")
-            parts.append(
-                f'<footnoteref id="{_escape(fn_id)}" num="{_escape(fn_num)}"/>'
-            )
+            # Inline the footnote content at the reference location
+            if fn_id and fn_id in ctx.footnotes:
+                footnote = ctx.footnotes[fn_id]
+                fn_content = footnote.get("content", [])
+                # Convert footnote content (using ctx.lists for list formatting)
+                inner_xml = _convert_body_content(fn_content, ctx.lists, ctx, indent=0)
+                # Wrap in footnote tag - content is inline, no extra newlines
+                inner_xml = inner_xml.strip()
+                parts.append(f'<footnote id="{_escape(fn_id)}">{inner_xml}</footnote>')
+            else:
+                # Fallback: footnote not found, emit empty tag
+                parts.append(f'<footnote id="{_escape(fn_id)}"></footnote>')
 
         elif "inlineObjectElement" in elem:
             obj_elem = elem["inlineObjectElement"]

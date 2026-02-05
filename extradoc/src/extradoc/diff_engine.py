@@ -7,6 +7,7 @@ Uses block-level diff detection for structural changes.
 from __future__ import annotations
 
 import json
+import re
 import xml.etree.ElementTree as ET
 from dataclasses import dataclass
 from typing import Any
@@ -231,7 +232,14 @@ def _generate_requests_for_change(
         requests.extend(_handle_tab_change(change))
 
     # Recursively handle child changes
+    # Note: FOOTNOTE children of CONTENT_BLOCK are handled in _handle_content_block_change
     for child_change in change.child_changes:
+        if (
+            change.block_type == BlockType.CONTENT_BLOCK
+            and child_change.block_type == BlockType.FOOTNOTE
+        ):
+            # Already handled in _handle_content_block_change
+            continue
         child_requests = _generate_requests_for_change(
             child_change, pristine_doc, current_doc, table_indexes
         )
@@ -285,9 +293,28 @@ def _handle_content_block_change(
     """Handle ContentBlock add/delete/modify changes.
 
     For MODIFIED content blocks, we use a simple delete + insert strategy.
+    Also handles footnote child_changes which require special index calculation.
     """
     requests: list[dict[str, Any]] = []
 
+    # Handle footnote child_changes first (they need the ContentBlock context)
+    # Footnotes in the body start at index 1
+    base_index = 1 if segment_id is None else 0
+
+    for child_change in change.child_changes:
+        if child_change.block_type == BlockType.FOOTNOTE:
+            # For added footnotes, use after_xml; for deleted, use before_xml
+            content_xml = (
+                change.after_xml
+                if child_change.change_type == ChangeType.ADDED
+                else change.before_xml
+            )
+            requests.extend(
+                _handle_footnote_change(child_change, content_xml, base_index)
+            )
+
+    # Skip normal content handling for now if only footnote changes
+    # (Phase 3 will implement full content handling)
     if change.change_type == ChangeType.ADDED:
         # Insert new content at the appropriate position
         if current_section and change.after_xml:
@@ -386,19 +413,104 @@ def _handle_header_footer_change(change: BlockChange) -> list[dict[str, Any]]:
     return requests
 
 
-def _handle_footnote_change(change: BlockChange) -> list[dict[str, Any]]:
-    """Handle footnote add/delete changes."""
+def _handle_footnote_change(
+    change: BlockChange,
+    content_block_xml: str | None = None,
+    base_index: int = 1,
+) -> list[dict[str, Any]]:
+    """Handle footnote add/delete changes.
+
+    Args:
+        change: The footnote change (ADDED/DELETED/MODIFIED)
+        content_block_xml: The containing ContentBlock's XML for index calculation
+        base_index: The starting index for the content block in the body
+
+    For ADDED: Creates footnote at the calculated position
+    For DELETED: Deletes the 1-character footnote reference
+    For MODIFIED: Content changes handled via child_changes (Phase 3)
+    """
     requests: list[dict[str, Any]] = []
 
     if change.change_type == ChangeType.ADDED:
-        # Footnotes are created via createFootnote request from body
-        pass
+        # For adding footnotes, we have two options:
+        # 1. If we can calculate a precise index from content, use location
+        # 2. Otherwise, use endOfSegmentLocation (adds at end)
+        #
+        # Note: Precise positioning requires Phase 3 (content handling) to ensure
+        # the text exists before the footnote. For now, we use endOfSegmentLocation.
+        #
+        # TODO: Once Phase 3 is implemented, calculate precise index and use location
+        requests.append(
+            {
+                "createFootnote": {
+                    "endOfSegmentLocation": {}  # Adds footnote at end of body
+                }
+            }
+        )
 
     elif change.change_type == ChangeType.DELETED:
-        # Footnotes are deleted by removing the reference in the body
-        pass
+        # Delete the 1-character footnote reference
+        # Need to find the index in the pristine content
+        index = _calculate_footnote_index(
+            content_block_xml, change.block_id, base_index
+        )
+        if index > 0:
+            requests.append(
+                {
+                    "deleteContentRange": {
+                        "range": {
+                            "startIndex": index,
+                            "endIndex": index + 1,  # Footnote ref is 1 character
+                        }
+                    }
+                }
+            )
 
     return requests
+
+
+def _calculate_footnote_index(
+    content_xml: str | None,
+    footnote_id: str,
+    base_index: int,
+) -> int:
+    """Calculate the index where a footnote reference should be/is located.
+
+    Parses the XML to find text content before the footnote tag.
+    Returns the index in the body where the footnote reference is.
+    """
+    if not content_xml:
+        return 0
+
+    # Find the position of the footnote in the XML
+    # The index is based on text content before the footnote
+    pattern = rf'<footnote[^>]*id="{re.escape(footnote_id)}"'
+    match = re.search(pattern, content_xml)
+    if not match:
+        return 0
+
+    # Get content before the footnote
+    before_footnote = content_xml[: match.start()]
+
+    # Extract text content (strip tags)
+    # Simple approach: count characters that aren't part of tags
+    text_length = 0
+    in_tag = False
+    for char in before_footnote:
+        if char == "<":
+            in_tag = True
+        elif char == ">":
+            in_tag = False
+        elif not in_tag:
+            text_length += 1
+
+    # Add newlines for paragraph breaks (each </p> or </h1> etc. adds a newline)
+    newline_count = len(
+        re.findall(r"</(?:p|h[1-6]|li|title|subtitle)>", before_footnote)
+    )
+    text_length += newline_count
+
+    return base_index + text_length
 
 
 def _handle_tab_change(change: BlockChange) -> list[dict[str, Any]]:
@@ -416,8 +528,6 @@ def _handle_tab_change(change: BlockChange) -> list[dict[str, Any]]:
         # Extract title from the change's XML if available
         tab_properties: dict[str, Any] = {}
         if change.after_xml:
-            import xml.etree.ElementTree as ET
-
             try:
                 root = ET.fromstring(change.after_xml)
                 title = root.get("title")

@@ -276,13 +276,30 @@ class BlockDiffDetector:
         }
 
         def add_paragraph(elem: ET.Element) -> None:
-            """Add a single paragraph as its own block."""
+            """Add a single paragraph as its own block.
+
+            If the paragraph contains inline <footnote> elements, extract them
+            as child FOOTNOTE blocks for proper diff detection.
+            """
             para_block = Block(
                 block_type=BlockType.PARAGRAPH,
                 xml_content=ET.tostring(elem, encoding="unicode"),
                 attributes={"tag": elem.tag},
                 start_index=len(blocks),
             )
+
+            # Extract inline footnotes as children
+            for footnote in elem.iter("footnote"):
+                fn_id = footnote.get("id", "")
+                fn_block = Block(
+                    block_type=BlockType.FOOTNOTE,
+                    block_id=fn_id,
+                    xml_content=ET.tostring(footnote, encoding="unicode"),
+                )
+                # Parse footnote content as children
+                fn_block.children = self._parse_structural_elements(footnote)
+                para_block.children.append(fn_block)
+
             blocks.append(para_block)
 
         for child in parent:
@@ -529,11 +546,67 @@ class BlockDiffDetector:
             # Combine all paragraphs in the group
             before_parts: list[str] = []
             after_parts: list[str] = []
+            footnote_changes: list[BlockChange] = []
+
             for _change_type, p_block, c_block in current_group:
                 if p_block and p_block.xml_content:
                     before_parts.append(p_block.xml_content)
                 if c_block and c_block.xml_content:
                     after_parts.append(c_block.xml_content)
+
+                # Check for footnote changes within paragraphs
+                p_footnotes = {
+                    fn.block_id: fn
+                    for fn in (p_block.children if p_block else [])
+                    if fn.block_type == BlockType.FOOTNOTE
+                }
+                c_footnotes = {
+                    fn.block_id: fn
+                    for fn in (c_block.children if c_block else [])
+                    if fn.block_type == BlockType.FOOTNOTE
+                }
+
+                # Detect added footnotes
+                for fn_id, fn in c_footnotes.items():
+                    if fn_id not in p_footnotes:
+                        footnote_changes.append(
+                            BlockChange(
+                                change_type=ChangeType.ADDED,
+                                block_type=BlockType.FOOTNOTE,
+                                block_id=fn_id,
+                                after_xml=fn.xml_content,
+                                container_path=path,
+                            )
+                        )
+
+                # Detect deleted footnotes
+                for fn_id, fn in p_footnotes.items():
+                    if fn_id not in c_footnotes:
+                        footnote_changes.append(
+                            BlockChange(
+                                change_type=ChangeType.DELETED,
+                                block_type=BlockType.FOOTNOTE,
+                                block_id=fn_id,
+                                before_xml=fn.xml_content,
+                                container_path=path,
+                            )
+                        )
+
+                # Detect modified footnotes
+                for fn_id in p_footnotes.keys() & c_footnotes.keys():
+                    p_fn = p_footnotes[fn_id]
+                    c_fn = c_footnotes[fn_id]
+                    if p_fn.xml_content != c_fn.xml_content:
+                        footnote_changes.append(
+                            BlockChange(
+                                change_type=ChangeType.MODIFIED,
+                                block_type=BlockType.FOOTNOTE,
+                                block_id=fn_id,
+                                before_xml=p_fn.xml_content,
+                                after_xml=c_fn.xml_content,
+                                container_path=path,
+                            )
+                        )
 
             assert current_group_type is not None
             grouped_changes.append(
@@ -543,6 +616,7 @@ class BlockDiffDetector:
                     before_xml="\n".join(before_parts) if before_parts else None,
                     after_xml="\n".join(after_parts) if after_parts else None,
                     container_path=path,
+                    child_changes=footnote_changes,  # Attach footnote changes
                 )
             )
 

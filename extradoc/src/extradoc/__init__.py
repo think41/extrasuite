@@ -6,6 +6,15 @@ optimized for LLM agents, enabling efficient editing with a pull/diff/push workf
 
 __version__ = "0.1.0"
 
+from extradoc.block_diff import (
+    Block,
+    BlockChange,
+    BlockDiffDetector,
+    BlockType,
+    ChangeType,
+    diff_documents_block_level,
+    format_changes,
+)
 from extradoc.client import (
     DiffError,
     DiffResult,
@@ -47,15 +56,6 @@ from extradoc.transport import (
     TransportError,
 )
 from extradoc.xml_converter import convert_document_to_xml
-from extradoc.block_diff import (
-    Block,
-    BlockChange,
-    BlockDiffDetector,
-    BlockType,
-    ChangeType,
-    diff_documents_block_level,
-    format_changes,
-)
 
 __all__ = [
     "APIError",

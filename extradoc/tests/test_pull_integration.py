@@ -217,7 +217,7 @@ async def test_diff_detects_text_change(
     document_xml.write_text(modified)
 
     # Run diff
-    diff_result, requests, validation = client.diff(document_dir)
+    diff_result, _requests, validation = client.diff(document_dir)
 
     # Should detect changes at block level
     assert diff_result.has_changes
