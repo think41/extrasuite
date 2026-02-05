@@ -6,6 +6,30 @@ Transforms sugar elements to internal representation for diffing:
 - <tr>/<td> -> flat <td row="r" col="c">
 - <b>text</b> -> <t bold="1">text</t>
 - <style class="..."> -> apply class to children
+
+INDEX COUNTING MODEL
+====================
+
+Google Docs uses UTF-16 code unit based indexing. This module implements:
+
+1. Paragraph length: utf16_len(content) + 1
+   - The +1 is for the trailing newline (represented by </p>)
+   - Empty paragraph <p></p> = 1 (just the newline)
+
+2. Special elements inside paragraphs: +1 each
+   - <hr/>, <pagebreak/>, <columnbreak/>, <image/>, <person/>, etc.
+
+3. Container closes (</body>, </td>, etc.): 0 index cost
+
+4. RULE: Every container must have at least one paragraph
+   - Body, headers, footers, footnotes, and table cells always have >= 1 paragraph
+   - The final paragraph CANNOT be deleted (Google Docs API constraint)
+
+Examples:
+    <p>Hello</p>          = 5 + 1 = 6
+    <p><hr/></p>          = 1 + 1 = 2
+    <p></p>               = 0 + 1 = 1
+    <p>A<pagebreak/>B</p> = 1 + 1 + 1 + 1 = 4
 """
 
 from __future__ import annotations
