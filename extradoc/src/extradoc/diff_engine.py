@@ -220,8 +220,9 @@ def diff_documents(
                     )
                 )
 
-    # Sort by descending index, then by sequence for stable ordering
-    operations.sort(key=lambda op: (-op.index, -op.sequence))
+    # Sort by descending index (for safe deletion order), then by ascending
+    # sequence (so inserts come before their style updates at the same index)
+    operations.sort(key=lambda op: (-op.index, op.sequence))
 
     return [_operation_to_request(op) for op in operations if op.op_type]
 
@@ -543,8 +544,9 @@ def _diff_paragraph(
 
     if p_text != c_text:
         # Use character-level diff
+        # Process in forward order - the final sort will handle ordering
         text_ops = diff_text(p_text, c_text)
-        for op_type, start, end, text in reversed(text_ops):
+        for op_type, start, end, text in text_ops:
             if op_type == "delete":
                 ops.append(
                     DiffOperation(
@@ -636,43 +638,84 @@ def _diff_run_styles(
     p_start: int,
     segment_id: str | None,
 ) -> list[DiffOperation]:
-    """Generate style update operations for run-level changes."""
+    """Generate style update operations for run-level changes.
+
+    This function handles the case where the text content is the same but the
+    run structure may differ (e.g., "Hello World" vs "Hello " + "World" with bold).
+    It flattens both paragraphs to character-level styles and compares them.
+    """
     ops: list[DiffOperation] = []
 
-    # Track position through runs
-    cursor = p_start
+    # Flatten both paragraphs to character-level styles
+    p_chars = _flatten_to_char_styles(pristine)
+    c_chars = _flatten_to_char_styles(current)
 
-    for p_run, c_run in zip(pristine.runs, current.runs, strict=False):
-        run_len = p_run.utf16_length()
+    # If different lengths, something is wrong (text should be same)
+    if len(p_chars) != len(c_chars):
+        return ops
 
-        # Skip special elements
-        if "_special" in p_run.styles or "_special" in c_run.styles:
-            cursor += run_len
-            continue
+    # Find ranges where styles differ
+    i = 0
+    while i < len(p_chars):
+        p_style, _ = p_chars[i]
+        c_style, _ = c_chars[i]
 
-        # Compare styles
-        p_styles = {k: v for k, v in p_run.styles.items() if not k.startswith("_")}
-        c_styles = {k: v for k, v in c_run.styles.items() if not k.startswith("_")}
+        if p_style != c_style:
+            # Find the end of this style difference range
+            start_i = i
+            while i < len(c_chars):
+                ps, _ = p_chars[i]
+                cs, _ = c_chars[i]
+                # Continue while styles differ AND current style is consistent
+                if ps != cs and cs == c_style:
+                    i += 1
+                else:
+                    break
 
-        if p_styles != c_styles:
-            style_diff = _compute_style_diff(p_styles, c_styles)
+            # Calculate UTF-16 indexes
+            start_offset = sum(utf16_len(c) for _, c in p_chars[:start_i])
+            end_offset = sum(utf16_len(c) for _, c in p_chars[:i])
+
+            style_diff = _compute_style_diff(p_style, c_style)
             if style_diff:
                 text_style, fields = style_diff
                 ops.append(
                     DiffOperation(
                         op_type="update_text_style",
-                        index=cursor,
-                        end_index=cursor + run_len,
+                        index=p_start + start_offset,
+                        end_index=p_start + end_offset,
                         text_style=text_style,
                         fields=fields,
                         segment_id=segment_id,
                         sequence=_next_sequence(),
                     )
                 )
-
-        cursor += run_len
+        else:
+            i += 1
 
     return ops
+
+
+def _flatten_to_char_styles(para: Paragraph) -> list[tuple[dict[str, str], str]]:
+    """Flatten a paragraph to a list of (style_dict, character) tuples.
+
+    Special elements are skipped (they don't have character-level styles).
+    """
+    result: list[tuple[dict[str, str], str]] = []
+
+    for run in para.runs:
+        # Skip special elements
+        if "_special" in run.styles:
+            continue
+
+        # Get clean styles (without _ prefixed keys)
+        styles = {k: v for k, v in run.styles.items() if not k.startswith("_")}
+
+        # Add each character with its style
+        for char in run.text:
+            result.append((styles, char))
+
+    return result
 
 
 def _compute_style_diff(
