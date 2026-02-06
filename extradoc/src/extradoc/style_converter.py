@@ -131,6 +131,11 @@ TABLE_CELL_STYLE_PROPS: list[StyleProp] = [
     StyleProp("paddingBottom", "paddingBottom", StyleType.PT),
     StyleProp("paddingLeft", "paddingLeft", StyleType.PT),
     StyleProp("paddingRight", "paddingRight", StyleType.PT),
+    # Borders
+    StyleProp("borderTop", "borderTop", StyleType.BORDER),
+    StyleProp("borderBottom", "borderBottom", StyleType.BORDER),
+    StyleProp("borderLeft", "borderLeft", StyleType.BORDER),
+    StyleProp("borderRight", "borderRight", StyleType.BORDER),
 ]
 
 

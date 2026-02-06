@@ -39,7 +39,9 @@ from .request_generators.table import (
     generate_insert_table_row_request,
 )
 from .style_converter import (
+    TABLE_CELL_STYLE_PROPS,
     TEXT_STYLE_PROPS,
+    build_table_cell_style_request,
     convert_styles,
 )
 
@@ -1582,6 +1584,50 @@ def _extract_cell_inner_content(cell_xml: str) -> str:
     return "\n".join(inner_parts)
 
 
+def _generate_cell_style_request(
+    cell_xml: str,
+    table_start_index: int,
+    row_index: int,
+    col_index: int,
+    segment_id: str | None,
+) -> dict[str, Any] | None:
+    """Generate updateTableCellStyle request if cell has style attributes.
+
+    Parses the cell XML to extract style attributes (bg, borders, padding, valign)
+    and generates an updateTableCellStyle request if any are present.
+
+    Args:
+        cell_xml: The full cell XML (e.g., <td borderTop="1,#FF0000,SOLID">...</td>)
+        table_start_index: Start index of the table
+        row_index: Row index (0-based)
+        col_index: Column index (0-based)
+        segment_id: Optional segment ID
+
+    Returns:
+        An updateTableCellStyle request dict, or None if no styles to apply
+    """
+    try:
+        root = ET.fromstring(cell_xml)
+    except ET.ParseError:
+        return None
+
+    # Extract style attributes from the cell element
+    styles = dict(root.attrib)
+
+    # Check if there are any cell style properties
+    _, fields = convert_styles(styles, TABLE_CELL_STYLE_PROPS)
+    if not fields:
+        return None
+
+    return build_table_cell_style_request(
+        styles,
+        table_start_index,
+        row_index,
+        col_index,
+        segment_id,
+    )
+
+
 def _generate_table_add_requests(
     after_xml: str,
     segment_id: str | None,
@@ -1722,11 +1768,17 @@ def _generate_table_modify_requests(
 
         elif row_change.change_type == ChangeType.MODIFIED:
             # Row modified - check for cell changes
-            cell_changes = [
-                c
-                for c in row_change.child_changes
-                if c.block_type == BlockType.TABLE_CELL
-            ]
+            # Sort by column index descending so we process from right to left
+            # This ensures insertions don't shift indexes for subsequent operations
+            cell_changes = sorted(
+                [
+                    c
+                    for c in row_change.child_changes
+                    if c.block_type == BlockType.TABLE_CELL
+                ],
+                key=lambda c: _get_col_index_from_change(c),
+                reverse=True,
+            )
 
             for cell_change in cell_changes:
                 col_index = _get_col_index_from_change(cell_change)
@@ -1795,6 +1847,18 @@ def _generate_table_modify_requests(
                                 for req in cell_reqs:
                                     req["_skipReorder"] = True
                                 requests.extend(cell_reqs)
+
+                            # Generate cell style request if cell has style attributes
+                            cell_style_req = _generate_cell_style_request(
+                                cell_change.after_xml,
+                                table_start_index,
+                                row_index,
+                                col_index,
+                                segment_id,
+                            )
+                            if cell_style_req:
+                                cell_style_req["_skipReorder"] = True
+                                requests.append(cell_style_req)
 
     return requests
 
