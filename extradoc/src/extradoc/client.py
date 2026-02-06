@@ -2,6 +2,13 @@
 
 Provides the DocsClient class with pull(), diff(), and push() methods
 implementing the core workflow for Google Docs manipulation.
+
+The push workflow uses a two-batch strategy:
+1. First batch: Create structural elements (headers, footers) to get real IDs
+2. Second batch: Content operations with substituted real IDs
+
+The request_generators.structural module provides utilities for this workflow,
+though the current implementation uses inline logic for historical reasons.
 """
 
 from __future__ import annotations
@@ -16,6 +23,10 @@ from typing import TYPE_CHECKING, Any
 from extradoc.block_diff import diff_documents_block_level
 from extradoc.desugar import SpecialElement, desugar_document
 from extradoc.diff_engine import diff_documents as diff_xml_documents
+from extradoc.request_generators.structural import (
+    extract_placeholder_footnote_ids,
+    separate_by_segment_ids,
+)
 from extradoc.xml_converter import convert_document_to_xml
 
 if TYPE_CHECKING:
@@ -451,31 +462,16 @@ class DocsClient:
             other_requests = [_rewrite(r) for r in other_requests]
 
         # Separate footnote-segment operations so we can rewrite them after we know real IDs.
-        def _has_segment_id(obj: Any, targets: set[str]) -> bool:
-            if isinstance(obj, dict):
-                if obj.get("segmentId") in targets:
-                    return True
-                return any(_has_segment_id(v, targets) for v in obj.values())
-            if isinstance(obj, list):
-                return any(_has_segment_id(v, targets) for v in obj)
-            return False
-
-        main_requests: list[dict[str, Any]] = []
-        footnote_requests: list[dict[str, Any]] = []
-        for req in other_requests:
-            if _has_segment_id(req, footnote_ids):
-                footnote_requests.append(req)
-            else:
-                main_requests.append(req)
+        # Use the structural module utility for this
+        main_requests, footnote_requests = separate_by_segment_ids(
+            other_requests, footnote_ids
+        )
 
         # Strip placeholder markers from createFootnote and record ordering.
-        footnote_placeholders: list[str] = []
-        cleaned_main: list[dict[str, Any]] = []
-        for req in main_requests:
-            if "createFootnote" in req:
-                footnote_placeholders.append(req.pop("_placeholderFootnoteId", ""))
-            cleaned_main.append(req)
-        main_requests = cleaned_main
+        # Use the structural module utility for this
+        main_requests, footnote_placeholders = extract_placeholder_footnote_ids(
+            main_requests
+        )
 
         # Send body + header/footer content + createFootnote requests first.
         main_response: dict[str, Any] = {}

@@ -1,0 +1,215 @@
+# ExtraDoc Phase 4: Complete Push Implementation
+
+## Status: In Progress
+
+**Last Updated:** 2026-02-06
+
+## Overview
+
+Implement complete push functionality following these priorities:
+1. **Structural elements first** - Create headers/footers/tabs, capture IDs, then populate content
+2. **Complete styling support** - All text styles AND all paragraph styles
+3. **Content population** - Tables, special elements, segment content
+
+## What Was Done
+
+### Phase 1: Declarative Style System ✅ COMPLETE
+
+Created `src/extradoc/style_converter.py` with:
+- `StyleType` enum (BOOL, PT, FLOAT, COLOR, ENUM, ENUM_MAP, FONT, LINK, BORDER)
+- `StyleProp` dataclass for declarative style definitions
+- `TEXT_STYLE_PROPS` - Text style mappings (bold, italic, underline, strikethrough, smallcaps, superscript, subscript, font, size, color, bg, links)
+- `PARAGRAPH_STYLE_PROPS` - Paragraph style mappings (alignment, lineSpacing, spaceAbove, spaceBelow, indentation, keepTogether, keepNext, avoidWidow, direction, shading, borders)
+- `TABLE_CELL_STYLE_PROPS` - Table cell style mappings (bg, valign, padding)
+- `convert_styles()` - Generic function to convert XML styles to API requests
+- Helper functions: `build_text_style_request()`, `build_paragraph_style_request()`, `build_table_cell_style_request()`
+
+### Phase 2: Structural Element Creation ✅ COMPLETE
+
+Created `src/extradoc/request_generators/structural.py` with:
+- `STRUCTURAL_REQUEST_TYPES` - Set of structural request types
+- `separate_structural_requests()` - Split structural from content requests
+- `extract_created_ids()` - Extract placeholder-to-real ID mappings from API responses
+- `substitute_placeholder_ids()` - Replace placeholders with real IDs in requests
+- `has_segment_id()` - Check if object references specific segment IDs
+- `separate_by_segment_ids()` - Separate requests by segment ID references
+- `extract_placeholder_footnote_ids()` - Extract and strip placeholder footnote IDs
+
+### Phase 3: Table Request Generator ✅ COMPLETE
+
+Created `src/extradoc/request_generators/table.py` with:
+- `generate_table_cell_style_requests()` - Generate updateTableCellStyle requests for styled cells
+- `calculate_cell_positions()` - Map (row, col) -> insertion index for table cells
+- `calculate_table_length()` - Calculate minimum length of an empty table
+- `generate_insert_table_request()` - Generate insertTable request
+- `generate_insert_table_row_request()` - Generate insertTableRow request
+- `generate_delete_table_row_request()` - Generate deleteTableRow request
+- `generate_insert_table_column_request()` - Generate insertTableColumn request
+- `generate_delete_table_column_request()` - Generate deleteTableColumn request
+
+### Phase 4: Content Request Generator ✅ COMPLETE
+
+Created `src/extradoc/request_generators/content.py` with:
+- `ParsedContent` dataclass for parsed content blocks
+- `TextRun`, `ParagraphInfo`, `SpecialElement` dataclasses
+- `parse_content_xml()` - Parse ContentBlock XML into structured data
+- `generate_content_requests()` - Generate insertText + updateTextStyle + updateParagraphStyle + createParagraphBullets requests
+- `generate_delete_content_request()` - Generate deleteContentRange request
+- `_generate_special_element_request()` - Handle pagebreak, columnbreak, footnoteref
+
+### Phase 5: Refactor diff_engine.py ✅ COMPLETE
+
+Updated `src/extradoc/diff_engine.py` to:
+- Import from `style_converter` for style conversion
+- Import from `request_generators.table` for table row/column request generation
+- Removed duplicate table request generation functions
+- Uses `convert_styles()` for text style conversion
+
+### Phase 6: Update client.py ✅ COMPLETE
+
+Updated `src/extradoc/client.py` to:
+- Import `separate_by_segment_ids` and `extract_placeholder_footnote_ids` from structural module
+- Use these utilities in the push workflow for cleaner two-batch execution
+
+## What Is Pending
+
+### Integration Testing
+- End-to-end testing with real Google Docs is needed
+- Test cases for various styling scenarios
+
+### Special Elements (Low Priority)
+- **Footnotes with precise positioning** - Currently uses `endOfSegmentLocation`, needs text content insertion first for precise index
+- **Autotext (page numbers)** - Cannot insert via batchUpdate API, use placeholder `[PAGE]`
+- **Images** - Requires separate upload flow
+- **Person mentions** - Requires specific personProperties
+
+### Additional Style Support
+- Table column width styling
+- Table border styling
+- Named style definitions (custom heading styles)
+
+## Architecture
+
+```
+src/extradoc/
+├── diff_engine.py          # Orchestration only - calls other modules
+├── style_converter.py      # Declarative style mappings + conversion
+├── request_generators/     # Request generation by type
+│   ├── __init__.py
+│   ├── structural.py       # Headers, footers, tabs, footnotes
+│   ├── table.py            # Table structure + cell content
+│   └── content.py          # Text insertion, paragraph styling
+└── client.py               # Two-batch execution with ID tracking
+```
+
+## Testing Against Real Google Docs
+
+### Test Document
+Use this document for testing: https://docs.google.com/document/d/15dNMijQYl3juFdu8LqLvJoh3K10DREbtUm82489hgAs/edit
+
+### Test Workflow
+
+1. **Pull the document:**
+   ```bash
+   cd extradoc
+   uv run python -m extradoc pull "15dNMijQYl3juFdu8LqLvJoh3K10DREbtUm82489hgAs" output/
+   ```
+
+2. **Make edits to the XML:**
+   Edit `output/15dNMijQYl3juFdu8LqLvJoh3K10DREbtUm82489hgAs/document.xml`
+
+3. **Preview changes (diff):**
+   ```bash
+   uv run python -m extradoc diff output/15dNMijQYl3juFdu8LqLvJoh3K10DREbtUm82489hgAs/
+   ```
+   Save the diff output for debugging:
+   ```bash
+   uv run python -m extradoc diff output/15dNMijQYl3juFdu8LqLvJoh3K10DREbtUm82489hgAs/ > output/diff.json
+   ```
+
+4. **Push changes:**
+   ```bash
+   uv run python -m extradoc push output/15dNMijQYl3juFdu8LqLvJoh3K10DREbtUm82489hgAs/
+   ```
+
+5. **Verify by pulling again:**
+   ```bash
+   uv run python -m extradoc pull "15dNMijQYl3juFdu8LqLvJoh3K10DREbtUm82489hgAs" output-after/
+   ```
+   Compare the before and after XML to confirm changes were applied correctly.
+
+### Test Cases to Verify
+
+#### Text Styling
+```xml
+<!-- Add yellow highlight -->
+<p>This is <span class="hilite">highlighted text</span>.</p>
+
+<!-- Where hilite style in styles.xml has: bg="#FFFF00" -->
+```
+
+#### Paragraph Styling
+```xml
+<!-- Centered paragraph -->
+<p align="CENTER">This paragraph is centered.</p>
+
+<!-- With spacing -->
+<p spaceAbove="12" spaceBelow="6">Paragraph with custom spacing.</p>
+```
+
+#### Headings
+```xml
+<h1>Heading 1</h1>
+<h2>Heading 2</h2>
+```
+
+#### Lists
+```xml
+<li type="bullet" level="0">First item</li>
+<li type="bullet" level="1">Nested item</li>
+<li type="decimal" level="0">Numbered item</li>
+```
+
+#### Tables
+```xml
+<table rows="2" cols="2">
+  <tr>
+    <td bg="#E0E0E0"><p>Header 1</p></td>
+    <td bg="#E0E0E0"><p>Header 2</p></td>
+  </tr>
+  <tr>
+    <td><p>Cell 1</p></td>
+    <td><p>Cell 2</p></td>
+  </tr>
+</table>
+```
+
+#### Headers/Footers
+```xml
+<!-- Add a footer -->
+<footer id="new_footer">
+  <p>Page footer content</p>
+</footer>
+```
+
+## Known Limitations
+
+| Feature | Limitation | Workaround |
+|---------|------------|------------|
+| Autotext (page numbers) | Cannot insert via batchUpdate | Use placeholder `[PAGE]` |
+| Person mentions | Requires specific personProperties | Insert as styled text |
+| New tabs with content | Requires two-batch (create, then populate) | Documented behavior |
+| Horizontal rules | Read-only in Google Docs API | Cannot add/remove, only modify adjacent content |
+| Images | Requires separate upload to Drive | Not yet implemented |
+
+## Files Summary
+
+| File | Purpose |
+|------|---------|
+| `src/extradoc/style_converter.py` | Declarative style mappings + `convert_styles()` |
+| `src/extradoc/request_generators/__init__.py` | Package init with exports |
+| `src/extradoc/request_generators/structural.py` | Header/footer/tab/footnote requests |
+| `src/extradoc/request_generators/table.py` | Table structure + cell styling |
+| `src/extradoc/request_generators/content.py` | Text insertion + text/paragraph styling |
+| `src/extradoc/diff_engine.py` | Orchestration, uses new modules |
+| `src/extradoc/client.py` | Two-batch execution with ID tracking |

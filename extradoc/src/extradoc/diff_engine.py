@@ -2,6 +2,11 @@
 
 Compares pristine and edited documents to generate Google Docs batchUpdate requests.
 Uses block-level diff detection for structural changes.
+
+This module orchestrates the diff/request generation process, delegating to
+specialized modules for style conversion and request generation:
+- style_converter: Declarative style mappings and conversion
+- request_generators/: Structural, table, and content request generation
 """
 
 from __future__ import annotations
@@ -27,70 +32,32 @@ from .desugar import (
     desugar_document,
 )
 from .indexer import calculate_table_indexes, utf16_len
+from .request_generators.table import (
+    generate_delete_table_column_request,
+    generate_delete_table_row_request,
+    generate_insert_table_column_request,
+    generate_insert_table_row_request,
+)
+from .style_converter import (
+    TEXT_STYLE_PROPS,
+    convert_styles,
+)
 
 # --- Helpers for style mapping ---
 
 
-def _hex_to_rgb(color: str) -> dict[str, float]:
-    """Convert #RRGGBB to Docs rgbColor dict."""
-    color = color.lstrip("#")
-    if len(color) != 6:
-        return {}
-    r = int(color[0:2], 16) / 255.0
-    g = int(color[2:4], 16) / 255.0
-    b = int(color[4:6], 16) / 255.0
-    return {"red": r, "green": g, "blue": b}
-
-
 def _styles_to_text_style(styles: dict[str, str]) -> tuple[dict[str, Any], str] | None:
-    """Convert run styles to Google Docs textStyle + fields."""
-    text_style: dict[str, Any] = {}
-    fields: list[str] = []
+    """Convert run styles to Google Docs textStyle + fields.
 
-    def add(field: str, value: Any) -> None:
-        fields.append(field)
-        text_style[field.split(".")[-1]] = value
+    Uses the declarative style converter for basic styles, with special
+    handling for link URLs which need nested structure.
+    """
+    text_style, fields = convert_styles(styles, TEXT_STYLE_PROPS)
 
-    if styles.get("bold") == "1":
-        add("bold", True)
-    if styles.get("italic") == "1":
-        add("italic", True)
-    if styles.get("underline") == "1":
-        add("underline", True)
-    if styles.get("strikethrough") == "1":
-        add("strikethrough", True)
-    if styles.get("superscript") == "1":
-        add("baselineOffset", "SUPERSCRIPT")
-    if styles.get("subscript") == "1":
-        add("baselineOffset", "SUBSCRIPT")
-    if "link" in styles:
-        text_style["link"] = {"url": styles["link"]}
-        fields.append("link")
-    if "color" in styles:
-        rgb = _hex_to_rgb(styles["color"])
-        if rgb:
-            text_style["foregroundColor"] = {"color": {"rgbColor": rgb}}
-            fields.append("foregroundColor")
-    if "bg" in styles:
-        rgb = _hex_to_rgb(styles["bg"])
-        if rgb:
-            text_style["backgroundColor"] = {"color": {"rgbColor": rgb}}
-            fields.append("backgroundColor")
-    if "font" in styles:
-        text_style["weightedFontFamily"] = {"fontFamily": styles["font"]}
-        fields.append("weightedFontFamily")
-    if "size" in styles:
-        # size like "11pt"
-        try:
-            size_pt = float(styles["size"].rstrip("pt"))
-            text_style["fontSize"] = {"magnitude": size_pt, "unit": "PT"}
-            fields.append("fontSize")
-        except ValueError:
-            pass
+    if not fields:
+        return None
 
-    if text_style:
-        return text_style, ",".join(fields)
-    return None
+    return text_style, ",".join(fields)
 
 
 def _full_run_text_style(styles: dict[str, str]) -> tuple[dict[str, Any], str]:
@@ -173,44 +140,66 @@ def diff_documents(
     # Calculate table indexes from pristine document
     table_indexes = calculate_table_indexes(pristine_doc.sections)
 
-    # Check if we need to use merged body insert
-    # This is necessary when we have mixed operations (deletes AND inserts) in the body
-    # because deletes change the document size, making insert indexes invalid
-    body_changes = [c for c in block_changes if "body" in str(c.container_path)]
+    # Separate body ContentBlock changes from structural changes
+    # Body ContentBlock changes may need merged approach for index stability
+    # Structural changes (table, footer, tab, header) are processed separately
+    body_content_changes = [
+        c
+        for c in block_changes
+        if "body" in str(c.container_path) and c.block_type == BlockType.CONTENT_BLOCK
+    ]
+    structural_changes = [
+        c
+        for c in block_changes
+        if c.block_type
+        in (BlockType.TABLE, BlockType.FOOTER, BlockType.TAB, BlockType.HEADER)
+        or "body" not in str(c.container_path)
+    ]
 
     has_body_deletes = any(
-        c.change_type in (ChangeType.DELETED, ChangeType.MODIFIED) for c in body_changes
+        c.change_type in (ChangeType.DELETED, ChangeType.MODIFIED)
+        for c in body_content_changes
     )
     has_body_inserts = any(
-        c.change_type in (ChangeType.ADDED, ChangeType.MODIFIED) for c in body_changes
+        c.change_type in (ChangeType.ADDED, ChangeType.MODIFIED)
+        for c in body_content_changes
     )
 
-    # If we have both deletes and inserts/modifies in the body, use merged approach
+    all_requests: list[dict[str, Any]] = []
+
+    # If we have both deletes and inserts/modifies in body ContentBlocks, use merged approach
     # This ensures index stability by doing a single delete + single insert
-    if has_body_deletes and has_body_inserts and len(body_changes) > 1:
+    if has_body_deletes and has_body_inserts and len(body_content_changes) > 1:
         # Merge all body content changes into a single insert
         merged_requests = _generate_merged_body_insert(
             block_changes, pristine_doc, current_doc, current_xml
         )
         if merged_requests:
-            return merged_requests
-        # Fall through to normal processing if merge fails
+            all_requests.extend(merged_requests)
+        # Continue to process structural changes below
 
-    # Generate requests from block changes
-    # Sort by pristine_start_index descending (bottom-up) to maintain index stability
-    sorted_changes = sorted(
-        block_changes,
-        key=lambda c: c.pristine_start_index,
-        reverse=True,
-    )
-
-    all_requests: list[dict[str, Any]] = []
-
-    for change in sorted_changes:
+    # Process structural changes (footer, tab, header, table) normally
+    for change in structural_changes:
         change_requests = _generate_requests_for_change(
             change, pristine_doc, current_doc, table_indexes
         )
         all_requests.extend(change_requests)
+
+    # If merged approach was NOT used (no body content requests yet), process all changes normally
+    if not all_requests:
+        # Generate requests from all block changes
+        # Sort by pristine_start_index descending (bottom-up) to maintain index stability
+        sorted_changes = sorted(
+            block_changes,
+            key=lambda c: c.pristine_start_index,
+            reverse=True,
+        )
+
+        for change in sorted_changes:
+            change_requests = _generate_requests_for_change(
+                change, pristine_doc, current_doc, table_indexes
+            )
+            all_requests.extend(change_requests)
 
     # Reorder requests: DELETEs first, then INSERTs, then UPDATEs
     # This ensures deletes don't affect inserted content
@@ -261,7 +250,11 @@ def diff_documents(
         if "insertSectionBreak" in req:
             return int(req["insertSectionBreak"]["location"].get("index", 0))
         if "insertTable" in req:
-            return int(req["insertTable"]["location"].get("index", 0))
+            table_req = req["insertTable"]
+            if "location" in table_req:
+                return int(table_req["location"].get("index", 0))
+            # endOfSegmentLocation means insert at end - use 0 for sorting
+            return 0
         return 0
 
     insert_requests.sort(key=get_insert_index, reverse=True)
@@ -1479,13 +1472,13 @@ def _generate_table_modify_requests(
             # If row_index is 0, insert above row 0 (insertBelow=False)
             if row_index == 0:
                 requests.append(
-                    _generate_insert_table_row_request(
+                    generate_insert_table_row_request(
                         table_start_index, 0, segment_id, insert_below=False
                     )
                 )
             else:
                 requests.append(
-                    _generate_insert_table_row_request(
+                    generate_insert_table_row_request(
                         table_start_index, row_index - 1, segment_id, insert_below=True
                     )
                 )
@@ -1493,7 +1486,7 @@ def _generate_table_modify_requests(
         elif row_change.change_type == ChangeType.DELETED:
             # Delete row
             requests.append(
-                _generate_delete_table_row_request(
+                generate_delete_table_row_request(
                     table_start_index, row_index, segment_id
                 )
             )
@@ -1514,7 +1507,7 @@ def _generate_table_modify_requests(
                     if col_index not in columns_added:
                         columns_added.add(col_index)
                         requests.append(
-                            _generate_insert_table_column_request(
+                            generate_insert_table_column_request(
                                 table_start_index, row_index, col_index, segment_id
                             )
                         )
@@ -1524,7 +1517,7 @@ def _generate_table_modify_requests(
                     if col_index not in columns_deleted:
                         columns_deleted.add(col_index)
                         requests.append(
-                            _generate_delete_table_column_request(
+                            generate_delete_table_column_request(
                                 table_start_index, row_index, col_index, segment_id
                             )
                         )
@@ -1626,117 +1619,12 @@ def _get_col_index_from_change(change: BlockChange) -> int:
     return 0
 
 
-def _generate_insert_table_row_request(
-    table_start_index: int,
-    row_index: int,
-    segment_id: str | None,
-    insert_below: bool = True,
-) -> dict[str, Any]:
-    """Generate insertTableRow request."""
-    cell_location: dict[str, Any] = {
-        "tableStartLocation": {"index": table_start_index},
-        "rowIndex": row_index,
-        "columnIndex": 0,  # Any valid column works
-    }
-    if segment_id:
-        cell_location["tableStartLocation"]["segmentId"] = segment_id
-
-    return {
-        "insertTableRow": {
-            "tableCellLocation": cell_location,
-            "insertBelow": insert_below,
-        }
-    }
-
-
-def _generate_delete_table_row_request(
-    table_start_index: int,
-    row_index: int,
-    segment_id: str | None,
-) -> dict[str, Any]:
-    """Generate deleteTableRow request."""
-    cell_location: dict[str, Any] = {
-        "tableStartLocation": {"index": table_start_index},
-        "rowIndex": row_index,
-        "columnIndex": 0,
-    }
-    if segment_id:
-        cell_location["tableStartLocation"]["segmentId"] = segment_id
-
-    return {
-        "deleteTableRow": {
-            "tableCellLocation": cell_location,
-        }
-    }
-
-
-def _generate_insert_table_column_request(
-    table_start_index: int,
-    row_index: int,
-    col_index: int,
-    segment_id: str | None,
-) -> dict[str, Any]:
-    """Generate insertTableColumn request.
-
-    The col_index is the NEW column's desired position. We need to convert this
-    to a valid existing column reference:
-    - For col_index > 0: insert to the right of column col_index - 1
-    - For col_index == 0: insert to the left of column 0
-    """
-    if col_index == 0:
-        # Insert as first column - insert to left of column 0
-        cell_location: dict[str, Any] = {
-            "tableStartLocation": {"index": table_start_index},
-            "rowIndex": row_index,
-            "columnIndex": 0,
-        }
-        if segment_id:
-            cell_location["tableStartLocation"]["segmentId"] = segment_id
-
-        return {
-            "insertTableColumn": {
-                "tableCellLocation": cell_location,
-                "insertRight": False,
-            }
-        }
-    else:
-        # Insert to the right of the previous column
-        cell_location = {
-            "tableStartLocation": {"index": table_start_index},
-            "rowIndex": row_index,
-            "columnIndex": col_index - 1,
-        }
-        if segment_id:
-            cell_location["tableStartLocation"]["segmentId"] = segment_id
-
-        return {
-            "insertTableColumn": {
-                "tableCellLocation": cell_location,
-                "insertRight": True,
-            }
-        }
-
-
-def _generate_delete_table_column_request(
-    table_start_index: int,
-    row_index: int,
-    col_index: int,
-    segment_id: str | None,
-) -> dict[str, Any]:
-    """Generate deleteTableColumn request."""
-    cell_location: dict[str, Any] = {
-        "tableStartLocation": {"index": table_start_index},
-        "rowIndex": row_index,
-        "columnIndex": col_index,
-    }
-    if segment_id:
-        cell_location["tableStartLocation"]["segmentId"] = segment_id
-
-    return {
-        "deleteTableColumn": {
-            "tableCellLocation": cell_location,
-        }
-    }
+# Table request generation functions are now delegated to request_generators/table.py
+# The following are imported at the top of this file:
+# - generate_insert_table_row_request
+# - generate_delete_table_row_request
+# - generate_insert_table_column_request
+# - generate_delete_table_column_request
 
 
 # --- Request generation helpers (kept from original) ---
