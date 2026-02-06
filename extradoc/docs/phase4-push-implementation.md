@@ -9,6 +9,7 @@ Core push functionality is working. Verified against real Google Docs:
 - Text styling (bold, italic): ✅ Working
 - Bullet lists (including nested): ✅ Working
 - Table cell content: ✅ Working
+- Table cell borders and backgrounds: ✅ Working
 - Header/footer content: ✅ Working
 
 ## Overview
@@ -181,8 +182,34 @@ Tested against document `15dNMijQYl3juFdu8LqLvJoh3K10DREbtUm82489hgAs`:
 
 ### Additional Style Support
 - Table column width styling
-- Table border styling
 - Named style definitions (custom heading styles)
+
+### Table Cell Border Styling ✅ COMPLETE
+
+Added support for table cell borders and backgrounds:
+
+**Supported attributes on `<td>` elements:**
+- `bg` - Background color (e.g., `bg="#FFFFCC"`)
+- `borderTop`, `borderBottom`, `borderLeft`, `borderRight` - Border styling
+
+**Border format:** `width,#color,dashStyle`
+- Example: `borderTop="2,#FF0000,SOLID"` (2pt red solid border)
+- Dash styles: SOLID, DASHED, DOTTED
+
+**Example:**
+```xml
+<table id="test">
+  <tr id="row1">
+    <td id="c1" borderTop="2,#FF0000,SOLID" bg="#FFFFCC"><p>Header 1</p></td>
+    <td id="c2" borderTop="2,#0000FF,SOLID" bg="#CCFFCC"><p>Header 2</p></td>
+  </tr>
+</table>
+```
+
+**Implementation notes:**
+- Cell changes within a row are processed right-to-left to prevent index corruption
+- Border styling uses `updateTableCellStyle` API request
+- Pull-side extraction not yet implemented (borders not preserved in XML after pull)
 
 ## Architecture
 
