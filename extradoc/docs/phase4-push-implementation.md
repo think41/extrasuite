@@ -4,13 +4,32 @@
 
 **Last Updated:** 2026-02-06
 
-Core push functionality is working. Verified against real Google Docs:
-- Body content (add/modify/delete): ✅ Working
-- Text styling (bold, italic): ✅ Working
-- Bullet lists (including nested): ✅ Working
-- Table cell content: ✅ Working
-- Table cell borders/backgrounds: ✅ Working (class-based styles in styles.xml)
-- Header/footer content: ✅ Working
+### Working Features (Verified against real Google Docs)
+
+| Feature | Status | Notes |
+|---------|--------|-------|
+| Body content (add/modify/delete) | ✅ Working | |
+| Text styling (bold, italic, etc.) | ✅ Working | |
+| Bullet lists (including nested) | ✅ Working | Tabs processed for nesting |
+| Table cell content | ✅ Working | |
+| Table cell borders/backgrounds | ✅ Working | Class-based styles in styles.xml |
+| Table column widths | ✅ Working | `<col>` elements for fixed widths |
+| Table row add/delete | ✅ Working | |
+| Header/footer content | ✅ Working | |
+| Footnotes (pull) | ✅ Working | Inline model |
+
+### Partially Working
+| Feature | Status | Notes |
+|---------|--------|-------|
+| Footnotes (push) | 🔄 Needs testing | Code exists, needs end-to-end verification |
+
+### Not Implemented (API Limitations)
+| Feature | Status | Notes |
+|---------|--------|-------|
+| Autotext (page numbers) | ❌ | API doesn't support insertion |
+| Images | ❌ | Requires Drive upload flow |
+| Person mentions | ❌ | Requires verified email |
+| Horizontal rules | ⚠️ Read-only | Cannot add/remove |
 
 ## Overview
 
@@ -174,19 +193,33 @@ Tested against document `15dNMijQYl3juFdu8LqLvJoh3K10DREbtUm82489hgAs`:
 
 ## What Is Pending
 
-### Special Elements (Low Priority)
-- **Footnotes with precise positioning** - Partially implemented:
-  - `_generate_special_element_request` now handles both `footnote` and `footnoteref` with precise location
-  - Two-batch workflow in client.py correctly handles footnote ID mapping
-  - Remaining issue: block_diff may trigger full content replacement instead of incremental changes when footnotes are added inline
-  - Need testing with simpler test cases to verify inline footnote creation
-- **Autotext (page numbers)** - Cannot insert via batchUpdate API, use placeholder `[PAGE]`
-- **Images** - Requires separate upload flow
-- **Person mentions** - Requires specific personProperties
+### Footnotes (Partially Implemented)
+**Status:** Pull working, push needs testing
 
-### Additional Style Support
-- ~~Table column width styling~~ ✅ COMPLETE (see below)
-- Named style definitions (custom heading styles)
+- ✅ **Pull-side:** Inline footnote model working - `<footnote>` tag appears at reference location with content inside
+- ✅ **Two-batch workflow:** client.py handles footnote ID mapping for structural operations
+- 🔄 **Push-side:** `_generate_special_element_request` handles `footnote` and `footnoteref`, but needs end-to-end testing
+- ❓ **Open issue:** block_diff may trigger full content replacement instead of incremental changes when footnotes are added inline
+
+**Next steps:**
+1. Test adding a new footnote inline and verify `createFootnote` request generated
+2. Test modifying footnote content and verify correct requests
+3. Test deleting a footnote
+
+### Special Elements (API Limitations)
+These cannot be fully implemented due to Google Docs API limitations:
+
+| Element | Status | Notes |
+|---------|--------|-------|
+| **Autotext (page numbers)** | ❌ Not supported | Cannot insert via batchUpdate API. Workaround: use placeholder `[PAGE]` |
+| **Images** | ❌ Not implemented | Requires separate upload to Drive, then `insertInlineImage` |
+| **Person mentions** | ❌ Not implemented | Requires specific `personProperties` with verified email |
+| **Horizontal rules** | ⚠️ Read-only | Cannot add/remove via API, only modify adjacent content |
+
+### Additional Style Support (Low Priority)
+- **Named style definitions** - Custom heading styles beyond H1-H6
+- **Paragraph borders** - Supported in style_converter but not exposed in XML format
+- **Text highlight colors** - Supported via `bg` attribute on `<span>`, needs testing
 
 ### Table Column Width Styling ✅ COMPLETE
 
@@ -355,6 +388,7 @@ Use this document for testing: https://docs.google.com/document/d/15dNMijQYl3juF
 | New tabs with content | Requires two-batch (create, then populate) | Documented behavior |
 | Horizontal rules | Read-only in Google Docs API | Cannot add/remove, only modify adjacent content |
 | Images | Requires separate upload to Drive | Not yet implemented |
+| Footnote index calculation | Inline footnotes affect index calculation | Use raw API indexes from `.raw/document.json` |
 
 ## Files Summary
 
