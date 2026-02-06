@@ -495,6 +495,11 @@ def _emit_table(
     text_styles: dict[str, dict[str, str]] | None,
 ) -> list[dict[str, Any]]:
     """Emit requests for a TABLE change."""
+    # Column add/delete changes are represented as child_changes of TABLE when present
+    column_changes = [
+        c for c in change.child_changes if c.block_type == BlockType.TABLE_COLUMN
+    ]
+
     if change.change_type == ChangeType.ADDED:
         if change.after_xml:
             insert_index = (
@@ -512,7 +517,12 @@ def _emit_table(
 
     elif change.change_type == ChangeType.MODIFIED:
         return _emit_table_modify(
-            change, segment_id, current_table_indexes, cell_styles, text_styles
+            change,
+            segment_id,
+            current_table_indexes,
+            cell_styles,
+            text_styles,
+            column_changes=column_changes,
         )
 
     return []
@@ -524,6 +534,7 @@ def _emit_table_modify(
     current_table_indexes: dict[str, int],
     cell_styles: dict[str, dict[str, str]] | None,
     text_styles: dict[str, dict[str, str]] | None = None,
+    column_changes: list[BlockChange] | None = None,
 ) -> list[dict[str, Any]]:
     """Emit requests for a modified table using backwards cell walk.
 
@@ -553,8 +564,33 @@ def _emit_table_modify(
 
     # Track column operations to deduplicate
     columns_deleted: set[int] = set()
-    deferred_col_adds_by_row: dict[int, list[dict[str, Any]]] = {}
-    deferred_col_added_set: dict[int, set[int]] = {}
+    columns_added: set[int] = set()
+    deferred_col_adds: list[tuple[int, dict[str, Any]]] = []
+
+    # Apply column add/delete first based on column_changes
+    if column_changes:
+        for col_change in column_changes:
+            col_idx = _get_col_index_from_change(col_change)
+            if col_change.change_type == ChangeType.ADDED and col_idx not in columns_added:
+                columns_added.add(col_idx)
+                deferred_col_adds.append(
+                    (
+                        col_idx,
+                        generate_insert_table_column_request(
+                            table_start, 0, col_idx, segment_id
+                        ),
+                    )
+                )
+            elif (
+                col_change.change_type == ChangeType.DELETED
+                and col_idx not in columns_deleted
+            ):
+                columns_deleted.add(col_idx)
+                requests.append(
+                    generate_delete_table_column_request(
+                        table_start, 0, col_idx, segment_id
+                    )
+                )
 
     # Walk rows backwards
     row_changes = [
@@ -618,13 +654,15 @@ def _emit_table_modify(
                 col_index = _get_col_index_from_change(cell_change)
 
                 if cell_change.change_type == ChangeType.ADDED:
-                    row_bucket = deferred_col_adds_by_row.setdefault(row_index, [])
-                    added_cols = deferred_col_added_set.setdefault(row_index, set())
-                    if col_index not in added_cols:
-                        added_cols.add(col_index)
-                        row_bucket.append(
-                            generate_insert_table_column_request(
-                                table_start, row_index, col_index, segment_id
+                    if col_index not in columns_added:
+                        columns_added.add(col_index)
+                        # Anchor insert to this row; Docs insertTableColumn works table-wide.
+                        deferred_col_adds.append(
+                            (
+                                col_index,
+                                generate_insert_table_column_request(
+                                    table_start, row_index, col_index, segment_id
+                                ),
                             )
                         )
 
@@ -685,15 +723,8 @@ def _emit_table_modify(
                             requests.append(cell_style_req)
 
     # Apply deferred inserts last to avoid index shifts
-    for _row_idx, col_reqs in sorted(
-        deferred_col_adds_by_row.items(), key=lambda item: item[0], reverse=True
-    ):
-        for req in sorted(
-            col_reqs,
-            key=lambda r: r["insertTableColumn"]["tableCellLocation"]["columnIndex"],
-            reverse=True,
-        ):
-            requests.append(req)
+    for _, req in sorted(deferred_col_adds, key=lambda item: item[0], reverse=True):
+        requests.append(req)
 
     for _, req in sorted(deferred_row_adds, key=lambda item: item[0], reverse=True):
         requests.append(req)

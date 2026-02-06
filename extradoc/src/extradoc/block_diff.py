@@ -577,6 +577,61 @@ class BlockDiffDetector:
         length = max(1, len(content_text))
         return length
 
+    def _diff_table_columns(
+        self, pristine_table: Block, current_table: Block, table_path: list[str]
+    ) -> tuple[list[tuple[int | None, int | None]], list[BlockChange]]:
+        """Detect column add/delete via column-wise hashes."""
+        changes: list[BlockChange] = []
+
+        def column_keys(table_block: Block) -> list[str]:
+            cols: dict[int, list[str]] = {}
+            for row in table_block.children:
+                for idx, cell in enumerate(row.children):
+                    cols.setdefault(idx, []).append(cell.content_hash())
+            max_col = max(cols.keys(), default=-1)
+            keys: list[str] = []
+            for c in range(max_col + 1):
+                joined = "||".join(cols.get(c, [""]))
+                keys.append(joined)
+            return keys
+
+        p_keys = column_keys(pristine_table)
+        c_keys = column_keys(current_table)
+        if len(p_keys) == len(c_keys):
+            alignment = [(i, i) for i in range(len(p_keys))]
+        else:
+            alignment = self._lcs_align(p_keys, c_keys)
+
+        for p_idx, c_idx in alignment:
+            if p_idx is None and c_idx is not None:
+                # Column added
+                changes.append(
+                    BlockChange(
+                        change_type=ChangeType.ADDED,
+                        block_type=BlockType.TABLE_COLUMN,
+                        block_id=str(c_idx),
+                        container_path=[*table_path, f"col_idx:{c_idx}"],
+                        pristine_start_index=0,
+                        pristine_end_index=0,
+                        segment_end_index=pristine_table.end_index,
+                    )
+                )
+            elif p_idx is not None and c_idx is None:
+                # Column deleted
+                changes.append(
+                    BlockChange(
+                        change_type=ChangeType.DELETED,
+                        block_type=BlockType.TABLE_COLUMN,
+                        block_id=str(p_idx),
+                        container_path=[*table_path, f"col_idx:{p_idx}"],
+                        pristine_start_index=pristine_table.start_index,
+                        pristine_end_index=pristine_table.end_index,
+                        segment_end_index=pristine_table.end_index,
+                    )
+                )
+
+        return alignment, changes
+
     def _diff_blocks(
         self,
         pristine: Block,
@@ -1061,23 +1116,32 @@ class BlockDiffDetector:
         pristine_rows = pristine_table.children  # List of TABLE_ROW blocks
         current_rows = current_table.children
 
-        # Match rows by position
-        max_rows = max(len(pristine_rows), len(current_rows))
+        # Column-level diff (table-wide)
+        col_alignment, col_changes = self._diff_table_columns(pristine_table, current_table, table_path)
+        changes.extend(col_changes)
 
-        for row_idx in range(max_rows):
-            p_row = pristine_rows[row_idx] if row_idx < len(pristine_rows) else None
-            c_row = current_rows[row_idx] if row_idx < len(current_rows) else None
+        if len(pristine_rows) == len(current_rows):
+            alignment = [(i, i) for i in range(len(pristine_rows))]
+        else:
+            # Align rows using LCS on content hashes (stable per content, tolerant of position shifts)
+            alignment = self._lcs_align(
+                [r.content_hash() for r in pristine_rows],
+                [r.content_hash() for r in current_rows],
+            )
 
-            # Include row index in path for request generation
-            row_path = [*table_path, f"row_idx:{row_idx}"]
+        last_pristine_end = pristine_table.start_index + 1
+
+        for p_idx, c_idx in alignment:
+            p_row = pristine_rows[p_idx] if p_idx is not None else None
+            c_row = current_rows[c_idx] if c_idx is not None else None
+
+            # Prefer current row index when present for path readability; fall back to pristine index
+            row_idx_for_path = c_idx if c_idx is not None else p_idx if p_idx is not None else 0
+            row_path = [*table_path, f"row_idx:{row_idx_for_path}"]
 
             if p_row is None and c_row is not None:
-                # Row added
-                anchor_start = (
-                    pristine_rows[row_idx - 1].end_index
-                    if row_idx > 0 and row_idx - 1 < len(pristine_rows)
-                    else pristine_table.start_index + 1
-                )
+                # Row added; anchor after previous matched pristine row or table start
+                anchor_start = last_pristine_end
                 changes.append(
                     BlockChange(
                         change_type=ChangeType.ADDED,
@@ -1110,7 +1174,7 @@ class BlockDiffDetector:
                 content_differs = p_row.xml_content != c_row.xml_content
 
                 # Always check for cell-level changes
-                cell_changes = self._diff_row_cells(p_row, c_row, row_path)
+                cell_changes = self._diff_row_cells(p_row, c_row, row_path, col_alignment)
 
                 if id_differs or content_differs or cell_changes:
                     # Row was modified
@@ -1128,6 +1192,8 @@ class BlockDiffDetector:
                             segment_end_index=pristine_table.end_index,
                         )
                     )
+            if p_row is not None:
+                last_pristine_end = p_row.end_index
 
         return changes
 
@@ -1136,6 +1202,7 @@ class BlockDiffDetector:
         pristine_row: Block,
         current_row: Block,
         table_path: list[str],
+        col_alignment: list[tuple[int | None, int | None]] | None = None,
     ) -> list[BlockChange]:
         """Diff cells within a row using ID and content comparison.
 
@@ -1150,14 +1217,17 @@ class BlockDiffDetector:
         pristine_cells = pristine_row.children  # List of TABLE_CELL blocks
         current_cells = current_row.children
 
-        # Match cells by position (column index)
-        max_cells = max(len(pristine_cells), len(current_cells))
+        # If column alignment provided, use it; otherwise positional
+        if col_alignment is None:
+            max_cells = max(len(pristine_cells), len(current_cells))
+            col_alignment = [(i if i < len(pristine_cells) else None, i if i < len(current_cells) else None) for i in range(max_cells)]
 
-        for col_idx in range(max_cells):
-            p_cell = pristine_cells[col_idx] if col_idx < len(pristine_cells) else None
-            c_cell = current_cells[col_idx] if col_idx < len(current_cells) else None
+        for p_idx, c_idx in col_alignment:
+            p_cell = pristine_cells[p_idx] if p_idx is not None and p_idx < len(pristine_cells) else None
+            c_cell = current_cells[c_idx] if c_idx is not None and c_idx < len(current_cells) else None
 
             # Include col_idx in path for column operations
+            col_idx = c_idx if c_idx is not None else p_idx if p_idx is not None else 0
             cell_path = [*row_path, f"col_idx:{col_idx}"]
 
             if p_cell is None and c_cell is not None:
@@ -1389,6 +1459,49 @@ class BlockDiffDetector:
             return (p_idx, c_idx)
 
         alignment.sort(key=sort_key)
+
+        return alignment
+
+    # --- LCS utilities for table alignment ---
+
+    def _lcs_align(
+        self, a: list[str], b: list[str]
+    ) -> list[tuple[int | None, int | None]]:
+        """Return alignment based on LCS of two key sequences.
+
+        Produces ordered pairs covering additions/deletions:
+        - (i, j) matched items
+        - (i, None) deletions
+        - (None, j) additions
+        """
+        m, n = len(a), len(b)
+        dp = [[0] * (n + 1) for _ in range(m + 1)]
+        for i in range(m - 1, -1, -1):
+            for j in range(n - 1, -1, -1):
+                if a[i] == b[j]:
+                    dp[i][j] = dp[i + 1][j + 1] + 1
+                else:
+                    dp[i][j] = max(dp[i + 1][j], dp[i][j + 1])
+
+        i = j = 0
+        alignment: list[tuple[int | None, int | None]] = []
+        while i < m and j < n:
+            if a[i] == b[j]:
+                alignment.append((i, j))
+                i += 1
+                j += 1
+            elif dp[i + 1][j] >= dp[i][j + 1]:
+                alignment.append((i, None))
+                i += 1
+            else:
+                alignment.append((None, j))
+                j += 1
+        while i < m:
+            alignment.append((i, None))
+            i += 1
+        while j < n:
+            alignment.append((None, j))
+            j += 1
 
         return alignment
 
