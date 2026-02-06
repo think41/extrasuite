@@ -553,8 +553,10 @@ def _generate_special_element_request(
             }
         }
 
-    elif element_type == "footnoteref":
+    elif element_type in ("footnote", "footnoteref"):
         # Footnote creation - returns a request with placeholder ID
+        # Both "footnote" (inline with content) and "footnoteref" (reference only) use the same request
+        # For "footnote", the content will be populated in a second batch after the footnote is created
         placeholder = special.attributes.get("id", "")
         req: dict[str, Any] = {
             "createFootnote": {
