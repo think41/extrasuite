@@ -39,6 +39,7 @@ from .request_generators.table import (
     generate_insert_table_row_request,
 )
 from .style_converter import (
+    PARAGRAPH_STYLE_PROPS,
     TABLE_CELL_STYLE_PROPS,
     TEXT_STYLE_PROPS,
     build_table_cell_style_request,
@@ -1007,6 +1008,8 @@ class ParsedContent:
         plain_text: Text content with newlines between paragraphs (no special elements)
         special_elements: List of (offset, element_type, attributes) for special elements
         paragraph_styles: List of (start_offset, end_offset, named_style) for headings
+        paragraph_props: List of (start_offset, end_offset, props_dict) for paragraph style attrs
+            (align, spaceAbove, spaceBelow, borderTop, borderBottom, etc.)
         bullets: List of (start_offset, end_offset, bullet_type, level) for list items
         text_styles: List of (start_offset, end_offset, styles_dict) for inline formatting
     """
@@ -1014,6 +1017,7 @@ class ParsedContent:
     plain_text: str
     special_elements: list[tuple[int, str, dict[str, str]]]
     paragraph_styles: list[tuple[int, int, str]]
+    paragraph_props: list[tuple[int, int, dict[str, str]]]
     bullets: list[tuple[int, int, str, int]]
     text_styles: list[tuple[int, int, dict[str, str]]]
 
@@ -1041,9 +1045,30 @@ def _parse_content_block_xml(
     wrapped = f"<root>{xml_content}</root>"
     root = ET.fromstring(wrapped)
 
+    # Paragraph style attributes we support (from PARAGRAPH_STYLE_PROPS)
+    para_style_attrs = {
+        "align",
+        "lineSpacing",
+        "spaceAbove",
+        "spaceBelow",
+        "indentLeft",
+        "indentRight",
+        "indentFirst",
+        "keepTogether",
+        "keepNext",
+        "avoidWidow",
+        "direction",
+        "bgColor",
+        "borderTop",
+        "borderBottom",
+        "borderLeft",
+        "borderRight",
+    }
+
     plain_text_parts: list[str] = []
     special_elements: list[tuple[int, str, dict[str, str]]] = []
     paragraph_styles: list[tuple[int, int, str]] = []
+    paragraph_props: list[tuple[int, int, dict[str, str]]] = []
     bullets: list[tuple[int, int, str, int]] = []
     text_styles: list[tuple[int, int, dict[str, str]]] = []
 
@@ -1095,6 +1120,13 @@ def _parse_content_block_xml(
         if named_style != "NORMAL_TEXT":
             paragraph_styles.append((para_start, para_end, named_style))
 
+        # Extract paragraph style attributes (align, spaceAbove, borderTop, etc.)
+        para_props_dict = {
+            k: v for k, v in para_elem.attrib.items() if k in para_style_attrs
+        }
+        if para_props_dict:
+            paragraph_props.append((para_start, para_end, para_props_dict))
+
         # Track bullets
         if bullet_type:
             bullets.append((para_start, para_end, bullet_type, bullet_level))
@@ -1111,6 +1143,7 @@ def _parse_content_block_xml(
         plain_text=plain_text,
         special_elements=special_elements,
         paragraph_styles=paragraph_styles,
+        paragraph_props=paragraph_props,
         bullets=bullets,
         text_styles=text_styles,
     )
@@ -1306,6 +1339,7 @@ def _generate_content_insert_requests(
             plain_text=parsed.plain_text[:-1],
             special_elements=parsed.special_elements,
             paragraph_styles=parsed.paragraph_styles,
+            paragraph_props=parsed.paragraph_props,
             bullets=parsed.bullets,
             text_styles=parsed.text_styles,
         )
@@ -1399,6 +1433,20 @@ def _generate_content_insert_requests(
                 }
             }
         )
+
+    # 3.5 Apply paragraph properties (align, spaceAbove, borderTop, etc.)
+    for start, end, props in parsed.paragraph_props:
+        para_style, para_fields = convert_styles(props, PARAGRAPH_STYLE_PROPS)
+        if para_style and para_fields:
+            requests.append(
+                {
+                    "updateParagraphStyle": {
+                        "range": make_range(start, end),
+                        "paragraphStyle": para_style,
+                        "fields": ",".join(para_fields),
+                    }
+                }
+            )
 
     # 4. Apply bullets - consolidate consecutive bullets of same type into single request
     # This is required because createParagraphBullets removes leading tabs, shifting indices
