@@ -24,7 +24,10 @@ Instead of working with complex API responses, agents interact with clean XML fi
 
 - `docs/extradoc-spec.md` - Complete XML format specification
 - `docs/diff-implementation-plan.md` - Diff implementation plan and status
-- `docs/googledocs/` - Google Docs API reference (120+ pages)
+- `docs/googledocs/` - Google Docs API reference (120+ pages) - **use this instead of web fetching**
+  - `docs/googledocs/api/` - Individual API request/response types (CreateParagraphBulletsRequest, etc.)
+  - `docs/googledocs/lists.md` - Working with bullet/numbered lists
+  - `docs/googledocs/rules-behavior.md` - Index behavior rules for batchUpdate
 
 ## Key Gotchas
 
