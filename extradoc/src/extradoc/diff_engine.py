@@ -353,11 +353,34 @@ def diff_documents(
         for c in body_content_changes
     )
 
+    # Check if there are any tables in the body (either in changes or in the document)
+    # The merged approach doesn't handle tables correctly, so we must skip it
+    has_body_tables = any(
+        c.block_type == BlockType.TABLE and "body" in str(c.container_path)
+        for c in block_changes
+    )
+    # Also check if pristine body has tables (unchanged tables won't appear in changes)
+    pristine_body = next(
+        (s for s in pristine_doc.sections if s.section_type == "body"), None
+    )
+    if pristine_body:
+        from extradoc.desugar import Table
+
+        has_body_tables = has_body_tables or any(
+            isinstance(elem, Table) for elem in pristine_body.content
+        )
+
     all_requests: list[dict[str, Any]] = []
 
     # If we have both deletes and inserts/modifies in body ContentBlocks, use merged approach
     # This ensures index stability by doing a single delete + single insert
-    if has_body_deletes and has_body_inserts and len(body_content_changes) > 1:
+    # IMPORTANT: Skip merged approach if there are tables - it doesn't handle them correctly
+    if (
+        has_body_deletes
+        and has_body_inserts
+        and len(body_content_changes) > 1
+        and not has_body_tables
+    ):
         # Merge all body content changes into a single insert
         merged_requests = _generate_merged_body_insert(
             block_changes, pristine_doc, current_doc, current_xml, text_styles
@@ -381,7 +404,10 @@ def diff_documents(
 
     # Process body content changes if not handled by merged approach
     merged_body_used = (
-        has_body_deletes and has_body_inserts and len(body_content_changes) > 1
+        has_body_deletes
+        and has_body_inserts
+        and len(body_content_changes) > 1
+        and not has_body_tables
     )
     if not merged_body_used and body_content_changes:
         # Sort by pristine_start_index descending (bottom-up) for index stability
@@ -1165,6 +1191,57 @@ def _parse_content_block_xml(
         para_props_dict = {
             k: v for k, v in para_elem.attrib.items() if k in para_style_attrs
         }
+
+        # Resolve class attribute to style properties from styles.xml
+        class_name = para_elem.get("class")
+        if class_name and style_defs and class_name in style_defs:
+            class_props = style_defs[class_name]
+
+            # Map style.xml property names to para_style_attrs names
+            style_to_para_mapping = {
+                "alignment": "align",
+            }
+
+            # Text-level properties that can apply to the whole paragraph
+            text_style_props = {
+                "bg",
+                "color",
+                "font",
+                "size",
+                "bold",
+                "italic",
+                "underline",
+                "strikethrough",
+            }
+
+            para_class_styles: dict[str, str] = {}
+            text_class_styles: dict[str, str] = {}
+
+            for prop, value in class_props.items():
+                # Map property name if needed
+                mapped_prop = style_to_para_mapping.get(prop, prop)
+
+                if mapped_prop in para_style_attrs:
+                    # Paragraph-level property
+                    if mapped_prop not in para_props_dict:  # Don't override explicit
+                        para_class_styles[mapped_prop] = value
+                elif prop in text_style_props:
+                    # Text-level property - will be applied as text style
+                    text_class_styles[prop] = value
+
+            # Merge paragraph styles from class
+            para_props_dict.update(para_class_styles)
+
+            # Add text style covering the whole paragraph content
+            if text_class_styles and para_text:
+                # Calculate actual text range (excluding tabs for nested bullets)
+                text_start = para_start
+                if bullet_level > 0:
+                    text_start += bullet_level  # Skip tab characters
+                text_end = para_start + utf16_len(para_text)
+                if text_start < text_end:
+                    text_styles.append((text_start, text_end, text_class_styles))
+
         if para_props_dict:
             paragraph_props.append((para_start, para_end, para_props_dict))
 

@@ -10,51 +10,37 @@ This document tracks bugs, limitations, and implementation gaps discovered durin
 
 | Category | Count |
 |----------|-------|
-| Critical Bugs (Open) | 1 |
-| Major Bugs (Open) | 4 |
-| Fixed Bugs | 5 |
-| API Limitations | 4 |
+| Critical Bugs (Open) | 0 |
+| Major Bugs (Open) | 3 |
+| Fixed Bugs | 8 |
+| API Limitations | 5 |
 
 ---
 
-## Critical Bugs (Open)
+## API Limitations (Cannot Fix)
 
-### 1. Checkbox List Type Not Working
+These are limitations of the Google Docs API, not bugs in extradoc.
 
-**Status:** 🔴 Open
-**Severity:** Critical - Feature doesn't work
-**Location:** `src/extradoc/diff_engine.py`, `src/extradoc/xml_converter.py`
+### Checkbox Lists Do Not Work
+
+**Status:** ❌ API Limitation
+**Severity:** Feature cannot work as designed
 
 **Problem:** `type="checkbox"` list items become regular bullet items instead of checkboxes.
 
-**Analysis:**
-- The preset `BULLET_CHECKBOX` is valid according to Google Docs API
-- Issue may be in how checkboxes are detected on pull (relies on Unicode glyphs `\u2610`, `\u2611`, `\u2612`)
-- Need to verify if the API actually creates checkboxes with this preset
+**Investigation Results:**
+- The preset `BULLET_CHECKBOX` is valid and accepted by the API
+- However, the API creates lists with `glyphType: "GLYPH_TYPE_UNSPECIFIED"` and no `glyphSymbol`
+- Real checkboxes in Google Docs use a different internal mechanism not exposed via the API
+- Community reports confirm: checkbox state cannot be detected or set via the API
+
+**Workaround:** Use Unicode checkbox symbols manually (☐ ☑ ☒) in text content.
 
 ---
 
 ## Major Bugs (Open)
 
-### 2. Custom Styles Not Applied
-
-**Status:** 🟠 Open
-**Severity:** Major - Styling doesn't work
-**Location:** Style application in diff engine
-
-**Problem:** Custom styles defined in `styles.xml` are not being applied to elements.
-
-**Affected Features:**
-- `<p class="center">` - paragraph alignment not applied
-- `<span class="highlight">` - text background not applied
-- Paragraph spacing/indentation not applied
-- Table cell styling not applied
-
-**Investigation Needed:** Check if `_generate_content_insert_requests()` reads and applies styles from `styles.xml`.
-
----
-
-### 3. List Items Merged With Headings
+### 1. List Items Merged With Headings
 
 **Status:** 🟠 Open
 **Severity:** Major - Document structure corrupted
@@ -77,11 +63,11 @@ This document tracks bugs, limitations, and implementation gaps discovered durin
 
 ---
 
-### 4. Base Style Corruption
+### 2. Base Style Corruption on Pull
 
 **Status:** 🟠 Open
 **Severity:** Major - Document styling corrupted
-**Location:** Style processing/factorization
+**Location:** `src/extradoc/style_factorizer.py`
 
 **Problem:** After push, the `_base` style in `styles.xml` gets corrupted with unexpected properties.
 
@@ -96,11 +82,11 @@ This document tracks bugs, limitations, and implementation gaps discovered durin
        italic="1" size="10pt" strikethrough="1" underline="1"/>
 ```
 
-**Investigation Needed:** Check style factorization logic on pull after push.
+**Root Cause:** Style factorization on pull assigns styled paragraph properties to the base style.
 
 ---
 
-### 5. Nested List Levels Incorrect
+### 3. Nested List Levels Incorrect
 
 **Status:** 🟠 Open
 **Severity:** Major - Feature partially broken
@@ -128,10 +114,9 @@ This document tracks bugs, limitations, and implementation gaps discovered durin
 
 ## Not Implemented (API Limitations)
 
-These are limitations of the Google Docs API, not bugs in extradoc.
-
 | Feature | Status | Notes |
 |---------|--------|-------|
+| Checkbox lists | ❌ API limitation | BULLET_CHECKBOX preset doesn't create real checkboxes |
 | Autotext (page numbers) | ❌ Cannot implement | API doesn't support insertion |
 | Images | ❌ Not implemented | Requires separate Drive upload flow |
 | Person mentions | ❌ Cannot implement | Requires verified email + special API |
@@ -143,6 +128,7 @@ These are limitations of the Google Docs API, not bugs in extradoc.
 
 | Feature | Limitation | Workaround |
 |---------|------------|------------|
+| Checkbox lists | API creates bullets, not checkboxes | Use Unicode symbols ☐ ☑ ☒ |
 | Autotext (page numbers) | Cannot insert via batchUpdate | Use placeholder `[PAGE]` |
 | Person mentions | Requires specific personProperties | Insert as styled text |
 | New tabs with content | Requires two-batch (create, then populate) | Documented behavior |
@@ -172,10 +158,66 @@ These are limitations of the Google Docs API, not bugs in extradoc.
 | Roman lists | ✅ | `type="roman"` (fixed) |
 | Page breaks | ✅ | `<pagebreak/>` (fixed) |
 | Header/footer editing | ✅ | Modify existing headers/footers (fixed) |
+| Custom paragraph styles | ✅ | `<p class="...">` with alignment, spacing (fixed) |
+| Custom text styles | ✅ | `<p class="...">` with bg, color, font (fixed) |
+| Tables preserved on edit | ✅ | Adding content around tables no longer destroys them |
 
 ---
 
 ## Fixed Bugs (2026-02-06)
+
+### Fixed: Table Content Destroyed During Body Edits
+
+**Location:** `src/extradoc/diff_engine.py`
+
+**Problem:** When adding content to a document body that contains tables, the entire body was replaced with plain text, destroying the table structure.
+
+**Root Cause:** The `_generate_merged_body_insert()` function was triggered when there were multiple body content changes. This function:
+1. Deleted all body content (including tables)
+2. Re-inserted body content via `_generate_content_insert_requests()` which doesn't handle tables
+3. Tables were serialized as plain text in the insert
+
+**Fix:** Added check to skip merged approach when the body contains tables:
+```python
+has_body_tables = any(
+    c.block_type == BlockType.TABLE and "body" in str(c.container_path)
+    for c in block_changes
+)
+# Also check pristine body for unchanged tables
+if pristine_body:
+    has_body_tables = has_body_tables or any(
+        isinstance(elem, Table) for elem in pristine_body.content
+    )
+
+# Skip merged approach if tables present
+if has_body_deletes and has_body_inserts and len(body_content_changes) > 1 and not has_body_tables:
+    # Use merged approach only when safe
+```
+
+---
+
+### Fixed: Custom Styles Not Applied on Push
+
+**Location:** `src/extradoc/diff_engine.py`, function `_parse_content_block_xml()`
+
+**Problem:** Custom styles defined in `styles.xml` were not applied when using `<p class="...">`.
+
+**Root Cause:** The `_parse_content_block_xml()` function only extracted explicit paragraph attributes, but did not resolve `class` attributes to style properties from `styles.xml`.
+
+**Fix:** Added class attribute resolution in paragraph parsing:
+```python
+class_name = para_elem.get("class")
+if class_name and style_defs and class_name in style_defs:
+    class_props = style_defs[class_name]
+    # Map property names (alignment -> align)
+    # Separate paragraph-level props (alignment) from text-level props (bg, color)
+    # Apply paragraph props via updateParagraphStyle
+    # Apply text props via updateTextStyle covering whole paragraph
+```
+
+Now `<p class="center">` applies alignment and `<p class="highlight">` applies background color.
+
+---
 
 ### Fixed: Table Content Not Inserted Into Cells
 
@@ -238,11 +280,9 @@ if block.block_type in (BlockType.HEADER, BlockType.FOOTER):
 
 | Priority | Issue | Status |
 |----------|-------|--------|
-| 1 | Checkbox list type | 🔴 Open - Needs investigation |
-| 2 | Custom style application | 🟠 Open - Needs investigation |
-| 3 | List/heading merge | 🟠 Open - Needs investigation |
-| 4 | Base style corruption | 🟠 Open - Needs investigation |
-| 5 | Nested list levels | 🟠 Open - Needs investigation |
+| 1 | List/heading merge | 🟠 Open - Needs investigation |
+| 2 | Base style corruption | 🟠 Open - Needs investigation |
+| 3 | Nested list levels | 🟠 Open - Needs investigation |
 
 ---
 
@@ -255,4 +295,5 @@ if block.block_type in (BlockType.HEADER, BlockType.FOOTER):
 | `src/extradoc/block_diff.py` | Block-level diff detection |
 | `src/extradoc/desugar.py` | XML to internal representation |
 | `src/extradoc/xml_converter.py` | Google API to XML conversion |
+| `src/extradoc/style_factorizer.py` | Style extraction and factorization |
 | `docs/googledocs/lists.md` | List preset documentation |
