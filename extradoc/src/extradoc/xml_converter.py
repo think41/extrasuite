@@ -569,6 +569,21 @@ def _convert_table(
     """
     rows = table.get("tableRows", [])
 
+    # Extract column width properties
+    table_style = table.get("tableStyle", {})
+    col_props = table_style.get("tableColumnProperties", [])
+    col_elements: list[str] = []
+
+    for i, col_prop in enumerate(col_props):
+        width_type = col_prop.get("widthType", "EVENLY_DISTRIBUTED")
+        if width_type == "FIXED_WIDTH":
+            width = col_prop.get("width", {})
+            magnitude = width.get("magnitude", 0)
+            unit = width.get("unit", "PT")
+            # Convert unit to lowercase for XML
+            unit_str = "pt" if unit == "PT" else unit.lower()
+            col_elements.append(f'  <col index="{i}" width="{magnitude}{unit_str}"/>')
+
     # Build rows with content-based IDs (bottom-up: cells first, then rows)
     row_parts: list[str] = []
 
@@ -620,12 +635,14 @@ def _convert_table(
         row_parts.extend(cell_parts)
         row_parts.append("  </tr>")
 
-    # Compute table ID from all rows content
-    table_content = "\n".join(row_parts)
+    # Compute table ID from all rows content (include col elements for stability)
+    table_content = "\n".join(col_elements + row_parts)
     table_id = content_hash_id(table_content)
 
     # Only include the content-based ID - no rows/cols/startIndex
     parts: list[str] = [f'<table id="{table_id}">']
+    # Add column width elements if any columns have fixed widths
+    parts.extend(col_elements)
     parts.extend(row_parts)
     parts.append("</table>")
 

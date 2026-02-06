@@ -44,6 +44,25 @@ class DiffError(Exception):
     """Raised when diff operation fails due to invalid folder structure."""
 
 
+def _extract_raw_table_indexes(raw_doc: dict[str, Any]) -> dict[str, int]:
+    """Extract table start indexes from raw API response.
+
+    Args:
+        raw_doc: Raw document JSON from Google Docs API
+
+    Returns:
+        Dict mapping "body:N" to table start index
+    """
+    indexes: dict[str, int] = {}
+    body_content = raw_doc.get("body", {}).get("content", [])
+    table_count = 0
+    for elem in body_content:
+        if "table" in elem:
+            indexes[f"body:{table_count}"] = elem.get("startIndex", 0)
+            table_count += 1
+    return indexes
+
+
 class ValidationError(Exception):
     """Raised when push validation fails."""
 
@@ -248,6 +267,16 @@ class DocsClient:
         # Read pristine XML from zip
         pristine_xml, pristine_styles, document_id = self._read_pristine(folder)
 
+        # Try to read raw table indexes from .raw/document.json if available
+        raw_table_indexes: dict[str, int] | None = None
+        raw_doc_path = folder / RAW_DIR / "document.json"
+        if raw_doc_path.exists():
+            try:
+                raw_doc = json.loads(raw_doc_path.read_text(encoding="utf-8"))
+                raw_table_indexes = _extract_raw_table_indexes(raw_doc)
+            except (json.JSONDecodeError, OSError):
+                pass  # Fall back to calculated indexes
+
         # Detect block-level changes first (for has_changes determination)
         block_changes = diff_documents_block_level(
             pristine_xml, current_xml, pristine_styles, current_styles
@@ -255,7 +284,11 @@ class DocsClient:
 
         # Generate batchUpdate requests using the diff engine
         requests = diff_xml_documents(
-            pristine_xml, current_xml, pristine_styles, current_styles
+            pristine_xml,
+            current_xml,
+            pristine_styles,
+            current_styles,
+            raw_table_indexes,
         )
 
         # Basic validation: block if horizontal rules changed (unsupported insertion).

@@ -883,7 +883,11 @@ class BlockDiffDetector:
             if pristine.block_type == BlockType.TABLE:
                 # Always diff tables recursively to detect row/column/cell changes
                 table_changes = self._diff_table_structure(pristine, current, path)
-                if table_changes:
+                # Also check for table property changes (column widths via <col> elements)
+                has_col_changes = self._has_column_width_changes(
+                    pristine.xml_content, current.xml_content
+                )
+                if table_changes or has_col_changes:
                     changes.append(
                         BlockChange(
                             change_type=ChangeType.MODIFIED,
@@ -923,6 +927,36 @@ class BlockDiffDetector:
                 )
 
         return changes
+
+    def _has_column_width_changes(
+        self, pristine_xml: str | None, current_xml: str | None
+    ) -> bool:
+        """Check if table column widths have changed (via <col> elements).
+
+        Args:
+            pristine_xml: Pristine table XML
+            current_xml: Current table XML
+
+        Returns:
+            True if column widths differ, False otherwise
+        """
+        import xml.etree.ElementTree as ET
+
+        def extract_cols(xml: str | None) -> list[tuple[str, str]]:
+            if not xml:
+                return []
+            try:
+                root = ET.fromstring(xml)
+            except ET.ParseError:
+                return []
+            cols = []
+            for col in root.findall("col"):
+                index = col.get("index", "")
+                width = col.get("width", "")
+                cols.append((index, width))
+            return sorted(cols)
+
+        return extract_cols(pristine_xml) != extract_cols(current_xml)
 
     def _diff_table_structure(
         self,

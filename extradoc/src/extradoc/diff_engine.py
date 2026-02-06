@@ -76,6 +76,106 @@ def parse_cell_styles(styles_xml: str | None) -> dict[str, dict[str, str]]:
     return cell_styles
 
 
+def _extract_column_widths(table_xml: str | None) -> dict[int, str]:
+    """Extract column widths from table XML.
+
+    Parses <col index="N" width="Xpt"/> elements from table XML.
+
+    Args:
+        table_xml: The table XML string, or None
+
+    Returns:
+        Dict mapping column index to width string (e.g., {0: "100pt", 1: "200pt"})
+    """
+    if not table_xml:
+        return {}
+
+    try:
+        root = ET.fromstring(table_xml)
+    except ET.ParseError:
+        return {}
+
+    import contextlib
+
+    widths: dict[int, str] = {}
+    for col_elem in root.findall("col"):
+        index_str = col_elem.get("index", "")
+        width = col_elem.get("width", "")
+        if index_str and width:
+            with contextlib.suppress(ValueError):
+                widths[int(index_str)] = width
+
+    return widths
+
+
+def _generate_column_width_requests(
+    table_start_index: int,
+    before_widths: dict[int, str],
+    after_widths: dict[int, str],
+    segment_id: str | None,
+) -> list[dict[str, Any]]:
+    """Generate UpdateTableColumnPropertiesRequest for column width changes.
+
+    Args:
+        table_start_index: The table's start index
+        before_widths: Column widths from pristine table
+        after_widths: Column widths from current table
+        segment_id: The segment ID (for headers/footers/footnotes)
+
+    Returns:
+        List of updateTableColumnProperties requests
+    """
+    requests: list[dict[str, Any]] = []
+
+    # Find all columns that have changed
+    all_columns = set(before_widths.keys()) | set(after_widths.keys())
+
+    for col_index in sorted(all_columns):
+        before_width = before_widths.get(col_index)
+        after_width = after_widths.get(col_index)
+
+        if before_width == after_width:
+            continue
+
+        # Column width changed
+        request: dict[str, Any] = {
+            "updateTableColumnProperties": {
+                "tableStartLocation": {"index": table_start_index},
+                "columnIndices": [col_index],
+                "tableColumnProperties": {},
+                "fields": "",
+            }
+        }
+
+        if segment_id:
+            request["updateTableColumnProperties"]["tableStartLocation"][
+                "segmentId"
+            ] = segment_id
+
+        col_props = request["updateTableColumnProperties"]["tableColumnProperties"]
+        fields: list[str] = []
+
+        if after_width:
+            # Set to fixed width
+            # Parse width value (e.g., "100pt" -> magnitude=100, unit=PT)
+            match = re.match(r"([\d.]+)(pt|in|mm)?", after_width, re.IGNORECASE)
+            if match:
+                magnitude = float(match.group(1))
+                unit = (match.group(2) or "pt").upper()
+                col_props["widthType"] = "FIXED_WIDTH"
+                col_props["width"] = {"magnitude": magnitude, "unit": unit}
+                fields.extend(["widthType", "width"])
+        else:
+            # Changed back to evenly distributed
+            col_props["widthType"] = "EVENLY_DISTRIBUTED"
+            fields.append("widthType")
+
+        request["updateTableColumnProperties"]["fields"] = ",".join(fields)
+        requests.append(request)
+
+    return requests
+
+
 def _styles_to_text_style(styles: dict[str, str]) -> tuple[dict[str, Any], str] | None:
     """Convert run styles to Google Docs textStyle + fields.
 
@@ -142,6 +242,7 @@ def diff_documents(
     current_xml: str,
     pristine_styles: str | None = None,
     current_styles: str | None = None,
+    raw_table_indexes: dict[str, int] | None = None,
 ) -> list[dict[str, Any]]:
     """Compare two XML documents and generate batchUpdate requests.
 
@@ -153,6 +254,14 @@ def diff_documents(
     2. Detect block-level changes (add, delete, modify)
     3. For each change, generate appropriate requests
     4. Process changes bottom-up (descending index) to maintain index stability
+
+    Args:
+        pristine_xml: The pristine document XML
+        current_xml: The current document XML
+        pristine_styles: The pristine styles.xml content
+        current_styles: The current styles.xml content
+        raw_table_indexes: Optional dict of table indexes from raw API response
+            (used for property-only changes like column widths)
     """
     # Get block-level changes
     block_changes = diff_documents_block_level(
@@ -167,8 +276,16 @@ def diff_documents(
     pristine_doc = desugar_document(pristine_xml, pristine_styles)
     current_doc = desugar_document(current_xml, current_styles)
 
-    # Calculate table indexes from pristine document
-    table_indexes = calculate_table_indexes(pristine_doc.sections)
+    # Calculate table indexes from both documents
+    # Pristine indexes used for content modifications (delete/insert)
+    # Current indexes used for property changes (column widths)
+    pristine_table_indexes = calculate_table_indexes(pristine_doc.sections)
+    # Use raw API indexes if provided (more accurate for property-only changes)
+    current_table_indexes = (
+        raw_table_indexes
+        if raw_table_indexes is not None
+        else calculate_table_indexes(current_doc.sections)
+    )
 
     # Parse cell styles from styles.xml for class attribute resolution
     cell_styles = parse_cell_styles(current_styles)
@@ -214,7 +331,12 @@ def diff_documents(
     # Process structural changes (footer, tab, header, table) normally
     for change in structural_changes:
         change_requests = _generate_requests_for_change(
-            change, pristine_doc, current_doc, table_indexes, cell_styles
+            change,
+            pristine_doc,
+            current_doc,
+            pristine_table_indexes,
+            current_table_indexes,
+            cell_styles,
         )
         all_requests.extend(change_requests)
 
@@ -230,7 +352,12 @@ def diff_documents(
 
         for change in sorted_changes:
             change_requests = _generate_requests_for_change(
-                change, pristine_doc, current_doc, table_indexes, cell_styles
+                change,
+                pristine_doc,
+                current_doc,
+                pristine_table_indexes,
+                current_table_indexes,
+                cell_styles,
             )
             all_requests.extend(change_requests)
 
@@ -308,7 +435,8 @@ def _generate_requests_for_change(
     change: BlockChange,
     pristine_doc: Any,
     current_doc: Any,
-    table_indexes: dict[str, int],
+    pristine_table_indexes: dict[str, int],
+    current_table_indexes: dict[str, int],
     cell_styles: dict[str, dict[str, str]] | None = None,
 ) -> list[dict[str, Any]]:
     """Generate batchUpdate requests for a single block change.
@@ -317,7 +445,8 @@ def _generate_requests_for_change(
         change: The BlockChange describing what changed
         pristine_doc: Desugared pristine document
         current_doc: Desugared current document
-        table_indexes: Map of table positions to start indexes
+        pristine_table_indexes: Map of table positions to start indexes (pristine doc)
+        current_table_indexes: Map of table positions to start indexes (current doc)
         cell_styles: Map of cell style class ID to properties (from styles.xml)
 
     Returns:
@@ -346,7 +475,8 @@ def _generate_requests_for_change(
                 pristine_section,
                 current_section,
                 segment_id,
-                table_indexes,
+                pristine_table_indexes,
+                current_table_indexes,
                 cell_styles,
             )
         )
@@ -371,7 +501,12 @@ def _generate_requests_for_change(
             # in _generate_table_modify_requests
             continue
         child_requests = _generate_requests_for_change(
-            child_change, pristine_doc, current_doc, table_indexes, cell_styles
+            child_change,
+            pristine_doc,
+            current_doc,
+            pristine_table_indexes,
+            current_table_indexes,
+            cell_styles,
         )
         requests.extend(child_requests)
 
@@ -616,7 +751,8 @@ def _handle_table_change(
     pristine_section: Section | None,  # noqa: ARG001 - Reserved for Phase 3
     current_section: Section | None,  # noqa: ARG001 - Reserved for Phase 3
     segment_id: str | None,
-    table_indexes: dict[str, int],
+    pristine_table_indexes: dict[str, int],
+    current_table_indexes: dict[str, int],
     cell_styles: dict[str, dict[str, str]] | None = None,
 ) -> list[dict[str, Any]]:
     """Handle Table add/delete/modify changes.
@@ -646,7 +782,11 @@ def _handle_table_change(
         # The child_changes contain TABLE_ROW and TABLE_CELL changes
         requests.extend(
             _generate_table_modify_requests(
-                change, segment_id, table_indexes, cell_styles
+                change,
+                segment_id,
+                pristine_table_indexes,
+                current_table_indexes,
+                cell_styles,
             )
         )
 
@@ -1767,7 +1907,8 @@ def _generate_table_delete_requests(
 def _generate_table_modify_requests(
     change: BlockChange,
     segment_id: str | None,
-    table_indexes: dict[str, int],
+    pristine_table_indexes: dict[str, int],
+    current_table_indexes: dict[str, int],
     cell_styles: dict[str, dict[str, str]] | None = None,
 ) -> list[dict[str, Any]]:
     """Generate requests for table modifications (row/column/cell changes).
@@ -1783,13 +1924,30 @@ def _generate_table_modify_requests(
     """
     requests: list[dict[str, Any]] = []
 
-    # Get table startIndex from the calculated indexes
-    # The table position is in the container_path
-    table_start_index = _get_table_start_index(change.container_path, table_indexes)
+    # Get table startIndex from both pristine and current indexes
+    # Pristine index is used for content modifications
+    # Current index is used for property changes (column widths)
+    pristine_table_start = _get_table_start_index(
+        change.container_path, pristine_table_indexes
+    )
+    current_table_start = _get_table_start_index(
+        change.container_path, current_table_indexes
+    )
 
-    if table_start_index == 0:
+    # Check for column width changes (use current index - the table exists now)
+    before_widths = _extract_column_widths(change.before_xml)
+    after_widths = _extract_column_widths(change.after_xml)
+    if before_widths != after_widths and current_table_start > 0:
+        requests.extend(
+            _generate_column_width_requests(
+                current_table_start, before_widths, after_widths, segment_id
+            )
+        )
+
+    # For structural changes, we need the pristine index
+    if pristine_table_start == 0:
         # No startIndex found - can't generate structural requests
-        return []
+        return requests
 
     # Track column operations to deduplicate
     # When a column is added/deleted, every row has the cell change,
@@ -1813,13 +1971,16 @@ def _generate_table_modify_requests(
             if row_index == 0:
                 requests.append(
                     generate_insert_table_row_request(
-                        table_start_index, 0, segment_id, insert_below=False
+                        pristine_table_start, 0, segment_id, insert_below=False
                     )
                 )
             else:
                 requests.append(
                     generate_insert_table_row_request(
-                        table_start_index, row_index - 1, segment_id, insert_below=True
+                        pristine_table_start,
+                        row_index - 1,
+                        segment_id,
+                        insert_below=True,
                     )
                 )
 
@@ -1827,7 +1988,7 @@ def _generate_table_modify_requests(
             # Delete row
             requests.append(
                 generate_delete_table_row_request(
-                    table_start_index, row_index, segment_id
+                    pristine_table_start, row_index, segment_id
                 )
             )
 
@@ -1854,7 +2015,7 @@ def _generate_table_modify_requests(
                         columns_added.add(col_index)
                         requests.append(
                             generate_insert_table_column_request(
-                                table_start_index, row_index, col_index, segment_id
+                                pristine_table_start, row_index, col_index, segment_id
                             )
                         )
 
@@ -1864,7 +2025,7 @@ def _generate_table_modify_requests(
                         columns_deleted.add(col_index)
                         requests.append(
                             generate_delete_table_column_request(
-                                table_start_index, row_index, col_index, segment_id
+                                pristine_table_start, row_index, col_index, segment_id
                             )
                         )
 
@@ -1874,7 +2035,7 @@ def _generate_table_modify_requests(
                     # Cell content modified - use reusable content functions
                     # Mark requests to skip reordering so insert+style stay together
                     cell_content_index = _calculate_cell_content_index(
-                        table_start_index,
+                        pristine_table_start,
                         row_index,
                         col_index,
                         change.before_xml,
@@ -1916,7 +2077,7 @@ def _generate_table_modify_requests(
                             # Generate cell style request if cell has style attributes
                             cell_style_req = _generate_cell_style_request(
                                 cell_change.after_xml,
-                                table_start_index,
+                                pristine_table_start,
                                 row_index,
                                 col_index,
                                 segment_id,
