@@ -183,7 +183,6 @@ Tested against document `15dNMijQYl3juFdu8LqLvJoh3K10DREbtUm82489hgAs`:
 - Table column width styling
 - Table border styling
 - Named style definitions (custom heading styles)
-- **Nested bullet lists** - See issue documentation above
 
 ## Architecture
 
