@@ -185,8 +185,32 @@ Tested against document `15dNMijQYl3juFdu8LqLvJoh3K10DREbtUm82489hgAs`:
 - **Person mentions** - Requires specific personProperties
 
 ### Additional Style Support
-- Table column width styling
+- ~~Table column width styling~~ ✅ COMPLETE (see below)
 - Named style definitions (custom heading styles)
+
+### Table Column Width Styling ✅ COMPLETE
+
+**Status:** Column width styling working end-to-end.
+
+**How it works:**
+1. **Pull-side:** Extracts column widths from `tableStyle.tableColumnProperties`, adds `<col index="N" width="Xpt"/>` elements for FIXED_WIDTH columns
+2. **Push-side:** Detects `<col>` element changes, generates `UpdateTableColumnPropertiesRequest`
+3. **Uses raw API indexes** from `.raw/document.json` for accurate table positioning
+
+**Example:**
+```xml
+<table id="cDyp2nz">
+  <col index="0" width="150pt"/>
+  <tr id="g9SKchj">
+    <td id="gUEeXJW" class="cell-jT0KF"><p><b>Header 1</b></p></td>
+    <td id="8Jw5e9F" class="cell-OU-ho"><p><b>Header 2</b></p></td>
+  </tr>
+</table>
+```
+
+**Tested (2026-02-06):**
+- Added `<col index="0" width="150pt"/>` to table → correct `UpdateTableColumnPropertiesRequest` generated
+- Push applied fixed width → verified in Google Docs and on re-pull
 
 ### Table Cell Border Styling ✅ COMPLETE
 
