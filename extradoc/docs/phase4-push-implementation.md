@@ -11,6 +11,7 @@
 | Body content (add/modify/delete) | ✅ Working | |
 | Text styling (bold, italic, etc.) | ✅ Working | |
 | Text highlight colors | ✅ Working | `bg` attribute via `<span class="...">` |
+| Paragraph borders | ✅ Working | `borderTop/Bottom/Left/Right` on `<p>` |
 | Bullet lists (including nested) | ✅ Working | Tabs processed for nesting |
 | Table cell content | ✅ Working | |
 | Table cell borders/backgrounds | ✅ Working | Class-based styles in styles.xml |
@@ -228,7 +229,27 @@ These cannot be fully implemented due to Google Docs API limitations:
 - **Footnote index calculation** - Currently relies on `.raw/document.json` for accurate table indexes when footnotes are present. Should calculate indexes correctly from XML without needing raw API response.
 
 ### Needs Testing/Verification
-- **Paragraph borders** - Supported in style_converter but not exposed in XML format
+(None currently)
+
+### Paragraph Borders ✅ PUSH WORKING
+
+**Status:** Push working, generates correct updateParagraphStyle requests.
+
+**How it works (Push):**
+1. Add border attribute to `<p>` element: `<p borderBottom="2,#0000FF,SOLID,2">text</p>`
+2. Format: `width,#color,dashStyle,padding` (all in points, padding is required)
+3. Push generates `updateParagraphStyle` request with correct border structure
+
+**Supported attributes:**
+- `borderTop`, `borderBottom`, `borderLeft`, `borderRight`
+- Other paragraph styles: `align`, `spaceAbove`, `spaceBelow`, `indentLeft`, `indentRight`, `indentFirst`, `bgColor`
+
+**Tested (2026-02-06):**
+- Added `borderBottom="2,#0000FF,SOLID,2"` to paragraph
+- Push succeeded, verified via raw API response
+- Border correctly applied: 2pt blue solid with 2pt padding
+
+**Note:** Padding field is required - API returns error "UNIT_UNSPECIFIED" if omitted.
 
 ### Text Highlight Colors ✅ PUSH WORKING
 
