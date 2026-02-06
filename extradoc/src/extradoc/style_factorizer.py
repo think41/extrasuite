@@ -6,7 +6,6 @@ and generates minimal style definitions (deviations from base).
 
 from __future__ import annotations
 
-from collections import Counter
 from collections.abc import Callable
 from dataclasses import dataclass, field
 from typing import Any
@@ -360,35 +359,39 @@ def _collect_from_paragraph(para: dict[str, Any], runs: list[TextRun]) -> None:
             runs.append(TextRun(text=stripped, char_count=char_count, styles=styles))
 
 
-def compute_base_style(runs: list[TextRun]) -> dict[str, str]:
-    """Compute the base style from all text runs.
+def extract_base_style_from_named_styles(document: dict[str, Any]) -> dict[str, str]:
+    """Extract base style from the document's NORMAL_TEXT named style.
 
-    For each property, the base value is the one that appears most frequently
-    (weighted by character count).
+    This uses the document's defined NORMAL_TEXT style as the base,
+    rather than computing from text run frequency. This ensures the
+    base style reflects the document's intended defaults, not styles
+    that happen to appear most often in content.
 
     Args:
-        runs: List of text runs
+        document: Raw document JSON from Google Docs API
 
     Returns:
-        Base style properties
+        Base style properties from NORMAL_TEXT
     """
-    # Property -> value -> total character count
-    prop_counts: dict[str, Counter[str]] = {}
+    # Find namedStyles - could be at top level or in documentTab
+    named_styles = document.get("namedStyles")
+    if not named_styles:
+        tabs = document.get("tabs", [])
+        if tabs:
+            doc_tab = tabs[0].get("documentTab", {})
+            named_styles = doc_tab.get("namedStyles")
 
-    for run in runs:
-        for prop, value in run.styles.items():
-            if prop not in prop_counts:
-                prop_counts[prop] = Counter()
-            prop_counts[prop][value] += run.char_count
+    if not named_styles:
+        # Fallback to empty base if no named styles found
+        return {}
 
-    # Select most common value for each property
-    base: dict[str, str] = {}
-    for prop, counts in prop_counts.items():
-        if counts:
-            most_common = counts.most_common(1)[0][0]
-            base[prop] = most_common
+    # Find NORMAL_TEXT style
+    for style in named_styles.get("styles", []):
+        if style.get("namedStyleType") == "NORMAL_TEXT":
+            text_style = style.get("textStyle", {})
+            return extract_text_style(text_style)
 
-    return base
+    return {}
 
 
 def compute_deviation(styles: dict[str, str], base: dict[str, str]) -> dict[str, str]:
@@ -423,8 +426,9 @@ def factorize_styles(document: dict[str, Any]) -> FactorizedStyles:
     # Collect all text runs
     runs = collect_text_runs(document)
 
-    # Compute base style
-    base_props = compute_base_style(runs)
+    # Extract base style from NORMAL_TEXT named style
+    # This uses the document's defined defaults, not computed from text frequency
+    base_props = extract_base_style_from_named_styles(document)
 
     # Create base style definition
     base_style = StyleDefinition(id="_base", properties=base_props)
