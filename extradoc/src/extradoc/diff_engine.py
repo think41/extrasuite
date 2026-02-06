@@ -203,11 +203,18 @@ def diff_documents(
 
     # Reorder requests: DELETEs first, then INSERTs, then UPDATEs
     # This ensures deletes don't affect inserted content
+    # Exception: requests marked with _skipReorder should stay in their original position
     delete_requests: list[dict[str, Any]] = []
     insert_requests: list[dict[str, Any]] = []
     update_requests: list[dict[str, Any]] = []
+    ordered_requests: list[dict[str, Any]] = []  # Requests that shouldn't be reordered
 
     for req in all_requests:
+        # Check for skip reorder marker
+        if req.pop("_skipReorder", False):
+            ordered_requests.append(req)
+            continue
+
         if (
             "deleteContentRange" in req
             or "deleteTableRow" in req
@@ -259,7 +266,9 @@ def diff_documents(
 
     insert_requests.sort(key=get_insert_index, reverse=True)
 
-    return delete_requests + insert_requests + update_requests
+    # Combine: deletes first, then ordered requests (e.g., table cell ops),
+    # then regular inserts, then updates
+    return delete_requests + ordered_requests + insert_requests + update_requests
 
 
 def _generate_requests_for_change(
@@ -309,13 +318,17 @@ def _generate_requests_for_change(
         requests.extend(_handle_tab_change(change))
 
     # Recursively handle child changes
-    # Note: FOOTNOTE children of CONTENT_BLOCK are handled in _handle_content_block_change
+    # Note: Some child changes are already handled by their parent handlers
     for child_change in change.child_changes:
         if (
             change.block_type == BlockType.CONTENT_BLOCK
             and child_change.block_type == BlockType.FOOTNOTE
         ):
             # Already handled in _handle_content_block_change
+            continue
+        if change.block_type == BlockType.TABLE:
+            # Table child changes (rows, cells, cell content) are all handled
+            # in _generate_table_modify_requests
             continue
         child_requests = _generate_requests_for_change(
             child_change, pristine_doc, current_doc, table_indexes
@@ -512,7 +525,12 @@ def _handle_content_block_change(
 
     elif change.change_type == ChangeType.DELETED:
         # Delete content using pristine indexes from BlockChange
-        if change.before_xml and change.pristine_start_index > 0:
+        # Note: Body starts at index 1, but headers/footers/footnotes start at 0
+        # Check for valid content range rather than just start > 0
+        if (
+            change.before_xml
+            and change.pristine_end_index > change.pristine_start_index
+        ):
             requests.extend(
                 _generate_content_delete_requests_by_index(
                     change.pristine_start_index,
@@ -526,7 +544,11 @@ def _handle_content_block_change(
         # For modified blocks, delete old content and insert new at same position
         # Note: Don't strip trailing newline for MODIFIED blocks since other content
         # (ADDED blocks) may follow. The paragraph structure should be preserved.
-        if change.before_xml and change.pristine_start_index > 0:
+        # Note: Body starts at index 1, but headers/footers/footnotes start at 0
+        if (
+            change.before_xml
+            and change.pristine_end_index > change.pristine_start_index
+        ):
             requests.extend(
                 _generate_content_delete_requests_by_index(
                     change.pristine_start_index,
@@ -1353,6 +1375,180 @@ def _parse_table_xml(xml_content: str) -> dict[str, Any]:
     }
 
 
+def _calculate_cell_content_index(
+    table_start_index: int,
+    target_row: int,
+    target_col: int,
+    table_xml: str,
+) -> int:
+    """Calculate the content start index for a specific table cell.
+
+    Cell content index = table_start + 1 (table marker) +
+        sum of row/cell markers and content lengths up to target cell +
+        1 (target cell marker)
+
+    Args:
+        table_start_index: The table's start index in the document
+        target_row: Row index (0-based)
+        target_col: Column index (0-based)
+        table_xml: The pristine table XML for calculating content lengths
+
+    Returns:
+        The index where the cell's content starts (after the cell marker)
+    """
+    try:
+        root = ET.fromstring(table_xml)
+    except ET.ParseError:
+        return 0
+
+    current_index = table_start_index + 1  # Table start marker
+
+    tr_elements = list(root.findall("tr"))
+
+    for row_idx, tr in enumerate(tr_elements):
+        current_index += 1  # Row marker
+
+        td_elements = list(tr.findall("td"))
+        for col_idx, td in enumerate(td_elements):
+            current_index += 1  # Cell marker
+
+            if row_idx == target_row and col_idx == target_col:
+                # Found the target cell - return the content start index
+                return current_index
+
+            # Add cell content length
+            cell_content_length = _calculate_cell_content_length(td)
+            current_index += cell_content_length
+
+        if row_idx == target_row:
+            # Target row passed but column not found - shouldn't happen
+            break
+
+    return 0  # Cell not found
+
+
+def _calculate_cell_content_length(td_elem: ET.Element) -> int:
+    """Calculate the UTF-16 length of a table cell's content.
+
+    Each paragraph in the cell contributes: text_length + special_elements + 1 (newline)
+    Empty cells have a default paragraph with just a newline (length 1).
+    """
+    total_length = 0
+    paragraph_tags = {
+        "p",
+        "h1",
+        "h2",
+        "h3",
+        "h4",
+        "h5",
+        "h6",
+        "li",
+        "title",
+        "subtitle",
+    }
+
+    children = list(td_elem)
+    if not children:
+        # Empty cell has default paragraph with newline
+        return 1
+
+    for child in children:
+        if child.tag in paragraph_tags:
+            # Calculate paragraph length: text + specials + newline
+            text_length = _get_element_text_length(child)
+            special_count = sum(
+                1 for elem in child.iter() if elem.tag in SPECIAL_ELEMENT_TAGS
+            )
+            total_length += text_length + special_count + 1  # +1 for newline
+        elif child.tag == "table":
+            # Nested table - calculate recursively
+            total_length += _calculate_nested_table_length(child)
+
+    # If no content was found, default to 1 (empty paragraph)
+    return total_length if total_length > 0 else 1
+
+
+def _get_element_text_length(elem: ET.Element) -> int:
+    """Get the UTF-16 length of text content in an element."""
+    length = 0
+    if elem.text:
+        length += utf16_len(elem.text)
+
+    for child in elem:
+        if child.tag not in SPECIAL_ELEMENT_TAGS:
+            length += _get_element_text_length(child)
+        if child.tail:
+            length += utf16_len(child.tail)
+
+    return length
+
+
+def _calculate_nested_table_length(table_elem: ET.Element) -> int:
+    """Calculate the UTF-16 length of a nested table."""
+    length = 1  # Table start marker
+
+    for tr in table_elem.findall("tr"):
+        length += 1  # Row marker
+        for td in tr.findall("td"):
+            length += 1  # Cell marker
+            length += _calculate_cell_content_length(td)
+
+    length += 1  # Table end marker
+    return length
+
+
+def _get_pristine_cell_length(table_xml: str, row: int, col: int) -> int:
+    """Get the content length of a specific cell in a table XML.
+
+    Args:
+        table_xml: The table XML
+        row: Row index (0-based)
+        col: Column index (0-based)
+
+    Returns:
+        The UTF-16 length of the cell's content
+    """
+    try:
+        root = ET.fromstring(table_xml)
+    except ET.ParseError:
+        return 1  # Default: empty cell
+
+    tr_elements = list(root.findall("tr"))
+    if row >= len(tr_elements):
+        return 1
+
+    td_elements = list(tr_elements[row].findall("td"))
+    if col >= len(td_elements):
+        return 1
+
+    return _calculate_cell_content_length(td_elements[col])
+
+
+def _extract_cell_inner_content(cell_xml: str) -> str:
+    """Extract the inner content (paragraphs) from a cell XML.
+
+    The cell_xml is like: <td id="..."><p>content</p></td>
+    We want just: <p>content</p>
+
+    Args:
+        cell_xml: The full cell XML including the td wrapper
+
+    Returns:
+        The inner content XML (paragraphs only)
+    """
+    try:
+        root = ET.fromstring(cell_xml)
+    except ET.ParseError:
+        return ""
+
+    # Get all child elements and serialize them
+    inner_parts = []
+    for child in root:
+        inner_parts.append(ET.tostring(child, encoding="unicode"))
+
+    return "\n".join(inner_parts)
+
+
 def _generate_table_add_requests(
     after_xml: str,
     segment_id: str | None,
@@ -1522,10 +1718,50 @@ def _generate_table_modify_requests(
                             )
                         )
 
-                elif cell_change.change_type == ChangeType.MODIFIED:
-                    # Cell content modified - this is Phase 3 (ContentBlock)
-                    # The cell's child_changes contain the content changes
-                    pass
+                elif (
+                    cell_change.change_type == ChangeType.MODIFIED and change.before_xml
+                ):
+                    # Cell content modified - use reusable content functions
+                    # Mark requests to skip reordering so insert+style stay together
+                    cell_content_index = _calculate_cell_content_index(
+                        table_start_index,
+                        row_index,
+                        col_index,
+                        change.before_xml,
+                    )
+                    if cell_content_index > 0:
+                        # Calculate pristine cell content length for delete
+                        pristine_cell_length = _get_pristine_cell_length(
+                            change.before_xml, row_index, col_index
+                        )
+                        # Delete old content (preserve cell's final newline)
+                        if pristine_cell_length > 1:
+                            delete_reqs = _generate_content_delete_requests_by_index(
+                                cell_content_index,
+                                cell_content_index + pristine_cell_length - 1,
+                                segment_id,
+                                cell_content_index + pristine_cell_length,
+                            )
+                            for req in delete_reqs:
+                                req["_skipReorder"] = True
+                            requests.extend(delete_reqs)
+                        # Insert new content
+                        if cell_change.after_xml:
+                            # Extract just the cell content (inner paragraphs)
+                            cell_inner_xml = _extract_cell_inner_content(
+                                cell_change.after_xml
+                            )
+                            if cell_inner_xml:
+                                cell_reqs = _generate_content_insert_requests(
+                                    cell_inner_xml,
+                                    segment_id,
+                                    cell_content_index,
+                                    strip_trailing_newline=True,
+                                )
+                                # Mark to skip reordering - insert+style must stay together
+                                for req in cell_reqs:
+                                    req["_skipReorder"] = True
+                                requests.extend(cell_reqs)
 
     return requests
 
