@@ -173,6 +173,29 @@ def diff_documents(
     # Calculate table indexes from pristine document
     table_indexes = calculate_table_indexes(pristine_doc.sections)
 
+    # Check if we need to use merged body insert
+    # This is necessary when we have mixed operations (deletes AND inserts) in the body
+    # because deletes change the document size, making insert indexes invalid
+    body_changes = [c for c in block_changes if "body" in str(c.container_path)]
+
+    has_body_deletes = any(
+        c.change_type in (ChangeType.DELETED, ChangeType.MODIFIED) for c in body_changes
+    )
+    has_body_inserts = any(
+        c.change_type in (ChangeType.ADDED, ChangeType.MODIFIED) for c in body_changes
+    )
+
+    # If we have both deletes and inserts/modifies in the body, use merged approach
+    # This ensures index stability by doing a single delete + single insert
+    if has_body_deletes and has_body_inserts and len(body_changes) > 1:
+        # Merge all body content changes into a single insert
+        merged_requests = _generate_merged_body_insert(
+            block_changes, pristine_doc, current_doc, current_xml
+        )
+        if merged_requests:
+            return merged_requests
+        # Fall through to normal processing if merge fails
+
     # Generate requests from block changes
     # Sort by pristine_start_index descending (bottom-up) to maintain index stability
     sorted_changes = sorted(
@@ -345,6 +368,100 @@ def _find_section(
     return None
 
 
+def _generate_merged_body_insert(
+    block_changes: list[BlockChange],
+    pristine_doc: Any,
+    current_doc: Any,  # noqa: ARG001 - Kept for API consistency
+    current_xml: str,
+) -> list[dict[str, Any]]:
+    """Generate a single merged insert for body content when positions overlap.
+
+    This is used when replacing document content, where the normal diff would
+    produce multiple changes at different positions. Since deletes change the
+    document size, insert indexes calculated from pristine become invalid.
+
+    Strategy:
+    1. Delete all existing body content (preserving final newline)
+    2. Insert all new body content as a single operation
+    3. Generate styling for the merged content
+
+    Returns empty list if merge cannot be performed.
+    """
+
+    # Find body section in pristine
+    pristine_body = None
+    for sec in pristine_doc.sections:
+        if sec.section_type == "body":
+            pristine_body = sec
+            break
+
+    if pristine_body is None:
+        return []
+
+    # Parse current XML to extract body content
+    try:
+        root = ET.fromstring(current_xml)
+        body_elem = root.find("body")
+        if body_elem is None:
+            return []
+    except ET.ParseError:
+        return []
+
+    # Serialize all body children as the merged content
+    body_content_parts: list[str] = []
+    for child in body_elem:
+        body_content_parts.append(ET.tostring(child, encoding="unicode"))
+
+    if not body_content_parts:
+        return []
+
+    merged_xml = "\n".join(body_content_parts)
+
+    requests: list[dict[str, Any]] = []
+
+    # 1. Calculate pristine body end index from the actual pristine body content
+    # Body starts at index 1
+    pristine_end = 1
+    for elem in pristine_body.content:
+        if isinstance(elem, Paragraph):
+            pristine_end += elem.utf16_length()
+        elif isinstance(elem, Table):
+            pristine_end += _table_length(elem)
+        elif isinstance(elem, SpecialElement):
+            pristine_end += elem.utf16_length()
+
+    # Also check block changes for segment_end_index (more reliable for segment boundary)
+    for change in block_changes:
+        if "body" in str(change.container_path) and change.segment_end_index > 0:
+            pristine_end = max(pristine_end, change.segment_end_index)
+            break
+
+    # Delete from 1 to pristine_end - 1 (preserve final newline)
+    if pristine_end > 2:
+        requests.append(
+            {
+                "deleteContentRange": {
+                    "range": {
+                        "startIndex": 1,
+                        "endIndex": pristine_end - 1,
+                    }
+                }
+            }
+        )
+
+    # 2. Insert all new body content at index 1
+    requests.extend(
+        _generate_content_insert_requests(
+            merged_xml,
+            segment_id=None,  # Body has no segment ID
+            insert_index=1,
+            strip_trailing_newline=False,
+        )
+    )
+
+    return requests
+
+
 def _handle_content_block_change(
     change: BlockChange,
     pristine_section: Section | None,  # noqa: ARG001 - Kept for API consistency
@@ -414,11 +531,8 @@ def _handle_content_block_change(
 
     elif change.change_type == ChangeType.MODIFIED:
         # For modified blocks, delete old content and insert new at same position
-        # Check if we're at segment end (delete range would hit segment boundary)
-        at_segment_end = (
-            change.segment_end_index > 0
-            and change.pristine_end_index >= change.segment_end_index
-        )
+        # Note: Don't strip trailing newline for MODIFIED blocks since other content
+        # (ADDED blocks) may follow. The paragraph structure should be preserved.
         if change.before_xml and change.pristine_start_index > 0:
             requests.extend(
                 _generate_content_delete_requests_by_index(
@@ -430,13 +544,12 @@ def _handle_content_block_change(
             )
         if change.after_xml:
             # Insert at the same position where we deleted
-            # If at segment end, strip trailing newline from content
             requests.extend(
                 _generate_content_insert_requests(
                     change.after_xml,
                     segment_id,
                     change.pristine_start_index,
-                    strip_trailing_newline=at_segment_end,
+                    strip_trailing_newline=False,  # Always include paragraph newline
                 )
             )
 
@@ -938,6 +1051,26 @@ def _generate_content_insert_requests(
             "insertText": {
                 "location": make_location(0),
                 "text": parsed.plain_text,
+            }
+        }
+    )
+
+    # 1.5. Clear all formatting from inserted text
+    # This prevents inheritance of styles from the insertion point
+    # We reset bold, italic, underline, strikethrough, and baselineOffset
+    text_len = utf16_len(parsed.plain_text)
+    requests.append(
+        {
+            "updateTextStyle": {
+                "range": make_range(0, text_len),
+                "textStyle": {
+                    "bold": False,
+                    "italic": False,
+                    "underline": False,
+                    "strikethrough": False,
+                    "baselineOffset": "NONE",
+                },
+                "fields": "bold,italic,underline,strikethrough,baselineOffset",
             }
         }
     )
