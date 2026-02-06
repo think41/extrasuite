@@ -175,7 +175,11 @@ Tested against document `15dNMijQYl3juFdu8LqLvJoh3K10DREbtUm82489hgAs`:
 ## What Is Pending
 
 ### Special Elements (Low Priority)
-- **Footnotes with precise positioning** - Currently uses `endOfSegmentLocation`, needs text content insertion first for precise index
+- **Footnotes with precise positioning** - Partially implemented:
+  - `_generate_special_element_request` now handles both `footnote` and `footnoteref` with precise location
+  - Two-batch workflow in client.py correctly handles footnote ID mapping
+  - Remaining issue: block_diff may trigger full content replacement instead of incremental changes when footnotes are added inline
+  - Need testing with simpler test cases to verify inline footnote creation
 - **Autotext (page numbers)** - Cannot insert via batchUpdate API, use placeholder `[PAGE]`
 - **Images** - Requires separate upload flow
 - **Person mentions** - Requires specific personProperties
