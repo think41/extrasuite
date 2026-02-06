@@ -76,6 +76,40 @@ def parse_cell_styles(styles_xml: str | None) -> dict[str, dict[str, str]]:
     return cell_styles
 
 
+def parse_text_styles(styles_xml: str | None) -> dict[str, dict[str, str]]:
+    """Parse text styles from styles.xml content.
+
+    Text styles are any styles that are NOT cell styles (i.e., don't start with "cell-").
+    These are used for inline text styling via <span class="..."> elements.
+
+    Args:
+        styles_xml: The styles.xml content, or None
+
+    Returns:
+        Dict mapping style ID to style properties (e.g., {"highlight-yellow": {"bg": "#FFFF00"}})
+    """
+    if not styles_xml:
+        return {}
+
+    try:
+        root = ET.fromstring(styles_xml)
+    except ET.ParseError:
+        return {}
+
+    text_styles: dict[str, dict[str, str]] = {}
+    for style_elem in root.findall("style"):
+        style_id = style_elem.get("id", "")
+        # Skip cell styles - they're handled separately
+        if style_id.startswith("cell-"):
+            continue
+        # Extract all attributes except 'id' as style properties
+        props = {k: v for k, v in style_elem.attrib.items() if k != "id"}
+        if props:  # Only add if there are actual properties
+            text_styles[style_id] = props
+
+    return text_styles
+
+
 def _extract_column_widths(table_xml: str | None) -> dict[int, str]:
     """Extract column widths from table XML.
 
@@ -290,6 +324,9 @@ def diff_documents(
     # Parse cell styles from styles.xml for class attribute resolution
     cell_styles = parse_cell_styles(current_styles)
 
+    # Parse text styles from styles.xml for span class resolution
+    text_styles = parse_text_styles(current_styles)
+
     # Separate body ContentBlock changes from structural changes
     # Body ContentBlock changes may need merged approach for index stability
     # Structural changes (table, footer, tab, header) are processed separately
@@ -322,7 +359,7 @@ def diff_documents(
     if has_body_deletes and has_body_inserts and len(body_content_changes) > 1:
         # Merge all body content changes into a single insert
         merged_requests = _generate_merged_body_insert(
-            block_changes, pristine_doc, current_doc, current_xml
+            block_changes, pristine_doc, current_doc, current_xml, text_styles
         )
         if merged_requests:
             all_requests.extend(merged_requests)
@@ -337,6 +374,7 @@ def diff_documents(
             pristine_table_indexes,
             current_table_indexes,
             cell_styles,
+            text_styles,
         )
         all_requests.extend(change_requests)
 
@@ -358,6 +396,7 @@ def diff_documents(
                 pristine_table_indexes,
                 current_table_indexes,
                 cell_styles,
+                text_styles,
             )
             all_requests.extend(change_requests)
 
@@ -438,6 +477,7 @@ def _generate_requests_for_change(
     pristine_table_indexes: dict[str, int],
     current_table_indexes: dict[str, int],
     cell_styles: dict[str, dict[str, str]] | None = None,
+    text_styles: dict[str, dict[str, str]] | None = None,
 ) -> list[dict[str, Any]]:
     """Generate batchUpdate requests for a single block change.
 
@@ -448,6 +488,7 @@ def _generate_requests_for_change(
         pristine_table_indexes: Map of table positions to start indexes (pristine doc)
         current_table_indexes: Map of table positions to start indexes (current doc)
         cell_styles: Map of cell style class ID to properties (from styles.xml)
+        text_styles: Map of text style class ID to properties (from styles.xml)
 
     Returns:
         List of batchUpdate request dicts
@@ -465,7 +506,7 @@ def _generate_requests_for_change(
     if change.block_type == BlockType.CONTENT_BLOCK:
         requests.extend(
             _handle_content_block_change(
-                change, pristine_section, current_section, segment_id
+                change, pristine_section, current_section, segment_id, text_styles
             )
         )
     elif change.block_type == BlockType.TABLE:
@@ -507,6 +548,7 @@ def _generate_requests_for_change(
             pristine_table_indexes,
             current_table_indexes,
             cell_styles,
+            text_styles,
         )
         requests.extend(child_requests)
 
@@ -554,6 +596,7 @@ def _generate_merged_body_insert(
     pristine_doc: Any,
     current_doc: Any,  # noqa: ARG001 - Kept for API consistency
     current_xml: str,
+    text_styles: dict[str, dict[str, str]] | None = None,
 ) -> list[dict[str, Any]]:
     """Generate a single merged insert for body content when positions overlap.
 
@@ -637,6 +680,7 @@ def _generate_merged_body_insert(
             segment_id=None,  # Body has no segment ID
             insert_index=1,
             strip_trailing_newline=False,
+            text_styles=text_styles,
         )
     )
 
@@ -648,6 +692,7 @@ def _handle_content_block_change(
     pristine_section: Section | None,  # noqa: ARG001 - Kept for API consistency
     current_section: Section | None,  # noqa: ARG001 - Kept for API consistency
     segment_id: str | None,
+    text_styles: dict[str, dict[str, str]] | None = None,
 ) -> list[dict[str, Any]]:
     """Handle ContentBlock add/delete/modify changes.
 
@@ -694,7 +739,7 @@ def _handle_content_block_change(
                 insert_index = change.segment_end_index - 1
             requests.extend(
                 _generate_content_insert_requests(
-                    change.after_xml, segment_id, insert_index
+                    change.after_xml, segment_id, insert_index, text_styles=text_styles
                 )
             )
 
@@ -740,6 +785,7 @@ def _handle_content_block_change(
                     segment_id,
                     change.pristine_start_index,
                     strip_trailing_newline=False,  # Always include paragraph newline
+                    text_styles=text_styles,
                 )
             )
 
@@ -972,7 +1018,10 @@ class ParsedContent:
     text_styles: list[tuple[int, int, dict[str, str]]]
 
 
-def _parse_content_block_xml(xml_content: str) -> ParsedContent:
+def _parse_content_block_xml(
+    xml_content: str,
+    style_defs: dict[str, dict[str, str]] | None = None,
+) -> ParsedContent:
     """Parse ContentBlock XML into structured data for request generation.
 
     The XML content is a sequence of paragraph elements (p, h1, li, etc.).
@@ -982,6 +1031,11 @@ def _parse_content_block_xml(xml_content: str) -> ParsedContent:
     - Paragraph styles (headings)
     - Bullet list info
     - Text run styles (bold, italic, links)
+
+    Args:
+        xml_content: The ContentBlock XML (sequence of paragraph elements)
+        style_defs: Map of style class ID to properties (from styles.xml)
+            Used to resolve <span class="..."> to actual style properties.
     """
     # Wrap in a root element for parsing
     wrapped = f"<root>{xml_content}</root>"
@@ -1012,7 +1066,7 @@ def _parse_content_block_xml(xml_content: str) -> ParsedContent:
 
         # Extract text runs from this paragraph
         para_text, para_specials, para_text_styles = _extract_paragraph_content(
-            para_elem, current_offset
+            para_elem, current_offset, style_defs
         )
 
         # For nested bullets, prepend leading tabs (Google Docs uses tabs for nesting)
@@ -1089,11 +1143,19 @@ SPECIAL_ELEMENT_TAGS = {"hr", "pagebreak", "columnbreak", "image", "footnote"}
 
 
 def _extract_paragraph_content(
-    para_elem: ET.Element, base_offset: int
+    para_elem: ET.Element,
+    base_offset: int,
+    style_defs: dict[str, dict[str, str]] | None = None,
 ) -> tuple[
     str, list[tuple[int, str, dict[str, str]]], list[tuple[int, int, dict[str, str]]]
 ]:
     """Extract text, special elements, and text styles from a paragraph element.
+
+    Args:
+        para_elem: The paragraph XML element
+        base_offset: The starting offset for this paragraph
+        style_defs: Map of style class ID to properties (from styles.xml)
+            Used to resolve <span class="..."> to actual style properties.
 
     Returns:
         - plain_text: Text content (no special elements)
@@ -1120,11 +1182,15 @@ def _extract_paragraph_content(
             if href:
                 node_styles["link"] = href
         elif tag == "span":
-            # Span with class - would need style resolution
-            # For now, just track the class
+            # Span with class - resolve to actual style properties from styles.xml
             class_name = node.get("class")
-            if class_name:
-                node_styles["class"] = class_name
+            if class_name and style_defs and class_name in style_defs:
+                # Merge in the resolved style properties
+                node_styles.update(style_defs[class_name])
+            # Also copy any inline attributes (except class)
+            for attr, value in node.attrib.items():
+                if attr != "class":
+                    node_styles[attr] = value
 
         # Handle text content
         if node.text:
@@ -1202,6 +1268,7 @@ def _generate_content_insert_requests(
     segment_id: str | None,
     insert_index: int = 1,
     strip_trailing_newline: bool = False,
+    text_styles: dict[str, dict[str, str]] | None = None,
 ) -> list[dict[str, Any]]:
     """Generate insert requests for content XML.
 
@@ -1220,6 +1287,7 @@ def _generate_content_insert_requests(
         strip_trailing_newline: If True, strip the trailing newline from the text.
             Used when modifying content at segment end where we preserve the
             existing final newline rather than inserting a new one.
+        text_styles: Map of text style class ID to properties (from styles.xml)
 
     Returns:
         List of batchUpdate requests
@@ -1230,7 +1298,7 @@ def _generate_content_insert_requests(
     requests: list[dict[str, Any]] = []
 
     # Parse the content
-    parsed = _parse_content_block_xml(xml_content)
+    parsed = _parse_content_block_xml(xml_content, text_styles)
 
     # Strip trailing newline if at segment end
     if strip_trailing_newline and parsed.plain_text.endswith("\n"):
@@ -1394,38 +1462,14 @@ def _bullet_type_to_preset(bullet_type: str) -> str:
 
 
 def _styles_to_text_style_request(styles: dict[str, str]) -> tuple[dict[str, Any], str]:
-    """Convert style dict to Google Docs textStyle and fields string."""
-    text_style: dict[str, Any] = {}
-    fields: list[str] = []
+    """Convert style dict to Google Docs textStyle and fields string.
 
-    if styles.get("bold") == "1":
-        text_style["bold"] = True
-        fields.append("bold")
-
-    if styles.get("italic") == "1":
-        text_style["italic"] = True
-        fields.append("italic")
-
-    if styles.get("underline") == "1":
-        text_style["underline"] = True
-        fields.append("underline")
-
-    if styles.get("strikethrough") == "1":
-        text_style["strikethrough"] = True
-        fields.append("strikethrough")
-
-    if styles.get("superscript") == "1":
-        text_style["baselineOffset"] = "SUPERSCRIPT"
-        fields.append("baselineOffset")
-
-    if styles.get("subscript") == "1":
-        text_style["baselineOffset"] = "SUBSCRIPT"
-        fields.append("baselineOffset")
-
-    if "link" in styles:
-        text_style["link"] = {"url": styles["link"]}
-        fields.append("link")
-
+    Uses convert_styles from style_converter to handle all text style properties
+    including bold, italic, underline, strikethrough, font, size, bg (background color),
+    link, superscript, subscript, etc.
+    """
+    # Use the declarative style converter for comprehensive style support
+    text_style, fields = convert_styles(styles, TEXT_STYLE_PROPS)
     return text_style, ",".join(fields)
 
 
