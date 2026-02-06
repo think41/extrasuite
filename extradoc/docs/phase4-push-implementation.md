@@ -216,10 +216,22 @@ These cannot be fully implemented due to Google Docs API limitations:
 | **Person mentions** | ❌ Not implemented | Requires specific `personProperties` with verified email |
 | **Horizontal rules** | ⚠️ Read-only | Cannot add/remove via API, only modify adjacent content |
 
-### Additional Style Support (Low Priority)
-- **Named style definitions** - Custom heading styles beyond H1-H6
+### Needs Design
+- **Document-level styles (DocumentStyle)** - Page margins, page size, background color, header/footer margins, page orientation. Uses `UpdateDocumentStyleRequest`. Need to design:
+  - How to represent in XML (attributes on `<doc>` element? separate `<documentStyle>` element?)
+  - Which properties to expose (margins, page size, background, orientation)
+  - How to handle PAGELESS vs paged documents
+  - See `docs/googledocs/api/DocumentStyle.md` and `docs/googledocs/api/UpdateDocumentStyleRequest.md`
+
+### Needs Fix
+- **Footnote index calculation** - Currently relies on `.raw/document.json` for accurate table indexes when footnotes are present. Should calculate indexes correctly from XML without needing raw API response.
+
+### Needs Testing/Verification
 - **Paragraph borders** - Supported in style_converter but not exposed in XML format
 - **Text highlight colors** - Supported via `bg` attribute on `<span>`, needs testing
+
+### Low Priority
+- **Named style definitions** - Custom heading styles beyond H1-H6
 
 ### Table Column Width Styling ✅ COMPLETE
 
