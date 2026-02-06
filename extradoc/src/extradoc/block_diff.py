@@ -86,6 +86,7 @@ class Block:
     attributes: dict[str, Any] = field(default_factory=dict)
     start_index: int = 0
     end_index: int = 0
+    segment_end_index: int = 0
 
     def content_hash(self) -> str:
         """Generate a hash of the content for quick comparison."""
@@ -281,9 +282,11 @@ class BlockDiffDetector:
             block.start_index = current_index
             block_length = self._calculate_block_length(block)
             block.end_index = current_index + block_length
+            block.segment_end_index = block.end_index
             current_index = block.end_index
 
         section.end_index = current_index
+        section.segment_end_index = current_index
         return current_index
 
     def _calculate_block_length(self, block: Block) -> int:
@@ -340,34 +343,72 @@ class BlockDiffDetector:
         return length
 
     def _calculate_table_length(self, table_block: Block) -> int:
-        """Calculate UTF-16 length of a table.
-
-        Structure:
-        - 1 for table start marker
-        - For each row: 1 for row marker
-        - For each cell: 1 for cell marker + cell content length
-        - 1 for table end marker
-        """
+        """Calculate UTF-16 length of a table and set child indexes."""
         try:
             root = ET.fromstring(table_block.xml_content)
         except ET.ParseError:
-            return 2  # Minimum: start + end markers
+            table_block.segment_end_index = table_block.start_index + 2
+            table_block.end_index = table_block.segment_end_index
+            return 2  # start + end markers
 
-        length = 1  # Table start marker
+        current = table_block.start_index + 1  # after table start marker
 
-        for tr in root.findall("tr"):
-            length += 1  # Row marker
-            for td in tr.findall("td"):
-                length += 1  # Cell marker
-                # Calculate cell content length
-                for child in td:
-                    if child.tag in ("p", "h1", "h2", "h3", "h4", "h5", "h6", "li"):
-                        length += self._calculate_paragraph_length(
-                            ET.tostring(child, encoding="unicode")
-                        )
+        row_blocks = table_block.children
+        tr_elems = root.findall("tr")
+        table_block.attributes["row_count"] = len(tr_elems)
 
-        length += 1  # Table end marker
+        for r_idx, tr in enumerate(tr_elems):
+            row_block = row_blocks[r_idx] if r_idx < len(row_blocks) else None
+            if row_block:
+                row_block.start_index = current  # row marker position
+            current += 1  # row marker
+
+            td_elems = tr.findall("td")
+            if row_block:
+                row_block.attributes["cell_count"] = len(td_elems)
+            cell_blocks = row_block.children if row_block else []
+            for c_idx, td in enumerate(td_elems):
+                cell_block = cell_blocks[c_idx] if c_idx < len(cell_blocks) else None
+
+                # Cell content starts after the cell marker
+                current += 1  # cell marker
+                cell_content_start = current
+                cell_len = self._calculate_cell_content_length(td)
+                cell_content_end = cell_content_start + cell_len
+
+                if cell_block:
+                    cell_block.start_index = cell_content_start
+                    cell_block.end_index = cell_content_end
+                    cell_block.segment_end_index = cell_content_end
+
+                current = cell_content_end
+
+            if row_block:
+                row_block.end_index = current
+                row_block.segment_end_index = current
+
+        current += 1  # table end marker
+        length = current - table_block.start_index
+        table_block.end_index = table_block.start_index + length
+        table_block.segment_end_index = table_block.end_index
         return length
+
+    def _calculate_cell_content_length(self, td_elem: ET.Element) -> int:
+        """UTF-16 length of a table cell's content (paragraphs + newline)."""
+        length = 0
+        for child in td_elem:
+            if child.tag in ("p", "h1", "h2", "h3", "h4", "h5", "h6", "li"):
+                length += self._calculate_paragraph_length(
+                    ET.tostring(child, encoding="unicode")
+                )
+            elif child.tag == "table":
+                nested = Block(
+                    block_type=BlockType.TABLE,
+                    xml_content=ET.tostring(child, encoding="unicode"),
+                )
+                nested.start_index = 0
+                length += self._calculate_table_length(nested)
+        return max(length, 1)
 
     def _parse_container(
         self, elem: ET.Element, block_type: BlockType, block_id: str
@@ -514,6 +555,7 @@ class BlockDiffDetector:
                         "colspan": int(td.get("colspan", "1")),
                         "rowspan": int(td.get("rowspan", "1")),
                     },
+                    segment_end_index=0,  # filled during index calc
                 )
                 # Recursively parse cell content (can contain nested tables)
                 cell_block.children = self._parse_structural_elements(td)
@@ -522,6 +564,18 @@ class BlockDiffDetector:
             table_block.children.append(row_block)
 
         return table_block
+
+    @staticmethod
+    def _calculate_table_cell_end_index(td: ET.Element) -> int:
+        """Estimate end index of a table cell within its own segment space.
+
+        Used to carry segment_end_index for cells so we can preserve
+        the final newline sentinel during edits.
+        """
+        content_text = ET.tostring(td, encoding="unicode")
+        # Minimal length is 1 (newline) when empty
+        length = max(1, len(content_text))
+        return length
 
     def _diff_blocks(
         self,
@@ -553,6 +607,7 @@ class BlockDiffDetector:
                 pristine.children,
                 current.children,
                 [*path, f"{pristine.block_type.value}:{pristine.block_id}"],
+                segment_start_index=pristine.start_index,
                 segment_end_index=pristine.end_index,
             )
             changes.extend(child_changes)
@@ -624,6 +679,8 @@ class BlockDiffDetector:
         pristine_children: list[Block],
         current_children: list[Block],
         path: list[str],
+        *,
+        segment_start_index: int = 0,
         segment_end_index: int = 0,
     ) -> list[BlockChange]:
         """Diff two lists of child blocks using LCS-based alignment.
@@ -660,12 +717,19 @@ class BlockDiffDetector:
                     raw_changes.append((None, p_block, c_block))
 
         # Group consecutive paragraph changes into ContentBlock changes
-        return self._group_paragraph_changes(raw_changes, path, segment_end_index)
+        return self._group_paragraph_changes(
+            raw_changes,
+            path,
+            segment_start_index=segment_start_index,
+            segment_end_index=segment_end_index,
+        )
 
     def _group_paragraph_changes(
         self,
         raw_changes: list[tuple[ChangeType | None, Block | None, Block | None]],
         path: list[str],
+        *,
+        segment_start_index: int = 0,
         segment_end_index: int = 0,
     ) -> list[BlockChange]:
         """Group consecutive paragraph changes into ContentBlock changes.
@@ -684,8 +748,7 @@ class BlockDiffDetector:
         current_group_type: ChangeType | None = None
 
         # Track the last known pristine end index for calculating insert positions
-        # Start with base index (1 for body, will be adjusted based on path)
-        last_pristine_end_index = 1 if "body" in str(path) else 0
+        last_pristine_end_index = segment_start_index
 
         def flush_group() -> None:
             """Flush the current group of paragraph changes."""
@@ -825,6 +888,7 @@ class BlockDiffDetector:
                 # Handle non-paragraph changes directly
                 if change_type == ChangeType.ADDED:
                     assert c_block is not None
+                    insert_at = last_pristine_end_index
                     grouped_changes.append(
                         BlockChange(
                             change_type=ChangeType.ADDED,
@@ -832,9 +896,8 @@ class BlockDiffDetector:
                             block_id=c_block.block_id,
                             after_xml=c_block.xml_content,
                             container_path=path,
-                            # Use last pristine position for insert location
-                            pristine_start_index=last_pristine_end_index,
-                            pristine_end_index=last_pristine_end_index,
+                            pristine_start_index=insert_at,
+                            pristine_end_index=insert_at,
                             segment_end_index=segment_end_index,
                         )
                     )
@@ -860,6 +923,7 @@ class BlockDiffDetector:
                     if p_block.block_type == BlockType.TABLE:
                         table_changes = self._diff_single_block(p_block, c_block, path)
                         grouped_changes.extend(table_changes)
+                        last_pristine_end_index = p_block.end_index
                     else:
                         grouped_changes.append(
                             BlockChange(
@@ -868,6 +932,8 @@ class BlockDiffDetector:
                                 before_xml=p_block.xml_content,
                                 after_xml=c_block.xml_content,
                                 container_path=path,
+                                pristine_start_index=p_block.start_index,
+                                pristine_end_index=p_block.end_index,
                                 segment_end_index=segment_end_index,
                             )
                         )
@@ -905,6 +971,8 @@ class BlockDiffDetector:
                             after_xml=current.xml_content,
                             container_path=path,
                             child_changes=table_changes,
+                            pristine_start_index=pristine.start_index,
+                            pristine_end_index=pristine.end_index,
                         )
                     )
 
@@ -1005,6 +1073,11 @@ class BlockDiffDetector:
 
             if p_row is None and c_row is not None:
                 # Row added
+                anchor_start = (
+                    pristine_rows[row_idx - 1].end_index
+                    if row_idx > 0 and row_idx - 1 < len(pristine_rows)
+                    else pristine_table.start_index + 1
+                )
                 changes.append(
                     BlockChange(
                         change_type=ChangeType.ADDED,
@@ -1012,6 +1085,9 @@ class BlockDiffDetector:
                         block_id=c_row.block_id,
                         container_path=row_path,
                         after_xml=c_row.xml_content,
+                        pristine_start_index=anchor_start,
+                        pristine_end_index=anchor_start,
+                        segment_end_index=pristine_table.end_index,
                     )
                 )
             elif p_row is not None and c_row is None:
@@ -1023,6 +1099,9 @@ class BlockDiffDetector:
                         block_id=p_row.block_id,
                         container_path=row_path,
                         before_xml=p_row.xml_content,
+                        pristine_start_index=p_row.start_index,
+                        pristine_end_index=p_row.end_index,
+                        segment_end_index=pristine_table.end_index,
                     )
                 )
             elif p_row is not None and c_row is not None:
@@ -1044,6 +1123,9 @@ class BlockDiffDetector:
                             before_xml=p_row.xml_content,
                             after_xml=c_row.xml_content,
                             child_changes=cell_changes,
+                            pristine_start_index=p_row.start_index,
+                            pristine_end_index=p_row.end_index,
+                            segment_end_index=pristine_table.end_index,
                         )
                     )
 
@@ -1079,7 +1161,8 @@ class BlockDiffDetector:
             cell_path = [*row_path, f"col_idx:{col_idx}"]
 
             if p_cell is None and c_cell is not None:
-                # Cell added (column added)
+                # Cell added (column added) - insert at end of row segment
+                anchor = pristine_row.end_index
                 changes.append(
                     BlockChange(
                         change_type=ChangeType.ADDED,
@@ -1087,6 +1170,9 @@ class BlockDiffDetector:
                         block_id=c_cell.block_id,
                         container_path=cell_path,
                         after_xml=c_cell.xml_content,
+                        pristine_start_index=anchor,
+                        pristine_end_index=anchor,
+                        segment_end_index=pristine_row.end_index,
                     )
                 )
             elif p_cell is not None and c_cell is None:
@@ -1098,6 +1184,9 @@ class BlockDiffDetector:
                         block_id=p_cell.block_id,
                         container_path=cell_path,
                         before_xml=p_cell.xml_content,
+                        pristine_start_index=p_cell.start_index,
+                        pristine_end_index=p_cell.end_index,
+                        segment_end_index=p_cell.end_index,
                     )
                 )
             elif p_cell is not None and c_cell is not None:
@@ -1112,6 +1201,7 @@ class BlockDiffDetector:
                         p_cell.children,
                         c_cell.children,
                         [*cell_path, f"cell:{p_cell.block_id}"],
+                        segment_start_index=p_cell.start_index,
                         segment_end_index=p_cell.end_index,
                     )
                     changes.append(
@@ -1123,6 +1213,9 @@ class BlockDiffDetector:
                             before_xml=p_cell.xml_content,
                             after_xml=c_cell.xml_content,
                             child_changes=child_changes,
+                            pristine_start_index=p_cell.start_index,
+                            pristine_end_index=p_cell.end_index,
+                            segment_end_index=p_cell.end_index,
                         )
                     )
 

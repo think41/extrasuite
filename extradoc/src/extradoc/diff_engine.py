@@ -25,7 +25,6 @@ from .block_diff import (
 )
 from .desugar import (
     Paragraph,
-    Section,
     SpecialElement,
     Table,
     TableCell,
@@ -282,13 +281,12 @@ def diff_documents(
     """Compare two XML documents and generate batchUpdate requests.
 
     Uses block-level diff detection to identify changes, then generates
-    appropriate Google Docs API requests for each change.
-
-    Strategy:
-    1. Parse both documents into block trees
-    2. Detect block-level changes (add, delete, modify)
-    3. For each change, generate appropriate requests
-    4. Process changes bottom-up (descending index) to maintain index stability
+    requests using a backwards walk algorithm. Each segment (body, header,
+    footer, footnote) is processed independently. Within each segment,
+    changes are walked from highest pristine index to lowest, emitting
+    requests in execution order. This guarantees that when processing
+    element at pristine position P, everything at positions < P is still
+    at pristine state.
 
     Args:
         pristine_xml: The pristine document XML
@@ -307,20 +305,15 @@ def diff_documents(
     if not block_changes:
         return []
 
-    # Parse documents for index calculation
-    pristine_doc = desugar_document(pristine_xml, pristine_styles)
-    current_doc = desugar_document(current_xml, current_styles)
-
-    # Calculate table indexes from both documents
-    # Pristine indexes used for content modifications (delete/insert)
-    # Current indexes used for property changes (column widths)
-    pristine_table_indexes = calculate_table_indexes(pristine_doc.sections)
-    # Use raw API indexes if provided (more accurate for property-only changes)
-    current_table_indexes = (
-        raw_table_indexes
-        if raw_table_indexes is not None
-        else calculate_table_indexes(current_doc.sections)
-    )
+    # Calculate table indexes for current document
+    # Used for property changes (column widths) where we need the live table position
+    # Pristine indexes are no longer needed — the backwards walk uses
+    # change.pristine_start_index directly from the block diff
+    if raw_table_indexes is not None:
+        current_table_indexes = raw_table_indexes
+    else:
+        current_doc = desugar_document(current_xml, current_styles)
+        current_table_indexes = calculate_table_indexes(current_doc.sections)
 
     # Parse cell styles from styles.xml for class attribute resolution
     cell_styles = parse_cell_styles(current_styles)
@@ -328,581 +321,139 @@ def diff_documents(
     # Parse text styles from styles.xml for span class resolution
     text_styles = parse_text_styles(current_styles)
 
-    # Separate body ContentBlock changes from structural changes
-    # Body ContentBlock changes may need merged approach for index stability
-    # Structural changes (table, footer, tab, header) are processed separately
-    body_content_changes = [
-        c
-        for c in block_changes
-        if "body" in str(c.container_path) and c.block_type == BlockType.CONTENT_BLOCK
-    ]
-    structural_changes = [
-        c
-        for c in block_changes
-        if c.block_type
-        in (BlockType.TABLE, BlockType.FOOTER, BlockType.TAB, BlockType.HEADER)
-        or "body" not in str(c.container_path)
-    ]
-
-    has_body_deletes = any(
-        c.change_type in (ChangeType.DELETED, ChangeType.MODIFIED)
-        for c in body_content_changes
-    )
-    has_body_inserts = any(
-        c.change_type in (ChangeType.ADDED, ChangeType.MODIFIED)
-        for c in body_content_changes
-    )
-
-    # Check if there are any tables in the body (either in changes or in the document)
-    # The merged approach doesn't handle tables correctly, so we must skip it
-    has_body_tables = any(
-        c.block_type == BlockType.TABLE and "body" in str(c.container_path)
-        for c in block_changes
-    )
-    # Also check if pristine body has tables (unchanged tables won't appear in changes)
-    pristine_body = next(
-        (s for s in pristine_doc.sections if s.section_type == "body"), None
-    )
-    if pristine_body:
-        from extradoc.desugar import Table
-
-        has_body_tables = has_body_tables or any(
-            isinstance(elem, Table) for elem in pristine_body.content
-        )
-
+    # Group changes by segment and walk each backwards
+    segments = _group_changes_by_segment(block_changes)
     all_requests: list[dict[str, Any]] = []
-
-    # If we have both deletes and inserts/modifies in body ContentBlocks, use merged approach
-    # This ensures index stability by doing a single delete + single insert
-    # IMPORTANT: Skip merged approach if there are tables - it doesn't handle them correctly
-    if (
-        has_body_deletes
-        and has_body_inserts
-        and len(body_content_changes) > 1
-        and not has_body_tables
-    ):
-        # Merge all body content changes into a single insert
-        merged_requests = _generate_merged_body_insert(
-            block_changes, pristine_doc, current_doc, current_xml, text_styles
-        )
-        if merged_requests:
-            all_requests.extend(merged_requests)
-        # Continue to process structural changes below
-
-    # Process structural changes (footer, tab, header, table) normally
-    for change in structural_changes:
-        change_requests = _generate_requests_for_change(
-            change,
-            pristine_doc,
-            current_doc,
-            pristine_table_indexes,
-            current_table_indexes,
-            cell_styles,
-            text_styles,
-        )
-        all_requests.extend(change_requests)
-
-    # Process body content changes if not handled by merged approach
-    merged_body_used = (
-        has_body_deletes
-        and has_body_inserts
-        and len(body_content_changes) > 1
-        and not has_body_tables
-    )
-    if not merged_body_used and body_content_changes:
-        # Sort by pristine_start_index descending (bottom-up) for index stability
-        sorted_body_changes = sorted(
-            body_content_changes,
-            key=lambda c: c.pristine_start_index,
-            reverse=True,
-        )
-        for change in sorted_body_changes:
-            change_requests = _generate_requests_for_change(
-                change,
-                pristine_doc,
-                current_doc,
-                pristine_table_indexes,
+    for segment_key, segment_changes in segments.items():
+        all_requests.extend(
+            _walk_segment_backwards(
+                segment_changes,
+                segment_key,
                 current_table_indexes,
                 cell_styles,
                 text_styles,
             )
-            all_requests.extend(change_requests)
-
-    # If no changes were processed above, process all changes normally
-    # (handles non-body content like headers/footers that aren't in either list)
-    if not all_requests:
-        # Generate requests from all block changes
-        # Sort by pristine_start_index descending (bottom-up) to maintain index stability
-        sorted_changes = sorted(
-            block_changes,
-            key=lambda c: c.pristine_start_index,
-            reverse=True,
         )
 
-        for change in sorted_changes:
-            change_requests = _generate_requests_for_change(
-                change,
-                pristine_doc,
-                current_doc,
-                pristine_table_indexes,
-                current_table_indexes,
-                cell_styles,
-                text_styles,
-            )
-            all_requests.extend(change_requests)
-
-    # Reorder requests: DELETEs first, then INSERTs, then UPDATEs
-    # This ensures deletes don't affect inserted content
-    # Exception: requests marked with _skipReorder should stay in their original position
-    delete_requests: list[dict[str, Any]] = []
-    insert_requests: list[dict[str, Any]] = []
-    update_requests: list[dict[str, Any]] = []
-    ordered_requests: list[dict[str, Any]] = []  # Requests that shouldn't be reordered
-
-    for req in all_requests:
-        # Check for skip reorder marker
-        if req.pop("_skipReorder", False):
-            ordered_requests.append(req)
-            continue
-
-        if (
-            "deleteContentRange" in req
-            or "deleteTableRow" in req
-            or "deleteTableColumn" in req
-        ):
-            delete_requests.append(req)
-        elif (
-            "insertText" in req
-            or "insertPageBreak" in req
-            or "insertSectionBreak" in req
-            or "insertTable" in req
-            or "insertTableRow" in req
-            or "insertTableColumn" in req
-        ):
-            insert_requests.append(req)
-        else:
-            update_requests.append(req)
-
-    # Sort deletes by start index descending
-    def get_delete_index(req: dict[str, Any]) -> int:
-        if "deleteContentRange" in req:
-            return int(req["deleteContentRange"]["range"].get("startIndex", 0))
-        if "deleteTableRow" in req:
-            return int(
-                req["deleteTableRow"]
-                .get("tableCellLocation", {})
-                .get("tableStartLocation", {})
-                .get("index", 0)
-            )
-        return 0
-
-    delete_requests.sort(key=get_delete_index, reverse=True)
-
-    # Sort inserts by index descending
-    def get_insert_index(req: dict[str, Any]) -> int:
-        if "insertText" in req:
-            return int(req["insertText"]["location"].get("index", 0))
-        if "insertPageBreak" in req:
-            return int(req["insertPageBreak"]["location"].get("index", 0))
-        if "insertSectionBreak" in req:
-            return int(req["insertSectionBreak"]["location"].get("index", 0))
-        if "insertTable" in req:
-            table_req = req["insertTable"]
-            if "location" in table_req:
-                return int(table_req["location"].get("index", 0))
-            # endOfSegmentLocation means insert at end - use 0 for sorting
-            return 0
-        return 0
-
-    insert_requests.sort(key=get_insert_index, reverse=True)
-
-    # Adjust insert indexes based on preceding deletes
-    # After all deletes run, the document is shorter. Inserts at positions after
-    # deleted content need their indexes adjusted.
-    # Calculate total deletion impact for each insert based on which deletes affect it
-    def adjust_request_index(req: dict[str, Any], adjustment: int) -> dict[str, Any]:
-        """Adjust the index in a request by the given amount."""
-        if adjustment == 0:
-            return req
-        # Handle insertText
-        if "insertText" in req:
-            req["insertText"]["location"]["index"] -= adjustment
-        # Handle insertPageBreak
-        elif "insertPageBreak" in req:
-            req["insertPageBreak"]["location"]["index"] -= adjustment
-        # Handle insertSectionBreak
-        elif "insertSectionBreak" in req:
-            req["insertSectionBreak"]["location"]["index"] -= adjustment
-        # Handle insertTable with location
-        elif "insertTable" in req and "location" in req["insertTable"]:
-            req["insertTable"]["location"]["index"] -= adjustment
-        return req
-
-    def adjust_update_index(req: dict[str, Any], adjustment: int) -> dict[str, Any]:
-        """Adjust range indexes in update requests."""
-        if adjustment == 0:
-            return req
-        # Handle updateTextStyle
-        if "updateTextStyle" in req:
-            rng = req["updateTextStyle"].get("range", {})
-            if "startIndex" in rng:
-                rng["startIndex"] -= adjustment
-            if "endIndex" in rng:
-                rng["endIndex"] -= adjustment
-        # Handle updateParagraphStyle
-        elif "updateParagraphStyle" in req:
-            rng = req["updateParagraphStyle"].get("range", {})
-            if "startIndex" in rng:
-                rng["startIndex"] -= adjustment
-            if "endIndex" in rng:
-                rng["endIndex"] -= adjustment
-        # Handle createParagraphBullets
-        elif "createParagraphBullets" in req:
-            rng = req["createParagraphBullets"].get("range", {})
-            if "startIndex" in rng:
-                rng["startIndex"] -= adjustment
-            if "endIndex" in rng:
-                rng["endIndex"] -= adjustment
-        return req
-
-    # Calculate delete ranges for adjustment
-    delete_ranges: list[tuple[int, int]] = []  # (start, length)
-    for del_req in delete_requests:
-        if "deleteContentRange" in del_req:
-            rng = del_req["deleteContentRange"]["range"]
-            start = rng.get("startIndex", 0)
-            end = rng.get("endIndex", start)
-            delete_ranges.append((start, end - start))
-
-    def get_any_request_index(req: dict[str, Any]) -> int:
-        """Get index from any type of request."""
-        # Insert requests
-        if "insertText" in req:
-            return int(req["insertText"]["location"].get("index", 0))
-        if "insertPageBreak" in req:
-            return int(req["insertPageBreak"]["location"].get("index", 0))
-        if "insertSectionBreak" in req:
-            return int(req["insertSectionBreak"]["location"].get("index", 0))
-        if "insertTable" in req and "location" in req["insertTable"]:
-            return int(req["insertTable"]["location"].get("index", 0))
-        # Update requests
-        if "updateTextStyle" in req:
-            return int(req["updateTextStyle"].get("range", {}).get("startIndex", 0))
-        if "updateParagraphStyle" in req:
-            return int(
-                req["updateParagraphStyle"].get("range", {}).get("startIndex", 0)
-            )
-        if "createParagraphBullets" in req:
-            return int(
-                req["createParagraphBullets"].get("range", {}).get("startIndex", 0)
-            )
-        return 0
-
-    def adjust_any_request(req: dict[str, Any], adjustment: int) -> dict[str, Any]:
-        """Adjust indexes in any type of request."""
-        if adjustment == 0:
-            return req
-        # Insert requests
-        if "insertText" in req:
-            req["insertText"]["location"]["index"] -= adjustment
-        elif "insertPageBreak" in req:
-            req["insertPageBreak"]["location"]["index"] -= adjustment
-        elif "insertSectionBreak" in req:
-            req["insertSectionBreak"]["location"]["index"] -= adjustment
-        elif "insertTable" in req and "location" in req["insertTable"]:
-            req["insertTable"]["location"]["index"] -= adjustment
-        # Update requests
-        elif "updateTextStyle" in req:
-            rng = req["updateTextStyle"].get("range", {})
-            if "startIndex" in rng:
-                rng["startIndex"] -= adjustment
-            if "endIndex" in rng:
-                rng["endIndex"] -= adjustment
-        elif "updateParagraphStyle" in req:
-            rng = req["updateParagraphStyle"].get("range", {})
-            if "startIndex" in rng:
-                rng["startIndex"] -= adjustment
-            if "endIndex" in rng:
-                rng["endIndex"] -= adjustment
-        elif "createParagraphBullets" in req:
-            rng = req["createParagraphBullets"].get("range", {})
-            if "startIndex" in rng:
-                rng["startIndex"] -= adjustment
-            if "endIndex" in rng:
-                rng["endIndex"] -= adjustment
-        return req
-
-    def calculate_adjustment(req_idx: int) -> int:
-        """Calculate total adjustment for a request at the given index."""
-        adjustment = 0
-        for del_start, del_len in delete_ranges:
-            # If the delete ends before or at the request position, adjust
-            if del_start + del_len <= req_idx:
-                adjustment += del_len
-        return adjustment
-
-    # Adjust each insert request based on deletes that occur before its position
-    adjusted_inserts: list[dict[str, Any]] = []
-    for ins_req in insert_requests:
-        insert_idx = get_insert_index(ins_req)
-        adjustment = calculate_adjustment(insert_idx)
-        adjusted_inserts.append(adjust_any_request(ins_req, adjustment))
-
-    # Adjust update requests
-    adjusted_updates: list[dict[str, Any]] = []
-    for upd_req in update_requests:
-        update_idx = get_any_request_index(upd_req)
-        adjustment = calculate_adjustment(update_idx)
-        adjusted_updates.append(adjust_any_request(upd_req, adjustment))
-
-    # Adjust ordered requests (those with _skipReorder that need to stay together)
-    # These also need adjustment for deletes that happen before them
-    adjusted_ordered: list[dict[str, Any]] = []
-    for ord_req in ordered_requests:
-        req_idx = get_any_request_index(ord_req)
-        adjustment = calculate_adjustment(req_idx)
-        adjusted_ordered.append(adjust_any_request(ord_req, adjustment))
-
-    # Combine: deletes first, then ordered requests (e.g., table cell ops),
-    # then regular inserts, then updates
-    return delete_requests + adjusted_ordered + adjusted_inserts + adjusted_updates
+    return all_requests
 
 
-def _generate_requests_for_change(
-    change: BlockChange,
-    pristine_doc: Any,
-    current_doc: Any,
-    pristine_table_indexes: dict[str, int],
-    current_table_indexes: dict[str, int],
-    cell_styles: dict[str, dict[str, str]] | None = None,
-    text_styles: dict[str, dict[str, str]] | None = None,
-) -> list[dict[str, Any]]:
-    """Generate batchUpdate requests for a single block change.
+def _group_changes_by_segment(
+    changes: list[BlockChange],
+) -> dict[str, list[BlockChange]]:
+    """Group block changes by segment.
 
-    Args:
-        change: The BlockChange describing what changed
-        pristine_doc: Desugared pristine document
-        current_doc: Desugared current document
-        pristine_table_indexes: Map of table positions to start indexes (pristine doc)
-        current_table_indexes: Map of table positions to start indexes (current doc)
-        cell_styles: Map of cell style class ID to properties (from styles.xml)
-        text_styles: Map of text style class ID to properties (from styles.xml)
+    Each segment (body, header, footer, footnote) has its own index space
+    and is processed independently.
 
     Returns:
-        List of batchUpdate request dicts
+        Dict mapping segment key to list of changes, sorted ascending
+        by pristine_start_index within each segment.
     """
-    # Extract segment_id from container path
-    segment_id = _extract_segment_id(change.container_path)
+    segments: dict[str, list[BlockChange]] = {}
 
-    # Find the matching section for index calculation
-    section_type = _get_section_type_from_path(change.container_path)
-    pristine_section = _find_section(pristine_doc, section_type, segment_id)
-    current_section = _find_section(current_doc, section_type, segment_id)
+    for change in changes:
+        key = _segment_key_from_change(change)
+        if key not in segments:
+            segments[key] = []
+        segments[key].append(change)
 
-    requests: list[dict[str, Any]] = []
+    # Sort each segment's changes ascending by pristine_start_index
+    for key in segments:
+        segments[key].sort(key=lambda c: c.pristine_start_index)
 
-    if change.block_type == BlockType.CONTENT_BLOCK:
-        requests.extend(
-            _handle_content_block_change(
-                change, pristine_section, current_section, segment_id, text_styles
-            )
-        )
-    elif change.block_type == BlockType.TABLE:
-        requests.extend(
-            _handle_table_change(
-                change,
-                pristine_section,
-                current_section,
-                segment_id,
-                pristine_table_indexes,
-                current_table_indexes,
-                cell_styles,
-                text_styles,
-            )
-        )
-    elif change.block_type in (BlockType.HEADER, BlockType.FOOTER):
-        requests.extend(_handle_header_footer_change(change))
-    elif change.block_type == BlockType.FOOTNOTE:
-        requests.extend(_handle_footnote_change(change))
-    elif change.block_type == BlockType.TAB:
-        requests.extend(_handle_tab_change(change))
-
-    # Recursively handle child changes
-    # Note: Some child changes are already handled by their parent handlers
-    for child_change in change.child_changes:
-        if (
-            change.block_type == BlockType.CONTENT_BLOCK
-            and child_change.block_type == BlockType.FOOTNOTE
-        ):
-            # Already handled in _handle_content_block_change
-            continue
-        if change.block_type == BlockType.TABLE:
-            # Table child changes (rows, cells, cell content) are all handled
-            # in _generate_table_modify_requests
-            continue
-        child_requests = _generate_requests_for_change(
-            child_change,
-            pristine_doc,
-            current_doc,
-            pristine_table_indexes,
-            current_table_indexes,
-            cell_styles,
-            text_styles,
-        )
-        requests.extend(child_requests)
-
-    return requests
+    return segments
 
 
-def _extract_segment_id(container_path: list[str]) -> str | None:
-    """Extract segment ID from container path.
+def _segment_key_from_change(change: BlockChange) -> str:
+    """Derive a segment key from a BlockChange.
 
-    Returns None for body, or the segment ID for headers/footers/footnotes.
+    For changes with a container_path, the key comes from the first path element
+    (e.g., "body:body" -> "body", "header:kix.abc" -> "header:kix.abc").
+
+    For top-level structural changes (HEADER/FOOTER/TAB/FOOTNOTE block types)
+    with empty container_path, derive the key from block_type and block_id.
     """
-    for part in container_path:
-        if ":" in part:
-            type_part, id_part = part.split(":", 1)
-            if type_part in ("header", "footer", "footnote") and id_part:
-                return id_part
-    return None
+    if change.container_path:
+        first = change.container_path[0]
+        if first.startswith("body:"):
+            return "body"
+        return first
 
+    # Top-level structural changes without container_path
+    if change.block_type == BlockType.HEADER:
+        return f"header:{change.block_id}" if change.block_id else "header"
+    if change.block_type == BlockType.FOOTER:
+        return f"footer:{change.block_id}" if change.block_id else "footer"
+    if change.block_type == BlockType.FOOTNOTE:
+        return f"footnote:{change.block_id}" if change.block_id else "footnote"
+    if change.block_type == BlockType.TAB:
+        return f"tab:{change.block_id}" if change.block_id else "tab"
 
-def _get_section_type_from_path(container_path: list[str]) -> str:
-    """Get section type from container path."""
-    for part in container_path:
-        if ":" in part:
-            type_part = part.split(":")[0]
-            if type_part in ("body", "header", "footer", "footnote"):
-                return type_part
     return "body"
 
 
-def _find_section(
-    doc: Any, section_type: str, segment_id: str | None
-) -> Section | None:
-    """Find a section in the document by type and ID."""
-    for section in doc.sections:
-        sec: Section = section
-        if sec.section_type == section_type and (
-            segment_id is None or sec.section_id == segment_id
-        ):
-            return sec
-    return None
-
-
-def _generate_merged_body_insert(
-    block_changes: list[BlockChange],
-    pristine_doc: Any,
-    current_doc: Any,  # noqa: ARG001 - Kept for API consistency
-    current_xml: str,
-    text_styles: dict[str, dict[str, str]] | None = None,
+def _walk_segment_backwards(
+    changes: list[BlockChange],
+    segment_key: str,
+    current_table_indexes: dict[str, int],
+    cell_styles: dict[str, dict[str, str]] | None,
+    text_styles: dict[str, dict[str, str]] | None,
 ) -> list[dict[str, Any]]:
-    """Generate a single merged insert for body content when positions overlap.
+    """Walk changes in a segment from highest to lowest pristine index.
 
-    This is used when replacing document content, where the normal diff would
-    produce multiple changes at different positions. Since deletes change the
-    document size, insert indexes calculated from pristine become invalid.
-
-    Strategy:
-    1. Delete all existing body content (preserving final newline)
-    2. Insert all new body content as a single operation
-    3. Generate styling for the merged content
-
-    Returns empty list if merge cannot be performed.
+    Core invariant: when processing element at pristine position P,
+    everything at positions < P is still at pristine state.
     """
-
-    # Find body section in pristine
-    pristine_body = None
-    for sec in pristine_doc.sections:
-        if sec.section_type == "body":
-            pristine_body = sec
-            break
-
-    if pristine_body is None:
-        return []
-
-    # Parse current XML to extract body content
-    try:
-        root = ET.fromstring(current_xml)
-        body_elem = root.find("body")
-        if body_elem is None:
-            return []
-    except ET.ParseError:
-        return []
-
-    # Serialize all body children as the merged content
-    body_content_parts: list[str] = []
-    for child in body_elem:
-        body_content_parts.append(ET.tostring(child, encoding="unicode"))
-
-    if not body_content_parts:
-        return []
-
-    merged_xml = "\n".join(body_content_parts)
-
     requests: list[dict[str, Any]] = []
+    segment_id = _segment_id_from_key(segment_key)
 
-    # 1. Calculate pristine body end index from the actual pristine body content
-    # Body starts at index 1
-    pristine_end = 1
-    for elem in pristine_body.content:
-        if isinstance(elem, Paragraph):
-            pristine_end += elem.utf16_length()
-        elif isinstance(elem, Table):
-            pristine_end += _table_length(elem)
-        elif isinstance(elem, SpecialElement):
-            pristine_end += elem.utf16_length()
-
-    # Also check block changes for segment_end_index (more reliable for segment boundary)
-    for change in block_changes:
-        if "body" in str(change.container_path) and change.segment_end_index > 0:
-            pristine_end = max(pristine_end, change.segment_end_index)
-            break
-
-    # Delete from 1 to pristine_end - 1 (preserve final newline)
-    if pristine_end > 2:
-        requests.append(
-            {
-                "deleteContentRange": {
-                    "range": {
-                        "startIndex": 1,
-                        "endIndex": pristine_end - 1,
-                    }
-                }
-            }
-        )
-
-    # 2. Insert all new body content at index 1
-    requests.extend(
-        _generate_content_insert_requests(
-            merged_xml,
-            segment_id=None,  # Body has no segment ID
-            insert_index=1,
-            strip_trailing_newline=False,
-            text_styles=text_styles,
-        )
-    )
+    for change in reversed(changes):
+        if change.block_type == BlockType.CONTENT_BLOCK:
+            requests.extend(_emit_content_block(change, segment_id, text_styles))
+        elif change.block_type == BlockType.TABLE:
+            requests.extend(
+                _emit_table(
+                    change,
+                    segment_id,
+                    current_table_indexes,
+                    cell_styles,
+                    text_styles,
+                )
+            )
+        elif change.block_type in (BlockType.HEADER, BlockType.FOOTER):
+            requests.extend(_handle_header_footer_change(change))
+        elif change.block_type == BlockType.FOOTNOTE:
+            requests.extend(_handle_footnote_change(change))
+        elif change.block_type == BlockType.TAB:
+            requests.extend(_handle_tab_change(change))
 
     return requests
 
 
-def _handle_content_block_change(
-    change: BlockChange,
-    pristine_section: Section | None,  # noqa: ARG001 - Kept for API consistency
-    current_section: Section | None,  # noqa: ARG001 - Kept for API consistency
-    segment_id: str | None,
-    text_styles: dict[str, dict[str, str]] | None = None,
-) -> list[dict[str, Any]]:
-    """Handle ContentBlock add/delete/modify changes.
+def _segment_id_from_key(segment_key: str) -> str | None:
+    """Extract segment ID from segment key.
 
-    For MODIFIED content blocks, we use a simple delete + insert strategy.
-    Also handles footnote child_changes which require special index calculation.
-
-    Uses pristine_start_index/pristine_end_index from the BlockChange for positioning.
+    Returns None for body, or the segment ID for headers/footers/footnotes.
     """
+    if segment_key == "body":
+        return None
+    if ":" in segment_key:
+        prefix, sid = segment_key.split(":", 1)
+        if prefix in ("header", "footer", "footnote"):
+            return sid
+    return None
+
+
+def _emit_content_block(
+    change: BlockChange,
+    segment_id: str | None,
+    text_styles: dict[str, dict[str, str]] | None,
+) -> list[dict[str, Any]]:
+    """Emit requests for a ContentBlock change."""
     requests: list[dict[str, Any]] = []
 
-    # Handle footnote child_changes first (they need the ContentBlock context)
+    # Handle footnote child_changes first
     base_index = (
         change.pristine_start_index
         if change.pristine_start_index > 0
@@ -911,7 +462,6 @@ def _handle_content_block_change(
 
     for child_change in change.child_changes:
         if child_change.block_type == BlockType.FOOTNOTE:
-            # For added footnotes, use after_xml; for deleted, use before_xml
             content_xml = (
                 change.after_xml
                 if child_change.change_type == ChangeType.ADDED
@@ -921,142 +471,232 @@ def _handle_content_block_change(
                 _handle_footnote_change(child_change, content_xml, base_index)
             )
 
-    if change.change_type == ChangeType.ADDED:
-        # Insert new content - for additions, insert at pristine_start_index
-        # (where the preceding element ends, or at the base index)
-        if change.after_xml:
-            insert_index = (
-                change.pristine_start_index
-                if change.pristine_start_index > 0
-                else (1 if segment_id is None else 0)
-            )
-            # Adjust if at segment end - can't insert at the final newline position
-            if (
-                change.segment_end_index > 0
-                and insert_index >= change.segment_end_index
-            ):
-                insert_index = change.segment_end_index - 1
-            requests.extend(
-                _generate_content_insert_requests(
-                    change.after_xml, segment_id, insert_index, text_styles=text_styles
-                )
-            )
+    segment_start = 1 if segment_id is None else 0
+    segment_end = change.segment_end_index if change.segment_end_index > 0 else None
 
-    elif change.change_type == ChangeType.DELETED:
-        # Delete content using pristine indexes from BlockChange
-        # Note: Body starts at index 1, but headers/footers/footnotes start at 0
-        # Check for valid content range rather than just start > 0
-        if (
-            change.before_xml
-            and change.pristine_end_index > change.pristine_start_index
-        ):
-            requests.extend(
-                _generate_content_delete_requests_by_index(
-                    change.pristine_start_index,
-                    change.pristine_end_index,
-                    segment_id,
-                    change.segment_end_index,
-                )
-            )
-
-    elif change.change_type == ChangeType.MODIFIED:
-        # For modified blocks, delete old content and insert new at same position
-        # Note: Don't strip trailing newline for MODIFIED blocks since other content
-        # (ADDED blocks) may follow. The paragraph structure should be preserved.
-        # Note: Body starts at index 1, but headers/footers/footnotes start at 0
-        if (
-            change.before_xml
-            and change.pristine_end_index > change.pristine_start_index
-        ):
-            requests.extend(
-                _generate_content_delete_requests_by_index(
-                    change.pristine_start_index,
-                    change.pristine_end_index,
-                    segment_id,
-                    change.segment_end_index,
-                )
-            )
-        if change.after_xml:
-            # Insert at the same position where we deleted
-            requests.extend(
-                _generate_content_insert_requests(
-                    change.after_xml,
-                    segment_id,
-                    change.pristine_start_index,
-                    strip_trailing_newline=False,  # Always include paragraph newline
-                    text_styles=text_styles,
-                )
-            )
+    requests.extend(
+        _emit_content_ops(
+            change,
+            segment_id,
+            segment_start,
+            segment_end,
+            text_styles,
+        )
+    )
 
     return requests
 
 
-def _handle_table_change(
+def _emit_table(
     change: BlockChange,
-    pristine_section: Section | None,  # noqa: ARG001 - Reserved for Phase 3
-    current_section: Section | None,  # noqa: ARG001 - Reserved for Phase 3
     segment_id: str | None,
-    pristine_table_indexes: dict[str, int],
     current_table_indexes: dict[str, int],
-    cell_styles: dict[str, dict[str, str]] | None = None,
-    text_styles: dict[str, dict[str, str]] | None = None,
+    cell_styles: dict[str, dict[str, str]] | None,
+    text_styles: dict[str, dict[str, str]] | None,
 ) -> list[dict[str, Any]]:
-    """Handle Table add/delete/modify changes.
-
-    For MODIFIED tables, we process child_changes which contain row/cell changes.
-    Row/column operations use the table's startIndex calculated from document structure.
-
-    Args:
-        cell_styles: Map of cell style class ID to properties (from styles.xml)
-        text_styles: Map of text style class ID to properties (from styles.xml)
-    """
-    requests: list[dict[str, Any]] = []
-
+    """Emit requests for a TABLE change."""
     if change.change_type == ChangeType.ADDED:
-        # Table insertion: insert structure then populate cell content
-        # Use pristine_start_index as the insertion point
         if change.after_xml:
             insert_index = (
                 change.pristine_start_index if change.pristine_start_index > 0 else 0
             )
-            # Adjust if at segment end - can't insert at the final newline position
-            if (
-                change.segment_end_index > 0
-                and insert_index >= change.segment_end_index
-            ):
-                insert_index = change.segment_end_index - 1
-            requests.extend(
-                _generate_table_add_requests(
-                    change.after_xml, segment_id, insert_index, text_styles
-                )
+            return _generate_table_add_requests(
+                change.after_xml, segment_id, insert_index, text_styles
             )
 
     elif change.change_type == ChangeType.DELETED:
-        # Table deletion: need to calculate the range from before_xml
-        if change.before_xml:
-            # Get table start index from pristine_table_indexes using container_path
-            table_start_index = _get_table_start_index(
-                change.container_path, pristine_table_indexes
+        if change.before_xml and change.pristine_start_index > 0:
+            return _generate_table_delete_requests(
+                change.before_xml, segment_id, change.pristine_start_index
             )
-            if table_start_index > 0:
-                requests.extend(
-                    _generate_table_delete_requests(
-                        change.before_xml, segment_id, table_start_index
+
+    elif change.change_type == ChangeType.MODIFIED:
+        return _emit_table_modify(
+            change, segment_id, current_table_indexes, cell_styles, text_styles
+        )
+
+    return []
+
+
+def _emit_table_modify(
+    change: BlockChange,
+    segment_id: str | None,
+    current_table_indexes: dict[str, int],
+    cell_styles: dict[str, dict[str, str]] | None,
+    text_styles: dict[str, dict[str, str]] | None = None,
+) -> list[dict[str, Any]]:
+    """Emit requests for a modified table using backwards cell walk.
+
+    Walks rows backwards, and within each row walks cells backwards,
+    maintaining the invariant that operations on later cells don't shift
+    indexes of earlier cells.
+    """
+    requests: list[dict[str, Any]] = []
+    table_start = change.pristine_start_index
+
+    # Column width changes (uses current table index)
+    before_widths = _extract_column_widths(change.before_xml)
+    after_widths = _extract_column_widths(change.after_xml)
+    if before_widths != after_widths:
+        current_table_start = _get_table_start_index(
+            change.container_path, current_table_indexes
+        )
+        if current_table_start > 0:
+            requests.extend(
+                _generate_column_width_requests(
+                    current_table_start, before_widths, after_widths, segment_id
+                )
+            )
+
+    if table_start == 0:
+        return requests
+
+    # Track column operations to deduplicate
+    columns_deleted: set[int] = set()
+    deferred_col_adds_by_row: dict[int, list[dict[str, Any]]] = {}
+    deferred_col_added_set: dict[int, set[int]] = {}
+
+    # Walk rows backwards
+    row_changes = [
+        c for c in change.child_changes if c.block_type == BlockType.TABLE_ROW
+    ]
+    row_changes.sort(key=lambda c: _get_row_index_from_change(c), reverse=True)
+    deferred_row_adds: list[tuple[int, dict[str, Any]]] = []
+
+    # Determine pristine row count from before_xml (if any)
+    pristine_row_count = 0
+    try:
+        if change.before_xml:
+            pristine_row_count = len(ET.fromstring(change.before_xml).findall("tr"))
+    except ET.ParseError:
+        pristine_row_count = 0
+    last_pristine_row = max(pristine_row_count - 1, 0)
+
+    for row_change in row_changes:
+        row_index = _get_row_index_from_change(row_change)
+
+        if row_change.change_type == ChangeType.ADDED:
+            if row_index == 0 or pristine_row_count == 0:
+                anchor = 0
+                deferred_row_adds.append(
+                    (
+                        row_index,
+                        generate_insert_table_row_request(
+                            table_start, anchor, segment_id, insert_below=False
+                        ),
+                    )
+                )
+            else:
+                anchor = min(row_index - 1, last_pristine_row)
+                deferred_row_adds.append(
+                    (
+                        row_index,
+                        generate_insert_table_row_request(
+                            table_start, anchor, segment_id, insert_below=True
+                        ),
                     )
                 )
 
-    elif change.change_type == ChangeType.MODIFIED:
-        # Table modified - process row/cell changes from child_changes
-        # The child_changes contain TABLE_ROW and TABLE_CELL changes
-        requests.extend(
-            _generate_table_modify_requests(
-                change,
-                segment_id,
-                pristine_table_indexes,
-                current_table_indexes,
-                cell_styles,
+        elif row_change.change_type == ChangeType.DELETED:
+            requests.append(
+                generate_delete_table_row_request(table_start, row_index, segment_id)
             )
-        )
+
+        elif row_change.change_type == ChangeType.MODIFIED:
+            # Walk cells backwards within this row
+            cell_changes = sorted(
+                [
+                    c
+                    for c in row_change.child_changes
+                    if c.block_type == BlockType.TABLE_CELL
+                ],
+                key=lambda c: _get_col_index_from_change(c),
+                reverse=True,
+            )
+
+            for cell_change in cell_changes:
+                col_index = _get_col_index_from_change(cell_change)
+
+                if cell_change.change_type == ChangeType.ADDED:
+                    row_bucket = deferred_col_adds_by_row.setdefault(row_index, [])
+                    added_cols = deferred_col_added_set.setdefault(row_index, set())
+                    if col_index not in added_cols:
+                        added_cols.add(col_index)
+                        row_bucket.append(
+                            generate_insert_table_column_request(
+                                table_start, row_index, col_index, segment_id
+                            )
+                        )
+
+                elif cell_change.change_type == ChangeType.DELETED:
+                    if col_index not in columns_deleted:
+                        columns_deleted.add(col_index)
+                        requests.append(
+                            generate_delete_table_column_request(
+                                table_start, row_index, col_index, segment_id
+                            )
+                        )
+
+                elif (
+                    cell_change.change_type == ChangeType.MODIFIED and change.before_xml
+                ):
+                    cell_content_index = cell_change.pristine_start_index
+                    cell_end = (
+                        cell_change.segment_end_index
+                        if cell_change.segment_end_index > 0
+                        else cell_content_index
+                    )
+                    if cell_content_index > 0 and cell_end >= cell_content_index:
+                        before_inner = _extract_cell_inner_content(
+                            cell_change.before_xml or ""
+                        )
+                        after_inner = _extract_cell_inner_content(
+                            cell_change.after_xml or ""
+                        )
+                        content_change = BlockChange(
+                            change_type=ChangeType.MODIFIED,
+                            block_type=BlockType.CONTENT_BLOCK,
+                            before_xml=before_inner,
+                            after_xml=after_inner,
+                            pristine_start_index=cell_content_index,
+                            pristine_end_index=max(cell_end - 1, cell_content_index),
+                            segment_end_index=cell_end,
+                        )
+                        requests.extend(
+                            _emit_content_ops(
+                                content_change,
+                                segment_id,
+                                cell_content_index,
+                                cell_end,
+                                text_styles,
+                            )
+                        )
+
+                        # Cell styling
+                        cell_style_req = _generate_cell_style_request(
+                            cell_change.after_xml or "",
+                            table_start,
+                            row_index,
+                            col_index,
+                            segment_id,
+                            cell_styles,
+                        )
+                        if cell_style_req:
+                            requests.append(cell_style_req)
+
+    # Apply deferred inserts last to avoid index shifts
+    for _row_idx, col_reqs in sorted(
+        deferred_col_adds_by_row.items(), key=lambda item: item[0], reverse=True
+    ):
+        for req in sorted(
+            col_reqs,
+            key=lambda r: r["insertTableColumn"]["tableCellLocation"]["columnIndex"],
+            reverse=True,
+        ):
+            requests.append(req)
+
+    for _, req in sorted(deferred_row_adds, key=lambda item: item[0], reverse=True):
+        requests.append(req)
 
     return requests
 
@@ -1636,22 +1276,18 @@ def _generate_content_insert_requests(
         return rng
 
     # 1. Insert plain text
-    # Mark with _skipReorder to prevent reordering - these requests must stay in sequence
-    # because special elements (pagebreak, etc.) reference indexes within this text
     requests.append(
         {
             "insertText": {
                 "location": make_location(0),
                 "text": parsed.plain_text,
             },
-            "_skipReorder": True,
         }
     )
 
     # 1.5. Clear all formatting from inserted text
     # This prevents inheritance of styles from the insertion point
     # We reset bold, italic, underline, strikethrough, and baselineOffset
-    # Mark with _skipReorder to stay in sequence after the text insert
     text_len = utf16_len(parsed.plain_text)
     requests.append(
         {
@@ -1666,12 +1302,10 @@ def _generate_content_insert_requests(
                 },
                 "fields": "bold,italic,underline,strikethrough,baselineOffset",
             },
-            "_skipReorder": True,
         }
     )
 
     # 2. Insert special elements (highest offset first)
-    # Mark with _skipReorder to stay in sequence after the text insert
     for offset, elem_type, _attrs in sorted(
         parsed.special_elements, key=lambda x: x[0], reverse=True
     ):
@@ -1681,7 +1315,6 @@ def _generate_content_insert_requests(
                     "insertPageBreak": {
                         "location": make_location(offset),
                     },
-                    "_skipReorder": True,
                 }
             )
         elif elem_type == "columnbreak":
@@ -1692,7 +1325,6 @@ def _generate_content_insert_requests(
                         "location": make_location(offset),
                         "sectionType": "CONTINUOUS",
                     },
-                    "_skipReorder": True,
                 }
             )
         # Note: hr, image, footnote require different handling
@@ -1777,6 +1409,139 @@ def _generate_content_insert_requests(
     return requests
 
 
+def _emit_content_ops(
+    change: BlockChange,
+    segment_id: str | None,
+    segment_start: int,
+    segment_end: int | None,
+    text_styles: dict[str, dict[str, str]] | None,
+) -> list[dict[str, Any]]:
+    """Central handler for content add/delete/modify within a segment.
+
+    segment_end is the exclusive end (position of the sentinel newline).
+    """
+    requests: list[dict[str, Any]] = []
+    sentinel = (segment_end - 1) if segment_end and segment_end > 0 else None
+
+    def clamp_range(start: int, end: int) -> tuple[int, int]:
+        if sentinel is None:
+            return start, end
+        end = min(end, sentinel)
+        return start, end
+
+    def at_segment_end(idx: int) -> bool:
+        return sentinel is not None and idx >= sentinel
+
+    if change.change_type == ChangeType.DELETED:
+        if (
+            change.before_xml
+            and change.pristine_end_index > change.pristine_start_index
+        ):
+            d_start, d_end = clamp_range(
+                change.pristine_start_index, change.pristine_end_index
+            )
+            if d_start < d_end:
+                requests.extend(
+                    _generate_content_delete_requests_by_index(
+                        d_start,
+                        d_end,
+                        segment_id,
+                        segment_end or 0,
+                    )
+                )
+
+    elif change.change_type == ChangeType.ADDED:
+        if change.after_xml:
+            insert_idx = change.pristine_start_index
+            if insert_idx <= 0:
+                insert_idx = segment_start
+            if segment_end is not None:
+                insert_idx = (
+                    min(insert_idx, segment_end - 1)
+                    if insert_idx > segment_end - 1
+                    else insert_idx
+                )
+            strip_nl = at_segment_end(insert_idx)
+            requests.extend(
+                _generate_content_insert_requests(
+                    change.after_xml,
+                    segment_id,
+                    insert_idx,
+                    strip_trailing_newline=strip_nl,
+                    text_styles=text_styles,
+                )
+            )
+
+    elif change.change_type == ChangeType.MODIFIED:
+        if (
+            change.before_xml
+            and change.pristine_end_index > change.pristine_start_index
+        ):
+            d_start, d_end = clamp_range(
+                change.pristine_start_index, change.pristine_end_index
+            )
+            if d_start < d_end:
+                requests.extend(
+                    _generate_content_delete_requests_by_index(
+                        d_start,
+                        d_end,
+                        segment_id,
+                        segment_end or 0,
+                    )
+                )
+        if change.after_xml:
+            insert_idx = change.pristine_start_index
+            if insert_idx <= 0:
+                insert_idx = segment_start
+            if segment_end is not None:
+                insert_idx = (
+                    min(insert_idx, segment_end - 1)
+                    if insert_idx > segment_end - 1
+                    else insert_idx
+                )
+            strip_nl = at_segment_end(change.pristine_end_index)
+            requests.extend(
+                _generate_content_insert_requests(
+                    change.after_xml,
+                    segment_id,
+                    insert_idx,
+                    strip_trailing_newline=strip_nl,
+                    text_styles=text_styles,
+                )
+            )
+
+    return requests
+
+
+def _adjust_for_segment_end(
+    start_index: int,
+    end_index: int,
+    segment_end_index: int | None,
+) -> tuple[int, int, bool]:
+    """Clamp operations to avoid touching the segment's final newline.
+
+    Returns (start, end, strip_trailing_newline).
+    The sentinel newline lives at segment_end_index-1 when provided (>0).
+    """
+    if not segment_end_index or segment_end_index <= 0:
+        return start_index, end_index, False
+
+    sentinel = segment_end_index - 1
+    strip_newline = False
+
+    # Clamp delete end to before sentinel
+    if end_index > sentinel:
+        end_index = sentinel
+
+    # If an insert/delete start would target or pass sentinel, move it to sentinel
+    # and request newline stripping for the paired insert.
+    if start_index >= sentinel:
+        start_index = sentinel
+        strip_newline = True
+
+    return start_index, end_index, strip_newline
+
+
 def _bullet_type_to_preset(bullet_type: str) -> str:
     """Convert bullet type to Google Docs bullet preset.
 
@@ -1840,52 +1605,6 @@ def _generate_content_delete_requests_by_index(
     range_spec: dict[str, Any] = {
         "startIndex": start_index,
         "endIndex": end_index,
-    }
-    if segment_id:
-        range_spec["segmentId"] = segment_id
-
-    return [
-        {
-            "deleteContentRange": {
-                "range": range_spec,
-            }
-        }
-    ]
-
-
-def _generate_content_delete_requests(
-    xml_content: str,
-    section: Section,
-    segment_id: str | None,
-) -> list[dict[str, Any]]:
-    """Generate delete requests for content XML.
-
-    Calculates the index range of the content to delete by parsing
-    the XML and computing UTF-16 lengths.
-
-    Args:
-        xml_content: The ContentBlock XML to delete
-        section: The section containing this content (for base index)
-        segment_id: The segment ID (header/footer/footnote ID, or None for body)
-
-    Returns:
-        List containing a single deleteContentRange request
-    """
-    if not xml_content or not xml_content.strip():
-        return []
-
-    # Calculate the UTF-16 length of the content
-    content_length = _calculate_content_length(xml_content)
-    if content_length == 0:
-        return []
-
-    # Body starts at index 1, headers/footers/footnotes start at 0
-    base_index = 1 if section.section_type == "body" else 0
-
-    # Build the delete range
-    range_spec: dict[str, Any] = {
-        "startIndex": base_index,
-        "endIndex": base_index + content_length,
     }
     if segment_id:
         range_spec["segmentId"] = segment_id
@@ -2234,7 +1953,6 @@ def _generate_table_add_requests(
     cols = table_info["cols"]
 
     # 1. Insert the empty table structure
-    # Mark with _skipReorder so it stays before cell content requests
     if insert_index > 0:
         location: dict[str, Any] = {"index": insert_index}
         if segment_id:
@@ -2246,7 +1964,6 @@ def _generate_table_add_requests(
                     "columns": cols,
                     "location": location,
                 },
-                "_skipReorder": True,
             }
         )
     else:
@@ -2399,223 +2116,40 @@ def _generate_table_delete_requests(
     return requests
 
 
-def _generate_table_modify_requests(
-    change: BlockChange,
-    segment_id: str | None,
-    pristine_table_indexes: dict[str, int],
-    current_table_indexes: dict[str, int],
-    cell_styles: dict[str, dict[str, str]] | None = None,
-) -> list[dict[str, Any]]:
-    """Generate requests for table modifications (row/column/cell changes).
-
-    Processes child_changes which contain TABLE_ROW changes.
-    Row changes may contain TABLE_CELL changes.
-
-    Note: Column operations affect entire columns, so we deduplicate them
-    (only generate one insertTableColumn per unique column index).
-
-    Args:
-        cell_styles: Map of cell style class ID to properties (from styles.xml)
-    """
-    requests: list[dict[str, Any]] = []
-
-    # Get table startIndex from both pristine and current indexes
-    # Pristine index is used for content modifications
-    # Current index is used for property changes (column widths)
-    pristine_table_start = _get_table_start_index(
-        change.container_path, pristine_table_indexes
-    )
-    current_table_start = _get_table_start_index(
-        change.container_path, current_table_indexes
-    )
-
-    # Check for column width changes (use current index - the table exists now)
-    before_widths = _extract_column_widths(change.before_xml)
-    after_widths = _extract_column_widths(change.after_xml)
-    if before_widths != after_widths and current_table_start > 0:
-        requests.extend(
-            _generate_column_width_requests(
-                current_table_start, before_widths, after_widths, segment_id
-            )
-        )
-
-    # For structural changes, we need the pristine index
-    if pristine_table_start == 0:
-        # No startIndex found - can't generate structural requests
-        return requests
-
-    # Track column operations to deduplicate
-    # When a column is added/deleted, every row has the cell change,
-    # but we only need ONE insertTableColumn/deleteTableColumn request
-    columns_added: set[int] = set()
-    columns_deleted: set[int] = set()
-
-    # Process child changes (TABLE_ROW changes)
-    # Sort by row index descending for bottom-up processing
-    row_changes = [
-        c for c in change.child_changes if c.block_type == BlockType.TABLE_ROW
-    ]
-    row_changes.sort(key=lambda c: _get_row_index_from_change(c), reverse=True)
-
-    for row_change in row_changes:
-        row_index = _get_row_index_from_change(row_change)
-
-        if row_change.change_type == ChangeType.ADDED:
-            # Insert new row - insert below row_index - 1 (the previous row)
-            # If row_index is 0, insert above row 0 (insertBelow=False)
-            if row_index == 0:
-                requests.append(
-                    generate_insert_table_row_request(
-                        pristine_table_start, 0, segment_id, insert_below=False
-                    )
-                )
-            else:
-                requests.append(
-                    generate_insert_table_row_request(
-                        pristine_table_start,
-                        row_index - 1,
-                        segment_id,
-                        insert_below=True,
-                    )
-                )
-
-        elif row_change.change_type == ChangeType.DELETED:
-            # Delete row
-            requests.append(
-                generate_delete_table_row_request(
-                    pristine_table_start, row_index, segment_id
-                )
-            )
-
-        elif row_change.change_type == ChangeType.MODIFIED:
-            # Row modified - check for cell changes
-            # Sort by column index descending so we process from right to left
-            # This ensures insertions don't shift indexes for subsequent operations
-            cell_changes = sorted(
-                [
-                    c
-                    for c in row_change.child_changes
-                    if c.block_type == BlockType.TABLE_CELL
-                ],
-                key=lambda c: _get_col_index_from_change(c),
-                reverse=True,
-            )
-
-            for cell_change in cell_changes:
-                col_index = _get_col_index_from_change(cell_change)
-
-                if cell_change.change_type == ChangeType.ADDED:
-                    # Cell added = column added (deduplicate)
-                    if col_index not in columns_added:
-                        columns_added.add(col_index)
-                        requests.append(
-                            generate_insert_table_column_request(
-                                pristine_table_start, row_index, col_index, segment_id
-                            )
-                        )
-
-                elif cell_change.change_type == ChangeType.DELETED:
-                    # Cell deleted = column deleted (deduplicate)
-                    if col_index not in columns_deleted:
-                        columns_deleted.add(col_index)
-                        requests.append(
-                            generate_delete_table_column_request(
-                                pristine_table_start, row_index, col_index, segment_id
-                            )
-                        )
-
-                elif (
-                    cell_change.change_type == ChangeType.MODIFIED and change.before_xml
-                ):
-                    # Cell content modified - use reusable content functions
-                    # Mark requests to skip reordering so insert+style stay together
-                    cell_content_index = _calculate_cell_content_index(
-                        pristine_table_start,
-                        row_index,
-                        col_index,
-                        change.before_xml,
-                    )
-                    if cell_content_index > 0:
-                        # Calculate pristine cell content length for delete
-                        pristine_cell_length = _get_pristine_cell_length(
-                            change.before_xml, row_index, col_index
-                        )
-                        # Delete old content (preserve cell's final newline)
-                        if pristine_cell_length > 1:
-                            delete_reqs = _generate_content_delete_requests_by_index(
-                                cell_content_index,
-                                cell_content_index + pristine_cell_length - 1,
-                                segment_id,
-                                cell_content_index + pristine_cell_length,
-                            )
-                            for req in delete_reqs:
-                                req["_skipReorder"] = True
-                            requests.extend(delete_reqs)
-                        # Insert new content
-                        if cell_change.after_xml:
-                            # Extract just the cell content (inner paragraphs)
-                            cell_inner_xml = _extract_cell_inner_content(
-                                cell_change.after_xml
-                            )
-                            if cell_inner_xml:
-                                cell_reqs = _generate_content_insert_requests(
-                                    cell_inner_xml,
-                                    segment_id,
-                                    cell_content_index,
-                                    strip_trailing_newline=True,
-                                )
-                                # Mark to skip reordering - insert+style must stay together
-                                for req in cell_reqs:
-                                    req["_skipReorder"] = True
-                                requests.extend(cell_reqs)
-
-                            # Generate cell style request if cell has style attributes
-                            cell_style_req = _generate_cell_style_request(
-                                cell_change.after_xml,
-                                pristine_table_start,
-                                row_index,
-                                col_index,
-                                segment_id,
-                                cell_styles,
-                            )
-                            if cell_style_req:
-                                cell_style_req["_skipReorder"] = True
-                                requests.append(cell_style_req)
-
-    return requests
-
-
 def _get_table_start_index(
     container_path: list[str],
     table_indexes: dict[str, int],
+    table_position: int | None = None,
 ) -> int:
     """Get the table's start index from the calculated index map.
 
-    The container_path contains the section type and table position.
-    Example path: ["body:body", "table:abc123", "row_idx:2"]
-
-    Args:
-        container_path: The path to the changed element
-        table_indexes: Map of "section:position" -> startIndex
-
-    Returns:
-        The table's start index, or 0 if not found
+    Prefers stable content-hash IDs from the container_path, falls back to
+    positional lookup when needed.
     """
-    # Extract section type from path
     section_type = "body"
+    table_id: str | None = None
+
     for part in container_path:
-        if ":" in part:
-            prefix = part.split(":")[0]
-            if prefix in ("body", "header", "footer", "footnote"):
-                section_type = prefix
-                break
+        if ":" not in part:
+            continue
+        prefix, value = part.split(":", 1)
+        if prefix in ("body", "header", "footer", "footnote"):
+            section_type = prefix
+        if prefix == "table":
+            table_id = value
 
-    # Find table position - count tables in the section
-    # For now, we assume single table per section (position 0)
-    # TODO: Track table position in block_diff for multi-table sections
-    table_key = f"{section_type}:0"
+    if table_id:
+        key = f"{section_type}:id:{table_id}"
+        if key in table_indexes:
+            return table_indexes[key]
 
-    return table_indexes.get(table_key, 0)
+    if table_position is not None:
+        pos_key = f"{section_type}:pos:{table_position}"
+        if pos_key in table_indexes:
+            return table_indexes[pos_key]
+
+    # Fallback to first table in section
+    return table_indexes.get(f"{section_type}:pos:0", 0)
 
 
 def _get_row_index_from_change(change: BlockChange) -> int:
