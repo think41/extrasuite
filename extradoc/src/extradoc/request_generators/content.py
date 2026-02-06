@@ -166,6 +166,23 @@ def parse_content_xml(xml_content: str) -> ParsedContent:
             para_elem, current_offset
         )
 
+        # For nested bullets, prepend leading tabs (Google Docs uses tabs for nesting)
+        if bullet_level > 0:
+            tabs = "\t" * bullet_level
+            tab_len = utf16_len(tabs)
+            para_text = tabs + para_text
+            # Adjust offsets for specials and runs
+            para_specials = [
+                SpecialElement(s.element_type, s.offset + tab_len, s.attributes)
+                for s in para_specials
+            ]
+            para_runs = [
+                TextRun(
+                    r.text, r.start_offset + tab_len, r.end_offset + tab_len, r.styles
+                )
+                for r in para_runs
+            ]
+
         plain_text_parts.append(para_text)
         special_elements.extend(para_specials)
         text_runs.extend(para_runs)
@@ -455,33 +472,36 @@ def generate_content_requests(
                 }
             )
 
-    # 5. Apply bullets
+    # 5. Apply bullets - consolidate consecutive bullets of same type into single request
+    # This is required because createParagraphBullets removes leading tabs, shifting indices
+    bullet_groups: list[tuple[int, int, str]] = []  # (start, end, preset)
     for para in parsed.paragraphs:
         if para.bullet_type:
             preset = BULLET_PRESETS.get(para.bullet_type, "BULLET_DISC_CIRCLE_SQUARE")
-            requests.append(
-                {
-                    "createParagraphBullets": {
-                        "range": make_range(para.start_offset, para.end_offset),
-                        "bulletPreset": preset,
-                    }
+            # Only extend if bullets are adjacent (prev_end == current_start) and same type
+            if (
+                bullet_groups
+                and bullet_groups[-1][2] == preset
+                and bullet_groups[-1][1] == para.start_offset
+            ):
+                # Extend the previous group
+                bullet_groups[-1] = (bullet_groups[-1][0], para.end_offset, preset)
+            else:
+                # Start a new group
+                bullet_groups.append((para.start_offset, para.end_offset, preset))
+
+    # Create one request per group
+    for group_start, group_end, preset in bullet_groups:
+        requests.append(
+            {
+                "createParagraphBullets": {
+                    "range": make_range(group_start, group_end),
+                    "bulletPreset": preset,
                 }
-            )
-            # Handle nested bullets (level > 0) with indentation
-            if para.bullet_level > 0:
-                indent_pt = 36 * para.bullet_level
-                requests.append(
-                    {
-                        "updateParagraphStyle": {
-                            "range": make_range(para.start_offset, para.end_offset),
-                            "paragraphStyle": {
-                                "indentStart": {"magnitude": indent_pt, "unit": "PT"},
-                                "indentFirstLine": {"magnitude": 0, "unit": "PT"},
-                            },
-                            "fields": "indentStart,indentFirstLine",
-                        }
-                    }
-                )
+            }
+        )
+    # Note: Nesting level is determined by leading tabs in the inserted text
+    # (handled in parse_content_xml). Tabs are removed by createParagraphBullets.
 
     # 6. Apply text styles (bold, italic, links, etc.)
     for run in parsed.text_runs:

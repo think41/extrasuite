@@ -112,6 +112,73 @@ Verified against real Google Doc (document ID: 15dNMijQYl3juFdu8LqLvJoh3K10DREbt
 2. Header/footer index handling - Fixed condition `pristine_start_index > 0` to `pristine_end_index > pristine_start_index` (headers/footers start at 0)
 3. Recursive processing - Skip TABLE child changes since they're handled by `_generate_table_modify_requests`
 
+## Known Issue: Nested Bullet Lists
+
+**Status:** Not working as expected. Needs further investigation.
+
+### The Problem
+
+When creating nested bullet lists (`<li level="1">`), the Google Docs API is not correctly setting the nesting level despite following the documented approach.
+
+### What the Documentation Says
+
+From `docs/googledocs/api/CreateParagraphBulletsRequest.md`:
+> The nesting level of each paragraph will be determined by counting leading tabs in front of each paragraph. To avoid excess space between the bullet and the corresponding paragraph, these leading tabs are removed by this request.
+
+From `docs/googledocs/lists.md`:
+> Paragraph nesting levels are determined by counting leading tabs.
+> **Important limitation:** You cannot adjust nesting levels of existing bullets. Instead, delete the bullet, add leading tabs, then recreate it.
+
+### What Was Tried
+
+1. **Insert text with tabs, then createParagraphBullets in same batchUpdate**
+   - Inserted: `"Item A\n\tNested Item B\n\tNested Item C\n"`
+   - Called `createParagraphBullets` on the range
+   - **Result:** Tabs remained in text (not removed), all items at level 0
+
+2. **Separate insertText for tabs, then createParagraphBullets**
+   - First insert content without tabs
+   - Then insert tab characters at start of lines
+   - Then call `createParagraphBullets`
+   - **Result:** Same - tabs remained, all items at level 0
+
+3. **Consolidated bullet requests (grouping adjacent bullets)**
+   - Fixed bug where non-adjacent bullets were grouped together
+   - Still didn't fix the nesting level issue
+
+### Observed Behavior
+
+- The tabs (`\t`) are NOT removed by `createParagraphBullets` as documented
+- The `nestingLevel` field in the bullet object is not set (defaults to 0)
+- The `indentStart` does increase (72pt for items with tabs vs 36pt for level 0)
+- Visual appearance shows indentation but semantic nesting level is wrong
+
+### Hypothesis
+
+The tab-based nesting mechanism may:
+1. Only work in specific contexts (e.g., Google Docs web UI)
+2. Require tabs to exist BEFORE any bullet is created on the paragraph
+3. Have undocumented prerequisites or timing requirements
+4. Be a bug or limitation in the batchUpdate API
+
+### Impact
+
+- Level 0 bullets work correctly
+- Nested bullets (level > 0) will appear visually indented but won't have correct semantic nesting
+- Round-trip (pull → push → pull) may not preserve nesting levels correctly
+
+### Workaround
+
+For now, nested bullets are not fully supported. Users can:
+1. Use only level 0 bullets
+2. Accept that nested bullets will have visual indentation but may not round-trip correctly
+
+### Next Steps
+
+- Search for Google Docs API forum posts about this issue
+- Try creating nested bullets via Google Docs UI and examining the API response
+- Consider filing a bug report with Google if this is an API issue
+
 ## What Is Pending
 
 ### Special Elements (Low Priority)
@@ -124,6 +191,7 @@ Verified against real Google Doc (document ID: 15dNMijQYl3juFdu8LqLvJoh3K10DREbt
 - Table column width styling
 - Table border styling
 - Named style definitions (custom heading styles)
+- **Nested bullet lists** - See issue documentation above
 
 ## Architecture
 
