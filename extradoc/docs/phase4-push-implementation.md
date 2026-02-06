@@ -196,17 +196,28 @@ Tested against document `15dNMijQYl3juFdu8LqLvJoh3K10DREbtUm82489hgAs`:
 ## What Is Pending
 
 ### Footnotes (Partially Implemented)
-**Status:** Pull working, push needs testing
+**Status:** Detection working, push has positioning limitation
 
 - ✅ **Pull-side:** Inline footnote model working - `<footnote>` tag appears at reference location with content inside
-- ✅ **Two-batch workflow:** client.py handles footnote ID mapping for structural operations
-- 🔄 **Push-side:** `_generate_special_element_request` handles `footnote` and `footnoteref`, but needs end-to-end testing
-- ❓ **Open issue:** block_diff may trigger full content replacement instead of incremental changes when footnotes are added inline
+- ✅ **Detection:** Fixed footnote detection for MODIFIED content blocks (was only working for ADDED)
+- ✅ **createFootnote request:** Now generated when adding footnotes inline
+- ⚠️ **Positioning limitation:** Footnotes are created at `endOfSegmentLocation` (end of document), not at the inline position
 
-**Next steps:**
-1. Test adding a new footnote inline and verify `createFootnote` request generated
-2. Test modifying footnote content and verify correct requests
-3. Test deleting a footnote
+**Tested (2026-02-06):**
+- Added `<footnote id="new_fn_1"><p>This is the footnote content.</p></footnote>` inline
+- Diff correctly detects ADDED FOOTNOTE in child_changes
+- `createFootnote` request is generated
+
+**Known issues:**
+1. **Positioning:** Footnote is created at end of segment, not inline where the `<footnote>` tag appears
+2. **Content population:** Footnote content needs to be populated in a second batch after creation (not yet tested)
+3. **Reference character:** The footnote reference character isn't inserted at the correct inline position
+
+**Root cause:** Adding inline footnotes requires a two-batch operation:
+1. First batch: Create footnote (returns real footnote ID)
+2. Second batch: Insert text with reference at correct position, populate footnote content
+
+This is documented in `docs/googledocs/rules-behavior.md` as a structural operation limitation.
 
 ### Special Elements (API Limitations)
 These cannot be fully implemented due to Google Docs API limitations:
