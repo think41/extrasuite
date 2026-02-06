@@ -18,3 +18,16 @@ Use full pull → edit → diff → push → repull cycles. Prefer editing the l
 - After push, always `pull` into a fresh folder (e.g., `output-after/`) and re-run `diff` to confirm clean state (no-op).
 - Log any duplicate structural ops (e.g., repeated `insertTableRow`) and capture the exact doc edits that triggered them.
 - Keep output folders per scenario or timestamped to avoid mixing results.
+
+## Execution tracker
+| Scenario | Status | Notes |
+| --- | --- | --- |
+| 1 Body mid-block modify | Pending | |
+| 2 Body end-of-segment insert | Pending | |
+| 3 Header end edit | Pending | |
+| 4 Footnote content change | Pending | |
+| 5 Table cell modify | Pending | |
+| 6 Table row add + cell edits (dup row guard) | Pending | Focus on repeated `insertTableRow` detection |
+| 7 Table column add + R→L cell edits | Pending | |
+| 8 Table bottom/right delete + cell edit | Pending | |
+| 9 Nested table cell edit | Pending | |
