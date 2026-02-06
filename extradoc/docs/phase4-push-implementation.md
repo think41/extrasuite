@@ -9,7 +9,7 @@ Core push functionality is working. Verified against real Google Docs:
 - Text styling (bold, italic): ✅ Working
 - Bullet lists (including nested): ✅ Working
 - Table cell content: ✅ Working
-- Table cell borders and backgrounds: ✅ Working
+- Table cell borders/backgrounds: ✅ Working (class-based styles in styles.xml)
 - Header/footer content: ✅ Working
 
 ## Overview
@@ -190,30 +190,33 @@ Tested against document `15dNMijQYl3juFdu8LqLvJoh3K10DREbtUm82489hgAs`:
 
 ### Table Cell Border Styling ✅ COMPLETE
 
-Added support for table cell borders and backgrounds:
+**Status:** Class-based cell styling working end-to-end.
 
-**Supported attributes on `<td>` elements:**
-- `bg` - Background color (e.g., `bg="#FFFFCC"`)
-- `borderTop`, `borderBottom`, `borderLeft`, `borderRight` - Border styling
-
-**Border format:** `width,#color,dashStyle`
-- Example: `borderTop="2,#FF0000,SOLID"` (2pt red solid border)
-- Dash styles: SOLID, DASHED, DOTTED
+**How it works:**
+1. **Pull-side:** Extracts cell styles from Google Docs API, generates style definitions in `styles.xml`, adds `class` attribute to `<td>` elements
+2. **Push-side:** Parses `styles.xml`, resolves class attributes to style properties, generates `updateTableCellStyle` requests
+3. **Cells processed right-to-left** to prevent index corruption during multi-cell modifications
 
 **Example:**
 ```xml
-<table id="test">
-  <tr id="row1">
-    <td id="c1" borderTop="2,#FF0000,SOLID" bg="#FFFFCC"><p>Header 1</p></td>
-    <td id="c2" borderTop="2,#0000FF,SOLID" bg="#CCFFCC"><p>Header 2</p></td>
-  </tr>
-</table>
+<!-- document.xml -->
+<td id="gUEeXJW" class="cell-jT0KF"><p><b>Header 1</b></p></td>
+
+<!-- styles.xml -->
+<style id="cell-jT0KF" bg="#FFFFCC" borderBottom="2,#FF0000,SOLID"
+       borderLeft="2,#FF0000,SOLID" borderRight="2,#FF0000,SOLID"
+       borderTop="2,#FF0000,SOLID" paddingBottom="5pt" paddingLeft="5pt"
+       paddingRight="5pt" paddingTop="5pt" valign="top"/>
 ```
 
-**Implementation notes:**
-- Cell changes within a row are processed right-to-left to prevent index corruption
-- Border styling uses `updateTableCellStyle` API request
-- Pull-side extraction not yet implemented (borders not preserved in XML after pull)
+**Tested (2026-02-06):**
+- Modified cell class to reference a different style → correct `updateTableCellStyle` request generated
+- Push applied yellow background and red borders → verified on re-pull
+
+**Files modified:**
+- `style_factorizer.py` - Added `extract_cell_style()`, `collect_cell_styles()`, `_factorize_cell_styles()`
+- `xml_converter.py` - Added `class` attribute to `<td>` elements
+- `diff_engine.py` - Added `parse_cell_styles()`, updated `_generate_cell_style_request()` to resolve class → properties
 
 ## Architecture
 

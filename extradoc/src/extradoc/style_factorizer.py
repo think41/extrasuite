@@ -47,16 +47,30 @@ class FactorizedStyles:
     base_style: StyleDefinition
     deviation_styles: list[StyleDefinition] = field(default_factory=list)
 
-    # Map from original style properties to style ID
+    # Map from original style properties to style ID (for text styles)
     style_map: dict[str, str] = field(default_factory=dict)
 
+    # Cell styles (separate from text styles, prefixed with "cell-")
+    cell_styles: list[StyleDefinition] = field(default_factory=list)
+    cell_style_map: dict[str, str] = field(default_factory=dict)
+
     def get_style_id(self, properties: dict[str, str]) -> str:
-        """Get the style ID for a set of properties.
+        """Get the style ID for a set of text style properties.
 
         Returns "_base" if properties match the base style.
         """
         key = _props_key(properties)
         return self.style_map.get(key, "_base")
+
+    def get_cell_style_id(self, properties: dict[str, str]) -> str | None:
+        """Get the style ID for a set of cell style properties.
+
+        Returns None if no style (default cell style).
+        """
+        if not properties:
+            return None
+        key = _props_key(properties)
+        return self.cell_style_map.get(key)
 
     def to_xml(self) -> str:
         """Generate styles.xml content."""
@@ -65,8 +79,12 @@ class FactorizedStyles:
         # Add base style first
         root.append(self.base_style.to_xml())
 
-        # Add deviation styles
+        # Add text deviation styles
         for style in self.deviation_styles:
+            root.append(style.to_xml())
+
+        # Add cell styles
+        for style in self.cell_styles:
             root.append(style.to_xml())
 
         return '<?xml version="1.0" encoding="UTF-8"?>\n' + _indent_xml(root)
@@ -121,6 +139,54 @@ PARAGRAPH_STYLE_PROPS: list[tuple[str, ParagraphStyleExtractor]] = [
     ("indentRight", lambda ps: _get_dimension(ps.get("indentEnd"))),
     ("indentFirstLine", lambda ps: _get_dimension(ps.get("indentFirstLine"))),
 ]
+
+# Property extractors for Google Docs table cell styles
+TableCellStyleExtractor = Callable[[dict[str, Any]], str | None]
+
+TABLE_CELL_STYLE_PROPS: list[tuple[str, TableCellStyleExtractor]] = [
+    ("bg", lambda cs: _get_color(cs.get("backgroundColor"))),
+    ("valign", lambda cs: _get_valign(cs.get("contentAlignment"))),
+    ("paddingTop", lambda cs: _get_dimension(cs.get("paddingTop"))),
+    ("paddingBottom", lambda cs: _get_dimension(cs.get("paddingBottom"))),
+    ("paddingLeft", lambda cs: _get_dimension(cs.get("paddingLeft"))),
+    ("paddingRight", lambda cs: _get_dimension(cs.get("paddingRight"))),
+    ("borderTop", lambda cs: _get_border(cs.get("borderTop"))),
+    ("borderBottom", lambda cs: _get_border(cs.get("borderBottom"))),
+    ("borderLeft", lambda cs: _get_border(cs.get("borderLeft"))),
+    ("borderRight", lambda cs: _get_border(cs.get("borderRight"))),
+]
+
+
+def _get_valign(alignment: str | None) -> str | None:
+    """Convert content alignment to valign value."""
+    if not alignment:
+        return None
+    mapping = {"TOP": "top", "MIDDLE": "middle", "BOTTOM": "bottom"}
+    return mapping.get(alignment)
+
+
+def _get_border(border_obj: dict[str, Any] | None) -> str | None:
+    """Convert border object to string format: width,#color,dashStyle."""
+    if not border_obj:
+        return None
+
+    width = border_obj.get("width", {})
+    width_val = width.get("magnitude", 0)
+    if width_val == 0:
+        return None
+
+    color = _get_color(border_obj.get("color"))
+    dash_style = border_obj.get("dashStyle", "SOLID")
+
+    # Format: width,#color,dashStyle
+    parts = [str(width_val)]
+    if color:
+        parts.append(color)
+    else:
+        parts.append("#000000")
+    parts.append(dash_style)
+
+    return ",".join(parts)
 
 
 def _get_font(text_style: dict[str, Any]) -> str | None:
@@ -200,6 +266,18 @@ def extract_paragraph_style(para_style: dict[str, Any]) -> dict[str, str]:
 
     for prop_name, extractor in PARAGRAPH_STYLE_PROPS:
         value = extractor(para_style)
+        if value:
+            props[prop_name] = value
+
+    return props
+
+
+def extract_cell_style(cell_style: dict[str, Any]) -> dict[str, str]:
+    """Extract style properties from a Google Docs table cell style."""
+    props: dict[str, str] = {}
+
+    for prop_name, extractor in TABLE_CELL_STYLE_PROPS:
+        value = extractor(cell_style)
         if value:
             props[prop_name] = value
 
@@ -384,8 +462,94 @@ def factorize_styles(document: dict[str, Any]) -> FactorizedStyles:
         else:
             final_style_map[orig_key] = key_to_id[deviation_key]
 
+    # Collect and factorize cell styles
+    cell_styles_list = collect_cell_styles(document)
+    cell_styles, cell_style_map = _factorize_cell_styles(cell_styles_list)
+
     return FactorizedStyles(
         base_style=base_style,
         deviation_styles=deviation_styles,
         style_map=final_style_map,
+        cell_styles=cell_styles,
+        cell_style_map=cell_style_map,
     )
+
+
+def collect_cell_styles(document: dict[str, Any]) -> list[dict[str, str]]:
+    """Collect all table cell styles from a document.
+
+    Args:
+        document: Raw document JSON from Google Docs API
+
+    Returns:
+        List of cell style property dicts
+    """
+    styles: list[dict[str, str]] = []
+
+    # Process tabs (modern API)
+    tabs = document.get("tabs", [])
+    if tabs:
+        for tab in tabs:
+            doc_tab = tab.get("documentTab", {})
+            _collect_cell_styles_from_body(doc_tab.get("body", {}), styles)
+    else:
+        # Legacy single-tab document
+        _collect_cell_styles_from_body(document.get("body", {}), styles)
+
+    return styles
+
+
+def _collect_cell_styles_from_body(
+    body: dict[str, Any], styles: list[dict[str, str]]
+) -> None:
+    """Collect cell styles from a body."""
+    content = body.get("content", [])
+    _collect_cell_styles_from_content(content, styles)
+
+
+def _collect_cell_styles_from_content(
+    content: list[dict[str, Any]], styles: list[dict[str, str]]
+) -> None:
+    """Recursively collect cell styles from structural elements."""
+    for element in content:
+        if "table" in element:
+            for row in element["table"].get("tableRows", []):
+                for cell in row.get("tableCells", []):
+                    cell_style = cell.get("tableCellStyle", {})
+                    props = extract_cell_style(cell_style)
+                    if props:
+                        styles.append(props)
+                    # Recurse into nested tables
+                    _collect_cell_styles_from_content(cell.get("content", []), styles)
+
+
+def _factorize_cell_styles(
+    cell_styles: list[dict[str, str]],
+) -> tuple[list[StyleDefinition], dict[str, str]]:
+    """Factorize cell styles into unique style definitions.
+
+    Unlike text styles, cell styles don't have a base style.
+    Each unique set of cell properties gets its own style ID.
+
+    Args:
+        cell_styles: List of cell style property dicts
+
+    Returns:
+        Tuple of (list of StyleDefinitions, map from props key to style ID)
+    """
+    style_defs: list[StyleDefinition] = []
+    style_map: dict[str, str] = {}
+    seen_keys: dict[str, str] = {}
+
+    for props in cell_styles:
+        key = _props_key(props)
+        if key in seen_keys:
+            continue
+
+        # Generate a unique cell style ID with "cell-" prefix
+        sid = "cell-" + style_id(props)
+        style_defs.append(StyleDefinition(id=sid, properties=props))
+        seen_keys[key] = sid
+        style_map[key] = sid
+
+    return style_defs, style_map

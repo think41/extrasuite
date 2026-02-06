@@ -48,6 +48,34 @@ from .style_converter import (
 # --- Helpers for style mapping ---
 
 
+def parse_cell_styles(styles_xml: str | None) -> dict[str, dict[str, str]]:
+    """Parse cell styles from styles.xml content.
+
+    Args:
+        styles_xml: The styles.xml content, or None
+
+    Returns:
+        Dict mapping style ID (e.g., "cell-abc123") to style properties
+    """
+    if not styles_xml:
+        return {}
+
+    try:
+        root = ET.fromstring(styles_xml)
+    except ET.ParseError:
+        return {}
+
+    cell_styles: dict[str, dict[str, str]] = {}
+    for style_elem in root.findall("style"):
+        style_id = style_elem.get("id", "")
+        if style_id.startswith("cell-"):
+            # Extract all attributes except 'id' as style properties
+            props = {k: v for k, v in style_elem.attrib.items() if k != "id"}
+            cell_styles[style_id] = props
+
+    return cell_styles
+
+
 def _styles_to_text_style(styles: dict[str, str]) -> tuple[dict[str, Any], str] | None:
     """Convert run styles to Google Docs textStyle + fields.
 
@@ -142,6 +170,9 @@ def diff_documents(
     # Calculate table indexes from pristine document
     table_indexes = calculate_table_indexes(pristine_doc.sections)
 
+    # Parse cell styles from styles.xml for class attribute resolution
+    cell_styles = parse_cell_styles(current_styles)
+
     # Separate body ContentBlock changes from structural changes
     # Body ContentBlock changes may need merged approach for index stability
     # Structural changes (table, footer, tab, header) are processed separately
@@ -183,7 +214,7 @@ def diff_documents(
     # Process structural changes (footer, tab, header, table) normally
     for change in structural_changes:
         change_requests = _generate_requests_for_change(
-            change, pristine_doc, current_doc, table_indexes
+            change, pristine_doc, current_doc, table_indexes, cell_styles
         )
         all_requests.extend(change_requests)
 
@@ -199,7 +230,7 @@ def diff_documents(
 
         for change in sorted_changes:
             change_requests = _generate_requests_for_change(
-                change, pristine_doc, current_doc, table_indexes
+                change, pristine_doc, current_doc, table_indexes, cell_styles
             )
             all_requests.extend(change_requests)
 
@@ -278,6 +309,7 @@ def _generate_requests_for_change(
     pristine_doc: Any,
     current_doc: Any,
     table_indexes: dict[str, int],
+    cell_styles: dict[str, dict[str, str]] | None = None,
 ) -> list[dict[str, Any]]:
     """Generate batchUpdate requests for a single block change.
 
@@ -286,6 +318,7 @@ def _generate_requests_for_change(
         pristine_doc: Desugared pristine document
         current_doc: Desugared current document
         table_indexes: Map of table positions to start indexes
+        cell_styles: Map of cell style class ID to properties (from styles.xml)
 
     Returns:
         List of batchUpdate request dicts
@@ -309,7 +342,12 @@ def _generate_requests_for_change(
     elif change.block_type == BlockType.TABLE:
         requests.extend(
             _handle_table_change(
-                change, pristine_section, current_section, segment_id, table_indexes
+                change,
+                pristine_section,
+                current_section,
+                segment_id,
+                table_indexes,
+                cell_styles,
             )
         )
     elif change.block_type in (BlockType.HEADER, BlockType.FOOTER):
@@ -333,7 +371,7 @@ def _generate_requests_for_change(
             # in _generate_table_modify_requests
             continue
         child_requests = _generate_requests_for_change(
-            child_change, pristine_doc, current_doc, table_indexes
+            child_change, pristine_doc, current_doc, table_indexes, cell_styles
         )
         requests.extend(child_requests)
 
@@ -579,11 +617,15 @@ def _handle_table_change(
     current_section: Section | None,  # noqa: ARG001 - Reserved for Phase 3
     segment_id: str | None,
     table_indexes: dict[str, int],
+    cell_styles: dict[str, dict[str, str]] | None = None,
 ) -> list[dict[str, Any]]:
     """Handle Table add/delete/modify changes.
 
     For MODIFIED tables, we process child_changes which contain row/cell changes.
     Row/column operations use the table's startIndex calculated from document structure.
+
+    Args:
+        cell_styles: Map of cell style class ID to properties (from styles.xml)
     """
     requests: list[dict[str, Any]] = []
 
@@ -603,7 +645,9 @@ def _handle_table_change(
         # Table modified - process row/cell changes from child_changes
         # The child_changes contain TABLE_ROW and TABLE_CELL changes
         requests.extend(
-            _generate_table_modify_requests(change, segment_id, table_indexes)
+            _generate_table_modify_requests(
+                change, segment_id, table_indexes, cell_styles
+            )
         )
 
     return requests
@@ -1590,18 +1634,23 @@ def _generate_cell_style_request(
     row_index: int,
     col_index: int,
     segment_id: str | None,
+    cell_styles: dict[str, dict[str, str]] | None = None,
 ) -> dict[str, Any] | None:
     """Generate updateTableCellStyle request if cell has style attributes.
 
     Parses the cell XML to extract style attributes (bg, borders, padding, valign)
     and generates an updateTableCellStyle request if any are present.
 
+    If the cell has a `class` attribute, looks up the style properties from
+    the cell_styles map (parsed from styles.xml).
+
     Args:
-        cell_xml: The full cell XML (e.g., <td borderTop="1,#FF0000,SOLID">...</td>)
+        cell_xml: The full cell XML (e.g., <td class="cell-abc123">...</td>)
         table_start_index: Start index of the table
         row_index: Row index (0-based)
         col_index: Column index (0-based)
         segment_id: Optional segment ID
+        cell_styles: Map of cell style class ID to properties (from styles.xml)
 
     Returns:
         An updateTableCellStyle request dict, or None if no styles to apply
@@ -1612,7 +1661,19 @@ def _generate_cell_style_request(
         return None
 
     # Extract style attributes from the cell element
-    styles = dict(root.attrib)
+    attrs = dict(root.attrib)
+
+    # If cell has a class attribute, look up the style properties
+    styles: dict[str, str] = {}
+    class_name = attrs.get("class")
+    if class_name and cell_styles and class_name in cell_styles:
+        # Use the style properties from styles.xml
+        styles = cell_styles[class_name].copy()
+
+    # Merge with any inline attributes (inline takes precedence)
+    for key, value in attrs.items():
+        if key not in ("id", "class", "colspan", "rowspan"):
+            styles[key] = value
 
     # Check if there are any cell style properties
     _, fields = convert_styles(styles, TABLE_CELL_STYLE_PROPS)
@@ -1707,6 +1768,7 @@ def _generate_table_modify_requests(
     change: BlockChange,
     segment_id: str | None,
     table_indexes: dict[str, int],
+    cell_styles: dict[str, dict[str, str]] | None = None,
 ) -> list[dict[str, Any]]:
     """Generate requests for table modifications (row/column/cell changes).
 
@@ -1715,6 +1777,9 @@ def _generate_table_modify_requests(
 
     Note: Column operations affect entire columns, so we deduplicate them
     (only generate one insertTableColumn per unique column index).
+
+    Args:
+        cell_styles: Map of cell style class ID to properties (from styles.xml)
     """
     requests: list[dict[str, Any]] = []
 
@@ -1855,6 +1920,7 @@ def _generate_table_modify_requests(
                                 row_index,
                                 col_index,
                                 segment_id,
+                                cell_styles,
                             )
                             if cell_style_req:
                                 cell_style_req["_skipReorder"] = True

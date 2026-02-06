@@ -16,6 +16,7 @@ from typing import Any
 
 from .style_factorizer import (
     FactorizedStyles,
+    extract_cell_style,
     extract_text_style,
     factorize_styles,
 )
@@ -587,8 +588,14 @@ def _convert_table(
             # Compute cell ID from content
             cell_id = content_hash_id(cell_xml)
 
+            # Extract cell style and get style class
+            cell_style_props = extract_cell_style(cell_style)
+            cell_style_id = ctx.styles.get_cell_style_id(cell_style_props)
+
             # Build cell attributes
             attrs = [f'id="{cell_id}"']
+            if cell_style_id:
+                attrs.append(f'class="{cell_style_id}"')
             if colspan > 1:
                 attrs.append(f'colspan="{colspan}"')
             if rowspan > 1:
