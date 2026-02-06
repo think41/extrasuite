@@ -713,59 +713,62 @@ class BlockDiffDetector:
                 pristine_start = last_pristine_end_index
                 pristine_end = last_pristine_end_index
 
-                # Check for footnote changes within paragraphs
-                p_footnotes = {
-                    fn.block_id: fn
-                    for fn in (p_block.children if p_block else [])
-                    if fn.block_type == BlockType.FOOTNOTE
-                }
-                c_footnotes = {
-                    fn.block_id: fn
-                    for fn in (c_block.children if c_block else [])
-                    if fn.block_type == BlockType.FOOTNOTE
-                }
+            # Check for footnote changes within paragraphs
+            # This runs for ALL change types (ADDED, MODIFIED, DELETED)
+            # Collect footnotes from all blocks in the group
+            p_footnotes: dict[str, Block] = {}
+            c_footnotes: dict[str, Block] = {}
+            for _ct, p_blk, c_blk in current_group:
+                if p_blk:
+                    for fn in p_blk.children:
+                        if fn.block_type == BlockType.FOOTNOTE:
+                            p_footnotes[fn.block_id] = fn
+                if c_blk:
+                    for fn in c_blk.children:
+                        if fn.block_type == BlockType.FOOTNOTE:
+                            c_footnotes[fn.block_id] = fn
 
-                # Detect added footnotes
-                for fn_id, fn in c_footnotes.items():
-                    if fn_id not in p_footnotes:
-                        footnote_changes.append(
-                            BlockChange(
-                                change_type=ChangeType.ADDED,
-                                block_type=BlockType.FOOTNOTE,
-                                block_id=fn_id,
-                                after_xml=fn.xml_content,
-                                container_path=path,
-                            )
+            # Detect added footnotes
+            for fn_id, fn in c_footnotes.items():
+                if fn_id not in p_footnotes:
+                    footnote_changes.append(
+                        BlockChange(
+                            change_type=ChangeType.ADDED,
+                            block_type=BlockType.FOOTNOTE,
+                            block_id=fn_id,
+                            after_xml=fn.xml_content,
+                            container_path=path,
                         )
+                    )
 
-                # Detect deleted footnotes
-                for fn_id, fn in p_footnotes.items():
-                    if fn_id not in c_footnotes:
-                        footnote_changes.append(
-                            BlockChange(
-                                change_type=ChangeType.DELETED,
-                                block_type=BlockType.FOOTNOTE,
-                                block_id=fn_id,
-                                before_xml=fn.xml_content,
-                                container_path=path,
-                            )
+            # Detect deleted footnotes
+            for fn_id, fn in p_footnotes.items():
+                if fn_id not in c_footnotes:
+                    footnote_changes.append(
+                        BlockChange(
+                            change_type=ChangeType.DELETED,
+                            block_type=BlockType.FOOTNOTE,
+                            block_id=fn_id,
+                            before_xml=fn.xml_content,
+                            container_path=path,
                         )
+                    )
 
-                # Detect modified footnotes
-                for fn_id in p_footnotes.keys() & c_footnotes.keys():
-                    p_fn = p_footnotes[fn_id]
-                    c_fn = c_footnotes[fn_id]
-                    if p_fn.xml_content != c_fn.xml_content:
-                        footnote_changes.append(
-                            BlockChange(
-                                change_type=ChangeType.MODIFIED,
-                                block_type=BlockType.FOOTNOTE,
-                                block_id=fn_id,
-                                before_xml=p_fn.xml_content,
-                                after_xml=c_fn.xml_content,
-                                container_path=path,
-                            )
+            # Detect modified footnotes
+            for fn_id in p_footnotes.keys() & c_footnotes.keys():
+                p_fn = p_footnotes[fn_id]
+                c_fn = c_footnotes[fn_id]
+                if p_fn.xml_content != c_fn.xml_content:
+                    footnote_changes.append(
+                        BlockChange(
+                            change_type=ChangeType.MODIFIED,
+                            block_type=BlockType.FOOTNOTE,
+                            block_id=fn_id,
+                            before_xml=p_fn.xml_content,
+                            after_xml=c_fn.xml_content,
+                            container_path=path,
                         )
+                    )
 
             assert current_group_type is not None
             grouped_changes.append(
