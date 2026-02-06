@@ -10,6 +10,7 @@
 |---------|--------|-------|
 | Body content (add/modify/delete) | ✅ Working | |
 | Text styling (bold, italic, etc.) | ✅ Working | |
+| Text highlight colors | ✅ Working | `bg` attribute via `<span class="...">` |
 | Bullet lists (including nested) | ✅ Working | Tabs processed for nesting |
 | Table cell content | ✅ Working | |
 | Table cell borders/backgrounds | ✅ Working | Class-based styles in styles.xml |
@@ -228,7 +229,24 @@ These cannot be fully implemented due to Google Docs API limitations:
 
 ### Needs Testing/Verification
 - **Paragraph borders** - Supported in style_converter but not exposed in XML format
-- **Text highlight colors** - Supported via `bg` attribute on `<span>`, needs testing
+
+### Text Highlight Colors ✅ PUSH WORKING
+
+**Status:** Push working, pull-side style factorization has known issue.
+
+**How it works (Push):**
+1. Define a text style in `styles.xml`: `<style id="highlight-yellow" bg="#FFFF00"/>`
+2. Use `<span class="highlight-yellow">text</span>` in document.xml
+3. Push generates correct `updateTextStyle` request with `backgroundColor`
+
+**Tested (2026-02-06):**
+- Added `<span class="highlight-yellow">regular paragraph</span>` to document
+- Push generated correct request: `{"updateTextStyle": {"textStyle": {"backgroundColor": {"color": {"rgbColor": {"red": 1.0, "green": 1.0, "blue": 0.0}}}}, "fields": "backgroundColor"}}`
+- Raw API response confirmed highlight applied to exact index range (11-28)
+
+**Known issue (Pull-side):**
+- Style factorizer may incorrectly merge text highlights into `_base` style instead of preserving as separate text spans
+- This is a pull-side issue, not a push-side issue
 
 ### Low Priority
 - **Named style definitions** - Custom heading styles beyond H1-H6
