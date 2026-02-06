@@ -1,0 +1,258 @@
+# ExtraDoc Implementation Gaps
+
+This document tracks bugs, limitations, and implementation gaps discovered during testing.
+
+**Last Updated:** 2026-02-06
+
+---
+
+## Summary
+
+| Category | Count |
+|----------|-------|
+| Critical Bugs (Open) | 1 |
+| Major Bugs (Open) | 4 |
+| Fixed Bugs | 5 |
+| API Limitations | 4 |
+
+---
+
+## Critical Bugs (Open)
+
+### 1. Checkbox List Type Not Working
+
+**Status:** 🔴 Open
+**Severity:** Critical - Feature doesn't work
+**Location:** `src/extradoc/diff_engine.py`, `src/extradoc/xml_converter.py`
+
+**Problem:** `type="checkbox"` list items become regular bullet items instead of checkboxes.
+
+**Analysis:**
+- The preset `BULLET_CHECKBOX` is valid according to Google Docs API
+- Issue may be in how checkboxes are detected on pull (relies on Unicode glyphs `\u2610`, `\u2611`, `\u2612`)
+- Need to verify if the API actually creates checkboxes with this preset
+
+---
+
+## Major Bugs (Open)
+
+### 2. Custom Styles Not Applied
+
+**Status:** 🟠 Open
+**Severity:** Major - Styling doesn't work
+**Location:** Style application in diff engine
+
+**Problem:** Custom styles defined in `styles.xml` are not being applied to elements.
+
+**Affected Features:**
+- `<p class="center">` - paragraph alignment not applied
+- `<span class="highlight">` - text background not applied
+- Paragraph spacing/indentation not applied
+- Table cell styling not applied
+
+**Investigation Needed:** Check if `_generate_content_insert_requests()` reads and applies styles from `styles.xml`.
+
+---
+
+### 3. List Items Merged With Headings
+
+**Status:** 🟠 Open
+**Severity:** Major - Document structure corrupted
+**Location:** `src/extradoc/diff_engine.py`
+
+**Problem:** When pushing content with headings followed by lists, the headings can become list items.
+
+**Observed:**
+```xml
+<!-- Before push -->
+<h2>4.3 Additional Bullet Styles</h2>
+<li type="bullet" level="0">Item A</li>
+
+<!-- After push -->
+<li type="decimal" level="0">4.3 Additional Bullet Styles</li>
+<li type="bullet" level="0">Item A</li>
+```
+
+**Likely Cause:** Bullet creation requests applying to wrong paragraph ranges.
+
+---
+
+### 4. Base Style Corruption
+
+**Status:** 🟠 Open
+**Severity:** Major - Document styling corrupted
+**Location:** Style processing/factorization
+
+**Problem:** After push, the `_base` style in `styles.xml` gets corrupted with unexpected properties.
+
+**Before:**
+```xml
+<style id="_base" font="Arial" size="11pt" color="#000000"/>
+```
+
+**After:**
+```xml
+<style id="_base" bg="#FFFF00" bold="1" color="#0B8043" font="Courier New"
+       italic="1" size="10pt" strikethrough="1" underline="1"/>
+```
+
+**Investigation Needed:** Check style factorization logic on pull after push.
+
+---
+
+### 5. Nested List Levels Incorrect
+
+**Status:** 🟠 Open
+**Severity:** Major - Feature partially broken
+**Location:** `src/extradoc/diff_engine.py`
+
+**Problem:** Nested lists sometimes have incorrect indentation levels after push.
+
+**Observed:** Level 1 and level 2 items may shift or merge incorrectly.
+
+---
+
+## Partially Working Features
+
+| Feature | Status | Notes |
+|---------|--------|-------|
+| Footnotes (push) | 🔄 Needs testing | Code exists, needs end-to-end verification |
+| `<style>` wrapper element | 🔄 Needs testing | For applying class to multiple consecutive elements |
+| Column breaks | 🔄 Needs testing | `<columnbreak/>` element |
+| Alpha lists | ✅ Fixed | `type="alpha"` now uses `NUMBERED_UPPERALPHA_ALPHA_ROMAN` |
+| Roman lists | ✅ Fixed | `type="roman"` now uses `NUMBERED_UPPERROMAN_UPPERALPHA_DECIMAL` |
+| Page breaks | ✅ Fixed | Request ordering issue resolved |
+| Headers/footers | ✅ Fixed | Type-only matching prevents creation errors |
+
+---
+
+## Not Implemented (API Limitations)
+
+These are limitations of the Google Docs API, not bugs in extradoc.
+
+| Feature | Status | Notes |
+|---------|--------|-------|
+| Autotext (page numbers) | ❌ Cannot implement | API doesn't support insertion |
+| Images | ❌ Not implemented | Requires separate Drive upload flow |
+| Person mentions | ❌ Cannot implement | Requires verified email + special API |
+| Horizontal rules | ⚠️ Read-only | Cannot add/remove via API |
+
+---
+
+## Known Limitations
+
+| Feature | Limitation | Workaround |
+|---------|------------|------------|
+| Autotext (page numbers) | Cannot insert via batchUpdate | Use placeholder `[PAGE]` |
+| Person mentions | Requires specific personProperties | Insert as styled text |
+| New tabs with content | Requires two-batch (create, then populate) | Documented behavior |
+| Horizontal rules | Read-only in Google Docs API | Cannot add/remove, only modify adjacent content |
+| Images | Requires separate upload to Drive | Not yet implemented |
+
+---
+
+## Working Features (Verified)
+
+| Feature | Status | Notes |
+|---------|--------|-------|
+| Title/Subtitle | ✅ | `<title>`, `<subtitle>` |
+| Headings h1-h6 | ✅ | All levels work |
+| Basic paragraphs | ✅ | `<p>` elements |
+| Bold | ✅ | `<b>` tag |
+| Italic | ✅ | `<i>` tag |
+| Underline | ✅ | `<u>` tag |
+| Strikethrough | ✅ | `<s>` tag |
+| Subscript | ✅ | `<sub>` tag |
+| Superscript | ✅ | `<sup>` tag |
+| Hyperlinks | ✅ | `<a href="...">` |
+| Combined formatting | ✅ | Nested tags like `<b><i>...</i></b>` |
+| Bullet lists | ✅ | `type="bullet"` |
+| Numbered lists | ✅ | `type="decimal"` |
+| Alpha lists | ✅ | `type="alpha"` (fixed) |
+| Roman lists | ✅ | `type="roman"` (fixed) |
+| Page breaks | ✅ | `<pagebreak/>` (fixed) |
+| Header/footer editing | ✅ | Modify existing headers/footers (fixed) |
+
+---
+
+## Fixed Bugs (2026-02-06)
+
+### Fixed: Table Content Not Inserted Into Cells
+
+**Location:** `src/extradoc/diff_engine.py`
+
+**Problem:** When adding new tables with content, only the table structure was created. Cell content was not inserted.
+
+**Root Cause:** `_generate_table_add_requests()` only created the `insertTable` request without populating cell content. The code path for cell content (`_generate_table_insert()`) was only used for nested tables.
+
+**Fix:** Implemented two-phase approach in `_generate_table_add_requests()`:
+1. Insert empty table structure with `insertTable`
+2. Calculate each cell's content index (accounting for auto-inserted newline before table)
+3. Use `_generate_content_insert_requests()` for each cell's content (same as body/header/footer)
+
+**Key insight:** Table cell content is a ContentBlock, handled the same way as body content. No duplicate logic needed.
+
+---
+
+### Fixed: Invalid Bullet Presets for Alpha/Roman Lists
+
+**Location:** `src/extradoc/diff_engine.py`, `src/extradoc/request_generators/content.py`
+
+**Problem:** Invalid Google Docs API bullet preset values.
+
+**Fix:** Updated presets:
+- `alpha` → `NUMBERED_UPPERALPHA_ALPHA_ROMAN` (starts with A, B, C)
+- `roman` → `NUMBERED_UPPERROMAN_UPPERALPHA_DECIMAL` (starts with I, II, III)
+
+---
+
+### Fixed: Request Ordering Issues (Page Break)
+
+**Location:** `src/extradoc/diff_engine.py`
+
+**Problem:** `insertPageBreak` requests were reordered before the text content.
+
+**Fix:** Added `_skipReorder: True` marker to requests from `_generate_content_insert_requests()`:
+- `insertText`
+- `updateTextStyle`
+- `insertPageBreak`
+- `insertSectionBreak`
+
+---
+
+### Fixed: Header/Footer Creation Fails
+
+**Location:** `src/extradoc/block_diff.py`
+
+**Problem:** Header/footer with new ID detected as ADDED instead of MODIFIED.
+
+**Fix:** Modified `child_key()` to match headers/footers by type only:
+```python
+if block.block_type in (BlockType.HEADER, BlockType.FOOTER):
+    return (block.block_type.value, "")  # Match by type only
+```
+
+---
+
+## Priority Fix Order
+
+| Priority | Issue | Status |
+|----------|-------|--------|
+| 1 | Checkbox list type | 🔴 Open - Needs investigation |
+| 2 | Custom style application | 🟠 Open - Needs investigation |
+| 3 | List/heading merge | 🟠 Open - Needs investigation |
+| 4 | Base style corruption | 🟠 Open - Needs investigation |
+| 5 | Nested list levels | 🟠 Open - Needs investigation |
+
+---
+
+## Related Files
+
+| File | Purpose |
+|------|---------|
+| `src/extradoc/diff_engine.py` | Main diff/request generation |
+| `src/extradoc/request_generators/content.py` | Content request generation |
+| `src/extradoc/block_diff.py` | Block-level diff detection |
+| `src/extradoc/desugar.py` | XML to internal representation |
+| `src/extradoc/xml_converter.py` | Google API to XML conversion |
+| `docs/googledocs/lists.md` | List preset documentation |

@@ -60,11 +60,16 @@ SPECIAL_ELEMENT_TAGS: frozenset[str] = frozenset(
 )
 
 # Bullet type to Google Docs preset mapping
+# Valid presets from Google Docs API:
+# - BULLET_DISC_CIRCLE_SQUARE, BULLET_CHECKBOX, BULLET_ARROW_DIAMOND_DISC, etc.
+# - NUMBERED_DECIMAL_NESTED, NUMBERED_DECIMAL_ALPHA_ROMAN
+# - NUMBERED_UPPERALPHA_ALPHA_ROMAN (starts with A, B, C)
+# - NUMBERED_UPPERROMAN_UPPERALPHA_DECIMAL (starts with I, II, III)
 BULLET_PRESETS: dict[str, str] = {
     "bullet": "BULLET_DISC_CIRCLE_SQUARE",
     "decimal": "NUMBERED_DECIMAL_NESTED",
-    "alpha": "NUMBERED_UPPERCASE_ALPHA",
-    "roman": "NUMBERED_UPPERCASE_ROMAN",
+    "alpha": "NUMBERED_UPPERALPHA_ALPHA_ROMAN",
+    "roman": "NUMBERED_UPPERROMAN_UPPERALPHA_DECIMAL",
     "checkbox": "BULLET_CHECKBOX",
 }
 

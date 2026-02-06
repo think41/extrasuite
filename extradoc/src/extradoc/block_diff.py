@@ -568,11 +568,17 @@ class BlockDiffDetector:
         """Diff children of a DOCUMENT block (body, headers, footers, footnotes).
 
         These children are matched by type and ID, then recursively diffed.
+        For headers and footers, we match by type only (ignoring ID) since
+        there's only one default header/footer per document.
         """
         changes: list[BlockChange] = []
 
         # Build lookup by (type, id) for pristine children
+        # For headers/footers, we use type-only matching since there's only one default
         def child_key(block: Block) -> tuple[str, str]:
+            if block.block_type in (BlockType.HEADER, BlockType.FOOTER):
+                # Match headers/footers by type only, not ID
+                return (block.block_type.value, "")
             return (block.block_type.value, block.block_id)
 
         pristine_map = {child_key(c): c for c in pristine.children}

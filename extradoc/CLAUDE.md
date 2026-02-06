@@ -264,6 +264,57 @@ Result:
 - If we insert 10 characters at index 50, indexes 1-49 stay the same
 - If individual ContentBlock diffs are correct, overall diff is guaranteed correct
 
+## Two-Phase Diff Algorithm
+
+The diff engine uses a **two-phase approach**: Block Diff (structure) followed by Content Diff (leaf nodes).
+
+### Phase 1: Block Diff (Structure)
+
+Block diff detects structural changes to containers:
+- **Body/Tab**: Document sections
+- **Table**: Creates/deletes table structure (`insertTable`, `deleteContentRange`)
+- **Header/Footer**: Creates/deletes headers/footers
+- **Footnote**: Creates/deletes footnotes
+- **Table Row/Column**: Structural table changes
+
+Block diff answers: "What containers were added, deleted, or modified?"
+
+### Phase 2: Content Diff (Leaf Nodes)
+
+Once structural containers exist, their **content** is handled uniformly via `_generate_content_insert_requests()`. This function handles ALL content containers the same way:
+- Body content
+- Header content
+- Footer content
+- Footnote content
+- **Table cell content**
+
+Content diff answers: "What paragraphs/text go inside this container?"
+
+### Why This Matters
+
+**All content containers use the same code path.** A table cell's content (`<td><p>Name</p></td>`) is handled exactly like body content (`<body><p>Name</p></body>`). The only difference is:
+1. Block diff creates the container (e.g., `insertTable`)
+2. Content diff populates it (e.g., `insertText` at the cell's content index)
+
+### Example: Adding a Table with Content
+
+```xml
+<table rows="2" cols="2">
+  <tr><td><p>Name</p></td><td><p>Value</p></td></tr>
+  <tr><td><p>Alice</p></td><td><p>100</p></td></tr>
+</table>
+```
+
+**Phase 1 (Block Diff):** Detects TABLE ADDED → generates `insertTable` request
+
+**Phase 2 (Content Diff):** For each cell:
+1. Calculate cell content index (accounting for table structure markers)
+2. Extract cell's inner XML (`<p>Name</p>`)
+3. Call `_generate_content_insert_requests()` with cell index
+4. Same function that handles body/header/footer content!
+
+**Key insight:** Don't duplicate content handling logic. Table cells, headers, footers, footnotes, and body all contain ContentBlocks. Handle them uniformly.
+
 ### Block vs ContentBlock Changes
 
 | Change Type | What Changed | Generated Requests |
@@ -297,21 +348,14 @@ Result:
 - Header/footer/footnote support (inline footnote model)
 - Block-level diff detection with paragraph-level granularity (`block_diff.py`)
 
-**Working (Structural Operations - Phase 2):**
-- Table operations: `insertTable`, `insertTableRow`, `deleteTableRow`, `insertTableColumn`, `deleteTableColumn`
+**Working (Push):**
+- Table operations: `insertTable` with cell content, `insertTableRow`, `deleteTableRow`, `insertTableColumn`, `deleteTableColumn`
 - Header/footer operations: `createHeader`, `deleteHeader`, `createFooter`, `deleteFooter`
 - Tab operations: `addDocumentTab`, `deleteTab`
 - Footnote operations: `createFootnote` (at end), `deleteContentRange` (for deletion)
+- ContentBlock operations: `insertText`, `updateTextStyle`, `updateParagraphStyle`, `createParagraphBullets`
+- Text formatting: bold, italic, underline, strikethrough, superscript, subscript, links
+- Paragraph styles: headings (h1-h6), title, subtitle
+- List types: bullet, decimal, alpha, roman
 
-**In Progress (Phase 3):**
-- ContentBlock request generation for text content changes
-- Precise footnote positioning (requires text content to exist first)
-
-**Next Steps:**
-1. Implement `ParsedContentBlock` extraction from XML
-2. Implement `_generate_content_insert_requests()` for text/styling
-3. Implement `_generate_content_delete_requests()` for deletions
-4. Handle MODIFIED ContentBlocks with delete + insert strategy
-5. End-to-end test with real documents
-
-See `docs/diff-implementation-plan.md` for detailed implementation plan.
+**Known Issues:** See `docs/gaps.md` for current bugs and limitations.

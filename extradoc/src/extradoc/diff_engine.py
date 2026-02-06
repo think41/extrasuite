@@ -379,7 +379,31 @@ def diff_documents(
         )
         all_requests.extend(change_requests)
 
-    # If merged approach was NOT used (no body content requests yet), process all changes normally
+    # Process body content changes if not handled by merged approach
+    merged_body_used = (
+        has_body_deletes and has_body_inserts and len(body_content_changes) > 1
+    )
+    if not merged_body_used and body_content_changes:
+        # Sort by pristine_start_index descending (bottom-up) for index stability
+        sorted_body_changes = sorted(
+            body_content_changes,
+            key=lambda c: c.pristine_start_index,
+            reverse=True,
+        )
+        for change in sorted_body_changes:
+            change_requests = _generate_requests_for_change(
+                change,
+                pristine_doc,
+                current_doc,
+                pristine_table_indexes,
+                current_table_indexes,
+                cell_styles,
+                text_styles,
+            )
+            all_requests.extend(change_requests)
+
+    # If no changes were processed above, process all changes normally
+    # (handles non-body content like headers/footers that aren't in either list)
     if not all_requests:
         # Generate requests from all block changes
         # Sort by pristine_start_index descending (bottom-up) to maintain index stability
@@ -520,6 +544,7 @@ def _generate_requests_for_change(
                 pristine_table_indexes,
                 current_table_indexes,
                 cell_styles,
+                text_styles,
             )
         )
     elif change.block_type in (BlockType.HEADER, BlockType.FOOTER):
@@ -801,6 +826,7 @@ def _handle_table_change(
     pristine_table_indexes: dict[str, int],
     current_table_indexes: dict[str, int],
     cell_styles: dict[str, dict[str, str]] | None = None,
+    text_styles: dict[str, dict[str, str]] | None = None,
 ) -> list[dict[str, Any]]:
     """Handle Table add/delete/modify changes.
 
@@ -809,13 +835,28 @@ def _handle_table_change(
 
     Args:
         cell_styles: Map of cell style class ID to properties (from styles.xml)
+        text_styles: Map of text style class ID to properties (from styles.xml)
     """
     requests: list[dict[str, Any]] = []
 
     if change.change_type == ChangeType.ADDED:
-        # Table insertion: need to parse dimensions and insertion point
+        # Table insertion: insert structure then populate cell content
+        # Use pristine_start_index as the insertion point
         if change.after_xml:
-            requests.extend(_generate_table_add_requests(change.after_xml, segment_id))
+            insert_index = (
+                change.pristine_start_index if change.pristine_start_index > 0 else 0
+            )
+            # Adjust if at segment end - can't insert at the final newline position
+            if (
+                change.segment_end_index > 0
+                and insert_index >= change.segment_end_index
+            ):
+                insert_index = change.segment_end_index - 1
+            requests.extend(
+                _generate_table_add_requests(
+                    change.after_xml, segment_id, insert_index, text_styles
+                )
+            )
 
     elif change.change_type == ChangeType.DELETED:
         # Table deletion: need to calculate the range from before_xml
@@ -1364,18 +1405,22 @@ def _generate_content_insert_requests(
         return rng
 
     # 1. Insert plain text
+    # Mark with _skipReorder to prevent reordering - these requests must stay in sequence
+    # because special elements (pagebreak, etc.) reference indexes within this text
     requests.append(
         {
             "insertText": {
                 "location": make_location(0),
                 "text": parsed.plain_text,
-            }
+            },
+            "_skipReorder": True,
         }
     )
 
     # 1.5. Clear all formatting from inserted text
     # This prevents inheritance of styles from the insertion point
     # We reset bold, italic, underline, strikethrough, and baselineOffset
+    # Mark with _skipReorder to stay in sequence after the text insert
     text_len = utf16_len(parsed.plain_text)
     requests.append(
         {
@@ -1389,11 +1434,13 @@ def _generate_content_insert_requests(
                     "baselineOffset": "NONE",
                 },
                 "fields": "bold,italic,underline,strikethrough,baselineOffset",
-            }
+            },
+            "_skipReorder": True,
         }
     )
 
     # 2. Insert special elements (highest offset first)
+    # Mark with _skipReorder to stay in sequence after the text insert
     for offset, elem_type, _attrs in sorted(
         parsed.special_elements, key=lambda x: x[0], reverse=True
     ):
@@ -1402,7 +1449,8 @@ def _generate_content_insert_requests(
                 {
                     "insertPageBreak": {
                         "location": make_location(offset),
-                    }
+                    },
+                    "_skipReorder": True,
                 }
             )
         elif elem_type == "columnbreak":
@@ -1412,7 +1460,8 @@ def _generate_content_insert_requests(
                     "insertSectionBreak": {
                         "location": make_location(offset),
                         "sectionType": "CONTINUOUS",
-                    }
+                    },
+                    "_skipReorder": True,
                 }
             )
         # Note: hr, image, footnote require different handling
@@ -1498,12 +1547,19 @@ def _generate_content_insert_requests(
 
 
 def _bullet_type_to_preset(bullet_type: str) -> str:
-    """Convert bullet type to Google Docs bullet preset."""
+    """Convert bullet type to Google Docs bullet preset.
+
+    Valid presets from Google Docs API:
+    - BULLET_DISC_CIRCLE_SQUARE, BULLET_CHECKBOX, BULLET_ARROW_DIAMOND_DISC, etc.
+    - NUMBERED_DECIMAL_NESTED, NUMBERED_DECIMAL_ALPHA_ROMAN
+    - NUMBERED_UPPERALPHA_ALPHA_ROMAN (starts with A, B, C)
+    - NUMBERED_UPPERROMAN_UPPERALPHA_DECIMAL (starts with I, II, III)
+    """
     presets = {
         "bullet": "BULLET_DISC_CIRCLE_SQUARE",
         "decimal": "NUMBERED_DECIMAL_NESTED",
-        "alpha": "NUMBERED_UPPERCASE_ALPHA",
-        "roman": "NUMBERED_UPPERCASE_ROMAN",
+        "alpha": "NUMBERED_UPPERALPHA_ALPHA_ROMAN",
+        "roman": "NUMBERED_UPPERROMAN_UPPERALPHA_DECIMAL",
         "checkbox": "BULLET_CHECKBOX",
     }
     return presets.get(bullet_type, "BULLET_DISC_CIRCLE_SQUARE")
@@ -1924,38 +1980,146 @@ def _generate_cell_style_request(
 def _generate_table_add_requests(
     after_xml: str,
     segment_id: str | None,
+    insert_index: int = 0,
+    text_styles: dict[str, dict[str, str]] | None = None,
 ) -> list[dict[str, Any]]:
-    """Generate requests to add a new table.
+    """Generate requests to add a new table with cell content.
 
-    For new tables, we need to:
-    1. Insert the table structure with insertTable
-    2. Populate cell content (handled by child_changes)
+    Strategy:
+    1. Insert the empty table structure with insertTable
+    2. Calculate each cell's content start index
+    3. For each cell with content, use _generate_content_insert_requests()
+       (same as body/header/footer/footnote content handling)
+
+    Args:
+        after_xml: The table XML content
+        segment_id: Segment ID (None for body, header/footer ID otherwise)
+        insert_index: The index at which to insert the table (0 = end of segment)
+        text_styles: Style definitions for text styling
     """
     requests: list[dict[str, Any]] = []
     table_info = _parse_table_xml(after_xml)
+    rows = table_info["rows"]
+    cols = table_info["cols"]
 
-    # Note: For ADDED tables, we don't have a startIndex from the pristine doc
-    # The insertion point needs to be calculated based on surrounding content
-    # For now, we return a placeholder request
-    # Full implementation needs integration with index calculation
-
-    location: dict[str, Any] = {}
-    if segment_id:
-        location["segmentId"] = segment_id
-
-    # InsertTable requires either location.index or endOfSegmentLocation
-    # For now, we use endOfSegmentLocation as a fallback
-    requests.append(
-        {
-            "insertTable": {
-                "rows": table_info["rows"],
-                "columns": table_info["cols"],
-                "endOfSegmentLocation": location if location else {"segmentId": ""},
+    # 1. Insert the empty table structure
+    # Mark with _skipReorder so it stays before cell content requests
+    if insert_index > 0:
+        location: dict[str, Any] = {"index": insert_index}
+        if segment_id:
+            location["segmentId"] = segment_id
+        requests.append(
+            {
+                "insertTable": {
+                    "rows": rows,
+                    "columns": cols,
+                    "location": location,
+                },
+                "_skipReorder": True,
             }
-        }
-    )
+        )
+    else:
+        # Use endOfSegmentLocation when no specific index
+        end_location: dict[str, Any] = {}
+        if segment_id:
+            end_location["segmentId"] = segment_id
+        requests.append(
+            {
+                "insertTable": {
+                    "rows": rows,
+                    "columns": cols,
+                    "endOfSegmentLocation": end_location
+                    if end_location
+                    else {"segmentId": ""},
+                }
+            }
+        )
+        # Without a specific insert index, we can't calculate cell positions
+        # The table structure is created but content requires a second pass
+        return requests
+
+    # 2. Parse table to extract cell content XML
+    try:
+        root = ET.fromstring(after_xml)
+    except ET.ParseError:
+        return requests
+
+    # 3. Calculate cell content indexes and insert content
+    # Table structure: table_start + 1 (table marker) + row markers + cell markers
+    # Each cell starts at: base + row_offset + cell_offset
+    # Process cells in reverse order (high to low index) for index stability
+
+    cell_contents: list[tuple[int, int, str]] = []  # (row, col, inner_xml)
+    tr_elements = list(root.findall("tr"))
+    for row_idx, tr in enumerate(tr_elements):
+        td_elements = list(tr.findall("td"))
+        for col_idx, td in enumerate(td_elements):
+            # Extract inner XML of the cell (the ContentBlock)
+            inner_parts = []
+            for child in td:
+                inner_parts.append(ET.tostring(child, encoding="unicode"))
+            if inner_parts:
+                cell_contents.append((row_idx, col_idx, "".join(inner_parts)))
+
+    # Calculate base cell positions for the freshly inserted empty table
+    # Each cell in a new table has 1 character (the default empty paragraph newline)
+    cell_starts = _calculate_new_table_cell_starts(insert_index, rows, cols)
+
+    # Process cells from highest index to lowest for index stability
+    for row_idx, col_idx, inner_xml in sorted(
+        cell_contents, key=lambda x: cell_starts.get((x[0], x[1]), 0), reverse=True
+    ):
+        cell_start = cell_starts.get((row_idx, col_idx))
+        if cell_start is None:
+            continue
+
+        # The cell already has a default empty paragraph (1 newline)
+        # We insert content at the start of the cell, and the content will
+        # replace/precede the default newline
+        cell_requests = _generate_content_insert_requests(
+            inner_xml,
+            segment_id,
+            insert_index=cell_start,
+            strip_trailing_newline=True,  # Don't add trailing newline, cell already has one
+            text_styles=text_styles,
+        )
+        requests.extend(cell_requests)
 
     return requests
+
+
+def _calculate_new_table_cell_starts(
+    insert_location_index: int, rows: int, cols: int
+) -> dict[tuple[int, int], int]:
+    """Calculate cell content start indexes for a newly inserted empty table.
+
+    IMPORTANT: When inserting a table via InsertTableRequest, a newline is
+    inserted BEFORE the table. So if location.index = N, the table actually
+    starts at N + 1.
+
+    In a fresh table, each cell contains just one empty paragraph (1 newline char).
+
+    Table structure indexes (after the auto-inserted newline):
+    - table_start (at insert_location + 1): table marker (1 char)
+    - For each row: row marker (1 char)
+    - For each cell: cell marker (1 char) + content (1 char for empty para)
+
+    Returns:
+        Dict mapping (row, col) to the content start index for that cell
+    """
+    cell_starts: dict[tuple[int, int], int] = {}
+    # Table starts at insert_location + 1 (due to auto-inserted newline)
+    # Then skip the table start marker
+    idx = insert_location_index + 1 + 1  # +1 for newline, +1 for table marker
+
+    for row in range(rows):
+        idx += 1  # Row marker
+        for col in range(cols):
+            idx += 1  # Cell marker
+            cell_starts[(row, col)] = idx
+            idx += 1  # Default empty paragraph (1 newline)
+
+    return cell_starts
 
 
 def _generate_table_delete_requests(
