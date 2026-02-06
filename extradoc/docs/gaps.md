@@ -2,7 +2,7 @@
 
 This document tracks bugs, limitations, and implementation gaps discovered during testing.
 
-**Last Updated:** 2026-02-06
+**Last Updated:** 2026-02-07
 
 ---
 
@@ -12,7 +12,7 @@ This document tracks bugs, limitations, and implementation gaps discovered durin
 |----------|-------|
 | Critical Bugs (Open) | 0 |
 | Major Bugs (Open) | 0 |
-| Fixed Bugs | 11 |
+| Fixed Bugs | 13 |
 | API Limitations | 5 |
 
 ---
@@ -35,6 +35,12 @@ These are limitations of the Google Docs API, not bugs in extradoc.
 - Community reports confirm: checkbox state cannot be detected or set via the API
 
 **Workaround:** Use Unicode checkbox symbols manually (☐ ☑ ☒) in text content.
+
+---
+
+## Critical Bugs (Open)
+
+*No open critical bugs at this time.*
 
 ---
 
@@ -107,6 +113,54 @@ These are limitations of the Google Docs API, not bugs in extradoc.
 | Custom paragraph styles | ✅ | `<p class="...">` with alignment, spacing (fixed) |
 | Custom text styles | ✅ | `<p class="...">` with bg, color, font (fixed) |
 | Tables preserved on edit | ✅ | Adding content around tables no longer destroys them |
+
+---
+
+## Fixed Bugs (2026-02-07)
+
+### Fixed: Table Delete Fails with `KeyError: 'startIndex'`
+
+**Location:** `src/extradoc/diff_engine.py`, `_handle_table_change()` and `_generate_table_delete_requests()`
+
+**Problem:** When a push attempted to delete a table (table exists in pristine but not in current), the diff engine crashed with `KeyError: 'startIndex'`.
+
+**Root Cause:** `_generate_table_delete_requests()` tried to access `table_info["startIndex"]`, but `_parse_table_xml()` only returns `{"rows", "cols", "id"}`. The `startIndex` needed to come from the `pristine_table_indexes` dict.
+
+**Fix:**
+1. Modified `_handle_table_change()` to look up the table start index using `_get_table_start_index(change.container_path, pristine_table_indexes)` before calling the delete function
+2. Updated `_generate_table_delete_requests()` to accept `table_start_index` as a parameter
+3. Used `_calculate_nested_table_length()` to accurately calculate the table size from XML for the delete range
+
+---
+
+### Fixed: Index Calculation Error When Modifying and Adding Content
+
+**Location:** `src/extradoc/diff_engine.py`, request reordering logic
+
+**Problem:** When a push both modified existing content AND added new content, the API rejected requests with "Index XXXX must be less than the end index of the referenced segment". This happened because insert/update indexes were calculated assuming the original document size, but deletes run first and shrink the document.
+
+**Root Cause:** The request reordering put all deletes first (sorted descending), then all inserts/updates. But insert indexes weren't adjusted to account for the document shrinkage caused by preceding deletes.
+
+**Fix:** Added index adjustment logic after reordering:
+1. Calculate delete ranges (start, length) for all `deleteContentRange` requests
+2. For each insert/update request at index I, calculate adjustment as the sum of all delete lengths where `delete_end <= I`
+3. Subtract the adjustment from the request's index
+
+This ensures inserts target the correct position after all preceding deletes have been applied.
+
+---
+
+### Known Issue: Style Inheritance on Insert
+
+**Status:** Documented, not fixed
+
+**Problem:** When inserting text after a heading, the inserted paragraphs may inherit the heading style instead of becoming normal paragraphs. This is because Google Docs applies formatting from the insertion point to newly inserted text.
+
+**Root Cause:** The code only generates `updateParagraphStyle` for non-NORMAL_TEXT paragraphs (headings). Normal paragraphs don't get explicit style updates, so they inherit from context.
+
+**Workaround:** Manually fix paragraph styles in Google Docs after push, or ensure content is inserted before styled elements rather than after them.
+
+**Note:** A fix was attempted (always apply NORMAL_TEXT style) but caused other issues. Further investigation needed.
 
 ---
 
@@ -280,7 +334,8 @@ if block.block_type in (BlockType.HEADER, BlockType.FOOTER):
 
 ## Priority Fix Order
 
-*All major bugs have been resolved.*
+1. **Merged body insert bullet index bug** — Blocks the most common workflow (adding lists to existing documents). Fix the content length calculation in `_generate_content_insert_requests()` or avoid triggering the merged approach unnecessarily.
+2. **Table delete `startIndex` bug** — Blocks table deletion via diff/push. Requires passing the table's document index into the delete function.
 
 ---
 

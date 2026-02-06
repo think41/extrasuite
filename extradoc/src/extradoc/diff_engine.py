@@ -516,9 +516,156 @@ def diff_documents(
 
     insert_requests.sort(key=get_insert_index, reverse=True)
 
+    # Adjust insert indexes based on preceding deletes
+    # After all deletes run, the document is shorter. Inserts at positions after
+    # deleted content need their indexes adjusted.
+    # Calculate total deletion impact for each insert based on which deletes affect it
+    def adjust_request_index(req: dict[str, Any], adjustment: int) -> dict[str, Any]:
+        """Adjust the index in a request by the given amount."""
+        if adjustment == 0:
+            return req
+        # Handle insertText
+        if "insertText" in req:
+            req["insertText"]["location"]["index"] -= adjustment
+        # Handle insertPageBreak
+        elif "insertPageBreak" in req:
+            req["insertPageBreak"]["location"]["index"] -= adjustment
+        # Handle insertSectionBreak
+        elif "insertSectionBreak" in req:
+            req["insertSectionBreak"]["location"]["index"] -= adjustment
+        # Handle insertTable with location
+        elif "insertTable" in req and "location" in req["insertTable"]:
+            req["insertTable"]["location"]["index"] -= adjustment
+        return req
+
+    def adjust_update_index(req: dict[str, Any], adjustment: int) -> dict[str, Any]:
+        """Adjust range indexes in update requests."""
+        if adjustment == 0:
+            return req
+        # Handle updateTextStyle
+        if "updateTextStyle" in req:
+            rng = req["updateTextStyle"].get("range", {})
+            if "startIndex" in rng:
+                rng["startIndex"] -= adjustment
+            if "endIndex" in rng:
+                rng["endIndex"] -= adjustment
+        # Handle updateParagraphStyle
+        elif "updateParagraphStyle" in req:
+            rng = req["updateParagraphStyle"].get("range", {})
+            if "startIndex" in rng:
+                rng["startIndex"] -= adjustment
+            if "endIndex" in rng:
+                rng["endIndex"] -= adjustment
+        # Handle createParagraphBullets
+        elif "createParagraphBullets" in req:
+            rng = req["createParagraphBullets"].get("range", {})
+            if "startIndex" in rng:
+                rng["startIndex"] -= adjustment
+            if "endIndex" in rng:
+                rng["endIndex"] -= adjustment
+        return req
+
+    # Calculate delete ranges for adjustment
+    delete_ranges: list[tuple[int, int]] = []  # (start, length)
+    for del_req in delete_requests:
+        if "deleteContentRange" in del_req:
+            rng = del_req["deleteContentRange"]["range"]
+            start = rng.get("startIndex", 0)
+            end = rng.get("endIndex", start)
+            delete_ranges.append((start, end - start))
+
+    def get_any_request_index(req: dict[str, Any]) -> int:
+        """Get index from any type of request."""
+        # Insert requests
+        if "insertText" in req:
+            return int(req["insertText"]["location"].get("index", 0))
+        if "insertPageBreak" in req:
+            return int(req["insertPageBreak"]["location"].get("index", 0))
+        if "insertSectionBreak" in req:
+            return int(req["insertSectionBreak"]["location"].get("index", 0))
+        if "insertTable" in req and "location" in req["insertTable"]:
+            return int(req["insertTable"]["location"].get("index", 0))
+        # Update requests
+        if "updateTextStyle" in req:
+            return int(req["updateTextStyle"].get("range", {}).get("startIndex", 0))
+        if "updateParagraphStyle" in req:
+            return int(
+                req["updateParagraphStyle"].get("range", {}).get("startIndex", 0)
+            )
+        if "createParagraphBullets" in req:
+            return int(
+                req["createParagraphBullets"].get("range", {}).get("startIndex", 0)
+            )
+        return 0
+
+    def adjust_any_request(req: dict[str, Any], adjustment: int) -> dict[str, Any]:
+        """Adjust indexes in any type of request."""
+        if adjustment == 0:
+            return req
+        # Insert requests
+        if "insertText" in req:
+            req["insertText"]["location"]["index"] -= adjustment
+        elif "insertPageBreak" in req:
+            req["insertPageBreak"]["location"]["index"] -= adjustment
+        elif "insertSectionBreak" in req:
+            req["insertSectionBreak"]["location"]["index"] -= adjustment
+        elif "insertTable" in req and "location" in req["insertTable"]:
+            req["insertTable"]["location"]["index"] -= adjustment
+        # Update requests
+        elif "updateTextStyle" in req:
+            rng = req["updateTextStyle"].get("range", {})
+            if "startIndex" in rng:
+                rng["startIndex"] -= adjustment
+            if "endIndex" in rng:
+                rng["endIndex"] -= adjustment
+        elif "updateParagraphStyle" in req:
+            rng = req["updateParagraphStyle"].get("range", {})
+            if "startIndex" in rng:
+                rng["startIndex"] -= adjustment
+            if "endIndex" in rng:
+                rng["endIndex"] -= adjustment
+        elif "createParagraphBullets" in req:
+            rng = req["createParagraphBullets"].get("range", {})
+            if "startIndex" in rng:
+                rng["startIndex"] -= adjustment
+            if "endIndex" in rng:
+                rng["endIndex"] -= adjustment
+        return req
+
+    def calculate_adjustment(req_idx: int) -> int:
+        """Calculate total adjustment for a request at the given index."""
+        adjustment = 0
+        for del_start, del_len in delete_ranges:
+            # If the delete ends before or at the request position, adjust
+            if del_start + del_len <= req_idx:
+                adjustment += del_len
+        return adjustment
+
+    # Adjust each insert request based on deletes that occur before its position
+    adjusted_inserts: list[dict[str, Any]] = []
+    for ins_req in insert_requests:
+        insert_idx = get_insert_index(ins_req)
+        adjustment = calculate_adjustment(insert_idx)
+        adjusted_inserts.append(adjust_any_request(ins_req, adjustment))
+
+    # Adjust update requests
+    adjusted_updates: list[dict[str, Any]] = []
+    for upd_req in update_requests:
+        update_idx = get_any_request_index(upd_req)
+        adjustment = calculate_adjustment(update_idx)
+        adjusted_updates.append(adjust_any_request(upd_req, adjustment))
+
+    # Adjust ordered requests (those with _skipReorder that need to stay together)
+    # These also need adjustment for deletes that happen before them
+    adjusted_ordered: list[dict[str, Any]] = []
+    for ord_req in ordered_requests:
+        req_idx = get_any_request_index(ord_req)
+        adjustment = calculate_adjustment(req_idx)
+        adjusted_ordered.append(adjust_any_request(ord_req, adjustment))
+
     # Combine: deletes first, then ordered requests (e.g., table cell ops),
     # then regular inserts, then updates
-    return delete_requests + ordered_requests + insert_requests + update_requests
+    return delete_requests + adjusted_ordered + adjusted_inserts + adjusted_updates
 
 
 def _generate_requests_for_change(
@@ -887,9 +1034,16 @@ def _handle_table_change(
     elif change.change_type == ChangeType.DELETED:
         # Table deletion: need to calculate the range from before_xml
         if change.before_xml:
-            requests.extend(
-                _generate_table_delete_requests(change.before_xml, segment_id)
+            # Get table start index from pristine_table_indexes using container_path
+            table_start_index = _get_table_start_index(
+                change.container_path, pristine_table_indexes
             )
+            if table_start_index > 0:
+                requests.extend(
+                    _generate_table_delete_requests(
+                        change.before_xml, segment_id, table_start_index
+                    )
+                )
 
     elif change.change_type == ChangeType.MODIFIED:
         # Table modified - process row/cell changes from child_changes
@@ -2202,28 +2356,36 @@ def _calculate_new_table_cell_starts(
 def _generate_table_delete_requests(
     before_xml: str,
     segment_id: str | None,
+    table_start_index: int,
 ) -> list[dict[str, Any]]:
     """Generate requests to delete a table.
 
     Uses deleteContentRange with the table's index range.
     The table's startIndex and size determine the range.
+
+    Args:
+        before_xml: The table's XML content (for parsing structure)
+        segment_id: The segment ID (body, header, footer, etc.)
+        table_start_index: The table's start index from pristine_table_indexes
     """
     requests: list[dict[str, Any]] = []
     table_info = _parse_table_xml(before_xml)
 
-    start_index = table_info["startIndex"]
-    if start_index == 0:
-        # No startIndex stored - can't generate delete request
+    if table_start_index == 0:
+        # No startIndex provided - can't generate delete request
         return []
 
-    # Calculate table end index by parsing the table content
-    # For a simple approximation, use structural calculation:
-    # table_start + 1 (table marker) + rows * (1 (row) + cols * (1 (cell) + 1 (newline))) + 1 (table end)
-    # This is approximate - proper calculation needs full content parsing
-    rows = table_info["rows"]
-    cols = table_info["cols"]
-    # Minimum table size: table markers + row/cell markers + minimum cell content
-    table_size = 1 + rows * (1 + cols * 2) + 1
+    start_index = table_start_index
+
+    # Calculate table size accurately by parsing the table XML content
+    try:
+        root = ET.fromstring(before_xml)
+        table_size = _calculate_nested_table_length(root)
+    except ET.ParseError:
+        # Fallback to rough estimate if XML parsing fails
+        rows = table_info["rows"]
+        cols = table_info["cols"]
+        table_size = 1 + rows * (1 + cols * 2) + 1
 
     range_obj: dict[str, Any] = {
         "startIndex": start_index,
