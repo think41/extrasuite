@@ -565,18 +565,6 @@ class BlockDiffDetector:
 
         return table_block
 
-    @staticmethod
-    def _calculate_table_cell_end_index(td: ET.Element) -> int:
-        """Estimate end index of a table cell within its own segment space.
-
-        Used to carry segment_end_index for cells so we can preserve
-        the final newline sentinel during edits.
-        """
-        content_text = ET.tostring(td, encoding="unicode")
-        # Minimal length is 1 (newline) when empty
-        length = max(1, len(content_text))
-        return length
-
     def _diff_table_columns(
         self, pristine_table: Block, current_table: Block, table_path: list[str]
     ) -> tuple[
@@ -1413,90 +1401,6 @@ class BlockDiffDetector:
 
         return changes
 
-    def _diff_table_cells(
-        self,
-        pristine_table: Block,
-        current_table: Block,
-        path: list[str],
-    ) -> list[BlockChange]:
-        """Diff table cells recursively (legacy method, now uses _diff_table_structure)."""
-        changes: list[BlockChange] = []
-
-        # Build cell lookup by position
-        pristine_cells = {c.block_id: c for c in pristine_table.children}
-        current_cells = {c.block_id: c for c in current_table.children}
-
-        all_cell_ids = set(pristine_cells.keys()) | set(current_cells.keys())
-
-        for cell_id in sorted(all_cell_ids):
-            p_cell = pristine_cells.get(cell_id)
-            c_cell = current_cells.get(cell_id)
-
-            cell_path = [*path, f"table_cell:{cell_id}"]
-
-            if p_cell is None and c_cell is not None:
-                # Cell added
-                changes.append(
-                    BlockChange(
-                        change_type=ChangeType.ADDED,
-                        block_type=BlockType.TABLE_CELL,
-                        block_id=cell_id,
-                        after_xml=c_cell.xml_content,
-                        container_path=path,
-                    )
-                )
-            elif p_cell is not None and c_cell is None:
-                # Cell deleted
-                changes.append(
-                    BlockChange(
-                        change_type=ChangeType.DELETED,
-                        block_type=BlockType.TABLE_CELL,
-                        block_id=cell_id,
-                        before_xml=p_cell.xml_content,
-                        container_path=path,
-                    )
-                )
-            elif (
-                p_cell is not None
-                and c_cell is not None
-                and p_cell.xml_content != c_cell.xml_content
-            ):
-                # Cell exists in both and content differs - compare recursively
-                child_changes = self._diff_child_lists(
-                    p_cell.children,
-                    c_cell.children,
-                    cell_path,
-                    segment_end_index=p_cell.end_index,
-                )
-
-                if child_changes:
-                    changes.append(
-                        BlockChange(
-                            change_type=ChangeType.MODIFIED,
-                            block_type=BlockType.TABLE_CELL,
-                            block_id=cell_id,
-                            before_xml=p_cell.xml_content,
-                            after_xml=c_cell.xml_content,
-                            container_path=path,
-                            child_changes=child_changes,
-                        )
-                    )
-                else:
-                    # Content changed but no structural child changes
-                    # This happens when the cell has simple paragraph content
-                    changes.append(
-                        BlockChange(
-                            change_type=ChangeType.MODIFIED,
-                            block_type=BlockType.TABLE_CELL,
-                            block_id=cell_id,
-                            before_xml=p_cell.xml_content,
-                            after_xml=c_cell.xml_content,
-                            container_path=path,
-                        )
-                    )
-
-        return changes
-
     def _align_blocks(
         self,
         pristine: list[Block],
@@ -1581,49 +1485,6 @@ class BlockDiffDetector:
             return (p_idx, c_idx)
 
         alignment.sort(key=sort_key)
-
-        return alignment
-
-    # --- LCS utilities for table alignment ---
-
-    def _lcs_align(
-        self, a: list[str], b: list[str]
-    ) -> list[tuple[int | None, int | None]]:
-        """Return alignment based on LCS of two key sequences.
-
-        Produces ordered pairs covering additions/deletions:
-        - (i, j) matched items
-        - (i, None) deletions
-        - (None, j) additions
-        """
-        m, n = len(a), len(b)
-        dp = [[0] * (n + 1) for _ in range(m + 1)]
-        for i in range(m - 1, -1, -1):
-            for j in range(n - 1, -1, -1):
-                if a[i] == b[j]:
-                    dp[i][j] = dp[i + 1][j + 1] + 1
-                else:
-                    dp[i][j] = max(dp[i + 1][j], dp[i][j + 1])
-
-        i = j = 0
-        alignment: list[tuple[int | None, int | None]] = []
-        while i < m and j < n:
-            if a[i] == b[j]:
-                alignment.append((i, j))
-                i += 1
-                j += 1
-            elif dp[i + 1][j] >= dp[i][j + 1]:
-                alignment.append((i, None))
-                i += 1
-            else:
-                alignment.append((None, j))
-                j += 1
-        while i < m:
-            alignment.append((i, None))
-            i += 1
-        while j < n:
-            alignment.append((None, j))
-            j += 1
 
         return alignment
 

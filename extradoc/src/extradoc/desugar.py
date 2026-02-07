@@ -12,7 +12,7 @@ from __future__ import annotations
 
 import xml.etree.ElementTree as ET
 from dataclasses import dataclass, field
-from typing import TYPE_CHECKING, Any
+from typing import TYPE_CHECKING
 
 if TYPE_CHECKING:
     from xml.etree.ElementTree import Element
@@ -65,9 +65,6 @@ class Paragraph:
     bullet_type: str | None = None
     bullet_level: int = 0
     style_class: str | None = None
-
-    def text_content(self) -> str:
-        return "".join(run.text for run in self.runs)
 
     def utf16_length(self) -> int:
         """Length including trailing newline."""
@@ -434,52 +431,3 @@ def _get_all_text(elem: Element) -> str:
         if child.tail:
             parts.append(child.tail)
     return "".join(parts)
-
-
-# --- Convenience functions for diffing ---
-
-
-def flatten_section(section: Section) -> list[tuple[str, Any, int, int]]:
-    """Flatten a section into a list of (type, element, start_idx, end_idx) tuples.
-
-    Args:
-        section: The section to flatten
-
-    Returns:
-        List of tuples for each element with its index range
-    """
-    result: list[tuple[str, Any, int, int]] = []
-
-    # Body starts at index 1, headers/footers/footnotes start at 0
-    current_idx = 1 if section.section_type == "body" else 0
-
-    for elem in section.content:
-        start_idx = current_idx
-
-        if isinstance(elem, Paragraph):
-            end_idx = start_idx + elem.utf16_length()
-            result.append(("paragraph", elem, start_idx, end_idx))
-            current_idx = end_idx
-
-        elif isinstance(elem, Table):
-            # Table structure: table_start + rows + table_end
-            table_start = current_idx
-            current_idx += 1  # Table start marker
-
-            for cell in elem.cells:
-                current_idx += 1  # Row start (simplified)
-                current_idx += 1  # Cell start
-
-                for cell_elem in cell.content:
-                    if isinstance(cell_elem, Paragraph):
-                        current_idx += cell_elem.utf16_length()
-
-            current_idx += 1  # Table end marker
-            result.append(("table", elem, table_start, current_idx))
-
-        elif isinstance(elem, SpecialElement):
-            end_idx = start_idx + elem.utf16_length()
-            result.append(("special", elem, start_idx, end_idx))
-            current_idx = end_idx
-
-    return result
