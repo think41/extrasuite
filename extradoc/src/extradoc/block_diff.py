@@ -773,7 +773,10 @@ class BlockDiffDetector:
         change status are grouped into ContentBlock changes.
         """
         # Use None as a sentinel for UNCHANGED to properly separate groups
-        raw_changes: list[tuple[ChangeType | None, Block | None, Block | None]] = []
+        # Include current_idx to detect gaps in the current document
+        raw_changes: list[
+            tuple[ChangeType | None, Block | None, Block | None, int | None]
+        ] = []
 
         # Build alignment using structural keys and content
         alignment = self._align_blocks(pristine_children, current_children)
@@ -782,12 +785,12 @@ class BlockDiffDetector:
             if p_idx is None and c_idx is not None:
                 # Addition
                 added_block = current_children[c_idx]
-                raw_changes.append((ChangeType.ADDED, None, added_block))
+                raw_changes.append((ChangeType.ADDED, None, added_block, c_idx))
 
             elif p_idx is not None and c_idx is None:
                 # Deletion
                 deleted_block = pristine_children[p_idx]
-                raw_changes.append((ChangeType.DELETED, deleted_block, None))
+                raw_changes.append((ChangeType.DELETED, deleted_block, None, None))
 
             elif p_idx is not None and c_idx is not None:
                 # Both exist - compare content
@@ -795,10 +798,10 @@ class BlockDiffDetector:
                 c_block = current_children[c_idx]
 
                 if p_block.xml_content != c_block.xml_content:
-                    raw_changes.append((ChangeType.MODIFIED, p_block, c_block))
+                    raw_changes.append((ChangeType.MODIFIED, p_block, c_block, c_idx))
                 else:
                     # Unchanged - use None as change_type to act as separator
-                    raw_changes.append((None, p_block, c_block))
+                    raw_changes.append((None, p_block, c_block, c_idx))
 
         # Group consecutive paragraph changes into ContentBlock changes
         return self._group_paragraph_changes(
@@ -810,7 +813,9 @@ class BlockDiffDetector:
 
     def _group_paragraph_changes(
         self,
-        raw_changes: list[tuple[ChangeType | None, Block | None, Block | None]],
+        raw_changes: list[
+            tuple[ChangeType | None, Block | None, Block | None, int | None]
+        ],
         path: list[str],
         *,
         segment_start_index: int = 0,
@@ -819,7 +824,8 @@ class BlockDiffDetector:
         """Group consecutive paragraph changes into ContentBlock changes.
 
         Non-paragraph changes (tables, TOC, etc.) are passed through as-is.
-        Consecutive paragraphs with the same change status are grouped.
+        Consecutive paragraphs with the same change status are grouped, but
+        only if they are also adjacent in the current document (no gaps).
         Unchanged blocks (change_type=None) act as separators between groups.
 
         Tracks last_pristine_end_index to calculate insert positions for additions.
@@ -830,6 +836,8 @@ class BlockDiffDetector:
         grouped_changes: list[BlockChange] = []
         current_group: list[tuple[ChangeType, Block | None, Block | None]] = []
         current_group_type: ChangeType | None = None
+        # Track the last current index in the group to detect gaps
+        last_current_idx_in_group: int | None = None
 
         # Track the last known pristine end index for calculating insert positions
         last_pristine_end_index = segment_start_index
@@ -837,6 +845,7 @@ class BlockDiffDetector:
         def flush_group() -> None:
             """Flush the current group of paragraph changes."""
             nonlocal current_group, current_group_type, last_pristine_end_index
+            nonlocal last_current_idx_in_group
             if not current_group:
                 return
 
@@ -940,8 +949,9 @@ class BlockDiffDetector:
 
             current_group = []
             current_group_type = None
+            last_current_idx_in_group = None
 
-        for change_type, p_block, c_block in raw_changes:
+        for change_type, p_block, c_block, current_idx in raw_changes:
             # Handle unchanged blocks (None change_type) - they just flush the group
             # and update the last pristine position
             if change_type is None:
@@ -957,14 +967,35 @@ class BlockDiffDetector:
             is_paragraph = block.block_type == BlockType.PARAGRAPH
 
             if is_paragraph:
-                # Check if we can add to current group
-                if current_group_type == change_type:
+                # Check if we can add to current group.
+                # Must have same change type AND be adjacent in the current document
+                # AND have the same paragraph type (p, li, h1, etc.).
+                # This prevents grouping paragraphs that are separated by other content
+                # or mixing regular paragraphs with list items.
+                is_adjacent = (
+                    last_current_idx_in_group is None
+                    or current_idx is None  # deletions don't have current_idx
+                    or current_idx == last_current_idx_in_group + 1
+                )
+                # Check same paragraph type (tag)
+                current_tag = block.attributes.get("tag", "p")
+                last_tag = None
+                if current_group:
+                    last_block = current_group[-1][2] or current_group[-1][1]
+                    if last_block:
+                        last_tag = last_block.attributes.get("tag", "p")
+                same_type = last_tag is None or current_tag == last_tag
+
+                if current_group_type == change_type and is_adjacent and same_type:
                     current_group.append((change_type, p_block, c_block))
+                    if current_idx is not None:
+                        last_current_idx_in_group = current_idx
                 else:
                     # Flush existing group and start new one
                     flush_group()
                     current_group = [(change_type, p_block, c_block)]
                     current_group_type = change_type
+                    last_current_idx_in_group = current_idx
             else:
                 # Non-paragraph: flush any pending paragraphs first
                 flush_group()
