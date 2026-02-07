@@ -451,18 +451,19 @@ def generate_content_requests(
             requests.append(special_req)
 
     # 4. Apply paragraph styles (headings, etc.)
+    # IMPORTANT: Always set namedStyleType for ALL paragraphs, not just headings.
+    # When text is inserted after a heading, new paragraphs inherit the heading style.
+    # We must explicitly set NORMAL_TEXT to prevent this inheritance.
     for para in parsed.paragraphs:
-        # Named style (headings)
-        if para.named_style != "NORMAL_TEXT":
-            requests.append(
-                {
-                    "updateParagraphStyle": {
-                        "range": make_range(para.start_offset, para.end_offset),
-                        "paragraphStyle": {"namedStyleType": para.named_style},
-                        "fields": "namedStyleType",
-                    }
+        requests.append(
+            {
+                "updateParagraphStyle": {
+                    "range": make_range(para.start_offset, para.end_offset),
+                    "paragraphStyle": {"namedStyleType": para.named_style},
+                    "fields": "namedStyleType",
                 }
-            )
+            }
+        )
 
         # Additional paragraph styles from attributes
         para_style, para_fields = convert_styles(para.styles, PARAGRAPH_STYLE_PROPS)

@@ -1131,9 +1131,10 @@ def _parse_content_block_xml(
         # Calculate paragraph end (after newline)
         para_end = current_offset + utf16_len(para_text) + 1  # +1 for newline
 
-        # Track paragraph style if not normal
-        if named_style != "NORMAL_TEXT":
-            paragraph_styles.append((para_start, para_end, named_style))
+        # Track paragraph style for ALL paragraphs, including NORMAL_TEXT.
+        # When text is inserted after a heading, new paragraphs inherit the heading style.
+        # We must explicitly set NORMAL_TEXT to prevent this inheritance.
+        paragraph_styles.append((para_start, para_end, named_style))
 
         # Extract paragraph style attributes (align, spaceAbove, borderTop, etc.)
         para_props_dict = {
@@ -1653,7 +1654,11 @@ def _emit_content_ops(
                     if insert_idx > segment_end - 1
                     else insert_idx
                 )
-            strip_nl = at_segment_end(change.pristine_end_index)
+            # Use insert_idx (not pristine_end_index) to determine if we should strip
+            # the trailing newline. The pristine_end_index reflects where OLD content ended,
+            # but the NEW content might be followed by additional content (inserted at higher
+            # indices in the backwards walk), so it won't actually end at the segment boundary.
+            strip_nl = at_segment_end(insert_idx)
             requests.extend(
                 _generate_content_insert_requests(
                     change.after_xml,
