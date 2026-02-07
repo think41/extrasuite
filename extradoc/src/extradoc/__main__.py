@@ -170,6 +170,80 @@ async def cmd_push(args: argparse.Namespace) -> int:
         await transport.close()
 
 
+async def cmd_diffv2(args: argparse.Namespace) -> int:
+    """Show changes using v2 diff engine (dry run)."""
+    folder = Path(args.folder)
+
+    if not folder.exists():
+        print(f"Error: Folder not found: {folder}", file=sys.stderr)
+        return 1
+
+    try:
+        from extradoc.v2.push import PushClient
+
+        push_client = PushClient()
+        document_id, requests, change_tree = push_client.diff(folder)
+
+        if not requests:
+            print("No changes detected.")
+            return 0
+
+        output = {"requests": requests}
+        print(json.dumps(output, indent=2))
+        print(
+            f"\n# {len(requests)} request(s) for document {document_id}",
+            file=sys.stderr,
+        )
+        return 0
+
+    except Exception as e:
+        print(f"Error: {e}", file=sys.stderr)
+        return 1
+
+
+async def cmd_pushv2(args: argparse.Namespace) -> int:
+    """Apply changes using v2 push engine."""
+    folder = Path(args.folder)
+
+    if not folder.exists():
+        print(f"Error: Folder not found: {folder}", file=sys.stderr)
+        return 1
+
+    print("Authenticating...")
+    try:
+        manager = CredentialsManager()
+        token_obj = manager.get_token()
+    except Exception as e:
+        print(f"Authentication failed: {e}", file=sys.stderr)
+        return 1
+
+    transport = GoogleDocsTransport(access_token=token_obj.access_token)
+
+    try:
+        from extradoc.v2.push import PushClient
+
+        push_client = PushClient()
+        result = await push_client.push(folder, transport, force=args.force)
+
+        if result.success:
+            if result.changes_applied == 0:
+                print("No changes to apply.")
+            else:
+                print(
+                    f"Successfully applied {result.changes_applied} changes to document {result.document_id}"
+                )
+            return 0
+        else:
+            print(f"Push failed: {result.message}", file=sys.stderr)
+            return 1
+
+    except Exception as e:
+        print(f"Error: {e}", file=sys.stderr)
+        return 1
+    finally:
+        await transport.close()
+
+
 def main() -> int:
     """Main entry point."""
     # Fast path to avoid subparser clashes when invoking `python -m extradoc test <folder>`
@@ -234,6 +308,34 @@ def main() -> int:
         help="Force push despite warnings (blocks still prevent push)",
     )
     push_parser.set_defaults(func=cmd_push)
+
+    # diffv2 subcommand
+    diffv2_parser = subparsers.add_parser(
+        "diffv2",
+        help="Show changes using v2 diff engine (dry run)",
+    )
+    diffv2_parser.add_argument(
+        "folder",
+        help="Path to document folder (containing document.xml)",
+    )
+    diffv2_parser.set_defaults(func=cmd_diffv2)
+
+    # pushv2 subcommand
+    pushv2_parser = subparsers.add_parser(
+        "pushv2",
+        help="Apply changes using v2 push engine",
+    )
+    pushv2_parser.add_argument(
+        "folder",
+        help="Path to document folder (containing document.xml)",
+    )
+    pushv2_parser.add_argument(
+        "-f",
+        "--force",
+        action="store_true",
+        help="Force push despite warnings (blocks still prevent push)",
+    )
+    pushv2_parser.set_defaults(func=cmd_pushv2)
 
     # Note: test command handled via fast path above to avoid duplicate subparser registration
 

@@ -445,12 +445,21 @@ All style operation ranges are computed as offsets from `pristine_start` (the in
 
 ### 9.3 MODIFIED ContentBlock
 
-A modification is a delete-then-insert at the same position:
+To preserve comments, suggested edits, and list identities, modifications should be applied granularly rather than replacing the entire block.
 
-1. Delete the old content (Section 9.1)
-2. Insert the new content (Section 9.2)
+1.  **Map Paragraphs:** align paragraphs in the pristine block to the current block (1-to-1 mapping where possible).
+2.  **Granular Text Diff:** For each mapped paragraph pair:
+    *   Compute the text difference (e.g. using `diff-match-patch`).
+    *   Generate `deleteContentRange` for deletions.
+    *   Generate `insertText` for insertions.
+    *   **Crucial:** Do not delete the final newline of the paragraph unless the paragraph itself is being removed. Preserving the newline preserves the `listId` and paragraph-level metadata.
+3.  **Update Styles:** Apply `updateTextStyle` and `updateParagraphStyle` to the modified ranges to match the new state.
 
-The delete happens first in the request sequence (they execute top-to-bottom). After deletion, the insertion point is at `pristine_start` (unchanged because content above was removed).
+### 9.4 Unmapped Paragraphs (Structural Changes)
+
+If the number of paragraphs changes (split/merge) and cannot be mapped 1-to-1:
+- **Deletions:** Use `deleteContentRange` (including newlines).
+- **Insertions:** Use `insertText` (with newlines).
 
 ## 10. Request Generation: Table Operations
 
@@ -495,111 +504,51 @@ Generate a single `deleteContentRange`:
 
 ### 10.3 MODIFIED Table
 
-This is the most complex operation. All row/column structural operations reference the table by its `table_start` (pristine index), which remains valid because the segment-level backwards walk ensures nothing below the table has been modified yet.
+To ensure index stability, operations are generated using a **strict backwards walk**. We must track the *post-modification length* of each row to correctly handle deferred column insertions.
 
-Requests are generated in this order:
+**Execution Order (Generated Requests):**
 
-**Phase 1: Column Deletions (highest column index first)**
+1.  **Column Deletions (High to Low)**
+    *   Uses pristine column indices.
+    *   Removing a column reduces the length of every row. Since we process high-to-low, earlier columns are unaffected.
 
-```json
-{
-  "deleteTableColumn": {
-    "tableCellLocation": {
-      "tableStartLocation": { "index": table_start, "segmentId": segment_id },
-      "rowIndex": 0,
-      "columnIndex": col_idx
-    }
-  }
-}
-```
+2.  **Row Deletions (High to Low)**
+    *   Uses pristine row indices.
+    *   Deleting Row N does not affect indices of Row N-1.
 
-Column deletions use pristine column indices, processed highest-first so that each deletion doesn't affect the index of subsequently deleted columns.
+3.  **Cell Content Modifications & Row Insertions (Interleaved, Bottom-Up)**
+    *   Iterate rows from last (highest index) to first.
+    *   **If Row is Modified:**
+        *   Process cells **Right-to-Left**.
+        *   Apply ContentBlock changes (Section 9) to each cell.
+        *   *Track the new length of this row.*
+    *   **If Row is Inserted:**
+        *   `insertTableRow` (inserts below the previous row).
+        *   Populate new cells (Right-to-Left).
+        *   *Track the length of this new row.*
+    *   **If Row is Unchanged:**
+        *   *Track its pristine length.*
 
-**Phase 2: Row Deletions and Cell Content Modifications (backwards walk)**
+4.  **Column Insertions (High to Low)**
+    *   `insertTableColumn` (inserts right of previous column).
+    *   **Populate New Cells:**
+        *   This operation adds a cell to *every* row.
+        *   We must populate these cells with content.
+        *   **Calculation:** Iterate through all rows (Top-to-Bottom of the *modified* table).
+        *   Start Index for Row 0 = Table Start + 1 (table marker).
+        *   Start Index for Row N = End Index of Row N-1.
+        *   Insertion Point for the new cell in Row N can be inferred from the previous cell in that row (or the end of the row if appending).
+        *   Use the *tracked lengths* from Step 3 to maintain correct positioning.
 
-Walk all rows **bottom-to-top** (highest row index first). For each row:
-
-- If the row is **DELETED**: emit `deleteTableRow`
-  ```json
-  {
-    "deleteTableRow": {
-      "tableCellLocation": {
-        "tableStartLocation": { "index": table_start, "segmentId": segment_id },
-        "rowIndex": row_idx,
-        "columnIndex": 0
-      }
-    }
-  }
-  ```
-
-- If the row is **MODIFIED**: walk its cells **right-to-left** (highest column index first). For each modified cell, generate content requests using the ContentBlock logic (Section 9), treating the cell as a mini-segment with `segment_end = cell.pristine_end`.
-
-Row deletions and cell modifications are interleaved in the backwards walk. Processing bottom-to-top ensures:
-- Deleting row N doesn't affect content indexes in rows < N
-- Modifying cells in row M doesn't affect cells in rows < M
-- `deleteTableRow` uses row index (structural), while content modifications use content indexes. Neither affects the other within the same backwards pass.
-
-**Phase 3: Column Insertions (deferred, highest column index first)**
-
-```json
-{
-  "insertTableColumn": {
-    "tableCellLocation": {
-      "tableStartLocation": { "index": table_start, "segmentId": segment_id },
-      "rowIndex": 0,
-      "columnIndex": reference_col_idx
-    },
-    "insertRight": true|false
-  }
-}
-```
-
-After each column insertion, compute new cell positions for the inserted column (each new cell is 1 index unit — just a newline) and insert content using ContentBlock logic.
-
-**Phase 4: Row Insertions (deferred, highest row index first)**
-
-```json
-{
-  "insertTableRow": {
-    "tableCellLocation": {
-      "tableStartLocation": { "index": table_start, "segmentId": segment_id },
-      "rowIndex": reference_row_idx,
-      "columnIndex": 0
-    },
-    "insertBelow": true|false
-  }
-}
-```
-
-After each row insertion, compute new cell positions (each new cell is 1 index unit) and insert content using ContentBlock logic.
-
-**Phase 5: Column Width Updates**
-
-```json
-{
-  "updateTableColumnProperties": {
-    "tableStartLocation": { "index": table_start, "segmentId": segment_id },
-    "columnIndices": [col_idx],
-    "tableColumnProperties": { "widthType": "FIXED_WIDTH", "width": { "magnitude": N, "unit": "PT" } },
-    "fields": "widthType,width"
-  }
-}
-```
-
-**Why this ordering?**
-
-1. **Column deletes first**: Removing a column removes cells from every row. Must happen before row processing to avoid operating on cells that will be deleted.
-2. **Row deletes + cell modifications interleaved, bottom-to-top**: The backwards walk invariant ensures index stability. `deleteTableRow` uses row indices (unaffected by content changes), while content operations use content indexes (unaffected by operations at higher row positions).
-3. **Structural inserts deferred**: `insertTableRow` / `insertTableColumn` change the table's index structure. If done before cell modifications, pristine content indexes would be invalidated. By deferring inserts until after all content operations, pristine indexes remain valid.
+5.  **Column Width Updates**
 
 ### 10.4 New Cell Content After Structural Insert
 
-After `insertTableRow`, each new cell contains a single newline (1 index unit). After `insertTableColumn`, each new cell in every existing row is empty (1 unit).
+The logic for populating new cells (created by `insertTableRow` or `insertTableColumn`) must rely on the **tracked row lengths** from the backwards walk, not pristine lengths, because content modifications in Step 3 may have changed the row lengths.
 
-To insert content into new cells:
-1. Compute the cell content start using Section 3.6, treating existing cells as their pristine length and new cells as length 1
-2. Walk cells right-to-left within the new row/column
-3. Use ContentBlock insertion logic with `strip_trailing_newline = true` (the cell already has its sentinel newline)
+1.  Calculate start index based on tracked lengths.
+2.  Walk cells right-to-left within the new/modified region.
+3.  Use ContentBlock insertion logic with `strip_trailing_newline = true` (since the new cell already has its sentinel newline).
 
 ## 11. Request Ordering Summary
 
@@ -627,8 +576,10 @@ Footnotes are inline in the XML: `<p>See note<footnote id="kix.fn1"><p>Footnote 
 When a paragraph contains a footnote:
 - The footnote reference occupies 1 index in the body
 - The footnote content has its own segment (index space starting at 0)
-- Adding a footnote: `createFootnote` at `endOfSegmentLocation`
-- Deleting a footnote: `deleteContentRange` for the 1-character reference in the body
+- **Adding a footnote:** `createFootnote` at `location: { "index": insertion_point, "segmentId": segment_id }`.
+  - The insertion point is the `pristine_start` (or calculated offset) within the ContentBlock, same as text.
+  - Do NOT use `endOfSegmentLocation`.
+- **Deleting a footnote:** `deleteContentRange` for the 1-character reference in the body.
 
 ### 12.2 Horizontal Rules
 
