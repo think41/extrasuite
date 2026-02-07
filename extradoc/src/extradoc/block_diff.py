@@ -1305,8 +1305,9 @@ class BlockDiffDetector:
         pristine_cells = pristine_row.children  # List of TABLE_CELL blocks
         current_cells = current_row.children
 
-        # If column alignment provided, use it; otherwise positional
-        if col_alignment is None:
+        # If column alignment provided and non-empty, use it; otherwise positional
+        # (Empty col_alignment means no <col> elements, not "no columns")
+        if not col_alignment:
             max_cells = max(len(pristine_cells), len(current_cells))
             col_alignment = [
                 (
@@ -1469,24 +1470,62 @@ class BlockDiffDetector:
                 matched_pristine.add(i)
                 matched_current.add(j)
 
-        # Remaining unmatched are additions/deletions
-        for i in range(len(pristine)):
-            if i not in matched_pristine:
-                alignment.append((i, None))
+        # Build interleaved output sorted by current document order.
+        #
+        # The old approach sorted by (p_idx, c_idx) which placed all
+        # additions (p_idx=None) at the end. This caused additions to
+        # get pristine_start_index = end-of-document, scrambling content.
+        #
+        # The fix: walk through the current document in order, emitting
+        # matched pairs and additions at their correct positions.
+        # Deletions are interleaved between matched pairs based on their
+        # pristine position, so last_pristine_end_index is updated
+        # correctly for subsequent additions.
 
+        # Build lookup: current_idx -> pristine_idx for matched pairs
+        c_to_p: dict[int, int] = {}
+        for p_idx, c_idx in alignment:
+            if p_idx is not None and c_idx is not None:
+                c_to_p[c_idx] = p_idx
+
+        # Collect additions and deletions
+        added_c: set[int] = set()
         for j in range(len(current)):
             if j not in matched_current:
-                alignment.append((None, j))
+                added_c.add(j)
 
-        # Sort alignment by original positions for stable output
-        def sort_key(pair: tuple[int | None, int | None]) -> tuple[int, int]:
-            p_idx = pair[0] if pair[0] is not None else len(pristine)
-            c_idx = pair[1] if pair[1] is not None else len(current)
-            return (p_idx, c_idx)
+        deleted_p: list[int] = sorted(
+            i for i in range(len(pristine)) if i not in matched_pristine
+        )
 
-        alignment.sort(key=sort_key)
+        # Walk current document order, interleaving deletions
+        result: list[tuple[int | None, int | None]] = []
+        del_ptr = 0
+        last_matched_p = -1
 
-        return alignment
+        for c_idx in range(len(current)):
+            if c_idx in c_to_p:
+                p_idx = c_to_p[c_idx]
+                # Flush deletions whose pristine index falls between
+                # the previous matched pristine index and this one
+                while (
+                    del_ptr < len(deleted_p)
+                    and deleted_p[del_ptr] > last_matched_p
+                    and deleted_p[del_ptr] < p_idx
+                ):
+                    result.append((deleted_p[del_ptr], None))
+                    del_ptr += 1
+                result.append((p_idx, c_idx))
+                last_matched_p = max(last_matched_p, p_idx)
+            elif c_idx in added_c:
+                result.append((None, c_idx))
+
+        # Flush remaining deletions
+        while del_ptr < len(deleted_p):
+            result.append((deleted_p[del_ptr], None))
+            del_ptr += 1
+
+        return result
 
 
 def diff_documents_block_level(
