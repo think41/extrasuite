@@ -259,18 +259,6 @@ def extract_text_style(text_style: dict[str, Any]) -> dict[str, str]:
     return props
 
 
-def extract_paragraph_style(para_style: dict[str, Any]) -> dict[str, str]:
-    """Extract style properties from a Google Docs paragraph style."""
-    props: dict[str, str] = {}
-
-    for prop_name, extractor in PARAGRAPH_STYLE_PROPS:
-        value = extractor(para_style)
-        if value:
-            props[prop_name] = value
-
-    return props
-
-
 def extract_cell_style(cell_style: dict[str, Any]) -> dict[str, str]:
     """Extract style properties from a Google Docs table cell style."""
     props: dict[str, str] = {}

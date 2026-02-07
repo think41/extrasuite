@@ -112,8 +112,6 @@ class GoogleDocsTransport(Transport):
             access_token: OAuth2 access token with documents.readonly scope
             timeout: Request timeout in seconds
         """
-        self._access_token = access_token
-        self._timeout = timeout
         ssl_context = ssl.create_default_context(cafile=certifi.where())
         self._client = httpx.AsyncClient(
             timeout=timeout,

@@ -59,7 +59,6 @@ class ConversionContext:
     inline_objects: dict[str, dict[str, Any]] = field(default_factory=dict)
     footnotes: dict[str, dict[str, Any]] = field(default_factory=dict)
     lists: dict[str, Any] = field(default_factory=dict)
-    current_tab_id: str | None = None
 
 
 def convert_document_to_xml(
@@ -164,13 +163,6 @@ def _escape(text: str) -> str:
     return "".join(result)
 
 
-def _indent(text: str, spaces: int) -> str:
-    """Indent each line of text."""
-    prefix = " " * spaces
-    lines = text.split("\n")
-    return "\n".join(prefix + line if line else line for line in lines)
-
-
 def _convert_tab(
     tab: dict[str, Any],
     document: dict[str, Any],
@@ -189,7 +181,6 @@ def _convert_tab(
     footers = doc_tab.get("footers", {})
     footnotes = doc_tab.get("footnotes", {})
 
-    ctx.current_tab_id = tab_id
     # Set context for footnote inlining
     ctx.footnotes = footnotes
     ctx.lists = lists
@@ -238,18 +229,6 @@ def _convert_header_or_footer(
     content = section.get("content", [])
     inner_xml = _convert_body_content(content, lists, ctx, indent=4)
     return f'  <{tag_name} id="{_escape(section_id)}" class="_base">\n{inner_xml}\n  </{tag_name}>'
-
-
-def _convert_footnote(
-    footnote: dict[str, Any],
-    footnote_id: str,
-    lists: dict[str, Any],
-    ctx: ConversionContext,
-) -> str:
-    """Convert a footnote to XML."""
-    content = footnote.get("content", [])
-    inner_xml = _convert_body_content(content, lists, ctx, indent=4)
-    return f'  <footnote id="{_escape(footnote_id)}">\n{inner_xml}\n  </footnote>'
 
 
 def _convert_body_content(

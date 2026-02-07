@@ -170,11 +170,6 @@ async def cmd_push(args: argparse.Namespace) -> int:
         await transport.close()
 
 
-def cmd_test(args: argparse.Namespace) -> int:
-    """Sync wrapper to reuse asyncio-less helper."""
-    return run_test_workflow(Path(args.folder))
-
-
 def main() -> int:
     """Main entry point."""
     # Fast path to avoid subparser clashes when invoking `python -m extradoc test <folder>`

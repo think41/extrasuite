@@ -139,20 +139,6 @@ TABLE_CELL_STYLE_PROPS: list[StyleProp] = [
 ]
 
 
-# Element tag -> namedStyleType mapping
-NAMED_STYLE_MAP: dict[str, str] = {
-    "h1": "HEADING_1",
-    "h2": "HEADING_2",
-    "h3": "HEADING_3",
-    "h4": "HEADING_4",
-    "h5": "HEADING_5",
-    "h6": "HEADING_6",
-    "title": "TITLE",
-    "subtitle": "SUBTITLE",
-    "p": "NORMAL_TEXT",
-}
-
-
 def convert_styles(
     styles: dict[str, str],
     prop_defs: list[StyleProp],
@@ -330,80 +316,6 @@ def _parse_border(border_str: str) -> dict[str, Any] | None:
             border["padding"] = {"magnitude": float(parts[3]), "unit": "PT"}
 
     return border
-
-
-def build_text_style_request(
-    styles: dict[str, str],
-    start_index: int,
-    end_index: int,
-    segment_id: str | None = None,
-) -> dict[str, Any] | None:
-    """Build an updateTextStyle request from XML styles.
-
-    Args:
-        styles: Dict of XML style attributes
-        start_index: Start index in document
-        end_index: End index in document
-        segment_id: Optional segment ID for headers/footers/footnotes
-
-    Returns:
-        An updateTextStyle request dict, or None if no styles to apply
-    """
-    text_style, fields = convert_styles(styles, TEXT_STYLE_PROPS)
-    if not fields:
-        return None
-
-    range_spec: dict[str, Any] = {
-        "startIndex": start_index,
-        "endIndex": end_index,
-    }
-    if segment_id:
-        range_spec["segmentId"] = segment_id
-
-    return {
-        "updateTextStyle": {
-            "range": range_spec,
-            "textStyle": text_style,
-            "fields": ",".join(fields),
-        }
-    }
-
-
-def build_paragraph_style_request(
-    styles: dict[str, str],
-    start_index: int,
-    end_index: int,
-    segment_id: str | None = None,
-) -> dict[str, Any] | None:
-    """Build an updateParagraphStyle request from XML styles.
-
-    Args:
-        styles: Dict of XML style attributes
-        start_index: Start index in document
-        end_index: End index in document
-        segment_id: Optional segment ID for headers/footers/footnotes
-
-    Returns:
-        An updateParagraphStyle request dict, or None if no styles to apply
-    """
-    para_style, fields = convert_styles(styles, PARAGRAPH_STYLE_PROPS)
-    if not fields:
-        return None
-
-    range_spec: dict[str, Any] = {
-        "startIndex": start_index,
-        "endIndex": end_index,
-    }
-    if segment_id:
-        range_spec["segmentId"] = segment_id
-
-    return {
-        "updateParagraphStyle": {
-            "range": range_spec,
-            "paragraphStyle": para_style,
-            "fields": ",".join(fields),
-        }
-    }
 
 
 def build_table_cell_style_request(
