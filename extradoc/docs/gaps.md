@@ -11,8 +11,8 @@ This document tracks bugs, limitations, and implementation gaps discovered durin
 | Category | Count |
 |----------|-------|
 | Critical Bugs (Open) | 0 |
-| Major Bugs (Open) | 0 |
-| Fixed Bugs | 13 |
+| Major Bugs (Open) | 4 |
+| Fixed Bugs | 15 |
 | API Limitations | 5 |
 
 ---
@@ -46,7 +46,98 @@ These are limitations of the Google Docs API, not bugs in extradoc.
 
 ## Major Bugs (Open)
 
-*No open major bugs at this time.*
+### Table Column Operations Fail
+
+**Status:** 🔴 Open
+**Severity:** Major - blocks table structure changes
+**Discovered:** 2026-02-07
+
+**Problem:** Changing the number of columns in an existing table fails with API error:
+```
+Invalid requests[33].insertTableColumn: Invalid table start location.
+Must specify the start index of the table.
+```
+
+**Reproduction:**
+1. Pull a document with a 3-column table
+2. Edit XML to have a 2-column table (or vice versa)
+3. Push fails with the above error
+
+**Root Cause:** The `insertTableColumn` or `deleteTableColumn` request is not receiving the correct table start index.
+
+**Workaround:** Delete the entire table and create a new one with the desired column count in two separate push operations.
+
+---
+
+### Drastic Rewrites Scramble Document Structure
+
+**Status:** 🔴 Open
+**Severity:** Major - unpredictable results on large changes
+**Discovered:** 2026-02-07
+
+**Problem:** When making major structural changes (e.g., replacing all content with completely different content), the diff algorithm produces unexpected results. Paragraphs may become headings, content may be reordered, or elements may be duplicated.
+
+**Reproduction:**
+1. Pull a document with headings, paragraphs, tables, and lists
+2. Replace entire body with completely different content structure
+3. Push - result has wrong element types (e.g., `<p>` becomes `<h1>`)
+
+**Example:** A complete rewrite from tech documentation to a short story resulted in:
+- Many `<p>` elements becoming `<h1>` headings
+- Content appearing in wrong order
+- Chapter headings merged together
+
+**Root Cause:** The diff algorithm attempts to minimize changes by "morphing" existing elements rather than delete-all + insert-all. This optimization produces incorrect results when content is substantially different.
+
+**Workaround:** For major rewrites, perform in two steps:
+1. Delete all content, push
+2. Pull fresh, add new content, push
+
+---
+
+### Phantom Empty Elements After Push
+
+**Status:** 🔴 Open
+**Severity:** Major - document pollution
+**Discovered:** 2026-02-07
+
+**Problem:** After a push operation, re-pulling the document reveals empty elements that were not in the source XML:
+- Empty headings: `<h2></h2>`
+- Empty list items: `<li type="bullet" level="0"></li>`
+
+**Reproduction:**
+1. Create a document with headings and lists
+2. Push changes
+3. Pull - observe empty elements not present in original XML
+
+**Root Cause:** Unknown. May be related to:
+- Index calculation errors leaving orphan newlines
+- Request ordering issues creating empty paragraphs that inherit styles
+- Interaction between delete and insert operations
+
+**Workaround:** Manually delete empty elements after push, or ignore them if they don't affect document appearance.
+
+---
+
+### Base Font Style Changes Not Applied
+
+**Status:** 🟡 Needs Investigation
+**Severity:** Medium - styling limitation
+**Discovered:** 2026-02-07
+
+**Problem:** Changing the `font` attribute in the `_base` style in `styles.xml` does not affect the pushed document. The document retains its original font.
+
+**Reproduction:**
+1. Pull a document (default font is Arial)
+2. Edit `styles.xml`: change `<style id="_base" font="Arial".../>` to `font="Georgia"`
+3. Push - document still uses Arial
+
+**Possible Causes:**
+- `_base` style changes may not generate any API requests
+- Font changes may require explicit `updateTextStyle` on all content
+- The diff may not detect `_base` changes as actionable
+
+**Workaround:** Apply font changes via explicit `class` attributes on individual elements rather than via `_base`.
 
 ---
 
@@ -86,6 +177,9 @@ These are limitations of the Google Docs API, not bugs in extradoc.
 | New tabs with content | Requires two-batch (create, then populate) | Documented behavior |
 | Horizontal rules | Read-only in Google Docs API | Cannot add/remove, only modify adjacent content |
 | Images | Requires separate upload to Drive | Not yet implemented |
+| Table column changes | Changing column count on existing tables fails | Delete table, push, then add new table |
+| Major rewrites | Diff algorithm scrambles content on large structural changes | Delete all content first, push, pull, then add new content |
+| Base font changes | Changing `_base` font in styles.xml has no effect | Use explicit class on elements |
 
 ---
 
@@ -113,6 +207,8 @@ These are limitations of the Google Docs API, not bugs in extradoc.
 | Custom paragraph styles | ✅ | `<p class="...">` with alignment, spacing (fixed) |
 | Custom text styles | ✅ | `<p class="...">` with bg, color, font (fixed) |
 | Tables preserved on edit | ✅ | Adding content around tables no longer destroys them |
+| Bullet removal | ✅ | Converting `<li>` to `<p>` now correctly removes bullets (fixed) |
+| Multiple inserts at same position | ✅ | Paragraphs no longer merge together (fixed) |
 
 ---
 
@@ -161,6 +257,38 @@ This ensures inserts target the correct position after all preceding deletes hav
 **Workaround:** Manually fix paragraph styles in Google Docs after push, or ensure content is inserted before styled elements rather than after them.
 
 **Note:** A fix was attempted (always apply NORMAL_TEXT style) but caused other issues. Further investigation needed.
+
+---
+
+### Fixed: Content Merging (Missing Newlines)
+
+**Location:** `src/extradoc/diff_engine.py`, `_walk_segment_backwards()`, `_emit_content_ops()`
+
+**Problem:** When multiple content blocks were inserted at the same position (e.g., adding several paragraphs to an empty document), ALL of them stripped their trailing newlines because they were all detected as "at segment end". This caused paragraphs to merge into a single line.
+
+**Root Cause:** In the backwards walk, each change independently checked `at_segment_end(insert_idx)` using pristine indexes. When multiple ADDED changes had the same insert position, they all saw themselves at segment end and stripped their newlines.
+
+**Fix:**
+1. Added `segment_end_consumed` flag tracking in `_walk_segment_backwards()`
+2. Modified `_emit_content_block()` and `_emit_content_ops()` to accept and return this flag
+3. Only the FIRST change processed (which is the LAST in document order due to backwards walk) strips its trailing newline
+4. Subsequent changes at the same position do NOT strip, preserving proper paragraph separation
+
+---
+
+### Fixed: Bullets Not Being Removed
+
+**Location:** `src/extradoc/diff_engine.py`, `_emit_content_ops()`, `_generate_content_insert_requests()`
+
+**Problem:** When converting from `<li>` to `<p>`, the bullet formatting persisted. Paragraphs that should be regular text remained as bullet items.
+
+**Root Cause:** When content was deleted and new content inserted at the same position, the paragraph structure retained its bullet formatting. The new content inherited this formatting because `deleteParagraphBullets` was never called.
+
+**Fix:**
+1. Added `delete_existing_bullets` parameter to `_generate_content_insert_requests()`
+2. For ADDED and MODIFIED changes, pass `delete_existing_bullets=True`
+3. Generate `deleteParagraphBullets` requests for all non-bullet paragraphs in the inserted content
+4. This safely removes bullet formatting regardless of whether it existed (no-op if not)
 
 ---
 
@@ -334,8 +462,10 @@ if block.block_type in (BlockType.HEADER, BlockType.FOOTER):
 
 ## Priority Fix Order
 
-1. **Merged body insert bullet index bug** — Blocks the most common workflow (adding lists to existing documents). Fix the content length calculation in `_generate_content_insert_requests()` or avoid triggering the merged approach unnecessarily.
-2. **Table delete `startIndex` bug** — Blocks table deletion via diff/push. Requires passing the table's document index into the delete function.
+1. **Drastic rewrites scramble content** — The diff algorithm's "minimize changes" heuristic produces incorrect results when content is substantially different. Consider detecting "major structural change" and falling back to delete-all + insert-all approach.
+2. **Table column operations fail** — `insertTableColumn`/`deleteTableColumn` requests need correct table start index. Blocks table structure changes.
+3. **Phantom empty elements** — Investigate why empty `<h2>` and `<li>` elements appear after push. May be index calculation or request ordering issue.
+4. **Base font changes ignored** — Changes to `_base` style font don't generate API requests. Need to propagate base style changes to content.
 
 ---
 

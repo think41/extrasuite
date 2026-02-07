@@ -404,13 +404,26 @@ def _walk_segment_backwards(
 
     Core invariant: when processing element at pristine position P,
     everything at positions < P is still at pristine state.
+
+    We track segment_end_consumed to handle newline stripping correctly:
+    In the backwards walk, only the FIRST change that inserts at segment end
+    (which is the LAST in document order) should strip its trailing newline.
+    Subsequent changes at the same position should NOT strip, because the
+    first insert has already pushed the segment end forward.
     """
     requests: list[dict[str, Any]] = []
     segment_id = _segment_id_from_key(segment_key)
+    # Track whether we've already inserted at segment end
+    segment_end_consumed = False
 
     for change in reversed(changes):
         if change.block_type == BlockType.CONTENT_BLOCK:
-            requests.extend(_emit_content_block(change, segment_id, text_styles))
+            reqs, consumed = _emit_content_block(
+                change, segment_id, text_styles, segment_end_consumed
+            )
+            requests.extend(reqs)
+            if consumed:
+                segment_end_consumed = True
         elif change.block_type == BlockType.TABLE:
             requests.extend(
                 _emit_table(
@@ -449,8 +462,14 @@ def _emit_content_block(
     change: BlockChange,
     segment_id: str | None,
     text_styles: dict[str, dict[str, str]] | None,
-) -> list[dict[str, Any]]:
-    """Emit requests for a ContentBlock change."""
+    segment_end_consumed: bool = False,
+) -> tuple[list[dict[str, Any]], bool]:
+    """Emit requests for a ContentBlock change.
+
+    Returns:
+        Tuple of (requests, segment_end_was_consumed) where segment_end_was_consumed
+        is True if this change inserted content at the segment end.
+    """
     requests: list[dict[str, Any]] = []
 
     # Handle footnote child_changes first
@@ -474,17 +493,17 @@ def _emit_content_block(
     segment_start = 1 if segment_id is None else 0
     segment_end = change.segment_end_index if change.segment_end_index > 0 else None
 
-    requests.extend(
-        _emit_content_ops(
-            change,
-            segment_id,
-            segment_start,
-            segment_end,
-            text_styles,
-        )
+    content_reqs, consumed = _emit_content_ops(
+        change,
+        segment_id,
+        segment_start,
+        segment_end,
+        text_styles,
+        segment_end_consumed,
     )
+    requests.extend(content_reqs)
 
-    return requests
+    return requests, consumed
 
 
 def _emit_table(
@@ -685,15 +704,14 @@ def _emit_table_modify(
                                 pristine_end_index=cell_end,
                                 segment_end_index=cell_end,
                             )
-                            requests.extend(
-                                _emit_content_ops(
-                                    content_change,
-                                    segment_id,
-                                    cell_content_index,
-                                    cell_end,
-                                    text_styles,
-                                )
+                            cell_reqs, _ = _emit_content_ops(
+                                content_change,
+                                segment_id,
+                                cell_content_index,
+                                cell_end,
+                                text_styles,
                             )
+                            requests.extend(cell_reqs)
                     continue
 
                 if col_index in columns_deleted:
@@ -723,15 +741,14 @@ def _emit_table_modify(
                             pristine_end_index=max(cell_end - 1, cell_content_index),
                             segment_end_index=cell_end,
                         )
-                        requests.extend(
-                            _emit_content_ops(
-                                content_change,
-                                segment_id,
-                                cell_content_index,
-                                cell_end,
-                                text_styles,
-                            )
+                        cell_reqs, _ = _emit_content_ops(
+                            content_change,
+                            segment_id,
+                            cell_content_index,
+                            cell_end,
+                            text_styles,
                         )
+                        requests.extend(cell_reqs)
 
                         # Cell styling
                         cell_style_req = _generate_cell_style_request(
@@ -1369,6 +1386,7 @@ def _generate_content_insert_requests(
     insert_index: int = 1,
     strip_trailing_newline: bool = False,
     text_styles: dict[str, dict[str, str]] | None = None,
+    delete_existing_bullets: bool = False,
 ) -> list[dict[str, Any]]:
     """Generate insert requests for content XML.
 
@@ -1377,7 +1395,7 @@ def _generate_content_insert_requests(
     2. Insert plain text - newlines automatically create paragraphs
     3. Insert special elements from highest offset to lowest
     4. Apply paragraph styles (headings)
-    5. Apply bullets
+    5. Apply bullets (or delete existing bullets for non-bullet paragraphs)
     6. Apply text styles (bold, italic, links)
 
     Args:
@@ -1388,6 +1406,10 @@ def _generate_content_insert_requests(
             Used when modifying content at segment end where we preserve the
             existing final newline rather than inserting a new one.
         text_styles: Map of text style class ID to properties (from styles.xml)
+        delete_existing_bullets: If True, generate deleteParagraphBullets requests
+            for paragraphs that are NOT bullets. This is needed when modifying
+            content from <li> to <p> - the bullet formatting persists unless
+            explicitly removed.
 
     Returns:
         List of batchUpdate requests
@@ -1547,6 +1569,35 @@ def _generate_content_insert_requests(
         # Note: Nesting level is determined by leading tabs in the inserted text
         # (handled in _parse_content_xml). Tabs are removed by createParagraphBullets.
 
+    # 4.5 Delete existing bullets for non-bullet paragraphs
+    # This is needed when modifying <li> to <p> - the bullet formatting persists
+    # in the paragraph structure unless explicitly removed.
+    if delete_existing_bullets:
+        # Build a set of all paragraph ranges that have bullets
+        bullet_ranges = set()
+        for start, end, _, _ in parsed.bullets:
+            bullet_ranges.add((start, end))
+
+        # For each paragraph that is NOT a bullet, generate deleteParagraphBullets
+        for para_start, para_end, _named_style in parsed.paragraph_styles:
+            # Adjust para_end if trailing newline was stripped
+            actual_para_end = para_end
+            if strip_trailing_newline:
+                # Check if this is the last paragraph (ends at or past text length + 1)
+                text_len = utf16_len(parsed.plain_text)
+                if para_end > text_len:
+                    # This paragraph's end was reduced by the newline stripping
+                    actual_para_end = text_len + 1  # Include the preserved newline
+
+            if (para_start, para_end) not in bullet_ranges:
+                requests.append(
+                    {
+                        "deleteParagraphBullets": {
+                            "range": make_range(para_start, actual_para_end),
+                        }
+                    }
+                )
+
     # 5. Apply text styles (bold, italic, links)
     for start, end, styles in parsed.text_styles:
         text_style, fields = _styles_to_text_style_request(styles)
@@ -1570,13 +1621,24 @@ def _emit_content_ops(
     segment_start: int,
     segment_end: int | None,
     text_styles: dict[str, dict[str, str]] | None,
-) -> list[dict[str, Any]]:
+    segment_end_consumed: bool = False,
+) -> tuple[list[dict[str, Any]], bool]:
     """Central handler for content add/delete/modify within a segment.
 
     segment_end is the exclusive end (position of the sentinel newline).
+
+    Args:
+        segment_end_consumed: If True, a previous insert in the backwards walk
+            has already inserted content at segment end, so this insert should
+            NOT strip its trailing newline.
+
+    Returns:
+        Tuple of (requests, consumed) where consumed is True if this operation
+        inserted content at segment end (and stripped the trailing newline).
     """
     requests: list[dict[str, Any]] = []
     sentinel = (segment_end - 1) if segment_end and segment_end > 0 else None
+    consumed = False
 
     def clamp_range(start: int, end: int) -> tuple[int, int]:
         if sentinel is None:
@@ -1616,7 +1678,16 @@ def _emit_content_ops(
                     if insert_idx > segment_end - 1
                     else insert_idx
                 )
-            strip_nl = at_segment_end(insert_idx)
+            # Only strip trailing newline if:
+            # 1. We're at segment end AND
+            # 2. No previous insert has already consumed the segment end
+            strip_nl = at_segment_end(insert_idx) and not segment_end_consumed
+            if strip_nl:
+                consumed = True
+            # Delete existing bullets for non-bullet paragraphs.
+            # This is needed because ADDED content may be inserted into a position
+            # where a DELETE just removed bullet content - the paragraph structure
+            # retains its bullet formatting, which the new content would inherit.
             requests.extend(
                 _generate_content_insert_requests(
                     change.after_xml,
@@ -1624,6 +1695,7 @@ def _emit_content_ops(
                     insert_idx,
                     strip_trailing_newline=strip_nl,
                     text_styles=text_styles,
+                    delete_existing_bullets=True,
                 )
             )
 
@@ -1654,11 +1726,12 @@ def _emit_content_ops(
                     if insert_idx > segment_end - 1
                     else insert_idx
                 )
-            # Use insert_idx (not pristine_end_index) to determine if we should strip
-            # the trailing newline. The pristine_end_index reflects where OLD content ended,
-            # but the NEW content might be followed by additional content (inserted at higher
-            # indices in the backwards walk), so it won't actually end at the segment boundary.
-            strip_nl = at_segment_end(insert_idx)
+            # Only strip trailing newline if:
+            # 1. We're at segment end AND
+            # 2. No previous insert has already consumed the segment end
+            strip_nl = at_segment_end(insert_idx) and not segment_end_consumed
+            if strip_nl:
+                consumed = True
             requests.extend(
                 _generate_content_insert_requests(
                     change.after_xml,
@@ -1666,10 +1739,11 @@ def _emit_content_ops(
                     insert_idx,
                     strip_trailing_newline=strip_nl,
                     text_styles=text_styles,
+                    delete_existing_bullets=True,  # Remove bullets when converting <li> to <p>
                 )
             )
 
-    return requests
+    return requests, consumed
 
 
 def _adjust_for_segment_end(
