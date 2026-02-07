@@ -211,7 +211,7 @@ Styles are defined in `styles.xml` and referenced by `class` attributes througho
 
 **Text:** `font`, `size` (e.g., `11pt`), `color` (e.g., `#FF0000`), `bg` (background), `bold` (`0`/`1`), `italic` (`0`/`1`), `underline` (`0`/`1`), `strikethrough` (`0`/`1`)
 
-**Paragraph:** `alignment` (`START`/`CENTER`/`END`/`JUSTIFIED`), `lineSpacing`, `spaceAbove`, `spaceBelow`, `indentLeft`, `indentRight`, `indentFirstLine`
+**Paragraph:** `alignment` (`START`/`CENTER`/`END`/`JUSTIFIED`), `lineSpacing` (percentage: 100=single, 150=1.5x, 200=double), `spaceAbove`, `spaceBelow`, `indentLeft`, `indentRight`, `indentFirstLine`
 
 **Table cell:** `bg`, `valign` (`top`/`middle`/`bottom`), `borderTop`/`borderBottom`/`borderLeft`/`borderRight` (format: `width,color,style` e.g., `2,#FF0000,SOLID`), `paddingTop`/`paddingBottom`/`paddingLeft`/`paddingRight`
 

@@ -337,7 +337,7 @@ This ensures:
 | Property | Values | Maps to |
 |----------|--------|---------|
 | `alignment` | `START`, `CENTER`, `END`, `JUSTIFIED` | `paragraphStyle.alignment` |
-| `lineSpacing` | e.g., `1.15` | `paragraphStyle.lineSpacing` |
+| `lineSpacing` | Percentage, e.g., `115` (100=single, 150=1.5x) | `paragraphStyle.lineSpacing` |
 | `spaceAbove` | e.g., `12pt` | `paragraphStyle.spaceAbove` |
 | `spaceBelow` | e.g., `6pt` | `paragraphStyle.spaceBelow` |
 | `indentLeft` | e.g., `36pt` | `paragraphStyle.indentStart` |

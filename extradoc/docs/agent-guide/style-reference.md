@@ -86,7 +86,7 @@ Applied via `class` on `<p>`, `<h1>`-`<h6>`, `<li>`, or `<style>` wrapper elemen
 | Property | Format | Example | Description |
 |----------|--------|---------|-------------|
 | `alignment` | Enum | `alignment="CENTER"` | Text alignment |
-| `lineSpacing` | Number | `lineSpacing="1.5"` | Line spacing multiplier |
+| `lineSpacing` | Percentage | `lineSpacing="150"` | Line spacing as percentage of normal (100 = single, 150 = 1.5x, 200 = double) |
 | `spaceAbove` | Number + `pt` | `spaceAbove="12pt"` | Space above paragraph |
 | `spaceBelow` | Number + `pt` | `spaceBelow="6pt"` | Space below paragraph |
 | `indentLeft` | Number + `pt` | `indentLeft="36pt"` | Left indent |
@@ -105,7 +105,7 @@ Applied via `class` on `<p>`, `<h1>`-`<h6>`, `<li>`, or `<style>` wrapper elemen
 <style id="quote" italic="1" indentLeft="36pt" color="#666666"/>
 
 <!-- Double-spaced -->
-<style id="dbl" lineSpacing="2.0"/>
+<style id="dbl" lineSpacing="200"/>
 
 <!-- Paragraph with spacing -->
 <style id="spaced" spaceAbove="12pt" spaceBelow="12pt"/>
