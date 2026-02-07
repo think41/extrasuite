@@ -45,24 +45,26 @@ Instead of working with complex API responses, agents interact with clean XML fi
 
 ## CLI Interface
 
+There are two diff/push engines: **v2 (preferred)** and v1 (legacy). Always use v2 unless debugging a v2-specific issue.
+
 ```bash
 # Download a document to local folder
-python -m extradoc pull <document_url_or_id> [output_dir]
+uv run python -m extradoc pull <document_url_or_id> [output_dir]
 # Output: ./<document_id>/ or specified output_dir
 
 # Options:
 #   --no-raw       Don't save raw API response to .raw/ folder
 
-# Preview changes (dry run)
-python -m extradoc diff <folder>
-# Output: batchUpdate JSON to stdout
+# Preview changes (dry run) — v2 preferred
+uv run python -m extradoc diffv2 <folder>
+# Legacy v1: uv run python -m extradoc diff <folder>
 
-# Apply changes to Google Docs
-python -m extradoc push <folder> [-f|--force]
-# Output: Success message with number of changes applied
+# Apply changes to Google Docs — v2 preferred
+uv run python -m extradoc pushv2 <folder> [-f|--force]
+# Legacy v1: uv run python -m extradoc push <folder> [-f|--force]
 ```
 
-Also works via `uvx extradoc pull/diff/push`.
+Also works via `uvx extradoc pull/diffv2/pushv2`.
 
 ## Folder Structure
 
@@ -152,7 +154,7 @@ async def test_pull(client, tmp_path):
 ### Creating New Golden Files
 
 1. Create a Google Doc with the features to test
-2. Pull it: `python -m extradoc pull <url> output/`
+2. Pull it: `uv run python -m extradoc pull <url> output/`
 3. Copy `.raw/document.json` to `tests/golden/<document_id>.json`
 4. Verify the output looks correct
 5. Commit the golden file

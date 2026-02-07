@@ -5,9 +5,9 @@ Edit Google Docs via local XML files using the pull-edit-push workflow.
 ## Workflow
 
 ```bash
-extradoc pull <url>       # Download document to local folder
+uv run python -m extradoc pull <url>       # Download document to local folder
 # ... edit XML files ...
-extradoc push <folder>    # Apply changes to Google Docs
+uv run python -m extradoc pushv2 <folder>  # Apply changes to Google Docs
 ```
 
 **After push, always re-pull before making more changes** — the pristine state is not auto-updated.
