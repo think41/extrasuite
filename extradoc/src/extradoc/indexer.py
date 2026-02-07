@@ -583,8 +583,9 @@ def calculate_table_indexes(
         sections: List of Section objects from desugar_document()
 
     Returns:
-        Dict mapping table position (section_type:index) to startIndex
-        e.g., {"body:0": 2, "body:1": 50} for 1st and 2nd tables in body
+        Dict mapping table identifiers to startIndex. Keys include:
+        - \"{section_type}:pos:{n}\" for positional lookup (back-compat)
+        - \"{section_type}:id:{table_id}\" when a stable table_id is present
     """
     # Import here to avoid circular dependency
     from extradoc.desugar import (
@@ -607,8 +608,13 @@ def calculate_table_indexes(
                 current_index += elem.utf16_length()
             elif isinstance(elem, Table):
                 # Record this table's start index
-                key = f"{section_type}:{table_count}"
-                table_indexes[key] = current_index
+                pos_key = f"{section_type}:pos:{table_count}"
+                table_indexes[pos_key] = current_index
+                legacy_key = f"{section_type}:{table_count}"
+                table_indexes[legacy_key] = current_index
+                if elem.table_id:
+                    id_key = f"{section_type}:id:{elem.table_id}"
+                    table_indexes[id_key] = current_index
 
                 # Calculate table length and advance
                 current_index += _calculate_table_length(elem)

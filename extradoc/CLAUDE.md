@@ -264,78 +264,13 @@ Result:
 - If we insert 10 characters at index 50, indexes 1-49 stay the same
 - If individual ContentBlock diffs are correct, overall diff is guaranteed correct
 
-## Two-Phase Diff Algorithm
+## Backwards Walk Diff Algorithm
 
-The diff engine uses a **two-phase approach**: Block Diff (structure) followed by Content Diff (leaf nodes).
+The diff engine converts block-level changes into Google Docs `batchUpdate` requests using a backwards walk. Each segment (body, each header, each footer, each footnote) has its own index space and is processed independently. Within a segment, the block diff provides an ordered list of changes, each annotated with pristine start/end indexes. The walk reverses this list and emits requests directly: DELETE emits `deleteContentRange` at the pristine range; ADD emits `insertText` + styling at the pristine insertion point; MODIFY emits delete-then-insert as an atomic pair. Because we process highest-index-first, each operation only affects content at or above position P, leaving everything below at pristine state. Core invariant: **when processing element at pristine position P, everything at positions < P is still pristine.**
 
-### Phase 1: Block Diff (Structure)
+Tables are handled by recursive descent into the same pattern. A modified table walks its rows backwards, and within each row walks cells backwards. Each cell's content is a ContentBlock and uses the same delete/insert handler as body content (`_generate_content_insert_requests()` handles body, header, footer, footnote, and table cell content uniformly). The cell's content index is calculated from the pristine table XML. Since we walk cells right-to-left and rows bottom-to-top, the invariant holds: operations on later cells do not shift indexes of earlier cells.
 
-Block diff detects structural changes to containers:
-- **Body/Tab**: Document sections
-- **Table**: Creates/deletes table structure (`insertTable`, `deleteContentRange`)
-- **Header/Footer**: Creates/deletes headers/footers
-- **Footnote**: Creates/deletes footnotes
-- **Table Row/Column**: Structural table changes
-
-Block diff answers: "What containers were added, deleted, or modified?"
-
-### Phase 2: Content Diff (Leaf Nodes)
-
-Once structural containers exist, their **content** is handled uniformly via `_generate_content_insert_requests()`. This function handles ALL content containers the same way:
-- Body content
-- Header content
-- Footer content
-- Footnote content
-- **Table cell content**
-
-Content diff answers: "What paragraphs/text go inside this container?"
-
-### Why This Matters
-
-**All content containers use the same code path.** A table cell's content (`<td><p>Name</p></td>`) is handled exactly like body content (`<body><p>Name</p></body>`). The only difference is:
-1. Block diff creates the container (e.g., `insertTable`)
-2. Content diff populates it (e.g., `insertText` at the cell's content index)
-
-### Example: Adding a Table with Content
-
-```xml
-<table rows="2" cols="2">
-  <tr><td><p>Name</p></td><td><p>Value</p></td></tr>
-  <tr><td><p>Alice</p></td><td><p>100</p></td></tr>
-</table>
-```
-
-**Phase 1 (Block Diff):** Detects TABLE ADDED → generates `insertTable` request
-
-**Phase 2 (Content Diff):** For each cell:
-1. Calculate cell content index (accounting for table structure markers)
-2. Extract cell's inner XML (`<p>Name</p>`)
-3. Call `_generate_content_insert_requests()` with cell index
-4. Same function that handles body/header/footer content!
-
-**Key insight:** Don't duplicate content handling logic. Table cells, headers, footers, footnotes, and body all contain ContentBlocks. Handle them uniformly.
-
-### Block vs ContentBlock Changes
-
-| Change Type | What Changed | Generated Requests |
-|-------------|--------------|-------------------|
-| Table ADD | New table | `insertTable` |
-| Table DELETE | Remove table | `deleteContentRange` covering entire block |
-| Table Row ADD | New row | `insertTableRow` |
-| Table Row DELETE | Remove row | `deleteTableRow` |
-| Table Column ADD | New column | `insertTableColumn` (deduplicated) |
-| Table Column DELETE | Remove column | `deleteTableColumn` (deduplicated) |
-| Header ADD | New header | `createHeader` |
-| Header DELETE | Remove header | `deleteHeader` |
-| Footer ADD | New footer | `createFooter` |
-| Footer DELETE | Remove footer | `deleteFooter` |
-| Tab ADD | New tab | `addDocumentTab` |
-| Tab DELETE | Remove tab | `deleteTab` |
-| Footnote ADD | New footnote | `createFootnote` (at end of body) |
-| Footnote DELETE | Remove footnote | `deleteContentRange` (1 char at ref position) |
-| ContentBlock ADD | New paragraph sequence | `insertText` + styling (Phase 3) |
-| ContentBlock DELETE | Remove paragraphs | `deleteContentRange` (Phase 3) |
-| ContentBlock MODIFY | Text or formatting changed | Delete + Insert (Phase 3) |
+The result is a flat list of requests emitted during the walk, already in correct execution order, with no post-processing required. No global reordering. No index adjustment. The algorithm handles content blocks, tables, rows, columns, headers, footers, and footnotes with one uniform principle: walk backwards, use pristine indexes.
 
 ## Current Status
 

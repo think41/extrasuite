@@ -4,6 +4,7 @@ Usage:
     python -m extradoc pull <document_id_or_url> [output_dir]
     python -m extradoc diff <folder>
     python -m extradoc push <folder>
+    python -m extradoc test <folder>
 """
 
 from __future__ import annotations
@@ -17,6 +18,7 @@ from pathlib import Path
 
 from extrasuite.client import CredentialsManager
 
+from extradoc.__main__test import run_test_workflow
 from extradoc.client import DocsClient
 from extradoc.transport import GoogleDocsTransport, LocalFileTransport
 
@@ -168,8 +170,20 @@ async def cmd_push(args: argparse.Namespace) -> int:
         await transport.close()
 
 
+def cmd_test(args: argparse.Namespace) -> int:
+    """Sync wrapper to reuse asyncio-less helper."""
+    return run_test_workflow(Path(args.folder))
+
+
 def main() -> int:
     """Main entry point."""
+    # Fast path to avoid subparser clashes when invoking `python -m extradoc test <folder>`
+    if len(sys.argv) > 1 and sys.argv[1] == "test":
+        if len(sys.argv) < 3:
+            print("Usage: python -m extradoc test <folder>", file=sys.stderr)
+            return 1
+        return run_test_workflow(Path(sys.argv[2]))
+
     parser = argparse.ArgumentParser(
         prog="extradoc",
         description="Transform Google Docs to LLM-friendly XML format",
@@ -225,6 +239,8 @@ def main() -> int:
         help="Force push despite warnings (blocks still prevent push)",
     )
     push_parser.set_defaults(func=cmd_push)
+
+    # Note: test command handled via fast path above to avoid duplicate subparser registration
 
     args = parser.parse_args()
     result: int = asyncio.run(args.func(args))

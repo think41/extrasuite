@@ -579,32 +579,61 @@ class BlockDiffDetector:
 
     def _diff_table_columns(
         self, pristine_table: Block, current_table: Block, table_path: list[str]
-    ) -> tuple[list[tuple[int | None, int | None]], list[BlockChange]]:
-        """Detect column add/delete via column-wise hashes."""
+    ) -> tuple[
+        list[tuple[int | None, int | None]],
+        list[BlockChange],
+        set[int],
+        set[int],
+    ]:
+        """Detect column add/delete via <col> element IDs.
+
+        Columns are matched by their id attribute (assigned at pull time).
+        LLMs preserve IDs on existing columns; new columns get new IDs.
+        """
         changes: list[BlockChange] = []
 
-        def column_keys(table_block: Block) -> list[str]:
-            cols: dict[int, list[str]] = {}
-            for row in table_block.children:
-                for idx, cell in enumerate(row.children):
-                    cols.setdefault(idx, []).append(cell.content_hash())
-            max_col = max(cols.keys(), default=-1)
-            keys: list[str] = []
-            for c in range(max_col + 1):
-                joined = "||".join(cols.get(c, [""]))
-                keys.append(joined)
-            return keys
+        def col_ids_from_xml(table_block: Block) -> list[str]:
+            """Extract ordered <col> IDs from the table XML."""
+            try:
+                root = ET.fromstring(table_block.xml_content)
+            except ET.ParseError:
+                return []
+            ids: list[str] = []
+            for col in root.findall("col"):
+                col_id = col.get("id", col.get("index", str(len(ids))))
+                ids.append(col_id)
+            return ids
 
-        p_keys = column_keys(pristine_table)
-        c_keys = column_keys(current_table)
-        if len(p_keys) == len(c_keys):
-            alignment = [(i, i) for i in range(len(p_keys))]
-        else:
-            alignment = self._lcs_align(p_keys, c_keys)
+        p_col_ids = col_ids_from_xml(pristine_table)
+        c_col_ids = col_ids_from_xml(current_table)
+
+        # Match columns by ID (same approach as rows)
+        p_id_to_idx: dict[str, int] = {}
+        for i, cid in enumerate(p_col_ids):
+            if cid not in p_id_to_idx:
+                p_id_to_idx[cid] = i
+
+        matched_p: set[int] = set()
+        alignment: list[tuple[int | None, int | None]] = []
+        for c_i, cid in enumerate(c_col_ids):
+            p_i = p_id_to_idx.get(cid)
+            if p_i is not None and p_i not in matched_p:
+                alignment.append((p_i, c_i))
+                matched_p.add(p_i)
+            else:
+                alignment.append((None, c_i))  # added column
+
+        # Any pristine columns not matched are deleted
+        for p_i in range(len(p_col_ids)):
+            if p_i not in matched_p:
+                alignment.append((p_i, None))
+
+        added: set[int] = set()
+        deleted: set[int] = set()
 
         for p_idx, c_idx in alignment:
             if p_idx is None and c_idx is not None:
-                # Column added
+                added.add(c_idx)
                 changes.append(
                     BlockChange(
                         change_type=ChangeType.ADDED,
@@ -617,7 +646,7 @@ class BlockDiffDetector:
                     )
                 )
             elif p_idx is not None and c_idx is None:
-                # Column deleted
+                deleted.add(p_idx)
                 changes.append(
                     BlockChange(
                         change_type=ChangeType.DELETED,
@@ -630,7 +659,7 @@ class BlockDiffDetector:
                     )
                 )
 
-        return alignment, changes
+        return alignment, changes, added, deleted
 
     def _diff_blocks(
         self,
@@ -1117,64 +1146,101 @@ class BlockDiffDetector:
         current_rows = current_table.children
 
         # Column-level diff (table-wide)
-        col_alignment, col_changes = self._diff_table_columns(pristine_table, current_table, table_path)
+        (
+            col_alignment,
+            col_changes,
+            columns_added,
+            columns_deleted,
+        ) = self._diff_table_columns(pristine_table, current_table, table_path)
         changes.extend(col_changes)
 
-        if len(pristine_rows) == len(current_rows):
-            alignment = [(i, i) for i in range(len(pristine_rows))]
-        else:
-            # Align rows using LCS on content hashes (stable per content, tolerant of position shifts)
-            alignment = self._lcs_align(
-                [r.content_hash() for r in pristine_rows],
-                [r.content_hash() for r in current_rows],
-            )
+        # Align rows by block_id (stable IDs assigned at pull time).
+        # LLMs preserve IDs on existing rows; new rows get new IDs.
+        # For duplicate IDs (e.g. empty rows sharing the same content hash),
+        # match positionally within each ID group.
+        from collections import defaultdict
+
+        p_id_to_indices: dict[str, list[int]] = defaultdict(list)
+        for i, r in enumerate(pristine_rows):
+            p_id_to_indices[r.block_id].append(i)
+
+        # Track consumption of each ID's pristine slots
+        p_id_consumed: dict[str, int] = defaultdict(int)  # count consumed per ID
+
+        matched_p: set[int] = set()
+        alignment: list[tuple[int | None, int | None]] = []
+        for c_i, c_row in enumerate(current_rows):
+            bid = c_row.block_id
+            slot = p_id_consumed[bid]
+            p_slots = p_id_to_indices.get(bid, [])
+            if slot < len(p_slots):
+                p_i = p_slots[slot]
+                alignment.append((p_i, c_i))
+                matched_p.add(p_i)
+                p_id_consumed[bid] = slot + 1
+            else:
+                alignment.append((None, c_i))  # added row
+
+        # Any pristine rows not matched are deleted
+        for p_i in range(len(pristine_rows)):
+            if p_i not in matched_p:
+                alignment.append((p_i, None))
 
         last_pristine_end = pristine_table.start_index + 1
 
         for p_idx, c_idx in alignment:
-            p_row = pristine_rows[p_idx] if p_idx is not None else None
-            c_row = current_rows[c_idx] if c_idx is not None else None
+            p_blk: Block | None = pristine_rows[p_idx] if p_idx is not None else None
+            c_blk: Block | None = current_rows[c_idx] if c_idx is not None else None
 
             # Prefer current row index when present for path readability; fall back to pristine index
-            row_idx_for_path = c_idx if c_idx is not None else p_idx if p_idx is not None else 0
+            row_idx_for_path = (
+                c_idx if c_idx is not None else p_idx if p_idx is not None else 0
+            )
             row_path = [*table_path, f"row_idx:{row_idx_for_path}"]
 
-            if p_row is None and c_row is not None:
+            if p_blk is None and c_blk is not None:
                 # Row added; anchor after previous matched pristine row or table start
                 anchor_start = last_pristine_end
                 changes.append(
                     BlockChange(
                         change_type=ChangeType.ADDED,
                         block_type=BlockType.TABLE_ROW,
-                        block_id=c_row.block_id,
+                        block_id=c_blk.block_id,
                         container_path=row_path,
-                        after_xml=c_row.xml_content,
+                        after_xml=c_blk.xml_content,
                         pristine_start_index=anchor_start,
                         pristine_end_index=anchor_start,
                         segment_end_index=pristine_table.end_index,
                     )
                 )
-            elif p_row is not None and c_row is None:
+            elif p_blk is not None and c_blk is None:
                 # Row deleted
                 changes.append(
                     BlockChange(
                         change_type=ChangeType.DELETED,
                         block_type=BlockType.TABLE_ROW,
-                        block_id=p_row.block_id,
+                        block_id=p_blk.block_id,
                         container_path=row_path,
-                        before_xml=p_row.xml_content,
-                        pristine_start_index=p_row.start_index,
-                        pristine_end_index=p_row.end_index,
+                        before_xml=p_blk.xml_content,
+                        pristine_start_index=p_blk.start_index,
+                        pristine_end_index=p_blk.end_index,
                         segment_end_index=pristine_table.end_index,
                     )
                 )
-            elif p_row is not None and c_row is not None:
+            elif p_blk is not None and c_blk is not None:
                 # Both exist - compare by ID and content
-                id_differs = p_row.block_id != c_row.block_id
-                content_differs = p_row.xml_content != c_row.xml_content
+                id_differs = p_blk.block_id != c_blk.block_id
+                content_differs = p_blk.xml_content != c_blk.xml_content
 
                 # Always check for cell-level changes
-                cell_changes = self._diff_row_cells(p_row, c_row, row_path, col_alignment)
+                cell_changes = self._diff_row_cells(
+                    p_blk,
+                    c_blk,
+                    row_path,
+                    col_alignment,
+                    columns_added=columns_added,
+                    columns_deleted=columns_deleted,
+                )
 
                 if id_differs or content_differs or cell_changes:
                     # Row was modified
@@ -1182,18 +1248,18 @@ class BlockDiffDetector:
                         BlockChange(
                             change_type=ChangeType.MODIFIED,
                             block_type=BlockType.TABLE_ROW,
-                            block_id=p_row.block_id,
+                            block_id=p_blk.block_id,
                             container_path=row_path,
-                            before_xml=p_row.xml_content,
-                            after_xml=c_row.xml_content,
+                            before_xml=p_blk.xml_content,
+                            after_xml=c_blk.xml_content,
                             child_changes=cell_changes,
-                            pristine_start_index=p_row.start_index,
-                            pristine_end_index=p_row.end_index,
+                            pristine_start_index=p_blk.start_index,
+                            pristine_end_index=p_blk.end_index,
                             segment_end_index=pristine_table.end_index,
                         )
                     )
-            if p_row is not None:
-                last_pristine_end = p_row.end_index
+            if p_blk is not None:
+                last_pristine_end = p_blk.end_index
 
         return changes
 
@@ -1203,6 +1269,9 @@ class BlockDiffDetector:
         current_row: Block,
         table_path: list[str],
         col_alignment: list[tuple[int | None, int | None]] | None = None,
+        *,
+        columns_added: set[int] | None = None,
+        columns_deleted: set[int] | None = None,
     ) -> list[BlockChange]:
         """Diff cells within a row using ID and content comparison.
 
@@ -1220,15 +1289,35 @@ class BlockDiffDetector:
         # If column alignment provided, use it; otherwise positional
         if col_alignment is None:
             max_cells = max(len(pristine_cells), len(current_cells))
-            col_alignment = [(i if i < len(pristine_cells) else None, i if i < len(current_cells) else None) for i in range(max_cells)]
+            col_alignment = [
+                (
+                    i if i < len(pristine_cells) else None,
+                    i if i < len(current_cells) else None,
+                )
+                for i in range(max_cells)
+            ]
 
         for p_idx, c_idx in col_alignment:
-            p_cell = pristine_cells[p_idx] if p_idx is not None and p_idx < len(pristine_cells) else None
-            c_cell = current_cells[c_idx] if c_idx is not None and c_idx < len(current_cells) else None
+            p_cell = (
+                pristine_cells[p_idx]
+                if p_idx is not None and p_idx < len(pristine_cells)
+                else None
+            )
+            c_cell = (
+                current_cells[c_idx]
+                if c_idx is not None and c_idx < len(current_cells)
+                else None
+            )
 
             # Include col_idx in path for column operations
             col_idx = c_idx if c_idx is not None else p_idx if p_idx is not None else 0
             cell_path = [*row_path, f"col_idx:{col_idx}"]
+
+            # Skip columns that are structurally added/deleted; handled at table level
+            if columns_added and col_idx in columns_added:
+                continue
+            if columns_deleted and col_idx in columns_deleted:
+                continue
 
             if p_cell is None and c_cell is not None:
                 # Cell added (column added) - insert at end of row segment
@@ -1262,7 +1351,9 @@ class BlockDiffDetector:
             elif p_cell is not None and c_cell is not None:
                 # Both exist - compare by ID and content
                 id_differs = p_cell.block_id != c_cell.block_id
-                content_differs = p_cell.xml_content != c_cell.xml_content
+                content_differs = (
+                    p_cell.xml_content.strip() != c_cell.xml_content.strip()
+                )
 
                 if id_differs or content_differs:
                     # Cell content changed

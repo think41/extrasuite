@@ -89,8 +89,9 @@ class SpecialElement:
 class TableCell:
     """A desugared table cell."""
 
-    row: int
-    col: int
+    row: int = 0
+    col: int = 0
+    cell_id: str = ""
     content: list[Paragraph | Table | SpecialElement] = field(default_factory=list)
     colspan: int = 1
     rowspan: int = 1
@@ -101,8 +102,9 @@ class TableCell:
 class Table:
     """A desugared table."""
 
-    rows: int
-    cols: int
+    rows: int = 0
+    cols: int = 0
+    table_id: str = ""
     cells: list[TableCell] = field(default_factory=list)
 
 
@@ -318,14 +320,16 @@ def _process_element(
 
 def _desugar_table(elem: Element, style_defs: dict[str, dict[str, str]]) -> Table:
     """Desugar a table element."""
-    rows = int(elem.get("rows", "0"))
-    cols = int(elem.get("cols", "0"))
+    tr_elements = list(elem.findall("tr"))
+    rows = len(tr_elements)
+    cols = max((len(tr.findall("td")) for tr in tr_elements), default=0)
 
-    table = Table(rows=rows, cols=cols)
+    table = Table(table_id=elem.get("id", ""), rows=rows, cols=cols)
 
-    for row_idx, tr in enumerate(elem.findall("tr")):
+    for row_idx, tr in enumerate(tr_elements):
         for col_idx, td in enumerate(tr.findall("td")):
             cell = TableCell(
+                cell_id=td.get("id", ""),
                 row=row_idx,
                 col=col_idx,
                 colspan=int(td.get("colspan", "1")),

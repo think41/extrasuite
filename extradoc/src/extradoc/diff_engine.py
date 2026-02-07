@@ -571,7 +571,10 @@ def _emit_table_modify(
     if column_changes:
         for col_change in column_changes:
             col_idx = _get_col_index_from_change(col_change)
-            if col_change.change_type == ChangeType.ADDED and col_idx not in columns_added:
+            if (
+                col_change.change_type == ChangeType.ADDED
+                and col_idx not in columns_added
+            ):
                 columns_added.add(col_idx)
                 deferred_col_adds.append(
                     (
@@ -597,7 +600,8 @@ def _emit_table_modify(
         c for c in change.child_changes if c.block_type == BlockType.TABLE_ROW
     ]
     row_changes.sort(key=lambda c: _get_row_index_from_change(c), reverse=True)
-    deferred_row_adds: list[tuple[int, dict[str, Any]]] = []
+    # (row_index, insert_request, after_xml_for_cell_content)
+    deferred_row_adds: list[tuple[int, dict[str, Any], str | None]] = []
 
     # Determine pristine row count from before_xml (if any)
     pristine_row_count = 0
@@ -620,6 +624,7 @@ def _emit_table_modify(
                         generate_insert_table_row_request(
                             table_start, anchor, segment_id, insert_below=False
                         ),
+                        row_change.after_xml,
                     )
                 )
             else:
@@ -630,6 +635,7 @@ def _emit_table_modify(
                         generate_insert_table_row_request(
                             table_start, anchor, segment_id, insert_below=True
                         ),
+                        row_change.after_xml,
                     )
                 )
 
@@ -653,31 +659,48 @@ def _emit_table_modify(
             for cell_change in cell_changes:
                 col_index = _get_col_index_from_change(cell_change)
 
-                if cell_change.change_type == ChangeType.ADDED:
-                    if col_index not in columns_added:
-                        columns_added.add(col_index)
-                        # Anchor insert to this row; Docs insertTableColumn works table-wide.
-                        deferred_col_adds.append(
-                            (
-                                col_index,
-                                generate_insert_table_column_request(
-                                    table_start, row_index, col_index, segment_id
-                                ),
-                            )
+                # If column handled structurally, allow only content ADD for added cols; skip others
+                if col_index in columns_added:
+                    if (
+                        cell_change.change_type
+                        in (ChangeType.ADDED, ChangeType.MODIFIED)
+                        and cell_change.after_xml
+                    ):
+                        cell_content_index = cell_change.pristine_start_index
+                        cell_end = (
+                            cell_change.segment_end_index
+                            if cell_change.segment_end_index > 0
+                            else cell_content_index
                         )
-
-                elif cell_change.change_type == ChangeType.DELETED:
-                    if col_index not in columns_deleted:
-                        columns_deleted.add(col_index)
-                        requests.append(
-                            generate_delete_table_column_request(
-                                table_start, row_index, col_index, segment_id
+                        if cell_content_index > 0:
+                            after_inner = _extract_cell_inner_content(
+                                cell_change.after_xml or ""
                             )
-                        )
+                            content_change = BlockChange(
+                                change_type=ChangeType.ADDED,
+                                block_type=BlockType.CONTENT_BLOCK,
+                                before_xml=None,
+                                after_xml=after_inner,
+                                pristine_start_index=cell_content_index,
+                                pristine_end_index=cell_end,
+                                segment_end_index=cell_end,
+                            )
+                            requests.extend(
+                                _emit_content_ops(
+                                    content_change,
+                                    segment_id,
+                                    cell_content_index,
+                                    cell_end,
+                                    text_styles,
+                                )
+                            )
+                    continue
 
-                elif (
-                    cell_change.change_type == ChangeType.MODIFIED and change.before_xml
-                ):
+                if col_index in columns_deleted:
+                    # Content is removed by deleteTableColumn; skip
+                    continue
+
+                if cell_change.change_type == ChangeType.MODIFIED and change.before_xml:
                     cell_content_index = cell_change.pristine_start_index
                     cell_end = (
                         cell_change.segment_end_index
@@ -726,8 +749,108 @@ def _emit_table_modify(
     for _, req in sorted(deferred_col_adds, key=lambda item: item[0], reverse=True):
         requests.append(req)
 
-    for _, req in sorted(deferred_row_adds, key=lambda item: item[0], reverse=True):
+    # Insert content for newly added columns (non-empty cells only).
+    # After insertTableColumn, new cells are empty (just '\n' = 1 unit).
+    # Each row gets a new cell marker (1 unit) + newline (1 unit) = 2 units.
+    # Calculate new cell position using PRISTINE table, then adjust for
+    # the 2-unit-per-row shift from new empty cells in earlier rows.
+    if columns_added and change.after_xml and change.before_xml:
+        try:
+            after_root = ET.fromstring(change.after_xml)
+        except ET.ParseError:
+            after_root = None
+        if after_root is not None:
+            rows_after = after_root.findall("tr")
+            for col_idx in sorted(columns_added, reverse=True):
+                for row_idx in reversed(range(len(rows_after))):
+                    td_xml = _get_cell_xml_from_table(
+                        change.after_xml, row_idx, col_idx
+                    )
+                    if not td_xml:
+                        continue
+                    inner = _extract_cell_inner_content(td_xml)
+                    if not inner.strip():
+                        continue
+                    if col_idx == 0:
+                        # Inserted left of pristine column 0
+                        base = _calculate_cell_content_index(
+                            table_start, row_idx, 0, change.before_xml
+                        )
+                        cell_start = base + 2 * row_idx
+                    else:
+                        # Inserted right of pristine column (col_idx - 1)
+                        pristine_col = col_idx - 1
+                        base = _calculate_cell_content_index(
+                            table_start, row_idx, pristine_col, change.before_xml
+                        )
+                        pristine_len = _get_pristine_cell_length(
+                            change.before_xml, row_idx, pristine_col
+                        )
+                        cell_start = base + pristine_len + 2 * row_idx + 1
+                    if cell_start <= 0:
+                        continue
+                    content_reqs = _generate_content_insert_requests(
+                        inner,
+                        segment_id,
+                        insert_index=cell_start,
+                        strip_trailing_newline=True,
+                        text_styles=text_styles,
+                    )
+                    requests.extend(content_reqs)
+
+    # Emit deferred row inserts (highest row index first), then populate cells.
+    # After insertTableRow, each new cell contains just '\n' (1 index unit).
+    # We use the after_xml (current table) to calculate cell positions,
+    # then insert content into each non-empty cell.
+    for _, req, _row_after_xml in sorted(
+        deferred_row_adds, key=lambda item: item[0], reverse=True
+    ):
         requests.append(req)
+
+    # Insert cell content for added rows.
+    # After insertTableRow, each cell is empty ('\n' = 1 index unit).
+    # Cell N content starts at: cell_0_start + 2*N
+    # (each empty cell = 1 cell marker + 1 newline = 2 units).
+    # We get cell_0_start from _calculate_cell_content_index for col 0
+    # (which only walks PRIOR rows, not the new row's cells).
+    # Walk cells right-to-left so earlier cell positions stay stable.
+    if deferred_row_adds and change.after_xml:
+        for row_index, _, row_after_xml in sorted(
+            deferred_row_adds, key=lambda item: item[0]
+        ):
+            if not row_after_xml:
+                continue
+            try:
+                row_root = ET.fromstring(row_after_xml)
+            except ET.ParseError:
+                continue
+            cells = list(row_root.findall("td"))
+            if not cells:
+                continue
+            # Cell 0 position is correct from _calculate_cell_content_index
+            # because it stops as soon as it reaches (row, col=0).
+            cell_0_start = _calculate_cell_content_index(
+                table_start, row_index, 0, change.after_xml
+            )
+            if cell_0_start <= 0:
+                continue
+            # Walk cells right-to-left
+            for col_idx in reversed(range(len(cells))):
+                td = cells[col_idx]
+                inner = _extract_cell_inner_content(ET.tostring(td, encoding="unicode"))
+                if not inner.strip():
+                    continue
+                # Each empty cell = 2 index units (marker + newline)
+                cell_start = cell_0_start + 2 * col_idx
+                cell_end = cell_start + 1  # empty cell has just '\n'
+                content_reqs = _generate_content_insert_requests(
+                    inner,
+                    segment_id,
+                    insert_index=cell_start,
+                    strip_trailing_newline=True,
+                    text_styles=text_styles,
+                )
+                requests.extend(content_reqs)
 
     return requests
 
@@ -1843,6 +1966,21 @@ def _calculate_nested_table_length(table_elem: ET.Element) -> int:
 
     length += 1  # Table end marker
     return length
+
+
+def _get_cell_xml_from_table(table_xml: str, row: int, col: int) -> str | None:
+    """Extract full td XML for a given row/col from table_xml."""
+    try:
+        root = ET.fromstring(table_xml)
+    except ET.ParseError:
+        return None
+    trs = root.findall("tr")
+    if row >= len(trs):
+        return None
+    tds = trs[row].findall("td")
+    if col >= len(tds):
+        return None
+    return ET.tostring(tds[col], encoding="unicode")
 
 
 def _get_pristine_cell_length(table_xml: str, row: int, col: int) -> int:

@@ -582,7 +582,10 @@ def _convert_table(
             unit = width.get("unit", "PT")
             # Convert unit to lowercase for XML
             unit_str = "pt" if unit == "PT" else unit.lower()
-            col_elements.append(f'  <col index="{i}" width="{magnitude}{unit_str}"/>')
+            col_id = content_hash_id(f"col:{i}:{magnitude}{unit_str}")
+            col_elements.append(
+                f'  <col id="{col_id}" index="{i}" width="{magnitude}{unit_str}"/>'
+            )
 
     # Build rows with content-based IDs (bottom-up: cells first, then rows)
     row_parts: list[str] = []

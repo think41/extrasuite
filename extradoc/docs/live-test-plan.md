@@ -22,12 +22,12 @@ Use full pull → edit → diff → push → repull cycles. Prefer editing the l
 ## Execution tracker
 | Scenario | Status | Notes |
 | --- | --- | --- |
-| 1 Body mid-block modify | Pending | |
-| 2 Body end-of-segment insert | Pending | |
-| 3 Header end edit | Pending | |
-| 4 Footnote content change | Pending | |
-| 5 Table cell modify | Pending | |
-| 6 Table row add + cell edits (dup row guard) | Pending | Focus on repeated `insertTableRow` detection |
-| 7 Table column add + R→L cell edits | Pending | |
-| 8 Table bottom/right delete + cell edit | Pending | |
-| 9 Nested table cell edit | Pending | |
+| 1 Body mid-block modify | PASS | Clean diff/push/repull; mid-paragraph edit produced expected 4 ops |
+| 2 Body end-of-segment insert | PASS | Inserted final paragraph; ops clamped before sentinel; clean repull |
+| 3 Header end edit | PASS | Header tail edit stayed within header segment; clean repull |
+| 4 Footnote content change | FAIL | Inline footnote was dropped; requests issued createFootnote(endOfSegment) without content |
+| 5 Table cell modify | PASS | Single cell edit in row 1 col 1; clean repull |
+| 6 Table row add + cell edits (dup row guard) | PASS | ID-based row alignment; combined row add + cell edit verified; 9 requests |
+| 7 Table column add + R→L cell edits | PASS | ID-based column alignment; 14 requests (1 insertTableColumn + cell content + bold style); content in correct cells |
+| 8 Table bottom/right delete + cell edit | Not run | TODO |
+| 9 Nested table cell edit | Not run | TODO |
