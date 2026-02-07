@@ -162,6 +162,60 @@ class TestContentGeneratorAdd:
         assert consumed  # segment_end_consumed should be True
 
 
+class TestContentGeneratorFollowedByAddedTable:
+    def test_followed_by_added_table_strips_trailing_newline(self):
+        """When followed_by_added_table=True, trailing newline is stripped."""
+        gen = ContentGenerator()
+        node = _make_content_node(
+            ChangeOp.ADDED,
+            after_xml="<p>Hello</p>",
+            pristine_start=5,
+            pristine_end=5,
+        )
+        ctx = _body_ctx(segment_end=100)
+        ctx.followed_by_added_table = True
+        reqs, consumed = gen.emit(node, ctx)
+        assert len(reqs) > 0
+        text = reqs[0]["insertText"]["text"]
+        assert not text.endswith("\n")
+        # Should NOT consume segment_end (independent reason for stripping)
+        assert not consumed
+
+    def test_followed_by_added_table_does_not_consume_segment_end(self):
+        """Stripping for table reason does NOT consume segment_end."""
+        gen = ContentGenerator()
+        node = _make_content_node(
+            ChangeOp.ADDED,
+            after_xml="<p>Hello</p>",
+            pristine_start=5,
+            pristine_end=5,
+        )
+        ctx = _body_ctx(segment_end=100)
+        ctx.followed_by_added_table = True
+        _reqs, consumed = gen.emit(node, ctx)
+        assert not consumed
+        assert not ctx.segment_end_consumed
+
+    def test_followed_by_added_table_modify_strips_newline(self):
+        """MODIFIED with followed_by_added_table=True strips trailing newline."""
+        gen = ContentGenerator()
+        node = _make_content_node(
+            ChangeOp.MODIFIED,
+            before_xml="<p>Old</p>",
+            after_xml="<p>New</p>",
+            pristine_start=5,
+            pristine_end=10,
+        )
+        ctx = _body_ctx(segment_end=100)
+        ctx.followed_by_added_table = True
+        reqs, consumed = gen.emit(node, ctx)
+        insert_reqs = [r for r in reqs if "insertText" in r]
+        assert len(insert_reqs) > 0
+        text = insert_reqs[0]["insertText"]["text"]
+        assert not text.endswith("\n")
+        assert not consumed
+
+
 class TestContentGeneratorModify:
     def test_modify_produces_delete_then_insert(self):
         """MODIFIED falls back to delete + insert."""

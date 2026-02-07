@@ -67,15 +67,28 @@ class RequestWalker:
             segment_end=seg_node.segment_end,
         )
 
-        # Sort children by pristine_start DESC for backwards walk
-        sorted_children = sorted(
-            seg_node.children,
-            key=lambda c: c.pristine_start,
-            reverse=True,
-        )
+        # Sort children by pristine_start DESC for backwards walk.
+        # Secondary key: original position DESC — when multiple blocks share
+        # the same pristine_start (e.g. all additions at the same point),
+        # the last block in document order must be emitted first so that
+        # earlier inserts push it down to its correct final position.
+        sorted_children = [
+            child
+            for _, child in sorted(
+                enumerate(seg_node.children),
+                key=lambda pair: (pair[1].pristine_start, pair[0]),
+                reverse=True,
+            )
+        ]
+
+        followed_by_added_table = False
 
         for child in sorted_children:
-            if child.node_type == NodeType.CONTENT_BLOCK:
+            if child.node_type == NodeType.TABLE:
+                requests.extend(self._table_gen.emit(child, ctx))
+                followed_by_added_table = child.op == ChangeOp.ADDED
+
+            elif child.node_type == NodeType.CONTENT_BLOCK:
                 # Handle footnote child changes first
                 for fn_child in child.children:
                     if (
@@ -98,13 +111,12 @@ class RequestWalker:
                             )
                         )
 
+                ctx.followed_by_added_table = followed_by_added_table
                 reqs, consumed = self._content_gen.emit(child, ctx)
                 requests.extend(reqs)
                 if consumed:
                     ctx.segment_end_consumed = True
-
-            elif child.node_type == NodeType.TABLE:
-                requests.extend(self._table_gen.emit(child, ctx))
+                followed_by_added_table = False
 
         return requests
 

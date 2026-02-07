@@ -235,15 +235,24 @@ class TreeDiffer:
             group_op = None
             last_current_idx = None
 
+        # Suppress deletion of structural separators before tables
+        for i in range(len(raw)):
+            op_i, p_block_i, c_block_i, current_idx_i = raw[i]
+            if (
+                op_i == ChangeOp.DELETED
+                and isinstance(p_block_i, ParagraphBlock)
+                and _is_empty_paragraph(p_block_i)
+                and i + 1 < len(raw)
+                and isinstance(raw[i + 1][1] or raw[i + 1][2], TableBlock)
+                and raw[i + 1][0] != ChangeOp.DELETED
+            ):
+                raw[i] = (None, p_block_i, None, None)
+
         for op, p_block, c_block, current_idx in raw:
             # Unchanged → flush and track position
             if op is None:
                 flush_group()
-                if (
-                    p_block is not None
-                    and isinstance(p_block, ParagraphBlock)
-                    and p_block.end_index > 0
-                ):
+                if p_block is not None and p_block.end_index > 0:
                     last_pristine_end = p_block.end_index
                 continue
 
@@ -633,3 +642,17 @@ class TreeDiffer:
                 )
 
         return changes
+
+
+def _is_empty_paragraph(block: ParagraphBlock) -> bool:
+    """Check if paragraph is empty (structural separator)."""
+    import xml.etree.ElementTree as ET
+
+    try:
+        elem = ET.fromstring(block.xml)
+        text = (elem.text or "") + "".join(
+            (c.text or "") + (c.tail or "") for c in elem
+        )
+        return not text.strip()
+    except ET.ParseError:
+        return False

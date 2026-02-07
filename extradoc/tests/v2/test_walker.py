@@ -220,3 +220,90 @@ class TestRequestWalker:
         assert len(reqs) == 1
         rng = reqs[0]["deleteContentRange"]["range"]
         assert "segmentId" not in rng
+
+    def test_content_before_added_table_strips_trailing_newline(self):
+        """Content block before an ADDED table should have trailing newline stripped."""
+        walker = _make_walker()
+        root = ChangeNode(
+            node_type=NodeType.DOCUMENT,
+            op=ChangeOp.UNCHANGED,
+            children=[
+                ChangeNode(
+                    node_type=NodeType.SEGMENT,
+                    op=ChangeOp.MODIFIED,
+                    segment_type=SegmentType.BODY,
+                    segment_id=None,
+                    segment_end=50,
+                    children=[
+                        # Content block (lower pristine_start, processed after table)
+                        ChangeNode(
+                            node_type=NodeType.CONTENT_BLOCK,
+                            op=ChangeOp.ADDED,
+                            after_xml="<p>Before table</p>",
+                            pristine_start=1,
+                            pristine_end=1,
+                        ),
+                        # Added table (higher pristine_start, processed first)
+                        ChangeNode(
+                            node_type=NodeType.TABLE,
+                            op=ChangeOp.ADDED,
+                            after_xml='<table id="t1"><tr id="r1"><td id="0,0"><p>Cell</p></td></tr></table>',
+                            pristine_start=1,
+                            pristine_end=1,
+                            table_start=1,
+                        ),
+                    ],
+                ),
+            ],
+        )
+        reqs = walker.walk(root)
+        # Find the insertText for content block
+        insert_reqs = [r for r in reqs if "insertText" in r]
+        assert len(insert_reqs) > 0
+        # The inserted text should NOT end with \n (stripped for added table)
+        text = insert_reqs[-1]["insertText"]["text"]
+        assert not text.endswith("\n")
+
+    def test_content_before_modified_table_does_not_strip(self):
+        """Content block before a MODIFIED table should NOT strip trailing newline."""
+        walker = _make_walker()
+        root = ChangeNode(
+            node_type=NodeType.DOCUMENT,
+            op=ChangeOp.UNCHANGED,
+            children=[
+                ChangeNode(
+                    node_type=NodeType.SEGMENT,
+                    op=ChangeOp.MODIFIED,
+                    segment_type=SegmentType.BODY,
+                    segment_id=None,
+                    segment_end=50,
+                    children=[
+                        ChangeNode(
+                            node_type=NodeType.CONTENT_BLOCK,
+                            op=ChangeOp.ADDED,
+                            after_xml="<p>Before table</p>",
+                            pristine_start=1,
+                            pristine_end=1,
+                        ),
+                        ChangeNode(
+                            node_type=NodeType.TABLE,
+                            op=ChangeOp.MODIFIED,
+                            before_xml='<table id="t1"><tr id="r1"><td id="0,0"><p>Old</p></td></tr></table>',
+                            after_xml='<table id="t1"><tr id="r1"><td id="0,0"><p>New</p></td></tr></table>',
+                            pristine_start=5,
+                            pristine_end=15,
+                            table_start=5,
+                        ),
+                    ],
+                ),
+            ],
+        )
+        reqs = walker.walk(root)
+        insert_reqs = [r for r in reqs if "insertText" in r]
+        # The content block insert should end with \n (not stripped)
+        # Find the insert for "Before table"
+        content_inserts = [
+            r for r in insert_reqs if "Before table" in r["insertText"]["text"]
+        ]
+        assert len(content_inserts) == 1
+        assert content_inserts[0]["insertText"]["text"].endswith("\n")

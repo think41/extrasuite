@@ -250,6 +250,81 @@ class TestTreeDiffer:
         deleted = [r for r in row_nodes if r.op == ChangeOp.DELETED]
         assert len(deleted) == 1
 
+    def test_empty_paragraph_before_non_deleted_table_is_suppressed(self):
+        """Empty paragraph before a non-deleted table should be suppressed (unchanged)."""
+        # Pristine has empty paragraph + table, current removes the empty paragraph
+        p = _parse_and_index(
+            _make_doc(
+                '<p>A</p><p></p><table id="t1"><tr id="r1"><td id="0,0"><p>Cell</p></td></tr></table>'
+            )
+        )
+        c = _parse_and_index(
+            _make_doc(
+                '<p>A</p><table id="t1"><tr id="r1"><td id="0,0"><p>Cell</p></td></tr></table>'
+            )
+        )
+        differ = TreeDiffer()
+        root = differ.diff(p, c)
+        # The empty paragraph deletion should be suppressed
+        if root.children:
+            seg = root.children[0]
+            content_nodes = [
+                ch
+                for ch in seg.children
+                if ch.node_type == NodeType.CONTENT_BLOCK and ch.op == ChangeOp.DELETED
+            ]
+            # No DELETED content block for the empty paragraph
+            assert len(content_nodes) == 0
+
+    def test_empty_paragraph_before_deleted_table_is_not_suppressed(self):
+        """Empty paragraph before a DELETED table should still be emitted as DELETE."""
+        p = _parse_and_index(
+            _make_doc(
+                '<p>A</p><p></p><table id="t1"><tr id="r1"><td id="0,0"><p>Cell</p></td></tr></table>'
+            )
+        )
+        c = _parse_and_index(_make_doc("<p>A</p>"))
+        differ = TreeDiffer()
+        root = differ.diff(p, c)
+        assert len(root.children) == 1
+        seg = root.children[0]
+        # Both the empty paragraph and the table should be deleted
+        deleted_nodes = [ch for ch in seg.children if ch.op == ChangeOp.DELETED]
+        assert len(deleted_nodes) >= 1
+        # Should have a table deletion
+        table_deleted = [
+            ch
+            for ch in seg.children
+            if ch.node_type == NodeType.TABLE and ch.op == ChangeOp.DELETED
+        ]
+        assert len(table_deleted) == 1
+
+    def test_added_content_after_unchanged_table_has_correct_pristine_start(self):
+        """Content added after an unchanged table should have pristine_start past the table."""
+        p = _parse_and_index(
+            _make_doc(
+                '<p>A</p><table id="t1"><tr id="r1"><td id="0,0"><p>Cell</p></td></tr></table><p>B</p>'
+            )
+        )
+        c = _parse_and_index(
+            _make_doc(
+                '<p>A</p><table id="t1"><tr id="r1"><td id="0,0"><p>Cell</p></td></tr></table><p>New</p><p>B</p>'
+            )
+        )
+        differ = TreeDiffer()
+        root = differ.diff(p, c)
+        seg = root.children[0]
+        added_nodes = [
+            ch
+            for ch in seg.children
+            if ch.node_type == NodeType.CONTENT_BLOCK and ch.op == ChangeOp.ADDED
+        ]
+        assert len(added_nodes) == 1
+        # pristine_start must be past the table, not at the table start
+        # "A\n" = 2 chars (index 1-3), table takes some space, then "B\n"
+        # The table's end_index > 3 (after "A\n"), so pristine_start should be > 3
+        assert added_nodes[0].pristine_start > 3
+
     def test_pristine_indexes_on_changes(self):
         """Change nodes should have valid pristine_start/end."""
         p = _parse_and_index(_make_doc("<p>Hello</p><p>World</p>"))

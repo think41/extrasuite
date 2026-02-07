@@ -147,8 +147,9 @@ class ContentGenerator:
             insert_idx = ctx.segment_end - 1
 
         at_seg_end = ctx.segment_end > 0 and insert_idx >= ctx.segment_end - 1
-        strip_nl = at_seg_end and not ctx.segment_end_consumed
-        consumed = strip_nl
+        strip_for_seg_end = at_seg_end and not ctx.segment_end_consumed
+        strip_nl = ctx.followed_by_added_table or strip_for_seg_end
+        consumed = strip_for_seg_end
 
         requests = self._generate_content_insert_requests(
             node.after_xml,
@@ -197,8 +198,9 @@ class ContentGenerator:
                 insert_idx = ctx.segment_end - 1
 
             at_seg_end = ctx.segment_end > 0 and insert_idx >= ctx.segment_end - 1
-            strip_nl = at_seg_end and not ctx.segment_end_consumed
-            if strip_nl:
+            strip_for_seg_end = at_seg_end and not ctx.segment_end_consumed
+            strip_nl = ctx.followed_by_added_table or strip_for_seg_end
+            if strip_for_seg_end:
                 consumed = True
 
             requests.extend(

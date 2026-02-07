@@ -76,6 +76,10 @@ class TableGenerator:
 
         insert_index = node.pristine_start if node.pristine_start > 0 else 0
 
+        # Clamp to valid range — can't insert past segment_end - 1
+        if ctx.segment_end > 0 and insert_index > ctx.segment_end - 1:
+            insert_index = ctx.segment_end - 1
+
         if insert_index > 0:
             location: dict[str, Any] = {"index": insert_index}
             if ctx.segment_id:

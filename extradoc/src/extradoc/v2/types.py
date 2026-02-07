@@ -230,3 +230,4 @@ class SegmentContext:
     segment_id: str | None
     segment_end: int
     segment_end_consumed: bool = False
+    followed_by_added_table: bool = False
