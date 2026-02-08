@@ -190,10 +190,16 @@ class TreeDiffer:
         group_op: ChangeOp | None = None
         last_current_idx: int | None = None
         last_pristine_end = seg_start
+        # Set to True before flush_group() when the trigger element is a
+        # non-deleted table (i.e. the content block being flushed is
+        # immediately followed by a structural element in document order).
+        flush_before_structural = False
 
         def flush_group() -> None:
             nonlocal group, group_op, last_current_idx, last_pristine_end
+            nonlocal flush_before_structural
             if not group:
+                flush_before_structural = False
                 return
             assert group_op is not None
 
@@ -228,12 +234,14 @@ class TreeDiffer:
                 pristine_start=p_start,
                 pristine_end=p_end,
                 children=footnote_children,
+                before_structural_element=flush_before_structural,
             )
             nodes.append(node)
 
             group = []
             group_op = None
             last_current_idx = None
+            flush_before_structural = False
 
         # Suppress deletion of structural separators before tables
         for i in range(len(raw)):
@@ -251,6 +259,11 @@ class TreeDiffer:
         for op, p_block, c_block, current_idx in raw:
             # Unchanged → flush and track position
             if op is None:
+                # If the unchanged element is a table, the preceding content
+                # block's trailing \n is the newline-before-table that the
+                # Google Docs API forbids deleting.
+                if group and isinstance(p_block or c_block, TableBlock):
+                    flush_before_structural = True
                 flush_group()
                 if p_block is not None and p_block.end_index > 0:
                     last_pristine_end = p_block.end_index
@@ -290,6 +303,8 @@ class TreeDiffer:
                     last_current_idx = current_idx
             else:
                 # Non-paragraph (table)
+                if group and op != ChangeOp.DELETED:
+                    flush_before_structural = True
                 flush_group()
 
                 if op == ChangeOp.ADDED:

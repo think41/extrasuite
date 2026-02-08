@@ -199,6 +199,10 @@ class ChangeNode:
     segment_id: str | None = None
     segment_end: int = 0
 
+    # Set by the differ when this content block immediately precedes a
+    # non-deleted table (or TOC/section-break) in document order.
+    before_structural_element: bool = False
+
     # TABLE-only fields
     table_start: int = 0
 
@@ -231,3 +235,4 @@ class SegmentContext:
     segment_end: int
     segment_end_consumed: bool = False
     followed_by_added_table: bool = False
+    before_structural_element: bool = False

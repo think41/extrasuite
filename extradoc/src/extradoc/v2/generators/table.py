@@ -346,7 +346,7 @@ class TableGenerator:
                                 row_change.row_index,
                                 col_idx,
                                 segment_id,
-                                None,
+                                self._content_gen._style_defs,
                             )
                             if cell_style_req:
                                 requests.append(cell_style_req)

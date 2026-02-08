@@ -9,7 +9,7 @@ per-paragraph granular text diffs instead of delete-all + insert-all.
 from __future__ import annotations
 
 import xml.etree.ElementTree as ET
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from typing import Any
 
 from diff_match_patch import diff_match_patch
@@ -83,6 +83,9 @@ class ParsedContent:
     paragraph_props: list[tuple[int, int, dict[str, str]]]
     bullets: list[tuple[int, int, str, int]]
     text_styles: list[tuple[int, int, dict[str, str]]]
+    # Offsets of \n characters in plain_text that belong to page-break-only
+    # paragraphs and should be stripped (insertPageBreak provides its own \n).
+    pagebreak_newline_offsets: list[int] = field(default_factory=list)
 
 
 class ContentGenerator:
@@ -120,6 +123,11 @@ class ContentGenerator:
         # Don't delete the segment's final newline
         if ctx.segment_end > 0 and end >= ctx.segment_end:
             end = ctx.segment_end - 1
+
+        # Don't delete the newline before a Table/TOC/SectionBreak — the
+        # Google Docs API explicitly prohibits this.
+        if ctx.before_structural_element and end == node.pristine_end:
+            end = node.pristine_end - 1
 
         if start >= end:
             return []
@@ -175,6 +183,8 @@ class ContentGenerator:
         """
         requests: list[dict[str, Any]] = []
         consumed = False
+        d_start = node.pristine_start
+        d_end = node.pristine_start  # no delete by default
 
         # Delete the old content
         if node.before_xml and node.pristine_end > node.pristine_start:
@@ -182,6 +192,9 @@ class ContentGenerator:
             d_end = node.pristine_end
             if ctx.segment_end > 0 and d_end >= ctx.segment_end:
                 d_end = ctx.segment_end - 1
+            # Don't delete the newline before a Table/TOC/SectionBreak
+            if ctx.before_structural_element and d_end == node.pristine_end:
+                d_end = node.pristine_end - 1
             if d_start < d_end:
                 range_spec: dict[str, Any] = {"startIndex": d_start, "endIndex": d_end}
                 if ctx.segment_id:
@@ -199,7 +212,26 @@ class ContentGenerator:
 
             at_seg_end = ctx.segment_end > 0 and insert_idx >= ctx.segment_end - 1
             strip_for_seg_end = at_seg_end and not ctx.segment_end_consumed
-            strip_nl = ctx.followed_by_added_table or strip_for_seg_end
+            # After a delete that reaches segment_end - 1, the insert point
+            # is effectively at the segment end even though pristine indexes
+            # don't reflect it yet.
+            deletes_to_seg_end = (
+                ctx.segment_end > 0 and d_start < d_end and d_end >= ctx.segment_end - 1
+            )
+            # When the delete was clamped to preserve the \n before a
+            # structural element (table/TOC/section break), the insert must
+            # strip its own trailing \n to avoid a ghost empty paragraph.
+            clamped_before_structural = (
+                ctx.before_structural_element
+                and d_start < d_end
+                and d_end < node.pristine_end
+            )
+            strip_nl = (
+                ctx.followed_by_added_table
+                or strip_for_seg_end
+                or deletes_to_seg_end
+                or clamped_before_structural
+            )
             if strip_for_seg_end:
                 consumed = True
 
@@ -240,10 +272,28 @@ class ContentGenerator:
                 paragraph_props=parsed.paragraph_props,
                 bullets=parsed.bullets,
                 text_styles=parsed.text_styles,
+                pagebreak_newline_offsets=parsed.pagebreak_newline_offsets,
             )
 
-        if not parsed.plain_text:
+        if not parsed.plain_text and not parsed.pagebreak_newline_offsets:
             return []
+
+        pb_offsets = sorted(parsed.pagebreak_newline_offsets)
+
+        def _pb_shift(offset: int, inclusive: bool = True) -> int:
+            """Compute index shift at `offset` due to page-break-only inserts.
+
+            Each insertPageBreak adds 2 index units (PB + \\n).
+            `inclusive=True` counts PBs at offset <= val (for range starts).
+            `inclusive=False` counts PBs at offset < val (for range ends).
+            """
+            count = 0
+            for pb in pb_offsets:
+                if (inclusive and pb <= offset) or (not inclusive and pb < offset):
+                    count += 1
+                elif pb > offset:
+                    break
+            return 2 * count
 
         def make_location(index: int) -> dict[str, Any]:
             loc: dict[str, Any] = {"index": insert_index + index}
@@ -260,33 +310,40 @@ class ContentGenerator:
                 rng["segmentId"] = segment_id
             return rng
 
-        # 1. Insert plain text
-        requests.append(
-            {
-                "insertText": {
-                    "location": make_location(0),
-                    "text": parsed.plain_text,
-                }
-            }
-        )
+        def make_adjusted_range(start: int, end: int) -> dict[str, Any]:
+            """Range adjusted for page-break-only paragraph shifts."""
+            adj_start = start + _pb_shift(start, inclusive=True)
+            adj_end = end + _pb_shift(end, inclusive=False)
+            return make_range(adj_start, adj_end)
 
-        # 1.5. Clear formatting
-        text_len = utf16_len(parsed.plain_text)
-        requests.append(
-            {
-                "updateTextStyle": {
-                    "range": make_range(0, text_len),
-                    "textStyle": {
-                        "bold": False,
-                        "italic": False,
-                        "underline": False,
-                        "strikethrough": False,
-                        "baselineOffset": "NONE",
-                    },
-                    "fields": "bold,italic,underline,strikethrough,baselineOffset",
+        # 1. Insert plain text (may be empty if only page-break-only paragraphs)
+        if parsed.plain_text:
+            requests.append(
+                {
+                    "insertText": {
+                        "location": make_location(0),
+                        "text": parsed.plain_text,
+                    }
                 }
-            }
-        )
+            )
+
+            # 1.5. Clear formatting
+            text_len = utf16_len(parsed.plain_text)
+            requests.append(
+                {
+                    "updateTextStyle": {
+                        "range": make_range(0, text_len),
+                        "textStyle": {
+                            "bold": False,
+                            "italic": False,
+                            "underline": False,
+                            "strikethrough": False,
+                            "baselineOffset": "NONE",
+                        },
+                        "fields": "bold,italic,underline,strikethrough,baselineOffset",
+                    }
+                }
+            )
 
         # 2. Insert special elements (highest offset first)
         for offset, elem_type, _attrs in sorted(
@@ -306,12 +363,16 @@ class ContentGenerator:
                     }
                 )
 
+        # Use adjusted ranges for style requests when page-break-only paragraphs
+        # are present, since insertPageBreak shifts subsequent positions by +2.
+        style_range = make_adjusted_range if pb_offsets else make_range
+
         # 3. Apply paragraph styles
         for start, end, named_style in parsed.paragraph_styles:
             requests.append(
                 {
                     "updateParagraphStyle": {
-                        "range": make_range(start, end),
+                        "range": style_range(start, end),
                         "paragraphStyle": {"namedStyleType": named_style},
                         "fields": "namedStyleType",
                     }
@@ -325,7 +386,7 @@ class ContentGenerator:
                 requests.append(
                     {
                         "updateParagraphStyle": {
-                            "range": make_range(start, end),
+                            "range": style_range(start, end),
                             "paragraphStyle": para_style,
                             "fields": ",".join(para_fields),
                         }
@@ -350,7 +411,7 @@ class ContentGenerator:
                 requests.append(
                     {
                         "createParagraphBullets": {
-                            "range": make_range(group_start, group_end),
+                            "range": style_range(group_start, group_end),
                             "bulletPreset": preset,
                         }
                     }
@@ -369,7 +430,7 @@ class ContentGenerator:
                     requests.append(
                         {
                             "deleteParagraphBullets": {
-                                "range": make_range(para_start, actual_para_end),
+                                "range": style_range(para_start, actual_para_end),
                             }
                         }
                     )
@@ -381,7 +442,7 @@ class ContentGenerator:
                 requests.append(
                     {
                         "updateTextStyle": {
-                            "range": make_range(start, end),
+                            "range": style_range(start, end),
                             "textStyle": text_style,
                             "fields": ",".join(fields),
                         }
@@ -403,6 +464,7 @@ class ContentGenerator:
         paragraph_props: list[tuple[int, int, dict[str, str]]] = []
         bullets: list[tuple[int, int, str, int]] = []
         text_styles: list[tuple[int, int, dict[str, str]]] = []
+        pagebreak_only_offsets: list[int] = []
 
         current_offset = 0
 
@@ -435,6 +497,24 @@ class ContentGenerator:
                 para_text_styles = [
                     (s + tab_len, e + tab_len, st) for s, e, st in para_text_styles
                 ]
+
+            # Detect page-break-only paragraphs: no text, only a pagebreak.
+            # insertPageBreak inserts PB + \n (2 index units), so we must NOT
+            # include our own \n or paragraph_styles entry to avoid a ghost
+            # empty paragraph.
+            is_pagebreak_only = (
+                not para_text
+                and len(para_specials) == 1
+                and para_specials[0][1] == "pagebreak"
+            )
+
+            if is_pagebreak_only:
+                special_elements.extend(para_specials)
+                # Don't add to plain_text_parts, don't advance current_offset,
+                # don't create paragraph_styles entry.  Record the offset so
+                # _generate_content_insert_requests can adjust style ranges.
+                pagebreak_only_offsets.append(para_start)
+                continue
 
             plain_text_parts.append(para_text)
             special_elements.extend(para_specials)
@@ -498,6 +578,7 @@ class ContentGenerator:
             paragraph_props=paragraph_props,
             bullets=bullets,
             text_styles=text_styles,
+            pagebreak_newline_offsets=pagebreak_only_offsets,
         )
 
     def _extract_paragraph_content(

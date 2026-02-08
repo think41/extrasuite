@@ -82,11 +82,19 @@ class RequestWalker:
         ]
 
         followed_by_added_table = False
+        # Track whether a non-deleted table follows (in document order).
+        # In the backwards walk the table is processed BEFORE the content
+        # block that precedes it.
+        before_structural_element = False
 
         for child in sorted_children:
             if child.node_type == NodeType.TABLE:
                 requests.extend(self._table_gen.emit(child, ctx))
                 followed_by_added_table = child.op == ChangeOp.ADDED
+                # A non-deleted table means the preceding content block's
+                # trailing \n is the "newline before a table" that the API
+                # forbids deleting.
+                before_structural_element = child.op != ChangeOp.DELETED
 
             elif child.node_type == NodeType.CONTENT_BLOCK:
                 # Handle footnote child changes first
@@ -112,11 +120,15 @@ class RequestWalker:
                         )
 
                 ctx.followed_by_added_table = followed_by_added_table
+                ctx.before_structural_element = (
+                    before_structural_element or child.before_structural_element
+                )
                 reqs, consumed = self._content_gen.emit(child, ctx)
                 requests.extend(reqs)
                 if consumed:
                     ctx.segment_end_consumed = True
                 followed_by_added_table = False
+                before_structural_element = False
 
         return requests
 
