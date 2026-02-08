@@ -1,7 +1,7 @@
 """Tests for v2/generators/content.py."""
 
-from extradoc.v2.generators.content import ContentGenerator, _bullet_type_to_preset
-from extradoc.v2.types import ChangeNode, ChangeOp, NodeType, SegmentContext
+from extradoc.generators.content import ContentGenerator, _bullet_type_to_preset
+from extradoc.types import ChangeNode, ChangeOp, NodeType, SegmentContext
 
 
 def _make_content_node(

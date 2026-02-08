@@ -1,10 +1,10 @@
 """Tests for v2/walker.py."""
 
-from extradoc.v2.generators.content import ContentGenerator
-from extradoc.v2.generators.structural import StructuralGenerator
-from extradoc.v2.generators.table import TableGenerator
-from extradoc.v2.types import ChangeNode, ChangeOp, NodeType, SegmentType
-from extradoc.v2.walker import RequestWalker
+from extradoc.generators.content import ContentGenerator
+from extradoc.generators.structural import StructuralGenerator
+from extradoc.generators.table import TableGenerator
+from extradoc.types import ChangeNode, ChangeOp, NodeType, SegmentType
+from extradoc.walker import RequestWalker
 
 TAB_ID = "t.0"
 

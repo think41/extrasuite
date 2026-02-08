@@ -2,8 +2,8 @@
 
 import xml.etree.ElementTree as ET
 
-from extradoc.v2.generators.content import ContentGenerator
-from extradoc.v2.generators.table import (
+from extradoc.generators.content import ContentGenerator
+from extradoc.generators.table import (
     TableGenerator,
     _calculate_cell_content_length,
     _calculate_nested_table_length,
@@ -14,7 +14,7 @@ from extradoc.v2.generators.table import (
     _get_pristine_cell_length,
     _parse_table_xml,
 )
-from extradoc.v2.types import ChangeNode, ChangeOp, NodeType, SegmentContext
+from extradoc.types import ChangeNode, ChangeOp, NodeType, SegmentContext
 
 
 def _body_ctx(segment_end: int = 100) -> SegmentContext:

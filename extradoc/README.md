@@ -20,18 +20,18 @@ uvx extradoc
 
 ```bash
 # Authenticate (one-time)
-python -m extrasuite.client login
+uv run python -m extrasuite.client login
 
 # Pull a document
-python -m extradoc pull https://docs.google.com/document/d/DOCUMENT_ID/edit
+uv run python -m extradoc pull https://docs.google.com/document/d/DOCUMENT_ID/edit
 
 # Edit files locally...
 
 # Preview changes (dry run)
-python -m extradoc diff ./DOCUMENT_ID/
+uv run python -m extradoc diff ./DOCUMENT_ID/
 
 # Push changes
-python -m extradoc push ./DOCUMENT_ID/
+uv run python -m extradoc push ./DOCUMENT_ID/
 ```
 
 ## CLI Commands
@@ -41,7 +41,7 @@ python -m extradoc push ./DOCUMENT_ID/
 Download a Google Doc to local files:
 
 ```bash
-python -m extradoc pull <document_url_or_id> [output_dir]
+uv run python -m extradoc pull <document_url_or_id> [output_dir]
 
 # Options:
 #   --no-raw    Don't save raw API responses to .raw/ folder
@@ -52,7 +52,7 @@ python -m extradoc pull <document_url_or_id> [output_dir]
 Preview changes (dry run, no API calls):
 
 ```bash
-python -m extradoc diff <folder>
+uv run python -m extradoc diff <folder>
 # Output: batchUpdate JSON to stdout
 ```
 
@@ -61,10 +61,11 @@ python -m extradoc diff <folder>
 Apply changes to Google Docs:
 
 ```bash
-python -m extradoc push <folder>
+uv run python -m extradoc push <folder>
 
 # Options:
 #   -f, --force    Push despite warnings (blocks still prevent push)
+#   --verify       Re-pull after push and compare to verify correctness
 ```
 
 ## Folder Structure
@@ -73,9 +74,8 @@ After `pull`, the folder contains:
 
 ```
 <document_id>/
-  document.json           # Document metadata and structure
-  content/                # Document content in LLM-friendly format
-    ...
+  document.xml            # ExtraDoc XML (main content)
+  styles.xml              # Factorized style definitions
   .raw/
     document.json         # Raw API response
   .pristine/

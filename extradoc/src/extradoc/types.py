@@ -12,15 +12,6 @@ from enum import Enum
 # --- Enums ---
 
 
-class BlockType(Enum):
-    """Types of structural blocks in the document tree."""
-
-    PARAGRAPH = "paragraph"
-    TABLE = "table"
-    TABLE_OF_CONTENTS = "toc"
-    SECTION_BREAK = "section_break"
-
-
 class SegmentType(Enum):
     """Types of document segments (each has its own index space)."""
 
@@ -160,7 +151,6 @@ class SegmentBlock:
     children: list[StructuralBlock] = field(default_factory=list)
     start_index: int = 0
     end_index: int = 0
-    class_attr: str = "_base"
 
 
 @dataclass
@@ -178,7 +168,6 @@ class DocumentBlock:
     """Root of the block tree."""
 
     doc_id: str
-    revision: str
     tabs: list[TabBlock] = field(default_factory=list)
 
 

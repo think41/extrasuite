@@ -10,15 +10,22 @@ Instead of working with complex API responses, agents interact with clean XML fi
 
 | File | Purpose |
 |------|---------|
-| `src/extradoc/__main__.py` | CLI entry point with `pull`, `diff`, `push`, `test` commands |
+| `src/extradoc/__main__.py` | CLI entry point with `pull`, `diff`, `push` commands |
 | `src/extradoc/transport.py` | `Transport` ABC, `GoogleDocsTransport`, `LocalFileTransport` |
 | `src/extradoc/xml_converter.py` | Converts Google Docs JSON to ExtraDoc XML format |
 | `src/extradoc/desugar.py` | Transforms sugar XML back to internal representation for diffing |
-| `src/extradoc/indexer.py` | UTF-16 index calculation and validation |
+| `src/extradoc/indexer.py` | UTF-16 code unit length calculation |
 | `src/extradoc/style_factorizer.py` | Extracts and minimizes styles |
 | `src/extradoc/style_hash.py` | Deterministic style ID generation |
 | `src/extradoc/style_converter.py` | Declarative style property mappings |
-| `src/extradoc/v2/` | Diff/push engine (tree differ, code generator, push orchestration) |
+| `src/extradoc/engine.py` | Top-level diff pipeline orchestrator |
+| `src/extradoc/parser.py` | Parses XML into typed `DocumentBlock` tree |
+| `src/extradoc/block_indexer.py` | UTF-16 index calculator for block trees |
+| `src/extradoc/aligner.py` | Block alignment for tree diffing |
+| `src/extradoc/differ.py` | Tree differ producing `ChangeNode` tree |
+| `src/extradoc/walker.py` | Walks change tree to emit `batchUpdate` requests |
+| `src/extradoc/push.py` | Push orchestration (3-batch strategy) |
+| `src/extradoc/generators/` | Request generators (content, structural, table) |
 | `src/extradoc/request_generators/structural.py` | Structural request utilities (footnote/header/footer ID handling) |
 | `src/extradoc/request_generators/table.py` | Table row/column insert/delete request generation |
 
@@ -60,10 +67,7 @@ uv run python -m extradoc pull <document_url_or_id> [output_dir]
 uv run python -m extradoc diff <folder>
 
 # Apply changes to Google Docs
-uv run python -m extradoc push <folder> [-f|--force]
-
-# End-to-end test: diff -> push -> repull -> compare
-uv run python -m extradoc test <folder>
+uv run python -m extradoc push <folder> [-f|--force] [--verify]
 ```
 
 Also works via `uvx extradoc pull/diff/push`.
@@ -154,14 +158,13 @@ tests/golden/
 │ __main__.py     │────▶│ Transport        │────▶│ Google API /    │
 │ (CLI + pull)    │     │ (data fetching)  │     │ Local Files     │
 ├─────────────────┤     └──────────────────┘     └─────────────────┘
-│ v2/PushClient   │
+│ PushClient      │
 │ (diff + push)   │
 └─────────────────┘
 ```
 
 - `Transport` is an abstract base class with `get_document()`, `batch_update()`, `close()`
 - `GoogleDocsTransport` - Production: makes real API calls via httpx
-- `LocalFileTransport` - Testing: reads from local golden files
 
 ### Pull Flow
 
@@ -171,14 +174,12 @@ tests/golden/
 4. **Save raw** - Optionally save `.raw/document.json`
 5. **Pristine copy** - Create `.pristine/document.zip` for diff/push
 
-### Diff/Push Flow (v2 engine)
+### Diff/Push Flow
 
-The v2 engine in `src/extradoc/v2/` handles diff and push:
-
-1. **Parse** - `v2/parser.py` builds `DocumentBlock` trees from pristine and current XML
-2. **Diff** - `v2/differ.py` `TreeDiffer` compares trees, producing a `ChangeNode` tree
-3. **Generate** - `v2/codegen.py` walks the change tree to emit `batchUpdate` requests
-4. **Push** - `v2/push.py` `PushClient` orchestrates the 3-batch strategy:
+1. **Parse** - `parser.py` builds `DocumentBlock` trees from pristine and current XML
+2. **Diff** - `differ.py` `TreeDiffer` compares trees, producing a `ChangeNode` tree
+3. **Generate** - `walker.py` walks the change tree to emit `batchUpdate` requests
+4. **Push** - `push.py` `PushClient` orchestrates the 3-batch strategy:
    - Batch 1: createHeader/createFooter → capture real IDs
    - Batch 2: Main body + createFootnote → capture real footnote IDs
    - Batch 3: Footnote content requests (with rewritten segment IDs)

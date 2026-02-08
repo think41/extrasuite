@@ -3,14 +3,14 @@
 Usage:
     python -m extradoc pull <document_id_or_url> [output_dir]
     python -m extradoc diff <folder>
-    python -m extradoc push <folder>
-    python -m extradoc test <folder>
+    python -m extradoc push <folder> [--verify]
 """
 
 from __future__ import annotations
 
 import argparse
 import asyncio
+import difflib
 import json
 import re
 import sys
@@ -19,9 +19,8 @@ from pathlib import Path
 
 from extrasuite.client import CredentialsManager
 
-from extradoc.__main__test import run_test_workflow
+from extradoc.push import PushClient
 from extradoc.transport import GoogleDocsTransport
-from extradoc.v2.push import PushClient
 from extradoc.xml_converter import convert_document_to_xml
 
 # File and directory names
@@ -121,7 +120,7 @@ async def cmd_pull(args: argparse.Namespace) -> int:
 
 
 async def cmd_diff(args: argparse.Namespace) -> int:
-    """Show changes using v2 diff engine (dry run)."""
+    """Show changes as batchUpdate JSON (dry run)."""
     folder = Path(args.folder)
 
     if not folder.exists():
@@ -150,7 +149,7 @@ async def cmd_diff(args: argparse.Namespace) -> int:
 
 
 async def cmd_push(args: argparse.Namespace) -> int:
-    """Apply changes to Google Docs using v2 push engine."""
+    """Apply changes to Google Docs."""
     folder = Path(args.folder)
 
     if not folder.exists():
@@ -178,10 +177,14 @@ async def cmd_push(args: argparse.Namespace) -> int:
                 print(
                     f"Successfully applied {result.changes_applied} changes to document {result.document_id}"
                 )
-            return 0
         else:
             print(f"Push failed: {result.message}", file=sys.stderr)
             return 1
+
+        if args.verify and result.changes_applied > 0:
+            return await _verify_push(folder, result.document_id, transport)
+
+        return 0
 
     except Exception as e:
         print(f"Error: {e}", file=sys.stderr)
@@ -190,15 +193,58 @@ async def cmd_push(args: argparse.Namespace) -> int:
         await transport.close()
 
 
+_REVISION_RE = re.compile(r'\srevision="[^"]*"')
+
+
+def _strip_revision(text: str) -> list[str]:
+    """Strip revision attributes and normalize lines for comparison."""
+    text = _REVISION_RE.sub("", text)
+    return [ln.rstrip() for ln in text.splitlines()]
+
+
+async def _verify_push(
+    folder: Path, document_id: str, transport: GoogleDocsTransport
+) -> int:
+    """Re-pull the document and compare against the edited XML."""
+    print("\nVerifying push...")
+    after_dir = folder.parent / f"{folder.name}-verify"
+
+    try:
+        document_data = await transport.get_document(document_id)
+        after_dir.mkdir(parents=True, exist_ok=True)
+        document_xml, _ = convert_document_to_xml(document_data.raw)
+        actual_path = after_dir / DOCUMENT_XML
+        actual_path.write_text(document_xml, encoding="utf-8")
+    except Exception as e:
+        print(f"Verify failed (re-pull error): {e}", file=sys.stderr)
+        return 1
+
+    expected = (folder / DOCUMENT_XML).read_text(encoding="utf-8")
+    actual = actual_path.read_text(encoding="utf-8")
+
+    exp_lines = _strip_revision(expected)
+    act_lines = _strip_revision(actual)
+
+    if exp_lines == act_lines:
+        print("Verify OK: repull matches edited document (ignoring revision).")
+        return 0
+
+    diff = "\n".join(
+        difflib.unified_diff(
+            exp_lines,
+            act_lines,
+            fromfile="edited",
+            tofile="repulled",
+            lineterm="",
+        )
+    )
+    print("Verify MISMATCH: repull differs from edited version.", file=sys.stderr)
+    print(diff, file=sys.stderr)
+    return 1
+
+
 def main() -> int:
     """Main entry point."""
-    # Fast path to avoid subparser clashes when invoking `python -m extradoc test <folder>`
-    if len(sys.argv) > 1 and sys.argv[1] == "test":
-        if len(sys.argv) < 3:
-            print("Usage: python -m extradoc test <folder>", file=sys.stderr)
-            return 1
-        return run_test_workflow(Path(sys.argv[2]))
-
     parser = argparse.ArgumentParser(
         prog="extradoc",
         description="Transform Google Docs to LLM-friendly XML format",
@@ -253,9 +299,12 @@ def main() -> int:
         action="store_true",
         help="Force push despite warnings (blocks still prevent push)",
     )
+    push_parser.add_argument(
+        "--verify",
+        action="store_true",
+        help="After push, re-pull and compare to verify correctness",
+    )
     push_parser.set_defaults(func=cmd_push)
-
-    # Note: test command handled via fast path above to avoid duplicate subparser registration
 
     args = parser.parse_args()
     result: int = asyncio.run(args.func(args))

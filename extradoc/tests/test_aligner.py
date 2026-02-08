@@ -1,7 +1,7 @@
 """Tests for v2/aligner.py."""
 
-from extradoc.v2.aligner import BlockAligner
-from extradoc.v2.types import (
+from extradoc.aligner import BlockAligner
+from extradoc.types import (
     AlignedPair,
     ParagraphBlock,
     TableBlock,

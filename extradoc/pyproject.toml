@@ -69,10 +69,6 @@ ignore = [
     "E501",   # line too long (handled by formatter)
 ]
 
-[tool.ruff.lint.per-file-ignores]
-# transport.py uses Path at runtime in LocalFileTransport
-"src/extradoc/transport.py" = ["TCH003"]
-
 [tool.ruff.lint.isort]
 known-first-party = ["extradoc"]
 

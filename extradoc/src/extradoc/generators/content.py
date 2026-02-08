@@ -12,8 +12,6 @@ import xml.etree.ElementTree as ET
 from dataclasses import dataclass, field
 from typing import Any
 
-from diff_match_patch import diff_match_patch
-
 from extradoc.indexer import utf16_len
 from extradoc.style_converter import (
     PARAGRAPH_STYLE_PROPS,
@@ -93,7 +91,6 @@ class ContentGenerator:
 
     def __init__(self, style_defs: dict[str, dict[str, str]] | None = None) -> None:
         self._style_defs = style_defs
-        self._dmp = diff_match_patch()
 
     def emit(
         self, node: ChangeNode, ctx: SegmentContext
@@ -346,12 +343,6 @@ class ContentGenerator:
             if segment_id:
                 rng["segmentId"] = segment_id
             return rng
-
-        def make_adjusted_range(start: int, end: int) -> dict[str, Any]:
-            """Range adjusted for page-break-only paragraph shifts."""
-            adj_start = start + _pb_shift(start, inclusive=True)
-            adj_end = end + _pb_shift(end, inclusive=False)
-            return make_range(adj_start, adj_end)
 
         # 1. Insert plain text (may be empty if only page-break-only paragraphs)
         if parsed.plain_text:

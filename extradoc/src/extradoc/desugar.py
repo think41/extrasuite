@@ -75,9 +75,6 @@ class Paragraph:
 class SpecialElement:
     """A special element (hr, pagebreak, image, etc.)."""
 
-    element_type: str
-    attributes: dict[str, str] = field(default_factory=dict)
-
     def utf16_length(self) -> int:
         return 1
 
@@ -255,11 +252,7 @@ def _process_element(
             if content and isinstance(content[-1], Paragraph):
                 content[-1].runs.extend(runs)
             else:
-                content.append(
-                    SpecialElement(
-                        element_type="columnbreak", attributes=dict(runs[0].styles)
-                    )
-                )
+                content.append(SpecialElement())
             return
 
         para = Paragraph(named_style="NORMAL_TEXT")
@@ -302,7 +295,7 @@ def _process_element(
         "equation",
     ):
         # These should normally be inside paragraphs, but handle them if standalone
-        special = SpecialElement(element_type=tag, attributes=dict(elem.attrib))
+        special = SpecialElement()
         content.append(special)
         return
 

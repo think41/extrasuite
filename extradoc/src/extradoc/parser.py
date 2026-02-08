@@ -43,7 +43,6 @@ class BlockParser:
 
         doc = DocumentBlock(
             doc_id=root.get("id", ""),
-            revision=root.get("revision", ""),
         )
 
         # Parse tabs
@@ -95,7 +94,6 @@ class BlockParser:
         segment = SegmentBlock(
             segment_type=segment_type,
             segment_id=segment_id,
-            class_attr=elem.get("class", "_base"),
         )
         segment.children = self._parse_structural_elements(elem)
         return segment

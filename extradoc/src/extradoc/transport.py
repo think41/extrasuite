@@ -2,16 +2,13 @@
 
 Defines the Transport protocol and implementations:
 - GoogleDocsTransport: Production transport using Google Docs API
-- LocalFileTransport: Test transport reading from local golden files
 """
 
 from __future__ import annotations
 
-import json
 import ssl
 from abc import ABC, abstractmethod
 from dataclasses import dataclass
-from pathlib import Path
 from typing import Any
 
 import certifi
@@ -186,51 +183,3 @@ class GoogleDocsTransport(Transport):
     async def close(self) -> None:
         """Close the HTTP client."""
         await self._client.aclose()
-
-
-class LocalFileTransport(Transport):
-    """Test transport that reads from local golden files.
-
-    Supports two directory structures:
-    1. Directory format: golden_dir/<document_id>/document.json
-    2. Flat file format: golden_dir/<document_id>.json
-    """
-
-    def __init__(self, golden_dir: Path) -> None:
-        """Initialize the transport.
-
-        Args:
-            golden_dir: Directory containing golden test files
-        """
-        self._golden_dir = golden_dir
-
-    async def get_document(self, document_id: str) -> DocumentData:
-        """Read document from local file."""
-        # Try directory format first
-        dir_path = self._golden_dir / document_id / "document.json"
-        if dir_path.exists():
-            path = dir_path
-        else:
-            # Fall back to flat file format
-            path = self._golden_dir / f"{document_id}.json"
-
-        response = json.loads(path.read_text())
-
-        return DocumentData(
-            document_id=response.get("documentId", document_id),
-            title=response.get("title", ""),
-            raw=response,
-        )
-
-    async def batch_update(
-        self, document_id: str, requests: list[dict[str, Any]]
-    ) -> dict[str, Any]:
-        """Mock batch_update for testing - returns empty replies."""
-        return {
-            "documentId": document_id,
-            "replies": [{} for _ in requests],
-        }
-
-    async def close(self) -> None:
-        """No-op for local file transport."""
-        pass

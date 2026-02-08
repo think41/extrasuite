@@ -13,11 +13,11 @@ import xml.etree.ElementTree as ET
 from typing import TYPE_CHECKING, Any
 
 from .aligner import BlockAligner
+from .block_indexer import BlockIndexer
 from .differ import TreeDiffer
 from .generators.content import ContentGenerator
 from .generators.structural import StructuralGenerator
 from .generators.table import TableGenerator
-from .indexer import BlockIndexer
 from .parser import BlockParser
 from .walker import RequestWalker
 

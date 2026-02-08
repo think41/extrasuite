@@ -14,29 +14,6 @@ from __future__ import annotations
 
 from typing import Any
 
-# Request types that create structural elements and need separate handling
-STRUCTURAL_REQUEST_TYPES: frozenset[str] = frozenset(
-    {
-        # Header/footer
-        "createHeader",
-        "createFooter",
-        "deleteHeader",
-        "deleteFooter",
-        # Tabs
-        "addDocumentTab",
-        "deleteTab",
-        # Footnotes
-        "createFootnote",
-        "deleteFootnoteReference",
-        # Tables
-        "insertTable",
-        "insertTableRow",
-        "insertTableColumn",
-        "deleteTableRow",
-        "deleteTableColumn",
-    }
-)
-
 
 def has_segment_id(obj: Any, target_ids: set[str]) -> bool:
     """Check if an object contains any of the target segment IDs.

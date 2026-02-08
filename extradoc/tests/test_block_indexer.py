@@ -1,8 +1,8 @@
 """Tests for v2/indexer.py."""
 
-from extradoc.v2.indexer import BlockIndexer
-from extradoc.v2.parser import BlockParser
-from extradoc.v2.types import ParagraphBlock, SegmentType, TableBlock
+from extradoc.block_indexer import BlockIndexer
+from extradoc.parser import BlockParser
+from extradoc.types import ParagraphBlock, SegmentType, TableBlock
 
 
 def _parse_and_index(body_content: str) -> list:

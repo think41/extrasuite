@@ -1,9 +1,9 @@
 """Tests for v2/differ.py."""
 
-from extradoc.v2.differ import TreeDiffer
-from extradoc.v2.indexer import BlockIndexer
-from extradoc.v2.parser import BlockParser
-from extradoc.v2.types import ChangeOp, NodeType, SegmentType
+from extradoc.block_indexer import BlockIndexer
+from extradoc.differ import TreeDiffer
+from extradoc.parser import BlockParser
+from extradoc.types import ChangeOp, NodeType, SegmentType
 
 
 def _make_doc(

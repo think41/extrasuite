@@ -3,8 +3,8 @@
 Tests the full pipeline: pristine XML + current XML → request list.
 """
 
-from extradoc.v2.engine import DiffEngine
-from extradoc.v2.types import NodeType
+from extradoc.engine import DiffEngine
+from extradoc.types import NodeType
 
 
 def _make_doc(body_content: str, headers: str = "", footers: str = "") -> str:
@@ -193,7 +193,6 @@ class TestDiffEngine:
         cell_mods_before = [
             i for i, t in enumerate(rt) if t in cell_mod_types and i < delete_row_idx
         ]
-        assert len(cell_mods_before) >= 2, (
-            f"Expected cell mod requests before deleteTableRow, "
-            f"got request order: {rt}"
-        )
+        assert (
+            len(cell_mods_before) >= 2
+        ), f"Expected cell mod requests before deleteTableRow, got request order: {rt}"

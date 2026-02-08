@@ -1,7 +1,7 @@
 """Tests for v2/generators/structural.py."""
 
-from extradoc.v2.generators.structural import StructuralGenerator
-from extradoc.v2.types import ChangeNode, ChangeOp, NodeType, SegmentType
+from extradoc.generators.structural import StructuralGenerator
+from extradoc.types import ChangeNode, ChangeOp, NodeType, SegmentType
 
 TAB_ID = "t.0"
 

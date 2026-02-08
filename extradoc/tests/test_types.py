@@ -1,6 +1,6 @@
 """Tests for v2/types.py."""
 
-from extradoc.v2.types import (
+from extradoc.types import (
     AlignedPair,
     ChangeNode,
     ChangeOp,
@@ -52,7 +52,7 @@ def test_change_node_defaults():
 
 
 def test_document_block_structure():
-    doc = DocumentBlock(doc_id="doc1", revision="rev1")
+    doc = DocumentBlock(doc_id="doc1")
     tab = TabBlock(tab_id="t.0", title="Tab 1")
     seg = SegmentBlock(segment_type=SegmentType.BODY, segment_id="body")
     tab.segments.append(seg)

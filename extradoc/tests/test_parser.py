@@ -1,7 +1,7 @@
 """Tests for v2/parser.py."""
 
-from extradoc.v2.parser import BlockParser
-from extradoc.v2.types import (
+from extradoc.parser import BlockParser
+from extradoc.types import (
     ParagraphBlock,
     SegmentType,
     TableBlock,
@@ -21,7 +21,6 @@ class TestBlockParser:
         parser = BlockParser()
         doc = parser.parse(xml)
         assert doc.doc_id == "test-id"
-        assert doc.revision == "rev1"
         assert len(doc.tabs) == 1
         assert doc.tabs[0].tab_id == "t.0"
         assert len(doc.tabs[0].segments) == 1
