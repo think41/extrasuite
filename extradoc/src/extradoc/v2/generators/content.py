@@ -489,25 +489,32 @@ class ContentGenerator:
                 }
             )
 
-        # 3.5 Apply paragraph properties
-        for start, end, props in parsed.paragraph_props:
-            para_style, para_fields = convert_styles(props, PARAGRAPH_STYLE_PROPS)
-            if para_style and para_fields:
-                requests.append(
-                    {
-                        "updateParagraphStyle": {
-                            "range": style_range(start, end),
-                            "paragraphStyle": para_style,
-                            "fields": ",".join(para_fields),
+        # 3.5 Delete existing bullets for non-bullet paragraphs.
+        #     MUST run BEFORE paragraph style overrides (step 4), because
+        #     deleteParagraphBullets clears indentStart/indentFirstLine
+        #     as a side effect.
+        if delete_existing_bullets:
+            bullet_ranges = {(s, e) for s, e, _, _ in parsed.bullets}
+            for para_start, para_end, _named_style in parsed.paragraph_styles:
+                if (para_start, para_end) not in bullet_ranges:
+                    actual_para_end = para_end
+                    if strip_trailing_newline:
+                        text_len_check = utf16_len(parsed.plain_text)
+                        if para_end > text_len_check:
+                            actual_para_end = text_len_check + 1
+                    requests.append(
+                        {
+                            "deleteParagraphBullets": {
+                                "range": style_range(para_start, actual_para_end),
+                            }
                         }
-                    }
-                )
+                    )
 
-        # 4. Apply bullets — merge ALL consecutive bullet paragraphs into a
-        #    single group per contiguous run.  Using separate
-        #    createParagraphBullets calls with different presets on adjacent
-        #    ranges causes the Google Docs API to merge them into one list
-        #    and potentially capture following non-bullet paragraphs.
+        # 3.6 Apply bullets — merge ALL consecutive bullet paragraphs into a
+        #     single group per contiguous run.  Using separate
+        #     createParagraphBullets calls with different presets on adjacent
+        #     ranges causes the Google Docs API to merge them into one list
+        #     and potentially capture following non-bullet paragraphs.
         if parsed.bullets:
             bullet_groups: list[tuple[int, int, str]] = []
             for start, end, bullet_type, _level in parsed.bullets:
@@ -532,23 +539,20 @@ class ContentGenerator:
                     }
                 )
 
-        # 4.5 Delete existing bullets for non-bullet paragraphs
-        if delete_existing_bullets:
-            bullet_ranges = {(s, e) for s, e, _, _ in parsed.bullets}
-            for para_start, para_end, _named_style in parsed.paragraph_styles:
-                if (para_start, para_end) not in bullet_ranges:
-                    actual_para_end = para_end
-                    if strip_trailing_newline:
-                        text_len_check = utf16_len(parsed.plain_text)
-                        if para_end > text_len_check:
-                            actual_para_end = text_len_check + 1
-                    requests.append(
-                        {
-                            "deleteParagraphBullets": {
-                                "range": style_range(para_start, actual_para_end),
-                            }
+        # 4. Apply paragraph properties — AFTER deleteParagraphBullets so
+        #    that indentStart/indentFirstLine are not cleared.
+        for start, end, props in parsed.paragraph_props:
+            para_style, para_fields = convert_styles(props, PARAGRAPH_STYLE_PROPS)
+            if para_style and para_fields:
+                requests.append(
+                    {
+                        "updateParagraphStyle": {
+                            "range": style_range(start, end),
+                            "paragraphStyle": para_style,
+                            "fields": ",".join(para_fields),
                         }
-                    )
+                    }
+                )
 
         # 5. Apply text styles
         for start, end, styles in parsed.text_styles:
