@@ -1,125 +1,130 @@
-# ExtraDoc Implementation Gaps
+# ExtraDoc v2 — Known Bugs & Root Cause Analysis
 
-This document tracks bugs, limitations, and implementation gaps discovered during testing.
-
-**Last Updated:** 2026-02-07
+**Last Updated:** 2026-02-08
+**Test Method:** Created a comprehensive 21-section showcase document exercising all features, pushed via v2, re-pulled, and compared.
 
 ---
 
 ## Critical Bugs
 
-### Massive Content Scrambling During Wholesale Rewrite
+### 1. Paragraph-Level Styles Bleed to Neighboring Paragraphs
 
-**Status:** Open
-**Discovered:** 2026-02-07
+**Severity:** Critical — affects alignment, lineSpacing, spacing, indentation
+**Symptoms:** After push, paragraphs that should be left-aligned show as right-aligned or centered. `spaceAbove`/`spaceBelow` values from one paragraph appear on unrelated paragraphs throughout the document.
 
-When making major structural changes (replacing entire body with completely different content), the diff algorithm produces severely disordered output. Paragraphs, bullet points, and sections are mixed up and placed at wrong locations throughout the document. Push reports success (214 requests applied) but the resulting document is garbled.
+**Root Cause (Push):** When multiple content blocks are inserted at the same position (e.g., index 1 for a nearly empty document), `insertText` inherits paragraph styles from existing text at the insertion point. The v2 engine correctly generates `updateParagraphStyle` requests with proper ranges *within* each content block, but:
 
-**Reproduction:**
-1. Pull a document with a full resume (headings, paragraphs, bullet lists)
-2. Replace entire body with a completely different person's resume in a different format (different headings, different structure, tables added, different list types)
-3. Push succeeds, but re-pull reveals content scrambled
+1. Content block A inserts text at index 1 and sets `alignment: END` on its range.
+2. Content block B then inserts text at the same base index. The new text *inherits* `alignment: END` from content block A's paragraph at the insertion point.
+3. Content block B's `updateParagraphStyle` with `namedStyleType: NORMAL_TEXT` does NOT clear explicitly-set properties like `alignment` — Google Docs treats named styles and explicit properties as separate layers.
 
-**Specific symptoms observed:**
-- Title/subtitle placed near bottom of document instead of top
-- Heading text split across two elements (`<h1>E</h1>` and `<h1>xperience</h1>` from `<h1>Experience</h1>`)
-- Job descriptions mixed between wrong employer headings
-- Awards section content scattered into Experience section
-- Numbered list items from one section appearing under unrelated headings
+This causes a cascading bleed: paragraph properties from earlier content blocks contaminate all subsequent content blocks inserted at the same or adjacent positions.
 
-**Root Cause:** The LCS-based diff alignment produces incorrect paragraph mappings when nearly every paragraph changes. The backwards walk invariant may break when there are many overlapping add/delete operations from a poor diff match.
+**Evidence:** Raw API response (`document.json`) after push showed `alignment: END` on paragraphs that should have been `alignment: START`, and `spaceBelow: {magnitude: 12}` on paragraphs that never requested spacing.
 
-**Workaround:** For major rewrites, perform in two steps:
-1. Delete all content, push
-2. Pull fresh, add new content, push
+**Root Cause (Pull):** `xml_converter.py` does not extract paragraph-level properties (alignment, lineSpacing, spaceAbove, etc.) from the API response back into XML `class` attributes. The `style_factorizer.py` module HAS extraction code for these properties (lines 133-137), but `xml_converter.py` doesn't use it for paragraph-level style factorization. This means even if styles were correctly applied, they wouldn't survive a pull round-trip.
+
+**Files:**
+- `v2/generators/content.py:370-395` — generates `updateParagraphStyle` requests
+- `xml_converter.py` — missing paragraph-level style extraction on pull
+
+---
+
+### 2. `<style>` Wrapper Element Has No Effect
+
+**Severity:** Critical — documented feature doesn't work at all
+**Symptoms:** `<style class="code"><p>line1</p><p>line2</p></style>` applies no styling to the wrapped paragraphs.
+
+**Root Cause:** In `v2/parser.py` lines 105-111, when the parser encounters a `<style>` wrapper element, it iterates over children and parses each as an individual `ParagraphBlock` via `self._parse_paragraph(styled_child)`. However, the wrapper's `class` attribute is **never transferred** to the children:
+
+```python
+elif tag == "style":
+    for styled_child in child:
+        if styled_child.tag in PARAGRAPH_TAGS:
+            blocks.append(self._parse_paragraph(styled_child))  # class NOT passed
+```
+
+Each child paragraph is serialized without the wrapper's class, so the class information is permanently lost during parsing. The child paragraphs end up with no style applied.
+
+**File:** `v2/parser.py:105-111`
 
 ---
 
 ## Major Bugs
 
-### Paragraph Order Swapped Near Headings
+### 3. New Tables Missing Cell Styles
 
-**Status:** Open
-**Discovered:** 2026-02-07
+**Severity:** Major — cell background, padding, borders, vertical alignment all absent on new tables
+**Symptoms:** A newly created table with `<td class="cell-hdr">` has no background color, no custom padding, no border styling.
 
-When inserting content into an empty document, paragraphs adjacent to headings can appear in the wrong order. Specifically, a `<p>` written immediately after an `<h1>` appeared before the `<h1>` after push+pull.
+**Root Cause:** In `v2/generators/table.py`, the `_add_table()` method (line 67) creates the table structure and populates cell content, but **never calls `_generate_cell_style_request()`**. Cell style generation only exists in `_phase_cell_mods_and_row_inserts()` (line 342-352), which is only invoked for MODIFIED tables via `_modify_table()`.
 
-**Reproduction:**
-1. Start with an empty document (body contains only `<p></p>`)
-2. Write `<h1>SARAH CHEN</h1>` followed by `<p><b>Senior Software Engineer</b></p>`
-3. Push, then pull
-4. The `<p>Senior Software Engineer</p>` appears BEFORE `<h1>SARAH CHEN</h1>`
+**File:** `v2/generators/table.py:67-142` — `_add_table()` missing cell style requests
 
 ---
 
-### Tab Creation Silently Fails
+### 4. New Tables Missing Column Widths
 
-**Status:** Open
-**Discovered:** 2026-02-07
+**Severity:** Major — `colwidths` attribute ignored on new tables
+**Symptoms:** A table with `colwidths="30,70"` has equal-width columns after push.
 
-Adding a `<tab>` element with content to the document XML results in the tab being completely absent after push. No error is reported during push — all requests are reported as "successfully applied" — but the tab and its content are simply lost.
+**Root Cause:** `_phase_column_widths()` is only called from `_modify_table()` (line 182). The `_add_table()` method has no column width handling at all.
 
-**Reproduction:**
-1. Pull a single-tab document
-2. Add `<tab id="t.cover" title="Cover Letter" class="_base"><body>...content...</body></tab>`
-3. Push (reports success, e.g., "177 changes applied")
-4. Pull — the tab is completely missing
+**File:** `v2/generators/table.py:67-142` — `_add_table()` missing column width requests
 
 ---
 
-### Table Column Operations Fail
+### 5. Footnotes Placed at End of Document
 
-**Status:** Open
-**Discovered:** 2026-02-07
+**Severity:** Major — footnotes are created but at the wrong position
+**Symptoms:** A `<footnote>` referenced inline within a paragraph appears at the bottom of the document body, not at the inline reference point.
 
-Changing the number of columns in an existing table fails with API error:
-```
-Invalid requests[33].insertTableColumn: Invalid table start location.
-Must specify the start index of the table.
-```
+**Root Cause:** In `v2/generators/structural.py` line 74, added footnotes use `{"createFootnote": {"endOfSegmentLocation": {}}}` which places the footnote reference at the end of the document body instead of at the specific inline position where the `<footnote>` tag appears in the XML. Additionally, after creating the footnote, its content is not populated.
 
-**Workaround:** Delete the entire table and create a new one with the desired column count in two separate push operations.
+**File:** `v2/generators/structural.py:74` — uses `endOfSegmentLocation` instead of inline index
 
 ---
 
-### Phantom Empty Elements After Push
+### 6. Merged Cells (colspan/rowspan) Not Applied
 
-**Status:** Open
-**Discovered:** 2026-02-07
+**Severity:** Major — tables always render as regular grids
+**Symptoms:** A `<td colspan="2">` cell is not merged — the table shows individual cells.
 
-After a push operation, re-pulling the document reveals empty elements that were not in the source XML (empty headings `<h2></h2>`, empty list items). May be related to index calculation errors leaving orphan newlines, or request ordering issues creating empty paragraphs that inherit styles.
+**Root Cause:** The `_add_table()` method creates tables via `insertTable` which always creates a regular grid. There is no code anywhere in `table.py` to generate `mergeTableCells` requests for cells with `colspan` or `rowspan` attributes. The Google Docs API does support `MergeTableCellsRequest`, but it is never invoked.
 
-**Workaround:** Manually delete empty elements after push, or ignore them if they don't affect document appearance.
-
----
-
-### Base Font Style Changes Not Applied
-
-**Status:** Open
-**Discovered:** 2026-02-07
-
-Changing the `font` attribute in the `_base` style in `styles.xml` does not affect the pushed document. The document retains its original font.
-
-**Workaround:** Apply font changes via explicit `class` attributes on individual elements rather than via `_base`.
+**File:** `v2/generators/table.py` — no `mergeTableCells` API calls
 
 ---
 
-### Decimal Lists Converted to Bullet Lists
+### 7. Page Break Inherits Wrong Paragraph Style
 
-**Status:** Open
-**Discovered:** 2026-02-07
+**Severity:** Major — page breaks create paragraphs with wrong heading level
+**Symptoms:** A `<pagebreak/>` between content inherits `HEADING_1` style from the preceding heading, creating a visible heading-styled empty paragraph.
 
-Some items written as `type="decimal"` round-trip as `type="bullet"` after push+pull. Observed in the Awards section during the wholesale rewrite test. May be a symptom of the content scrambling bug rather than an independent issue.
+**Root Cause:** In `v2/generators/content.py` lines 505-517, page-break-only paragraphs skip the `paragraph_styles.append(...)` call (they `continue` without setting `namedStyleType`). The `insertPageBreak` API call creates a new paragraph that inherits the named style from the text at the insertion point. If the preceding paragraph is a heading, the page break paragraph becomes a heading too.
+
+**File:** `v2/generators/content.py:505-517` — page-break-only paragraphs skip namedStyleType
+
+---
+
+### 8. Mixed List Types Break Adjacent Content
+
+**Severity:** Major — headings after mixed lists get absorbed into the list
+**Symptoms:** A heading `<h2>` immediately after a list with mixed types (decimal at level 0, alpha at level 1) becomes a list item instead of a heading.
+
+**Root Cause:** `createParagraphBullets` applies a bullet preset to a character range. When different presets are applied to adjacent paragraphs (e.g., decimal at level 0 followed by alpha at level 1), the Google Docs API may merge them into a single list, overriding the intended type differentiation. The range of the last `createParagraphBullets` request can extend past the list items and capture the following heading paragraph.
+
+**Files:** `v2/generators/content.py` — `createParagraphBullets` range calculation
 
 ---
 
 ## API Limitations (Cannot Fix)
 
-### Checkbox Lists Do Not Work
+### 9. Checkbox Lists Create Regular Bullets
 
-`type="checkbox"` list items become regular bullet items instead of checkboxes. The `BULLET_CHECKBOX` preset is accepted by the API but creates lists with `glyphType: "GLYPH_TYPE_UNSPECIFIED"`. Real checkboxes use a different internal mechanism not exposed via the API.
+`type="checkbox"` list items become regular bullet items. The `BULLET_CHECKBOX` preset is accepted by the API but creates lists with `glyphType: GLYPH_TYPE_UNSPECIFIED`. Real checkboxes use a different internal mechanism not exposed via the Docs API.
 
-**Workaround:** Use Unicode checkbox symbols manually (☐ ☑ ☒) in text content.
+**Workaround:** Use Unicode checkbox symbols manually (`☐ ☑ ☒`) in text content.
 
 ---
 
@@ -127,84 +132,32 @@ Some items written as `type="decimal"` round-trip as `type="bullet"` after push+
 
 | Feature | Notes |
 |---------|-------|
-| Checkbox lists | API limitation — BULLET_CHECKBOX preset doesn't create real checkboxes |
 | Autotext (page numbers) | API doesn't support insertion |
 | Images | Requires separate Drive upload flow |
 | Person mentions | Requires verified email + special API |
 | Horizontal rules | Read-only — cannot add/remove via API |
+| Tab creation | `addDocumentTab` exists but content population not implemented |
 
 ---
 
-## Partially Working Features
+## Features Working Correctly
 
-| Feature | Status | Notes |
-|---------|--------|-------|
-| Footnotes (push) | Needs testing | Code exists, needs end-to-end verification |
-| `<style>` wrapper element | Needs testing | For applying class to multiple consecutive elements |
-| Column breaks | Needs testing | `<columnbreak/>` element |
+The following features were verified as working correctly through the round-trip test:
 
----
-
-## Observations
-
-| Observation | Details |
-|------------|---------|
-| Bold/italic text gets wrapped in span+class on round-trip | `<b>text</b>` round-trips as `<span class="JF4QL"><b>text</b></span>`. Style factorizer creates classes for bold/italic properties. Not a functional bug but makes the XML noisier. |
-| Quotes get XML-escaped on round-trip | `"text"` becomes `&quot;text&quot;`, apostrophes become `&#x27;`. Standard XML behavior. |
-| Tables gain IDs and cell classes on round-trip | After push, table elements get Google-assigned IDs and cell classes. Expected behavior. |
-
----
-
-## Fixed Bugs
-
-### Fixed: Table Delete Fails with `KeyError: 'startIndex'`
-
-`_generate_table_delete_requests()` tried to access `table_info["startIndex"]`, but `_parse_table_xml()` only returns `{"rows", "cols", "id"}`. Fixed to look up the table start index from `pristine_table_indexes`.
-
-### Fixed: Index Calculation Error When Modifying and Adding Content
-
-Insert indexes weren't adjusted to account for document shrinkage caused by preceding deletes. Fixed by adding index adjustment logic after reordering.
-
-### Fixed: Content Merging (Missing Newlines)
-
-When multiple content blocks were inserted at the same position, all stripped trailing newlines because they all detected themselves as "at segment end". Fixed with `segment_end_consumed` flag tracking.
-
-### Fixed: Bullets Not Being Removed
-
-Converting from `<li>` to `<p>` left bullet formatting. Fixed by generating `deleteParagraphBullets` requests for non-bullet paragraphs.
-
-### Fixed: Table Content Destroyed During Body Edits
-
-Adding content to a body containing tables destroyed table structure. Fixed by skipping merged approach when tables are present.
-
-### Fixed: Table Content Not Inserted Into Cells
-
-New tables were created empty. Fixed with two-phase approach: insert table structure, then populate cells.
-
-### Fixed: Custom Styles Not Applied on Push
-
-`class` attributes on paragraphs weren't resolved to style properties. Fixed by adding class attribute resolution in paragraph parsing.
-
-### Fixed: Invalid Bullet Presets for Alpha/Roman Lists
-
-Updated `alpha` to `NUMBERED_UPPERALPHA_ALPHA_ROMAN` and `roman` to `NUMBERED_UPPERROMAN_UPPERALPHA_DECIMAL`.
-
-### Fixed: Request Ordering Issues (Page Break)
-
-`insertPageBreak` requests were reordered before text content. Fixed with `_skipReorder` marker.
-
-### Fixed: Header/Footer Creation Fails
-
-Headers/footers with new IDs detected as ADDED instead of MODIFIED. Fixed by matching headers/footers by type only.
-
-### Fixed: Base Style Corruption on Pull
-
-`_base` style was computed from most frequent text properties instead of `NORMAL_TEXT` named style. Fixed to extract from `namedStyles.NORMAL_TEXT`.
-
-### Fixed: List Items Merged With Headings
-
-Could not reproduce on 2026-02-06. Marking as resolved pending further reports.
-
-### Fixed: Nested List Levels Incorrect
-
-Could not reproduce on 2026-02-06. All nesting levels preserved correctly after push/pull cycle.
+| Feature | Notes |
+|---------|-------|
+| Headings (h1-h6, title, subtitle) | All 8 heading types round-trip correctly |
+| Basic paragraphs | Content preserved exactly |
+| Bold, italic, underline, strikethrough | All inline formatting works |
+| Superscript, subscript | Works correctly |
+| Hyperlinks | URL and display text preserved |
+| Text colors and backgrounds | All color/highlight styles applied |
+| Font changes (family, size) | Custom fonts like Georgia, Courier New work |
+| Simple bullet lists | Single-level bullets work |
+| Simple numbered lists (decimal) | Single-type numbered lists work |
+| Nested lists (same type) | Nesting via tab indentation works |
+| Basic tables (no special styling) | Content in cells preserved |
+| Multi-paragraph table cells | Multiple `<p>` in a `<td>` works |
+| Headers and footers | Content in header/footer segments works |
+| Named styles on text spans | `class` attributes on `<span>` apply text styles |
+| Unicode and special characters | Emoji, accented chars, symbols all preserved |
