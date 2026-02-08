@@ -3,6 +3,8 @@
 from extradoc.v2.generators.structural import StructuralGenerator
 from extradoc.v2.types import ChangeNode, ChangeOp, NodeType, SegmentType
 
+TAB_ID = "t.0"
+
 
 class TestHeaderFooter:
     def test_add_header(self):
@@ -13,10 +15,11 @@ class TestHeaderFooter:
             segment_type=SegmentType.HEADER,
             segment_id="hdr1",
         )
-        reqs = gen.emit_header_footer(node)
+        reqs = gen.emit_header_footer(node, tab_id=TAB_ID)
         assert len(reqs) == 1
         assert "createHeader" in reqs[0]
         assert reqs[0]["createHeader"]["type"] == "DEFAULT"
+        assert reqs[0]["createHeader"]["sectionBreakLocation"]["tabId"] == TAB_ID
 
     def test_add_footer(self):
         gen = StructuralGenerator()
@@ -26,9 +29,10 @@ class TestHeaderFooter:
             segment_type=SegmentType.FOOTER,
             segment_id="ftr1",
         )
-        reqs = gen.emit_header_footer(node)
+        reqs = gen.emit_header_footer(node, tab_id=TAB_ID)
         assert len(reqs) == 1
         assert "createFooter" in reqs[0]
+        assert reqs[0]["createFooter"]["sectionBreakLocation"]["tabId"] == TAB_ID
 
     def test_delete_header(self):
         gen = StructuralGenerator()
@@ -39,10 +43,11 @@ class TestHeaderFooter:
             segment_id="hdr1",
             node_id="hdr1",
         )
-        reqs = gen.emit_header_footer(node)
+        reqs = gen.emit_header_footer(node, tab_id=TAB_ID)
         assert len(reqs) == 1
         assert "deleteHeader" in reqs[0]
         assert reqs[0]["deleteHeader"]["headerId"] == "hdr1"
+        assert reqs[0]["deleteHeader"]["tabId"] == TAB_ID
 
     def test_delete_footer(self):
         gen = StructuralGenerator()
@@ -53,10 +58,11 @@ class TestHeaderFooter:
             segment_id="ftr1",
             node_id="ftr1",
         )
-        reqs = gen.emit_header_footer(node)
+        reqs = gen.emit_header_footer(node, tab_id=TAB_ID)
         assert len(reqs) == 1
         assert "deleteFooter" in reqs[0]
         assert reqs[0]["deleteFooter"]["footerId"] == "ftr1"
+        assert reqs[0]["deleteFooter"]["tabId"] == TAB_ID
 
     def test_unchanged_produces_nothing(self):
         gen = StructuralGenerator()
@@ -65,7 +71,7 @@ class TestHeaderFooter:
             op=ChangeOp.UNCHANGED,
             segment_type=SegmentType.HEADER,
         )
-        reqs = gen.emit_header_footer(node)
+        reqs = gen.emit_header_footer(node, tab_id=TAB_ID)
         assert reqs == []
 
 
@@ -106,9 +112,10 @@ class TestFootnote:
             segment_id="fn1",
             node_id="fn1",
         )
-        reqs = gen.emit_footnote(node)
+        reqs = gen.emit_footnote(node, tab_id=TAB_ID)
         assert len(reqs) == 1
         assert "createFootnote" in reqs[0]
+        assert reqs[0]["createFootnote"]["endOfSegmentLocation"]["tabId"] == TAB_ID
 
     def test_delete_footnote_with_content_xml(self):
         gen = StructuralGenerator()
@@ -120,13 +127,14 @@ class TestFootnote:
             node_id="fn1",
         )
         content_xml = '<p>Before<footnote id="fn1"><p>Note</p></footnote>After</p>'
-        reqs = gen.emit_footnote(node, content_xml, base_index=1)
+        reqs = gen.emit_footnote(node, content_xml, base_index=1, tab_id=TAB_ID)
         assert len(reqs) == 1
         assert "deleteContentRange" in reqs[0]
         rng = reqs[0]["deleteContentRange"]["range"]
         # "Before" = 6 chars + base_index=1 = 7
         assert rng["startIndex"] == 7
         assert rng["endIndex"] == 8  # 1-character footnote reference
+        assert rng["tabId"] == TAB_ID
 
     def test_delete_footnote_no_content(self):
         gen = StructuralGenerator()
@@ -137,6 +145,6 @@ class TestFootnote:
             segment_id="fn1",
             node_id="fn1",
         )
-        reqs = gen.emit_footnote(node, None, base_index=1)
+        reqs = gen.emit_footnote(node, None, base_index=1, tab_id=TAB_ID)
         # Can't calculate index without content
         assert reqs == []

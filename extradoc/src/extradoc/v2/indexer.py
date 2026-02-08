@@ -43,11 +43,12 @@ class BlockIndexer:
         - BODY starts at index 1 (after initial sectionBreak)
         - HEADER/FOOTER/FOOTNOTE start at index 0
         """
-        for segment in doc.segments:
-            if segment.segment_type == SegmentType.BODY:
-                self._index_segment(segment, start=1)
-            else:
-                self._index_segment(segment, start=0)
+        for tab in doc.tabs:
+            for segment in tab.segments:
+                if segment.segment_type == SegmentType.BODY:
+                    self._index_segment(segment, start=1)
+                else:
+                    self._index_segment(segment, start=0)
 
     def _index_segment(self, segment: SegmentBlock, start: int) -> None:
         """Walk children and set start/end indexes."""

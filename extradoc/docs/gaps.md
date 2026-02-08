@@ -30,26 +30,6 @@ This causes a cascading bleed: paragraph properties from earlier content blocks 
 
 ---
 
-### 2. `<style>` Wrapper Element Has No Effect
-
-**Severity:** Critical — documented feature doesn't work at all
-**Symptoms:** `<style class="code"><p>line1</p><p>line2</p></style>` applies no styling to the wrapped paragraphs.
-
-**Root Cause:** In `v2/parser.py` lines 105-111, when the parser encounters a `<style>` wrapper element, it iterates over children and parses each as an individual `ParagraphBlock` via `self._parse_paragraph(styled_child)`. However, the wrapper's `class` attribute is **never transferred** to the children:
-
-```python
-elif tag == "style":
-    for styled_child in child:
-        if styled_child.tag in PARAGRAPH_TAGS:
-            blocks.append(self._parse_paragraph(styled_child))  # class NOT passed
-```
-
-Each child paragraph is serialized without the wrapper's class, so the class information is permanently lost during parsing. The child paragraphs end up with no style applied.
-
-**File:** `v2/parser.py:105-111`
-
----
-
 ## Major Bugs
 
 ### 3. New Tables Missing Cell Styles
@@ -136,7 +116,6 @@ Each child paragraph is serialized without the wrapper's class, so the class inf
 | Images | Requires separate Drive upload flow |
 | Person mentions | Requires verified email + special API |
 | Horizontal rules | Read-only — cannot add/remove via API |
-| Tab creation | `addDocumentTab` exists but content population not implemented |
 
 ---
 
@@ -159,5 +138,7 @@ The following features were verified as working correctly through the round-trip
 | Basic tables (no special styling) | Content in cells preserved |
 | Multi-paragraph table cells | Multiple `<p>` in a `<td>` works |
 | Headers and footers | Content in header/footer segments works |
+| Document tabs | Add/delete tabs, edit content within tabs, `tabId` in all requests |
+| `<style>` wrapper element | Transfers `class` to wrapped children correctly |
 | Named styles on text spans | `class` attributes on `<span>` apply text styles |
 | Unicode and special characters | Emoji, accented chars, symbols all preserved |

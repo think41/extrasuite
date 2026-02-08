@@ -14,6 +14,7 @@ def generate_insert_table_row_request(
     row_index: int,
     segment_id: str | None = None,
     insert_below: bool = True,
+    tab_id: str | None = None,
 ) -> dict[str, Any]:
     """Generate an insertTableRow request.
 
@@ -22,6 +23,7 @@ def generate_insert_table_row_request(
         row_index: Reference row index
         segment_id: Optional segment ID
         insert_below: If True, insert below the reference row; if False, above
+        tab_id: Optional tab ID
 
     Returns:
         An insertTableRow request dict
@@ -29,6 +31,8 @@ def generate_insert_table_row_request(
     table_start_loc: dict[str, Any] = {"index": table_start_index}
     if segment_id:
         table_start_loc["segmentId"] = segment_id
+    if tab_id:
+        table_start_loc["tabId"] = tab_id
 
     return {
         "insertTableRow": {
@@ -46,6 +50,7 @@ def generate_delete_table_row_request(
     table_start_index: int,
     row_index: int,
     segment_id: str | None = None,
+    tab_id: str | None = None,
 ) -> dict[str, Any]:
     """Generate a deleteTableRow request.
 
@@ -53,6 +58,7 @@ def generate_delete_table_row_request(
         table_start_index: Start index of the table
         row_index: Row index to delete
         segment_id: Optional segment ID
+        tab_id: Optional tab ID
 
     Returns:
         A deleteTableRow request dict
@@ -60,6 +66,8 @@ def generate_delete_table_row_request(
     table_start_loc: dict[str, Any] = {"index": table_start_index}
     if segment_id:
         table_start_loc["segmentId"] = segment_id
+    if tab_id:
+        table_start_loc["tabId"] = tab_id
 
     return {
         "deleteTableRow": {
@@ -77,6 +85,7 @@ def generate_insert_table_column_request(
     row_index: int,
     col_index: int,
     segment_id: str | None = None,
+    tab_id: str | None = None,
 ) -> dict[str, Any]:
     """Generate an insertTableColumn request.
 
@@ -90,6 +99,7 @@ def generate_insert_table_column_request(
         row_index: Row index for cell location
         col_index: Desired position of new column
         segment_id: Optional segment ID
+        tab_id: Optional tab ID
 
     Returns:
         An insertTableColumn request dict
@@ -97,6 +107,8 @@ def generate_insert_table_column_request(
     table_start_loc: dict[str, Any] = {"index": table_start_index}
     if segment_id:
         table_start_loc["segmentId"] = segment_id
+    if tab_id:
+        table_start_loc["tabId"] = tab_id
 
     if col_index == 0:
         # Insert as first column - insert to left of column 0
@@ -129,6 +141,7 @@ def generate_delete_table_column_request(
     row_index: int,
     col_index: int,
     segment_id: str | None = None,
+    tab_id: str | None = None,
 ) -> dict[str, Any]:
     """Generate a deleteTableColumn request.
 
@@ -137,6 +150,7 @@ def generate_delete_table_column_request(
         row_index: Row index for cell location
         col_index: Column index to delete
         segment_id: Optional segment ID
+        tab_id: Optional tab ID
 
     Returns:
         A deleteTableColumn request dict
@@ -144,6 +158,8 @@ def generate_delete_table_column_request(
     table_start_loc: dict[str, Any] = {"index": table_start_index}
     if segment_id:
         table_start_loc["segmentId"] = segment_id
+    if tab_id:
+        table_start_loc["tabId"] = tab_id
 
     return {
         "deleteTableColumn": {

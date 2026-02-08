@@ -39,22 +39,17 @@ uv run python -m extradoc pushv2 <folder>  # Apply changes to Google Docs
     <title>Document Title</title>
   </meta>
 
-  <body class="_base">
-    <!-- All document content goes here -->
-  </body>
-
-  <!-- Optional sections -->
-  <header id="kix.abc123" class="_base">...</header>
-  <footer id="kix.def456" class="_base">...</footer>
+  <tab id="t.0" title="Tab 1" class="_base">
+    <body>
+      <!-- All document content goes here -->
+    </body>
+    <header id="kix.abc123" class="_base">...</header>
+    <footer id="kix.def456" class="_base">...</footer>
+  </tab>
 </doc>
 ```
 
-For multi-tab documents, `<body>` is replaced by `<tab>` elements:
-```xml
-<tab id="t.0" title="Tab Name" class="_base">
-  <body>...content...</body>
-</tab>
-```
+Each `<tab>` contains a `<body>` with the main content, plus optional headers, footers, and footnotes. Multi-tab documents have multiple `<tab>` elements.
 
 ---
 
@@ -268,20 +263,22 @@ To apply formatting not covered by existing styles:
 
 ## Headers and Footers
 
-Headers and footers appear as top-level sections after `<body>`:
+Headers and footers appear inside their `<tab>` element, after `<body>`:
 
 ```xml
-<header id="kix.hdr1" class="_base">
-  <p>Company Name — Confidential</p>
-</header>
-
-<footer id="kix.ftr1" class="rmHiM">
-  <p>Page <autotext type="PAGE_NUMBER"/> of <autotext type="PAGE_COUNT"/></p>
-</footer>
+<tab id="t.0" title="Tab 1" class="_base">
+  <body>...</body>
+  <header id="kix.hdr1" class="_base">
+    <p>Company Name — Confidential</p>
+  </header>
+  <footer id="kix.ftr1" class="rmHiM">
+    <p>Page <autotext type="PAGE_NUMBER"/> of <autotext type="PAGE_COUNT"/></p>
+  </footer>
+</tab>
 ```
 
 - Edit content of existing headers/footers by modifying their `<p>` elements
-- Add a new header/footer by adding a `<header>` or `<footer>` element
+- Add a new header/footer by adding a `<header>` or `<footer>` element inside the `<tab>`
 - Each header/footer is a separate section with its own styling scope
 
 ---
@@ -290,7 +287,7 @@ Headers and footers appear as top-level sections after `<body>`:
 
 ### Add a paragraph
 
-Insert a `<p>` element at the desired position within `<body>`:
+Insert a `<p>` element at the desired position within `<body>` (inside the `<tab>`):
 ```xml
 <h2>Introduction</h2>
 <p>This is a new paragraph added after the heading.</p>

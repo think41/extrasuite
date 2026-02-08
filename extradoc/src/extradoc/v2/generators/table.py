@@ -81,7 +81,7 @@ class TableGenerator:
             insert_index = ctx.segment_end - 1
 
         if insert_index > 0:
-            location: dict[str, Any] = {"index": insert_index}
+            location: dict[str, Any] = {"index": insert_index, "tabId": ctx.tab_id}
             if ctx.segment_id:
                 location["segmentId"] = ctx.segment_id
             requests.append(
@@ -94,7 +94,7 @@ class TableGenerator:
                 }
             )
         else:
-            end_location: dict[str, Any] = {}
+            end_location: dict[str, Any] = {"tabId": ctx.tab_id}
             if ctx.segment_id:
                 end_location["segmentId"] = ctx.segment_id
             requests.append(
@@ -102,7 +102,7 @@ class TableGenerator:
                     "insertTable": {
                         "rows": rows,
                         "columns": cols,
-                        "endOfSegmentLocation": end_location or {"segmentId": ""},
+                        "endOfSegmentLocation": end_location,
                     }
                 }
             )
@@ -136,6 +136,7 @@ class TableGenerator:
                 ctx.segment_id,
                 insert_index=cell_start,
                 strip_trailing_newline=True,
+                tab_id=ctx.tab_id,
             )
             requests.extend(cell_reqs)
 
@@ -152,6 +153,7 @@ class TableGenerator:
                     col_idx,
                     ctx.segment_id,
                     self._content_gen._style_defs,
+                    tab_id=ctx.tab_id,
                 )
                 if cell_style_req:
                     requests.append(cell_style_req)
@@ -161,12 +163,16 @@ class TableGenerator:
         if after_widths:
             requests.extend(
                 _generate_column_width_requests(
-                    table_start, {}, after_widths, ctx.segment_id
+                    table_start, {}, after_widths, ctx.segment_id, tab_id=ctx.tab_id
                 )
             )
 
         # Apply cell merges (colspan/rowspan)
-        requests.extend(_generate_merge_requests(root, table_start, ctx.segment_id))
+        requests.extend(
+            _generate_merge_requests(
+                root, table_start, ctx.segment_id, tab_id=ctx.tab_id
+            )
+        )
 
         return requests
 
@@ -188,6 +194,7 @@ class TableGenerator:
         range_obj: dict[str, Any] = {
             "startIndex": node.pristine_start,
             "endIndex": node.pristine_start + table_size,
+            "tabId": ctx.tab_id,
         }
         if ctx.segment_id:
             range_obj["segmentId"] = ctx.segment_id
@@ -216,10 +223,14 @@ class TableGenerator:
         segment_id = ctx.segment_id
 
         # Phase 1: Column deletes
-        requests.extend(self._phase_column_deletes(node, col_changes, segment_id))
+        requests.extend(
+            self._phase_column_deletes(node, col_changes, segment_id, ctx.tab_id)
+        )
 
         # Phase 2: Row deletes
-        requests.extend(self._phase_row_deletes(node, row_changes, segment_id))
+        requests.extend(
+            self._phase_row_deletes(node, row_changes, segment_id, ctx.tab_id)
+        )
 
         # Phase 3: Cell mods + row inserts
         cell_reqs, row_lengths = self._phase_cell_mods_and_row_inserts(
@@ -237,6 +248,7 @@ class TableGenerator:
         node: ChangeNode,
         col_changes: list[ChangeNode],
         segment_id: str | None,
+        tab_id: str,
     ) -> list[dict[str, Any]]:
         """Phase 1: Delete columns highest col_index first."""
         requests: list[dict[str, Any]] = []
@@ -244,7 +256,11 @@ class TableGenerator:
         for col_change in sorted(deletes, key=lambda c: c.col_index, reverse=True):
             requests.append(
                 generate_delete_table_column_request(
-                    node.table_start, 0, col_change.col_index, segment_id
+                    node.table_start,
+                    0,
+                    col_change.col_index,
+                    segment_id,
+                    tab_id=tab_id,
                 )
             )
         return requests
@@ -254,6 +270,7 @@ class TableGenerator:
         node: ChangeNode,
         row_changes: list[ChangeNode],
         segment_id: str | None,
+        tab_id: str,
     ) -> list[dict[str, Any]]:
         """Phase 2: Delete rows highest row_index first."""
         requests: list[dict[str, Any]] = []
@@ -261,7 +278,10 @@ class TableGenerator:
         for row_change in sorted(deletes, key=lambda c: c.row_index, reverse=True):
             requests.append(
                 generate_delete_table_row_request(
-                    node.table_start, row_change.row_index, segment_id
+                    node.table_start,
+                    row_change.row_index,
+                    segment_id,
+                    tab_id=tab_id,
                 )
             )
         return requests
@@ -307,7 +327,11 @@ class TableGenerator:
                         (
                             row_idx,
                             generate_insert_table_row_request(
-                                table_start, 0, segment_id, insert_below=False
+                                table_start,
+                                0,
+                                segment_id,
+                                insert_below=False,
+                                tab_id=ctx.tab_id,
                             ),
                             row_change.after_xml,
                         )
@@ -318,7 +342,11 @@ class TableGenerator:
                         (
                             row_idx,
                             generate_insert_table_row_request(
-                                table_start, anchor, segment_id, insert_below=True
+                                table_start,
+                                anchor,
+                                segment_id,
+                                insert_below=True,
+                                tab_id=ctx.tab_id,
                             ),
                             row_change.after_xml,
                         )
@@ -362,6 +390,7 @@ class TableGenerator:
                             cell_ctx = SegmentContext(
                                 segment_id=segment_id,
                                 segment_end=cell_end,
+                                tab_id=ctx.tab_id,
                             )
                             cell_reqs, _ = self._content_gen.emit(
                                 content_change, cell_ctx
@@ -376,6 +405,7 @@ class TableGenerator:
                                 col_idx,
                                 segment_id,
                                 self._content_gen._style_defs,
+                                tab_id=ctx.tab_id,
                             )
                             if cell_style_req:
                                 requests.append(cell_style_req)
@@ -418,6 +448,7 @@ class TableGenerator:
                         segment_id,
                         insert_index=cell_start,
                         strip_trailing_newline=True,
+                        tab_id=ctx.tab_id,
                     )
                     requests.extend(cell_reqs)
 
@@ -437,7 +468,11 @@ class TableGenerator:
         for col_change in sorted(adds, key=lambda c: c.col_index, reverse=True):
             requests.append(
                 generate_insert_table_column_request(
-                    node.table_start, 0, col_change.col_index, ctx.segment_id
+                    node.table_start,
+                    0,
+                    col_change.col_index,
+                    ctx.segment_id,
+                    tab_id=ctx.tab_id,
                 )
             )
 
@@ -479,6 +514,7 @@ class TableGenerator:
                         ctx.segment_id,
                         insert_index=cell_start,
                         strip_trailing_newline=True,
+                        tab_id=ctx.tab_id,
                     )
                     requests.extend(content_reqs)
 
@@ -500,7 +536,11 @@ class TableGenerator:
             return []
 
         return _generate_column_width_requests(
-            table_start, before_widths, after_widths, ctx.segment_id
+            table_start,
+            before_widths,
+            after_widths,
+            ctx.segment_id,
+            tab_id=ctx.tab_id,
         )
 
 
@@ -653,6 +693,8 @@ def _generate_cell_style_request(
     col_index: int,
     segment_id: str | None,
     cell_styles: dict[str, dict[str, str]] | None = None,
+    *,
+    tab_id: str = "",
 ) -> dict[str, Any] | None:
     """Generate updateTableCellStyle request if cell has style attributes."""
     try:
@@ -676,7 +718,12 @@ def _generate_cell_style_request(
         return None
 
     return build_table_cell_style_request(
-        styles, table_start_index, row_index, col_index, segment_id
+        styles,
+        table_start_index,
+        row_index,
+        col_index,
+        segment_id,
+        tab_id=tab_id,
     )
 
 
@@ -704,6 +751,8 @@ def _generate_column_width_requests(
     before_widths: dict[int, str],
     after_widths: dict[int, str],
     segment_id: str | None,
+    *,
+    tab_id: str = "",
 ) -> list[dict[str, Any]]:
     """Generate UpdateTableColumnPropertiesRequest for width changes."""
     requests: list[dict[str, Any]] = []
@@ -715,19 +764,20 @@ def _generate_column_width_requests(
         if before_width == after_width:
             continue
 
+        table_start_loc: dict[str, Any] = {"index": table_start_index}
+        if segment_id:
+            table_start_loc["segmentId"] = segment_id
+        if tab_id:
+            table_start_loc["tabId"] = tab_id
+
         request: dict[str, Any] = {
             "updateTableColumnProperties": {
-                "tableStartLocation": {"index": table_start_index},
+                "tableStartLocation": table_start_loc,
                 "columnIndices": [col_index],
                 "tableColumnProperties": {},
                 "fields": "",
             }
         }
-
-        if segment_id:
-            request["updateTableColumnProperties"]["tableStartLocation"][
-                "segmentId"
-            ] = segment_id
 
         col_props = request["updateTableColumnProperties"]["tableColumnProperties"]
         fields: list[str] = []
@@ -754,6 +804,8 @@ def _generate_merge_requests(
     table_root: ET.Element,
     table_start_index: int,
     segment_id: str | None,
+    *,
+    tab_id: str = "",
 ) -> list[dict[str, Any]]:
     """Generate mergeTableCells requests for cells with colspan/rowspan > 1."""
     requests: list[dict[str, Any]] = []
@@ -765,16 +817,18 @@ def _generate_merge_requests(
             if colspan <= 1 and rowspan <= 1:
                 continue
 
-            table_start_loc: dict[str, Any] = {"index": table_start_index}
+            merge_start_loc: dict[str, Any] = {"index": table_start_index}
             if segment_id:
-                table_start_loc["segmentId"] = segment_id
+                merge_start_loc["segmentId"] = segment_id
+            if tab_id:
+                merge_start_loc["tabId"] = tab_id
 
             requests.append(
                 {
                     "mergeTableCells": {
                         "tableRange": {
                             "tableCellLocation": {
-                                "tableStartLocation": table_start_loc,
+                                "tableStartLocation": merge_start_loc,
                                 "rowIndex": row_idx,
                                 "columnIndex": col_idx,
                             },

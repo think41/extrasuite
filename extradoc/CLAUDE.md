@@ -86,17 +86,18 @@ After `pull`, the folder contains:
   <meta>
     <title>Document Title</title>
   </meta>
-  <body class="_base">
-    <h1>Heading</h1>
-    <p>Paragraph text.</p>
-    <li type="bullet" level="0">Bullet point</li>
-    <table rows="2" cols="2">
-      <tr><td><p>Cell</p></td><td><p>Cell</p></td></tr>
-    </table>
-  </body>
-  <header id="kix.abc123" class="_base">...</header>
-  <footer id="kix.def456" class="_base">...</footer>
-  <footnote id="kix.fn1">...</footnote>
+  <tab id="t.0" title="Tab 1" class="_base">
+    <body>
+      <h1>Heading</h1>
+      <p>Paragraph text.</p>
+      <li type="bullet" level="0">Bullet point</li>
+      <table rows="2" cols="2">
+        <tr><td><p>Cell</p></td><td><p>Cell</p></td></tr>
+      </table>
+    </body>
+    <header id="kix.abc123" class="_base">...</header>
+    <footer id="kix.def456" class="_base">...</footer>
+  </tab>
 </doc>
 ```
 

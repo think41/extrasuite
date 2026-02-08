@@ -10,6 +10,7 @@ from extradoc.v2.types import (
     SegmentBlock,
     SegmentContext,
     SegmentType,
+    TabBlock,
     TableBlock,
 )
 
@@ -39,7 +40,7 @@ def test_aligned_pair_frozen():
 
 
 def test_segment_context_defaults():
-    ctx = SegmentContext(segment_id=None, segment_end=100)
+    ctx = SegmentContext(segment_id=None, segment_end=100, tab_id="t.0")
     assert ctx.segment_end_consumed is False
 
 
@@ -52,7 +53,10 @@ def test_change_node_defaults():
 
 def test_document_block_structure():
     doc = DocumentBlock(doc_id="doc1", revision="rev1")
+    tab = TabBlock(tab_id="t.0", title="Tab 1")
     seg = SegmentBlock(segment_type=SegmentType.BODY, segment_id="body")
-    doc.segments.append(seg)
-    assert len(doc.segments) == 1
-    assert doc.segments[0].segment_type == SegmentType.BODY
+    tab.segments.append(seg)
+    doc.tabs.append(tab)
+    assert len(doc.tabs) == 1
+    assert len(doc.tabs[0].segments) == 1
+    assert doc.tabs[0].segments[0].segment_type == SegmentType.BODY

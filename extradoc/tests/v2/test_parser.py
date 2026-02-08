@@ -12,7 +12,7 @@ def _make_doc(
     body_content: str = "", headers: str = "", footers: str = "", footnotes: str = ""
 ) -> str:
     """Build a minimal document XML string."""
-    return f'<doc id="test-id" revision="rev1"><body class="_base">{body_content}</body>{headers}{footers}{footnotes}</doc>'
+    return f'<doc id="test-id" revision="rev1"><tab id="t.0" title="Tab 1"><body class="_base">{body_content}</body>{headers}{footers}{footnotes}</tab></doc>'
 
 
 class TestBlockParser:
@@ -22,14 +22,16 @@ class TestBlockParser:
         doc = parser.parse(xml)
         assert doc.doc_id == "test-id"
         assert doc.revision == "rev1"
-        assert len(doc.segments) == 1
-        assert doc.segments[0].segment_type == SegmentType.BODY
-        assert doc.segments[0].children == []
+        assert len(doc.tabs) == 1
+        assert doc.tabs[0].tab_id == "t.0"
+        assert len(doc.tabs[0].segments) == 1
+        assert doc.tabs[0].segments[0].segment_type == SegmentType.BODY
+        assert doc.tabs[0].segments[0].children == []
 
     def test_paragraphs(self):
         xml = _make_doc("<p>Hello</p><p>World</p>")
         doc = BlockParser().parse(xml)
-        body = doc.segments[0]
+        body = doc.tabs[0].segments[0]
         assert len(body.children) == 2
         assert all(isinstance(c, ParagraphBlock) for c in body.children)
         assert body.children[0].tag == "p"
@@ -38,7 +40,7 @@ class TestBlockParser:
     def test_heading_tags(self):
         xml = _make_doc("<h1>Title</h1><h2>Sub</h2><h3>Sub2</h3>")
         doc = BlockParser().parse(xml)
-        body = doc.segments[0]
+        body = doc.tabs[0].segments[0]
         assert len(body.children) == 3
         tags = [c.tag for c in body.children if isinstance(c, ParagraphBlock)]
         assert tags == ["h1", "h2", "h3"]
@@ -53,7 +55,7 @@ class TestBlockParser:
             "</table>"
         )
         doc = BlockParser().parse(xml)
-        body = doc.segments[0]
+        body = doc.tabs[0].segments[0]
         assert len(body.children) == 1
         table = body.children[0]
         assert isinstance(table, TableBlock)
@@ -72,7 +74,7 @@ class TestBlockParser:
             "<p>After</p>"
         )
         doc = BlockParser().parse(xml)
-        body = doc.segments[0]
+        body = doc.tabs[0].segments[0]
         assert len(body.children) == 3
         assert isinstance(body.children[0], ParagraphBlock)
         assert isinstance(body.children[1], TableBlock)
@@ -85,12 +87,12 @@ class TestBlockParser:
             footers='<footer id="ftr1" class="_base"><p>Footer</p></footer>',
         )
         doc = BlockParser().parse(xml)
-        assert len(doc.segments) == 3
-        assert doc.segments[0].segment_type == SegmentType.BODY
-        assert doc.segments[1].segment_type == SegmentType.HEADER
-        assert doc.segments[1].segment_id == "hdr1"
-        assert doc.segments[2].segment_type == SegmentType.FOOTER
-        assert doc.segments[2].segment_id == "ftr1"
+        assert len(doc.tabs[0].segments) == 3
+        assert doc.tabs[0].segments[0].segment_type == SegmentType.BODY
+        assert doc.tabs[0].segments[1].segment_type == SegmentType.HEADER
+        assert doc.tabs[0].segments[1].segment_id == "hdr1"
+        assert doc.tabs[0].segments[2].segment_type == SegmentType.FOOTER
+        assert doc.tabs[0].segments[2].segment_id == "ftr1"
 
     def test_footnotes(self):
         xml = _make_doc(
@@ -98,14 +100,14 @@ class TestBlockParser:
             footnotes='<footnote id="fn1"><p>Footnote text</p></footnote>',
         )
         doc = BlockParser().parse(xml)
-        assert len(doc.segments) == 2
-        assert doc.segments[1].segment_type == SegmentType.FOOTNOTE
-        assert doc.segments[1].segment_id == "fn1"
+        assert len(doc.tabs[0].segments) == 2
+        assert doc.tabs[0].segments[1].segment_type == SegmentType.FOOTNOTE
+        assert doc.tabs[0].segments[1].segment_id == "fn1"
 
     def test_inline_footnote_in_paragraph(self):
         xml = _make_doc('<p>Text<footnote id="fn1"><p>Note</p></footnote></p>')
         doc = BlockParser().parse(xml)
-        body = doc.segments[0]
+        body = doc.tabs[0].segments[0]
         para = body.children[0]
         assert isinstance(para, ParagraphBlock)
         assert len(para.footnotes) == 1
@@ -117,7 +119,7 @@ class TestBlockParser:
             '<li type="bullet" level="1">Item 2</li>'
         )
         doc = BlockParser().parse(xml)
-        body = doc.segments[0]
+        body = doc.tabs[0].segments[0]
         assert len(body.children) == 2
         assert all(
             isinstance(c, ParagraphBlock) and c.tag == "li" for c in body.children
@@ -130,7 +132,7 @@ class TestBlockParser:
             "</td></tr></table>"
         )
         doc = BlockParser().parse(xml)
-        body = doc.segments[0]
+        body = doc.tabs[0].segments[0]
         table = body.children[0]
         assert isinstance(table, TableBlock)
         cell = table.rows[0].cells[0]

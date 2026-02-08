@@ -18,7 +18,7 @@ from extradoc.v2.types import ChangeNode, ChangeOp, NodeType, SegmentContext
 
 
 def _body_ctx(segment_end: int = 100) -> SegmentContext:
-    return SegmentContext(segment_id=None, segment_end=segment_end)
+    return SegmentContext(segment_id=None, segment_end=segment_end, tab_id="t.0")
 
 
 class TestParseTableXml:

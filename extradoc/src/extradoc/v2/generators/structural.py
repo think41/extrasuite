@@ -15,22 +15,42 @@ from ..types import ChangeNode, ChangeOp, SegmentType
 class StructuralGenerator:
     """Generates requests for structural changes (headers, footers, tabs, footnotes)."""
 
-    def emit_header_footer(self, node: ChangeNode) -> list[dict[str, Any]]:
+    def emit_header_footer(
+        self, node: ChangeNode, *, tab_id: str
+    ) -> list[dict[str, Any]]:
         """Handle header/footer add/delete."""
         requests: list[dict[str, Any]] = []
 
         if node.op == ChangeOp.ADDED:
             if node.segment_type == SegmentType.HEADER:
-                requests.append({"createHeader": {"type": "DEFAULT"}})
+                requests.append(
+                    {
+                        "createHeader": {
+                            "type": "DEFAULT",
+                            "sectionBreakLocation": {"tabId": tab_id},
+                        }
+                    }
+                )
             elif node.segment_type == SegmentType.FOOTER:
-                requests.append({"createFooter": {"type": "DEFAULT"}})
+                requests.append(
+                    {
+                        "createFooter": {
+                            "type": "DEFAULT",
+                            "sectionBreakLocation": {"tabId": tab_id},
+                        }
+                    }
+                )
 
         elif node.op == ChangeOp.DELETED:
             segment_id = node.segment_id or node.node_id
             if node.segment_type == SegmentType.HEADER and segment_id:
-                requests.append({"deleteHeader": {"headerId": segment_id}})
+                requests.append(
+                    {"deleteHeader": {"headerId": segment_id, "tabId": tab_id}}
+                )
             elif node.segment_type == SegmentType.FOOTER and segment_id:
-                requests.append({"deleteFooter": {"footerId": segment_id}})
+                requests.append(
+                    {"deleteFooter": {"footerId": segment_id, "tabId": tab_id}}
+                )
 
         return requests
 
@@ -62,6 +82,8 @@ class StructuralGenerator:
         node: ChangeNode,
         content_block_xml: str | None = None,
         base_index: int = 1,
+        *,
+        tab_id: str,
     ) -> list[dict[str, Any]]:
         """Handle footnote add/delete.
 
@@ -71,7 +93,9 @@ class StructuralGenerator:
         requests: list[dict[str, Any]] = []
 
         if node.op == ChangeOp.ADDED:
-            requests.append({"createFootnote": {"endOfSegmentLocation": {}}})
+            requests.append(
+                {"createFootnote": {"endOfSegmentLocation": {"tabId": tab_id}}}
+            )
 
         elif node.op == ChangeOp.DELETED:
             index = self._calculate_footnote_index(
@@ -84,6 +108,7 @@ class StructuralGenerator:
                             "range": {
                                 "startIndex": index,
                                 "endIndex": index + 1,
+                                "tabId": tab_id,
                             }
                         }
                     }

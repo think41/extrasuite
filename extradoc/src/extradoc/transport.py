@@ -124,7 +124,7 @@ class GoogleDocsTransport(Transport):
 
     async def get_document(self, document_id: str) -> DocumentData:
         """Fetch document data from Google Docs API."""
-        url = f"{API_BASE}/{document_id}"
+        url = f"{API_BASE}/{document_id}?includeTabsContent=true"
         response = await self._request(url)
 
         return DocumentData(

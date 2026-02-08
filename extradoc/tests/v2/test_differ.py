@@ -9,7 +9,7 @@ from extradoc.v2.types import ChangeOp, NodeType, SegmentType
 def _make_doc(
     body_content: str, headers: str = "", footers: str = "", footnotes: str = ""
 ) -> str:
-    return f'<doc id="d" revision="r"><body class="_base">{body_content}</body>{headers}{footers}{footnotes}</doc>'
+    return f'<doc id="d" revision="r"><tab id="t.0" title="Tab 1"><body class="_base">{body_content}</body>{headers}{footers}{footnotes}</tab></doc>'
 
 
 def _parse_and_index(xml: str):
@@ -18,6 +18,20 @@ def _parse_and_index(xml: str):
     indexer = BlockIndexer()
     indexer.compute(doc)
     return doc
+
+
+def _get_body_seg(root):
+    """Get the body SEGMENT node from a change tree (DOCUMENT → TAB → SEGMENT)."""
+    assert len(root.children) >= 1
+    tab = root.children[0]
+    assert tab.node_type == NodeType.TAB
+    for child in tab.children:
+        if (
+            child.node_type == NodeType.SEGMENT
+            and child.segment_type == SegmentType.BODY
+        ):
+            return child
+    raise AssertionError("No body segment found in change tree")
 
 
 class TestTreeDiffer:
@@ -38,9 +52,7 @@ class TestTreeDiffer:
         c = _parse_and_index(_make_doc("<p>A</p><p>B</p>"))
         differ = TreeDiffer()
         root = differ.diff(p, c)
-        assert len(root.children) == 1
-        seg = root.children[0]
-        assert seg.node_type == NodeType.SEGMENT
+        seg = _get_body_seg(root)
         assert seg.op == ChangeOp.MODIFIED
         assert seg.segment_type == SegmentType.BODY
 
@@ -57,7 +69,7 @@ class TestTreeDiffer:
         c = _parse_and_index(_make_doc("<p>A</p>"))
         differ = TreeDiffer()
         root = differ.diff(p, c)
-        seg = root.children[0]
+        seg = _get_body_seg(root)
         content_nodes = [
             ch for ch in seg.children if ch.node_type == NodeType.CONTENT_BLOCK
         ]
@@ -71,7 +83,7 @@ class TestTreeDiffer:
         c = _parse_and_index(_make_doc("<p>World</p>"))
         differ = TreeDiffer()
         root = differ.diff(p, c)
-        seg = root.children[0]
+        seg = _get_body_seg(root)
         content_nodes = [
             ch for ch in seg.children if ch.node_type == NodeType.CONTENT_BLOCK
         ]
@@ -86,7 +98,7 @@ class TestTreeDiffer:
         c = _parse_and_index(_make_doc("<p>X</p><p>B</p><p>Z</p>"))
         differ = TreeDiffer()
         root = differ.diff(p, c)
-        seg = root.children[0]
+        seg = _get_body_seg(root)
         # A→X and C→Z separated by unchanged B
         content_nodes = [
             ch for ch in seg.children if ch.node_type == NodeType.CONTENT_BLOCK
@@ -101,7 +113,7 @@ class TestTreeDiffer:
         c = _parse_and_index(_make_doc("<p>X</p><p>Y</p>"))
         differ = TreeDiffer()
         root = differ.diff(p, c)
-        seg = root.children[0]
+        seg = _get_body_seg(root)
         content_nodes = [
             ch for ch in seg.children if ch.node_type == NodeType.CONTENT_BLOCK
         ]
@@ -118,7 +130,7 @@ class TestTreeDiffer:
         )
         differ = TreeDiffer()
         root = differ.diff(p, c)
-        seg = root.children[0]
+        seg = _get_body_seg(root)
         table_nodes = [ch for ch in seg.children if ch.node_type == NodeType.TABLE]
         assert len(table_nodes) == 1
         assert table_nodes[0].op == ChangeOp.ADDED
@@ -133,7 +145,7 @@ class TestTreeDiffer:
         c = _parse_and_index(_make_doc("<p>A</p>"))
         differ = TreeDiffer()
         root = differ.diff(p, c)
-        seg = root.children[0]
+        seg = _get_body_seg(root)
         table_nodes = [ch for ch in seg.children if ch.node_type == NodeType.TABLE]
         assert len(table_nodes) == 1
         assert table_nodes[0].op == ChangeOp.DELETED
@@ -153,7 +165,7 @@ class TestTreeDiffer:
         )
         differ = TreeDiffer()
         root = differ.diff(p, c)
-        seg = root.children[0]
+        seg = _get_body_seg(root)
         table_nodes = [ch for ch in seg.children if ch.node_type == NodeType.TABLE]
         assert len(table_nodes) == 1
         table = table_nodes[0]
@@ -163,7 +175,7 @@ class TestTreeDiffer:
         assert len(row_nodes) >= 1
 
     def test_header_added(self):
-        """Adding a header produces SEGMENT ADDED child."""
+        """Adding a header produces SEGMENT ADDED child inside TAB."""
         p = _parse_and_index(_make_doc("<p>A</p>"))
         c = _parse_and_index(
             _make_doc(
@@ -173,9 +185,11 @@ class TestTreeDiffer:
         )
         differ = TreeDiffer()
         root = differ.diff(p, c)
+        tab = root.children[0]
+        assert tab.node_type == NodeType.TAB
         header_nodes = [
             ch
-            for ch in root.children
+            for ch in tab.children
             if ch.node_type == NodeType.SEGMENT
             and ch.segment_type == SegmentType.HEADER
         ]
@@ -183,7 +197,7 @@ class TestTreeDiffer:
         assert header_nodes[0].op == ChangeOp.ADDED
 
     def test_header_deleted(self):
-        """Deleting a header produces SEGMENT DELETED child."""
+        """Deleting a header produces SEGMENT DELETED child inside TAB."""
         p = _parse_and_index(
             _make_doc(
                 "<p>A</p>",
@@ -193,9 +207,10 @@ class TestTreeDiffer:
         c = _parse_and_index(_make_doc("<p>A</p>"))
         differ = TreeDiffer()
         root = differ.diff(p, c)
+        tab = root.children[0]
         header_nodes = [
             ch
-            for ch in root.children
+            for ch in tab.children
             if ch.node_type == NodeType.SEGMENT
             and ch.segment_type == SegmentType.HEADER
         ]
@@ -212,9 +227,10 @@ class TestTreeDiffer:
         )
         differ = TreeDiffer()
         root = differ.diff(p, c)
+        tab = root.children[0]
         footer_nodes = [
             ch
-            for ch in root.children
+            for ch in tab.children
             if ch.node_type == NodeType.SEGMENT
             and ch.segment_type == SegmentType.FOOTER
         ]
@@ -229,7 +245,7 @@ class TestTreeDiffer:
         c = _parse_and_index(_make_doc(c_xml))
         differ = TreeDiffer()
         root = differ.diff(p, c)
-        seg = root.children[0]
+        seg = _get_body_seg(root)
         table = seg.children[0]
         assert table.node_type == NodeType.TABLE
         row_nodes = [ch for ch in table.children if ch.node_type == NodeType.TABLE_ROW]
@@ -244,7 +260,7 @@ class TestTreeDiffer:
         c = _parse_and_index(_make_doc(c_xml))
         differ = TreeDiffer()
         root = differ.diff(p, c)
-        seg = root.children[0]
+        seg = _get_body_seg(root)
         table = seg.children[0]
         row_nodes = [ch for ch in table.children if ch.node_type == NodeType.TABLE_ROW]
         deleted = [r for r in row_nodes if r.op == ChangeOp.DELETED]
@@ -267,7 +283,7 @@ class TestTreeDiffer:
         root = differ.diff(p, c)
         # The empty paragraph deletion should be suppressed
         if root.children:
-            seg = root.children[0]
+            seg = _get_body_seg(root)
             content_nodes = [
                 ch
                 for ch in seg.children
@@ -286,8 +302,7 @@ class TestTreeDiffer:
         c = _parse_and_index(_make_doc("<p>A</p>"))
         differ = TreeDiffer()
         root = differ.diff(p, c)
-        assert len(root.children) == 1
-        seg = root.children[0]
+        seg = _get_body_seg(root)
         # Both the empty paragraph and the table should be deleted
         deleted_nodes = [ch for ch in seg.children if ch.op == ChangeOp.DELETED]
         assert len(deleted_nodes) >= 1
@@ -313,7 +328,7 @@ class TestTreeDiffer:
         )
         differ = TreeDiffer()
         root = differ.diff(p, c)
-        seg = root.children[0]
+        seg = _get_body_seg(root)
         added_nodes = [
             ch
             for ch in seg.children
@@ -331,7 +346,7 @@ class TestTreeDiffer:
         c = _parse_and_index(_make_doc("<p>Hello</p><p>Changed</p>"))
         differ = TreeDiffer()
         root = differ.diff(p, c)
-        seg = root.children[0]
+        seg = _get_body_seg(root)
         content_nodes = [
             ch for ch in seg.children if ch.node_type == NodeType.CONTENT_BLOCK
         ]

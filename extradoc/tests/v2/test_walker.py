@@ -6,12 +6,30 @@ from extradoc.v2.generators.table import TableGenerator
 from extradoc.v2.types import ChangeNode, ChangeOp, NodeType, SegmentType
 from extradoc.v2.walker import RequestWalker
 
+TAB_ID = "t.0"
+
 
 def _make_walker() -> RequestWalker:
     content_gen = ContentGenerator()
     table_gen = TableGenerator(content_gen)
     structural_gen = StructuralGenerator()
     return RequestWalker(content_gen, table_gen, structural_gen)
+
+
+def _wrap_in_tab(children: list[ChangeNode]) -> ChangeNode:
+    """Wrap segment children in a MODIFIED TAB node inside a DOCUMENT root."""
+    return ChangeNode(
+        node_type=NodeType.DOCUMENT,
+        op=ChangeOp.UNCHANGED,
+        children=[
+            ChangeNode(
+                node_type=NodeType.TAB,
+                op=ChangeOp.MODIFIED,
+                tab_id=TAB_ID,
+                children=children,
+            ),
+        ],
+    )
 
 
 class TestRequestWalker:
@@ -25,10 +43,8 @@ class TestRequestWalker:
     def test_single_content_delete(self):
         """Delete content block produces deleteContentRange."""
         walker = _make_walker()
-        root = ChangeNode(
-            node_type=NodeType.DOCUMENT,
-            op=ChangeOp.UNCHANGED,
-            children=[
+        root = _wrap_in_tab(
+            [
                 ChangeNode(
                     node_type=NodeType.SEGMENT,
                     op=ChangeOp.MODIFIED,
@@ -45,19 +61,18 @@ class TestRequestWalker:
                         ),
                     ],
                 ),
-            ],
+            ]
         )
         reqs = walker.walk(root)
         assert len(reqs) == 1
         assert "deleteContentRange" in reqs[0]
+        assert reqs[0]["deleteContentRange"]["range"]["tabId"] == TAB_ID
 
     def test_single_content_add(self):
         """Add content block produces insertText + styling."""
         walker = _make_walker()
-        root = ChangeNode(
-            node_type=NodeType.DOCUMENT,
-            op=ChangeOp.UNCHANGED,
-            children=[
+        root = _wrap_in_tab(
+            [
                 ChangeNode(
                     node_type=NodeType.SEGMENT,
                     op=ChangeOp.MODIFIED,
@@ -74,19 +89,18 @@ class TestRequestWalker:
                         ),
                     ],
                 ),
-            ],
+            ]
         )
         reqs = walker.walk(root)
         assert len(reqs) > 0
         assert "insertText" in reqs[0]
+        assert reqs[0]["insertText"]["location"]["tabId"] == TAB_ID
 
     def test_backwards_walk_order(self):
         """Two content blocks should be processed highest-pristine-start first."""
         walker = _make_walker()
-        root = ChangeNode(
-            node_type=NodeType.DOCUMENT,
-            op=ChangeOp.UNCHANGED,
-            children=[
+        root = _wrap_in_tab(
+            [
                 ChangeNode(
                     node_type=NodeType.SEGMENT,
                     op=ChangeOp.MODIFIED,
@@ -110,7 +124,7 @@ class TestRequestWalker:
                         ),
                     ],
                 ),
-            ],
+            ]
         )
         reqs = walker.walk(root)
         # Both should be deleteContentRange
@@ -122,12 +136,10 @@ class TestRequestWalker:
         assert first_start > second_start
 
     def test_header_add(self):
-        """Added header segment produces createHeader."""
+        """Added header segment produces createHeader with tabId."""
         walker = _make_walker()
-        root = ChangeNode(
-            node_type=NodeType.DOCUMENT,
-            op=ChangeOp.UNCHANGED,
-            children=[
+        root = _wrap_in_tab(
+            [
                 ChangeNode(
                     node_type=NodeType.SEGMENT,
                     op=ChangeOp.ADDED,
@@ -135,19 +147,18 @@ class TestRequestWalker:
                     segment_id="hdr1",
                     node_id="hdr1",
                 ),
-            ],
+            ]
         )
         reqs = walker.walk(root)
         assert len(reqs) == 1
         assert "createHeader" in reqs[0]
+        assert reqs[0]["createHeader"]["sectionBreakLocation"]["tabId"] == TAB_ID
 
     def test_footer_delete(self):
-        """Deleted footer segment produces deleteFooter."""
+        """Deleted footer segment produces deleteFooter with tabId."""
         walker = _make_walker()
-        root = ChangeNode(
-            node_type=NodeType.DOCUMENT,
-            op=ChangeOp.UNCHANGED,
-            children=[
+        root = _wrap_in_tab(
+            [
                 ChangeNode(
                     node_type=NodeType.SEGMENT,
                     op=ChangeOp.DELETED,
@@ -155,19 +166,18 @@ class TestRequestWalker:
                     segment_id="ftr1",
                     node_id="ftr1",
                 ),
-            ],
+            ]
         )
         reqs = walker.walk(root)
         assert len(reqs) == 1
         assert "deleteFooter" in reqs[0]
+        assert reqs[0]["deleteFooter"]["tabId"] == TAB_ID
 
     def test_table_in_segment(self):
         """Table change in body segment produces table requests."""
         walker = _make_walker()
-        root = ChangeNode(
-            node_type=NodeType.DOCUMENT,
-            op=ChangeOp.UNCHANGED,
-            children=[
+        root = _wrap_in_tab(
+            [
                 ChangeNode(
                     node_type=NodeType.SEGMENT,
                     op=ChangeOp.MODIFIED,
@@ -185,19 +195,18 @@ class TestRequestWalker:
                         ),
                     ],
                 ),
-            ],
+            ]
         )
         reqs = walker.walk(root)
         assert len(reqs) == 1
         assert "deleteContentRange" in reqs[0]
+        assert reqs[0]["deleteContentRange"]["range"]["tabId"] == TAB_ID
 
     def test_body_segment_id_is_none(self):
         """Body segment should resolve to None segment_id (no segmentId in requests)."""
         walker = _make_walker()
-        root = ChangeNode(
-            node_type=NodeType.DOCUMENT,
-            op=ChangeOp.UNCHANGED,
-            children=[
+        root = _wrap_in_tab(
+            [
                 ChangeNode(
                     node_type=NodeType.SEGMENT,
                     op=ChangeOp.MODIFIED,
@@ -214,20 +223,19 @@ class TestRequestWalker:
                         ),
                     ],
                 ),
-            ],
+            ]
         )
         reqs = walker.walk(root)
         assert len(reqs) == 1
         rng = reqs[0]["deleteContentRange"]["range"]
         assert "segmentId" not in rng
+        assert rng["tabId"] == TAB_ID
 
     def test_content_before_added_table_strips_trailing_newline(self):
         """Content block before an ADDED table should have trailing newline stripped."""
         walker = _make_walker()
-        root = ChangeNode(
-            node_type=NodeType.DOCUMENT,
-            op=ChangeOp.UNCHANGED,
-            children=[
+        root = _wrap_in_tab(
+            [
                 ChangeNode(
                     node_type=NodeType.SEGMENT,
                     op=ChangeOp.MODIFIED,
@@ -254,7 +262,7 @@ class TestRequestWalker:
                         ),
                     ],
                 ),
-            ],
+            ]
         )
         reqs = walker.walk(root)
         # Find the insertText for content block
@@ -267,10 +275,8 @@ class TestRequestWalker:
     def test_content_before_modified_table_does_not_strip(self):
         """Content block before a MODIFIED table should NOT strip trailing newline."""
         walker = _make_walker()
-        root = ChangeNode(
-            node_type=NodeType.DOCUMENT,
-            op=ChangeOp.UNCHANGED,
-            children=[
+        root = _wrap_in_tab(
+            [
                 ChangeNode(
                     node_type=NodeType.SEGMENT,
                     op=ChangeOp.MODIFIED,
@@ -296,7 +302,7 @@ class TestRequestWalker:
                         ),
                     ],
                 ),
-            ],
+            ]
         )
         reqs = walker.walk(root)
         insert_reqs = [r for r in reqs if "insertText" in r]

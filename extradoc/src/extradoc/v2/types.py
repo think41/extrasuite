@@ -43,6 +43,7 @@ class NodeType(Enum):
     """Types of nodes in the change tree."""
 
     DOCUMENT = "document"
+    TAB = "tab"
     SEGMENT = "segment"
     CONTENT_BLOCK = "content_block"
     TABLE = "table"
@@ -163,12 +164,22 @@ class SegmentBlock:
 
 
 @dataclass
+class TabBlock:
+    """A document tab containing segments."""
+
+    tab_id: str
+    title: str
+    xml: str = ""  # full <tab>...</tab> XML for add/delete
+    segments: list[SegmentBlock] = field(default_factory=list)
+
+
+@dataclass
 class DocumentBlock:
     """Root of the block tree."""
 
     doc_id: str
     revision: str
-    segments: list[SegmentBlock] = field(default_factory=list)
+    tabs: list[TabBlock] = field(default_factory=list)
 
 
 # --- Change tree types (output of differ, input to walker) ---
@@ -193,6 +204,9 @@ class ChangeNode:
     pristine_end: int = 0
 
     children: list[ChangeNode] = field(default_factory=list)
+
+    # TAB-only fields
+    tab_id: str | None = None
 
     # SEGMENT-only fields
     segment_type: SegmentType | None = None
@@ -233,6 +247,7 @@ class SegmentContext:
 
     segment_id: str | None
     segment_end: int
+    tab_id: str
     segment_end_consumed: bool = False
     followed_by_added_table: bool = False
     before_structural_element: bool = False

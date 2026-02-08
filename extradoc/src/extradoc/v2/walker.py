@@ -40,24 +40,46 @@ class RequestWalker:
         """Walk the entire change tree and return requests in execution order."""
         requests: list[dict[str, Any]] = []
 
-        for seg_node in root.children:
+        for child in root.children:
+            if child.node_type == NodeType.TAB:
+                if child.op in (ChangeOp.ADDED, ChangeOp.DELETED):
+                    requests.extend(self._structural_gen.emit_tab(child))
+                elif child.op == ChangeOp.MODIFIED:
+                    requests.extend(self._walk_tab(child))
+
+        return requests
+
+    def _walk_tab(self, tab_node: ChangeNode) -> list[dict[str, Any]]:
+        """Walk a single tab's segment children."""
+        requests: list[dict[str, Any]] = []
+        tab_id = tab_node.tab_id
+        if not tab_id:
+            raise ValueError("TAB change node must have tab_id set")
+
+        for seg_node in tab_node.children:
             if seg_node.node_type != NodeType.SEGMENT:
                 continue
 
             # Handle segment-level structural changes (add/delete)
             if seg_node.op in (ChangeOp.ADDED, ChangeOp.DELETED):
                 if seg_node.segment_type in (SegmentType.HEADER, SegmentType.FOOTER):
-                    requests.extend(self._structural_gen.emit_header_footer(seg_node))
+                    requests.extend(
+                        self._structural_gen.emit_header_footer(seg_node, tab_id=tab_id)
+                    )
                 elif seg_node.segment_type == SegmentType.FOOTNOTE:
-                    requests.extend(self._structural_gen.emit_footnote(seg_node))
+                    requests.extend(
+                        self._structural_gen.emit_footnote(seg_node, tab_id=tab_id)
+                    )
                 continue
 
             # For MODIFIED segments, walk children backwards
-            requests.extend(self._walk_segment(seg_node))
+            requests.extend(self._walk_segment(seg_node, tab_id=tab_id))
 
         return requests
 
-    def _walk_segment(self, seg_node: ChangeNode) -> list[dict[str, Any]]:
+    def _walk_segment(
+        self, seg_node: ChangeNode, *, tab_id: str
+    ) -> list[dict[str, Any]]:
         """Walk a single segment's children from highest to lowest pristine_start."""
         requests: list[dict[str, Any]] = []
 
@@ -65,6 +87,7 @@ class RequestWalker:
         ctx = SegmentContext(
             segment_id=segment_id,
             segment_end=seg_node.segment_end,
+            tab_id=tab_id,
         )
 
         # Sort children by pristine_start DESC for backwards walk.
@@ -114,7 +137,10 @@ class RequestWalker:
                         )
                         requests.extend(
                             self._structural_gen.emit_footnote(
-                                fn_child, content_xml, base_index
+                                fn_child,
+                                content_xml,
+                                base_index,
+                                tab_id=tab_id,
                             )
                         )
 

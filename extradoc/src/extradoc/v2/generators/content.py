@@ -132,7 +132,11 @@ class ContentGenerator:
         if start >= end:
             return []
 
-        range_spec: dict[str, Any] = {"startIndex": start, "endIndex": end}
+        range_spec: dict[str, Any] = {
+            "startIndex": start,
+            "endIndex": end,
+            "tabId": ctx.tab_id,
+        }
         if ctx.segment_id:
             range_spec["segmentId"] = ctx.segment_id
 
@@ -165,7 +169,30 @@ class ContentGenerator:
             insert_idx,
             strip_trailing_newline=strip_nl,
             delete_existing_bullets=True,
+            tab_id=ctx.tab_id,
         )
+
+        # When inserting at the segment end AFTER a previous insert already
+        # consumed it, prepend "\n" to separate from the preceding paragraph.
+        # Without this, text inserted at segment_end-1 merges with the last
+        # existing paragraph (goes before its trailing newline).
+        if at_seg_end and ctx.segment_end_consumed and requests:
+            for req in requests:
+                if "insertText" in req:
+                    req["insertText"]["text"] = "\n" + req["insertText"]["text"]
+                    continue
+                # Shift all styling ranges by 1 for the prepended \n
+                for key in (
+                    "updateTextStyle",
+                    "updateParagraphStyle",
+                    "deleteParagraphBullets",
+                    "createParagraphBullets",
+                ):
+                    if key in req:
+                        rng = req[key].get("range")
+                        if rng:
+                            rng["startIndex"] = rng["startIndex"] + 1
+                            rng["endIndex"] = rng["endIndex"] + 1
 
         return requests, consumed
 
@@ -196,7 +223,11 @@ class ContentGenerator:
             if ctx.before_structural_element and d_end == node.pristine_end:
                 d_end = node.pristine_end - 1
             if d_start < d_end:
-                range_spec: dict[str, Any] = {"startIndex": d_start, "endIndex": d_end}
+                range_spec: dict[str, Any] = {
+                    "startIndex": d_start,
+                    "endIndex": d_end,
+                    "tabId": ctx.tab_id,
+                }
                 if ctx.segment_id:
                     range_spec["segmentId"] = ctx.segment_id
                 requests.append({"deleteContentRange": {"range": range_spec}})
@@ -242,6 +273,7 @@ class ContentGenerator:
                     insert_idx,
                     strip_trailing_newline=strip_nl,
                     delete_existing_bullets=True,
+                    tab_id=ctx.tab_id,
                 )
             )
 
@@ -256,6 +288,7 @@ class ContentGenerator:
         insert_index: int = 1,
         strip_trailing_newline: bool = False,
         delete_existing_bullets: bool = False,
+        tab_id: str = "",
     ) -> list[dict[str, Any]]:
         """Generate insert requests for content XML."""
         if not xml_content or not xml_content.strip():
@@ -296,7 +329,7 @@ class ContentGenerator:
             return 2 * count
 
         def make_location(index: int) -> dict[str, Any]:
-            loc: dict[str, Any] = {"index": insert_index + index}
+            loc: dict[str, Any] = {"index": insert_index + index, "tabId": tab_id}
             if segment_id:
                 loc["segmentId"] = segment_id
             return loc
@@ -305,6 +338,7 @@ class ContentGenerator:
             rng: dict[str, Any] = {
                 "startIndex": insert_index + start,
                 "endIndex": insert_index + end,
+                "tabId": tab_id,
             }
             if segment_id:
                 rng["segmentId"] = segment_id
@@ -376,7 +410,7 @@ class ContentGenerator:
             fn_id = attrs.get("id", "")
             # Account for page-break-only paragraph shifts
             adj_offset = offset + _pb_shift(offset, inclusive=True)
-            loc: dict[str, Any] = {"index": insert_index + adj_offset}
+            loc: dict[str, Any] = {"index": insert_index + adj_offset, "tabId": tab_id}
             if segment_id:
                 loc["segmentId"] = segment_id
             req: dict[str, Any] = {

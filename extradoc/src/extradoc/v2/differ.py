@@ -19,6 +19,7 @@ from .types import (
     SegmentBlock,
     SegmentType,
     StructuralBlock,
+    TabBlock,
     TableBlock,
     TableRowBlock,
 )
@@ -33,8 +34,9 @@ class TreeDiffer:
     def diff(self, pristine: DocumentBlock, current: DocumentBlock) -> ChangeNode:
         """Diff two document trees and return a change tree.
 
-        Returns a DOCUMENT-level ChangeNode whose children are SEGMENT nodes.
-        Only segments/blocks with changes produce nodes.
+        Returns a DOCUMENT-level ChangeNode whose children are TAB nodes.
+        Each TAB node has SEGMENT children. Only tabs/segments/blocks with
+        changes produce nodes.
         """
         root = ChangeNode(
             node_type=NodeType.DOCUMENT,
@@ -42,11 +44,64 @@ class TreeDiffer:
             node_id=pristine.doc_id,
         )
 
-        segment_pairs = self._match_segments(pristine, current)
+        tab_pairs = self._match_tabs(pristine, current)
+        for p_tab, c_tab in tab_pairs:
+            if p_tab is None and c_tab is not None:
+                # Tab added
+                root.children.append(
+                    ChangeNode(
+                        node_type=NodeType.TAB,
+                        op=ChangeOp.ADDED,
+                        node_id=c_tab.tab_id,
+                        tab_id=c_tab.tab_id,
+                        after_xml=c_tab.xml,
+                    )
+                )
+            elif p_tab is not None and c_tab is None:
+                # Tab deleted
+                root.children.append(
+                    ChangeNode(
+                        node_type=NodeType.TAB,
+                        op=ChangeOp.DELETED,
+                        node_id=p_tab.tab_id,
+                        tab_id=p_tab.tab_id,
+                        before_xml=p_tab.xml,
+                    )
+                )
+            elif p_tab is not None and c_tab is not None:
+                tab_node = self._diff_tab(p_tab, c_tab)
+                if tab_node is not None:
+                    root.children.append(tab_node)
+
+        return root
+
+    def _match_tabs(
+        self,
+        pristine: DocumentBlock,
+        current: DocumentBlock,
+    ) -> list[tuple[TabBlock | None, TabBlock | None]]:
+        """Match tabs by tab_id."""
+        p_map = {t.tab_id: t for t in pristine.tabs}
+        c_map = {t.tab_id: t for t in current.tabs}
+
+        all_keys = list(
+            dict.fromkeys(
+                [t.tab_id for t in pristine.tabs] + [t.tab_id for t in current.tabs]
+            )
+        )
+        pairs: list[tuple[TabBlock | None, TabBlock | None]] = []
+        for key in all_keys:
+            pairs.append((p_map.get(key), c_map.get(key)))
+        return pairs
+
+    def _diff_tab(self, p_tab: TabBlock, c_tab: TabBlock) -> ChangeNode | None:
+        """Diff a matched pair of tabs. Returns None if no changes."""
+        children: list[ChangeNode] = []
+
+        segment_pairs = self._match_segments(p_tab, c_tab)
         for p_seg, c_seg in segment_pairs:
             if p_seg is None and c_seg is not None:
-                # Segment added
-                root.children.append(
+                children.append(
                     ChangeNode(
                         node_type=NodeType.SEGMENT,
                         op=ChangeOp.ADDED,
@@ -57,8 +112,7 @@ class TreeDiffer:
                     )
                 )
             elif p_seg is not None and c_seg is None:
-                # Segment deleted
-                root.children.append(
+                children.append(
                     ChangeNode(
                         node_type=NodeType.SEGMENT,
                         op=ChangeOp.DELETED,
@@ -71,9 +125,18 @@ class TreeDiffer:
             elif p_seg is not None and c_seg is not None:
                 seg_node = self._diff_segment(p_seg, c_seg)
                 if seg_node is not None:
-                    root.children.append(seg_node)
+                    children.append(seg_node)
 
-        return root
+        if not children:
+            return None
+
+        return ChangeNode(
+            node_type=NodeType.TAB,
+            op=ChangeOp.MODIFIED,
+            node_id=p_tab.tab_id,
+            tab_id=p_tab.tab_id,
+            children=children,
+        )
 
     def _segment_xml(self, seg: SegmentBlock) -> str:
         """Build a minimal XML representation for a segment (for structural changes)."""
@@ -82,8 +145,8 @@ class TreeDiffer:
 
     def _match_segments(
         self,
-        pristine: DocumentBlock,
-        current: DocumentBlock,
+        pristine: TabBlock,
+        current: TabBlock,
     ) -> list[tuple[SegmentBlock | None, SegmentBlock | None]]:
         """Match segments by (type, id).
 

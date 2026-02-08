@@ -22,7 +22,7 @@ def _make_content_node(
 
 
 def _body_ctx(segment_end: int = 100) -> SegmentContext:
-    return SegmentContext(segment_id=None, segment_end=segment_end)
+    return SegmentContext(segment_id=None, segment_end=segment_end, tab_id="t.0")
 
 
 def _req_types(requests: list) -> list[str]:
@@ -81,7 +81,7 @@ class TestContentGeneratorDelete:
             pristine_start=0,
             pristine_end=3,
         )
-        ctx = SegmentContext(segment_id="kix.hdr1", segment_end=10)
+        ctx = SegmentContext(segment_id="kix.hdr1", segment_end=10, tab_id="t.0")
         reqs, _consumed = gen.emit(node, ctx)
         assert len(reqs) == 1
         rng = reqs[0]["deleteContentRange"]["range"]

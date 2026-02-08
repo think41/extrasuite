@@ -7,12 +7,12 @@ from extradoc.v2.types import ParagraphBlock, SegmentType, TableBlock
 
 def _parse_and_index(body_content: str) -> list:
     """Helper: parse doc and compute indexes, return body children."""
-    xml = f'<doc id="d" revision="r"><body class="_base">{body_content}</body></doc>'
+    xml = f'<doc id="d" revision="r"><tab id="t.0" title="Tab 1"><body class="_base">{body_content}</body></tab></doc>'
     parser = BlockParser()
     doc = parser.parse(xml)
     indexer = BlockIndexer()
     indexer.compute(doc)
-    return doc.segments[0].children
+    return doc.tabs[0].segments[0].children
 
 
 class TestBlockIndexer:
@@ -83,10 +83,10 @@ class TestBlockIndexer:
 
     def test_header_starts_at_zero(self):
         """Headers start at index 0, not 1."""
-        xml = '<doc id="d" revision="r"><header id="h1" class="_base"><p>Hi</p></header></doc>'
+        xml = '<doc id="d" revision="r"><tab id="t.0" title="Tab 1"><body class="_base"></body><header id="h1" class="_base"><p>Hi</p></header></tab></doc>'
         doc = BlockParser().parse(xml)
         BlockIndexer().compute(doc)
-        header = doc.segments[0]
+        header = doc.tabs[0].segments[1]
         assert header.segment_type == SegmentType.HEADER
         assert header.start_index == 0
         p = header.children[0]
@@ -95,12 +95,10 @@ class TestBlockIndexer:
         assert p.end_index == 3  # "Hi"(2) + \n(1) = 3
 
     def test_segment_end_index(self):
-        xml = (
-            '<doc id="d" revision="r"><body class="_base"><p>A</p><p>B</p></body></doc>'
-        )
+        xml = '<doc id="d" revision="r"><tab id="t.0" title="Tab 1"><body class="_base"><p>A</p><p>B</p></body></tab></doc>'
         doc = BlockParser().parse(xml)
         BlockIndexer().compute(doc)
-        body = doc.segments[0]
+        body = doc.tabs[0].segments[0]
         # A: 1 → 3, B: 3 → 5
         assert body.end_index == 5
 

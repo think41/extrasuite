@@ -15,6 +15,7 @@ from .types import (
     SegmentBlock,
     SegmentType,
     StructuralBlock,
+    TabBlock,
     TableBlock,
     TableCellBlock,
     TableRowBlock,
@@ -36,7 +37,7 @@ class BlockParser:
             xml_content: The document.xml content
 
         Returns:
-            A DocumentBlock with typed children
+            A DocumentBlock with typed children organized by tabs
         """
         root = ET.fromstring(xml_content)
 
@@ -45,32 +46,42 @@ class BlockParser:
             revision=root.get("revision", ""),
         )
 
-        # Process body
-        body = root.find("body")
-        if body is not None:
-            segment = self._parse_segment(body, SegmentType.BODY, "body")
-            doc.segments.append(segment)
-
-        # Process headers
-        for header in root.findall("header"):
-            segment = self._parse_segment(
-                header, SegmentType.HEADER, header.get("id", "")
+        # Parse tabs
+        for tab_elem in root.findall("tab"):
+            tab_block = TabBlock(
+                tab_id=tab_elem.get("id", ""),
+                title=tab_elem.get("title", ""),
+                xml=ET.tostring(tab_elem, encoding="unicode"),
             )
-            doc.segments.append(segment)
 
-        # Process footers
-        for footer in root.findall("footer"):
-            segment = self._parse_segment(
-                footer, SegmentType.FOOTER, footer.get("id", "")
-            )
-            doc.segments.append(segment)
+            # Body within tab
+            body = tab_elem.find("body")
+            if body is not None:
+                segment = self._parse_segment(body, SegmentType.BODY, "body")
+                tab_block.segments.append(segment)
 
-        # Process footnotes
-        for footnote in root.findall("footnote"):
-            segment = self._parse_segment(
-                footnote, SegmentType.FOOTNOTE, footnote.get("id", "")
-            )
-            doc.segments.append(segment)
+            # Headers within tab
+            for header in tab_elem.findall("header"):
+                segment = self._parse_segment(
+                    header, SegmentType.HEADER, header.get("id", "")
+                )
+                tab_block.segments.append(segment)
+
+            # Footers within tab
+            for footer in tab_elem.findall("footer"):
+                segment = self._parse_segment(
+                    footer, SegmentType.FOOTER, footer.get("id", "")
+                )
+                tab_block.segments.append(segment)
+
+            # Footnotes within tab
+            for footnote in tab_elem.findall("footnote"):
+                segment = self._parse_segment(
+                    footnote, SegmentType.FOOTNOTE, footnote.get("id", "")
+                )
+                tab_block.segments.append(segment)
+
+            doc.tabs.append(tab_block)
 
         return doc
 
@@ -120,7 +131,12 @@ class BlockParser:
 
     def _parse_paragraph(self, elem: ET.Element) -> ParagraphBlock:
         """Parse a single paragraph element."""
+        # Strip tail whitespace — it's just XML formatting between elements
+        # and would pollute content hashes (e.g. "\n      " differs by indent).
+        saved_tail = elem.tail
+        elem.tail = None
         xml = ET.tostring(elem, encoding="unicode")
+        elem.tail = saved_tail
 
         para = ParagraphBlock(
             tag=elem.tag,

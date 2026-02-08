@@ -324,6 +324,7 @@ def build_table_cell_style_request(
     row_index: int,
     col_index: int,
     segment_id: str | None = None,
+    tab_id: str | None = None,
 ) -> dict[str, Any] | None:
     """Build an updateTableCellStyle request from XML styles.
 
@@ -333,6 +334,7 @@ def build_table_cell_style_request(
         row_index: Row index in the table
         col_index: Column index in the table
         segment_id: Optional segment ID for headers/footers/footnotes
+        tab_id: Optional tab ID
 
     Returns:
         An updateTableCellStyle request dict, or None if no styles to apply
@@ -344,6 +346,8 @@ def build_table_cell_style_request(
     table_start_loc: dict[str, Any] = {"index": table_start_index}
     if segment_id:
         table_start_loc["segmentId"] = segment_id
+    if tab_id:
+        table_start_loc["tabId"] = tab_id
 
     return {
         "updateTableCellStyle": {

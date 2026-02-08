@@ -162,38 +162,30 @@ def desugar_document(
         title=title,
     )
 
-    # Process body
-    body = root.find("body")
-    if body is not None:
-        section = _desugar_section(body, "body", style_defs)
-        doc.sections.append(section)
-
-    # Process tabs (multi-tab documents)
+    # Process tabs — all content is inside <tab> elements
     for tab in root.findall("tab"):
+        tab_id = tab.get("id", "")
+
         tab_body = tab.find("body")
         if tab_body is not None:
-            tab_id = tab.get("id", "")
             section = _desugar_section(tab_body, "body", style_defs)
             section.section_id = tab_id
             doc.sections.append(section)
 
-    # Process headers
-    for header in root.findall("header"):
-        section = _desugar_section(header, "header", style_defs)
-        section.section_id = header.get("id", "")
-        doc.sections.append(section)
+        for header in tab.findall("header"):
+            section = _desugar_section(header, "header", style_defs)
+            section.section_id = header.get("id", "")
+            doc.sections.append(section)
 
-    # Process footers
-    for footer in root.findall("footer"):
-        section = _desugar_section(footer, "footer", style_defs)
-        section.section_id = footer.get("id", "")
-        doc.sections.append(section)
+        for footer in tab.findall("footer"):
+            section = _desugar_section(footer, "footer", style_defs)
+            section.section_id = footer.get("id", "")
+            doc.sections.append(section)
 
-    # Process footnotes
-    for footnote in root.findall("footnote"):
-        section = _desugar_section(footnote, "footnote", style_defs)
-        section.section_id = footnote.get("id", "")
-        doc.sections.append(section)
+        for footnote in tab.findall("footnote"):
+            section = _desugar_section(footnote, "footnote", style_defs)
+            section.section_id = footnote.get("id", "")
+            doc.sections.append(section)
 
     return doc
 

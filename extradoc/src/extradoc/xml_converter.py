@@ -98,48 +98,25 @@ def convert_document_to_xml(
         "  </meta>",
     ]
 
-    # Check for tabs (modern API) vs legacy body
+    # Convert tabs
     tabs = document.get("tabs", [])
-
-    if tabs:
-        for tab in tabs:
-            tab_xml = _convert_tab(tab, document, ctx)
-            parts.append(tab_xml)
-    else:
-        # Legacy single-tab document
-        body = document.get("body", {})
-        content = body.get("content", [])
-        lists = document.get("lists", {})
-        headers = document.get("headers", {})
-        footers = document.get("footers", {})
-        footnotes = document.get("footnotes", {})
-
-        # Set context for footnote inlining
-        ctx.footnotes = footnotes
-        ctx.lists = lists
-
-        # Convert body (footnotes are inlined where references appear)
-        parts.append('  <body class="_base">')
-        body_xml = _convert_body_content(content, lists, ctx, indent=4)
-        parts.append(body_xml)
-        parts.append("  </body>")
-
-        # Convert headers
-        for header_id, header in headers.items():
-            header_xml = _convert_header_or_footer(
-                header, header_id, "header", lists, ctx
-            )
-            parts.append(header_xml)
-
-        # Convert footers
-        for footer_id, footer in footers.items():
-            footer_xml = _convert_header_or_footer(
-                footer, footer_id, "footer", lists, ctx
-            )
-            parts.append(footer_xml)
-
-        # Note: Footnotes are NOT converted separately - they are inlined
-        # in the body where the footnote reference appears
+    if not tabs and "body" in document:
+        # Legacy format (no includeTabsContent): synthesize a tab
+        tabs = [
+            {
+                "tabProperties": {"tabId": "t.0", "title": ""},
+                "documentTab": {
+                    "body": document["body"],
+                    "headers": document.get("headers", {}),
+                    "footers": document.get("footers", {}),
+                    "footnotes": document.get("footnotes", {}),
+                    "lists": document.get("lists", {}),
+                },
+            }
+        ]
+    for tab in tabs:
+        tab_xml = _convert_tab(tab, document, ctx)
+        parts.append(tab_xml)
 
     parts.append("</doc>")
 
@@ -206,20 +183,24 @@ def _convert_tab(
     parts.append(body_xml)
     parts.append("    </body>")
 
-    parts.append("  </tab>")
-
-    # Headers
+    # Headers (inside tab)
     for header_id, header in headers.items():
-        header_xml = _convert_header_or_footer(header, header_id, "header", lists, ctx)
+        header_xml = _convert_header_or_footer(
+            header, header_id, "header", lists, ctx, indent=4
+        )
         parts.append(header_xml)
 
-    # Footers
+    # Footers (inside tab)
     for footer_id, footer in footers.items():
-        footer_xml = _convert_header_or_footer(footer, footer_id, "footer", lists, ctx)
+        footer_xml = _convert_header_or_footer(
+            footer, footer_id, "footer", lists, ctx, indent=4
+        )
         parts.append(footer_xml)
 
     # Note: Footnotes are NOT converted separately - they are inlined
     # in the body where the footnote reference appears
+
+    parts.append("  </tab>")
 
     return "\n".join(parts)
 
@@ -230,11 +211,13 @@ def _convert_header_or_footer(
     tag_name: str,
     lists: dict[str, Any],
     ctx: ConversionContext,
+    indent: int = 2,
 ) -> str:
     """Convert a header or footer to XML."""
     content = section.get("content", [])
-    inner_xml = _convert_body_content(content, lists, ctx, indent=4)
-    return f'  <{tag_name} id="{_escape(section_id)}" class="_base">\n{inner_xml}\n  </{tag_name}>'
+    prefix = " " * indent
+    inner_xml = _convert_body_content(content, lists, ctx, indent=indent + 2)
+    return f'{prefix}<{tag_name} id="{_escape(section_id)}" class="_base">\n{inner_xml}\n{prefix}</{tag_name}>'
 
 
 def _convert_body_content(

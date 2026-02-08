@@ -8,7 +8,7 @@ from extradoc.v2.types import NodeType
 
 
 def _make_doc(body_content: str, headers: str = "", footers: str = "") -> str:
-    return f'<doc id="d" revision="r"><body class="_base">{body_content}</body>{headers}{footers}</doc>'
+    return f'<doc id="d" revision="r"><tab id="t.0" title="Tab 1"><body class="_base">{body_content}</body>{headers}{footers}</tab></doc>'
 
 
 def _req_types(requests: list) -> list[str]:
