@@ -8,6 +8,8 @@ DOCUMENT → SEGMENT → CONTENT_BLOCK/TABLE → TABLE_ROW → TABLE_CELL
 
 from __future__ import annotations
 
+import xml.etree.ElementTree as ET
+
 from .aligner import BlockAligner
 from .types import (
     AlignedPair,
@@ -308,7 +310,7 @@ class TreeDiffer:
 
         # Suppress deletion of structural separators before tables
         for i in range(len(raw)):
-            op_i, p_block_i, c_block_i, current_idx_i = raw[i]
+            op_i, p_block_i, _, _ = raw[i]
             if (
                 op_i == ChangeOp.DELETED
                 and isinstance(p_block_i, ParagraphBlock)
@@ -724,8 +726,6 @@ class TreeDiffer:
 
 def _is_empty_paragraph(block: ParagraphBlock) -> bool:
     """Check if paragraph is empty (structural separator)."""
-    import xml.etree.ElementTree as ET
-
     try:
         elem = ET.fromstring(block.xml)
         text = (elem.text or "") + "".join(

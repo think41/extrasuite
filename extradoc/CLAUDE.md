@@ -10,20 +10,23 @@ Instead of working with complex API responses, agents interact with clean XML fi
 
 | File | Purpose |
 |------|---------|
-| `src/extradoc/client.py` | `DocsClient` - main interface with `pull()`, `diff()`, `push()` methods |
+| `src/extradoc/__main__.py` | CLI entry point with `pull`, `diff`, `push`, `test` commands |
 | `src/extradoc/transport.py` | `Transport` ABC, `GoogleDocsTransport`, `LocalFileTransport` |
 | `src/extradoc/xml_converter.py` | Converts Google Docs JSON to ExtraDoc XML format |
 | `src/extradoc/desugar.py` | Transforms sugar XML back to internal representation for diffing |
-| `src/extradoc/block_diff.py` | Block-level diff detection |
-| `src/extradoc/diff_engine.py` | Generates batchUpdate requests from diffs |
 | `src/extradoc/indexer.py` | UTF-16 index calculation and validation |
 | `src/extradoc/style_factorizer.py` | Extracts and minimizes styles |
 | `src/extradoc/style_hash.py` | Deterministic style ID generation |
+| `src/extradoc/style_converter.py` | Declarative style property mappings |
+| `src/extradoc/v2/` | Diff/push engine (tree differ, code generator, push orchestration) |
+| `src/extradoc/request_generators/structural.py` | Structural request utilities (footnote/header/footer ID handling) |
+| `src/extradoc/request_generators/table.py` | Table row/column insert/delete request generation |
 
 ## Documentation
 
 - `docs/extradoc-spec.md` - Complete XML format specification
-- `docs/diff-implementation-plan.md` - Diff implementation plan and status
+- `docs/extradoc-diff-specification.md` - Diff specification
+- `docs/gaps.md` - Known bugs and limitations
 - `docs/googledocs/` - Google Docs API reference (120+ pages) - **use this instead of web fetching**
   - `docs/googledocs/api/` - Individual API request/response types (CreateParagraphBulletsRequest, etc.)
   - `docs/googledocs/lists.md` - Working with bullet/numbered lists
@@ -45,8 +48,6 @@ Instead of working with complex API responses, agents interact with clean XML fi
 
 ## CLI Interface
 
-There are two diff/push engines: **v2 (preferred)** and v1 (legacy). Always use v2 unless debugging a v2-specific issue.
-
 ```bash
 # Download a document to local folder
 uv run python -m extradoc pull <document_url_or_id> [output_dir]
@@ -55,16 +56,17 @@ uv run python -m extradoc pull <document_url_or_id> [output_dir]
 # Options:
 #   --no-raw       Don't save raw API response to .raw/ folder
 
-# Preview changes (dry run) — v2 preferred
-uv run python -m extradoc diffv2 <folder>
-# Legacy v1: uv run python -m extradoc diff <folder>
+# Preview changes (dry run)
+uv run python -m extradoc diff <folder>
 
-# Apply changes to Google Docs — v2 preferred
-uv run python -m extradoc pushv2 <folder> [-f|--force]
-# Legacy v1: uv run python -m extradoc push <folder> [-f|--force]
+# Apply changes to Google Docs
+uv run python -m extradoc push <folder> [-f|--force]
+
+# End-to-end test: diff -> push -> repull -> compare
+uv run python -m extradoc test <folder>
 ```
 
-Also works via `uvx extradoc pull/diffv2/pushv2`.
+Also works via `uvx extradoc pull/diff/push`.
 
 ## Folder Structure
 
@@ -135,23 +137,6 @@ tests/golden/
   <document_id>.json    # Raw Google Docs API response
 ```
 
-Use `LocalFileTransport` in tests:
-
-```python
-from extradoc import DocsClient
-from extradoc.transport import LocalFileTransport
-
-@pytest.fixture
-def client():
-    transport = LocalFileTransport(Path("tests/golden"))
-    return DocsClient(transport)
-
-@pytest.mark.asyncio
-async def test_pull(client, tmp_path):
-    await client.pull("document_id", tmp_path)
-    assert (tmp_path / "document_id" / "document.xml").exists()
-```
-
 ### Creating New Golden Files
 
 1. Create a Google Doc with the features to test
@@ -166,9 +151,12 @@ async def test_pull(client, tmp_path):
 
 ```
 ┌─────────────────┐     ┌──────────────────┐     ┌─────────────────┐
-│ DocsClient      │────▶│ Transport        │────▶│ Google API /    │
-│ (orchestration) │     │ (data fetching)  │     │ Local Files     │
-└─────────────────┘     └──────────────────┘     └─────────────────┘
+│ __main__.py     │────▶│ Transport        │────▶│ Google API /    │
+│ (CLI + pull)    │     │ (data fetching)  │     │ Local Files     │
+├─────────────────┤     └──────────────────┘     └─────────────────┘
+│ v2/PushClient   │
+│ (diff + push)   │
+└─────────────────┘
 ```
 
 - `Transport` is an abstract base class with `get_document()`, `batch_update()`, `close()`
@@ -183,97 +171,17 @@ async def test_pull(client, tmp_path):
 4. **Save raw** - Optionally save `.raw/document.json`
 5. **Pristine copy** - Create `.pristine/document.zip` for diff/push
 
-## Block-Level Diff Architecture
+### Diff/Push Flow (v2 engine)
 
-The diff workflow uses a tree-based decomposition to ensure index stability.
+The v2 engine in `src/extradoc/v2/` handles diff and push:
 
-### Block Types
-
-The `block_diff.py` module parses XML into a block tree:
-
-| Block Type | Description | Handling |
-|------------|-------------|----------|
-| `DOCUMENT` | Root container | Contains body, headers, footers, footnotes |
-| `BODY` | Document body | Contains structural elements |
-| `TAB` | Multi-tab document tab | Contains body content |
-| `HEADER` | Page header | Separate index space starting at 0 |
-| `FOOTER` | Page footer | Separate index space starting at 0 |
-| `FOOTNOTE` | Footnote content | Separate index space starting at 0 |
-| `PARAGRAPH` | Individual paragraph | Parsed individually, grouped in changes |
-| `CONTENT_BLOCK` | Grouped paragraphs | Change output for consecutive same-status paragraphs |
-| `TABLE` | Table element | Has recursive TABLE_CELL children |
-| `TABLE_CELL` | Table cell | Contains nested content |
-| `TABLE_OF_CONTENTS` | TOC element | Treated as single block |
-
-**Key insight:** Each paragraph is parsed individually, then during diffing, consecutive paragraphs with the same change status are grouped into `CONTENT_BLOCK` changes. This allows surgical updates where only modified paragraphs are included.
-
-### Tree-Based Resolution
-
-```
-Document
-├── Body
-│   ├── Paragraph (title)
-│   ├── Paragraph (subtitle) → MODIFIED
-│   ├── Paragraph (p1) → unchanged (acts as separator)
-│   ├── Paragraph (p2) → MODIFIED
-│   ├── Table
-│   │   ├── TableCell (0,0)
-│   │   └── TableCell (0,1)
-│   └── Paragraph (p3)
-├── Header (kix.hdr1)
-│   └── Paragraph
-└── Footer (kix.ftr1)
-    └── Paragraph
-```
-
-### Block Change Detection
-
-The `BlockDiffDetector` uses LCS-based alignment with paragraph-level granularity:
-
-```python
-from extradoc import diff_documents_block_level, format_changes
-
-changes = diff_documents_block_level(pristine_xml, current_xml)
-print(format_changes(changes))
-```
-
-Each `BlockChange` contains:
-- `change_type`: ADDED, DELETED, or MODIFIED
-- `block_type`: The type of block affected
-- `before_xml`: Original XML (for DELETE/MODIFY)
-- `after_xml`: New XML (for ADD/MODIFY)
-- `container_path`: Path to container (e.g., `["body:body"]`, `["header:kix.hdr1"]`)
-- `child_changes`: Nested changes (for tables)
-
-### Paragraph-Level Granularity
-
-Only modified paragraphs are included in changes:
-
-```
-pristine: [title, subtitle, p1, p2]
-current:  [title, subtitle', p1, p2']
-
-Result:
-- ContentBlock([subtitle]) → MODIFIED (title unchanged, not included)
-- ContentBlock([p2]) → MODIFIED (p1 unchanged, acts as separator)
-```
-
-### Bottom-Up Processing
-
-**Critical:** Process changes from the END of the document toward the BEGINNING.
-
-**Why this works:**
-- Changes at higher indexes don't affect lower indexes
-- If we insert 10 characters at index 50, indexes 1-49 stay the same
-- If individual ContentBlock diffs are correct, overall diff is guaranteed correct
-
-## Backwards Walk Diff Algorithm
-
-The diff engine converts block-level changes into Google Docs `batchUpdate` requests using a backwards walk. Each segment (body, each header, each footer, each footnote) has its own index space and is processed independently. Within a segment, the block diff provides an ordered list of changes, each annotated with pristine start/end indexes. The walk reverses this list and emits requests directly: DELETE emits `deleteContentRange` at the pristine range; ADD emits `insertText` + styling at the pristine insertion point; MODIFY emits delete-then-insert as an atomic pair. Because we process highest-index-first, each operation only affects content at or above position P, leaving everything below at pristine state. Core invariant: **when processing element at pristine position P, everything at positions < P is still pristine.**
-
-Tables are handled by recursive descent into the same pattern. A modified table walks its rows backwards, and within each row walks cells backwards. Each cell's content is a ContentBlock and uses the same delete/insert handler as body content (`_generate_content_insert_requests()` handles body, header, footer, footnote, and table cell content uniformly). The cell's content index is calculated from the pristine table XML. Since we walk cells right-to-left and rows bottom-to-top, the invariant holds: operations on later cells do not shift indexes of earlier cells.
-
-The result is a flat list of requests emitted during the walk, already in correct execution order, with no post-processing required. No global reordering. No index adjustment. The algorithm handles content blocks, tables, rows, columns, headers, footers, and footnotes with one uniform principle: walk backwards, use pristine indexes.
+1. **Parse** - `v2/parser.py` builds `DocumentBlock` trees from pristine and current XML
+2. **Diff** - `v2/differ.py` `TreeDiffer` compares trees, producing a `ChangeNode` tree
+3. **Generate** - `v2/codegen.py` walks the change tree to emit `batchUpdate` requests
+4. **Push** - `v2/push.py` `PushClient` orchestrates the 3-batch strategy:
+   - Batch 1: createHeader/createFooter → capture real IDs
+   - Batch 2: Main body + createFootnote → capture real footnote IDs
+   - Batch 3: Footnote content requests (with rewritten segment IDs)
 
 ## Current Status
 
@@ -284,7 +192,6 @@ The result is a flat list of requests emitted during the walk, already in correc
 - Style factorization
 - Multi-tab document support
 - Header/footer/footnote support (inline footnote model)
-- Block-level diff detection with paragraph-level granularity (`block_diff.py`)
 
 **Working (Push):**
 - Table operations: `insertTable` with cell content, `insertTableRow`, `deleteTableRow`, `insertTableColumn`, `deleteTableColumn`

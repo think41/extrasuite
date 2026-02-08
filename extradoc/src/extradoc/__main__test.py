@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import difflib
 import re
 import subprocess
 import sys
@@ -86,8 +87,6 @@ def run_test_workflow(folder: Path) -> int:
         print(f"expected:  {expected}")
         print(f"actual:    {actual}")
         return 0
-
-    import difflib
 
     diff = "\n".join(
         difflib.unified_diff(
