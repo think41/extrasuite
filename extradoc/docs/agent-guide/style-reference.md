@@ -164,7 +164,7 @@ Applied via `class` on `<td>` elements. Cell style IDs typically start with `cel
 ### Applying Cell Styles
 
 ```xml
-<table rows="2" cols="2" id="abc123">
+<table id="abc123">
   <tr id="row1">
     <td id="c1" class="cell-hdr"><p><b>Name</b></p></td>
     <td id="c2" class="cell-hdr"><p><b>Value</b></p></td>
@@ -183,7 +183,7 @@ Applied via `class` on `<td>` elements. Cell style IDs typically start with `cel
 Set fixed column widths using `<col>` elements inside `<table>`:
 
 ```xml
-<table rows="2" cols="3" id="abc123">
+<table id="abc123">
   <col index="0" width="200pt"/>
   <col index="1" width="100pt"/>
   <tr>...</tr>

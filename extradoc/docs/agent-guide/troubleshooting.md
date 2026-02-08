@@ -12,7 +12,7 @@ Common issues, API limitations, and debugging tips for extradoc.
 
 **Fix:** Always re-pull after push:
 ```bash
-uv run python -m extradoc pushv2 <folder>
+uv run python -m extradoc push <folder>
 uv run python -m extradoc pull <url> <folder>    # Re-pull to refresh pristine state
 # Now safe to edit again
 ```
@@ -25,7 +25,7 @@ uv run python -m extradoc pull <url> <folder>    # Re-pull to refresh pristine s
 ```bash
 uv run python -m extradoc pull <url> <folder>
 # Make your edits again on the fresh copy
-uv run python -m extradoc pushv2 <folder>
+uv run python -m extradoc push <folder>
 ```
 
 ### "Horizontal rule count changed" error
@@ -36,9 +36,9 @@ uv run python -m extradoc pushv2 <folder>
 
 ### Push fails with API error on table changes
 
-**Cause:** The `rows` or `cols` attribute on `<table>` doesn't match the actual number of `<tr>` or `<td>` elements.
+**Cause:** Table structure is invalid — missing `<p>` inside a `<td>`, or merged cell physical `<td>` elements were removed.
 
-**Fix:** Ensure `rows` matches the number of `<tr>` elements and `cols` matches the number of `<td>` elements per row (including empty cells for merged regions).
+**Fix:** Ensure every `<td>` contains at least one `<p>` (even empty cells). For merged cells, keep all physical `<td>` elements — `colspan`/`rowspan` are visual metadata only.
 
 ### Style changes not applying
 
@@ -90,10 +90,10 @@ These are hard limits of the Google Docs API. No workaround is available.
 
 ## Debugging with Diff
 
-Use `diffv2` as a dry run to preview what push will do:
+Use `diff` as a dry run to preview what push will do:
 
 ```bash
-uv run python -m extradoc diffv2 <folder>
+uv run python -m extradoc diff <folder>
 ```
 
 This outputs the `batchUpdate` JSON that would be sent to the API. Review it to verify:
@@ -103,7 +103,7 @@ This outputs the `batchUpdate` JSON that would be sent to the API. Review it to 
 
 Save diff output for comparison:
 ```bash
-uv run python -m extradoc diffv2 <folder> > diff-output.json
+uv run python -m extradoc diff <folder> > diff-output.json
 ```
 
 ---
@@ -114,18 +114,18 @@ This is the most common source of confusion with tables.
 
 ### The Rule
 
-Each row must have exactly `cols` number of `<td>` elements, regardless of merging. The `colspan` and `rowspan` attributes are **visual metadata only** — they don't reduce the number of physical cells.
+Each row must have the same number of `<td>` elements, regardless of merging. The `colspan` and `rowspan` attributes are **visual metadata only** — they don't reduce the number of physical cells.
 
 ### Example: 3-column table with a merged cell
 
-If you have a table with `cols="3"` and the first cell spans 2 columns:
+If you have a 3-column table and the first cell spans 2 columns:
 
 ```xml
-<table rows="1" cols="3">
-  <tr>
-    <td colspan="2"><p>Merged cell spanning columns 1-2</p></td>
-    <td><p></p></td>    <!-- Physical cell covered by merge (empty but required) -->
-    <td><p>Column 3</p></td>
+<table id="abc123">
+  <tr id="row1">
+    <td id="c1" colspan="2"><p>Merged cell spanning columns 1-2</p></td>
+    <td id="c2"><p></p></td>    <!-- Physical cell covered by merge (empty but required) -->
+    <td id="c3"><p>Column 3</p></td>
   </tr>
 </table>
 ```
@@ -226,8 +226,8 @@ When push doesn't work as expected:
 
 1. **Did you re-pull before editing?** Stale pristine state is the #1 cause of issues.
 2. **Is the XML valid?** Check for unescaped special characters or missing closing tags.
-3. **Do table dimensions match?** `rows` and `cols` attributes must match actual `<tr>` and `<td>` counts.
+3. **Does every `<td>` contain a `<p>`?** Even empty cells need `<td><p></p></td>`.
 4. **Are all table cells present?** Even merged cells need physical `<td>` elements.
 5. **Did you add/remove an `<hr/>`?** This is not supported.
 6. **Does your style exist?** Check that the `class` value maps to a `<style>` in `styles.xml`.
-7. **Run `uv run python -m extradoc diffv2`** to preview what will be pushed and look for unexpected changes.
+7. **Run `uv run python -m extradoc diff`** to preview what will be pushed and look for unexpected changes.
