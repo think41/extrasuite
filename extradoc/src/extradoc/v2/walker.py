@@ -97,17 +97,16 @@ class RequestWalker:
                 before_structural_element = child.op != ChangeOp.DELETED
 
             elif child.node_type == NodeType.CONTENT_BLOCK:
-                # Handle footnote child changes first
+                # Handle DELETED footnote child changes (the content generator
+                # handles ADDED footnotes inline via createFootnote at the
+                # correct position within the content block).
                 for fn_child in child.children:
                     if (
                         fn_child.node_type == NodeType.SEGMENT
                         and fn_child.segment_type == SegmentType.FOOTNOTE
+                        and fn_child.op == ChangeOp.DELETED
                     ):
-                        content_xml = (
-                            child.after_xml
-                            if fn_child.op == ChangeOp.ADDED
-                            else child.before_xml
-                        )
+                        content_xml = child.before_xml
                         base_index = (
                             child.pristine_start
                             if child.pristine_start > 0

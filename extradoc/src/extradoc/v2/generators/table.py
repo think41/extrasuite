@@ -139,6 +139,35 @@ class TableGenerator:
             )
             requests.extend(cell_reqs)
 
+        # The table start location is insert_index + 1 (after the \n before the table)
+        table_start = insert_index + 1
+
+        # Apply cell styles
+        for row_idx, tr in enumerate(root.findall("tr")):
+            for col_idx, td in enumerate(tr.findall("td")):
+                cell_style_req = _generate_cell_style_request(
+                    ET.tostring(td, encoding="unicode"),
+                    table_start,
+                    row_idx,
+                    col_idx,
+                    ctx.segment_id,
+                    self._content_gen._style_defs,
+                )
+                if cell_style_req:
+                    requests.append(cell_style_req)
+
+        # Apply column widths
+        after_widths = _extract_column_widths(node.after_xml)
+        if after_widths:
+            requests.extend(
+                _generate_column_width_requests(
+                    table_start, {}, after_widths, ctx.segment_id
+                )
+            )
+
+        # Apply cell merges (colspan/rowspan)
+        requests.extend(_generate_merge_requests(root, table_start, ctx.segment_id))
+
         return requests
 
     # --- DELETE TABLE ---
@@ -717,5 +746,43 @@ def _generate_column_width_requests(
 
         request["updateTableColumnProperties"]["fields"] = ",".join(fields)
         requests.append(request)
+
+    return requests
+
+
+def _generate_merge_requests(
+    table_root: ET.Element,
+    table_start_index: int,
+    segment_id: str | None,
+) -> list[dict[str, Any]]:
+    """Generate mergeTableCells requests for cells with colspan/rowspan > 1."""
+    requests: list[dict[str, Any]] = []
+
+    for row_idx, tr in enumerate(table_root.findall("tr")):
+        for col_idx, td in enumerate(tr.findall("td")):
+            colspan = int(td.get("colspan", "1"))
+            rowspan = int(td.get("rowspan", "1"))
+            if colspan <= 1 and rowspan <= 1:
+                continue
+
+            table_start_loc: dict[str, Any] = {"index": table_start_index}
+            if segment_id:
+                table_start_loc["segmentId"] = segment_id
+
+            requests.append(
+                {
+                    "mergeTableCells": {
+                        "tableRange": {
+                            "tableCellLocation": {
+                                "tableStartLocation": table_start_loc,
+                                "rowIndex": row_idx,
+                                "columnIndex": col_idx,
+                            },
+                            "rowSpan": rowspan,
+                            "columnSpan": colspan,
+                        }
+                    }
+                }
+            )
 
     return requests

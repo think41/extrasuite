@@ -103,8 +103,11 @@ class BlockParser:
                 blocks.append(self._parse_table(child))
 
             elif tag == "style":
-                # Style wrapper — process children
+                # Style wrapper — transfer class to children that lack their own
+                wrapper_class = child.get("class")
                 for styled_child in child:
+                    if wrapper_class and not styled_child.get("class"):
+                        styled_child.set("class", wrapper_class)
                     if styled_child.tag in PARAGRAPH_TAGS:
                         blocks.append(self._parse_paragraph(styled_child))
                     elif styled_child.tag == "table":

@@ -15,6 +15,9 @@ from dataclasses import dataclass, field
 from typing import Any
 
 from .style_factorizer import (
+    PARAGRAPH_STYLE_PROPS as PARA_EXTRACTORS,
+)
+from .style_factorizer import (
     FactorizedStyles,
     extract_cell_style,
     extract_text_style,
@@ -59,6 +62,8 @@ class ConversionContext:
     inline_objects: dict[str, dict[str, Any]] = field(default_factory=dict)
     footnotes: dict[str, dict[str, Any]] = field(default_factory=dict)
     lists: dict[str, Any] = field(default_factory=dict)
+    # Named style → paragraph property defaults (from document namedStyles)
+    named_style_para_defaults: dict[str, dict[str, str]] = field(default_factory=dict)
 
 
 def convert_document_to_xml(
@@ -77,6 +82,7 @@ def convert_document_to_xml(
 
     ctx = ConversionContext(styles=styles)
     ctx.inline_objects = document.get("inlineObjects", {})
+    ctx.named_style_para_defaults = _build_named_style_para_defaults(document)
 
     # Get document metadata
     doc_id = document.get("documentId", "")
@@ -315,17 +321,30 @@ def _convert_paragraph(para: dict[str, Any], ctx: ConversionContext) -> str:
     else:
         tag = "p"
 
-    # Check if paragraph has custom styling (beyond what named style provides)
-    # For now, we'll add class attribute if paragraph has specific styling
-    # This is simplified - full implementation would check paragraph style properties
-    class_attr = ""
+    # Extract paragraph-level property overrides (alignment, spacing, etc.)
+    # Only includes properties that differ from the named style's defaults.
+    para_attrs = ""
+    overrides = _extract_paragraph_overrides(style, named_style, ctx)
+    # Map extractor names to XML attribute names
+    _PARA_PROP_TO_ATTR = {
+        "alignment": "align",
+        "lineSpacing": "lineSpacing",
+        "spaceAbove": "spaceAbove",
+        "spaceBelow": "spaceBelow",
+        "indentLeft": "indentLeft",
+        "indentRight": "indentRight",
+        "indentFirstLine": "indentFirst",
+    }
+    for prop_name, attr_name in _PARA_PROP_TO_ATTR.items():
+        if prop_name in overrides:
+            para_attrs += f' {attr_name}="{_escape(overrides[prop_name])}"'
 
     # Preserve whitespace content for accurate index calculation
     # Even spaces matter for Google Docs UTF-16 indexes
     if not content:
-        return f"<{tag}{class_attr}></{tag}>"
+        return f"<{tag}{para_attrs}></{tag}>"
 
-    return f"<{tag}{class_attr}>{content}</{tag}>"
+    return f"<{tag}{para_attrs}>{content}</{tag}>"
 
 
 def _convert_list_item(
@@ -629,3 +648,64 @@ def _convert_table(
     parts.append("</table>")
 
     return "\n".join(parts)
+
+
+def _build_named_style_para_defaults(
+    document: dict[str, Any],
+) -> dict[str, dict[str, str]]:
+    """Build a mapping from named style type to paragraph property defaults.
+
+    Extracts paragraph-level properties (alignment, spacing, indentation) from
+    the document's namedStyles definitions so we can detect explicit overrides
+    on individual paragraphs.
+    """
+    named_styles = document.get("namedStyles")
+    if not named_styles:
+        tabs = document.get("tabs", [])
+        if tabs:
+            doc_tab = tabs[0].get("documentTab", {})
+            named_styles = doc_tab.get("namedStyles")
+    if not named_styles:
+        return {}
+
+    result: dict[str, dict[str, str]] = {}
+    for style_def in named_styles.get("styles", []):
+        style_type = style_def.get("namedStyleType", "")
+        if not style_type:
+            continue
+        para_style = style_def.get("paragraphStyle", {})
+        props = _extract_para_props_raw(para_style)
+        result[style_type] = props
+    return result
+
+
+def _extract_para_props_raw(para_style: dict[str, Any]) -> dict[str, str]:
+    """Extract paragraph properties from a paragraphStyle dict."""
+    props: dict[str, str] = {}
+    for prop_name, extractor in PARA_EXTRACTORS:
+        value = extractor(para_style)
+        if value:
+            props[prop_name] = value
+    return props
+
+
+def _extract_paragraph_overrides(
+    para_style: dict[str, Any],
+    named_style_type: str,
+    ctx: ConversionContext,
+) -> dict[str, str]:
+    """Extract paragraph properties that override the named style defaults.
+
+    Only returns properties that differ from what the named style defines,
+    so the XML stays clean (no redundant attributes).
+    """
+    current = _extract_para_props_raw(para_style)
+    if not current:
+        return {}
+
+    defaults = ctx.named_style_para_defaults.get(named_style_type, {})
+    overrides: dict[str, str] = {}
+    for prop, value in current.items():
+        if defaults.get(prop) != value:
+            overrides[prop] = value
+    return overrides

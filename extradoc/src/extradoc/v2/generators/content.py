@@ -363,18 +363,89 @@ class ContentGenerator:
                     }
                 )
 
-        # Use adjusted ranges for style requests when page-break-only paragraphs
-        # are present, since insertPageBreak shifts subsequent positions by +2.
-        style_range = make_adjusted_range if pb_offsets else make_range
+        # 2.5 Create footnotes at inline positions (highest offset first).
+        #     Each createFootnote inserts a 1-index-unit reference character.
+        fn_elements = [
+            (offset, attrs)
+            for offset, elem_type, attrs in parsed.special_elements
+            if elem_type == "footnote"
+        ]
+        fn_offsets = sorted(offset for offset, _ in fn_elements)
 
-        # 3. Apply paragraph styles
+        for offset, attrs in sorted(fn_elements, key=lambda x: x[0], reverse=True):
+            fn_id = attrs.get("id", "")
+            # Account for page-break-only paragraph shifts
+            adj_offset = offset + _pb_shift(offset, inclusive=True)
+            loc: dict[str, Any] = {"index": insert_index + adj_offset}
+            if segment_id:
+                loc["segmentId"] = segment_id
+            req: dict[str, Any] = {
+                "createFootnote": {"location": loc},
+                "_placeholderFootnoteId": fn_id,
+            }
+            requests.append(req)
+
+        def _fn_shift(offset: int, inclusive: bool = True) -> int:
+            """Compute index shift at `offset` due to inline footnote inserts.
+
+            Each createFootnote adds 1 index unit (the reference character).
+            """
+            count = 0
+            for fn_off in fn_offsets:
+                if (inclusive and fn_off <= offset) or (
+                    not inclusive and fn_off < offset
+                ):
+                    count += 1
+                elif fn_off > offset:
+                    break
+            return count
+
+        def make_fully_adjusted_range(start: int, end: int) -> dict[str, Any]:
+            """Range adjusted for page-break-only paragraph AND footnote shifts."""
+            adj_start = start + _pb_shift(start, True) + _fn_shift(start, True)
+            adj_end = end + _pb_shift(end, False) + _fn_shift(end, False)
+            return make_range(adj_start, adj_end)
+
+        # Use adjusted ranges for style requests when page-break-only paragraphs
+        # or footnotes are present, since they shift subsequent positions.
+        has_shifts = bool(pb_offsets or fn_offsets)
+        style_range = make_fully_adjusted_range if has_shifts else make_range
+
+        # 3. Apply paragraph styles — reset namedStyleType AND clear explicit
+        #    paragraph properties that may have been inherited from existing
+        #    content at the insertion point (prevents style bleed).
+        _PARA_RESET_FIELDS = (
+            "namedStyleType,"
+            "alignment,lineSpacing,spaceAbove,spaceBelow,"
+            "indentStart,indentEnd,indentFirstLine,"
+            "keepLinesTogether,keepWithNext,avoidWidowAndOrphan,"
+            "direction,shading,borderTop,borderBottom,borderLeft,borderRight"
+        )
         for start, end, named_style in parsed.paragraph_styles:
             requests.append(
                 {
                     "updateParagraphStyle": {
                         "range": style_range(start, end),
                         "paragraphStyle": {"namedStyleType": named_style},
-                        "fields": "namedStyleType",
+                        "fields": _PARA_RESET_FIELDS,
+                    }
+                }
+            )
+
+        # 3.1 Reset paragraph style for page-break-only paragraphs.
+        #     insertPageBreak creates a paragraph (PB + \n = 2 index units)
+        #     that inherits the style from the insertion point. Reset it to
+        #     NORMAL_TEXT to prevent heading styles from bleeding.
+        for pb_offset in pb_offsets:
+            shift = _pb_shift(pb_offset, inclusive=False) + _fn_shift(pb_offset, False)
+            pb_start = pb_offset + shift
+            pb_end = pb_start + 2
+            requests.append(
+                {
+                    "updateParagraphStyle": {
+                        "range": make_range(pb_start, pb_end),
+                        "paragraphStyle": {"namedStyleType": "NORMAL_TEXT"},
+                        "fields": _PARA_RESET_FIELDS,
                     }
                 }
             )
@@ -393,17 +464,22 @@ class ContentGenerator:
                     }
                 )
 
-        # 4. Apply bullets
+        # 4. Apply bullets — merge ALL consecutive bullet paragraphs into a
+        #    single group per contiguous run.  Using separate
+        #    createParagraphBullets calls with different presets on adjacent
+        #    ranges causes the Google Docs API to merge them into one list
+        #    and potentially capture following non-bullet paragraphs.
         if parsed.bullets:
             bullet_groups: list[tuple[int, int, str]] = []
             for start, end, bullet_type, _level in parsed.bullets:
                 preset = _bullet_type_to_preset(bullet_type)
-                if (
-                    bullet_groups
-                    and bullet_groups[-1][2] == preset
-                    and bullet_groups[-1][1] == start
-                ):
-                    bullet_groups[-1] = (bullet_groups[-1][0], end, preset)
+                if bullet_groups and bullet_groups[-1][1] == start:
+                    # Merge into existing group — keep the first preset
+                    bullet_groups[-1] = (
+                        bullet_groups[-1][0],
+                        end,
+                        bullet_groups[-1][2],
+                    )
                 else:
                     bullet_groups.append((start, end, preset))
 
