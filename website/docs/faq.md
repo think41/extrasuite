@@ -7,13 +7,13 @@ Everything you need to know about using ExtraSuite.
 ## Getting Started
 
 ??? question "What is ExtraSuite?"
-    ExtraSuite lets AI assistants like Claude Code and Codex work with your Google Sheets, Docs, and Slides. Instead of copy-pasting data, you can ask your AI to read, analyze, and edit your documents directly.
+    ExtraSuite lets AI assistants like Claude Code and Codex declaratively edit your Google Workspace files - Sheets, Docs, Slides, and Forms. Instead of generating code or making API calls, agents pull a file into a compact local representation, edit it, and push changes back. ExtraSuite figures out the minimal API calls to sync everything - like Terraform for Google Workspace.
 
 ??? question "How do I get started?"
     Three simple steps:
 
     1. **Install the skill** - Run the install command from the homepage in your terminal
-    2. **Share your document** - Share your Google Sheet with your service account email
+    2. **Share your document** - Share your Google file with your service account email
     3. **Ask your AI** - Ask Claude Code or Codex to read or modify your document
 
     See the [Getting Started Guide](getting-started/overview.md) for detailed instructions.
@@ -29,8 +29,38 @@ Everything you need to know about using ExtraSuite.
 
     See [Installation Guides](getting-started/installation/index.md) for platform-specific instructions.
 
+??? question "Which Google Workspace file types are supported?"
+    ExtraSuite supports:
+
+    - **Google Sheets** - via `extrasheet` (TSV + JSON representation)
+    - **Google Docs** - via `extradoc` (structured document format)
+    - **Google Slides** - via `extraslide` (SML/XML format)
+    - **Google Forms** - via `extraform` (JSON-based form structure)
+    - **Google Apps Script** - upcoming (bound scripts support)
+
+    All file types follow the same pull-edit-diff-push workflow. See [Skills Overview](skills/index.md) for details.
+
 ??? question "Do I need to install anything?"
-    Yes, a one-time setup. Run the install command from the homepage in your terminal. This adds the Google Sheets skill to your AI assistant. The installation takes a few seconds.
+    Yes, a one-time setup. Run the install command from the homepage in your terminal. This adds the ExtraSuite skills to your AI assistant. The installation takes a few seconds.
+
+---
+
+## How It Works
+
+??? question "What does 'declarative editing' mean?"
+    Instead of writing code to call Google's API directly, agents edit local file representations. For example, to modify a spreadsheet, the agent edits a TSV file. To update a slide, it edits an XML file. ExtraSuite then computes the minimal API `batchUpdate` to sync the changes back to Google - similar to how Terraform works for infrastructure.
+
+    This is simpler, safer, and more token-efficient than having agents generate imperative API calls.
+
+??? question "What is the pull-edit-diff-push workflow?"
+    Every file type follows the same four-step workflow:
+
+    1. **Pull** - Download the Google file into a compact local folder
+    2. **Edit** - Agent modifies the local files (TSV, XML, JSON)
+    3. **Diff** - Preview what API calls would be made (dry run)
+    4. **Push** - Apply the changes to the Google file
+
+    This is consistent across Sheets, Docs, Slides, and Forms.
 
 ---
 
@@ -48,6 +78,14 @@ Everything you need to know about using ExtraSuite.
 
 ??? question "What if the AI makes a mistake?"
     All changes appear in Google's version history under your agent's name. You can review exactly what changed and use Google's built-in "See version history" feature to undo any changes. Nothing is permanent.
+
+??? question "Is the declarative approach more secure than code generation?"
+    Yes. With ExtraSuite, the agent edits local files instead of generating and executing code. This means:
+
+    - No arbitrary code execution
+    - No network calls beyond Google Workspace APIs (which can be whitelisted)
+    - All changes go through ExtraSuite's diff engine, which computes the minimal `batchUpdate`
+    - Changes are attributable and auditable in Google Drive version history
 
 ??? question "How long do access tokens last?"
     Access tokens expire after **1 hour**. After that, the skill will automatically prompt you to re-authenticate if needed. No long-lived credentials are stored or distributed.
@@ -69,13 +107,32 @@ Everything you need to know about using ExtraSuite.
 ## Usage
 
 ??? question "What can I use this for?"
-    Here are some examples:
+    Here are some examples across file types:
 
-    - Generate reports from your data and write them to a Sheet
+    **Sheets:**
+
+    - Generate reports from your data
     - Clean up and format messy spreadsheet data
     - Create charts and summaries from raw numbers
-    - Extract data from one sheet and transform it into another format
-    - Automate repetitive spreadsheet tasks through natural language
+    - Automate repetitive spreadsheet tasks
+
+    **Docs:**
+
+    - Draft and edit documents
+    - Apply formatting and structure
+    - Insert and modify content programmatically
+
+    **Slides:**
+
+    - Build presentations from data
+    - Update text, shapes, and layouts
+    - Batch-edit slides across a deck
+
+    **Forms:**
+
+    - Create surveys and questionnaires
+    - Modify question types and options
+    - Update form structure programmatically
 
     See [Prompting Guide](user-guide/prompting.md) for more examples.
 
@@ -84,13 +141,8 @@ Everything you need to know about using ExtraSuite.
 
     Find your service account email on the [ExtraSuite homepage](https://extrasuite.think41.com) after signing in.
 
-??? question "Does it work with Google Docs and Slides?"
-    Google Sheets is fully supported today. Google Docs and Slides support is in **alpha** - the infrastructure is ready, we're just finalizing the skills.
-
-    See [Skills Overview](skills/index.md) for current status.
-
 ??? question "How do I share a document?"
-    1. Open your Google Sheet
+    1. Open your Google Sheet, Doc, Slide, or Form
     2. Click **Share** (top right)
     3. Paste your service account email
     4. Choose permission level (Viewer, Commenter, or Editor)
@@ -110,29 +162,22 @@ Everything you need to know about using ExtraSuite.
     See [Installation Guides](getting-started/installation/index.md) for platform-specific instructions.
 
 ??? question "What Python version is required?"
-    Python 3.8 or higher is required. The skill creates its own virtual environment, so it won't interfere with your system Python.
-
-??? question "Where are skills installed?"
-    Skills are installed to platform-specific directories:
-
-    | Platform | Location |
-    |----------|----------|
-    | Claude Code | `~/.claude/skills/gsheets/` |
-    | Codex CLI | `~/.codex/skills/gsheets/` |
-    | Gemini CLI | `~/.gemini/skills/gsheets/` |
-    | Cursor | `~/.cursor/skills/gsheets/` |
+    Python 3.10 or higher is required. The skill creates its own virtual environment, so it won't interfere with your system Python.
 
 ??? question "How do I update the skill?"
     Re-run the install command from the ExtraSuite homepage. This downloads the latest version of all skills.
 
 ??? question "How do I uninstall?"
-    Remove the skill directory:
+    Remove the skill directories:
 
     ```bash
-    rm -rf ~/.claude/skills/gsheets  # For Claude Code
-    rm -rf ~/.codex/skills/gsheets   # For Codex CLI
+    rm -rf ~/.claude/skills/gsheetx   # Google Sheets
+    rm -rf ~/.claude/skills/extraslide # Google Slides
     # etc.
     ```
+
+??? question "What about Google Apps Script?"
+    Apps Script support (starting with bound scripts) is on our roadmap. This will enable agents to manage scripts attached to Sheets, Docs, Slides, and Forms, following the same declarative pull-edit-push workflow.
 
 ---
 
@@ -143,7 +188,7 @@ Everything you need to know about using ExtraSuite.
     2. The token in the URL expires after 5 minutes - refresh the page for a new one
     3. Check that your terminal has internet access
 
-??? question "I get 'Spreadsheet not found' error"
+??? question "I get a 'not found' error"
     1. Verify the URL is correct
     2. Check that you've shared the document with your service account email
     3. Make sure you copied the full service account email (including the domain)
@@ -164,11 +209,11 @@ Everything you need to know about using ExtraSuite.
 ??? question "The AI doesn't recognize the skill"
     1. Verify the skill is installed:
        ```bash
-       ls ~/.claude/skills/gsheets/SKILL.md
+       ls ~/.claude/skills/
        ```
-    2. Try explicitly mentioning the skill:
+    2. Try explicitly mentioning ExtraSuite:
        ```
-       Using the gsheets skill, read the data from...
+       Using ExtraSuite, read the data from...
        ```
 
 ---
@@ -182,4 +227,4 @@ Everything you need to know about using ExtraSuite.
     - **Feature requests**: Contact the platform team
 
 ??? question "Where can I see what features are planned?"
-    Check the [Skills Overview](skills/index.md) for current status and planned features for each skill.
+    Check the [Skills Overview](skills/index.md) for current status and planned features. Google Apps Script support is next on the roadmap.

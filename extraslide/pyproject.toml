@@ -1,7 +1,7 @@
 [project]
 name = "extraslide"
 version = "0.1.0"
-description = "A Python library that simplifies editing Google Slides through an HTML-like abstraction"
+description = "Declarative Google Slides editing for AI agents - pull, edit, push via SML"
 readme = "README.md"
 license = "MIT"
 authors = [

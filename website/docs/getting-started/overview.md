@@ -2,6 +2,16 @@
 
 Welcome to ExtraSuite! This guide will help you set up your AI agent to work with Google Workspace in minutes.
 
+## What is ExtraSuite?
+
+ExtraSuite lets AI agents declaratively edit Google Workspace files - Sheets, Docs, Slides, and Forms. Instead of generating code or making raw API calls, agents pull a file into a compact local representation, edit it, and push changes back. ExtraSuite figures out the minimal API calls to sync everything.
+
+**The workflow is the same for every file type:**
+
+```
+pull -> edit -> diff (preview) -> push
+```
+
 ## Prerequisites
 
 Before you begin, make sure you have:
@@ -47,9 +57,9 @@ After signing in, you'll see a personalized install command. Copy and run it in 
 
 ### 3. Share Your Document
 
-Copy your service account email (shown on the homepage after sign-in) and share your Google Sheet:
+Copy your service account email (shown on the homepage after sign-in) and share your Google file:
 
-1. Open your Google Sheet
+1. Open your Google Sheet, Doc, Slide, or Form
 2. Click **Share**
 3. Paste your service account email
 4. Choose permission level (Viewer, Commenter, or Editor)
@@ -64,15 +74,17 @@ Read the sales data from https://docs.google.com/spreadsheets/d/abc123/edit
 and create a summary of Q4 revenue by region.
 ```
 
+The agent will use the pull-edit-push workflow behind the scenes - pulling the file, editing the local representation, and pushing changes back to Google.
+
 ## What's Next?
 
 - **[Installation Guides](installation/index.md)** - Platform-specific instructions
 - **[User Guide](../user-guide/index.md)** - Learn effective prompting techniques
-- **[Skills Reference](../skills/index.md)** - Detailed documentation for each skill
+- **[Skills Reference](../skills/index.md)** - Detailed documentation for each file type
 
 ## Troubleshooting
 
-### "Spreadsheet not found" Error
+### "File not found" Error
 
 Make sure you've shared the document with your service account email. The email looks like:
 `yourname-domain@project.iam.gserviceaccount.com`

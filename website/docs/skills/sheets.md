@@ -1,6 +1,6 @@
 # Google Sheets Skill
 
-Work with Google Sheets using Python and the gspread library. This skill enables your AI agent to read, write, and manipulate spreadsheets.
+Read, write, and manipulate Google Sheets. This skill enables your AI agent to work with spreadsheets using the declarative pull-edit-diff-push workflow or the gspread library for programmatic access.
 
 !!! success "Status: Stable"
     This skill is fully supported for production use.

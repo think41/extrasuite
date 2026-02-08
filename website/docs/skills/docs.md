@@ -1,19 +1,54 @@
 # Google Docs Skill
 
-Create and edit Google Documents using Python and the Google Docs API.
+Create and edit Google Documents using the declarative pull-edit-diff-push workflow.
 
-!!! warning "Status: Alpha"
-    This skill is in alpha and under active development. APIs may change.
+!!! success "Status: Stable"
+    This skill is fully supported for production use.
 
 ## Overview
 
 The Google Docs skill enables your AI agent to:
 
-- Create new documents
-- Read document content
-- Insert and modify text
-- Apply formatting
+- Pull documents into editable local files
+- Read and modify document content
+- Insert and format text
 - Work with tables, lists, and images
+- Preview changes before applying
+- Push edits back to Google Docs
+
+All editing is declarative - the agent edits local files, and ExtraSuite computes the minimal `batchUpdate` API calls to sync changes.
+
+## The Workflow
+
+```bash
+# 1. Pull - download the document
+python -m extradoc pull https://docs.google.com/document/d/DOCUMENT_ID/edit
+
+# 2. Edit - modify files in the local folder
+
+# 3. Diff - preview changes (dry run)
+python -m extradoc diff ./DOCUMENT_ID/
+
+# 4. Push - apply changes
+python -m extradoc push ./DOCUMENT_ID/
+```
+
+## On-Disk Format
+
+After `pull`, you'll have:
+
+```
+<document_id>/
+  document.json           # Document metadata and structure
+  content/                # Document content in LLM-friendly format
+    ...
+  .raw/
+    document.json         # Raw API response
+  .pristine/
+    document.zip          # Original state for diff comparison
+```
+
+The agent edits files in this folder. When it runs `push`, ExtraSuite diffs the current state against `.pristine/` and generates the minimal API update.
 
 ## Current Capabilities
 
@@ -22,219 +57,57 @@ The Google Docs skill enables your AI agent to:
 | Read document content | :material-check-circle:{ .text-green } Available |
 | Create new documents | :material-check-circle:{ .text-green } Available |
 | Insert text | :material-check-circle:{ .text-green } Available |
-| Basic formatting | :material-flask:{ .text-orange } Beta |
-| Tables | :material-flask:{ .text-orange } Beta |
+| Basic formatting | :material-check-circle:{ .text-green } Available |
+| Tables | :material-check-circle:{ .text-green } Available |
 | Images | :material-clock:{ .text-gray } Planned |
 | Headers/Footers | :material-clock:{ .text-gray } Planned |
 | Styles | :material-clock:{ .text-gray } Planned |
 
-## Quick Start
+## Best Practices
 
-```python
-from gdocs_utils import open_document, create_document
+### 1. Always Pull Fresh
 
-# Open existing document
-doc = open_document("https://docs.google.com/document/d/.../edit")
+After pushing changes, the local files become stale. Re-pull before making more edits:
 
-# Get content
-content = doc.get_content()
-print(content.body)
-
-# Create new document
-new_doc = create_document("My New Document")
-new_doc.insert_text("Hello, World!")
+```bash
+python -m extradoc push ./DOCUMENT_ID/
+python -m extradoc pull https://docs.google.com/document/d/DOCUMENT_ID/edit  # Re-pull!
 ```
 
-## Basic Operations
+### 2. Preview with Diff
 
-### Opening a Document
+Always preview changes before pushing:
 
-```python
-from gdocs_utils import open_document
-
-doc = open_document("https://docs.google.com/document/d/DOCUMENT_ID/edit")
+```bash
+python -m extradoc diff ./DOCUMENT_ID/
 ```
 
-### Reading Content
+This shows the `batchUpdate` JSON that would be sent, without making any API calls.
 
-```python
-# Get full content
-content = doc.get_content()
+### 3. Minimal Edits
 
-# Get plain text
-text = doc.get_plain_text()
-
-# Get structured content (paragraphs, lists, tables)
-structure = doc.get_structure()
-```
-
-### Creating Documents
-
-```python
-from gdocs_utils import create_document
-
-# Create empty document
-doc = create_document("New Document")
-
-# Create in specific folder
-doc = create_document("New Document", folder_id="FOLDER_ID")
-```
-
-### Inserting Text
-
-```python
-# Insert at end
-doc.insert_text("New paragraph")
-
-# Insert at specific index
-doc.insert_text("Inserted text", index=10)
-
-# Insert with formatting
-doc.insert_text("Bold text", bold=True)
-doc.insert_text("Heading", style="HEADING_1")
-```
-
-## Working with Text
-
-### Replacing Text
-
-```python
-# Replace all occurrences
-doc.replace_text("old text", "new text")
-
-# Replace with regex
-doc.replace_regex(r"\d{4}-\d{2}-\d{2}", "DATE_PLACEHOLDER")
-```
-
-### Formatting Text
-
-```python
-# Apply formatting to range
-doc.format_range(
-    start_index=0,
-    end_index=100,
-    bold=True,
-    italic=False,
-    font_size=12,
-    font_family="Arial"
-)
-
-# Apply paragraph style
-doc.apply_style(
-    start_index=0,
-    end_index=50,
-    style="HEADING_2"
-)
-```
-
-## Working with Tables
-
-```python
-# Insert table
-doc.insert_table(rows=3, columns=4)
-
-# Insert table with data
-data = [
-    ["Name", "Role", "Department"],
-    ["Alice", "Engineer", "R&D"],
-    ["Bob", "Manager", "Sales"]
-]
-doc.insert_table_with_data(data)
-```
-
-## Working with Lists
-
-```python
-# Create bullet list
-items = ["First item", "Second item", "Third item"]
-doc.insert_bullet_list(items)
-
-# Create numbered list
-doc.insert_numbered_list(items)
-```
+Only change what's necessary. The diff engine works best with targeted edits rather than wholesale rewrites.
 
 ## Error Handling
 
-```python
-from gdocs_utils import open_document, DocumentNotFound, PermissionError
+Common errors:
 
-try:
-    doc = open_document(url)
-except DocumentNotFound:
-    print("Document not found or not shared")
-except PermissionError:
-    print("No permission to access document")
-```
-
-## Best Practices
-
-### 1. Batch Updates
-
-Group multiple changes into a single request:
-
-```python
-# WRONG: Multiple API calls
-doc.insert_text("Line 1")
-doc.insert_text("Line 2")
-doc.insert_text("Line 3")
-
-# CORRECT: Single batch request
-doc.batch_update([
-    {"insert_text": {"text": "Line 1\n", "index": 1}},
-    {"insert_text": {"text": "Line 2\n", "index": -1}},
-    {"insert_text": {"text": "Line 3\n", "index": -1}}
-])
-```
-
-### 2. Preserve Formatting
-
-When replacing text, preserve existing formatting:
-
-```python
-doc.replace_text("placeholder", "actual value", preserve_formatting=True)
-```
-
-### 3. Use Templates
-
-For consistent documents, start with a template:
-
-```python
-# Copy template
-template_doc = open_document(template_url)
-new_doc = template_doc.copy("New Document from Template")
-
-# Replace placeholders
-new_doc.replace_text("{{NAME}}", "John Smith")
-new_doc.replace_text("{{DATE}}", "2024-01-15")
-```
+- **"Document not found"** - Verify the URL and that the document is shared with your service account
+- **"Permission denied"** - Check sharing permissions (Viewer won't allow writes)
+- **"Rate limit"** - Wait and retry
 
 ## Limitations
 
-### Alpha Limitations
-
-- Complex formatting may not be fully preserved
+- Complex formatting may not be fully preserved in the local representation
 - Some edge cases in table handling
-- Limited image support
-
-### API Limitations
-
-- Maximum document size: 1,048,576 characters
-- Maximum image size: 50MB
-- Rate limits: 300 requests per minute per user
+- Limited image support (planned)
 
 ## Roadmap
-
-### Planned Features
 
 1. **Image handling** - Insert, resize, and position images
 2. **Headers/Footers** - Add page headers and footers
 3. **Styles** - Apply and create custom styles
 4. **Comments** - Add and resolve comments
-5. **Suggestions** - Work with suggestion mode
-
-### Feedback
-
-We're actively developing this skill. Share feedback or report issues through your internal support channels.
 
 ---
 
@@ -242,3 +115,4 @@ We're actively developing this skill. Share feedback or report issues through yo
 
 - [Google Sheets Skill](sheets.md) - For spreadsheet operations
 - [Google Slides Skill](slides.md) - For presentations
+- [Google Forms Skill](forms.md) - For form operations

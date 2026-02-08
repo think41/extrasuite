@@ -1,6 +1,6 @@
 # Prompting Guide
 
-Learn how to write effective prompts for working with Google Sheets through ExtraSuite.
+Learn how to write effective prompts for working with Google Workspace files through ExtraSuite. While many examples below use Sheets, the same principles apply to Docs, Slides, and Forms.
 
 ## The Golden Rule
 

@@ -1,6 +1,8 @@
 # extrasuite
 
-Python client library for [ExtraSuite](https://github.com/think41/extrasuite) - secure OAuth token exchange for AI agents and CLI tools.
+Python client library for [ExtraSuite](https://github.com/think41/extrasuite) - authentication for declarative Google Workspace editing by AI agents.
+
+ExtraSuite enables agents to declaratively edit Google Sheets, Docs, Slides, and Forms through a consistent pull-edit-diff-push workflow. This client library handles the secure OAuth token exchange that powers it all.
 
 ## Installation
 
@@ -140,9 +142,9 @@ token.expires_in_seconds()  # Seconds until expiration
 - Python 3.10+
 - Dependencies: `keyring`, `certifi`
 
-For Google Sheets/Docs/Slides integration:
+For Google Workspace integration via ExtraSuite packages:
 ```bash
-pip install gspread google-auth
+pip install extrasheet extradoc extraslide extraform
 ```
 
 ## License
