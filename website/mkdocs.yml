@@ -1,5 +1,5 @@
 site_name: ExtraSuite
-site_description: Connect AI agents to your Google Workspace - read, analyze, and edit spreadsheets, documents, and slides with natural language
+site_description: Declarative Google Workspace editing for AI agents - pull, edit, and push Sheets, Docs, Slides, and Forms with a consistent workflow
 site_url: https://extrasuite.think41.com
 repo_url: https://github.com/think41/extrasuite
 repo_name: think41/extrasuite
@@ -112,6 +112,7 @@ nav:
     - Google Sheets: skills/sheets.md
     - Google Docs: skills/docs.md
     - Google Slides: skills/slides.md
+    - Google Forms: skills/forms.md
   - Deployment:
     - deployment/index.md
     - Cloud Run: deployment/cloud-run.md

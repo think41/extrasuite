@@ -1,8 +1,10 @@
 # ExtraForm
 
-Pull, edit, and push Google Forms using local files.
+Declarative Google Forms editing for AI agents. Pull, edit, push.
 
-ExtraForm transforms Google Forms into a file-based representation optimized for LLM agents. It follows the same pull/diff/push workflow as ExtraSheet.
+Part of the [ExtraSuite](https://github.com/think41/extrasuite) project - declarative Google Workspace editing for AI agents.
+
+ExtraForm converts Google Forms into compact, token-efficient local JSON files that agents can edit declaratively. The library computes the minimal `batchUpdate` API calls to sync changes back. It follows the same pull/diff/push workflow as all ExtraSuite packages.
 
 ## Installation
 
@@ -148,6 +150,10 @@ uv run pytest tests/ -v
 uv run ruff check . && uv run ruff format .
 uv run mypy src/extraform
 ```
+
+## Part of ExtraSuite
+
+This package is part of the [ExtraSuite](https://github.com/think41/extrasuite) project - a platform for declarative Google Workspace editing by AI agents. ExtraSuite supports Sheets, Docs, Slides, and Forms with a consistent pull-edit-diff-push workflow, with Apps Script support upcoming.
 
 ## License
 

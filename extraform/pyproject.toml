@@ -5,7 +5,7 @@ build-backend = "hatchling.build"
 [project]
 name = "extraform"
 version = "0.1.0"
-description = "Pull, edit, and push Google Forms using local files"
+description = "Declarative Google Forms editing for AI agents - pull, edit, push"
 readme = "README.md"
 license = "MIT"
 requires-python = ">=3.10"

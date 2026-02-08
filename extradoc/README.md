@@ -1,12 +1,12 @@
 # extradoc
 
-File-based Google Docs representation library for LLM agents.
+Declarative Google Docs editing for AI agents. Pull, edit, push.
 
-Part of the [ExtraSuite](https://github.com/think41/extrasuite) project.
+Part of the [ExtraSuite](https://github.com/think41/extrasuite) project - declarative Google Workspace editing for AI agents.
 
 ## Overview
 
-extradoc transforms Google Docs into a file-based representation optimized for LLM agents, enabling efficient "fly-blind" editing through the pull/diff/push workflow.
+extradoc converts Google Docs into compact, token-efficient local files that agents can edit declaratively. The library computes the minimal `batchUpdate` API calls to sync changes back - like Terraform for documents. Agents edit local file representations through the pull/diff/push workflow.
 
 ## Installation
 
@@ -91,6 +91,10 @@ uv run pytest tests/ -v
 uv run ruff check . && uv run ruff format .
 uv run mypy src/extradoc
 ```
+
+## Part of ExtraSuite
+
+This package is part of the [ExtraSuite](https://github.com/think41/extrasuite) project - a platform for declarative Google Workspace editing by AI agents. ExtraSuite supports Sheets, Docs, Slides, and Forms with a consistent pull-edit-diff-push workflow, with Apps Script support upcoming.
 
 ## License
 

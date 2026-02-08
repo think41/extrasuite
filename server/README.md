@@ -1,6 +1,8 @@
 # ExtraSuite Server
 
-FastAPI backend for ExtraSuite - secure OAuth token exchange for CLI tools.
+FastAPI backend for ExtraSuite - authentication and token management for declarative Google Workspace editing by AI agents.
+
+ExtraSuite enables agents to declaratively edit Google Sheets, Docs, Slides, and Forms through a consistent pull-edit-diff-push workflow. This server provides per-user service accounts and short-lived tokens that power the security model.
 
 ## Development
 

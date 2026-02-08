@@ -1,7 +1,7 @@
 [project]
 name = "extrasuite-server"
 version = "1.0.0"
-description = "ExtraSuite Server - Headless CLI authentication service for Google Workspace APIs"
+description = "ExtraSuite Server - authentication and token management for declarative Google Workspace editing by AI agents"
 readme = "README.md"
 requires-python = ">=3.12"
 dependencies = [

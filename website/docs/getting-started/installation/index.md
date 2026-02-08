@@ -37,7 +37,7 @@ After signing in, you'll see a personalized install command. The command include
 
 - Is unique to your account
 - Is valid for 5 minutes
-- Installs the skill for all supported AI agents at once
+- Installs skills for all supported AI agents at once
 
 ### Step 3: Run the Command
 
@@ -63,22 +63,35 @@ The installer will confirm which skills were installed and where.
 
 ## What Gets Installed
 
-The installer creates skill files in the standard locations for each AI agent:
+The installer creates skill files in the standard locations for each AI agent. Skills enable the pull-edit-diff-push workflow for Google Workspace files:
 
 | Agent | Skill Location |
 |-------|---------------|
-| Claude Code | `~/.claude/skills/gsheets/` |
-| Codex CLI | `~/.codex/skills/gsheets/` |
-| Gemini CLI | `~/.gemini/skills/gsheets/` |
-| Cursor | `~/.cursor/skills/gsheets/` |
+| Claude Code | `~/.claude/skills/` |
+| Codex CLI | `~/.codex/skills/` |
+| Gemini CLI | `~/.gemini/skills/` |
+| Cursor | `~/.cursor/skills/` |
 
 Each skill directory contains:
 
 - `SKILL.md` - Instructions for the AI agent
 - `checks.py` - Environment verification script
-- `verify_access.py` - Spreadsheet access verification
-- `gsheet_utils.py` - Utility functions
+- `verify_access.py` - File access verification
+- Utility scripts - Helper functions for the specific file type
 - `requirements.txt` - Python dependencies
+
+## Supported File Types
+
+After installation, your AI agent can work with:
+
+| File Type | Package | Local Format |
+|-----------|---------|--------------|
+| Google Sheets | `extrasheet` | TSV + JSON |
+| Google Docs | `extradoc` | Structured JSON |
+| Google Slides | `extraslide` | SML (XML) |
+| Google Forms | `extraform` | JSON |
+
+All follow the same pull-edit-diff-push workflow.
 
 ## Troubleshooting
 

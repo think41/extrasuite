@@ -1,6 +1,6 @@
 # API Reference
 
-ExtraSuite provides a simple API for AI agents to obtain short-lived Google Cloud service account tokens. This section documents the protocol specification and implementation details.
+ExtraSuite provides a simple API for AI agents to obtain short-lived Google Cloud service account tokens, enabling declarative editing of Google Workspace files (Sheets, Docs, Slides, Forms). This section documents the protocol specification and implementation details.
 
 ## For Implementers
 
