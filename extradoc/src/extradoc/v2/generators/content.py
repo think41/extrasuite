@@ -170,6 +170,7 @@ class ContentGenerator:
             strip_trailing_newline=strip_nl,
             delete_existing_bullets=True,
             tab_id=ctx.tab_id,
+            inside_table_cell=ctx.inside_table_cell,
         )
 
         # When inserting at the segment end AFTER a previous insert already
@@ -274,6 +275,7 @@ class ContentGenerator:
                     strip_trailing_newline=strip_nl,
                     delete_existing_bullets=True,
                     tab_id=ctx.tab_id,
+                    inside_table_cell=ctx.inside_table_cell,
                 )
             )
 
@@ -289,6 +291,7 @@ class ContentGenerator:
         strip_trailing_newline: bool = False,
         delete_existing_bullets: bool = False,
         tab_id: str = "",
+        inside_table_cell: bool = False,
     ) -> list[dict[str, Any]]:
         """Generate insert requests for content XML."""
         if not xml_content or not xml_content.strip():
@@ -387,7 +390,9 @@ class ContentGenerator:
                 requests.append(
                     {"insertPageBreak": {"location": make_location(offset)}}
                 )
-            elif elem_type == "columnbreak":
+            elif elem_type == "columnbreak" and not inside_table_cell:
+                # Section breaks cannot be inserted inside a table, equation,
+                # footnote, header, or footer (Google Docs API constraint).
                 requests.append(
                     {
                         "insertSectionBreak": {

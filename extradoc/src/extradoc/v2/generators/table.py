@@ -137,6 +137,7 @@ class TableGenerator:
                 insert_index=cell_start,
                 strip_trailing_newline=True,
                 tab_id=ctx.tab_id,
+                inside_table_cell=True,
             )
             requests.extend(cell_reqs)
 
@@ -391,6 +392,7 @@ class TableGenerator:
                                 segment_id=segment_id,
                                 segment_end=cell_end,
                                 tab_id=ctx.tab_id,
+                                inside_table_cell=True,
                             )
                             cell_reqs, _ = self._content_gen.emit(
                                 content_change, cell_ctx
@@ -449,6 +451,7 @@ class TableGenerator:
                         insert_index=cell_start,
                         strip_trailing_newline=True,
                         tab_id=ctx.tab_id,
+                        inside_table_cell=True,
                     )
                     requests.extend(cell_reqs)
 
@@ -515,6 +518,7 @@ class TableGenerator:
                         insert_index=cell_start,
                         strip_trailing_newline=True,
                         tab_id=ctx.tab_id,
+                        inside_table_cell=True,
                     )
                     requests.extend(content_reqs)
 

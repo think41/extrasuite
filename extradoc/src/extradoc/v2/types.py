@@ -251,3 +251,4 @@ class SegmentContext:
     segment_end_consumed: bool = False
     followed_by_added_table: bool = False
     before_structural_element: bool = False
+    inside_table_cell: bool = False
