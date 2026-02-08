@@ -54,3 +54,6 @@ dist/
 *.local
 .env
 .env.local
+
+# Test output
+output/
