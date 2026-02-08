@@ -1,7 +1,8 @@
-# ExtraDoc v2 — Known Bugs & Root Cause Analysis
+# ExtraDoc — Known Bugs & Root Cause Analysis
 
-**Last Updated:** 2026-02-08
-**Test Method:** Created a comprehensive 21-section showcase document exercising all features, pushed via v2, re-pulled, and compared.
+**Last Updated:** 2026-02-09
+**Test Document:** https://docs.google.com/document/d/1JgCnmlnTuV7SUwuF0_xXIi101gmK5vfmjkUKuGdrams/edit
+**Test Method:** Created a comprehensive document exercising all features (title/subtitle, h1-h6, inline formatting, 5 tables with cell styles/column widths/colspan, 6 list types with nesting, footnotes, header/footer, 2 tabs, page break, column break, code block, unicode/emoji). Pushed via extradoc, re-pulled, and compared.
 
 ---
 
@@ -12,7 +13,7 @@
 **Severity:** Critical — affects alignment, lineSpacing, spacing, indentation
 **Symptoms:** After push, paragraphs that should be left-aligned show as right-aligned or centered. `spaceAbove`/`spaceBelow` values from one paragraph appear on unrelated paragraphs throughout the document.
 
-**Root Cause (Push):** When multiple content blocks are inserted at the same position (e.g., index 1 for a nearly empty document), `insertText` inherits paragraph styles from existing text at the insertion point. The v2 engine correctly generates `updateParagraphStyle` requests with proper ranges *within* each content block, but:
+**Root Cause (Push):** When multiple content blocks are inserted at the same position (e.g., index 1 for a nearly empty document), `insertText` inherits paragraph styles from existing text at the insertion point. The engine correctly generates `updateParagraphStyle` requests with proper ranges *within* each content block, but:
 
 1. Content block A inserts text at index 1 and sets `alignment: END` on its range.
 2. Content block B then inserts text at the same base index. The new text *inherits* `alignment: END` from content block A's paragraph at the insertion point.
@@ -20,87 +21,232 @@
 
 This causes a cascading bleed: paragraph properties from earlier content blocks contaminate all subsequent content blocks inserted at the same or adjacent positions.
 
-**Evidence:** Raw API response (`document.json`) after push showed `alignment: END` on paragraphs that should have been `alignment: START`, and `spaceBelow: {magnitude: 12}` on paragraphs that never requested spacing.
-
 **Root Cause (Pull):** `xml_converter.py` does not extract paragraph-level properties (alignment, lineSpacing, spaceAbove, etc.) from the API response back into XML `class` attributes. The `style_factorizer.py` module HAS extraction code for these properties (lines 133-137), but `xml_converter.py` doesn't use it for paragraph-level style factorization. This means even if styles were correctly applied, they wouldn't survive a pull round-trip.
 
 **Files:**
-- `v2/generators/content.py:370-395` — generates `updateParagraphStyle` requests
+- `generators/content.py` — generates `updateParagraphStyle` requests
 - `xml_converter.py` — missing paragraph-level style extraction on pull
 
 ---
 
 ## Major Bugs
 
-### 3. New Tables Missing Cell Styles
+### 2. Header/Footer Content Not Populated
+
+**Severity:** Major — headers/footers are created but always empty
+**Symptoms:** After push, a `<header>` or `<footer>` with text content is created (gets a real Google ID) but contains only an empty `<p></p>`. The `class` attribute is also ignored (shows `_base`).
+
+**Sent:**
+```xml
+<header id="kix.hdr1" class="hdr-s"><p>Acme Corp — CONFIDENTIAL</p></header>
+<footer id="kix.ftr1" class="ftr-s"><p>Acme Corp Q4 2025 Annual Report — Confidential</p></footer>
+```
+
+**Got:**
+```xml
+<header id="kix.d4r8p7ib84y7" class="_base"><p></p></header>
+<footer id="kix.bm560lpnwvvd" class="_base"><p></p></footer>
+```
+
+**Root Cause:** The 3-batch push strategy creates headers/footers in batch 1 and captures their real IDs. But batch 2 (main body content) apparently does not include insertText requests targeting the header/footer segment IDs. The content insertion for these segments is either not generated or uses the wrong segment ID.
+
+**Files:** `push.py` (3-batch orchestration), `generators/structural.py` (header/footer handling)
+
+---
+
+### 3. New Tab Body Content Not Populated
+
+**Severity:** Major — new tabs are created but always empty
+**Symptoms:** A second tab with `<h1>`, `<table>`, and `<p>` content is created with the correct title, but its body contains only `<p></p>`.
+
+**Sent:**
+```xml
+<tab id="t.new1" title="Raw Data" class="_base">
+  <body>
+    <h1>Supporting Data</h1>
+    <table id="t4">...</table>
+    <p>This tab contains supplementary data.</p>
+  </body>
+</tab>
+```
+
+**Got:**
+```xml
+<tab id="t.9247hqsf0nbn" title="Raw Data" class="_base">
+  <body><p></p></body>
+</tab>
+```
+
+**Root Cause:** `addDocumentTab` creates the tab, but the subsequent content insertion requests for the new tab's body are either not generated or use the wrong `tabId`. The real tab ID assigned by Google (e.g., `t.9247hqsf0nbn`) may not be mapped back to the placeholder ID (`t.new1`) used in content generation.
+
+**Files:** `push.py`, `walker.py` or `generators/` — tab ID rewriting for new tabs
+
+---
+
+### 4. New Tables Missing Cell Styles
 
 **Severity:** Major — cell background, padding, borders, vertical alignment all absent on new tables
-**Symptoms:** A newly created table with `<td class="cell-hdr">` has no background color, no custom padding, no border styling.
+**Symptoms:** A newly created table with `<td class="cell-hdr">` (bg=#1A237E) has no background color. All cells show only default padding (`cell-Iv00x`).
 
-**Root Cause:** In `v2/generators/table.py`, the `_add_table()` method (line 67) creates the table structure and populates cell content, but **never calls `_generate_cell_style_request()`**. Cell style generation only exists in `_phase_cell_mods_and_row_inserts()` (line 342-352), which is only invoked for MODIFIED tables via `_modify_table()`.
+**Sent:** `cell-hdr` (dark blue), `cell-alt` (gray), `cell-tot` (yellow), `cell-dk` (dark gray)
+**Got:** All cells → `cell-Iv00x` (default 5pt padding only)
 
-**File:** `v2/generators/table.py:67-142` — `_add_table()` missing cell style requests
+**Root Cause:** In `generators/table.py`, the `_add_table()` method creates the table structure and populates cell content, but **never calls `_generate_cell_style_request()`**. Cell style generation only exists in `_phase_cell_mods_and_row_inserts()`, which is only invoked for MODIFIED tables via `_modify_table()`.
 
----
-
-### 4. New Tables Missing Column Widths
-
-**Severity:** Major — `colwidths` attribute ignored on new tables
-**Symptoms:** A table with `colwidths="30,70"` has equal-width columns after push.
-
-**Root Cause:** `_phase_column_widths()` is only called from `_modify_table()` (line 182). The `_add_table()` method has no column width handling at all.
-
-**File:** `v2/generators/table.py:67-142` — `_add_table()` missing column width requests
+**File:** `generators/table.py` — `_add_table()` missing cell style requests
 
 ---
 
-### 5. Footnotes Placed at End of Document
+### 5. Footnote Content Lost and Position Shifted
 
-**Severity:** Major — footnotes are created but at the wrong position
-**Symptoms:** A `<footnote>` referenced inline within a paragraph appears at the bottom of the document body, not at the inline reference point.
+**Severity:** Major — footnotes created but empty and at wrong position
+**Symptoms:** Two issues:
 
-**Root Cause:** In `v2/generators/structural.py` line 74, added footnotes use `{"createFootnote": {"endOfSegmentLocation": {}}}` which places the footnote reference at the end of the document body instead of at the specific inline position where the `<footnote>` tag appears in the XML. Additionally, after creating the footnote, its content is not populated.
+1. **Content lost:** Footnote body contains only a space character instead of the specified text.
+2. **Position shifted:** The footnote reference splits the host word. "dividend" becomes "dividen[footnote]d" and "policy" becomes "polic[footnote]y".
 
-**File:** `v2/generators/structural.py:74` — uses `endOfSegmentLocation` instead of inline index
+**Sent:**
+```xml
+<p>...dividend<footnote id="kix.fn1"><p>Dividend subject to regulatory approval...</p></footnote> for Q1...</p>
+```
+
+**Got:**
+```xml
+<p>...dividen<footnote id="kix.m5f8vnawm6l7"><p lineSpacing="100"><span class="c13K5"> </span></p></footnote>d for Q1...</p>
+```
+
+**Root Cause:**
+- Content: `createFootnote` creates the footnote but subsequent content insertion into the footnote segment (batch 3) fails or is not generated.
+- Position: The footnote reference index is off by 1, likely because the index calculation doesn't account for the footnote reference character itself or uses the wrong offset within the text run.
+
+**Files:** `generators/structural.py` (footnote creation), `push.py` (batch 3 footnote content)
 
 ---
 
 ### 6. Merged Cells (colspan/rowspan) Not Applied
 
 **Severity:** Major — tables always render as regular grids
-**Symptoms:** A `<td colspan="2">` cell is not merged — the table shows individual cells.
+**Symptoms:** A `<td colspan="2">` cell is not visually merged — the table shows individual cells.
 
-**Root Cause:** The `_add_table()` method creates tables via `insertTable` which always creates a regular grid. There is no code anywhere in `table.py` to generate `mergeTableCells` requests for cells with `colspan` or `rowspan` attributes. The Google Docs API does support `MergeTableCellsRequest`, but it is never invoked.
+**Root Cause:** The `_add_table()` method creates tables via `insertTable` which always creates a regular grid. There is no code to generate `mergeTableCells` requests for cells with `colspan` or `rowspan` attributes. The Google Docs API does support `MergeTableCellsRequest`, but it is never invoked.
 
-**File:** `v2/generators/table.py` — no `mergeTableCells` API calls
+**Note:** The colspan attribute round-trips through pull (Google reports covered cells), but the visual merge is not applied during push.
+
+**File:** `generators/table.py` — no `mergeTableCells` API calls
 
 ---
 
-### 7. Page Break Inherits Wrong Paragraph Style
+### 7. Mixed List Types Collapse to Parent Type
+
+**Severity:** Major — nested sub-items lose their intended list type
+**Symptoms:**
+- `<li type="bullet" level="1">` nested under decimal level 0 → becomes `type="decimal" level="1"`
+- `<li type="alpha" level="1">` nested under decimal level 0 → becomes `type="decimal" level="1"`
+
+**Root Cause:** `createParagraphBullets` applies a single bullet preset to a character range. When different presets are applied to adjacent paragraphs (e.g., `NUMBERED_DECIMAL_NESTED` for level 0, then `BULLET_DISC_CIRCLE_SQUARE` for level 1), Google Docs merges them into a single list, overriding the sub-item's intended type with the parent list's type.
+
+**Files:** `generators/content.py` — `createParagraphBullets` range calculation and preset selection
+
+---
+
+### 8. Spurious Empty Paragraphs Inserted
+
+**Severity:** Major — document is littered with blank lines
+**Symptoms:** After push, empty `<p></p>` elements appear before/after title, subtitle, every heading, after tables, etc. Roughly 15+ spurious empty paragraphs in a 4-page document.
+
+**Example:** Between subtitle and h1:
+```xml
+<subtitle>Board-Confidential Draft · Prepared January 2026</subtitle>
+<p></p>
+<h1 spaceAbove="24pt" spaceBelow="12pt">Executive Summary</h1>
+```
+
+**Root Cause:** Likely caused by `insertText` including extra `\n` characters, or by content block boundaries generating an extra paragraph break at the seam between blocks.
+
+**Files:** `generators/content.py` — text insertion with newlines
+
+---
+
+### 9. H2+ Heading Spacing via Class Not Applied
+
+**Severity:** Major — paragraph styles from class ignored on some heading types
+**Symptoms:** `<h2 class="h2-sp">` where h2-sp has `spaceAbove="18pt" spaceBelow="6pt"` is pushed without any spacing. The re-pulled h2 shows no spacing attributes. Meanwhile, h1 elements with the same pattern (`<h1 class="h1-sp">`) DO retain spacing.
+
+**Root Cause:** The paragraph style from the `class` attribute is either not resolved for h2+ headings, or is overwritten by the `updateParagraphStyle` that sets `namedStyleType: HEADING_2`. This could be the same paragraph-style-bleed issue (#1) — setting `namedStyleType` may clear explicit spacing properties, or the spacing requests may be generated but then overridden.
+
+**Files:** `generators/content.py` — heading paragraph style generation, class resolution for non-h1 headings
+
+---
+
+### 10. indentFirstLine Lost
+
+**Severity:** Moderate — first-line indent is silently dropped
+**Symptoms:** A paragraph with `class="indent"` (indentLeft="18pt" indentFirstLine="36pt") comes back with only `indentLeft="18pt"`. The `indentFirstLine` is lost.
+
+**Root Cause:** Either the `indentFirstLine` property is not included in `updateParagraphStyle` field mask, or it's being overwritten. The Google Docs API field name is `indentFirstLine` in the paragraph style.
+
+**Files:** `generators/content.py` — paragraph style field mask, `style_converter.py` — property mapping
+
+---
+
+### 11. Column Break Dropped
+
+**Severity:** Moderate — column breaks are silently discarded
+**Symptoms:** `<p>text before<columnbreak/>text after</p>` becomes two separate paragraphs with no column break. The `<columnbreak/>` element is lost entirely.
+
+**Root Cause:** The column break insertion code path may not exist or may not generate `insertSectionBreak` with `CONTINUOUS` type at the correct position. The SKILL.md says column break "Can Add = Yes" but the implementation may be incomplete.
+
+**Files:** `generators/content.py` — special element handling for columnbreak
+
+---
+
+### 12. Tab Rename Not Applied
+
+**Severity:** Moderate — changing tab title has no effect
+**Symptoms:** Changing `title="Tab 1"` to `title="Main Report"` on an existing tab is ignored.
+
+**Root Cause:** The diff engine either does not detect tab title changes, or there is no code to generate `updateDocumentTab` requests for title changes.
+
+**Files:** `walker.py` or `differ.py` — tab property change detection
+
+---
+
+### 13. Meta Title Change Not Applied
+
+**Severity:** Minor — document title in Google Drive unchanged
+**Symptoms:** Changing `<title>` in `<meta>` has no effect on the Google Docs document title.
+
+**Root Cause:** The Google Docs `batchUpdate` API does not support changing the document title. Title changes require `documents.patch()` or the Drive API. This is likely a missing feature rather than a bug.
+
+**Files:** `push.py` — no title update API call
+
+---
+
+### 14. Muted Text Style Bleeds Across Paragraph Boundary
+
+**Severity:** Moderate — inline text style range is miscalculated
+**Symptoms:** The muted style (9pt gray) applied to the last paragraph leaks. The span wraps most of the text but misses the last 2 characters: `<span class="I5tq1">...renderin</span>g.`
+
+**Root Cause:** The text style range end index is off by a small amount, likely related to UTF-16 index calculation for surrounding content or an off-by-one in the text run range.
+
+**Files:** `generators/content.py` — `updateTextStyle` range calculation
+
+---
+
+### 15. Page Break Inherits Wrong Paragraph Style
 
 **Severity:** Major — page breaks create paragraphs with wrong heading level
-**Symptoms:** A `<pagebreak/>` between content inherits `HEADING_1` style from the preceding heading, creating a visible heading-styled empty paragraph.
+**Symptoms:** A `<pagebreak/>` after a heading inherits the heading's `namedStyleType`, creating a visible heading-styled empty paragraph.
 
-**Root Cause:** In `v2/generators/content.py` lines 505-517, page-break-only paragraphs skip the `paragraph_styles.append(...)` call (they `continue` without setting `namedStyleType`). The `insertPageBreak` API call creates a new paragraph that inherits the named style from the text at the insertion point. If the preceding paragraph is a heading, the page break paragraph becomes a heading too.
+**Root Cause:** Page-break-only paragraphs skip the `namedStyleType` setting. The `insertPageBreak` API call creates a new paragraph that inherits the named style from the text at the insertion point. If the preceding paragraph is a heading, the page break paragraph becomes a heading too.
 
-**File:** `v2/generators/content.py:505-517` — page-break-only paragraphs skip namedStyleType
-
----
-
-### 8. Mixed List Types Break Adjacent Content
-
-**Severity:** Major — headings after mixed lists get absorbed into the list
-**Symptoms:** A heading `<h2>` immediately after a list with mixed types (decimal at level 0, alpha at level 1) becomes a list item instead of a heading.
-
-**Root Cause:** `createParagraphBullets` applies a bullet preset to a character range. When different presets are applied to adjacent paragraphs (e.g., decimal at level 0 followed by alpha at level 1), the Google Docs API may merge them into a single list, overriding the intended type differentiation. The range of the last `createParagraphBullets` request can extend past the list items and capture the following heading paragraph.
-
-**Files:** `v2/generators/content.py` — `createParagraphBullets` range calculation
+**Files:** `generators/content.py` — page-break-only paragraphs skip namedStyleType
 
 ---
 
 ## API Limitations (Cannot Fix)
 
-### 9. Checkbox Lists Create Regular Bullets
+### Checkbox Lists Create Regular Bullets
 
 `type="checkbox"` list items become regular bullet items. The `BULLET_CHECKBOX` preset is accepted by the API but creates lists with `glyphType: GLYPH_TYPE_UNSPECIFIED`. Real checkboxes use a different internal mechanism not exposed via the Docs API.
 
@@ -126,19 +272,31 @@ The following features were verified as working correctly through the round-trip
 | Feature | Notes |
 |---------|-------|
 | Headings (h1-h6, title, subtitle) | All 8 heading types round-trip correctly |
+| H1 spacing (spaceAbove/spaceBelow) | Direct attributes on h1 preserved |
 | Basic paragraphs | Content preserved exactly |
 | Bold, italic, underline, strikethrough | All inline formatting works |
 | Superscript, subscript | Works correctly |
 | Hyperlinks | URL and display text preserved |
-| Text colors and backgrounds | All color/highlight styles applied |
+| Text colors and backgrounds | All color/highlight styles applied via `<span>` |
 | Font changes (family, size) | Custom fonts like Georgia, Courier New work |
 | Simple bullet lists | Single-level bullets work |
 | Simple numbered lists (decimal) | Single-type numbered lists work |
-| Nested lists (same type) | Nesting via tab indentation works |
-| Basic tables (no special styling) | Content in cells preserved |
+| Roman numeral lists | `type="roman"` works correctly |
+| Nested lists (same type) | 4-level deep nesting works |
+| Basic tables (no cell styling) | Content in cells preserved |
+| Table column widths on new tables | `<col>` width attributes applied correctly |
 | Multi-paragraph table cells | Multiple `<p>` in a `<td>` works |
-| Headers and footers | Content in header/footer segments works |
-| Document tabs | Add/delete tabs, edit content within tabs, `tabId` in all requests |
+| Lists inside table cells | `<li>` within `<td>` works |
+| Colspan attribute round-trip | `colspan` preserved through pull (visual merge not applied) |
 | `<style>` wrapper element | Transfers `class` to wrapped children correctly |
 | Named styles on text spans | `class` attributes on `<span>` apply text styles |
-| Unicode and special characters | Emoji, accented chars, symbols all preserved |
+| Paragraph alignment (END, JUSTIFIED, CENTER) | Applied correctly on individual paragraphs |
+| Line spacing (150%, 200%) | Applied correctly on individual paragraphs |
+| Indent left | Applied correctly on individual paragraphs |
+| Page break | `<pagebreak/>` inserted correctly (but see bug #15 for style) |
+| Tab creation | `addDocumentTab` creates tab with title (but see bug #3 for content) |
+| Header/footer creation | Structure created (but see bug #2 for content) |
+| Footnote creation | Reference created (but see bugs #5 for content/position) |
+| Unicode and special characters | Emoji (🚀📈✅), ™, ©, ¥, €, £, smart quotes, em/en-dash, ellipsis all preserved |
+| Code block via style wrapper | Courier New + background via `<style class="code">` works |
+| Block quote via style wrapper | Italic + indent + color via `<style class="quote">` works |
