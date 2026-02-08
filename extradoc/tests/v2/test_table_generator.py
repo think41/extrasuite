@@ -192,3 +192,199 @@ class TestTableGeneratorModify:
         reqs = gen.emit(node, _body_ctx())
         width_reqs = [r for r in reqs if "updateTableColumnProperties" in r]
         assert len(width_reqs) == 1
+
+    def test_row_delete_with_cell_mod_ordering(self):
+        """Cell mods must appear before deleteTableRow in the request list.
+
+        When a row is deleted and another row's cells are modified in the
+        same table, the cell modifications (which use pristine body indices)
+        must execute before the row delete (which shrinks the body and
+        invalidates those indices).
+        """
+        content_gen = ContentGenerator()
+        gen = TableGenerator(content_gen)
+
+        # 3-row, 2-col table. Table starts at body index 10.
+        # Row 0: header (unchanged)
+        # Row 1: to be deleted
+        # Row 2: cell modified (Alpha → Beta)
+        before_xml = (
+            '<table id="t1">'
+            '<tr id="r0"><td id="c00"><p>H1</p></td><td id="c01"><p>H2</p></td></tr>'
+            '<tr id="r1"><td id="c10"><p>Del1</p></td><td id="c11"><p>Del2</p></td></tr>'
+            '<tr id="r2"><td id="c20"><p>Alpha</p></td><td id="c21"><p>Keep</p></td></tr>'
+            "</table>"
+        )
+        after_xml = (
+            '<table id="t1">'
+            '<tr id="r0"><td id="c00"><p>H1</p></td><td id="c01"><p>H2</p></td></tr>'
+            '<tr id="r2"><td id="c20"><p>Beta</p></td><td id="c21"><p>Keep</p></td></tr>'
+            "</table>"
+        )
+
+        # Calculate pristine cell indices for row 2, col 0:
+        # table_start(1) + row0_marker(1) + c00_marker(1) + "H1\n"(3) +
+        # c01_marker(1) + "H2\n"(3) + row1_marker(1) + c10_marker(1) +
+        # "Del1\n"(5) + c11_marker(1) + "Del2\n"(5) + row2_marker(1) +
+        # c20_marker(1) = table_start + 26
+        # So cell c20 content starts at 10 + 26 = 36
+        # Cell c20 content is "Alpha\n" = 6 chars, ends at 42
+        table_start = 10
+        cell_c20_start = table_start + 26
+        cell_c20_end = cell_c20_start + 6  # "Alpha\n"
+
+        # Build the change tree
+        cell_change = ChangeNode(
+            node_type=NodeType.TABLE_CELL,
+            op=ChangeOp.MODIFIED,
+            node_id="c20",
+            col_index=0,
+            before_xml='<td id="c20"><p>Alpha</p></td>',
+            after_xml='<td id="c20"><p>Beta</p></td>',
+            pristine_start=cell_c20_start,
+            pristine_end=cell_c20_end,
+        )
+
+        row_modified = ChangeNode(
+            node_type=NodeType.TABLE_ROW,
+            op=ChangeOp.MODIFIED,
+            node_id="r2",
+            row_index=1,  # In the final table, this is row 1
+            before_xml='<tr id="r2"><td id="c20"><p>Alpha</p></td><td id="c21"><p>Keep</p></td></tr>',
+            after_xml='<tr id="r2"><td id="c20"><p>Beta</p></td><td id="c21"><p>Keep</p></td></tr>',
+            pristine_start=cell_c20_start - 1,  # row marker before first cell
+            pristine_end=cell_c20_end + 6,  # includes c21 content
+            children=[cell_change],
+        )
+
+        row_deleted = ChangeNode(
+            node_type=NodeType.TABLE_ROW,
+            op=ChangeOp.DELETED,
+            node_id="r1",
+            row_index=1,  # Pristine row index
+            before_xml='<tr id="r1"><td id="c10"><p>Del1</p></td><td id="c11"><p>Del2</p></td></tr>',
+        )
+
+        table_node = ChangeNode(
+            node_type=NodeType.TABLE,
+            op=ChangeOp.MODIFIED,
+            before_xml=before_xml,
+            after_xml=after_xml,
+            pristine_start=table_start,
+            pristine_end=table_start + 50,
+            table_start=table_start,
+            children=[row_deleted, row_modified],
+        )
+
+        reqs = gen.emit(table_node, _body_ctx(segment_end=200))
+
+        # Find the positions of cell mod requests and deleteTableRow
+        delete_row_indices = [i for i, r in enumerate(reqs) if "deleteTableRow" in r]
+        cell_mod_indices = [
+            i
+            for i, r in enumerate(reqs)
+            if "deleteContentRange" in r or "insertText" in r
+        ]
+
+        assert len(delete_row_indices) >= 1, "Should have at least one deleteTableRow"
+        assert len(cell_mod_indices) >= 1, "Should have at least one cell mod request"
+
+        # All cell mods must come before all row deletes
+        max_cell_mod = max(cell_mod_indices)
+        min_row_delete = min(delete_row_indices)
+        assert max_cell_mod < min_row_delete, (
+            f"Cell mods (last at index {max_cell_mod}) must come before "
+            f"row deletes (first at index {min_row_delete}). "
+            f"Request types: {[next(iter(r.keys())) for r in reqs]}"
+        )
+
+    def test_column_delete_with_cell_mod_ordering(self):
+        """Cell mods must appear before deleteTableColumn in the request list.
+
+        Same issue as row deletes: column deletes shrink the body and
+        invalidate pristine body indices used by cell modifications.
+        """
+        content_gen = ContentGenerator()
+        gen = TableGenerator(content_gen)
+
+        # 2-row, 3-col table. Column 1 deleted, cell (0, 2) modified.
+        before_xml = (
+            '<table id="t1">'
+            '<tr id="r0"><td id="c00"><p>A</p></td><td id="c01"><p>B</p></td><td id="c02"><p>Old</p></td></tr>'
+            '<tr id="r1"><td id="c10"><p>D</p></td><td id="c11"><p>E</p></td><td id="c12"><p>F</p></td></tr>'
+            "</table>"
+        )
+        after_xml = (
+            '<table id="t1">'
+            '<tr id="r0"><td id="c00"><p>A</p></td><td id="c02"><p>New</p></td></tr>'
+            '<tr id="r1"><td id="c10"><p>D</p></td><td id="c12"><p>F</p></td></tr>'
+            "</table>"
+        )
+
+        table_start = 10
+        # Cell c02 in pristine: after table(1) + row0(1) + c00(1) + "A\n"(2)
+        # + c01(1) + "B\n"(2) + c02(1) = 10 + 9 = 19
+        cell_c02_start = table_start + 9
+        cell_c02_end = cell_c02_start + 4  # "Old\n"
+
+        cell_change = ChangeNode(
+            node_type=NodeType.TABLE_CELL,
+            op=ChangeOp.MODIFIED,
+            node_id="c02",
+            col_index=2,
+            before_xml='<td id="c02"><p>Old</p></td>',
+            after_xml='<td id="c02"><p>New</p></td>',
+            pristine_start=cell_c02_start,
+            pristine_end=cell_c02_end,
+        )
+
+        row_modified = ChangeNode(
+            node_type=NodeType.TABLE_ROW,
+            op=ChangeOp.MODIFIED,
+            node_id="r0",
+            row_index=0,
+            before_xml='<tr id="r0"><td id="c00"><p>A</p></td><td id="c01"><p>B</p></td><td id="c02"><p>Old</p></td></tr>',
+            after_xml='<tr id="r0"><td id="c00"><p>A</p></td><td id="c02"><p>New</p></td></tr>',
+            pristine_start=table_start + 1,
+            pristine_end=cell_c02_end,
+            children=[cell_change],
+        )
+
+        col_deleted = ChangeNode(
+            node_type=NodeType.TABLE_COLUMN,
+            op=ChangeOp.DELETED,
+            col_index=1,
+        )
+
+        table_node = ChangeNode(
+            node_type=NodeType.TABLE,
+            op=ChangeOp.MODIFIED,
+            before_xml=before_xml,
+            after_xml=after_xml,
+            pristine_start=table_start,
+            pristine_end=table_start + 30,
+            table_start=table_start,
+            children=[col_deleted, row_modified],
+        )
+
+        reqs = gen.emit(table_node, _body_ctx(segment_end=200))
+
+        delete_col_indices = [i for i, r in enumerate(reqs) if "deleteTableColumn" in r]
+        cell_mod_indices = [
+            i
+            for i, r in enumerate(reqs)
+            if "deleteContentRange" in r or "insertText" in r
+        ]
+
+        # Cell mods for non-deleted columns should exist
+        # (col 2 is modified, col 1 is deleted — cell in col 2 should be modified)
+        assert len(cell_mod_indices) >= 1, "Should have cell mod requests"
+        assert len(delete_col_indices) >= 1, "Should have deleteTableColumn"
+
+        max_cell_mod = max(cell_mod_indices)
+        min_col_delete = min(delete_col_indices)
+        assert max_cell_mod < min_col_delete, (
+            f"Cell mods (last at index {max_cell_mod}) must come before "
+            f"column deletes (first at index {min_col_delete}). "
+            f"Request types: {[next(iter(r.keys())) for r in reqs]}"
+        )

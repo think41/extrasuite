@@ -1,13 +1,22 @@
 """Table request generation for ExtraDoc v2.
 
-Handles TABLE change nodes: add, delete, and 5-phase modify.
+Handles TABLE change nodes: add, delete, and modify.
 
 Phase ordering for MODIFIED tables:
-1. Column deletes (highest col_index first)
-2. Row deletes (highest row_index first)
-3. Cell mods + row inserts (bottom to top) — tracks row_lengths
-4. Column inserts (highest col_index first) — uses row_lengths
-5. Column widths
+1. Cell mods (bottom to top, right to left) — uses pristine body indices
+2. Row deletes (highest row_index first) — structural, uses table_start + row_index
+3. Column deletes (highest col_index first) — structural, uses table_start + col_index
+4. Row inserts (highest row_index first) — structural
+5. Populate new row cells — content operations
+6. Column inserts (highest col_index first) — structural
+7. Populate new column cells — content operations
+8. Column widths — structural
+
+Cell mods MUST happen before structural deletes because structural deletes
+(row/column) change body indices, which would invalidate the pristine body
+indices used by cell content operations (deleteContentRange, insertText).
+Structural operations use table_start + row/col logical indices, which are
+unaffected by cell content changes.
 """
 
 from __future__ import annotations
@@ -202,12 +211,16 @@ class TableGenerator:
 
         return [{"deleteContentRange": {"range": range_obj}}]
 
-    # --- MODIFY TABLE (5 phases) ---
+    # --- MODIFY TABLE ---
 
     def _modify_table(
         self, node: ChangeNode, ctx: SegmentContext
     ) -> list[dict[str, Any]]:
-        """Modify a table using 5-phase approach."""
+        """Modify a table using phased approach.
+
+        Cell mods run first (while pristine body indices are valid),
+        then structural deletes, then structural inserts + populate.
+        """
         requests: list[dict[str, Any]] = []
         table_start = node.table_start
 
@@ -215,7 +228,7 @@ class TableGenerator:
         col_changes = [c for c in node.children if c.node_type == NodeType.TABLE_COLUMN]
         row_changes = [c for c in node.children if c.node_type == NodeType.TABLE_ROW]
 
-        # Phase 5: Column widths (uses current table start, can be emitted anytime)
+        # Column widths (structural, uses table_start, can be emitted anytime)
         requests.extend(self._phase_column_widths(node, ctx))
 
         if table_start == 0:
@@ -223,23 +236,26 @@ class TableGenerator:
 
         segment_id = ctx.segment_id
 
-        # Phase 1: Column deletes
-        requests.extend(
-            self._phase_column_deletes(node, col_changes, segment_id, ctx.tab_id)
-        )
+        # Phase 1: Cell mods — MUST be before structural deletes.
+        # Uses pristine body indices which are valid because nothing
+        # has changed the document yet at this point in the backwards walk.
+        requests.extend(self._phase_cell_mods(node, row_changes, ctx))
 
-        # Phase 2: Row deletes
+        # Phase 2: Row deletes (structural, highest row first)
         requests.extend(
             self._phase_row_deletes(node, row_changes, segment_id, ctx.tab_id)
         )
 
-        # Phase 3: Cell mods + row inserts
-        cell_reqs, row_lengths = self._phase_cell_mods_and_row_inserts(
-            node, row_changes, ctx
+        # Phase 3: Column deletes (structural, highest col first)
+        requests.extend(
+            self._phase_column_deletes(node, col_changes, segment_id, ctx.tab_id)
         )
+
+        # Phase 4: Row inserts + populate new row cells
+        cell_reqs, row_lengths = self._phase_row_inserts(node, row_changes, ctx)
         requests.extend(cell_reqs)
 
-        # Phase 4: Column inserts
+        # Phase 5: Column inserts + populate new column cells
         requests.extend(self._phase_column_inserts(node, col_changes, row_lengths, ctx))
 
         return requests
@@ -287,13 +303,92 @@ class TableGenerator:
             )
         return requests
 
-    def _phase_cell_mods_and_row_inserts(
+    def _phase_cell_mods(
+        self,
+        node: ChangeNode,
+        row_changes: list[ChangeNode],
+        ctx: SegmentContext,
+    ) -> list[dict[str, Any]]:
+        """Cell modifications on existing (MODIFIED) rows, bottom-to-top.
+
+        Must run before any structural deletes so pristine body indices
+        are still valid.
+        """
+        requests: list[dict[str, Any]] = []
+        table_start = node.table_start
+        segment_id = ctx.segment_id
+
+        # Collect columns that were added/deleted for cell filtering
+        col_changes = [c for c in node.children if c.node_type == NodeType.TABLE_COLUMN]
+        cols_added = {c.col_index for c in col_changes if c.op == ChangeOp.ADDED}
+        cols_deleted = {c.col_index for c in col_changes if c.op == ChangeOp.DELETED}
+
+        # Process modified rows bottom-to-top
+        modified_rows = [r for r in row_changes if r.op == ChangeOp.MODIFIED]
+        for row_change in sorted(
+            modified_rows, key=lambda c: c.row_index, reverse=True
+        ):
+            # Walk cells right-to-left
+            cell_changes = sorted(
+                [c for c in row_change.children if c.node_type == NodeType.TABLE_CELL],
+                key=lambda c: c.col_index,
+                reverse=True,
+            )
+            for cell_change in cell_changes:
+                col_idx = cell_change.col_index
+                if col_idx in cols_added or col_idx in cols_deleted:
+                    continue
+
+                if cell_change.op == ChangeOp.MODIFIED and node.before_xml:
+                    cell_content_idx = cell_change.pristine_start
+                    cell_end = cell_change.pristine_end
+                    if cell_content_idx > 0 and cell_end >= cell_content_idx:
+                        before_inner = _extract_cell_inner_content(
+                            cell_change.before_xml or ""
+                        )
+                        after_inner = _extract_cell_inner_content(
+                            cell_change.after_xml or ""
+                        )
+
+                        content_change = ChangeNode(
+                            node_type=NodeType.CONTENT_BLOCK,
+                            op=ChangeOp.MODIFIED,
+                            before_xml=before_inner,
+                            after_xml=after_inner,
+                            pristine_start=cell_content_idx,
+                            pristine_end=max(cell_end - 1, cell_content_idx),
+                        )
+                        cell_ctx = SegmentContext(
+                            segment_id=segment_id,
+                            segment_end=cell_end,
+                            tab_id=ctx.tab_id,
+                            inside_table_cell=True,
+                        )
+                        cell_reqs, _ = self._content_gen.emit(content_change, cell_ctx)
+                        requests.extend(cell_reqs)
+
+                        # Cell style
+                        cell_style_req = _generate_cell_style_request(
+                            cell_change.after_xml or "",
+                            table_start,
+                            row_change.row_index,
+                            col_idx,
+                            segment_id,
+                            self._content_gen._style_defs,
+                            tab_id=ctx.tab_id,
+                        )
+                        if cell_style_req:
+                            requests.append(cell_style_req)
+
+        return requests
+
+    def _phase_row_inserts(
         self,
         node: ChangeNode,
         row_changes: list[ChangeNode],
         ctx: SegmentContext,
     ) -> tuple[list[dict[str, Any]], dict[int, int]]:
-        """Phase 3: Cell modifications and row inserts (bottom-to-top).
+        """Row inserts + populate new row cells.
 
         Returns (requests, row_lengths) where row_lengths maps
         row_index to post-modification length.
@@ -310,107 +405,42 @@ class TableGenerator:
                 pristine_row_count = len(ET.fromstring(node.before_xml).findall("tr"))
         last_pristine_row = max(pristine_row_count - 1, 0)
 
-        # Collect columns that were added/deleted for cell filtering
-        col_changes = [c for c in node.children if c.node_type == NodeType.TABLE_COLUMN]
-        cols_added = {c.col_index for c in col_changes if c.op == ChangeOp.ADDED}
-        cols_deleted = {c.col_index for c in col_changes if c.op == ChangeOp.DELETED}
-
         # Deferred row inserts
         deferred_row_adds: list[tuple[int, dict[str, Any], str | None]] = []
 
-        # Process bottom-to-top
-        for row_change in sorted(row_changes, key=lambda c: c.row_index, reverse=True):
+        added_rows = [r for r in row_changes if r.op == ChangeOp.ADDED]
+        for row_change in added_rows:
             row_idx = row_change.row_index
 
-            if row_change.op == ChangeOp.ADDED:
-                if row_idx == 0 or pristine_row_count == 0:
-                    deferred_row_adds.append(
-                        (
-                            row_idx,
-                            generate_insert_table_row_request(
-                                table_start,
-                                0,
-                                segment_id,
-                                insert_below=False,
-                                tab_id=ctx.tab_id,
-                            ),
-                            row_change.after_xml,
-                        )
+            if row_idx == 0 or pristine_row_count == 0:
+                deferred_row_adds.append(
+                    (
+                        row_idx,
+                        generate_insert_table_row_request(
+                            table_start,
+                            0,
+                            segment_id,
+                            insert_below=False,
+                            tab_id=ctx.tab_id,
+                        ),
+                        row_change.after_xml,
                     )
-                else:
-                    anchor = min(row_idx - 1, last_pristine_row)
-                    deferred_row_adds.append(
-                        (
-                            row_idx,
-                            generate_insert_table_row_request(
-                                table_start,
-                                anchor,
-                                segment_id,
-                                insert_below=True,
-                                tab_id=ctx.tab_id,
-                            ),
-                            row_change.after_xml,
-                        )
-                    )
-
-            elif row_change.op == ChangeOp.MODIFIED:
-                # Walk cells right-to-left
-                cell_changes = sorted(
-                    [
-                        c
-                        for c in row_change.children
-                        if c.node_type == NodeType.TABLE_CELL
-                    ],
-                    key=lambda c: c.col_index,
-                    reverse=True,
                 )
-                for cell_change in cell_changes:
-                    col_idx = cell_change.col_index
-                    if col_idx in cols_added or col_idx in cols_deleted:
-                        continue
-
-                    if cell_change.op == ChangeOp.MODIFIED and node.before_xml:
-                        cell_content_idx = cell_change.pristine_start
-                        cell_end = cell_change.pristine_end
-                        if cell_content_idx > 0 and cell_end >= cell_content_idx:
-                            before_inner = _extract_cell_inner_content(
-                                cell_change.before_xml or ""
-                            )
-                            after_inner = _extract_cell_inner_content(
-                                cell_change.after_xml or ""
-                            )
-
-                            content_change = ChangeNode(
-                                node_type=NodeType.CONTENT_BLOCK,
-                                op=ChangeOp.MODIFIED,
-                                before_xml=before_inner,
-                                after_xml=after_inner,
-                                pristine_start=cell_content_idx,
-                                pristine_end=max(cell_end - 1, cell_content_idx),
-                            )
-                            cell_ctx = SegmentContext(
-                                segment_id=segment_id,
-                                segment_end=cell_end,
-                                tab_id=ctx.tab_id,
-                                inside_table_cell=True,
-                            )
-                            cell_reqs, _ = self._content_gen.emit(
-                                content_change, cell_ctx
-                            )
-                            requests.extend(cell_reqs)
-
-                            # Cell style
-                            cell_style_req = _generate_cell_style_request(
-                                cell_change.after_xml or "",
-                                table_start,
-                                row_change.row_index,
-                                col_idx,
-                                segment_id,
-                                self._content_gen._style_defs,
-                                tab_id=ctx.tab_id,
-                            )
-                            if cell_style_req:
-                                requests.append(cell_style_req)
+            else:
+                anchor = min(row_idx - 1, last_pristine_row)
+                deferred_row_adds.append(
+                    (
+                        row_idx,
+                        generate_insert_table_row_request(
+                            table_start,
+                            anchor,
+                            segment_id,
+                            insert_below=True,
+                            tab_id=ctx.tab_id,
+                        ),
+                        row_change.after_xml,
+                    )
+                )
 
         # Emit deferred row inserts (highest first)
         for _, req, _row_xml in sorted(

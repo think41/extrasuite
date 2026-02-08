@@ -154,3 +154,46 @@ class TestDiffEngine:
         styles = '<styles><style id="bold-style" bold="1"/></styles>'
         requests, _tree = engine.diff(pristine, current, current_styles=styles)
         assert len(requests) > 0
+
+    def test_table_row_delete_with_cell_mod(self):
+        """End-to-end: delete a row and modify a cell in a surviving row.
+
+        This is the core bug scenario: cell mods must be emitted before
+        deleteTableRow, otherwise the pristine body indices used by cell
+        mods become stale after the row delete shrinks the body.
+        """
+        engine = DiffEngine()
+        pristine = _make_doc(
+            "<p>Before</p>"
+            '<table id="t1">'
+            '<tr id="r0"><td id="c00"><p>Header</p></td><td id="c01"><p>H2</p></td></tr>'
+            '<tr id="r1"><td id="c10"><p>Delete</p></td><td id="c11"><p>Me</p></td></tr>'
+            '<tr id="r2"><td id="c20"><p>Alpha</p></td><td id="c21"><p>Keep</p></td></tr>'
+            "</table>"
+            "<p>After</p>"
+        )
+        current = _make_doc(
+            "<p>Before</p>"
+            '<table id="t1">'
+            '<tr id="r0"><td id="c00"><p>Header</p></td><td id="c01"><p>H2</p></td></tr>'
+            '<tr id="r2"><td id="c20"><p>Beta</p></td><td id="c21"><p>Keep</p></td></tr>'
+            "</table>"
+            "<p>After</p>"
+        )
+        requests, _tree = engine.diff(pristine, current)
+        rt = _req_types(requests)
+
+        assert "deleteTableRow" in rt, "Should have deleteTableRow for row r1"
+
+        # Cell mod requests (deleteContentRange/insertText for Alpha→Beta)
+        # must appear BEFORE deleteTableRow
+        cell_mod_types = {"deleteContentRange", "insertText"}
+        delete_row_idx = rt.index("deleteTableRow")
+
+        cell_mods_before = [
+            i for i, t in enumerate(rt) if t in cell_mod_types and i < delete_row_idx
+        ]
+        assert len(cell_mods_before) >= 2, (
+            f"Expected cell mod requests before deleteTableRow, "
+            f"got request order: {rt}"
+        )
