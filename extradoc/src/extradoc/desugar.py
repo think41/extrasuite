@@ -179,7 +179,7 @@ def desugar_document(
             section.section_id = footer.get("id", "")
             doc.sections.append(section)
 
-        for footnote in tab.findall("footnote"):
+        for footnote in tab.iter("footnote"):
             section = _desugar_section(footnote, "footnote", style_defs)
             section.section_id = footnote.get("id", "")
             doc.sections.append(section)

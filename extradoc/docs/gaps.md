@@ -97,29 +97,18 @@ This causes a cascading bleed: paragraph properties from earlier content blocks 
 
 ---
 
-### 5. Footnote Content Lost and Position Shifted
+### ~~5. Footnote Content Lost~~ (FIXED)
 
-**Severity:** Major — footnotes created but empty and at wrong position
-**Symptoms:** Two issues:
+**Status:** Fixed — footnote content is now populated correctly.
 
-1. **Content lost:** Footnote body contains only a space character instead of the specified text.
-2. **Position shifted:** The footnote reference splits the host word. "dividend" becomes "dividen[footnote]d" and "policy" becomes "polic[footnote]y".
+**Previous issue:** `createFootnote` created the footnote reference but the footnote body was never populated (contained only a space character).
 
-**Sent:**
-```xml
-<p>...dividend<footnote id="kix.fn1"><p>Dividend subject to regulatory approval...</p></footnote> for Q1...</p>
-```
+**Root causes fixed:**
+1. `walker.py` — `_walk_segment()` now calls `_emit_new_segment_content()` for ADDED footnotes, generating content insertion requests targeting the footnote's segment ID.
+2. `push.py` — Reordered batch separation: placeholder footnote IDs are extracted first, then used to separate footnote content requests into batch 3. Also fixed batch 3 cleanup: `deleteContentRange` was missing `tabId` and used `endIndex: 2` which tried to delete the segment-end newline. `createFootnote` creates " \n" (space + newline); only the space (index 0-1) should be deleted.
+3. `desugar.py` — Changed `tab.findall("footnote")` to `tab.iter("footnote")` so footnotes nested inside `<body><p>` are discovered.
 
-**Got:**
-```xml
-<p>...dividen<footnote id="kix.m5f8vnawm6l7"><p lineSpacing="100"><span class="c13K5"> </span></p></footnote>d for Q1...</p>
-```
-
-**Root Cause:**
-- Content: `createFootnote` creates the footnote but subsequent content insertion into the footnote segment (batch 3) fails or is not generated.
-- Position: The footnote reference index is off by 1, likely because the index calculation doesn't account for the footnote reference character itself or uses the wrong offset within the text run.
-
-**Files:** `generators/structural.py` (footnote creation), `push.py` (batch 3 footnote content)
+**Note:** Footnote position shift (off-by-one) is a separate issue not addressed here.
 
 ---
 
@@ -189,14 +178,19 @@ This causes a cascading bleed: paragraph properties from earlier content blocks 
 
 ---
 
-### 11. Column Break Dropped
+### 11. Column Break Cannot Round-Trip
 
-**Severity:** Moderate — column breaks are silently discarded
-**Symptoms:** `<p>text before<columnbreak/>text after</p>` becomes two separate paragraphs with no column break. The `<columnbreak/>` element is lost entirely.
+**Severity:** Moderate — column breaks are silently lost on push and pull
 
-**Root Cause:** The column break insertion code path may not exist or may not generate `insertSectionBreak` with `CONTINUOUS` type at the correct position. The SKILL.md says column break "Can Add = Yes" but the implementation may be incomplete.
+**Symptoms:** `<p>text before<columnbreak/>text after</p>` pushed via `insertSectionBreak(CONTINUOUS)` creates a section break (different from a column break), which splits the paragraph. On re-pull, `sectionBreak` elements are skipped entirely (`xml_converter.py:234`), so the column break disappears.
 
-**Files:** `generators/content.py` — special element handling for columnbreak
+**Root Cause:** Two issues:
+1. **No insertColumnBreak API:** Google Docs API has no request type for inserting inline column breaks. `insertSectionBreak(CONTINUOUS)` creates a *section* break (body-level element between paragraphs), not a *column* break (inline element within a paragraph). These are fundamentally different element types.
+2. **Section breaks skipped on pull:** `xml_converter.py:234-235` skips all `sectionBreak` elements with `continue`, so even the resulting section break is lost.
+
+**Impact:** Column breaks should be reclassified as read-only (like `<hr/>` and `<image/>`). They can be read from existing documents but cannot be added via the API.
+
+**Files:** `generators/content.py` — special element handling, `xml_converter.py:234` — sectionBreak skip
 
 ---
 
@@ -244,6 +238,20 @@ This causes a cascading bleed: paragraph properties from earlier content blocks 
 
 ---
 
+### 16. Multiple Deletes in Same Segment Can Hit Segment-End Constraint
+
+**Severity:** Major — push fails with API 400 error
+
+**Symptoms:** When a push modifies content that includes a footnote reference deletion plus other content changes in the same segment, the API returns: `"The range cannot include the newline character at the end of the segment."`
+
+**Root Cause:** When the diff produces multiple `deleteContentRange` requests within the same segment, they are ordered from highest to lowest index. Each delete shrinks the document. A lower-index delete's `endIndex` (computed against pristine) can become the new segment end after higher-index deletes execute, causing it to include the segment-end newline.
+
+Example: pristine segment is 157 chars. Delete 127-156 (clamped for segment end) + delete 108-109 (footnote ref) reduces segment to 127 chars. Then delete 23-127 now reaches the segment end.
+
+**Files:** `generators/content.py` — `_modify()` delete range calculation, `walker.py` — request ordering
+
+---
+
 ## API Limitations (Cannot Fix)
 
 ### Checkbox Lists Create Regular Bullets
@@ -256,12 +264,14 @@ This causes a cascading bleed: paragraph properties from earlier content blocks 
 
 ## Not Implemented
 
-| Feature | Notes |
-|---------|-------|
-| Autotext (page numbers) | API doesn't support insertion |
-| Images | Requires separate Drive upload flow |
-| Person mentions | Requires verified email + special API |
-| Horizontal rules | Read-only — cannot add/remove via API |
+| Feature | API Available? | Notes |
+|---------|---------------|-------|
+| Images | Yes — `insertInlineImage` | Takes a public URI. Not yet implemented in extradoc. |
+| Person mentions | Yes — `insertPerson` | Takes `personProperties`. Not yet implemented in extradoc. |
+| Date elements | Yes — `insertDate` | Takes `dateElementProperties`. Not yet implemented in extradoc. |
+| Autotext (page numbers) | No | No `insertAutoText` API exists |
+| Horizontal rules | No | No `insertHorizontalRule` API exists — read-only |
+| Column breaks | No | No `insertColumnBreak` API exists — `insertSectionBreak` is different (see bug #11) |
 
 ---
 

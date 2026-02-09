@@ -126,11 +126,6 @@ class PushClient:
 
         new_headers = _new_section_ids("header")
         new_footers = _new_section_ids("footer")
-        new_footnotes = _new_section_ids("footnote")
-        footnote_ids = {
-            s.section_id for s in current_doc.sections if s.section_type == "footnote"
-        }
-
         # Detect new tab IDs
         new_tab_ids = _new_tab_ids(pristine_xml, current_xml)
 
@@ -199,12 +194,25 @@ class PushClient:
             other_requests = [_rewrite(r) for r in other_requests]
 
         # --- Batch 2: Main content + createFootnote ---
+        # Extract placeholder IDs first, then use them to separate
+        # footnote content requests into batch 3
+        other_requests, footnote_placeholders = extract_placeholder_footnote_ids(
+            other_requests
+        )
+        footnote_placeholder_ids = set(footnote_placeholders)
         main_requests, footnote_requests = separate_by_segment_ids(
-            other_requests, footnote_ids
+            other_requests, footnote_placeholder_ids
         )
-        main_requests, footnote_placeholders = extract_placeholder_footnote_ids(
-            main_requests
-        )
+
+        # Build placeholder → tabId mapping from createFootnote requests
+        footnote_tab_ids: dict[str, str] = {}
+        ph_iter = iter(footnote_placeholders)
+        for req in main_requests:
+            if "createFootnote" in req:
+                tab_id_val = req["createFootnote"].get("location", {}).get("tabId", "")
+                ph = next(ph_iter, None)
+                if ph:
+                    footnote_tab_ids[ph] = tab_id_val
 
         main_response: dict[str, Any] = {}
         if main_requests:
@@ -219,8 +227,6 @@ class PushClient:
                 placeholder = ""
                 if fn_idx < len(footnote_placeholders):
                     placeholder = footnote_placeholders[fn_idx]
-                if not placeholder and fn_idx < len(new_footnotes):
-                    placeholder = new_footnotes[fn_idx]
                 if placeholder and real_id:
                     footnote_id_map[placeholder] = real_id
                 fn_idx += 1
@@ -233,18 +239,18 @@ class PushClient:
 
         if footnote_requests:
             cleanup_requests: list[dict[str, Any]] = []
-            for ph_id in new_footnotes:
+            for ph_id in footnote_placeholders:
                 real_id = footnote_id_map.get(ph_id, ph_id)
+                tab_id_val = footnote_tab_ids.get(ph_id, "")
+                cleanup_range: dict[str, Any] = {
+                    "segmentId": real_id,
+                    "startIndex": 0,
+                    "endIndex": 1,
+                }
+                if tab_id_val:
+                    cleanup_range["tabId"] = tab_id_val
                 cleanup_requests.append(
-                    {
-                        "deleteContentRange": {
-                            "range": {
-                                "segmentId": real_id,
-                                "startIndex": 0,
-                                "endIndex": 2,
-                            }
-                        }
-                    }
+                    {"deleteContentRange": {"range": cleanup_range}}
                 )
             await transport.batch_update(
                 document_id, cleanup_requests + footnote_requests

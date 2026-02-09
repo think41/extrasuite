@@ -293,29 +293,36 @@ class RequestWalker:
                 before_structural_element = child.op != ChangeOp.DELETED
 
             elif child.node_type == NodeType.CONTENT_BLOCK:
-                # Handle DELETED footnote child changes (the content generator
-                # handles ADDED footnotes inline via createFootnote at the
-                # correct position within the content block).
+                # Handle footnote child changes:
+                # - DELETED: emit deleteContentRange for footnote reference
+                # - ADDED: emit content insertion for new footnote body
+                # (the content generator handles ADDED footnotes inline via
+                # createFootnote at the correct position within the content block)
                 for fn_child in child.children:
                     if (
                         fn_child.node_type == NodeType.SEGMENT
                         and fn_child.segment_type == SegmentType.FOOTNOTE
-                        and fn_child.op == ChangeOp.DELETED
                     ):
-                        content_xml = child.before_xml
-                        base_index = (
-                            child.pristine_start
-                            if child.pristine_start > 0
-                            else (1 if segment_id is None else 0)
-                        )
-                        requests.extend(
-                            self._structural_gen.emit_footnote(
-                                fn_child,
-                                content_xml,
-                                base_index,
-                                tab_id=tab_id,
+                        if fn_child.op == ChangeOp.DELETED:
+                            content_xml = child.before_xml
+                            base_index = (
+                                child.pristine_start
+                                if child.pristine_start > 0
+                                else (1 if segment_id is None else 0)
                             )
-                        )
+                            requests.extend(
+                                self._structural_gen.emit_footnote(
+                                    fn_child,
+                                    content_xml,
+                                    base_index,
+                                    tab_id=tab_id,
+                                )
+                            )
+                        elif fn_child.op == ChangeOp.ADDED and fn_child.after_xml:
+                            # Generate content insertion for new footnote body
+                            requests.extend(
+                                self._emit_new_segment_content(fn_child, tab_id=tab_id)
+                            )
 
                 ctx.followed_by_added_table = followed_by_added_table
                 ctx.before_structural_element = (
