@@ -196,6 +196,7 @@ class ChangeNode:
 
     # TAB-only fields
     tab_id: str | None = None
+    tab_title: str | None = None
 
     # SEGMENT-only fields
     segment_type: SegmentType | None = None

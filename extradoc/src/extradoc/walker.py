@@ -7,6 +7,7 @@ to lowest, delegating to the appropriate generator.
 
 from __future__ import annotations
 
+import xml.etree.ElementTree as ET
 from typing import TYPE_CHECKING, Any
 
 from .types import (
@@ -15,6 +16,11 @@ from .types import (
     NodeType,
     SegmentContext,
     SegmentType,
+)
+
+# Tags that represent paragraph-like elements
+_PARAGRAPH_TAGS = frozenset(
+    {"p", "h1", "h2", "h3", "h4", "h5", "h6", "title", "subtitle", "li"}
 )
 
 if TYPE_CHECKING:
@@ -42,7 +48,10 @@ class RequestWalker:
 
         for child in root.children:
             if child.node_type == NodeType.TAB:
-                if child.op in (ChangeOp.ADDED, ChangeOp.DELETED):
+                if child.op == ChangeOp.ADDED:
+                    requests.extend(self._structural_gen.emit_tab(child))
+                    requests.extend(self._walk_added_tab_body(child))
+                elif child.op == ChangeOp.DELETED:
                     requests.extend(self._structural_gen.emit_tab(child))
                 elif child.op == ChangeOp.MODIFIED:
                     requests.extend(self._walk_tab(child))
@@ -55,6 +64,20 @@ class RequestWalker:
         tab_id = tab_node.tab_id
         if not tab_id:
             raise ValueError("TAB change node must have tab_id set")
+
+        # Emit tab title rename if needed
+        if tab_node.tab_title is not None:
+            requests.append(
+                {
+                    "updateDocumentTabProperties": {
+                        "tabProperties": {
+                            "tabId": tab_id,
+                            "title": tab_node.tab_title,
+                        },
+                        "fields": "title",
+                    }
+                }
+            )
 
         for seg_node in tab_node.children:
             if seg_node.node_type != NodeType.SEGMENT:
@@ -76,6 +99,90 @@ class RequestWalker:
             requests.extend(self._walk_segment(seg_node, tab_id=tab_id))
 
         return requests
+
+    def _walk_added_tab_body(self, tab_node: ChangeNode) -> list[dict[str, Any]]:
+        """Generate content insertion requests for a new tab's body."""
+        if not tab_node.after_xml or not tab_node.tab_id:
+            return []
+
+        try:
+            tab_elem = ET.fromstring(tab_node.after_xml)
+        except ET.ParseError:
+            return []
+
+        body = tab_elem.find("body")
+        if body is None or len(body) == 0:
+            return []
+
+        # Build children: group consecutive paragraphs into CONTENT_BLOCKs,
+        # emit tables individually.
+        # New tab body starts at index 1 (body start) with just \n (end at 2).
+        children: list[ChangeNode] = []
+        para_group: list[str] = []
+
+        def flush_paras() -> None:
+            if para_group:
+                children.append(
+                    ChangeNode(
+                        node_type=NodeType.CONTENT_BLOCK,
+                        op=ChangeOp.ADDED,
+                        after_xml="\n".join(para_group),
+                        pristine_start=1,
+                        pristine_end=1,
+                    )
+                )
+                para_group.clear()
+
+        for child in body:
+            if child.tag == "table":
+                flush_paras()
+                children.append(
+                    ChangeNode(
+                        node_type=NodeType.TABLE,
+                        op=ChangeOp.ADDED,
+                        after_xml=ET.tostring(child, encoding="unicode"),
+                        pristine_start=1,
+                        pristine_end=1,
+                        table_start=1,
+                    )
+                )
+            elif child.tag in _PARAGRAPH_TAGS:
+                para_group.append(ET.tostring(child, encoding="unicode"))
+            elif child.tag == "style":
+                for styled in child:
+                    wrapper_class = child.get("class")
+                    if wrapper_class and not styled.get("class"):
+                        styled.set("class", wrapper_class)
+                    if styled.tag in _PARAGRAPH_TAGS:
+                        para_group.append(ET.tostring(styled, encoding="unicode"))
+                    elif styled.tag == "table":
+                        flush_paras()
+                        children.append(
+                            ChangeNode(
+                                node_type=NodeType.TABLE,
+                                op=ChangeOp.ADDED,
+                                after_xml=ET.tostring(styled, encoding="unicode"),
+                                pristine_start=1,
+                                pristine_end=1,
+                                table_start=1,
+                            )
+                        )
+
+        flush_paras()
+
+        if not children:
+            return []
+
+        # Create a synthetic body segment and walk it
+        seg_node = ChangeNode(
+            node_type=NodeType.SEGMENT,
+            op=ChangeOp.MODIFIED,
+            segment_type=SegmentType.BODY,
+            segment_id="body",
+            segment_end=2,
+            children=children,
+        )
+        return self._walk_segment(seg_node, tab_id=tab_node.tab_id)
 
     def _walk_segment(
         self, seg_node: ChangeNode, *, tab_id: str

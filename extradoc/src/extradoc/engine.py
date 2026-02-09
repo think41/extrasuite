@@ -85,8 +85,6 @@ def _parse_text_styles(styles_xml: str | None) -> dict[str, dict[str, str]] | No
     text_styles: dict[str, dict[str, str]] = {}
     for style_elem in root.findall("style"):
         style_id = style_elem.get("id", "")
-        if style_id.startswith("cell-"):
-            continue
         props = {k: v for k, v in style_elem.attrib.items() if k != "id"}
         if props:
             text_styles[style_id] = props

@@ -100,6 +100,10 @@ class TreeDiffer:
         """Diff a matched pair of tabs. Returns None if no changes."""
         children: list[ChangeNode] = []
 
+        # Detect tab title change
+        title_changed = p_tab.title != c_tab.title
+        new_title = c_tab.title if title_changed else None
+
         segment_pairs = self._match_segments(p_tab, c_tab)
         for p_seg, c_seg in segment_pairs:
             if p_seg is None and c_seg is not None:
@@ -129,7 +133,7 @@ class TreeDiffer:
                 if seg_node is not None:
                     children.append(seg_node)
 
-        if not children:
+        if not children and not title_changed:
             return None
 
         return ChangeNode(
@@ -137,6 +141,7 @@ class TreeDiffer:
             op=ChangeOp.MODIFIED,
             node_id=p_tab.tab_id,
             tab_id=p_tab.tab_id,
+            tab_title=new_title,
             children=children,
         )
 
