@@ -25,7 +25,9 @@ from .types import (
 )
 
 # Tags that count as special elements (each consumes 1 index)
-SPECIAL_TAGS = frozenset({"hr", "pagebreak", "columnbreak", "image", "footnote"})
+SPECIAL_TAGS = frozenset(
+    {"hr", "pagebreak", "columnbreak", "image", "footnote", "person"}
+)
 
 # Tags that represent paragraph-like elements
 PARAGRAPH_TAGS = frozenset(

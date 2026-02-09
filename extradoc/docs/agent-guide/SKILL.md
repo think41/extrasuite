@@ -55,15 +55,15 @@ Start with `document.xml`. Read `styles.xml` only when you need to understand or
 
 ### Special / Read-Only
 
-| Element | Can Add | Can Modify | Can Delete |
-|---------|---------|------------|------------|
-| `<hr/>` | No | No | No |
-| `<pagebreak/>` | Yes | N/A | Yes |
-| `<columnbreak/>` | Yes | N/A | Yes |
-| `<image/>` | No | No | No |
-| `<footnote>` | Partial | Yes | Yes |
-| `<autotext/>` | No | No | No |
-| `<person/>` | No | No | No |
+| Element | Can Add | Can Modify | Can Delete | Notes |
+|---------|---------|------------|------------|-------|
+| `<hr/>` | No | No | No | API limitation |
+| `<pagebreak/>` | Yes | N/A | Yes | |
+| `<columnbreak/>` | No | No | No | API limitation — no `insertColumnBreak` |
+| `<image/>` | No | No | No | API exists (`insertInlineImage`) but not yet implemented |
+| `<footnote>` | Partial | Yes | Yes | Content population has known issues |
+| `<autotext/>` | No | No | No | API limitation |
+| `<person/>` | Yes | No | Yes | Insert via `insertPerson` API |
 
 ---
 

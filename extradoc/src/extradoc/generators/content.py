@@ -45,7 +45,7 @@ INLINE_STYLE_TAGS: dict[str, str] = {
 
 # Special elements that consume 1 index
 SPECIAL_ELEMENT_TAGS = frozenset(
-    {"hr", "pagebreak", "columnbreak", "image", "footnote"}
+    {"hr", "pagebreak", "columnbreak", "image", "footnote", "person"}
 )
 
 # Paragraph style attributes
@@ -243,9 +243,13 @@ class ContentGenerator:
             strip_for_seg_end = at_seg_end and not ctx.segment_end_consumed
             # After a delete that reaches segment_end - 1, the insert point
             # is effectively at the segment end even though pristine indexes
-            # don't reflect it yet.
+            # don't reflect it yet.  But only if the segment end hasn't
+            # already been consumed by a later (higher-index) content block.
             deletes_to_seg_end = (
-                ctx.segment_end > 0 and d_start < d_end and d_end >= ctx.segment_end - 1
+                ctx.segment_end > 0
+                and d_start < d_end
+                and d_end >= ctx.segment_end - 1
+                and not ctx.segment_end_consumed
             )
             # When the delete was clamped to preserve the \n before a
             # structural element (table/TOC/section break), the insert must
@@ -430,15 +434,68 @@ class ContentGenerator:
                     break
             return count
 
+        # 2.6 Insert person mentions at inline positions (highest offset first).
+        #     Each insertPerson inserts a 1-index-unit reference character.
+        person_elements = [
+            (offset, attrs)
+            for offset, elem_type, attrs in parsed.special_elements
+            if elem_type == "person"
+        ]
+        person_offsets = sorted(offset for offset, _ in person_elements)
+
+        for offset, attrs in sorted(person_elements, key=lambda x: x[0], reverse=True):
+            email = attrs.get("email", "")
+            adj_offset = offset + _pb_shift(offset, inclusive=True)
+            person_loc: dict[str, Any] = {
+                "index": insert_index + adj_offset,
+                "tabId": tab_id,
+            }
+            if segment_id:
+                person_loc["segmentId"] = segment_id
+            requests.append(
+                {
+                    "insertPerson": {
+                        "location": person_loc,
+                        "personProperties": {"email": email},
+                    }
+                }
+            )
+
+        def _person_shift(offset: int, inclusive: bool = True) -> int:
+            """Compute index shift at `offset` due to inline person inserts.
+
+            Each insertPerson adds 1 index unit (the person chip).
+            """
+            count = 0
+            for p_off in person_offsets:
+                if (inclusive and p_off <= offset) or (
+                    not inclusive and p_off < offset
+                ):
+                    count += 1
+                elif p_off > offset:
+                    break
+            return count
+
         def make_fully_adjusted_range(start: int, end: int) -> dict[str, Any]:
-            """Range adjusted for page-break-only paragraph AND footnote shifts."""
-            adj_start = start + _pb_shift(start, True) + _fn_shift(start, True)
-            adj_end = end + _pb_shift(end, False) + _fn_shift(end, False)
+            """Range adjusted for page-break, footnote, AND person shifts."""
+            adj_start = (
+                start
+                + _pb_shift(start, True)
+                + _fn_shift(start, True)
+                + _person_shift(start, True)
+            )
+            adj_end = (
+                end
+                + _pb_shift(end, False)
+                + _fn_shift(end, False)
+                + _person_shift(end, False)
+            )
             return make_range(adj_start, adj_end)
 
-        # Use adjusted ranges for style requests when page-break-only paragraphs
-        # or footnotes are present, since they shift subsequent positions.
-        has_shifts = bool(pb_offsets or fn_offsets)
+        # Use adjusted ranges for style requests when page-break-only paragraphs,
+        # footnotes, or person mentions are present, since they shift subsequent
+        # positions.
+        has_shifts = bool(pb_offsets or fn_offsets or person_offsets)
         style_range = make_fully_adjusted_range if has_shifts else make_range
 
         # 3. Apply paragraph styles — reset namedStyleType AND clear explicit
