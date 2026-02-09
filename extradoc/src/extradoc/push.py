@@ -90,16 +90,15 @@ class PushClient:
                 message="No changes to apply",
             )
 
-        # --- Batch 1: Header/footer/tab creation ---
-        create_requests: list[dict[str, Any]] = []
+        # --- Classify requests ---
+        tab_create_requests: list[dict[str, Any]] = []
+        hf_create_requests: list[dict[str, Any]] = []
         other_requests: list[dict[str, Any]] = []
         for req in requests:
-            if (
-                "createHeader" in req
-                or "createFooter" in req
-                or "addDocumentTab" in req
-            ):
-                create_requests.append(req)
+            if "addDocumentTab" in req:
+                tab_create_requests.append(req)
+            elif "createHeader" in req or "createFooter" in req:
+                hf_create_requests.append(req)
             else:
                 other_requests.append(req)
 
@@ -140,28 +139,6 @@ class PushClient:
         footnote_id_map: dict[str, str] = {}
         tab_id_map: dict[str, str] = {}
 
-        if create_requests:
-            create_response = await transport.batch_update(document_id, create_requests)
-            replies = create_response.get("replies", [])
-            h_idx = f_idx = t_idx = 0
-            for rep in replies:
-                if "createHeader" in rep and h_idx < len(new_headers):
-                    real_id = rep["createHeader"].get("headerId")
-                    if real_id:
-                        header_id_map[new_headers[h_idx]] = real_id
-                    h_idx += 1
-                if "createFooter" in rep and f_idx < len(new_footers):
-                    real_id = rep["createFooter"].get("footerId")
-                    if real_id:
-                        footer_id_map[new_footers[f_idx]] = real_id
-                    f_idx += 1
-                if "addDocumentTab" in rep and t_idx < len(new_tab_ids):
-                    tab_props = rep["addDocumentTab"].get("tabProperties", {})
-                    real_id = tab_props.get("tabId")
-                    if real_id:
-                        tab_id_map[new_tab_ids[t_idx]] = real_id
-                    t_idx += 1
-
         # Rewrite segment IDs and tab IDs
         def _rewrite(obj: Any, *, footnote_map: dict[str, str] | None = None) -> Any:
             if isinstance(obj, dict):
@@ -185,6 +162,38 @@ class PushClient:
             if isinstance(obj, list):
                 return [_rewrite(x, footnote_map=footnote_map) for x in obj]
             return obj
+
+        # --- Batch 1a: Tab creation → capture real tab IDs ---
+        if tab_create_requests:
+            tab_response = await transport.batch_update(
+                document_id, tab_create_requests
+            )
+            t_idx = 0
+            for rep in tab_response.get("replies", []):
+                if "addDocumentTab" in rep and t_idx < len(new_tab_ids):
+                    tab_props = rep["addDocumentTab"].get("tabProperties", {})
+                    real_id = tab_props.get("tabId")
+                    if real_id:
+                        tab_id_map[new_tab_ids[t_idx]] = real_id
+                    t_idx += 1
+
+        # --- Batch 1b: Header/footer creation (with rewritten tab IDs) ---
+        if hf_create_requests:
+            if tab_id_map:
+                hf_create_requests = [_rewrite(r) for r in hf_create_requests]
+            hf_response = await transport.batch_update(document_id, hf_create_requests)
+            h_idx = f_idx = 0
+            for rep in hf_response.get("replies", []):
+                if "createHeader" in rep and h_idx < len(new_headers):
+                    real_id = rep["createHeader"].get("headerId")
+                    if real_id:
+                        header_id_map[new_headers[h_idx]] = real_id
+                    h_idx += 1
+                if "createFooter" in rep and f_idx < len(new_footers):
+                    real_id = rep["createFooter"].get("footerId")
+                    if real_id:
+                        footer_id_map[new_footers[f_idx]] = real_id
+                    f_idx += 1
 
         if header_id_map or footer_id_map or tab_id_map:
             other_requests = [_rewrite(r) for r in other_requests]

@@ -146,9 +146,16 @@ class TreeDiffer:
         )
 
     def _segment_xml(self, seg: SegmentBlock) -> str:
-        """Build a minimal XML representation for a segment (for structural changes)."""
-        # For add/delete of entire segments we just need the type and id
-        return f'<{seg.segment_type.value} id="{seg.segment_id}"/>'
+        """Build XML representation for a segment (for structural changes).
+
+        Includes children content so the walker can generate content insertion
+        requests for newly created segments (e.g. new header with text).
+        """
+        tag = seg.segment_type.value
+        children_xml = "\n".join(child.xml for child in seg.children)
+        if children_xml:
+            return f'<{tag} id="{seg.segment_id}">\n{children_xml}\n</{tag}>'
+        return f'<{tag} id="{seg.segment_id}"/>'
 
     def _match_segments(
         self,

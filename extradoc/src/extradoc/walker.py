@@ -89,6 +89,11 @@ class RequestWalker:
                     requests.extend(
                         self._structural_gen.emit_header_footer(seg_node, tab_id=tab_id)
                     )
+                    # For ADDED headers/footers, also generate content insertion
+                    if seg_node.op == ChangeOp.ADDED and seg_node.after_xml:
+                        requests.extend(
+                            self._emit_new_segment_content(seg_node, tab_id=tab_id)
+                        )
                 elif seg_node.segment_type == SegmentType.FOOTNOTE:
                     requests.extend(
                         self._structural_gen.emit_footnote(seg_node, tab_id=tab_id)
@@ -100,8 +105,40 @@ class RequestWalker:
 
         return requests
 
+    def _emit_new_segment_content(
+        self, seg_node: ChangeNode, *, tab_id: str
+    ) -> list[dict[str, Any]]:
+        """Generate content insertion requests for a newly created segment.
+
+        Used for ADDED headers/footers (on both existing and new tabs).
+        Parses the segment's after_xml to find paragraph content and
+        generates insertion requests targeting the new segment's index space.
+        """
+        if not seg_node.after_xml:
+            return []
+
+        try:
+            elem = ET.fromstring(seg_node.after_xml)
+        except ET.ParseError:
+            return []
+
+        children = self._build_content_children(elem)
+        if not children:
+            return []
+
+        # New header/footer starts with a single \n (segment_end=1, index 0).
+        synthetic = ChangeNode(
+            node_type=NodeType.SEGMENT,
+            op=ChangeOp.MODIFIED,
+            segment_type=seg_node.segment_type,
+            segment_id=seg_node.segment_id,
+            segment_end=1,
+            children=children,
+        )
+        return self._walk_segment(synthetic, tab_id=tab_id)
+
     def _walk_added_tab_body(self, tab_node: ChangeNode) -> list[dict[str, Any]]:
-        """Generate content insertion requests for a new tab's body."""
+        """Generate content insertion requests for a new tab's body, headers, and footers."""
         if not tab_node.after_xml or not tab_node.tab_id:
             return []
 
@@ -110,13 +147,55 @@ class RequestWalker:
         except ET.ParseError:
             return []
 
-        body = tab_elem.find("body")
-        if body is None or len(body) == 0:
-            return []
+        requests: list[dict[str, Any]] = []
 
-        # Build children: group consecutive paragraphs into CONTENT_BLOCKs,
-        # emit tables individually.
-        # New tab body starts at index 1 (body start) with just \n (end at 2).
+        # --- Body content ---
+        body = tab_elem.find("body")
+        if body is not None and len(body) > 0:
+            body_children = self._build_content_children(body)
+            if body_children:
+                seg_node = ChangeNode(
+                    node_type=NodeType.SEGMENT,
+                    op=ChangeOp.MODIFIED,
+                    segment_type=SegmentType.BODY,
+                    segment_id="body",
+                    segment_end=2,
+                    children=body_children,
+                )
+                requests.extend(self._walk_segment(seg_node, tab_id=tab_node.tab_id))
+
+        # --- Headers and footers ---
+        for section_tag, seg_type in [
+            ("header", SegmentType.HEADER),
+            ("footer", SegmentType.FOOTER),
+        ]:
+            section_elem = tab_elem.find(section_tag)
+            if section_elem is None:
+                continue
+            section_id = section_elem.get("id", "")
+            if not section_id:
+                continue
+
+            # Emit createHeader / createFooter
+            hf_node = ChangeNode(
+                node_type=NodeType.SEGMENT,
+                op=ChangeOp.ADDED,
+                segment_type=seg_type,
+                segment_id=section_id,
+                after_xml=ET.tostring(section_elem, encoding="unicode"),
+            )
+            requests.extend(
+                self._structural_gen.emit_header_footer(hf_node, tab_id=tab_node.tab_id)
+            )
+            # Emit content insertion for the section
+            requests.extend(
+                self._emit_new_segment_content(hf_node, tab_id=tab_node.tab_id)
+            )
+
+        return requests
+
+    def _build_content_children(self, container: ET.Element) -> list[ChangeNode]:
+        """Build CONTENT_BLOCK and TABLE children from an XML container element."""
         children: list[ChangeNode] = []
         para_group: list[str] = []
 
@@ -133,7 +212,7 @@ class RequestWalker:
                 )
                 para_group.clear()
 
-        for child in body:
+        for child in container:
             if child.tag == "table":
                 flush_paras()
                 children.append(
@@ -169,20 +248,7 @@ class RequestWalker:
                         )
 
         flush_paras()
-
-        if not children:
-            return []
-
-        # Create a synthetic body segment and walk it
-        seg_node = ChangeNode(
-            node_type=NodeType.SEGMENT,
-            op=ChangeOp.MODIFIED,
-            segment_type=SegmentType.BODY,
-            segment_id="body",
-            segment_end=2,
-            children=children,
-        )
-        return self._walk_segment(seg_node, tab_id=tab_node.tab_id)
+        return children
 
     def _walk_segment(
         self, seg_node: ChangeNode, *, tab_id: str
