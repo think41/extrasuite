@@ -1,6 +1,7 @@
 """Top-level orchestrator for ExtraDoc v2 diff pipeline.
 
 Pipeline:
+0. Validate XML (no embedded newlines)
 1. Parse both XMLs → DocumentBlock
 2. Compute indexes on pristine tree
 3. Diff → ChangeNode tree
@@ -46,6 +47,9 @@ class DiffEngine:
         Returns:
             Tuple of (batchUpdate requests, change tree root node)
         """
+        # 0. Validate
+        _validate_no_embedded_newlines(current_xml)
+
         # 1. Parse
         parser = BlockParser()
         pristine_doc = parser.parse(pristine_xml)
@@ -90,3 +94,94 @@ def _parse_text_styles(styles_xml: str | None) -> dict[str, dict[str, str]] | No
             text_styles[style_id] = props
 
     return text_styles if text_styles else None
+
+
+# Container/structural tags that only hold child elements.
+# Whitespace (including newlines) between children is normal XML indentation.
+# Everything NOT in this set is a content element where newlines are forbidden.
+_CONTAINER_TAGS = frozenset(
+    {
+        # Document structure
+        "doc",
+        "meta",
+        "tab",
+        "body",
+        # Segments (separate index spaces)
+        "header",
+        "footer",
+        "footnote",
+        # Table structure
+        "table",
+        "tr",
+        "td",
+        "col",
+        # Other containers
+        "toc",
+        "style",
+        # styles.xml (validated alongside document.xml)
+        "styles",
+    }
+)
+
+
+def _validate_no_embedded_newlines(xml_content: str) -> None:
+    """Validate that no content element contains embedded newline characters.
+
+    Google Docs API interprets newlines as paragraph separators. Newlines
+    inside element text cause corruption (e.g. spurious list items).
+
+    Container tags (doc, tab, body, table, tr, td, header, footer, footnote,
+    toc, style, meta, col) naturally have whitespace between child elements
+    and are skipped.
+
+    All other tags (p, h1-h6, li, title, subtitle, b, i, u, s, sup, sub,
+    span, a, etc.) are content elements where newlines are not allowed.
+
+    Raises:
+        ValueError: If an element contains an embedded newline, with the
+            tag name and a snippet of the offending text.
+    """
+    try:
+        root = ET.fromstring(xml_content)
+    except ET.ParseError:
+        # Let the parser handle malformed XML later.
+        return
+
+    for elem in root.iter():
+        tag = elem.tag
+        if tag in _CONTAINER_TAGS:
+            continue
+
+        # Check .text (content before first child)
+        if elem.text and "\n" in elem.text:
+            snippet = elem.text[:80].replace("\n", "\\n")
+            raise ValueError(
+                f"Newline character found inside <{tag}> element: "
+                f'"{snippet}"\n'
+                f"Each element must be a single line of text. "
+                f"To create a new line, close the element and open a new one."
+            )
+
+        # Check .tail (content after this element's closing tag,
+        # still belonging to the parent)
+        if elem.tail and "\n" in elem.tail:
+            # tail text belongs to the parent — only flag if parent
+            # is also a content tag
+            parent_tag = _find_parent_tag(root, elem)
+            if parent_tag and parent_tag not in _CONTAINER_TAGS:
+                snippet = elem.tail[:80].replace("\n", "\\n")
+                raise ValueError(
+                    f"Newline character found after </{tag}> inside "
+                    f'<{parent_tag}> element: "{snippet}"\n'
+                    f"Each element must be a single line of text. "
+                    f"To create a new line, close the element and open a new one."
+                )
+
+
+def _find_parent_tag(root: ET.Element, target: ET.Element) -> str | None:
+    """Find the parent tag of a target element."""
+    for parent in root.iter():
+        for child in parent:
+            if child is target:
+                return parent.tag
+    return None

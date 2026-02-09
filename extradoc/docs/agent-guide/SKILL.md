@@ -164,13 +164,14 @@ Each `<tab>` contains `<body>` plus optional `<header>`, `<footer>`, and `<footn
 
 ## Key Rules
 
-1. **Always re-pull after push.** The `.pristine/` state is not auto-updated.
-2. **Do not modify `.pristine/` or `.raw/`.** Internal directories used by push.
-3. **Every `<td>` must contain at least one `<p>`.** Even empty cells.
-4. **`<hr/>`, `<image/>`, `<autotext/>`, `<person/>` are read-only.** Cannot add/remove.
-5. **XML-escape special characters.** `&amp;` `&lt;` `&gt;` `&quot;` in text content.
-6. **List items are flat.** No `<ul>`/`<ol>` wrappers — nesting via `level` attribute only.
-7. **The `<style>` wrapper applies a class to multiple consecutive elements.** Not a style definition.
+1. **No newline characters inside content elements.** Each `<p>`, `<h1>`–`<h6>`, `<li>`, `<title>`, `<subtitle>`, and inline tags (`<b>`, `<i>`, `<span>`, `<a>`, etc.) must be a single line of text. To start a new line, close the element and open a new one. Newlines inside content are misinterpreted by the Google Docs API and cause corruption (e.g. spurious list items). Container elements (`<doc>`, `<tab>`, `<body>`, `<table>`, `<tr>`, `<td>`, `<header>`, `<footer>`, `<footnote>`, `<toc>`, `<style>`, `<meta>`) may contain whitespace/newlines between their children. **Diff/push will reject documents that violate this rule.**
+2. **Always re-pull after push.** The `.pristine/` state is not auto-updated.
+3. **Do not modify `.pristine/` or `.raw/`.** Internal directories used by push.
+4. **Every `<td>` must contain at least one `<p>`.** Even empty cells.
+5. **`<hr/>`, `<image/>`, `<autotext/>`, `<person/>` are read-only.** Cannot add/remove.
+6. **XML-escape special characters.** `&amp;` `&lt;` `&gt;` `&quot;` in text content.
+7. **List items are flat.** No `<ul>`/`<ol>` wrappers — nesting via `level` attribute only.
+8. **The `<style>` wrapper applies a class to multiple consecutive elements.** Not a style definition.
 
 ---
 

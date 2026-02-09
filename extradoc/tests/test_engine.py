@@ -3,7 +3,9 @@
 Tests the full pipeline: pristine XML + current XML → request list.
 """
 
-from extradoc.engine import DiffEngine
+import pytest
+
+from extradoc.engine import DiffEngine, _validate_no_embedded_newlines
 from extradoc.types import NodeType
 
 
@@ -196,3 +198,160 @@ class TestDiffEngine:
         assert (
             len(cell_mods_before) >= 2
         ), f"Expected cell mod requests before deleteTableRow, got request order: {rt}"
+
+
+class TestValidateNoEmbeddedNewlines:
+    """Tests for _validate_no_embedded_newlines."""
+
+    # -- Should pass (no error) --
+
+    def test_clean_document(self):
+        """Normal document with no embedded newlines passes."""
+        xml = _make_doc("<p>Hello world</p><p>Second paragraph</p>")
+        _validate_no_embedded_newlines(xml)
+
+    def test_container_tags_allow_whitespace(self):
+        """Container tags (doc, tab, body, table, tr, td, etc.) allow newlines
+        between child elements — this is normal XML indentation."""
+        xml = (
+            '<doc id="d" revision="r">\n'
+            '  <tab id="t.0" title="Tab 1">\n'
+            "    <body>\n"
+            "      <p>Hello</p>\n"
+            '      <table id="t1">\n'
+            '        <tr id="r1">\n'
+            '          <td id="c1">\n'
+            "            <p>Cell</p>\n"
+            "          </td>\n"
+            "        </tr>\n"
+            "      </table>\n"
+            "    </body>\n"
+            "  </tab>\n"
+            "</doc>"
+        )
+        _validate_no_embedded_newlines(xml)
+
+    def test_header_footer_allow_whitespace(self):
+        """Header and footer are containers — whitespace between children is fine."""
+        xml = _make_doc(
+            "<p>Body</p>",
+            headers='<header id="h1" class="_base">\n  <p>Header text</p>\n</header>',
+            footers='<footer id="f1" class="_base">\n  <p>Footer text</p>\n</footer>',
+        )
+        _validate_no_embedded_newlines(xml)
+
+    def test_footnote_allows_whitespace(self):
+        """Footnote is a container — whitespace between children is fine."""
+        xml = _make_doc(
+            '<p>Text<footnote id="fn1">\n  <p>Footnote content</p>\n</footnote></p>'
+        )
+        _validate_no_embedded_newlines(xml)
+
+    def test_toc_allows_whitespace(self):
+        """Table of contents is a container."""
+        xml = _make_doc("<toc>\n  <p>Chapter 1</p>\n</toc>")
+        _validate_no_embedded_newlines(xml)
+
+    def test_style_wrapper_allows_whitespace(self):
+        """<style> wrapper is a container."""
+        xml = _make_doc(
+            '<style class="warn">\n  <p>Warning 1</p>\n  <p>Warning 2</p>\n</style>'
+        )
+        _validate_no_embedded_newlines(xml)
+
+    def test_empty_elements(self):
+        """Empty elements are fine."""
+        xml = _make_doc("<p></p><h1></h1>")
+        _validate_no_embedded_newlines(xml)
+
+    def test_malformed_xml_passes(self):
+        """Malformed XML is not our problem — let the parser handle it."""
+        _validate_no_embedded_newlines("<not valid xml <<<")
+
+    # -- Should fail (ValueError) --
+
+    def test_newline_in_paragraph(self):
+        xml = _make_doc("<p>Line one\nLine two</p>")
+        with pytest.raises(ValueError, match=r"<p>"):
+            _validate_no_embedded_newlines(xml)
+
+    def test_newline_in_heading(self):
+        xml = _make_doc("<h1>Title\nsubtitle</h1>")
+        with pytest.raises(ValueError, match=r"<h1>"):
+            _validate_no_embedded_newlines(xml)
+
+    def test_newline_in_h2(self):
+        xml = _make_doc("<h2>First\nsecond</h2>")
+        with pytest.raises(ValueError, match=r"<h2>"):
+            _validate_no_embedded_newlines(xml)
+
+    def test_newline_in_list_item(self):
+        xml = _make_doc('<li type="bullet" level="0">Item\ncontinued</li>')
+        with pytest.raises(ValueError, match=r"<li>"):
+            _validate_no_embedded_newlines(xml)
+
+    def test_newline_in_title(self):
+        xml = _make_doc("<title>Doc\ntitle</title>")
+        with pytest.raises(ValueError, match=r"<title>"):
+            _validate_no_embedded_newlines(xml)
+
+    def test_newline_in_subtitle(self):
+        xml = _make_doc("<subtitle>Sub\ntitle</subtitle>")
+        with pytest.raises(ValueError, match=r"<subtitle>"):
+            _validate_no_embedded_newlines(xml)
+
+    def test_newline_in_bold(self):
+        xml = _make_doc("<p><b>Bold\ntext</b></p>")
+        with pytest.raises(ValueError, match=r"<b>"):
+            _validate_no_embedded_newlines(xml)
+
+    def test_newline_in_italic(self):
+        xml = _make_doc("<p><i>Italic\ntext</i></p>")
+        with pytest.raises(ValueError, match=r"<i>"):
+            _validate_no_embedded_newlines(xml)
+
+    def test_newline_in_span(self):
+        xml = _make_doc('<p><span class="x">Styled\ntext</span></p>')
+        with pytest.raises(ValueError, match=r"<span>"):
+            _validate_no_embedded_newlines(xml)
+
+    def test_newline_in_link(self):
+        xml = _make_doc('<p><a href="url">Link\ntext</a></p>')
+        with pytest.raises(ValueError, match=r"<a>"):
+            _validate_no_embedded_newlines(xml)
+
+    def test_newline_in_tail_text(self):
+        """Tail text after inline element but inside content parent."""
+        xml = _make_doc("<p><b>bold</b>then\nnewline</p>")
+        with pytest.raises(ValueError, match=r"newline"):
+            _validate_no_embedded_newlines(xml)
+
+    def test_newline_in_underline(self):
+        xml = _make_doc("<p><u>Under\nline</u></p>")
+        with pytest.raises(ValueError, match=r"<u>"):
+            _validate_no_embedded_newlines(xml)
+
+    def test_newline_in_strikethrough(self):
+        xml = _make_doc("<p><s>Strike\nthrough</s></p>")
+        with pytest.raises(ValueError, match=r"<s>"):
+            _validate_no_embedded_newlines(xml)
+
+    def test_newline_in_superscript(self):
+        xml = _make_doc("<p><sup>Super\nscript</sup></p>")
+        with pytest.raises(ValueError, match=r"<sup>"):
+            _validate_no_embedded_newlines(xml)
+
+    def test_newline_in_subscript(self):
+        xml = _make_doc("<p><sub>Sub\nscript</sub></p>")
+        with pytest.raises(ValueError, match=r"<sub>"):
+            _validate_no_embedded_newlines(xml)
+
+    # -- Integration: DiffEngine.diff rejects embedded newlines --
+
+    def test_diff_rejects_newline_in_current(self):
+        """DiffEngine.diff should reject current XML with embedded newlines."""
+        engine = DiffEngine()
+        pristine = _make_doc("<p>A</p>")
+        current = _make_doc("<p>Line one\nLine two</p>")
+        with pytest.raises(ValueError, match=r"<p>"):
+            engine.diff(pristine, current)
