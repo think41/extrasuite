@@ -19,6 +19,7 @@ from .types import (
     TableBlock,
     TableCellBlock,
     TableRowBlock,
+    TocBlock,
 )
 
 # Tags that represent paragraph-like elements
@@ -122,8 +123,10 @@ class BlockParser:
                     elif styled_child.tag == "table":
                         blocks.append(self._parse_table(styled_child))
 
-            # toc, sectionBreak etc. are currently ignored in v2
-            # (they're rare and read-only in practice)
+            elif tag == "toc":
+                blocks.append(self._parse_toc(child))
+
+            # sectionBreak etc. are currently ignored in v2
 
         return blocks
 
@@ -156,6 +159,14 @@ class BlockParser:
             )
 
         return para
+
+    def _parse_toc(self, toc_elem: ET.Element) -> TocBlock:
+        """Parse a table of contents element into a TocBlock."""
+        saved_tail = toc_elem.tail
+        toc_elem.tail = None
+        xml = ET.tostring(toc_elem, encoding="unicode")
+        toc_elem.tail = saved_tail
+        return TocBlock(xml=xml)
 
     def _parse_table(self, table_elem: ET.Element) -> TableBlock:
         """Parse a table element into a TableBlock."""

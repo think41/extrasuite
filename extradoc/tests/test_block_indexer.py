@@ -2,7 +2,7 @@
 
 from extradoc.block_indexer import BlockIndexer
 from extradoc.parser import BlockParser
-from extradoc.types import ParagraphBlock, SegmentType, TableBlock
+from extradoc.types import ParagraphBlock, SegmentType, TableBlock, TocBlock
 
 
 def _parse_and_index(body_content: str) -> list:
@@ -108,3 +108,74 @@ class TestBlockIndexer:
         p = children[0]
         # pagebreak(1) + "Text"(4) + \n(1) = 6
         assert p.end_index - p.start_index == 6
+
+    def test_toc_with_paragraphs(self):
+        """TOC: 1(start) + paragraph lengths + 1(end). Subsequent content indexes correct."""
+        children = _parse_and_index(
+            "<p>Before</p>" "<toc><p>Chapter 1</p><p>Chapter 2</p></toc>" "<p>After</p>"
+        )
+        assert len(children) == 3
+        p_before = children[0]
+        toc = children[1]
+        p_after = children[2]
+
+        assert isinstance(p_before, ParagraphBlock)
+        assert isinstance(toc, TocBlock)
+        assert isinstance(p_after, ParagraphBlock)
+
+        # "Before" = 6 chars + 1 newline = 7, starts at 1
+        assert p_before.start_index == 1
+        assert p_before.end_index == 8
+
+        # TOC: start marker(1) + "Chapter 1"(9)+\n(1) + "Chapter 2"(9)+\n(1) + end marker(1) = 22
+        assert toc.start_index == 8
+        assert toc.end_index == 30
+
+        # "After" starts at 30
+        assert p_after.start_index == 30
+        assert p_after.end_index == 36  # "After"(5) + \n(1)
+
+    def test_empty_toc(self):
+        """Empty TOC: start marker(1) + end marker(1) = 2."""
+        children = _parse_and_index("<toc></toc>")
+        assert len(children) == 1
+        toc = children[0]
+        assert isinstance(toc, TocBlock)
+        assert toc.start_index == 1
+        assert toc.end_index == 3  # 1 + 2 = 3
+
+    def test_equation_uses_length_attribute(self):
+        """<equation length="23"/> consumes 23 index units."""
+        children = _parse_and_index(
+            '<p><equation length="23"/> This is an equation</p>'
+        )
+        p = children[0]
+        # equation(23) + " This is an equation"(20) + \n(1) = 44
+        assert p.end_index - p.start_index == 44
+
+    def test_equation_default_length_one(self):
+        """<equation/> without length attribute defaults to 1."""
+        children = _parse_and_index("<p><equation/> Text</p>")
+        p = children[0]
+        # equation(1) + " Text"(5) + \n(1) = 7
+        assert p.end_index - p.start_index == 7
+
+    def test_equation_shifts_subsequent_indexes(self):
+        """Content after a paragraph with equation gets correct indexes."""
+        children = _parse_and_index('<p><equation length="23"/>eq</p><p>After</p>')
+        p1, p2 = children
+        # p1: equation(23) + "eq"(2) + \n(1) = 26, starts at 1 → ends at 27
+        assert p1.start_index == 1
+        assert p1.end_index == 27
+        # p2: "After"(5) + \n(1) = 6, starts at 27 → ends at 33
+        assert p2.start_index == 27
+        assert p2.end_index == 33
+
+    def test_richlink_counts_as_one(self):
+        """<richlink/> counts as 1 index unit."""
+        children = _parse_and_index(
+            '<p>See <richlink url="https://example.com" title="Example"/> here</p>'
+        )
+        p = children[0]
+        # "See "(4) + richlink(1) + " here"(5) + \n(1) = 11
+        assert p.end_index - p.start_index == 11

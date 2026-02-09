@@ -45,7 +45,17 @@ INLINE_STYLE_TAGS: dict[str, str] = {
 
 # Special elements that consume 1 index
 SPECIAL_ELEMENT_TAGS = frozenset(
-    {"hr", "pagebreak", "columnbreak", "image", "footnote", "person"}
+    {
+        "hr",
+        "pagebreak",
+        "columnbreak",
+        "image",
+        "footnote",
+        "person",
+        "date",
+        "richlink",
+        "equation",
+    }
 )
 
 # Paragraph style attributes
@@ -476,26 +486,80 @@ class ContentGenerator:
                     break
             return count
 
+        # 2.7 Insert date elements at inline positions (highest offset first).
+        #     Each insertDate inserts a 1-index-unit reference character.
+        date_elements = [
+            (offset, attrs)
+            for offset, elem_type, attrs in parsed.special_elements
+            if elem_type == "date"
+        ]
+        date_offsets = sorted(offset for offset, _ in date_elements)
+
+        for offset, attrs in sorted(date_elements, key=lambda x: x[0], reverse=True):
+            adj_offset = offset + _pb_shift(offset, inclusive=True)
+            date_loc: dict[str, Any] = {
+                "index": insert_index + adj_offset,
+                "tabId": tab_id,
+            }
+            if segment_id:
+                date_loc["segmentId"] = segment_id
+            date_props: dict[str, Any] = {}
+            if attrs.get("timestamp"):
+                date_props["timestamp"] = attrs["timestamp"]
+            if attrs.get("dateFormat"):
+                date_props["dateFormat"] = attrs["dateFormat"]
+            if attrs.get("locale"):
+                date_props["locale"] = attrs["locale"]
+            if attrs.get("timeFormat"):
+                date_props["timeFormat"] = attrs["timeFormat"]
+            if attrs.get("timeZoneId"):
+                date_props["timeZoneId"] = attrs["timeZoneId"]
+            requests.append(
+                {
+                    "insertDate": {
+                        "location": date_loc,
+                        "dateElementProperties": date_props,
+                    }
+                }
+            )
+
+        def _date_shift(offset: int, inclusive: bool = True) -> int:
+            """Compute index shift at `offset` due to inline date inserts.
+
+            Each insertDate adds 1 index unit (the date chip).
+            """
+            count = 0
+            for d_off in date_offsets:
+                if (inclusive and d_off <= offset) or (
+                    not inclusive and d_off < offset
+                ):
+                    count += 1
+                elif d_off > offset:
+                    break
+            return count
+
         def make_fully_adjusted_range(start: int, end: int) -> dict[str, Any]:
-            """Range adjusted for page-break, footnote, AND person shifts."""
+            """Range adjusted for page-break, footnote, person, AND date shifts."""
             adj_start = (
                 start
                 + _pb_shift(start, True)
                 + _fn_shift(start, True)
                 + _person_shift(start, True)
+                + _date_shift(start, True)
             )
             adj_end = (
                 end
                 + _pb_shift(end, False)
                 + _fn_shift(end, False)
                 + _person_shift(end, False)
+                + _date_shift(end, False)
             )
             return make_range(adj_start, adj_end)
 
         # Use adjusted ranges for style requests when page-break-only paragraphs,
-        # footnotes, or person mentions are present, since they shift subsequent
-        # positions.
-        has_shifts = bool(pb_offsets or fn_offsets or person_offsets)
+        # footnotes, person mentions, or date elements are present, since they
+        # shift subsequent positions.
+        has_shifts = bool(pb_offsets or fn_offsets or person_offsets or date_offsets)
         style_range = make_fully_adjusted_range if has_shifts else make_range
 
         # 3. Apply paragraph styles — reset namedStyleType AND clear explicit

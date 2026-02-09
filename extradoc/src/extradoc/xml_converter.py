@@ -423,14 +423,43 @@ def _convert_paragraph_elements(
             props = rich_link.get("richLinkProperties", {})
             url = props.get("uri", "")
             link_title = props.get("title", url)
-            # Rich links are treated as regular links in the XML format
-            parts.append(f'<a href="{_escape(url)}">{_escape(link_title)}</a>')
+            # Rich links (chips) take exactly 1 index unit in Google Docs
+            parts.append(
+                f'<richlink url="{_escape(url)}" title="{_escape(link_title)}"/>'
+            )
 
         elif "dateElement" in elem:
-            parts.append("<date/>")
+            date_elem = elem["dateElement"]
+            date_props = date_elem.get("dateElementProperties", {})
+            date_attrs: list[str] = []
+            timestamp = date_props.get("timestamp", "")
+            if timestamp:
+                date_attrs.append(f'timestamp="{_escape(timestamp)}"')
+            date_format = date_props.get("dateFormat", "")
+            if date_format and date_format != "DATE_FORMAT_UNSPECIFIED":
+                date_attrs.append(f'dateFormat="{_escape(date_format)}"')
+            locale = date_props.get("locale", "")
+            if locale:
+                date_attrs.append(f'locale="{_escape(locale)}"')
+            time_format = date_props.get("timeFormat", "")
+            if time_format and time_format != "TIME_FORMAT_UNSPECIFIED":
+                date_attrs.append(f'timeFormat="{_escape(time_format)}"')
+            time_zone_id = date_props.get("timeZoneId", "")
+            if time_zone_id:
+                date_attrs.append(f'timeZoneId="{_escape(time_zone_id)}"')
+            if date_attrs:
+                parts.append(f"<date {' '.join(date_attrs)}/>")
+            else:
+                parts.append("<date/>")
 
         elif "equation" in elem:
-            parts.append("<equation/>")
+            # Equations are opaque — the API gives no content, only
+            # startIndex/endIndex.  Store the length so the block
+            # indexer can account for the index span.
+            eq_start = elem.get("startIndex", 0)
+            eq_end = elem.get("endIndex", 0)
+            eq_len = eq_end - eq_start
+            parts.append(f'<equation length="{eq_len}"/>')
 
         elif "autoText" in elem:
             auto = elem["autoText"]

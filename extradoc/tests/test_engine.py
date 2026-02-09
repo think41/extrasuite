@@ -199,6 +199,59 @@ class TestDiffEngine:
             len(cell_mods_before) >= 2
         ), f"Expected cell mod requests before deleteTableRow, got request order: {rt}"
 
+    def test_toc_no_spurious_diff(self):
+        """Document with TOC should produce no spurious diffs when unchanged."""
+        engine = DiffEngine()
+        xml = _make_doc(
+            "<p>Before</p>" "<toc><p>Chapter 1</p><p>Chapter 2</p></toc>" "<p>After</p>"
+        )
+        requests, _tree = engine.diff(xml, xml)
+        assert requests == []
+
+    def test_toc_with_content_change_after(self):
+        """Content change after TOC should use correct indexes."""
+        engine = DiffEngine()
+        pristine = _make_doc(
+            "<p>Before</p>" "<toc><p>Chapter 1</p></toc>" "<p>After</p>"
+        )
+        current = _make_doc(
+            "<p>Before</p>" "<toc><p>Chapter 1</p></toc>" "<p>Changed</p>"
+        )
+        requests, _tree = engine.diff(pristine, current)
+        assert len(requests) > 0
+        rt = _req_types(requests)
+        assert "deleteContentRange" in rt
+        assert "insertText" in rt
+
+    def test_equation_no_spurious_diff(self):
+        """Document with equation should produce no spurious diffs when unchanged."""
+        engine = DiffEngine()
+        xml = _make_doc(
+            '<p><equation length="23"/> This is an equation</p>' "<p>After equation</p>"
+        )
+        requests, _tree = engine.diff(xml, xml)
+        assert requests == []
+
+    def test_equation_content_change_after(self):
+        """Content change after equation paragraph should use correct indexes."""
+        engine = DiffEngine()
+        pristine = _make_doc('<p><equation length="23"/> eq</p>' "<p>Original</p>")
+        current = _make_doc('<p><equation length="23"/> eq</p>' "<p>Changed</p>")
+        requests, _tree = engine.diff(pristine, current)
+        assert len(requests) > 0
+        rt = _req_types(requests)
+        assert "deleteContentRange" in rt
+        assert "insertText" in rt
+
+    def test_richlink_no_spurious_diff(self):
+        """Document with richlink should produce no spurious diffs when unchanged."""
+        engine = DiffEngine()
+        xml = _make_doc(
+            '<p>See <richlink url="https://example.com" title="Example"/> for details.</p>'
+        )
+        requests, _tree = engine.diff(xml, xml)
+        assert requests == []
+
 
 class TestValidateNoEmbeddedNewlines:
     """Tests for _validate_no_embedded_newlines."""

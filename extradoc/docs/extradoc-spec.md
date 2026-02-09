@@ -186,11 +186,17 @@ This matches Google Docs' internal structure where merged cells still exist as p
 <!-- Person mention -->
 <p>Contact <person email="foo@example.com" name="Foo Bar"/> for details.</p>
 
+<!-- Date element -->
+<p>Due: <date timestamp="2026-02-09T12:00:00Z" dateFormat="DATE_FORMAT_MONTH_DAY_YEAR_ABBREVIATED"/></p>
+
+<!-- Rich link (chip) -->
+<p>See <richlink url="https://example.com" title="Example Doc"/> for details.</p>
+
 <!-- Auto-generated text (page numbers, etc.) -->
 <p>Page <autotext type="PAGE_NUMBER"/></p>
 ```
 
-**Note:** Special elements like `<columnbreak/>`, `<pagebreak/>`, `<hr/>` each take exactly 1 index in Google Docs.
+**Note:** Special elements like `<columnbreak/>`, `<pagebreak/>`, `<hr/>`, `<richlink/>` each take exactly 1 index in Google Docs.
 
 ### 3.6 Footnotes (Inline Model)
 
@@ -911,6 +917,8 @@ extradoc push <folder> --force
 | Inline image | 1 |
 | Person mention | 1 |
 | Footnote reference | 1 |
+| Rich link (chip) | 1 |
+| Equation | Variable (stored in `length` attribute) |
 | Table start | 1 |
 | Table row start | 1 |
 | Table cell start | 1 |
@@ -977,7 +985,10 @@ def utf16_len(text: str) -> int:
 | `<pagebreak/>` | Page break | - |
 | `<image/>` | Image | `src`, `width`, `height`, `alt`, `title` |
 | `<person/>` | Person mention | `email`, `name` |
+| `<date/>` | Date element | `timestamp`, `dateFormat`, `locale`, `timeFormat`, `timeZoneId` |
 | `<footnote>` | Inline footnote (contains content) | `id` |
+| `<richlink/>` | Rich link chip (read-only) | `url`, `title` |
+| `<equation/>` | Equation (read-only) | `length` |
 | `<autotext/>` | Auto-generated text | `type` |
 
 #### Structural Elements

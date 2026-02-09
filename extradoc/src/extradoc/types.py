@@ -135,8 +135,34 @@ class TableBlock:
         return "table"
 
 
+@dataclass
+class TocBlock:
+    """A table of contents element in the document tree.
+
+    TOCs are read-only but occupy real index space that must be tracked
+    for correct index calculations.
+
+    Attributes:
+        xml: The full XML string for this TOC
+        start_index: UTF-16 start index (set by indexer)
+        end_index: UTF-16 end index (set by indexer)
+    """
+
+    xml: str
+    start_index: int = 0
+    end_index: int = 0
+
+    def content_hash(self) -> str:
+        """Content hash for exact matching."""
+        return self.xml
+
+    def structural_key(self) -> str:
+        """Key for structural matching."""
+        return "toc"
+
+
 # Type alias for structural elements
-StructuralBlock = ParagraphBlock | TableBlock
+StructuralBlock = ParagraphBlock | TableBlock | TocBlock
 
 
 @dataclass

@@ -64,6 +64,9 @@ Start with `document.xml`. Read `styles.xml` only when you need to understand or
 | `<footnote>` | Partial | Yes | Yes | Content population has known issues |
 | `<autotext/>` | No | No | No | API limitation |
 | `<person/>` | Yes | No | Yes | Insert via `insertPerson` API |
+| `<date/>` | Yes | No | Yes | Insert via `insertDate` API. Attrs: `timestamp`, `dateFormat`, `locale`, `timeFormat`, `timeZoneId` |
+| `<richlink/>` | No | No | No | Rich link chip. Attrs: `url`, `title`. Takes 1 index unit |
+| `<equation/>` | No | No | No | Equation. Attr: `length` (index units consumed) |
 
 ---
 

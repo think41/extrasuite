@@ -22,11 +22,21 @@ from .types import (
     SegmentType,
     TableBlock,
     TableCellBlock,
+    TocBlock,
 )
 
 # Tags that count as special elements (each consumes 1 index)
 SPECIAL_TAGS = frozenset(
-    {"hr", "pagebreak", "columnbreak", "image", "footnote", "person"}
+    {
+        "hr",
+        "pagebreak",
+        "columnbreak",
+        "image",
+        "footnote",
+        "person",
+        "date",
+        "richlink",
+    }
 )
 
 # Tags that represent paragraph-like elements
@@ -68,13 +78,18 @@ class BlockIndexer:
                 length = self._table_length(block)
                 block.end_index = current + length
                 current = block.end_index
+            elif isinstance(block, TocBlock):
+                block.start_index = current
+                length = self._toc_length(block)
+                block.end_index = current + length
+                current = block.end_index
 
         segment.end_index = current
 
     def _paragraph_length(self, para: ParagraphBlock) -> int:
         """Calculate UTF-16 length of a paragraph.
 
-        Length = text_content + special_elements + 1 (newline)
+        Length = text_content + special_elements + equation_lengths + 1 (newline)
         """
         try:
             root = ET.fromstring(para.xml)
@@ -83,8 +98,13 @@ class BlockIndexer:
 
         text_length = self._text_length_from_xml(root)
         special_count = sum(1 for elem in root.iter() if elem.tag in SPECIAL_TAGS)
+        equation_length = sum(
+            int(elem.get("length", "1"))
+            for elem in root.iter()
+            if elem.tag == "equation"
+        )
 
-        return text_length + special_count + 1
+        return text_length + special_count + equation_length + 1
 
     def _table_length(self, table: TableBlock) -> int:
         """Calculate UTF-16 length of a table and set child indexes.
@@ -113,6 +133,38 @@ class BlockIndexer:
 
         current += 1  # table end marker
         return current - table.start_index
+
+    def _toc_length(self, toc: TocBlock) -> int:
+        """Calculate UTF-16 length of a table of contents.
+
+        TOC structure:
+        - 1 for TOC start marker
+        - Sum of paragraph lengths for each child paragraph
+        - 1 for TOC end marker
+        """
+        try:
+            root = ET.fromstring(toc.xml)
+        except ET.ParseError:
+            return 2  # Minimum: start + end markers
+
+        length = 1  # TOC start marker
+
+        for child in root:
+            if child.tag in PARAGRAPH_TAGS:
+                xml = ET.tostring(child, encoding="unicode")
+                try:
+                    para_root = ET.fromstring(xml)
+                except ET.ParseError:
+                    length += 1
+                    continue
+                text_len = self._text_length_from_xml(para_root)
+                special_count = sum(
+                    1 for elem in para_root.iter() if elem.tag in SPECIAL_TAGS
+                )
+                length += text_len + special_count + 1
+
+        length += 1  # TOC end marker
+        return length
 
     def _cell_content_length(self, cell: TableCellBlock) -> int:
         """Calculate UTF-16 length of cell content."""
@@ -166,7 +218,12 @@ class BlockIndexer:
                 special_count = sum(
                     1 for elem in root.iter() if elem.tag in SPECIAL_TAGS
                 )
-                length += text_len + special_count + 1
+                equation_length = sum(
+                    int(elem.get("length", "1"))
+                    for elem in root.iter()
+                    if elem.tag == "equation"
+                )
+                length += text_len + special_count + equation_length + 1
             elif child.tag == "table":
                 xml = ET.tostring(child, encoding="unicode")
                 length += self._nested_table_length_from_xml(xml)
@@ -174,14 +231,14 @@ class BlockIndexer:
         return max(length, 1)
 
     def _text_length_from_xml(self, elem: ET.Element) -> int:
-        """Recursively calculate text length, ignoring special elements."""
+        """Recursively calculate text length, ignoring special elements and equations."""
         length = 0
 
         if elem.text:
             length += utf16_len(elem.text)
 
         for child in elem:
-            if child.tag not in SPECIAL_TAGS:
+            if child.tag not in SPECIAL_TAGS and child.tag != "equation":
                 length += self._text_length_from_xml(child)
             if child.tail:
                 length += utf16_len(child.tail)

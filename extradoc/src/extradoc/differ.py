@@ -24,6 +24,7 @@ from .types import (
     TabBlock,
     TableBlock,
     TableRowBlock,
+    TocBlock,
 )
 
 
@@ -328,7 +329,7 @@ class TreeDiffer:
                 and isinstance(p_block_i, ParagraphBlock)
                 and _is_empty_paragraph(p_block_i)
                 and i + 1 < len(raw)
-                and isinstance(raw[i + 1][1] or raw[i + 1][2], TableBlock)
+                and isinstance(raw[i + 1][1] or raw[i + 1][2], TableBlock | TocBlock)
                 and raw[i + 1][0] != ChangeOp.DELETED
             ):
                 raw[i] = (None, p_block_i, None, None)
@@ -339,7 +340,7 @@ class TreeDiffer:
                 # If the unchanged element is a table, the preceding content
                 # block's trailing \n is the newline-before-table that the
                 # Google Docs API forbids deleting.
-                if group and isinstance(p_block or c_block, TableBlock):
+                if group and isinstance(p_block or c_block, TableBlock | TocBlock):
                     flush_before_structural = True
                 flush_group()
                 if p_block is not None and p_block.end_index > 0:
@@ -379,10 +380,16 @@ class TreeDiffer:
                     group_op = op
                     last_current_idx = current_idx
             else:
-                # Non-paragraph (table)
+                # Non-paragraph (table or TOC)
                 if group and op != ChangeOp.DELETED:
                     flush_before_structural = True
                 flush_group()
+
+                # TOC is read-only — just track its position, never emit changes
+                if isinstance(p_block or c_block, TocBlock):
+                    if p_block is not None and p_block.end_index > 0:
+                        last_pristine_end = p_block.end_index
+                    continue
 
                 if op == ChangeOp.ADDED:
                     assert isinstance(c_block, TableBlock)

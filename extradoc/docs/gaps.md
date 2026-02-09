@@ -267,7 +267,7 @@ Example: pristine segment is 157 chars. Delete 127-156 (clamped for segment end)
 | Feature | API Available? | Notes |
 |---------|---------------|-------|
 | Images | Yes — `insertInlineImage` | Takes a public URI. Not yet implemented in extradoc. |
-| Date elements | Yes — `insertDate` | Takes `dateElementProperties`. Not yet implemented in extradoc. |
+| ~~Date elements~~ | ~~Yes — `insertDate`~~ | ~~Implemented — `<date/>` with `timestamp`, `dateFormat`, `locale`, `timeFormat`, `timeZoneId` attributes.~~ |
 | Autotext (page numbers) | No | No `insertAutoText` API exists |
 | Horizontal rules | No | No `insertHorizontalRule` API exists — read-only |
 | Column breaks | No | No `insertColumnBreak` API exists — `insertSectionBreak` is different (see bug #11) |
