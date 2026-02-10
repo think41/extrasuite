@@ -323,7 +323,7 @@ dev = [
 requires-dist = [
     { name = "certifi", specifier = ">=2024.0.0" },
     { name = "diff-match-patch", specifier = ">=20230430" },
-    { name = "extrasuite", specifier = ">=0.2.0" },
+    { name = "extrasuite", specifier = ">=0.3.0" },
     { name = "httpx", specifier = ">=0.27.0" },
     { name = "keyring", specifier = ">=25.0.0" },
     { name = "mypy", marker = "extra == 'dev'", specifier = ">=1.0.0" },
@@ -340,11 +340,11 @@ dev = []
 
 [[package]]
 name = "extrasuite"
-version = "0.2.0"
+version = "0.3.0"
 source = { registry = "https://pypi.org/simple" }
-sdist = { url = "https://files.pythonhosted.org/packages/cb/4d/ebefb8186ddf04ca78a885adcb2097a7097703262bac5cee65484a9784cf/extrasuite-0.2.0.tar.gz", hash = "sha256:ae79d693cc6c8c3a3aca9d4c58c26fe962aedd067d20c41e708639b79321d774", size = 11306, upload-time = "2026-02-05T10:27:24.892Z" }
+sdist = { url = "https://files.pythonhosted.org/packages/59/64/63da9f7e056d740a27b94c7205cc9d369acdc84c41833acb9efccfba9594/extrasuite-0.3.0.tar.gz", hash = "sha256:6c8e0cfe26f3bd0659ad84056482fe2652eeb0dc0410920e7d80990adacf00f0", size = 13168, upload-time = "2026-02-10T13:54:23.101Z" }
 wheels = [
-    { url = "https://files.pythonhosted.org/packages/5e/5f/8c58a0f3b7a748297fb42603fb6bbe5a0080072ff308fcea6ba8ba004cde/extrasuite-0.2.0-py3-none-any.whl", hash = "sha256:6b4cc496cafc1fcb9698c1beb1aa3c9f272ab8d9567db50269afcde4ea4fb6c1", size = 12928, upload-time = "2026-02-05T10:27:23.403Z" },
+    { url = "https://files.pythonhosted.org/packages/f2/4e/8e120720f9353edc2bb82dc1f746a21b6244a379c06c31edad601fda3edb/extrasuite-0.3.0-py3-none-any.whl", hash = "sha256:d0bed93677f7a4cf3811aceefa6aeaf81da9a91ee4310d6b369388c14fc445d9", size = 14503, upload-time = "2026-02-10T13:54:21.367Z" },
 ]
 
 [[package]]
