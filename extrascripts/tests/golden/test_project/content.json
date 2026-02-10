@@ -1,0 +1,39 @@
+{
+  "scriptId": "test_project",
+  "files": [
+    {
+      "name": "Code",
+      "type": "SERVER_JS",
+      "source": "function onOpen(e) {\n  const ui = SpreadsheetApp.getUi();\n  ui.createMenu('My Tools')\n    .addItem('Run Report', 'runReport')\n    .addToUi();\n}\n\nfunction runReport() {\n  const sheet = SpreadsheetApp.getActiveSpreadsheet().getActiveSheet();\n  const data = sheet.getDataRange().getValues();\n  Logger.log('Processing ' + data.length + ' rows');\n  return data.length;\n}\n",
+      "createTime": "2025-01-15T10:00:00.000Z",
+      "updateTime": "2025-01-20T15:30:00.000Z",
+      "functionSet": {
+        "values": [
+          {"name": "onOpen"},
+          {"name": "runReport"}
+        ]
+      }
+    },
+    {
+      "name": "Utils",
+      "type": "SERVER_JS",
+      "source": "/**\n * Format a date as YYYY-MM-DD.\n */\nfunction formatDate(date) {\n  const d = new Date(date);\n  const year = d.getFullYear();\n  const month = String(d.getMonth() + 1).padStart(2, '0');\n  const day = String(d.getDate()).padStart(2, '0');\n  return `${year}-${month}-${day}`;\n}\n\n/**\n * Send an email notification.\n */\nfunction sendNotification(to, subject, body) {\n  MailApp.sendEmail(to, subject, body);\n}\n",
+      "createTime": "2025-01-15T10:00:00.000Z",
+      "updateTime": "2025-01-18T12:00:00.000Z"
+    },
+    {
+      "name": "Sidebar",
+      "type": "HTML",
+      "source": "<!DOCTYPE html>\n<html>\n<head>\n  <base target=\"_top\">\n  <style>\n    body { font-family: Arial, sans-serif; padding: 16px; }\n    button { margin: 8px 0; padding: 8px 16px; }\n  </style>\n</head>\n<body>\n  <h2>Report Generator</h2>\n  <button onclick=\"google.script.run.runReport()\">Run Report</button>\n</body>\n</html>\n",
+      "createTime": "2025-01-16T09:00:00.000Z",
+      "updateTime": "2025-01-16T09:00:00.000Z"
+    },
+    {
+      "name": "appsscript",
+      "type": "JSON",
+      "source": "{\n  \"timeZone\": \"America/New_York\",\n  \"dependencies\": {},\n  \"exceptionLogging\": \"CLOUD\",\n  \"runtimeVersion\": \"V8\",\n  \"oauthScopes\": [\n    \"https://www.googleapis.com/auth/spreadsheets\",\n    \"https://www.googleapis.com/auth/gmail.send\"\n  ]\n}\n",
+      "createTime": "2025-01-15T10:00:00.000Z",
+      "updateTime": "2025-01-15T10:00:00.000Z"
+    }
+  ]
+}

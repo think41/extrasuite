@@ -4,9 +4,9 @@ repos:
     hooks:
       - id: ruff
         args: [--fix]
-        files: ^(server|client|extraslide|extradoc)/
+        files: ^(server|client|extraslide|extradoc|extrascripts)/
       - id: ruff-format
-        files: ^(server|client|extraslide|extradoc)/
+        files: ^(server|client|extraslide|extradoc|extrascripts)/
 
   - repo: local
     hooks:
@@ -30,4 +30,11 @@ repos:
         language: system
         types: [python]
         files: ^extradoc/
+        pass_filenames: false
+      - id: mypy-extrascripts
+        name: mypy (extrascripts)
+        entry: bash -c 'cd extrascripts && uv run mypy src/extrascripts'
+        language: system
+        types: [python]
+        files: ^extrascripts/
         pass_filenames: false
