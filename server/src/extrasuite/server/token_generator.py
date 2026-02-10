@@ -371,7 +371,7 @@ class TokenGenerator:
             json={"bytesToSign": base64.b64encode(unsigned_jwt).decode()},
         )
         sign_response.raise_for_status()
-        signed_bytes = base64.b64decode(sign_response.json()["signedBlob"])
+        signed_bytes = base64.b64decode(sign_response.json()["signature"])
 
         # Build signed JWT
         signature_b64 = base64.urlsafe_b64encode(signed_bytes).rstrip(b"=")
