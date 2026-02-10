@@ -9,12 +9,10 @@ Tokens are cached in ~/.config/extrasuite/token.json with secure file permission
 and other CLI tools that store short-lived credentials.
 
 Example:
-    from extrasuite.client import authenticate
+    from extrasuite.client import CredentialsManager
 
-    # Configure via environment variables:
-    # - EXTRASUITE_AUTH_URL and EXTRASUITE_EXCHANGE_URL for ExtraSuite protocol
-    # - SERVICE_ACCOUNT_PATH for service account file
-    token = authenticate()
+    manager = CredentialsManager()
+    token = manager.get_token()
 
     # Use token with Google APIs
     import gspread
@@ -28,15 +26,11 @@ from extrasuite.client.credentials import (
     CredentialsManager,
     OAuthToken,
     Token,
-    authenticate,
-    get_oauth_token,
 )
 
-__version__ = "0.2.0"
+__version__ = "0.4.0"
 __all__ = [
     "CredentialsManager",
     "OAuthToken",
     "Token",
-    "authenticate",
-    "get_oauth_token",
 ]

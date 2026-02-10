@@ -14,7 +14,6 @@ from extrasuite.client.credentials import (
     CredentialsManager,
     OAuthToken,
     Token,
-    authenticate,
 )
 
 
@@ -595,79 +594,6 @@ class TestCredentialsManagerIntegration:
         # Verify file was updated
         stored_data = json.loads(token_path.read_text())
         assert stored_data["access_token"] == "fresh-token"
-
-
-class TestAuthenticateFunction:
-    """Tests for the authenticate() convenience function."""
-
-    def test_authenticate_returns_token(self, tmp_path: Path) -> None:
-        """authenticate() returns a valid token."""
-        token_path = tmp_path / "token.json"
-        token_data = {
-            "access_token": "test-token",
-            "service_account_email": "sa@example.com",
-            "expires_at": time.time() + 3600,
-        }
-        token_path.write_text(json.dumps(token_data))
-
-        with (
-            mock.patch.object(CredentialsManager, "DEFAULT_CACHE_PATH", token_path),
-            mock.patch.dict(
-                os.environ,
-                {
-                    "EXTRASUITE_AUTH_URL": "https://auth.example.com/auth",
-                    "EXTRASUITE_EXCHANGE_URL": "https://auth.example.com/exchange",
-                },
-            ),
-        ):
-            token = authenticate()
-            assert token.access_token == "test-token"
-
-    def test_authenticate_with_explicit_urls(self, tmp_path: Path) -> None:
-        """authenticate() works with explicit URLs."""
-        token_path = tmp_path / "token.json"
-        token_data = {
-            "access_token": "explicit-token",
-            "service_account_email": "sa@example.com",
-            "expires_at": time.time() + 3600,
-        }
-        token_path.write_text(json.dumps(token_data))
-
-        with mock.patch.object(CredentialsManager, "DEFAULT_CACHE_PATH", token_path):
-            token = authenticate(
-                auth_url="https://explicit.example.com/auth",
-                exchange_url="https://explicit.example.com/exchange",
-            )
-            assert token.access_token == "explicit-token"
-
-    def test_authenticate_force_refresh(self, tmp_path: Path) -> None:
-        """authenticate() with force_refresh ignores cache."""
-        token_path = tmp_path / "token.json"
-        cached_token_data = {
-            "access_token": "cached-token",
-            "service_account_email": "sa@example.com",
-            "expires_at": time.time() + 3600,
-        }
-        token_path.write_text(json.dumps(cached_token_data))
-
-        new_token = Token(
-            access_token="new-token",
-            service_account_email="sa@example.com",
-            expires_at=time.time() + 3600,
-        )
-
-        with (
-            mock.patch.object(CredentialsManager, "DEFAULT_CACHE_PATH", token_path),
-            mock.patch.object(
-                CredentialsManager, "_authenticate_extrasuite", return_value=new_token
-            ),
-        ):
-            token = authenticate(
-                auth_url="https://auth.example.com/auth",
-                exchange_url="https://auth.example.com/exchange",
-                force_refresh=True,
-            )
-            assert token.access_token == "new-token"
 
 
 class TestOAuthToken:
