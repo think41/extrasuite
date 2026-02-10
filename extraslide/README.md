@@ -1,10 +1,12 @@
 # extraslide
 
-A Python library that converts Google Slides to/from SML (Slide Markup Language) - an XML-based format optimized for AI agent editing.
+Declarative Google Slides editing for AI agents. Pull, edit, push.
+
+Part of the [ExtraSuite](https://github.com/think41/extrasuite) project - declarative Google Workspace editing for AI agents.
 
 ## Overview
 
-extraslide enables AI agents (Claude Code, Codex, etc.) to read and edit Google Slides through a simple workflow:
+extraslide converts Google Slides to/from SML (Slide Markup Language) - a compact XML format that agents can edit declaratively. The library computes the minimal `batchUpdate` API calls to sync changes back. AI agents (Claude Code, Codex, etc.) read and edit presentations through a simple workflow:
 
 1. **Pull** - Download a presentation as editable SML files
 2. **Edit** - Agent modifies the SML based on user instructions
@@ -229,9 +231,9 @@ Element styles (fill, stroke, text formatting) are stored in `styles.json` and a
 - Python 3.10+
 - Google Slides file shared with your service account
 
-## Project Status
+## Part of ExtraSuite
 
-**Alpha** - The library is functional but still evolving. SML format and CLI may change.
+This package is part of the [ExtraSuite](https://github.com/think41/extrasuite) project - a platform for declarative Google Workspace editing by AI agents. ExtraSuite supports Sheets, Docs, Slides, and Forms with a consistent pull-edit-diff-push workflow, with Apps Script support upcoming.
 
 ## License
 

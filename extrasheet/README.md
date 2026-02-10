@@ -1,10 +1,12 @@
 # extrasheet
 
-File-based Google Sheets representation library for LLM agents.
+Declarative Google Sheets editing for AI agents. Pull, edit, push.
+
+Part of the [ExtraSuite](https://github.com/think41/extrasuite) project - declarative Google Workspace editing for AI agents.
 
 ## Overview
 
-`extrasheet` transforms Google Sheets into a file-based representation optimized for LLM agents. Instead of working with complex API responses, agents interact with simple files:
+`extrasheet` converts Google Sheets into compact, token-efficient local files that agents can edit declaratively. The library then computes the minimal `batchUpdate` API calls to sync changes back - like Terraform for spreadsheets. Instead of working with complex API responses, agents interact with simple files:
 
 - **data.tsv** - Cell values in tab-separated format (formulas show computed values)
 - **formula.json** - Sparse dictionary mapping cell coordinates to formulas
@@ -154,4 +156,4 @@ MIT License - see [LICENSE](LICENSE) for details.
 
 ## Part of ExtraSuite
 
-This package is part of the [ExtraSuite](https://github.com/think41/extrasuite) project, which provides AI agents with secure access to Google Workspace files.
+This package is part of the [ExtraSuite](https://github.com/think41/extrasuite) project - a platform for declarative Google Workspace editing by AI agents. ExtraSuite supports Sheets, Docs, Slides, and Forms with a consistent pull-edit-diff-push workflow, with Apps Script support upcoming.

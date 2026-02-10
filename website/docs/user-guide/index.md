@@ -10,7 +10,7 @@ This guide covers everything you need to know to effectively use ExtraSuite with
 
     ---
 
-    Learn how to write effective prompts for working with Google Sheets. Get better results by providing clear context and specific instructions.
+    Learn how to write effective prompts for working with Google Workspace files. Get better results by providing clear context and specific instructions.
 
 -   :material-share-variant:{ .lg .middle } **[Sharing Documents](sharing.md)**
 
@@ -27,6 +27,17 @@ This guide covers everything you need to know to effectively use ExtraSuite with
 </div>
 
 ## Key Concepts
+
+### The Pull-Edit-Diff-Push Workflow
+
+ExtraSuite uses a declarative editing approach. Instead of generating code to call Google APIs, agents:
+
+1. **Pull** a file into a compact local representation
+2. **Edit** the local files (TSV for sheets, SML/XML for slides, JSON for docs/forms)
+3. **Diff** to preview what API calls would be made (optional dry run)
+4. **Push** to apply changes back to Google
+
+This is the same workflow across Sheets, Docs, Slides, and Forms.
 
 ### Service Account Email
 
@@ -60,7 +71,7 @@ When sharing documents, you can choose:
 
 | Permission | What the Agent Can Do |
 |------------|----------------------|
-| **Viewer** | Read data, download as CSV |
+| **Viewer** | Read data, download content |
 | **Commenter** | Everything in Viewer, plus add comments |
 | **Editor** | Full read/write access, modify content |
 
@@ -79,19 +90,22 @@ Say:
 
 ### 2. Include the Full URL
 
-Always include the complete Google Sheets URL in your prompt:
+Always include the complete Google file URL in your prompt:
 ```
 https://docs.google.com/spreadsheets/d/SPREADSHEET_ID/edit
+https://docs.google.com/document/d/DOCUMENT_ID/edit
+https://docs.google.com/presentation/d/PRESENTATION_ID/edit
+https://docs.google.com/forms/d/FORM_ID/edit
 ```
 
 ### 3. Verify Before Major Changes
 
-For important spreadsheets:
+For important files:
 1. Make a copy before large-scale edits
 2. Review the agent's plan before execution
 3. Check version history after changes
 
-### 4. Use Formulas, Not Values
+### 4. Use Formulas, Not Values (Sheets)
 
 Ask the agent to use formulas instead of hardcoded values:
 ```

@@ -2,16 +2,16 @@
 
 ExtraSuite is designed to make automated agents useful **without removing control from employees**. This document explains the security model from both employee and administrator perspectives.
 
-## The Core Principle
+## The Core Principles
 
-!!! info "Key Security Guarantee"
-    **ExtraSuite agents can only access what you explicitly share with them.**
-
-If you don't share a document with your agent, the agent cannot access it. Period.
+!!! info "Key Security Guarantees"
+    1. **Agents can only access what you explicitly share with them.** If you don't share a document, the agent cannot access it. Period.
+    2. **Editing is declarative, not imperative.** Agents edit local files - they don't generate code or make arbitrary network calls. Only Google Workspace API calls are needed (whitelistable).
+    3. **Every edit is auditable.** All changes appear in Google Drive version history under the agent's identity, and are reversible using native Google tools.
 
 ## What This Means for You
 
-Each employee is assigned a dedicated virtual agent with its own email address. If you share a Google Doc or Google Sheet with your agent's email address, the agent can access **only that document**, and only with the permission level you choose (view, comment, or edit).
+Each employee is assigned a dedicated virtual agent with its own email address. If you share a Google Sheet, Doc, Slide, or Form with your agent's email address, the agent can access **only that document**, and only with the permission level you choose (view, comment, or edit).
 
 ### You Stay in Control
 
@@ -91,9 +91,31 @@ Issued tokens are scoped only to required Google Workspace APIs:
 | Google Sheets | Read/Write |
 | Google Docs | Read/Write |
 | Google Slides | Read/Write |
+| Google Forms | Read/Write |
 | Google Drive | **Read-only** |
 
 ExtraSuite does not issue broad Google Cloud API permissions.
+
+### Declarative Safety Model
+
+ExtraSuite uses a declarative editing approach that provides additional security:
+
+**No code generation or execution:**
+
+- Agents edit local file representations (TSV, XML, JSON), not generate code
+- ExtraSuite's diff engine computes the minimal `batchUpdate` API request
+- No arbitrary code paths - only structured API calls
+
+**Minimal network surface:**
+
+- The only network calls are to Google Workspace APIs
+- These URLs are known and can be whitelisted by IT administrators
+- No outbound calls to arbitrary endpoints
+
+**Auditable change sets:**
+
+- The `diff` command shows exactly what API calls will be made before execution
+- Changes are deterministic - same edits always produce the same API requests
 
 ### CLI Authentication Flow
 
@@ -185,7 +207,7 @@ The following security settings can be configured via environment variables:
 
 ### Clear Edit Attribution
 
-All edits appear in Google Docs and Sheets version history under the agent's service account identity. There is no shared or ambiguous editor identity.
+All edits appear in Google Workspace version history (Sheets, Docs, Slides, Forms) under the agent's service account identity. There is no shared or ambiguous editor identity.
 
 ### Native Rollback
 
@@ -234,9 +256,9 @@ ExtraSuite guarantees the following:
 ExtraSuite's security model is intentionally simple and transparent:
 
 !!! quote "The Security Promise"
-    *If an employee does not explicitly share a document with their agent, the agent cannot access it. If the agent edits a document, the employee can see exactly what changed — and undo it.*
+    *If an employee does not explicitly share a document with their agent, the agent cannot access it. If the agent edits a document, the employee can see exactly what changed — and undo it. The agent edits files declaratively - no code generation, no arbitrary network calls.*
 
-This design prioritizes **least privilege**, **auditability**, and **employee trust** while staying fully within Google Workspace's native security model.
+This design prioritizes **least privilege**, **auditability**, **declarative safety**, and **employee trust** while staying fully within Google Workspace's native security model.
 
 ---
 

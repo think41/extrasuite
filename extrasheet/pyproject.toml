@@ -6,7 +6,7 @@ build-backend = "hatchling.build"
 name = "extrasheet"
 version = "0.1.0"
 requires-python = ">=3.10"
-description = "File-based Google Sheets representation library for LLM agents"
+description = "Declarative Google Sheets editing for AI agents - pull, edit, push"
 readme = "README.md"
 license = "MIT"
 authors = [

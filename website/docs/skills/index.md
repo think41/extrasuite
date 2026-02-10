@@ -1,14 +1,16 @@
 # Skills Overview
 
-ExtraSuite provides skills that enable AI agents to work with Google Workspace applications. Each skill is a set of instructions and utilities that teach your AI agent how to interact with specific Google services.
+ExtraSuite provides skills that enable AI agents to declaratively edit Google Workspace files. Each skill teaches your AI agent the pull-edit-diff-push workflow for a specific file type.
 
 ## Available Skills
 
 | Skill | Status | Description |
 |-------|--------|-------------|
-| [Google Sheets](sheets.md) | :material-check-circle:{ .text-green } **Stable** | Read, write, and manipulate spreadsheets |
-| [Google Docs](docs.md) | :material-flask:{ .text-orange } **Alpha** | Create and edit documents |
-| [Google Slides](slides.md) | :material-flask:{ .text-orange } **Alpha** | Build presentations |
+| [Google Sheets](sheets.md) | :material-check-circle:{ .text-green } **Stable** | Read, write, and manipulate spreadsheets via TSV + JSON |
+| [Google Docs](docs.md) | :material-check-circle:{ .text-green } **Stable** | Create and edit documents via structured local files |
+| [Google Slides](slides.md) | :material-check-circle:{ .text-green } **Stable** | Build and edit presentations via SML (Slide Markup Language) |
+| [Google Forms](forms.md) | :material-check-circle:{ .text-green } **Stable** | Create and edit forms via JSON |
+| Google Apps Script | :material-clock:{ .text-gray } **Upcoming** | Manage bound scripts attached to Workspace files |
 
 ## What is a Skill?
 
@@ -21,46 +23,35 @@ A skill is a package that contains:
 
 When your AI agent encounters a task related to a skill (like working with a spreadsheet), it reads the skill instructions and uses the provided utilities.
 
-## How Skills Work
+## The Core Workflow
+
+All skills follow the same **pull-edit-diff-push** workflow:
 
 ```mermaid
 graph LR
-    A[User Prompt] --> B[AI Agent]
-    B --> C{Skill Detected?}
-    C -->|Yes| D[Load Skill Instructions]
-    D --> E[Execute Skill Code]
-    E --> F[Google Workspace API]
-    F --> G[Return Results]
-    C -->|No| H[Normal Response]
+    A[Pull] --> B[Edit Locally]
+    B --> C[Diff / Preview]
+    C --> D[Push to Google]
 ```
 
-### 1. Detection
+This is a declarative approach - like Terraform for Google Workspace:
 
-The AI agent recognizes when a skill is needed based on:
+1. **Pull** downloads the Google file into a compact, LLM-friendly local representation
+2. **Edit** - the agent modifies local files (TSV, SML XML, JSON) rather than making API calls
+3. **Diff** compares local edits against the original and generates the `batchUpdate` API request (dry run)
+4. **Push** applies the computed changes to the Google file
 
-- URLs in the prompt (e.g., Google Sheets URL)
-- Keywords (e.g., "spreadsheet", "document")
-- Explicit skill references
+The agent never needs to understand Google's API request format. It just edits files.
 
-### 2. Loading
+## Why Declarative?
 
-The agent reads the `SKILL.md` file to understand:
-
-- How to initialize the environment
-- What functions are available
-- Best practices and patterns
-
-### 3. Execution
-
-The agent writes and runs Python code using:
-
-- Custom utilities (e.g., `gsheet_utils.py`)
-- Standard libraries (e.g., `gspread`)
-- ExtraSuite authentication
-
-### 4. Results
-
-The agent interprets results and responds to your request.
+| Benefit | Explanation |
+|---------|-------------|
+| **Simpler for agents** | Edit a TSV file or XML markup instead of constructing complex API JSON |
+| **Safer** | No code generation or execution needed. No arbitrary network calls. |
+| **Auditable** | Changes are visible in Google Drive version history under the agent's identity |
+| **Token-efficient** | Compact file formats minimize LLM token usage |
+| **Consistent** | Same workflow across Sheets, Docs, Slides, and Forms |
 
 ## Skill Installation Location
 
@@ -68,59 +59,10 @@ Skills are installed in platform-specific directories:
 
 | Platform | Location |
 |----------|----------|
-| Claude Code | `~/.claude/skills/gsheets/` |
-| Codex CLI | `~/.codex/skills/gsheets/` |
-| Gemini CLI | `~/.gemini/skills/gsheets/` |
-| Cursor | `~/.cursor/skills/gsheets/` |
-
-## Skill Components
-
-Each skill directory contains:
-
-```
-gsheets/
-├── SKILL.md           # Agent instructions
-├── checks.py          # Environment verification
-├── verify_access.py   # Access verification
-├── gsheet_utils.py    # Utility functions
-├── requirements.txt   # Python dependencies
-└── venv/              # Virtual environment (created on first use)
-```
-
-### SKILL.md
-
-The main instruction file that tells the AI agent:
-
-- How to initialize the environment
-- What workflow to follow
-- Available functions and their usage
-- Best practices and error handling
-
-### checks.py
-
-Verifies the environment is set up correctly:
-
-- Python version
-- Virtual environment
-- Required packages
-- Network connectivity
-
-### verify_access.py
-
-Confirms access to a specific spreadsheet:
-
-- Tests authentication
-- Verifies sharing permissions
-- Provides troubleshooting guidance
-
-### gsheet_utils.py
-
-Custom utility functions that extend standard libraries:
-
-- `open_sheet()` - Opens spreadsheet with authentication
-- `get_shape()` - Analyzes table structure
-- `has_table()` - Checks for defined tables
-- `convert_to_table()` - Creates tables from ranges
+| Claude Code | `~/.claude/skills/` |
+| Codex CLI | `~/.codex/skills/` |
+| Gemini CLI | `~/.gemini/skills/` |
+| Cursor | `~/.cursor/skills/` |
 
 ## Skill Updates
 
@@ -140,17 +82,12 @@ If your AI agent doesn't recognize the skill:
 
 1. Verify the skill is installed:
    ```bash
-   ls ~/.claude/skills/gsheets/SKILL.md
+   ls ~/.claude/skills/
    ```
 
-2. Check the skill content:
-   ```bash
-   head -20 ~/.claude/skills/gsheets/SKILL.md
+2. Try explicitly referencing the skill in your prompt:
    ```
-
-3. Try explicitly referencing the skill in your prompt:
-   ```
-   Using the gsheets skill, read the data from...
+   Using ExtraSuite, read the data from...
    ```
 
 ### Environment Issues
@@ -159,7 +96,7 @@ If the skill fails to run:
 
 1. Run the checks script:
    ```bash
-   python3 ~/.claude/skills/gsheets/checks.py
+   python3 ~/.claude/skills/<skill>/checks.py
    ```
 
 2. Verify Python is installed:
@@ -169,22 +106,17 @@ If the skill fails to run:
 
 3. Recreate the virtual environment:
    ```bash
-   rm -rf ~/.claude/skills/gsheets/venv
-   python3 ~/.claude/skills/gsheets/checks.py
+   rm -rf ~/.claude/skills/<skill>/venv
+   python3 ~/.claude/skills/<skill>/checks.py
    ```
 
 ### Authentication Issues
 
 If authentication fails:
 
-1. Run the verification script:
-   ```bash
-   ~/.claude/skills/gsheets/venv/bin/python ~/.claude/skills/gsheets/verify_access.py <url>
-   ```
-
-2. Clear cached tokens:
+1. Clear cached tokens:
    ```bash
    rm -f ~/.config/extrasuite/token.json
    ```
 
-3. Re-authenticate via the ExtraSuite website
+2. Re-authenticate via the ExtraSuite website

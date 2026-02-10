@@ -22,9 +22,9 @@ yourname-domain@project.iam.gserviceaccount.com
 
 ## Sharing a Document
 
-### Via Google Sheets UI
+### Via Google Workspace UI
 
-1. Open your Google Sheet
+1. Open your Google Sheet, Doc, Slide, or Form
 2. Click the **Share** button (top right)
 3. In the "Add people and groups" field, paste your service account email
 4. Choose permission level:
@@ -46,7 +46,7 @@ yourname-domain@project.iam.gserviceaccount.com
 To share multiple documents at once:
 
 1. Create a folder in Google Drive
-2. Move your spreadsheets into the folder
+2. Move your files into the folder
 3. Share the folder with your service account email
 4. All documents in the folder will be accessible
 

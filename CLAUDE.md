@@ -1,25 +1,32 @@
 ## Project Overview
 
-ExtraSuite is an open source umbrella project (https://github.com/think41/extrasuite) that enables AI agents (Claude Code, Codex, etc.) to read or edit Google Drive files (Sheets, Slides, Docs) in a token-efficient, secure, and auditable way.
+ExtraSuite is an open source platform (https://github.com/think41/extrasuite) that enables AI agents (Claude Code, Codex, etc.) to declaratively edit Google Workspace files - Sheets, Docs, Slides, and Forms - with Apps Script support upcoming. Think of it as Terraform for Google Workspace: agents edit local files, and ExtraSuite computes the minimal API calls to sync changes back.
 
-**Security model:** Each end user gets a dedicated service account. The agent can only access files explicitly shared with that service account. All edits appear in Google Drive version history as "John Doe's agent added this section/modified that diagram/so on"
+**Core principles:**
 
-**Token efficiency:** Google's native file representations are verbose. This project converts Google files into compact, LLM-friendly folder structures that allow agents to understand the big picture and make targeted edits.
+- **Declarative editing:** Agents edit local file representations, not APIs. ExtraSuite computes the `batchUpdate` to sync changes. Same pattern across all file types.
+- **Secure by design:** Each user gets a dedicated service account with short-lived tokens. Agents can only access files explicitly shared with them. No code generation or arbitrary network calls needed - just Google Workspace API calls (whitelistable).
+- **User-auditable:** All edits appear in Google Drive version history under the agent's identity. "John's agent modified this section" - visible, attributable, and reversible using native Google Workspace tools.
+- **Token-efficient:** Google's native file representations are verbose. ExtraSuite converts files into compact, LLM-friendly folder structures (TSV, SML XML, structured JSON) that minimize token usage.
+- **Consistent workflow:** Pull, edit, diff, push - the same workflow across every file type.
 
 ## Architecture
 
 ```
 ┌─────────────────┐     ┌──────────────────┐     ┌─────────────────┐
 │ server/         │     │ extrasheet/      │     │ Google APIs     │
-│ (auth tokens)   │────▶│ extraslide       │────▶│ (Sheets/Slides) │
-│                 │     │ (pull/diff/push) │     │                 │
-└─────────────────┘     └──────────────────┘     └─────────────────┘
-        │                        │
-        ▼                        ▼
-┌─────────────────┐     ┌──────────────────┐
-│ client/         │     │ Local folder     │
-│ (CLI auth)      │     │ (agent edits)    │
-└─────────────────┘     └──────────────────┘
+│ (auth + tokens) │────>│ extraslide/      │────>│ (Sheets/Slides/ │
+│                 │     │ extradoc/        │     │  Docs/Forms)    │
+└─────────────────┘     │ extraform/       │     └─────────────────┘
+        │               │ (pull/diff/push) │
+        v               └──────────────────┘
+┌─────────────────┐              │
+│ client/         │              v
+│ (CLI auth)      │     ┌──────────────────┐
+└─────────────────┘     │ Local folder     │
+                        │ (agent edits     │
+                        │  declaratively)  │
+                        └──────────────────┘
 ```
 
 ## Public CLI Interface
@@ -31,26 +38,34 @@ All commands work both as `python -m <module>` and via `uvx`:
 python -m extrasuite.client login      # or: uvx extrasuite login
 python -m extrasuite.client logout     # or: uvx extrasuite logout
 
-# Working with files (extrasheet/extraslide)
+# Working with files (same pattern for all file types)
 python -m extrasheet pull <url> [output_dir]   # Downloads to ./<file_id>/ by default
 python -m extrasheet diff <folder>             # Shows batchUpdate JSON (dry run)
 python -m extrasheet push <folder>             # Applies changes to Google file
 
+python -m extradoc pull <url> [output_dir]
+python -m extradoc diff <folder>
+python -m extradoc push <folder>
+
 python -m extraslide pull <url> [output_dir]
 python -m extraslide diff <folder>
 python -m extraslide push <folder>
+
+python -m extraform pull <url> [output_dir]
+python -m extraform diff <folder>
+python -m extraform push <folder>
 ```
 
 ## Pull-Edit-Diff-Push Workflow
 
-The core workflow for editing Google files:
+The core workflow for editing Google files (same across all file types):
 
 1. **pull** - Fetches the Google file via API, converts it into a local folder structure. The folder contains:
-   - Human/LLM-readable files (TSV for sheets, SML/XML for slides)
+   - Human/LLM-readable files (TSV for sheets, SML/XML for slides, structured JSON for docs/forms)
    - A `.pristine/` directory containing the original state as a zip file
    - See `extrasheet/docs/on-disk-format.md` or `extraslide/docs/markup-syntax-design.md` for format specs
 
-2. **edit** - Agent modifies files in place according to user instructions and SKILL.md guidance
+2. **edit** - Agent modifies files in place according to user instructions and SKILL.md guidance. This is declarative: the agent edits the file representation, not API calls.
 
 3. **diff** - Compares current files against `.pristine/` and generates the `batchUpdate` request JSON. This is essentially `push --dry-run`. Does not call any APIs.
 
@@ -63,7 +78,9 @@ The core workflow for editing Google files:
 | **server/** | FastAPI server providing per-user service accounts and short-lived tokens. Deployed to Cloud Run. Also distributes agent skills. Uses `extrasuite.server` namespace. |
 | **client/** | CLI for authentication (`login`/`logout`). Manages token caching via OS specific keyring. Published to PyPI as `extrasuite`. Uses `extrasuite.client` namespace. |
 | **extrasheet/** | Converts Google Sheets to/from folder with TSV + JSON files. Implements pull/diff/push. |
-| **extraslide/** | Converts Google Slides to/from SML (Slide Markup Language) XML. Implements pull/diff/push. Alpha quality. |
+| **extradoc/** | Converts Google Docs to/from structured local files. Implements pull/diff/push. |
+| **extraslide/** | Converts Google Slides to/from SML (Slide Markup Language) XML. Implements pull/diff/push. |
+| **extraform/** | Converts Google Forms to/from JSON-based local files. Implements pull/diff/push. |
 | **website/** | MkDocs documentation at https://extrasuite.think41.com |
 
 ## User Flow
@@ -71,7 +88,7 @@ The core workflow for editing Google files:
 1. **One-time setup:** User logs into server, gets a dedicated service account created
 2. **Install skills:** User runs `curl <url> | sh` to install SKILL.md into their agent
 3. **Share file:** User shares Google file with their service account email
-4. **Agent workflow:** Agent runs `login` (if needed) → `pull` → edits files → `diff` (preview) → `push`
+4. **Agent workflow:** Agent runs `login` (if needed) -> `pull` -> edits files declaratively -> `diff` (preview) -> `push`
 
 Token caching: Short-lived tokens are cached using OS specific keyring. When expired, browser opens for re-auth (SSO may skip login).
 
@@ -115,13 +132,15 @@ Tests verify the public API: `login`, `logout`, `pull`, `diff`, `push`.
 
 ## Releasing to PyPI
 
-Three packages are published to PyPI independently using tag-based releases with GitHub Actions and trusted publishing.
+Packages are published to PyPI independently using tag-based releases with GitHub Actions and trusted publishing.
 
 | Package | PyPI Name | Tag Pattern | Workflow |
 |---------|-----------|-------------|----------|
 | client/ | `extrasuite` | `extrasuite-v*` | `publish-extrasuite.yml` |
 | extrasheet/ | `extrasheet` | `extrasheet-v*` | `publish-extrasheet.yml` |
 | extraslide/ | `extraslide` | `extraslide-v*` | `publish-extraslide.yml` |
+| extradoc/ | `extradoc` | `extradoc-v*` | `publish-extradoc.yml` |
+| extraform/ | `extraform` | `extraform-v*` | `publish-extraform.yml` |
 
 **Release process:**
 

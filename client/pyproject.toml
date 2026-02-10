@@ -1,14 +1,14 @@
 [project]
 name = "extrasuite"
 version = "0.2.0"
-description = "Client library for ExtraSuite - secure OAuth token exchange for CLI tools"
+description = "Client library for ExtraSuite - authentication for declarative Google Workspace editing by AI agents"
 readme = "README.md"
 requires-python = ">=3.10"
 license = {text = "MIT"}
 authors = [
     {name = "Sripathi Krishnan", email = "sripathi@think41.com"}
 ]
-keywords = ["google", "oauth", "workspace", "sheets", "docs", "drive", "cli"]
+keywords = ["google", "oauth", "workspace", "sheets", "docs", "slides", "forms", "drive", "ai-agent", "llm", "declarative"]
 classifiers = [
     "Development Status :: 4 - Beta",
     "Intended Audience :: Developers",

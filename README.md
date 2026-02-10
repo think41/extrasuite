@@ -1,178 +1,142 @@
 # ExtraSuite
 
-Secure OAuth token exchange for CLI tools accessing Google Workspace APIs (Sheets, Docs, Drive).
+**Declarative Google Workspace editing for AI agents.** Pull a file, edit it locally, push it back. Across Sheets, Docs, Slides, and Forms.
 
-## What is this?
+ExtraSuite converts Google Workspace files into compact, LLM-friendly local representations. Agents edit files declaratively - like Terraform for Google Workspace - and the library figures out the imperative API calls to sync changes back. No code generation, no arbitrary network calls, no API wrangling.
 
-ExtraSuite lets CLI applications obtain short-lived service account tokens to access Google Workspace APIs. Instead of distributing service account keys, users authenticate once via browser, and the server handles token management securely.
+## Why ExtraSuite?
 
-**Key Benefits:**
-- **No service account keys** - Tokens are short-lived (1 hour) and never stored locally
-- **User-scoped access** - Each user gets their own service account with minimal permissions
-- **Browser-based auth** - OAuth flow handles authentication securely
-- **Audit-friendly** - Service accounts include owner metadata for traceability
+| Principle | What it means |
+|-----------|---------------|
+| **Declarative editing** | Edit files, not APIs. The agent modifies a local file and ExtraSuite computes the minimal `batchUpdate` to sync it. Same pattern across Sheets, Docs, Slides, and Forms. |
+| **Secure by design** | Each user gets a dedicated service account. Short-lived tokens (1 hour), no stored keys. Agents can only access files explicitly shared with them. Network calls restricted to Google Workspace APIs. |
+| **User-auditable** | Every edit appears in Google Drive version history under the agent's identity. "John's agent modified this section" - visible, attributable, and reversible. |
+| **Token-efficient** | Custom file representations strip verbose API JSON into compact formats (TSV, SML, structured JSON) that minimize LLM token usage while remaining intuitive. |
+| **Consistent workflow** | `pull` -> edit -> `diff` -> `push` across every file type. Learn once, use everywhere. |
+
+## Supported File Types
+
+| Package | File Type | Status | Description |
+|---------|-----------|--------|-------------|
+| [extrasheet](extrasheet/) | Google Sheets | Stable | TSV + JSON representation |
+| [extradoc](extradoc/) | Google Docs | Stable | Structured document format |
+| [extraslide](extraslide/) | Google Slides | Stable | SML (Slide Markup Language) XML |
+| [extraform](extraform/) | Google Forms | Stable | JSON-based form structure |
+| | Google Apps Script | Upcoming | Bound scripts support |
+
+## The Pull-Edit-Diff-Push Workflow
+
+Every file type follows the same workflow:
+
+```bash
+# 1. Pull - download the file into a local folder
+extrasheet pull https://docs.google.com/spreadsheets/d/abc123/edit
+
+# 2. Edit - agent modifies files in the local folder
+#    (TSV for sheets, SML for slides, structured JSON for docs/forms)
+
+# 3. Diff - preview the batchUpdate that would be sent (dry run)
+extrasheet diff ./abc123/
+
+# 4. Push - apply changes to Google
+extrasheet push ./abc123/
+```
+
+Works the same for `extradoc`, `extraslide`, and `extraform`.
 
 ## Architecture
 
 ```
-┌─────────────────────────────────────────────────────────────┐
-│                    CLI Tool (Python)                        │
-│  ┌─────────────────────────────────────────────────────┐   │
-│  │    python -m extrasuite.client login                │   │
-│  │    - Opens browser for OAuth authentication         │   │
-│  │    - Caches token securely in OS keyring            │   │
-│  └─────────────────────────────────────────────────────┘   │
-└─────────────────────────────────────────────────────────────┘
-                              │
-                              ▼
-┌─────────────────────────────────────────────────────────────┐
-│                ExtraSuite Server (Cloud Run)                │
-│  ┌─────────────────────────────────────────────────────┐   │
-│  │  /api/token/auth     - CLI entry point (→ Google)   │   │
-│  │  /api/auth/callback  - OAuth callback (→ CLI)       │   │
-│  │  /api/health/*       - Health checks                │   │
-│  └─────────────────────────────────────────────────────┘   │
-└─────────────────────────────────────────────────────────────┘
-                              │
-                              ▼
-┌─────────────────────────────────────────────────────────────┐
-│                Google Cloud Project                         │
-│  - Service Account creation (IAM API)                      │
-│  - OAuth for user authentication                           │
-│  - SA token impersonation                                  │
-│  - Firestore for credential storage                        │
-└─────────────────────────────────────────────────────────────┘
+┌─────────────────┐     ┌──────────────────┐     ┌─────────────────┐
+│ server/         │     │ extrasheet/      │     │ Google APIs     │
+│ (auth + tokens) │────>│ extraslide/      │────>│ (Sheets/Slides/ │
+│                 │     │ extradoc/        │     │  Docs/Forms)    │
+└─────────────────┘     │ extraform/       │     └─────────────────┘
+        │               │ (pull/diff/push) │
+        v               └──────────────────┘
+┌─────────────────┐              │
+│ client/         │              v
+│ (CLI auth)      │     ┌──────────────────┐
+└─────────────────┘     │ Local folder     │
+                        │ (agent edits     │
+                        │  declaratively)  │
+                        └──────────────────┘
 ```
 
 ## Quick Start
 
-### Install the Client Library
+### Install
 
 ```bash
-pip install extrasuite
+pip install extrasuite extrasheet  # or: extradoc, extraslide, extraform
 ```
 
-### CLI Authentication
+### Authenticate
 
 ```bash
 # Login (opens browser for OAuth)
-python -m extrasuite.client login
-
-# Or using the console script
 extrasuite login
-
-# Logout (clears cached credentials)
-python -m extrasuite.client logout
 ```
 
-### Use in Your Code
+### Work with files
 
-```python
-from extrasuite.client import authenticate
+```bash
+# Sheets
+python -m extrasheet pull <url>
+# Edit the local TSV/JSON files...
+python -m extrasheet push ./spreadsheet_id/
 
-# Get a token - opens browser for authentication if needed
-token = authenticate()
+# Docs
+python -m extradoc pull <url>
+python -m extradoc push ./document_id/
 
-# Use the token with Google APIs
-import gspread
-from google.oauth2.credentials import Credentials
+# Slides
+python -m extraslide pull <url>
+python -m extraslide push ./presentation_id/
 
-creds = Credentials(token.access_token)
-gc = gspread.authorize(creds)
-sheet = gc.open("My Spreadsheet").sheet1
+# Forms
+python -m extraform pull <url>
+python -m extraform push ./form_id/
 ```
 
 ## Project Structure
 
 ```
 extrasuite/
-├── client/                       # Python client library (PyPI: extrasuite)
-│   ├── src/extrasuite/client/
-│   │   ├── __init__.py
-│   │   ├── __main__.py           # CLI: login/logout commands
-│   │   └── credentials.py        # CredentialsManager class
-│   └── pyproject.toml
-│
-├── server/                       # FastAPI server (Cloud Run)
-│   ├── src/extrasuite/server/
-│   │   ├── main.py               # FastAPI app entry point
-│   │   ├── config.py             # Pydantic settings
-│   │   ├── database.py           # Async Firestore storage
-│   │   ├── api.py                # OAuth callback handler
-│   │   └── token_generator.py    # SA creation/impersonation
-│   └── Dockerfile
-│
-├── extrasheet/                   # Google Sheets to file converter
-├── extraslide/                   # Google Slides to file converter
-└── website/                      # MkDocs documentation
+├── client/          # Python client library (PyPI: extrasuite) - CLI auth
+├── server/          # FastAPI server (Cloud Run) - token management
+├── extrasheet/      # Google Sheets <-> local files (PyPI: extrasheet)
+├── extraslide/      # Google Slides <-> SML files (PyPI: extraslide)
+├── extradoc/        # Google Docs <-> local files (PyPI: extradoc)
+├── extraform/       # Google Forms <-> local files (PyPI: extraform)
+└── website/         # Documentation at https://extrasuite.think41.com
 ```
+
+## Security Model
+
+- **Dedicated agent identity** - Each user gets their own service account. No shared credentials.
+- **Explicit sharing only** - Agents can only access files shared with their service account email via standard Google Drive sharing.
+- **Short-lived tokens** - Access tokens expire after 1 hour. No private keys distributed.
+- **Declarative = safe** - Agents edit local files, not execute arbitrary code. No network calls beyond Google Workspace APIs (whitelistable).
+- **Full audit trail** - All edits attributed to the agent's identity in Google Drive version history.
+
+See the [security documentation](https://extrasuite.think41.com/security/) for details.
 
 ## Deploying the Server
 
 See the [deployment documentation](https://extrasuite.think41.com/deployment/) for Cloud Run deployment instructions.
 
-### Prerequisites
-
-1. Google Cloud Project with billing enabled
-2. OAuth 2.0 credentials (Web application type)
-3. Firestore database for credential storage
-4. Required IAM permissions
-
-### Quick Deploy
-
-```bash
-# Deploy to Cloud Run using pre-built image from GitHub Container Registry
-gcloud run deploy extrasuite-server \
-  --image=ghcr.io/think41/extrasuite-server:latest \
-  --service-account=extrasuite-server@$PROJECT_ID.iam.gserviceaccount.com \
-  --region=us-central1 \
-  --allow-unauthenticated \
-  --set-env-vars="ENVIRONMENT=production,GOOGLE_CLOUD_PROJECT=$PROJECT_ID" \
-  --set-secrets="GOOGLE_CLIENT_ID=extrasuite-client-id:latest,GOOGLE_CLIENT_SECRET=extrasuite-client-secret:latest,SECRET_KEY=extrasuite-secret-key:latest"
-```
-
 ## Development
 
-### Server Development
+Each package uses `uv` for dependencies, `ruff` for linting/formatting, `mypy` for type checking, `pytest` for tests.
 
 ```bash
-cd server
-uv sync
-uv run uvicorn extrasuite.server.main:app --reload --port 8001
-```
-
-### Client Development
-
-```bash
-cd client
+cd <package>
 uv sync
 uv run pytest tests/ -v
+uv run ruff check . && uv run ruff format .
+uv run mypy src/<package>
 ```
-
-### Run Tests
-
-```bash
-cd server
-uv run pytest tests/ -v
-uv run ruff check .
-```
-
-## API Endpoints
-
-| Method | Endpoint | Description |
-|--------|----------|-------------|
-| GET | `/api/token/auth?port=<port>` | Start OAuth flow for CLI |
-| POST | `/api/token/exchange` | Exchange auth code for token |
-| GET | `/api/auth/callback` | OAuth callback handler |
-| GET | `/api/health` | Health check |
-
-## Security
-
-- **Short-lived tokens**: Service account tokens expire after 1 hour
-- **Localhost redirects only**: CLI callbacks restricted to localhost
-- **OAuth state tokens**: CSRF protection with time-limited state (10 min)
-- **Secure token storage**: Tokens stored in OS keyring (macOS Keychain, Windows Credential Locker, Linux Secret Service)
-- **No private keys**: Service account keys are never downloaded
 
 ## License
 
