@@ -1,122 +1,50 @@
-# ExtraSuite
+ExtraSuite enables AI agents (Claude Code, Codex, etc.) to automate Google Workspace in a secure, auditable and token-efficent manner. You can read and edit files, automate tasks with google app scripts, delegate calendar and so on. The primary audience is small to medium organizations. 
 
-Secure OAuth token exchange for CLI tools accessing Google Workspace APIs (Sheets, Docs, Drive).
+## Why ExtraSuite?
 
-## What is this?
+**Auditable:** The employee's agent gets a dedicated service account. The agent can only access files explicitly shared with that service account. All edits made by the agent appear in version history as "John Doe's agent added this section/modified that formula/so on". Anyone with access to that file can quickly know who changed what. 
 
-ExtraSuite lets CLI applications obtain short-lived service account tokens to access Google Workspace APIs. Instead of distributing service account keys, users authenticate once via browser, and the server handles token management securely.
+**Workflow:** Agents perform a consistent git-like workflow for every supported google drive file - `pull`, edit files locally, `push`.  
+- `pull` downloads the doc/slide/sheet/form to a local folder in standard file formats. 
+- `skill.md` explains the folder structure and file formats to the agent so that it can effectively read/write these files.
+- `push` performs a diff, figures out what changed, converts them into the appropriate google specific batchUpdate API request, and efficiently updates the google file. The changes show up in version history, appropriately tagged to the employee's service account.
 
-**Key Benefits:**
-- **No service account keys** - Tokens are short-lived (1 hour) and never stored locally
-- **User-scoped access** - Each user gets their own service account with minimal permissions
-- **Browser-based auth** - OAuth flow handles authentication securely
-- **Audit-friendly** - Service accounts include owner metadata for traceability
+**Security:** The agent is only editing local files and invoking `pull` and `push` commands. Notably, it isn't executing arbitrary code. This means that you can whitelist the specific tool calls (pull and push) and network domains (only google APIs) to achieve strong security. This is blocking "the ability to externally communicate" leg in [lethal trifecta](https://simonwillison.net/2025/Jun/16/the-lethal-trifecta/) to make strong security guarantees.
 
-## Architecture
+**Token efficiency:** Google Drive files are broken down into several local files to achieve progressive disclosure and task based access. 
+- Google Docs is represented as an "html-inspired-xml" + a styles.xml. Styles are factored and converted into CSS styles. The complexity of utf-16 indexes is copmletely hiddent.
+- Google Sheets is represented as a JSON summarizing the overall sheet + a sub-folder for each worksheet. Each worksheet has a data.tsv that only contains the data, a formula.json that contains generalized formulas across a range rather than formulas across every cell, and a json representing the factored "css-like" styles. 
 
-```
-┌─────────────────────────────────────────────────────────────┐
-│                    CLI Tool (Python)                        │
-│  ┌─────────────────────────────────────────────────────┐   │
-│  │    python -m extrasuite.client login                │   │
-│  │    - Opens browser for OAuth authentication         │   │
-│  │    - Caches token securely in OS keyring            │   │
-│  └─────────────────────────────────────────────────────┘   │
-└─────────────────────────────────────────────────────────────┘
-                              │
-                              ▼
-┌─────────────────────────────────────────────────────────────┐
-│                ExtraSuite Server (Cloud Run)                │
-│  ┌─────────────────────────────────────────────────────┐   │
-│  │  /api/token/auth     - CLI entry point (→ Google)   │   │
-│  │  /api/auth/callback  - OAuth callback (→ CLI)       │   │
-│  │  /api/health/*       - Health checks                │   │
-│  └─────────────────────────────────────────────────────┘   │
-└─────────────────────────────────────────────────────────────┘
-                              │
-                              ▼
-┌─────────────────────────────────────────────────────────────┐
-│                Google Cloud Project                         │
-│  - Service Account creation (IAM API)                      │
-│  - OAuth for user authentication                           │
-│  - SA token impersonation                                  │
-│  - Firestore for credential storage                        │
-└─────────────────────────────────────────────────────────────┘
-```
+**Least Privileges:** The AI is granted the minimum necessary permission to perform the task, and only for about 1 hour. Most activities use a separate identity (all read/write google drive/sheet/docs/slides/forms operations); but some require the agent to act as the employee (app scripts, gmail, calendar). 
 
-## Quick Start
+## What can I do with ExtraSuite
 
-### Install the Client Library
 
-```bash
-pip install extrasuite
-```
+## Prerequisites
+1. Google Workspace must allow collaboration with external users.
+2. Access to a project in Google Cloud with editor/administrator access. This cloud project does NOT need to be associated with your organization's domain / google workspace.
 
-### CLI Authentication
+## Installation
+- You need to deploy ExtraSuite server once for all the employees. 
+- See the [deployment documentation](https://extrasuite.think41.com/deployment/) for Cloud Run deployment instructions.
 
-```bash
-# Login (opens browser for OAuth)
-python -m extrasuite.client login
+## Employee/Agent Workflow
 
-# Or using the console script
-extrasuite login
+1. **Install skill:** Employee logs into ExtraSuite server, notes down their agent's email, and also runs a command to install agent skill.
+3. **Share file:** Employee shares the google doc/sheet/slide/form with their 1:1 service account. This can be editor or viewer, depending on the use case.
+4. **Agent workflow:** Agent runs `login` (if needed) → `pull` → edits files → `diff` (preview) → `push` to achieve the task.
 
-# Logout (clears cached credentials)
-python -m extrasuite.client logout
-```
+## Packages
 
-### Use in Your Code
+| Package | Purpose |
+|---------|---------|
+| **server/** | Web application to create per-employee service accounts and provide short lived access tokens to the agent. Must be deployed to cloud run. |
+| **client/** | Shared library used to authenticate employees and retrieve short-lived access tokens. |
+| **extra(doc|sheet|slide|form)/** | Python library + skills read and edit google docs/sheet/slide/form using the pull/diff/push workflow. Can be used as standalone libraries if you have alternative ways to provide service account keys. |
+| **website/** | Public website hosted on https://extrasuite.think41.com |
 
-```python
-from extrasuite.client import authenticate
 
-# Get a token - opens browser for authentication if needed
-token = authenticate()
 
-# Use the token with Google APIs
-import gspread
-from google.oauth2.credentials import Credentials
-
-creds = Credentials(token.access_token)
-gc = gspread.authorize(creds)
-sheet = gc.open("My Spreadsheet").sheet1
-```
-
-## Project Structure
-
-```
-extrasuite/
-├── client/                       # Python client library (PyPI: extrasuite)
-│   ├── src/extrasuite/client/
-│   │   ├── __init__.py
-│   │   ├── __main__.py           # CLI: login/logout commands
-│   │   └── credentials.py        # CredentialsManager class
-│   └── pyproject.toml
-│
-├── server/                       # FastAPI server (Cloud Run)
-│   ├── src/extrasuite/server/
-│   │   ├── main.py               # FastAPI app entry point
-│   │   ├── config.py             # Pydantic settings
-│   │   ├── database.py           # Async Firestore storage
-│   │   ├── api.py                # OAuth callback handler
-│   │   └── token_generator.py    # SA creation/impersonation
-│   └── Dockerfile
-│
-├── extrasheet/                   # Google Sheets to file converter
-├── extraslide/                   # Google Slides to file converter
-└── website/                      # MkDocs documentation
-```
-
-## Deploying the Server
-
-See the [deployment documentation](https://extrasuite.think41.com/deployment/) for Cloud Run deployment instructions.
-
-### Prerequisites
-
-1. Google Cloud Project with billing enabled
-2. OAuth 2.0 credentials (Web application type)
-3. Firestore database for credential storage
-4. Required IAM permissions
 
 ### Quick Deploy
 
