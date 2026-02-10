@@ -368,7 +368,7 @@ class TokenGenerator:
         sign_url = f"https://iam.googleapis.com/v1/projects/-/serviceAccounts/{sa_email}:signBlob"
         sign_response = authed_session.post(
             sign_url,
-            json={"payload": base64.b64encode(unsigned_jwt).decode()},
+            json={"bytesToSign": base64.b64encode(unsigned_jwt).decode()},
         )
         sign_response.raise_for_status()
         signed_bytes = base64.b64decode(sign_response.json()["signedBlob"])
