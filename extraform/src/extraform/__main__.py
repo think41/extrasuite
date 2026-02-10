@@ -230,13 +230,13 @@ def get_access_token() -> str:
         ExtraFormError: If authentication fails.
     """
     try:
-        # Import extrasuite client for authentication
-        from extrasuite.client import authenticate
+        from extrasuite.client import CredentialsManager
     except ImportError as e:
         raise ExtraFormError("extrasuite package not installed. Run: pip install extrasuite") from e
 
     try:
-        token = authenticate()
+        manager = CredentialsManager()
+        token = manager.get_token()
         return token.access_token
     except Exception as e:
         raise ExtraFormError(f"Authentication failed: {e}") from e

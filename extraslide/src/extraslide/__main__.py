@@ -15,8 +15,9 @@ import re
 import sys
 from pathlib import Path
 
+from extrasuite.client import CredentialsManager
+
 from extraslide.client import SlidesClient
-from extraslide.credentials import CredentialsManager
 from extraslide.transport import GoogleSlidesTransport, LocalFileTransport
 
 

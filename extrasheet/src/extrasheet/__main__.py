@@ -16,8 +16,9 @@ import re
 import sys
 from pathlib import Path
 
+from extrasuite.client import CredentialsManager
+
 from extrasheet.client import SheetsClient
-from extrasheet.credentials import CredentialsManager
 from extrasheet.exceptions import DiffError
 from extrasheet.transport import GoogleSheetsTransport, LocalFileTransport
 

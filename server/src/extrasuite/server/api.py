@@ -245,7 +245,7 @@ async def google_callback(
             "Invalid OAuth state",
             extra={"state_prefix": state[:8], "reason": "not_found_or_expired"},
         )
-        raise HTTPException(status_code=400, detail="Invalid or expired state token")
+        return _cli_error_response("", "invalid_state")
 
     cli_redirect = str(state_data["redirect_url"])
     flow_type = str(state_data.get("flow_type", ""))
@@ -350,17 +350,17 @@ async def start_delegation_auth(
     DELEGATION_SCOPES allowlist, then either generates a delegation auth code
     (if session exists) or redirects to Google OAuth.
     """
+    cli_redirect = _build_cli_redirect_url(port)
+
     # Check if delegation is enabled
     if not settings.is_delegation_enabled():
-        raise HTTPException(
-            status_code=404,
-            detail="Domain-wide delegation is not enabled on this server",
-        )
+        logger.warning("Delegation not enabled, redirecting error to CLI")
+        return _cli_error_response(cli_redirect, "delegation_not_enabled")
 
     # Resolve short scope names to full URLs
     requested_scopes = [s.strip() for s in scopes.split(",") if s.strip()]
     if not requested_scopes:
-        raise HTTPException(status_code=400, detail="No scopes requested")
+        return _cli_error_response(cli_redirect, "no_scopes_requested")
 
     resolved_scopes = [_resolve_scope(s) for s in requested_scopes]
 
@@ -368,12 +368,8 @@ async def start_delegation_auth(
     disallowed = [s for s in resolved_scopes if not settings.is_scope_allowed(s)]
     if disallowed:
         short_names = [s.removeprefix(_GOOGLE_SCOPE_PREFIX) for s in disallowed]
-        raise HTTPException(
-            status_code=400,
-            detail=f"Disallowed scopes: {', '.join(short_names)}",
-        )
-
-    cli_redirect = _build_cli_redirect_url(port)
+        logger.warning("Disallowed scopes requested", extra={"scopes": short_names})
+        return _cli_error_response(cli_redirect, "disallowed_scopes")
 
     # If user has a valid session, generate delegation auth code directly
     email = request.session.get("email")
@@ -560,15 +556,17 @@ async def _generate_delegation_code_and_redirect(
     return RedirectResponse(url=redirect_url)
 
 
-def _cli_error_response(redirect: str) -> RedirectResponse | HTMLResponse:
+def _cli_error_response(
+    redirect: str, error: str = "authentication_failed"
+) -> RedirectResponse | HTMLResponse:
     """Create error response for CLI flow.
 
-    Security: Does not include internal error details in the response.
+    Security: Only uses predefined error codes, no internal details.
     Errors are logged server-side for debugging.
     """
     if redirect:
-        # Redirect to CLI with generic error
-        params = {"error": "authentication_failed"}
+        # Redirect to CLI with error code
+        params = {"error": error}
         return RedirectResponse(url=f"{redirect}?{urlencode(params)}")
     else:
         return HTMLResponse(
