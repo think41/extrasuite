@@ -24,7 +24,19 @@ Example:
     gc = gspread.authorize(creds)
 """
 
-from extrasuite.client.credentials import CredentialsManager, Token, authenticate
+from extrasuite.client.credentials import (
+    CredentialsManager,
+    OAuthToken,
+    Token,
+    authenticate,
+    get_oauth_token,
+)
 
 __version__ = "0.2.0"
-__all__ = ["CredentialsManager", "Token", "authenticate"]
+__all__ = [
+    "CredentialsManager",
+    "OAuthToken",
+    "Token",
+    "authenticate",
+    "get_oauth_token",
+]

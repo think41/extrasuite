@@ -98,6 +98,19 @@ Everything you need to know about using ExtraSuite.
 
     See [Sharing Documents](user-guide/sharing.md) for detailed instructions.
 
+??? question "Can my agent send emails or access my Calendar?"
+    Yes, if your organization has enabled **domain-wide delegation**. This is an optional feature that allows agents to access user-level APIs like Gmail, Calendar, and Apps Script.
+
+    Your admin must:
+
+    1. Set `DELEGATION_ENABLED=true` on the ExtraSuite server (optionally set `DELEGATION_SCOPES` to restrict which scopes can be requested)
+    2. Set up domain-wide delegation in Google Workspace Admin Console
+
+    Once configured, use `extrasuite authorize --scopes gmail.send --reason "sending report"` to get a delegated token.
+
+??? question "Is domain-wide delegation required?"
+    No. Domain-wide delegation is entirely optional and only needed for user-level API access (Gmail, Calendar, Apps Script). The core ExtraSuite functionality (Sheets, Docs, Slides) works without it using the standard service-account-per-user model.
+
 ---
 
 ## Technical

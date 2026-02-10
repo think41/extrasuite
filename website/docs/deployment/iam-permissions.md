@@ -142,6 +142,43 @@ This requires updating bindings each time a new user is onboarded.
 
 ---
 
+## Optional: Domain-Wide Delegation
+
+Domain-wide delegation is only needed if you want agents to access user-specific APIs like Gmail, Calendar, or Apps Script. It uses the same `extrasuite-server` service account — no new service account is needed.
+
+### Prerequisites
+
+- The `extrasuite-server` SA already has `roles/iam.serviceAccountTokenCreator` (from the base setup)
+- A Google Workspace domain with admin console access
+
+### Configure in Google Workspace Admin Console
+
+1. Go to **Admin Console** → **Security** → **Access and data control** → **API Controls** → **Domain-wide Delegation**
+2. Click **Add new**
+3. **Client ID:** Enter the OAuth client ID of your `extrasuite-server` service account (find it in IAM & Admin → Service Accounts → click the SA → Details → Unique ID)
+4. **OAuth scopes:** Add the scopes you want to allow, comma-separated:
+   ```
+   https://www.googleapis.com/auth/gmail.send,https://www.googleapis.com/auth/calendar,https://www.googleapis.com/auth/script.projects
+   ```
+5. Click **Authorize**
+
+### Configure ExtraSuite Server
+
+Enable delegation and optionally restrict scopes:
+
+```bash
+gcloud run services update extrasuite-server \
+  --region=asia-southeast1 \
+  --update-env-vars="DELEGATION_ENABLED=true,DELEGATION_SCOPES=gmail.send,calendar,script.projects" \
+  --project=$PROJECT_ID
+```
+
+- `DELEGATION_ENABLED=true` activates the delegation endpoints
+- `DELEGATION_SCOPES` (optional) restricts which scopes clients can request — an additional layer on top of Workspace Admin Console enforcement
+- If `DELEGATION_SCOPES` is omitted, any scope is allowed (Workspace Admin Console is the sole enforcement)
+
+---
+
 ## Audit Logging
 
 Enable Cloud Audit Logs to monitor ExtraSuite activity:

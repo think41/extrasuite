@@ -481,6 +481,29 @@ gcloud beta run domain-mappings describe \
 | `ALLOWED_EMAIL_DOMAINS` | No | Comma-separated list of allowed email domains |
 | `TOKEN_EXPIRY_MINUTES` | No | Access token lifetime (default: 60) |
 | `SESSION_COOKIE_EXPIRY_MINUTES` | No | Session duration (default: 1440 = 24 hours) |
+| `DELEGATION_ENABLED` | No | Set to `true` to enable domain-wide delegation endpoints |
+| `DELEGATION_SCOPES` | No | Optional scope allowlist for delegation (e.g., `gmail.send,calendar`) |
+
+---
+
+## Optional: Enable Domain-Wide Delegation
+
+If you want agents to access user-level APIs like Gmail, Calendar, or Apps Script, enable domain-wide delegation:
+
+1. **Set delegation environment variables:**
+
+    ```bash
+    gcloud run services update extrasuite-server \
+      --region=asia-southeast1 \
+      --update-env-vars="DELEGATION_ENABLED=true,DELEGATION_SCOPES=gmail.send,calendar,script.projects" \
+      --project=$PROJECT_ID
+    ```
+
+    `DELEGATION_SCOPES` is optional — omit it to allow any scope (Workspace Admin Console still enforces).
+
+2. **Configure Google Workspace Admin Console** — see [IAM Permissions: Domain-Wide Delegation](iam-permissions.md#optional-domain-wide-delegation) for setup steps.
+
+3. **Verify:** Clients can now use `extrasuite authorize --scopes gmail.send` to obtain delegated tokens.
 
 ---
 

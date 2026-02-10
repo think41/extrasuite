@@ -92,8 +92,36 @@ Issued tokens are scoped only to required Google Workspace APIs:
 | Google Docs | Read/Write |
 | Google Slides | Read/Write |
 | Google Drive | **Read-only** |
+| Gmail, Calendar, Apps Script | Optional (via domain-wide delegation) |
 
 ExtraSuite does not issue broad Google Cloud API permissions.
+
+### Domain-Wide Delegation (Optional)
+
+ExtraSuite optionally supports **domain-wide delegation** for user-specific APIs like Gmail, Calendar, and Apps Script. This is an opt-in feature controlled by the `DELEGATION_ENABLED` environment variable.
+
+**How it works:**
+
+- The server impersonates the user via Google's domain-wide delegation mechanism
+- **Two layers of scope enforcement:**
+    1. **Server-side allowlist** (`DELEGATION_SCOPES`) — optional, rejects disallowed scopes before any Google API call
+    2. **Google Workspace Admin Console** — authoritative enforcement; if a scope isn't authorized there, the delegation call fails and the server returns 403
+- All delegation requests are logged with user email, requested scopes, reason, and timestamp
+
+**Security model comparison:**
+
+| Aspect | SA-per-user (default) | Domain-wide delegation |
+|--------|----------------------|----------------------|
+| Token acts as | Service account | User |
+| Access scope | Files shared with SA | Delegated scopes (Gmail, Calendar, etc.) |
+| Admin control | SA creation | Workspace Admin Console |
+| Audit trail | Token generation logs | Delegation request logs with reason |
+
+**Risk analysis:**
+
+- Server compromise could allow impersonation of any user for delegated scopes
+- Mitigations: Cloud Run (no SSH, immutable containers), IAM audit logs, no SA key files
+- Scopes are enforced at two levels: server-side `DELEGATION_SCOPES` allowlist and Google Workspace Admin Console
 
 ### CLI Authentication Flow
 
@@ -226,6 +254,8 @@ ExtraSuite guarantees the following:
 - ✅ All agent edits are attributable, auditable, and reversible using native Google Workspace tools
 - ✅ No long-lived credentials are exposed to agents or clients
 - ✅ Tokens are never exposed in browser URLs or history
+- ✅ Delegated scopes (if enabled) are allowlisted by the admin
+- ✅ All delegation requests are logged with user, scopes, and reason
 
 ---
 

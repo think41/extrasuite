@@ -495,8 +495,208 @@ If you implement this specification, your server will be compatible with:
 
 ---
 
+## Delegation Protocol (Optional)
+
+The delegation protocol enables AI agents to obtain **user-level** access tokens for APIs like Gmail, Calendar, and Apps Script. Unlike the service account flow above (where tokens act as a service account), delegation tokens act **as the user** via Google's domain-wide delegation.
+
+This protocol mirrors the service account flow — same localhost redirect pattern, same auth code exchange — but with different endpoints and response format.
+
+### Prerequisites
+
+- Domain-wide delegation configured in Google Workspace Admin Console
+- Server has `DELEGATION_ENABLED=true`
+- Optionally, `DELEGATION_SCOPES` restricts which scopes can be requested
+
+### Endpoint 1: Start Delegation Authentication
+
+**Purpose:** Initiate the delegation flow. The server resolves scope names, validates against the optional allowlist, authenticates the user, and redirects to the CLI's local server.
+
+```
+GET /api/delegation/auth?port=<port>&scopes=<scopes>&reason=<reason>
+```
+
+#### Request
+
+| Parameter | Type | Required | Description |
+|-----------|------|----------|-------------|
+| `port` | integer | Yes | Port number where the CLI is listening (1024-65535) |
+| `scopes` | string | Yes | Comma-separated scope names (e.g., `gmail.send,calendar`) |
+| `reason` | string | No | Human-readable reason for the request (logged for audit) |
+
+**Scope names** are short identifiers that map to full Google OAuth scope URLs by prefixing `https://www.googleapis.com/auth/`. For example:
+
+| Short name | Full scope URL |
+|------------|---------------|
+| `gmail.send` | `https://www.googleapis.com/auth/gmail.send` |
+| `gmail.readonly` | `https://www.googleapis.com/auth/gmail.readonly` |
+| `calendar` | `https://www.googleapis.com/auth/calendar` |
+| `calendar.readonly` | `https://www.googleapis.com/auth/calendar.readonly` |
+| `drive` | `https://www.googleapis.com/auth/drive` |
+| `drive.readonly` | `https://www.googleapis.com/auth/drive.readonly` |
+| `script.projects` | `https://www.googleapis.com/auth/script.projects` |
+
+#### Server Behavior
+
+The server MUST:
+
+1. **Check if delegation is enabled** — return 404 if not
+2. **Resolve and validate scopes**
+   - Prefix each short name with `https://www.googleapis.com/auth/`
+   - If `DELEGATION_SCOPES` allowlist is configured, reject scopes not in the list (400)
+3. **Authenticate the user** (same as service account flow)
+4. **Generate a delegation authorization code**
+   - Associate it with the user's email, requested scopes, and reason
+   - Same TTL and single-use requirements as service account auth codes
+5. **Redirect to localhost** — same format as service account flow
+
+#### Responses
+
+**Success (Redirect):**
+```
+HTTP/1.1 302 Found
+Location: http://localhost:8085/on-authentication?code=abc123xyz...
+```
+
+**Error - Delegation Not Enabled:**
+```
+HTTP/1.1 404 Not Found
+Content-Type: application/json
+
+{
+  "detail": "Domain-wide delegation is not enabled on this server"
+}
+```
+
+**Error - Disallowed Scope:**
+```
+HTTP/1.1 400 Bad Request
+Content-Type: application/json
+
+{
+  "detail": "Disallowed scopes: gmail.send"
+}
+```
+
+---
+
+### Endpoint 2: Exchange Code for Delegation Token
+
+**Purpose:** Exchange a valid delegation authorization code for a user-level access token.
+
+```
+POST /api/delegation/exchange
+```
+
+#### Request
+
+**Content-Type:** `application/json`
+
+```json
+{
+  "code": "abc123xyz..."
+}
+```
+
+| Field | Type | Required | Description |
+|-------|------|----------|-------------|
+| `code` | string | Yes | The delegation authorization code received via localhost redirect |
+
+#### Server Behavior
+
+The server MUST:
+
+1. **Validate the authorization code** (same requirements as service account flow)
+2. **Log the delegation request** for audit (user email, scopes, reason, timestamp)
+3. **Generate a delegated access token**
+   - Build a JWT with `sub` set to the user's email and requested scopes
+   - Sign the JWT using the server's service account via IAM `signBlob` API
+   - Exchange the signed JWT at Google's token endpoint for an access token
+   - If delegation fails (e.g., scope not authorized in Workspace Admin Console), return 403
+4. **Return token information**
+
+#### Response
+
+**Success:**
+```
+HTTP/1.1 200 OK
+Content-Type: application/json
+
+{
+  "access_token": "ya29.a0AfH6SMB...",
+  "expires_at": "2026-01-23T14:30:00Z",
+  "scopes": [
+    "https://www.googleapis.com/auth/gmail.send",
+    "https://www.googleapis.com/auth/calendar"
+  ]
+}
+```
+
+| Field | Type | Description |
+|-------|------|-------------|
+| `access_token` | string | The access token for Google API calls (acts as the user) |
+| `expires_at` | string | ISO 8601 timestamp when the token expires |
+| `scopes` | array | List of granted scope URLs |
+
+**Error - Invalid Code:**
+```
+HTTP/1.1 400 Bad Request
+Content-Type: application/json
+
+{
+  "detail": "Invalid or expired auth code"
+}
+```
+
+**Error - Delegation Failed:**
+```
+HTTP/1.1 403 Forbidden
+Content-Type: application/json
+
+{
+  "detail": "Domain-wide delegation failed. The requested scopes may not be authorized in Google Workspace Admin Console."
+}
+```
+
+---
+
+### Delegation Security Requirements
+
+All security requirements from the service account flow apply (auth code TTL, single-use, entropy, transport security, rate limiting).
+
+Additionally:
+
+| Requirement | Value | Rationale |
+|-------------|-------|-----------|
+| Scope allowlist | Optional (`DELEGATION_SCOPES`) | Defense-in-depth on top of Workspace Admin Console |
+| Audit logging | All requests logged | User, scopes, reason, timestamp recorded |
+| Workspace Admin enforcement | Required | Google rejects unauthorized scopes at token generation |
+
+### Delegation Example Flow
+
+```
+1. User: "Send this report via email"
+2. Agent needs gmail.send scope
+3. Agent calls CredentialsManager.get_oauth_token(["gmail.send"], reason="sending report")
+4. CredentialsManager starts local server on port 8085
+5. CredentialsManager opens browser to:
+   https://your-server.com/api/delegation/auth?port=8085&scopes=gmail.send&reason=sending+report
+6. Server validates scopes against DELEGATION_SCOPES allowlist (if configured)
+7. Server authenticates user (or uses existing session)
+8. Server generates delegation auth code with {email, scopes, reason}
+9. Server redirects browser to:
+   http://localhost:8085/on-authentication?code=abc123
+10. CredentialsManager receives code
+11. CredentialsManager POSTs to /api/delegation/exchange
+12. Server logs delegation request, generates token via domain-wide delegation
+13. Server returns {access_token, expires_at, scopes}
+14. Agent uses token to send email via Gmail API
+```
+
+---
+
 ## Changelog
 
 | Version | Date | Changes |
 |---------|------|---------|
+| 1.1 | 2026-02-10 | Add delegation protocol specification |
 | 1.0 | 2026-01-23 | Initial specification |

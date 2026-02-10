@@ -1,13 +1,16 @@
 """REST API endpoints for ExtraSuite.
 
 This module contains all HTTP endpoints. Business logic is delegated to:
-- TokenGenerator: Service account token generation
+- TokenGenerator: Service account token generation and domain-wide delegation
 - Database: Credential storage and OAuth state management
 
 Endpoints:
-- GET /api/token/auth     - CLI entry point, starts OAuth or refreshes token
-- GET /api/auth/callback  - OAuth callback, exchanges code for token
-- GET /api/health         - Health check
+- GET  /api/token/auth          - CLI entry point, starts OAuth or refreshes token
+- POST /api/token/exchange      - Exchange auth code for service account token
+- GET  /api/delegation/auth     - Start delegation flow for user-level API access
+- POST /api/delegation/exchange - Exchange auth code for delegated token
+- GET  /api/auth/callback       - OAuth callback (shared by token and delegation flows)
+- GET  /api/health              - Health check
 """
 
 import secrets
@@ -26,7 +29,7 @@ from slowapi.util import get_remote_address
 
 from extrasuite.server.config import Settings, get_settings
 from extrasuite.server.database import Database, get_database
-from extrasuite.server.token_generator import TokenGenerator
+from extrasuite.server.token_generator import DelegationError, TokenGenerator
 
 # Reduced OAuth scopes - only what we need to identify the user
 # We use server's ADC for SA impersonation, NOT user's OAuth credentials
@@ -236,13 +239,16 @@ async def google_callback(
     Verifies OAuth, sets session, then generates token and redirects to CLI.
     """
     # Retrieve and consume state token from Firestore (one-time use)
-    cli_redirect = await db.retrieve_state(state)
-    if not cli_redirect:
+    state_data = await db.retrieve_state(state)
+    if not state_data:
         logger.warning(
             "Invalid OAuth state",
             extra={"state_prefix": state[:8], "reason": "not_found_or_expired"},
         )
         raise HTTPException(status_code=400, detail="Invalid or expired state token")
+
+    cli_redirect = str(state_data["redirect_url"])
+    flow_type = str(state_data.get("flow_type", ""))
 
     # Exchange code for tokens
     flow = _create_oauth_flow(settings)
@@ -297,13 +303,181 @@ async def google_callback(
             # Continue to home page - user can retry later
         return RedirectResponse(url="/")
 
+    # Handle delegation flow
+    if flow_type == "delegation":
+        delegation_scopes = list(state_data.get("scopes", []))  # type: ignore[arg-type]
+        delegation_reason = str(state_data.get("reason", ""))
+        return await _generate_delegation_code_and_redirect(
+            db, user_email, delegation_scopes, delegation_reason, cli_redirect
+        )
+
     # Generate token and redirect to CLI
     return await _generate_token_and_redirect(db, settings, user_email, cli_redirect)
 
 
 # =============================================================================
+# Delegation Endpoints (Domain-Wide Delegation)
+# =============================================================================
+
+
+class DelegationExchangeRequest(BaseModel):
+    """Request body for delegation auth code exchange."""
+
+    code: str = Field(..., min_length=1, description="Auth code received from redirect")
+
+
+class DelegationExchangeResponse(BaseModel):
+    """Response body for delegation auth code exchange."""
+
+    access_token: str
+    expires_at: str
+    scopes: list[str]
+
+
+@router.get("/delegation/auth", response_model=None)
+@limiter.limit("10/minute")
+async def start_delegation_auth(
+    request: Request,
+    port: int = Query(..., description="CLI localhost callback port", ge=MIN_PORT, le=MAX_PORT),
+    scopes: str = Query(..., description="Comma-separated scope names (e.g., gmail.send,calendar)"),
+    reason: str = Query("", description="Reason for requesting delegation"),
+    settings: Settings = Depends(get_settings),
+    db: Database = Depends(get_database),
+) -> RedirectResponse | HTMLResponse:
+    """Start delegation auth flow for user-level API access.
+
+    Resolves scope names to full URLs, validates against the optional
+    DELEGATION_SCOPES allowlist, then either generates a delegation auth code
+    (if session exists) or redirects to Google OAuth.
+    """
+    # Check if delegation is enabled
+    if not settings.is_delegation_enabled():
+        raise HTTPException(
+            status_code=404,
+            detail="Domain-wide delegation is not enabled on this server",
+        )
+
+    # Resolve short scope names to full URLs
+    requested_scopes = [s.strip() for s in scopes.split(",") if s.strip()]
+    if not requested_scopes:
+        raise HTTPException(status_code=400, detail="No scopes requested")
+
+    resolved_scopes = [_resolve_scope(s) for s in requested_scopes]
+
+    # Validate against allowlist if configured
+    disallowed = [s for s in resolved_scopes if not settings.is_scope_allowed(s)]
+    if disallowed:
+        short_names = [s.removeprefix(_GOOGLE_SCOPE_PREFIX) for s in disallowed]
+        raise HTTPException(
+            status_code=400,
+            detail=f"Disallowed scopes: {', '.join(short_names)}",
+        )
+
+    cli_redirect = _build_cli_redirect_url(port)
+
+    # If user has a valid session, generate delegation auth code directly
+    email = request.session.get("email")
+    if email:
+        logger.info(
+            "Session found, generating delegation auth code",
+            extra={"email": email, "scopes": resolved_scopes},
+        )
+        return await _generate_delegation_code_and_redirect(
+            db, email, resolved_scopes, reason, cli_redirect
+        )
+
+    # No session - start OAuth flow with delegation context
+    logger.info(
+        "No session, starting OAuth flow for delegation",
+        extra={"scopes": resolved_scopes},
+    )
+    state = secrets.token_urlsafe(32)
+    await db.save_state(
+        state,
+        cli_redirect,
+        scopes=resolved_scopes,
+        reason=reason,
+        flow_type="delegation",
+    )
+
+    flow = _create_oauth_flow(settings)
+    authorization_url, _ = flow.authorization_url(
+        access_type="offline",
+        state=state,
+        prompt="consent",
+    )
+
+    return RedirectResponse(url=authorization_url)
+
+
+@router.post("/delegation/exchange", response_model=DelegationExchangeResponse)
+@limiter.limit("20/minute")
+async def exchange_delegation_code(
+    request: Request,  # noqa: ARG001 - Required for rate limiter
+    body: DelegationExchangeRequest,
+    db: Database = Depends(get_database),
+    settings: Settings = Depends(get_settings),
+) -> DelegationExchangeResponse:
+    """Exchange delegation auth code for a delegated access token.
+
+    The auth code contains the user email and requested scopes.
+    Generates a token via domain-wide delegation (IAM signBlob).
+    """
+    auth_data = await db.retrieve_delegation_auth_code(body.code)
+
+    if not auth_data:
+        logger.warning(
+            "Invalid or expired delegation auth code",
+            extra={"code_prefix": body.code[:8]},
+        )
+        raise HTTPException(status_code=400, detail="Invalid or expired auth code")
+
+    email = str(auth_data["email"])
+    scopes = list(auth_data["scopes"])  # type: ignore[arg-type]
+    reason = str(auth_data.get("reason", ""))
+
+    # Log the delegation request for audit
+    await db.log_delegation_request(email, scopes, reason)
+
+    # Generate delegated token
+    token_generator = TokenGenerator(database=db, settings=settings)
+    try:
+        result = await token_generator.generate_delegated_token(email, scopes)
+    except DelegationError as e:
+        logger.warning(
+            "Delegation failed",
+            extra={"email": email, "scopes": scopes, "error": str(e)},
+        )
+        raise HTTPException(
+            status_code=403,
+            detail="Domain-wide delegation failed. The requested scopes may not be authorized in Google Workspace Admin Console.",
+        ) from e
+
+    logger.info(
+        "Delegation auth code exchanged for token",
+        extra={"email": email, "scopes": scopes},
+    )
+
+    return DelegationExchangeResponse(
+        access_token=result.token,
+        expires_at=result.expires_at.isoformat(),
+        scopes=scopes,
+    )
+
+
+# =============================================================================
 # Private Helpers
 # =============================================================================
+
+
+_GOOGLE_SCOPE_PREFIX = "https://www.googleapis.com/auth/"
+
+
+def _resolve_scope(scope: str) -> str:
+    """Resolve a short scope name to a full Google API scope URL."""
+    if scope.startswith("https://"):
+        return scope
+    return f"{_GOOGLE_SCOPE_PREFIX}{scope}"
 
 
 def _build_cli_redirect_url(port: int) -> str:
@@ -365,6 +539,22 @@ async def _generate_token_and_redirect(
     await db.save_auth_code(auth_code, service_account_email)
 
     # Redirect with auth code only
+    params = {"code": auth_code}
+    redirect_url = f"{cli_redirect}?{urlencode(params)}"
+    return RedirectResponse(url=redirect_url)
+
+
+async def _generate_delegation_code_and_redirect(
+    db: Database,
+    email: str,
+    scopes: list[str],
+    reason: str,
+    cli_redirect: str,
+) -> RedirectResponse:
+    """Generate a delegation auth code and redirect to CLI."""
+    auth_code = secrets.token_urlsafe(32)
+    await db.save_delegation_auth_code(auth_code, email, scopes, reason)
+
     params = {"code": auth_code}
     redirect_url = f"{cli_redirect}?{urlencode(params)}"
     return RedirectResponse(url=redirect_url)

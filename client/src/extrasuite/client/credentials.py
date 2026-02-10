@@ -75,6 +75,50 @@ class Token:
         )
 
 
+_GOOGLE_SCOPE_PREFIX = "https://www.googleapis.com/auth/"
+
+
+@dataclass
+class OAuthToken:
+    """Token for user-level API access via domain-wide delegation.
+
+    Attributes:
+        access_token: The OAuth2 access token for API calls.
+        scopes: List of granted scope URLs.
+        expires_at: Unix timestamp when the token expires.
+    """
+
+    access_token: str
+    scopes: list[str]
+    expires_at: float
+
+    def is_valid(self, buffer_seconds: int = 60) -> bool:
+        """Check if token is still valid with a safety buffer."""
+        return time.time() < self.expires_at - buffer_seconds
+
+    def expires_in_seconds(self) -> int:
+        """Return seconds until token expires."""
+        return max(0, int(self.expires_at - time.time()))
+
+    def to_dict(self) -> dict[str, Any]:
+        """Convert to dictionary for serialization."""
+        return {
+            "access_token": self.access_token,
+            "scopes": self.scopes,
+            "expires_at": self.expires_at,
+            "token_type": "Bearer",
+        }
+
+    @classmethod
+    def from_dict(cls, data: dict[str, Any]) -> OAuthToken:
+        """Create OAuthToken from dictionary."""
+        return cls(
+            access_token=data["access_token"],
+            scopes=data.get("scopes", []),
+            expires_at=data["expires_at"],
+        )
+
+
 class CredentialsManager:
     """Manages credentials for Google API access.
 
@@ -357,6 +401,199 @@ class CredentialsManager:
         except (json.JSONDecodeError, OSError):
             return None
 
+    OAUTH_CACHE_PATH = Path.home() / ".config" / "extrasuite" / "oauth_token.json"
+
+    def get_oauth_token(
+        self, scopes: list[str], reason: str = "", force_refresh: bool = False
+    ) -> OAuthToken:
+        """Get a delegated OAuth token for user-level API access.
+
+        Uses server-side domain-wide delegation to obtain a token
+        that acts as the user for the requested scopes.
+
+        Args:
+            scopes: List of scope aliases or full URLs (e.g., ["gmail.send"])
+            reason: Optional reason for requesting access (logged server-side)
+            force_refresh: If True, ignore cached token
+
+        Returns:
+            An OAuthToken with access_token, scopes, and expires_at.
+        """
+        resolved = self._resolve_scopes(scopes)
+
+        if not force_refresh:
+            cached = self._load_cached_oauth_token(resolved)
+            if cached and cached.is_valid():
+                print(
+                    f"Using cached OAuth token (expires in {cached.expires_in_seconds()} seconds)"
+                )
+                return cached
+
+        print("Starting delegation authentication flow...")
+        token = self._authenticate_delegation(resolved, reason)
+        self._save_oauth_token(token)
+
+        print("\nDelegation authentication successful!")
+        print(f"Scopes: {', '.join(token.scopes)}")
+        print(f"Token expires in: {token.expires_in_seconds()} seconds")
+
+        return token
+
+    @staticmethod
+    def _resolve_scopes(scopes: list[str]) -> list[str]:
+        """Resolve short scope names to full Google API scope URLs."""
+        return [
+            s if s.startswith("https://") else f"{_GOOGLE_SCOPE_PREFIX}{s}"
+            for s in scopes
+        ]
+
+    def _load_cached_oauth_token(self, scopes: list[str]) -> OAuthToken | None:
+        """Load cached OAuth token if it exists, is valid, and covers requested scopes."""
+        if not self.OAUTH_CACHE_PATH.exists():
+            return None
+
+        try:
+            data = json.loads(self.OAUTH_CACHE_PATH.read_text())
+            token = OAuthToken.from_dict(data)
+            if token.is_valid() and set(scopes).issubset(set(token.scopes)):
+                return token
+            return None
+        except (json.JSONDecodeError, KeyError):
+            return None
+
+    def _save_oauth_token(self, token: OAuthToken) -> None:
+        """Save OAuth token to cache file with secure permissions."""
+        self.OAUTH_CACHE_PATH.parent.mkdir(parents=True, exist_ok=True)
+        self.OAUTH_CACHE_PATH.parent.chmod(stat.S_IRWXU)
+
+        temp_path = self.OAUTH_CACHE_PATH.with_suffix(".tmp")
+        temp_path.write_text(json.dumps(token.to_dict(), indent=2))
+        temp_path.chmod(stat.S_IRUSR | stat.S_IWUSR)  # 0600
+        temp_path.rename(self.OAUTH_CACHE_PATH)
+        print(f"OAuth token saved to {self.OAUTH_CACHE_PATH}")
+
+    def _authenticate_delegation(self, scopes: list[str], reason: str) -> OAuthToken:
+        """Run the delegation authentication flow.
+
+        Opens browser to server's /api/delegation/auth endpoint,
+        receives auth code, exchanges it for a delegated token.
+        """
+        if not self._auth_url:
+            raise ValueError("ExtraSuite server not configured")
+
+        # Derive delegation URLs from existing auth URL base
+        base_url = self._auth_url.rsplit("/api/", 1)[0]
+        delegation_auth_url = f"{base_url}/api/delegation/auth"
+        delegation_exchange_url = f"{base_url}/api/delegation/exchange"
+
+        port = self._find_free_port()
+
+        # Send short scope names to server
+        scope_params = ",".join(s.removeprefix(_GOOGLE_SCOPE_PREFIX) for s in scopes)
+
+        auth_url = f"{delegation_auth_url}?port={port}&scopes={urllib.parse.quote(scope_params)}"
+        if reason:
+            auth_url += f"&reason={urllib.parse.quote(reason)}"
+
+        # Shared state for receiving auth code
+        result_holder: dict[str, Any] = {"code": None, "error": None, "done": False}
+        result_lock = threading.Lock()
+
+        # Start HTTP callback server
+        handler_class = self._create_handler_class(result_holder, result_lock)
+        server = http.server.HTTPServer(("127.0.0.1", port), handler_class)
+        server.timeout = 1
+
+        def serve_loop() -> None:
+            start_time = time.time()
+            while time.time() - start_time < self.DEFAULT_CALLBACK_TIMEOUT:
+                with result_lock:
+                    if result_holder["done"]:
+                        break
+                server.handle_request()
+            server.server_close()
+
+        server_thread = threading.Thread(target=serve_loop, daemon=True)
+        server_thread.start()
+
+        print("\n" + "=" * 60)
+        print("DELEGATION AUTHORIZATION REQUIRED")
+        print("=" * 60)
+        print(f"\nRequested scopes: {scope_params}")
+        if reason:
+            print(f"Reason: {reason}")
+        print(f"\nOpen this URL in your browser:\n\n  {auth_url}\n")
+
+        try:
+            import webbrowser
+
+            if webbrowser.open(auth_url):
+                print("(Browser opened automatically)")
+        except Exception:
+            pass
+
+        print("\nWaiting for authorization...")
+        print("-" * 60)
+
+        # Wait for callback
+        start_time = time.time()
+        while time.time() - start_time < self.DEFAULT_CALLBACK_TIMEOUT:
+            with result_lock:
+                if result_holder["done"]:
+                    break
+            time.sleep(0.5)
+
+        with result_lock:
+            result_holder["done"] = True
+
+        if result_holder.get("error"):
+            raise Exception(
+                f"Delegation authorization failed: {result_holder['error']}"
+            )
+
+        if not result_holder.get("code"):
+            raise Exception("Delegation authorization timed out. Please try again.")
+
+        # Exchange auth code for delegated token
+        print("\nExchanging auth code for delegated token...")
+        return self._exchange_delegation_code(
+            result_holder["code"], delegation_exchange_url
+        )
+
+    def _exchange_delegation_code(
+        self, auth_code: str, exchange_url: str
+    ) -> OAuthToken:
+        """Exchange delegation auth code for a delegated token."""
+        body = json.dumps({"code": auth_code}).encode("utf-8")
+
+        req = urllib.request.Request(
+            exchange_url,
+            data=body,
+            headers={"Content-Type": "application/json"},
+            method="POST",
+        )
+
+        try:
+            with urllib.request.urlopen(
+                req, timeout=30, context=SSL_CONTEXT
+            ) as response:
+                result = json.loads(response.read().decode("utf-8"))
+        except urllib.error.HTTPError as e:
+            error_body = e.read().decode("utf-8") if e.fp else str(e)
+            raise Exception(f"Delegation token exchange failed: {error_body}") from e
+        except urllib.error.URLError as e:
+            raise Exception(f"Failed to connect to server: {e}") from e
+
+        # Parse expires_at from ISO 8601 format to Unix timestamp
+        expires_at_str = result["expires_at"]
+        expires_at_dt = datetime.fromisoformat(expires_at_str.replace("Z", "+00:00"))
+
+        return OAuthToken(
+            access_token=result["access_token"],
+            scopes=result.get("scopes", []),
+            expires_at=expires_at_dt.timestamp(),
+        )
+
     def _authenticate_extrasuite(self) -> Token:
         """Run the ExtraSuite authentication flow.
 
@@ -624,6 +861,27 @@ def authenticate(
         service_account_path=service_account_path,
     )
     return manager.get_token(force_refresh=force_refresh)
+
+
+def get_oauth_token(
+    scopes: list[str], reason: str = "", force_refresh: bool = False
+) -> OAuthToken:
+    """Get a delegated OAuth token for user-level API access.
+
+    Convenience function that creates a CredentialsManager and obtains
+    a delegated token. Configuration is loaded from environment variables
+    or gateway.json.
+
+    Args:
+        scopes: List of scope aliases (e.g., ["gmail.send", "calendar"])
+        reason: Optional reason for requesting access
+        force_refresh: If True, ignore cached token
+
+    Returns:
+        An OAuthToken with access_token, scopes, and expires_at.
+    """
+    manager = CredentialsManager()
+    return manager.get_oauth_token(scopes, reason=reason, force_refresh=force_refresh)
 
 
 def main() -> int:

@@ -12,6 +12,7 @@ import pytest
 
 from extrasuite.client.credentials import (
     CredentialsManager,
+    OAuthToken,
     Token,
     authenticate,
 )
@@ -667,3 +668,152 @@ class TestAuthenticateFunction:
                 force_refresh=True,
             )
             assert token.access_token == "new-token"
+
+
+class TestOAuthToken:
+    """Tests for OAuthToken dataclass."""
+
+    def test_is_valid_with_valid_token(self) -> None:
+        """Token with future expiry is valid."""
+        token = OAuthToken(
+            access_token="test-token",
+            scopes=["https://www.googleapis.com/auth/gmail.send"],
+            expires_at=time.time() + 3600,
+        )
+        assert token.is_valid() is True
+
+    def test_is_valid_with_expired_token(self) -> None:
+        """Token with past expiry is invalid."""
+        token = OAuthToken(
+            access_token="test-token",
+            scopes=["https://www.googleapis.com/auth/gmail.send"],
+            expires_at=time.time() - 100,
+        )
+        assert token.is_valid() is False
+
+    def test_to_dict(self) -> None:
+        """to_dict returns correct dictionary."""
+        token = OAuthToken(
+            access_token="test-token",
+            scopes=["https://www.googleapis.com/auth/gmail.send"],
+            expires_at=1234567890.0,
+        )
+        result = token.to_dict()
+        assert result["access_token"] == "test-token"
+        assert result["scopes"] == ["https://www.googleapis.com/auth/gmail.send"]
+        assert result["expires_at"] == 1234567890.0
+        assert result["token_type"] == "Bearer"
+
+    def test_roundtrip(self) -> None:
+        """OAuthToken survives to_dict/from_dict roundtrip."""
+        original = OAuthToken(
+            access_token="test-token",
+            scopes=[
+                "https://www.googleapis.com/auth/gmail.send",
+                "https://www.googleapis.com/auth/calendar",
+            ],
+            expires_at=1234567890.0,
+        )
+        restored = OAuthToken.from_dict(original.to_dict())
+        assert restored.access_token == original.access_token
+        assert restored.scopes == original.scopes
+        assert restored.expires_at == original.expires_at
+
+
+class TestDelegationFlow:
+    """Tests for delegation authentication flow."""
+
+    def test_get_oauth_token_uses_cache(self, tmp_path: Path) -> None:
+        """get_oauth_token returns cached token when valid and scopes match."""
+        oauth_path = tmp_path / "oauth_token.json"
+        token_data = {
+            "access_token": "cached-oauth-token",
+            "scopes": ["https://www.googleapis.com/auth/gmail.send"],
+            "expires_at": time.time() + 3600,
+        }
+        oauth_path.write_text(json.dumps(token_data))
+
+        manager = CredentialsManager(
+            auth_url="https://auth.example.com/api/token/auth",
+            exchange_url="https://auth.example.com/api/token/exchange",
+        )
+
+        with mock.patch.object(CredentialsManager, "OAUTH_CACHE_PATH", oauth_path):
+            token = manager.get_oauth_token(["gmail.send"])
+            assert token.access_token == "cached-oauth-token"
+
+    def test_get_oauth_token_ignores_cache_with_different_scopes(
+        self, tmp_path: Path
+    ) -> None:
+        """get_oauth_token ignores cache when scopes don't match."""
+        oauth_path = tmp_path / "oauth_token.json"
+        token_data = {
+            "access_token": "cached-oauth-token",
+            "scopes": ["https://www.googleapis.com/auth/gmail.send"],
+            "expires_at": time.time() + 3600,
+        }
+        oauth_path.write_text(json.dumps(token_data))
+
+        new_token = OAuthToken(
+            access_token="new-oauth-token",
+            scopes=[
+                "https://www.googleapis.com/auth/gmail.send",
+                "https://www.googleapis.com/auth/calendar",
+            ],
+            expires_at=time.time() + 3600,
+        )
+
+        manager = CredentialsManager(
+            auth_url="https://auth.example.com/api/token/auth",
+            exchange_url="https://auth.example.com/api/token/exchange",
+        )
+
+        with (
+            mock.patch.object(CredentialsManager, "OAUTH_CACHE_PATH", oauth_path),
+            mock.patch.object(
+                manager, "_authenticate_delegation", return_value=new_token
+            ),
+        ):
+            token = manager.get_oauth_token(["gmail.send", "calendar"])
+            assert token.access_token == "new-oauth-token"
+
+    def test_exchange_delegation_code_success(self) -> None:
+        """_exchange_delegation_code parses response correctly."""
+        manager = CredentialsManager(
+            auth_url="https://auth.example.com/api/token/auth",
+            exchange_url="https://auth.example.com/api/token/exchange",
+        )
+
+        mock_response = {
+            "access_token": "delegated-token",
+            "expires_at": "2025-01-01T12:00:00Z",
+            "scopes": ["https://www.googleapis.com/auth/gmail.send"],
+        }
+
+        with mock.patch("urllib.request.urlopen") as mock_urlopen:
+            mock_response_obj = mock.MagicMock()
+            mock_response_obj.read.return_value = json.dumps(mock_response).encode()
+            mock_response_obj.__enter__ = mock.MagicMock(return_value=mock_response_obj)
+            mock_response_obj.__exit__ = mock.MagicMock(return_value=False)
+            mock_urlopen.return_value = mock_response_obj
+
+            token = manager._exchange_delegation_code(
+                "test-code", "https://auth.example.com/api/delegation/exchange"
+            )
+
+            assert token.access_token == "delegated-token"
+            assert token.scopes == ["https://www.googleapis.com/auth/gmail.send"]
+
+    def test_resolve_scopes(self) -> None:
+        """_resolve_scopes converts aliases to full URLs."""
+        result = CredentialsManager._resolve_scopes(["gmail.send", "calendar"])
+        assert result == [
+            "https://www.googleapis.com/auth/gmail.send",
+            "https://www.googleapis.com/auth/calendar",
+        ]
+
+    def test_resolve_scopes_passthrough(self) -> None:
+        """_resolve_scopes passes through full URLs unchanged."""
+        full_url = "https://www.googleapis.com/auth/gmail.send"
+        result = CredentialsManager._resolve_scopes([full_url])
+        assert result == [full_url]

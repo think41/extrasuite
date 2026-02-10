@@ -1,11 +1,13 @@
 """Unit tests for TokenGenerator."""
 
+import unittest.mock
 from datetime import UTC, datetime, timedelta
 
 import pytest
 from google.auth.exceptions import RefreshError
 
 from extrasuite.server.token_generator import (
+    DelegationError,
     GeneratedToken,
     ImpersonationError,
     ServiceAccountCreationError,
@@ -363,6 +365,75 @@ class TestTokenGeneratorWithCustomToken:
         result = await generator.generate_token("user@example.com")
 
         assert result.token == custom_token
+
+
+class TestGenerateDelegatedToken:
+    """Tests for domain-wide delegation token generation."""
+
+    @pytest.mark.asyncio
+    async def test_generate_delegated_token_calls_delegation(self) -> None:
+        """generate_delegated_token should call _do_delegation and return result."""
+        fake_db = FakeDatabase()
+        fake_settings = FakeSettings(
+            delegation_enabled=True,
+        )
+        fake_iam = FakeIAMAsyncClient(project_id="test-project")
+        FakeCreds = create_fake_impersonated_credentials_class()
+
+        generator = TokenGenerator(
+            database=fake_db,
+            settings=fake_settings,
+            iam_client=fake_iam,  # type: ignore[arg-type]
+            impersonated_credentials_class=FakeCreds,
+        )
+
+        # Mock _do_delegation since it requires real IAM/Google APIs
+        mock_token = "delegated-token-xyz"
+        mock_expires = datetime.now(UTC) + timedelta(hours=1)
+
+        with unittest.mock.patch.object(
+            generator, "_do_delegation", return_value=(mock_token, mock_expires)
+        ):
+            result = await generator.generate_delegated_token(
+                "user@example.com",
+                ["https://www.googleapis.com/auth/gmail.send"],
+            )
+
+        assert isinstance(result, GeneratedToken)
+        assert result.token == mock_token
+        assert result.service_account_email == "user@example.com"
+        assert result.expires_at == mock_expires
+
+    @pytest.mark.asyncio
+    async def test_generate_delegated_token_raises_delegation_error(self) -> None:
+        """generate_delegated_token should wrap errors in DelegationError."""
+        fake_db = FakeDatabase()
+        fake_settings = FakeSettings(
+            delegation_enabled=True,
+        )
+        fake_iam = FakeIAMAsyncClient(project_id="test-project")
+        FakeCreds = create_fake_impersonated_credentials_class()
+
+        generator = TokenGenerator(
+            database=fake_db,
+            settings=fake_settings,
+            iam_client=fake_iam,  # type: ignore[arg-type]
+            impersonated_credentials_class=FakeCreds,
+        )
+
+        with (
+            unittest.mock.patch.object(
+                generator, "_do_delegation", side_effect=Exception("signBlob failed")
+            ),
+            pytest.raises(DelegationError) as exc_info,
+        ):
+            await generator.generate_delegated_token(
+                "user@example.com",
+                ["https://www.googleapis.com/auth/gmail.send"],
+            )
+
+        assert exc_info.value.user_email == "user@example.com"
+        assert exc_info.value.cause is not None
 
 
 class TestFakeSettings:

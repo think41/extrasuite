@@ -1,8 +1,9 @@
 """CLI entry point for extrasuite.client.
 
 Usage:
-    python -m extrasuite.client login    # Authenticate with extrasuite-server
-    python -m extrasuite.client logout   # Clear cached credentials
+    python -m extrasuite.client login      # Authenticate with extrasuite-server
+    python -m extrasuite.client logout     # Clear cached credentials
+    python -m extrasuite.client authorize  # Get delegated token for user-level APIs
 """
 
 import argparse
@@ -26,6 +27,34 @@ def cmd_login(args: argparse.Namespace) -> int:
         return 1
     except Exception as e:
         print(f"Authentication failed: {e}", file=sys.stderr)
+        return 1
+
+
+def cmd_authorize(args: argparse.Namespace) -> int:
+    """Get a delegated OAuth token for user-level API access."""
+    try:
+        scopes = [s.strip() for s in args.scopes.split(",") if s.strip()]
+        if not scopes:
+            print("Error: --scopes is required", file=sys.stderr)
+            return 1
+
+        manager = CredentialsManager(
+            auth_url=args.auth_url,
+            exchange_url=args.exchange_url,
+        )
+        token = manager.get_oauth_token(
+            scopes,
+            reason=args.reason or "",
+            force_refresh=args.force,
+        )
+        if args.show_token:
+            print(f"\nAccess Token:\n{token.access_token}")
+        return 0
+    except ValueError as e:
+        print(f"Configuration error: {e}", file=sys.stderr)
+        return 1
+    except Exception as e:
+        print(f"Authorization failed: {e}", file=sys.stderr)
         return 1
 
 
@@ -76,6 +105,41 @@ def main() -> int:
         help="Force re-authentication even if cached token is valid",
     )
     login_parser.set_defaults(func=cmd_login)
+
+    # authorize subcommand
+    authorize_parser = subparsers.add_parser(
+        "authorize",
+        help="Get delegated token for user-level APIs (Gmail, Calendar, etc.)",
+    )
+    authorize_parser.add_argument(
+        "--scopes",
+        required=True,
+        help="Comma-separated scope aliases (e.g., gmail.send,calendar)",
+    )
+    authorize_parser.add_argument(
+        "--reason",
+        help="Reason for requesting access (logged server-side for audit)",
+    )
+    authorize_parser.add_argument(
+        "--auth-url",
+        help="URL to start authentication (or set EXTRASUITE_AUTH_URL env var)",
+    )
+    authorize_parser.add_argument(
+        "--exchange-url",
+        help="URL to exchange auth code (or set EXTRASUITE_EXCHANGE_URL env var)",
+    )
+    authorize_parser.add_argument(
+        "--force",
+        "-f",
+        action="store_true",
+        help="Force re-authorization even if cached token is valid",
+    )
+    authorize_parser.add_argument(
+        "--show-token",
+        action="store_true",
+        help="Print the access token to stdout",
+    )
+    authorize_parser.set_defaults(func=cmd_authorize)
 
     # logout subcommand
     logout_parser = subparsers.add_parser(

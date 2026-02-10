@@ -12,7 +12,12 @@ Key design decisions:
 """
 
 import asyncio
+import base64
+import json
 import re
+import time
+import urllib.parse
+import urllib.request
 from dataclasses import dataclass
 from datetime import UTC, datetime, timedelta
 from typing import Any, Protocol
@@ -21,6 +26,7 @@ import google.auth
 from google.api_core.exceptions import NotFound
 from google.auth import impersonated_credentials
 from google.auth.transport import requests as google_requests
+from google.auth.transport.requests import AuthorizedSession
 from google.cloud.iam_admin_v1 import IAMAsyncClient
 from google.cloud.iam_admin_v1.types import (
     CreateServiceAccountRequest,
@@ -69,6 +75,15 @@ class ImpersonationError(TokenGeneratorError):
         self.cause = cause
 
 
+class DelegationError(TokenGeneratorError):
+    """Raised when domain-wide delegation token generation fails."""
+
+    def __init__(self, message: str, user_email: str, cause: Exception | None = None) -> None:
+        super().__init__(message)
+        self.user_email = user_email
+        self.cause = cause
+
+
 @dataclass
 class GeneratedToken:
     """Result of token generation."""
@@ -93,6 +108,8 @@ class SettingsProtocol(Protocol):
     token_expiry_minutes: int
 
     def get_domain_abbreviation(self, domain: str) -> str: ...
+
+    def is_delegation_enabled(self) -> bool: ...
 
 
 def sanitize_email_for_account_id(email: str, domain_abbrev: str) -> str:
@@ -269,6 +286,116 @@ class TokenGenerator:
         """
         sa_email = await self.ensure_service_account(user_email, user_name)
         return await self.generate_token_for_service_account(sa_email)
+
+    async def generate_delegated_token(self, user_email: str, scopes: list[str]) -> GeneratedToken:
+        """Generate a delegated access token for a user via domain-wide delegation.
+
+        Uses IAM signBlob to sign a JWT asserting the user's identity,
+        then exchanges it for an access token at Google's token endpoint.
+
+        Args:
+            user_email: Email of the user to impersonate
+            scopes: List of OAuth scope URLs to request
+
+        Returns:
+            GeneratedToken with token, expires_at, and service_account_email (the SA used)
+
+        Raises:
+            DelegationError: If token generation fails
+        """
+        try:
+            token, expires_at = await asyncio.to_thread(self._do_delegation, user_email, scopes)
+
+            logger.info(
+                "Delegated token generated",
+                extra={"user_email": user_email, "scopes": scopes},
+            )
+
+            return GeneratedToken(
+                token=token,
+                expires_at=expires_at,
+                service_account_email=user_email,
+            )
+        except Exception as e:
+            raise DelegationError(f"Domain-wide delegation failed: {e}", user_email, e) from e
+
+    def _do_delegation(self, user_email: str, scopes: list[str]) -> tuple[str, datetime]:
+        """Perform domain-wide delegation token generation (blocking, runs in thread pool).
+
+        1. Get server SA email from ADC
+        2. Build JWT with sub=user_email
+        3. Sign JWT using IAM signBlob API
+        4. Exchange signed JWT for access token
+        """
+        source_credentials = self._get_admin_credentials()
+        source_credentials.refresh(google_requests.Request())
+
+        # Get server SA email
+        sa_email = getattr(source_credentials, "service_account_email", None)
+        if not sa_email:
+            # On Cloud Run, credentials are Compute metadata-based
+            sa_email = getattr(source_credentials, "_service_account_email", None)
+        if not sa_email:
+            # Fall back to metadata server
+            req = urllib.request.Request(
+                "http://metadata.google.internal/computeMetadata/v1/instance/service-accounts/default/email",
+                headers={"Metadata-Flavor": "Google"},
+            )
+            with urllib.request.urlopen(req, timeout=5) as resp:
+                sa_email = resp.read().decode()
+
+        now = int(time.time())
+        exp = now + self._token_lifetime_seconds
+
+        # Build JWT payload
+        payload = {
+            "iss": sa_email,
+            "sub": user_email,
+            "scope": " ".join(scopes),
+            "aud": "https://oauth2.googleapis.com/token",
+            "iat": now,
+            "exp": exp,
+        }
+
+        # Build unsigned JWT
+        header = {"alg": "RS256", "typ": "JWT"}
+        header_b64 = base64.urlsafe_b64encode(json.dumps(header).encode()).rstrip(b"=")
+        payload_b64 = base64.urlsafe_b64encode(json.dumps(payload).encode()).rstrip(b"=")
+        unsigned_jwt = header_b64 + b"." + payload_b64
+
+        # Sign using IAM signBlob API
+        authed_session = AuthorizedSession(source_credentials)
+        sign_url = f"https://iam.googleapis.com/v1/projects/-/serviceAccounts/{sa_email}:signBlob"
+        sign_response = authed_session.post(
+            sign_url,
+            json={"payload": base64.b64encode(unsigned_jwt).decode()},
+        )
+        sign_response.raise_for_status()
+        signed_bytes = base64.b64decode(sign_response.json()["signedBlob"])
+
+        # Build signed JWT
+        signature_b64 = base64.urlsafe_b64encode(signed_bytes).rstrip(b"=")
+        signed_jwt = unsigned_jwt + b"." + signature_b64
+
+        # Exchange JWT for access token
+        token_request = urllib.request.Request(
+            "https://oauth2.googleapis.com/token",
+            data=urllib.parse.urlencode(
+                {
+                    "grant_type": "urn:ietf:params:oauth:grant-type:jwt-bearer",
+                    "assertion": signed_jwt.decode(),
+                }
+            ).encode(),
+            headers={"Content-Type": "application/x-www-form-urlencoded"},
+            method="POST",
+        )
+
+        with urllib.request.urlopen(token_request, timeout=30) as resp:
+            token_data = json.loads(resp.read().decode())
+
+        expires_at = datetime.now(UTC) + timedelta(seconds=token_data.get("expires_in", 3600))
+
+        return token_data["access_token"], expires_at
 
     async def _get_or_create_service_account(
         self, user_email: str, user_name: str

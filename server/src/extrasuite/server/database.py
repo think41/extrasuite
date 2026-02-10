@@ -79,33 +79,47 @@ class Database:
     # OAuth State Management (for CSRF protection during OAuth flow)
     # =========================================================================
 
-    async def save_state(self, state: str, redirect_url: str) -> None:
-        """Save OAuth state token with redirect URL.
+    async def save_state(
+        self,
+        state: str,
+        redirect_url: str,
+        scopes: list[str] | None = None,
+        reason: str = "",
+        flow_type: str = "",
+    ) -> None:
+        """Save OAuth state token with redirect URL and optional delegation fields.
 
         Includes expires_at field for Firestore TTL automatic cleanup.
         """
         expires_at = datetime.now(UTC) + OAUTH_STATE_TTL
         doc_ref = self._client.collection("oauth_states").document(state)
 
+        data: dict[str, object] = {
+            "redirect_url": redirect_url,
+            "expires_at": expires_at,
+        }
+        if scopes is not None:
+            data["scopes"] = scopes
+        if reason:
+            data["reason"] = reason
+        if flow_type:
+            data["flow_type"] = flow_type
+
         async def _create() -> None:
-            await doc_ref.set(
-                {
-                    "redirect_url": redirect_url,
-                    "expires_at": expires_at,
-                }
-            )
+            await doc_ref.set(data)
 
         await asyncio.wait_for(_create(), timeout=self._timeout)
 
-    async def retrieve_state(self, state: str) -> str | None:
-        """Retrieve AND delete OAuth state. Returns redirect_url or None if not found/expired.
+    async def retrieve_state(self, state: str) -> dict[str, object] | None:
+        """Retrieve AND delete OAuth state. Returns state data dict or None if not found/expired.
 
+        Returns dict with keys: redirect_url, scopes (optional), reason (optional), flow_type (optional).
         Uses a Firestore transaction for atomic get-and-delete to prevent race conditions.
         """
         doc_ref = self._client.collection("oauth_states").document(state)
 
         @async_transactional
-        async def _atomic_retrieve(transaction) -> str | None:
+        async def _atomic_retrieve(transaction) -> dict[str, object] | None:
             doc = await doc_ref.get(transaction=transaction)
 
             if not doc.exists:
@@ -129,7 +143,15 @@ class Database:
 
             # Delete the state (one-time use)
             transaction.delete(doc_ref)
-            return redirect_url
+
+            result: dict[str, object] = {"redirect_url": redirect_url}
+            if "scopes" in data:
+                result["scopes"] = data["scopes"]
+            if "reason" in data:
+                result["reason"] = data["reason"]
+            if "flow_type" in data:
+                result["flow_type"] = data["flow_type"]
+            return result
 
         transaction = self._client.transaction()
         return await asyncio.wait_for(_atomic_retrieve(transaction), timeout=self._timeout)
@@ -284,6 +306,98 @@ class Database:
         # Sort by email for consistent ordering
         result.sort(key=lambda x: x["email"])
         return result
+
+    # =========================================================================
+    # Delegation Auth Codes (for domain-wide delegation token delivery)
+    # =========================================================================
+
+    async def save_delegation_auth_code(
+        self, auth_code: str, email: str, scopes: list[str], reason: str
+    ) -> None:
+        """Save delegation auth code with user email and requested scopes.
+
+        Auth codes are single-use and expire after AUTH_CODE_TTL.
+        """
+        expires_at = datetime.now(UTC) + AUTH_CODE_TTL
+        doc_ref = self._client.collection("auth_codes").document(auth_code)
+
+        async def _create() -> None:
+            await doc_ref.set(
+                {
+                    "email": email,
+                    "scopes": scopes,
+                    "reason": reason,
+                    "flow_type": "delegation",
+                    "expires_at": expires_at,
+                }
+            )
+
+        await asyncio.wait_for(_create(), timeout=self._timeout)
+
+    async def retrieve_delegation_auth_code(self, auth_code: str) -> dict[str, object] | None:
+        """Retrieve AND delete delegation auth code.
+
+        Returns {email, scopes, reason} or None if not found/expired.
+        Uses a Firestore transaction for atomic get-and-delete.
+        """
+        doc_ref = self._client.collection("auth_codes").document(auth_code)
+
+        @async_transactional
+        async def _atomic_retrieve(transaction) -> dict[str, object] | None:
+            doc = await doc_ref.get(transaction=transaction)
+
+            if not doc.exists:
+                return None
+
+            data = doc.to_dict()
+            if data is None:
+                return None
+
+            # Only retrieve delegation auth codes
+            if data.get("flow_type") != "delegation":
+                return None
+
+            expires_at = data.get("expires_at")
+            if not expires_at or datetime.now(UTC) > expires_at:
+                transaction.delete(doc_ref)
+                return None
+
+            # Delete the auth code (one-time use)
+            transaction.delete(doc_ref)
+            return {
+                "email": data.get("email", ""),
+                "scopes": data.get("scopes", []),
+                "reason": data.get("reason", ""),
+            }
+
+        transaction = self._client.transaction()
+        return await asyncio.wait_for(_atomic_retrieve(transaction), timeout=self._timeout)
+
+    # =========================================================================
+    # Delegation Audit Log
+    # =========================================================================
+
+    async def log_delegation_request(self, email: str, scopes: list[str], reason: str) -> None:
+        """Log a delegation token request for audit purposes.
+
+        Stored in delegation_logs collection with 30-day TTL for auto-cleanup.
+        """
+        now = datetime.now(UTC)
+        expires_at = now + timedelta(days=30)
+        doc_ref = self._client.collection("delegation_logs").document()
+
+        async def _create() -> None:
+            await doc_ref.set(
+                {
+                    "email": email,
+                    "scopes": scopes,
+                    "reason": reason,
+                    "timestamp": now,
+                    "expires_at": expires_at,
+                }
+            )
+
+        await asyncio.wait_for(_create(), timeout=self._timeout)
 
 
 def get_database(request: Request) -> Database:

@@ -12,6 +12,8 @@ from typing import Literal
 from pydantic import field_validator, model_validator
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
+_GOOGLE_SCOPE_PREFIX = "https://www.googleapis.com/auth/"
+
 
 class Settings(BaseSettings):
     """Application settings loaded from environment variables.
@@ -104,6 +106,16 @@ class Settings(BaseSettings):
     # If domain not in map, falls back to 4-char hash of domain
     domain_abbreviations: str = ""
 
+    # Domain-wide delegation (optional)
+    # When true, enables the /api/delegation/* endpoints for user-level API access
+    delegation_enabled: bool = False
+
+    # Delegation scope allowlist (short scope names, optional)
+    # When set, only these scopes can be requested via delegation endpoints.
+    # When empty, any scope is allowed (Google Workspace Admin Console still enforces).
+    # Env var: DELEGATION_SCOPES=gmail.send,calendar,script.projects
+    delegation_scopes: list[str] = []
+
     # Default skills URL (public GitHub release)
     # Used when no bundled skills.zip is present in the Docker image
     default_skills_url: str = (
@@ -158,6 +170,35 @@ class Settings(BaseSettings):
 
         # Fallback: 4-char hash of domain
         return hashlib.sha256(domain.lower().encode()).hexdigest()[:4]
+
+    def is_delegation_enabled(self) -> bool:
+        """Check if domain-wide delegation is enabled."""
+        return self.delegation_enabled
+
+    def get_delegation_scopes(self) -> list[str]:
+        """Get resolved delegation scope URLs from the allowlist.
+
+        Returns empty list if no allowlist is configured (all scopes allowed).
+        """
+        return [f"{_GOOGLE_SCOPE_PREFIX}{s}" for s in self.delegation_scopes]
+
+    def is_scope_allowed(self, scope_url: str) -> bool:
+        """Check if a scope URL is allowed by the delegation allowlist.
+
+        Returns True if no allowlist is configured (empty = allow all).
+        """
+        allowed = self.get_delegation_scopes()
+        if not allowed:
+            return True
+        return scope_url in allowed
+
+    @field_validator("delegation_scopes", mode="before")
+    @classmethod
+    def parse_delegation_scopes(cls, v: object) -> list[str]:
+        """Parse comma-separated string from env var into list."""
+        if isinstance(v, str):
+            return [s.strip() for s in v.split(",") if s.strip()]
+        return v  # type: ignore[return-value]
 
     @model_validator(mode="after")
     def validate_required_settings(self) -> "Settings":
