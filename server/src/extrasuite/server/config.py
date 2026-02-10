@@ -110,11 +110,11 @@ class Settings(BaseSettings):
     # When true, enables the /api/delegation/* endpoints for user-level API access
     delegation_enabled: bool = False
 
-    # Delegation scope allowlist (short scope names, optional)
+    # Delegation scope allowlist (short scope names, comma-separated, optional)
     # When set, only these scopes can be requested via delegation endpoints.
     # When empty, any scope is allowed (Google Workspace Admin Console still enforces).
     # Env var: DELEGATION_SCOPES=gmail.send,calendar,script.projects
-    delegation_scopes: list[str] = []
+    delegation_scopes: str = ""
 
     # Default skills URL (public GitHub release)
     # Used when no bundled skills.zip is present in the Docker image
@@ -180,7 +180,10 @@ class Settings(BaseSettings):
 
         Returns empty list if no allowlist is configured (all scopes allowed).
         """
-        return [f"{_GOOGLE_SCOPE_PREFIX}{s}" for s in self.delegation_scopes]
+        if not self.delegation_scopes:
+            return []
+        scopes = [s.strip() for s in self.delegation_scopes.split(",") if s.strip()]
+        return [f"{_GOOGLE_SCOPE_PREFIX}{s}" for s in scopes]
 
     def is_scope_allowed(self, scope_url: str) -> bool:
         """Check if a scope URL is allowed by the delegation allowlist.
@@ -191,14 +194,6 @@ class Settings(BaseSettings):
         if not allowed:
             return True
         return scope_url in allowed
-
-    @field_validator("delegation_scopes", mode="before")
-    @classmethod
-    def parse_delegation_scopes(cls, v: object) -> list[str]:
-        """Parse comma-separated string from env var into list."""
-        if isinstance(v, str):
-            return [s.strip() for s in v.split(",") if s.strip()]
-        return v  # type: ignore[return-value]
 
     @model_validator(mode="after")
     def validate_required_settings(self) -> "Settings":
