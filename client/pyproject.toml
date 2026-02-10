@@ -1,6 +1,6 @@
 [project]
 name = "extrasuite"
-version = "0.2.0"
+version = "0.3.0"
 description = "Client library for ExtraSuite - secure OAuth token exchange for CLI tools"
 readme = "README.md"
 requires-python = ">=3.10"
