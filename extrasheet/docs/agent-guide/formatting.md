@@ -62,13 +62,57 @@ Apply formatting to cell ranges:
 | `verticalAlignment` | `TOP`, `MIDDLE`, `BOTTOM` |
 | `numberFormat.type` | `NUMBER`, `CURRENCY`, `DATE`, `PERCENT`, `TEXT` |
 | `numberFormat.pattern` | Format string (e.g., `"$#,##0.00"`) |
-| `wrapStrategy` | `OVERFLOW_CELL`, `WRAP`, `CLIP` |
+| `textFormat.strikethrough` | `true` / `false` |
+| `textFormat.underline` | `true` / `false` |
+| `wrapStrategy` | `OVERFLOW_CELL` (default), `WRAP`, `CLIP` |
+| `padding` | `{"top": 5, "bottom": 5, "left": 10, "right": 10}` (pixels) |
+| `textDirection` | `LEFT_TO_RIGHT`, `RIGHT_TO_LEFT` |
+| `textRotation` | `{"angle": 45}` (-90 to 90) or `{"vertical": true}` |
+
+---
+
+## Borders
+
+Add borders to cells via the `borders` property inside a format rule:
+
+```json
+{
+  "formatRules": [
+    {
+      "range": "A1:D10",
+      "format": {
+        "borders": {
+          "top": {"style": "SOLID", "color": "#000000"},
+          "bottom": {"style": "SOLID", "color": "#000000"},
+          "left": {"style": "SOLID"},
+          "right": {"style": "SOLID"}
+        }
+      }
+    }
+  ]
+}
+```
+
+**Border sides:** `top`, `bottom`, `left`, `right`
+
+**Each side has:**
+- `style` — required: `SOLID`, `DASHED`, `DOTTED`, `DOUBLE`, `SOLID_MEDIUM`, `SOLID_THICK`
+- `color` — optional hex color (defaults to black)
+- `width` — optional integer (pixels)
+
+Borders can be combined with other format properties in the same rule. Removing a format rule that had borders will clear the borders too.
+
+---
+
+## Deleting Formatting
+
+Remove a format rule entry from `formatRules` to reset that range to default formatting. The push will clear all formatting properties and borders on the range.
 
 ---
 
 ## Conditional Formatting
 
-Highlight cells based on conditions. Uses **RGB dicts** for colors.
+Highlight cells based on conditions. Uses **hex colors** (same as formatRules).
 
 ### Boolean Rules
 
@@ -225,5 +269,7 @@ Row heights and column widths in `dimension.json`:
 
 - **rowMetadata**: Uses 1-based row numbers (`"row": 1` = first row)
 - **columnMetadata**: Uses column letters (`"column": "A"`)
+- **hidden**: Add `"hidden": true` to hide a row or column without deleting its data
+- **Reset to default**: Remove an entry from the array to reset that row/column to default size (21px rows, 100px columns) and make it visible again
 
-Only non-default sizes are stored (default: 21px rows, 100px columns).
+Only non-default sizes are stored.

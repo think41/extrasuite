@@ -5,10 +5,10 @@ Edit Google Sheets via local files using the pull-edit-diff-push workflow.
 ## Workflow
 
 ```bash
-extrasheet pull <url>      # Download spreadsheet to local folder
-# ... edit files ...
-extrasheet diff <folder>   # Preview changes (dry run)
-extrasheet push <folder>   # Apply changes to Google Sheets
+uv run python -m extrasheet pull <url> <root-folder>    # Download spreadsheet to <root-folder>/<spreadsheet_id>/
+# ... edit files in <root-folder>/<spreadsheet_id>/
+uv run python -m extrasheet push <root-folder>/<spreadsheet_id>   # Apply changes to Google Sheets
+uv run python -m extrasheet diff <root-folder>/<spreadsheet_id>   # Preview changes (dry run)
 ```
 
 **After push, always re-pull before making more changes** — the pristine state is not auto-updated.
@@ -17,13 +17,17 @@ extrasheet push <folder>   # Apply changes to Google Sheets
 
 ```
 <spreadsheet_id>/
-  spreadsheet.json          # START HERE - metadata + data previews
-  <sheet_name>/
-    data.tsv                # Cell values (tab-separated)
-    formula.json            # Formulas
-    format.json             # Formatting (optional)
-    ...                     # Other feature files
-  .pristine/                # DO NOT TOUCH - used by diff
+  spreadsheet.json          # START HERE - metadata + data previews from all worksheets
+  theme.json                # Default formatting and theme colors (auto-generated, rarely edited)
+  named_ranges.json         # Named ranges (optional, spreadsheet-level)
+  <sheet_name>/             # One folder per sheet, named after the sheet title
+    data.tsv                # Raw, unformatted cell values, truncated to 100 rows. Formula cells show last computed value.
+    formula.json            # Formulas. A column or row with a consistent formula pattern is represented as a single entry
+    format.json             # How the spreadsheet is styled - number/currency formats, colours, fonts, conditional formats, merges, etc.
+    dimension.json          # Column widths and row heights
+    ...                     # Optional files for charts, data validation, filters, pivot tables, banded ranges, slicers, etc. See features.md for details.
+  .raw/                     # Raw API responses (internal use only)
+  .pristine/                # Original state for diff comparison (internal use only)
 ```
 
 ## Reading Strategy
@@ -37,13 +41,19 @@ extrasheet push <folder>   # Apply changes to Google Sheets
 ## spreadsheet.json
 
 Central metadata file. Contains:
-- Spreadsheet title
-- List of sheets with properties
-- Data preview for each sheet (first 5 + last 3 rows)
+- Spreadsheet title and properties
+- List of sheets with preview and folder name for each sheet
+- Data preview for each sheet (first 5 + last 3 rows, split into `firstRows` and `lastRows`)
 
 ```json
 {
-  "title": "My Spreadsheet",
+  "spreadsheetId": "abc123...",
+  "spreadsheetUrl": "https://docs.google.com/spreadsheets/d/abc123.../edit",
+  "properties": {
+    "title": "My Spreadsheet",
+    "locale": "en_US",
+    "timeZone": "America/New_York"
+  },
   "sheets": [
     {
       "sheetId": 0,
@@ -51,20 +61,34 @@ Central metadata file. Contains:
       "folder": "Sheet1",
       "sheetType": "GRID",
       "gridProperties": {"rowCount": 100, "columnCount": 26, "frozenRowCount": 1},
-      "preview": [
-        ["Name", "Value", "Date"],
-        ["Alice", "100", "2024-01-15"],
-        ...
-      ]
+      "preview": {
+        "firstRows": [
+          ["Name", "Value", "Date"],
+          ["Alice", "100", "2024-01-15"],
+          ...
+        ],
+        "lastRows": [
+          ["Zara", "200", "2024-12-01"]
+        ]
+      }
     }
   ]
 }
 ```
 
 **Editable properties:**
-- `title` — spreadsheet or sheet title
-- `gridProperties.frozenRowCount`, `frozenColumnCount`
-- `hidden` — hide a sheet
+- `properties.title` — spreadsheet title
+- `sheets[].title` — sheet title
+- `sheets[].hidden` — hide a sheet
+- `sheets[].gridProperties.frozenRowCount` — frozen header rows
+- `sheets[].gridProperties.frozenColumnCount` — frozen columns
+- `sheets[].tabColor` — hex color for the sheet tab (e.g., `"#FF0000"`), remove to clear
+- `sheets[].rightToLeft` — `true` for right-to-left layout (Arabic, Hebrew, etc.)
+
+**Large sheets:** When a sheet has more than 100 rows, data.tsv is truncated. A `truncation` field appears:
+```json
+"truncation": {"totalRows": 5000, "fetchedRows": 100, "truncated": true}
+```
 
 ---
 
@@ -72,28 +96,15 @@ Central metadata file. Contains:
 
 Tab-separated cell values. Each sheet folder has one.
 
-```tsv
-Name	Value	Date
-Alice	100	2024-01-15
-Bob	200	2024-01-16
-```
-
-> **No headers:** The file has no special header row. Line 1 = Row 1 in Google Sheets, Line 2 = Row 2, etc. If your spreadsheet has a header row, it's simply the first line in data.tsv.
+> **No headers:** Line 1 = Row 1 in Google Sheets, first value in data.tsv corresponds to A1 in google sheets.
 
 > **Raw values only:** data.tsv contains raw values, not formatted display strings. Write `8000` not `$8,000`. Write `0.72` not `72%`. The display format is controlled by `format.json` (e.g., `numberFormat.type: "CURRENCY"`). Formulas are defined separately in `formula.json`.
 
-> **Formula errors:** After push, if a formula has an error (e.g., referencing text instead of numbers), the error message appears in data.tsv when you re-pull. For example: `Function DIVIDE parameter 1 expects number values. But 'Count' is a text...`
+> **Formula errors:** After push, if a formula has an error (e.g., referencing text instead of numbers), the error message appears in data.tsv when you re-pull. For example: `Evaluation of function AVERAGE caused a divide by zero error.`
 
 **Editing:**
-- Change cell values directly
-- Add rows by adding lines
-- Add columns by adding tab-separated values
-- Delete rows by removing lines
-- Delete columns by removing values from each line
-
-**Special characters:** Escaped as `\t` (tab), `\n` (newline), `\\` (backslash).
-
-**Formulas:** Show computed values here. Actual formulas are in `formula.json`.
+- Edit the file in place to change cell values, add or delete rows/columns
+- Formula cells should be left blank — the formula goes in `formula.json`.
 
 ---
 
@@ -117,18 +128,7 @@ Formulas as a **flat dictionary** mapping cell addresses to formulas.
 
 **Absolute references:** Use `$` to fix references: `"D2:D100": "=C2*$B$1"` keeps B1 fixed.
 
-**Common patterns:**
-```json
-{
-  "B10": "=SUM(B2:B9)",
-  "C10": "=AVERAGE(C2:C9)",
-  "D2:D100": "=IFERROR(B2/C2, 0)",
-  "E2:E100": "=IF(D2>0.5, \"High\", \"Low\")",
-  "F2:F100": "=VLOOKUP(A2, 'Lookup'!A:B, 2, FALSE)"
-}
-```
-
-**Deleting formulas:** Remove the key. The cell keeps its last computed value in data.tsv.
+**Deleting formulas:** Remove the key. The cell keeps its last computed value in data.tsv unless you also edit data.tsv to change it.
 
 **Cross-sheet references:** `"A1": "='Other Sheet'!B5"`
 
@@ -155,10 +155,18 @@ For simple formatting, edit `format.json`:
 
 **Common properties:**
 - `backgroundColor` — hex color (`"#FF0000"`)
-- `textFormat.bold`, `textFormat.italic` — boolean
+- `textFormat.bold`, `textFormat.italic`, `textFormat.strikethrough`, `textFormat.underline` — boolean
 - `textFormat.fontSize` — integer (points)
+- `textFormat.foregroundColor` — hex color for text
 - `horizontalAlignment` — `LEFT`, `CENTER`, `RIGHT`
+- `verticalAlignment` — `TOP`, `MIDDLE`, `BOTTOM`
 - `numberFormat.type` — `NUMBER`, `CURRENCY`, `DATE`, `PERCENT`
+- `numberFormat.pattern` — format string (e.g., `"$#,##0.00"`, `"MMM d, yyyy"`)
+- `wrapStrategy` — `OVERFLOW_CELL` (default), `WRAP`, `CLIP`
+- `padding` — `{"top": 5, "bottom": 5, "left": 10, "right": 10}` (pixels)
+- `textDirection` — `LEFT_TO_RIGHT`, `RIGHT_TO_LEFT`
+- `textRotation` — `{"angle": 45}` (-90 to 90) or `{"vertical": true}`
+- `borders` — see [formatting.md](formatting.md) for border syntax
 
 For advanced formatting (conditional formats, merges, rich text), see [formatting.md](formatting.md).
 
@@ -168,18 +176,26 @@ For advanced formatting (conditional formats, merges, rich text), see [formattin
 
 ## Creating a New Sheet
 
-1. Create folder: `<spreadsheet_id>/NewSheet/`
+All of these can be done in a single push:
+
+1. Create folder: `<spreadsheet_id>/<NewSheet>/`
 2. Add `data.tsv` with content
-3. Add entry to `spreadsheet.json` → `sheets[]`:
+3. Optionally add `formula.json`, `format.json`, etc.
+4. Add entry to `spreadsheet.json` → `sheets[]`:
    ```json
-   {"title": "NewSheet", "folder": "NewSheet", "sheetType": "GRID"}
+   {"title": "New Sheet Title", "folder": "<NewSheet>", "sheetType": "GRID"}
    ```
-4. Run `extrasheet push`
-5. **Re-pull to get server-assigned sheetId**
+5. Run `extrasheet push`
+
+The diff engine automatically generates `addSheet` before any content updates, so everything works in one push. No need to create the sheet first and re-pull.
 
 ## Deleting a Sheet
 
-Remove the sheet's folder from disk, then push.
+1. Remove the sheet's entry from `spreadsheet.json` → `sheets[]`
+2. Remove the sheet's folder from disk
+3. Run `extrasheet push`
+
+Both steps (1 and 2) are required. The diff detects deletion by comparing the sheet list in `spreadsheet.json` against the pristine copy.
 
 **Warning:** Check for cross-sheet references (`'SheetName'!`) in formulas first.
 
@@ -191,8 +207,7 @@ Remove the sheet's folder from disk, then push.
 |-------|----------|
 | Changes not applied after push | Re-pull before making more changes |
 | "Sheet already exists" error | Re-pull — pristine state is stale |
-| Sheet IDs changed | Google reassigns IDs — re-pull to get actual IDs |
-| Formula errors like "expects number values" | data.tsv has formatted text (`$8,000`) instead of raw numbers (`8000`) |
+| Formula errors in data.tsv | data.tsv has formatted text (`$8,000`) instead of raw numbers (`8000`) |
 | Conditional format not working | Use `ranges` (array) not `range` (string) for `conditionalFormats` |
 
 ---
@@ -201,18 +216,24 @@ Remove the sheet's folder from disk, then push.
 
 | File | Format | When to Edit |
 |------|--------|--------------|
-| `spreadsheet.json` | JSON | Change titles, frozen rows/cols, add sheets |
+| `spreadsheet.json` | JSON | Change titles, frozen rows/cols, add/delete sheets |
 | `data.tsv` | TSV | Change cell values, insert/delete rows/cols |
 | `formula.json` | Flat dict | Add/modify formulas |
-| `format.json` | JSON | Colors, fonts, number formats |
+| `format.json` | JSON | Colors, fonts, number formats, conditional formats, merges, notes, rich text |
+| `dimension.json` | JSON | Row heights, column widths |
 | `charts.json` | JSON | Add/modify charts |
 | `data-validation.json` | JSON | Dropdowns, checkboxes |
-| `dimension.json` | JSON | Row heights, column widths |
+| `filters.json` | JSON | Basic filters, filter views |
+| `banded-ranges.json` | JSON | Alternating row/column colors |
+| `pivot-tables.json` | JSON | Pivot tables |
+| `tables.json` | JSON | Structured tables |
+| `slicers.json` | JSON | Slicers for filtering (rare) |
+| `named_ranges.json` | JSON | Named ranges (spreadsheet-level, not per-sheet) |
 
 ---
 
 ## Specialized Guides
 
-- **[formatting.md](formatting.md)** — Conditional formats, merges, notes, rich text, banded ranges
+- **[formatting.md](formatting.md)** — Conditional formats, merges, notes, rich text, banded ranges, dimension sizing
 - **[features.md](features.md)** — Charts, pivot tables, data validation, filters, named ranges
 - **[batchupdate.md](batchupdate.md)** — Sort, move rows/columns, direct API operations
