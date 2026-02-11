@@ -1,0 +1,96 @@
+{
+  "comments": [
+    {
+      "id": "AAAABcDeFg",
+      "content": "This paragraph needs revision.",
+      "anchor": "{\"r\":\"head\",\"a\":[{\"txt\":{\"o\":42,\"l\":13}}]}",
+      "author": {
+        "displayName": "John Doe",
+        "emailAddress": "john@example.com"
+      },
+      "createdTime": "2025-01-15T10:30:00Z",
+      "modifiedTime": "2025-01-15T11:05:00Z",
+      "resolved": false,
+      "deleted": false,
+      "quotedFileContent": {
+        "mimeType": "text/plain",
+        "value": "sample quoted"
+      },
+      "replies": [
+        {
+          "id": "BBBBBcDeFg",
+          "content": "I agree, let me fix it.",
+          "author": {
+            "displayName": "Jane Smith",
+            "emailAddress": "jane@example.com"
+          },
+          "createdTime": "2025-01-15T11:00:00Z",
+          "modifiedTime": "2025-01-15T11:00:00Z",
+          "deleted": false
+        },
+        {
+          "id": "CCCCCcDeFg",
+          "content": "Fixed now.",
+          "author": {
+            "displayName": "Jane Smith",
+            "emailAddress": "jane@example.com"
+          },
+          "createdTime": "2025-01-15T11:05:00Z",
+          "modifiedTime": "2025-01-15T11:05:00Z",
+          "deleted": false
+        }
+      ]
+    },
+    {
+      "id": "DDDDDeDeFg",
+      "content": "Great introduction!",
+      "author": {
+        "displayName": "Bob Wilson",
+        "emailAddress": "bob@example.com"
+      },
+      "createdTime": "2025-01-16T09:00:00Z",
+      "modifiedTime": "2025-01-16T09:00:00Z",
+      "resolved": true,
+      "deleted": false,
+      "replies": []
+    },
+    {
+      "id": "EEEEEeDeFg",
+      "content": "This was deleted",
+      "author": {
+        "displayName": "Alice Brown",
+        "emailAddress": "alice@example.com"
+      },
+      "createdTime": "2025-01-17T09:00:00Z",
+      "modifiedTime": "2025-01-17T09:00:00Z",
+      "resolved": false,
+      "deleted": true,
+      "replies": []
+    },
+    {
+      "id": "FFFFFfFeFg",
+      "content": "Unanchored comment without position info.",
+      "author": {
+        "displayName": "Carol Green",
+        "emailAddress": "carol@example.com"
+      },
+      "createdTime": "2025-01-18T09:00:00Z",
+      "modifiedTime": "2025-01-18T09:00:00Z",
+      "resolved": false,
+      "deleted": false,
+      "replies": [
+        {
+          "id": "GGGGGgGeFg",
+          "content": "Deleted reply",
+          "author": {
+            "displayName": "Dave White",
+            "emailAddress": "dave@example.com"
+          },
+          "createdTime": "2025-01-18T10:00:00Z",
+          "modifiedTime": "2025-01-18T10:00:00Z",
+          "deleted": true
+        }
+      ]
+    }
+  ]
+}

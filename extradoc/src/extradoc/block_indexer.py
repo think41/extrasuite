@@ -167,17 +167,24 @@ class BlockIndexer:
         return length
 
     def _cell_content_length(self, cell: TableCellBlock) -> int:
-        """Calculate UTF-16 length of cell content."""
+        """Calculate UTF-16 length of cell content and set child indexes."""
         if not cell.children:
             return 1  # empty cell has default paragraph with newline
 
         length = 0
+        current = cell.start_index
         for child in cell.children:
             if isinstance(child, ParagraphBlock):
-                length += self._paragraph_length(child)
+                child.start_index = current
+                plen = self._paragraph_length(child)
+                child.end_index = current + plen
+                current = child.end_index
+                length += plen
             elif isinstance(child, TableBlock):
                 # Nested table — need to calculate without setting indexes
-                length += self._nested_table_length_from_xml(child.xml)
+                nested_len = self._nested_table_length_from_xml(child.xml)
+                current += nested_len
+                length += nested_len
 
         return max(length, 1)
 

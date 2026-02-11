@@ -467,11 +467,22 @@ def cmd_doc_diff(args: Any) -> None:
     from extradoc import DocsClient
 
     client = DocsClient.__new__(DocsClient)
-    _document_id, requests, _change_tree = client.diff(args.folder)
-    if not requests:
+    _document_id, requests, _change_tree, comment_ops = client.diff(args.folder)
+    has_changes = bool(requests) or comment_ops.has_operations
+    if not has_changes:
         print("No changes detected.")
     else:
-        print(json.dumps(requests, indent=2))
+        if requests:
+            print(json.dumps(requests, indent=2))
+        if comment_ops.has_operations:
+            parts: list[str] = []
+            if comment_ops.new_comments:
+                parts.append(f"{len(comment_ops.new_comments)} new comment(s)")
+            if comment_ops.new_replies:
+                parts.append(f"{len(comment_ops.new_replies)} new reply/replies")
+            if comment_ops.resolves:
+                parts.append(f"{len(comment_ops.resolves)} comment(s) to resolve")
+            print("Comment operations: " + ", ".join(parts))
 
 
 def cmd_doc_push(args: Any) -> None:
@@ -556,6 +567,7 @@ Folder layout after pull:
   <document_id>/
     document.xml            Semantic markup (h1, p, li, table) - edit this
     styles.xml              Named and paragraph styles
+    comments.xml            Document comments and replies (if any)
     .pristine/              Original state (do not edit)
 """
 

@@ -21,7 +21,16 @@ import httpx
 
 # API constants
 API_BASE = "https://docs.googleapis.com/v1/documents"
+DRIVE_API_BASE = "https://www.googleapis.com/drive/v3/files"
 DEFAULT_TIMEOUT = 60
+
+# Fields to request for comments list
+_COMMENTS_FIELDS = (
+    "comments(id,content,anchor,author,createdTime,modifiedTime,"
+    "resolved,deleted,quotedFileContent,"
+    "replies(id,content,author,createdTime,modifiedTime,deleted,action)),"
+    "nextPageToken"
+)
 
 
 class TransportError(Exception):
@@ -92,6 +101,58 @@ class Transport(ABC):
         ...
 
     @abstractmethod
+    async def list_comments(self, file_id: str) -> list[dict[str, Any]]:
+        """Fetch all comments on a file via Drive API v3.
+
+        Args:
+            file_id: The file identifier
+
+        Returns:
+            List of comment dicts from the Drive API
+        """
+        ...
+
+    @abstractmethod
+    async def create_comment(
+        self,
+        file_id: str,
+        content: str,
+        anchor_json: str | None = None,
+    ) -> dict[str, Any]:
+        """Create a new comment on a file.
+
+        Args:
+            file_id: The file identifier
+            content: Comment text
+            anchor_json: Optional anchor JSON for positioned comments
+
+        Returns:
+            API response with the created comment
+        """
+        ...
+
+    @abstractmethod
+    async def create_reply(
+        self,
+        file_id: str,
+        comment_id: str,
+        content: str,
+        action: str | None = None,
+    ) -> dict[str, Any]:
+        """Create a reply on an existing comment.
+
+        Args:
+            file_id: The file identifier
+            comment_id: The comment to reply to
+            content: Reply text
+            action: Optional action, e.g. "resolve"
+
+        Returns:
+            API response with the created reply
+        """
+        ...
+
+    @abstractmethod
     async def close(self) -> None:
         """Close any open connections."""
         ...
@@ -141,6 +202,54 @@ class GoogleDocsTransport(Transport):
         """Apply batchUpdate requests to Google Docs API."""
         url = f"{API_BASE}/{document_id}:batchUpdate"
         body = {"requests": requests}
+        return await self._post_request(url, body)
+
+    async def list_comments(self, file_id: str) -> list[dict[str, Any]]:
+        """Fetch all comments via Drive API v3 with pagination."""
+        all_comments: list[dict[str, Any]] = []
+        page_token: str | None = None
+        while True:
+            url = (
+                f"{DRIVE_API_BASE}/{file_id}/comments"
+                f"?fields={_COMMENTS_FIELDS}&pageSize=100"
+            )
+            if page_token:
+                url += f"&pageToken={page_token}"
+            response = await self._request(url)
+            all_comments.extend(response.get("comments", []))
+            page_token = response.get("nextPageToken")
+            if not page_token:
+                break
+        return all_comments
+
+    async def create_comment(
+        self,
+        file_id: str,
+        content: str,
+        anchor_json: str | None = None,
+    ) -> dict[str, Any]:
+        """Create a new comment via Drive API v3."""
+        url = f"{DRIVE_API_BASE}/{file_id}/comments?fields=id,content,anchor,author,createdTime"
+        body: dict[str, Any] = {"content": content}
+        if anchor_json is not None:
+            body["anchor"] = anchor_json
+        return await self._post_request(url, body)
+
+    async def create_reply(
+        self,
+        file_id: str,
+        comment_id: str,
+        content: str,
+        action: str | None = None,
+    ) -> dict[str, Any]:
+        """Create a reply on an existing comment via Drive API v3."""
+        url = (
+            f"{DRIVE_API_BASE}/{file_id}/comments/{comment_id}/replies"
+            f"?fields=id,content,author,createdTime,action"
+        )
+        body: dict[str, Any] = {"content": content}
+        if action is not None:
+            body["action"] = action
         return await self._post_request(url, body)
 
     async def _request(self, url: str) -> dict[str, Any]:
@@ -224,6 +333,40 @@ class LocalFileTransport(Transport):
     ) -> dict[str, Any]:
         """Mock batch_update for testing - returns empty replies."""
         return {"replies": [{}] * len(requests)}
+
+    async def list_comments(self, file_id: str) -> list[dict[str, Any]]:
+        """Read comments from local golden file."""
+        path = self._golden_dir / f"{file_id}_comments.json"
+        if not path.exists():
+            return []
+        data = json.loads(path.read_text(encoding="utf-8"))
+        result: list[dict[str, Any]] = data.get("comments", [])
+        return result
+
+    async def create_comment(
+        self,
+        file_id: str,  # noqa: ARG002
+        content: str,
+        anchor_json: str | None = None,  # noqa: ARG002
+    ) -> dict[str, Any]:
+        """Mock create_comment for testing."""
+        return {"id": "mock_comment_id", "content": content}
+
+    async def create_reply(
+        self,
+        file_id: str,  # noqa: ARG002
+        comment_id: str,  # noqa: ARG002
+        content: str,
+        action: str | None = None,
+    ) -> dict[str, Any]:
+        """Mock create_reply for testing."""
+        result: dict[str, Any] = {
+            "id": "mock_reply_id",
+            "content": content,
+        }
+        if action:
+            result["action"] = action
+        return result
 
     async def close(self) -> None:
         """No-op for local file transport."""

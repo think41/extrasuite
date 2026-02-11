@@ -13,6 +13,14 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import TYPE_CHECKING, Any
 
+from extradoc.comments_converter import (
+    CommentOperations,
+    _build_anchor_json,
+    compute_comment_ref_positions,
+    convert_comments_to_xml,
+    diff_comments,
+    extract_comment_ref_ids,
+)
 from extradoc.desugar import desugar_document
 from extradoc.engine import DiffEngine
 from extradoc.request_generators.structural import (
@@ -27,6 +35,7 @@ if TYPE_CHECKING:
 # File and directory name constants
 DOCUMENT_XML = "document.xml"
 STYLES_XML = "styles.xml"
+COMMENTS_XML = "comments.xml"
 RAW_DIR = ".raw"
 PRISTINE_DIR = ".pristine"
 PRISTINE_ZIP = "document.zip"
@@ -40,6 +49,9 @@ class PushResult:
     document_id: str
     changes_applied: int
     message: str = ""
+    comments_created: int = 0
+    replies_created: int = 0
+    comments_resolved: int = 0
 
 
 def _new_tab_ids(pristine_xml: str, current_xml: str) -> list[str]:
@@ -83,7 +95,12 @@ class DocsClient:
 
         written_files: list[Path] = []
 
-        document_xml, styles_xml = convert_document_to_xml(document_data.raw)
+        # Fetch comments first so we can inject <comment-ref> tags into document.xml
+        comments = await self._transport.list_comments(document_id)
+
+        document_xml, styles_xml = convert_document_to_xml(
+            document_data.raw, comments=comments or None
+        )
 
         xml_path = document_dir / DOCUMENT_XML
         xml_path.write_text(document_xml, encoding="utf-8")
@@ -92,6 +109,13 @@ class DocsClient:
         styles_path = document_dir / STYLES_XML
         styles_path.write_text(styles_xml, encoding="utf-8")
         written_files.append(styles_path)
+
+        # Write simplified comments.xml (no position info)
+        if comments:
+            comments_xml = convert_comments_to_xml(comments, document_id)
+            comments_path = document_dir / COMMENTS_XML
+            comments_path.write_text(comments_xml, encoding="utf-8")
+            written_files.append(comments_path)
 
         if save_raw:
             raw_dir = document_dir / RAW_DIR
@@ -102,13 +126,22 @@ class DocsClient:
                 encoding="utf-8",
             )
             written_files.append(raw_path)
+            if comments:
+                comments_raw_path = raw_dir / "comments.json"
+                comments_raw_path.write_text(
+                    json.dumps({"comments": comments}, indent=2, ensure_ascii=False),
+                    encoding="utf-8",
+                )
+                written_files.append(comments_raw_path)
 
         pristine_path = self._create_pristine_copy(document_dir, written_files)
         written_files.append(pristine_path)
 
         return written_files
 
-    def diff(self, folder: str | Path) -> tuple[str, list[dict[str, Any]], Any]:
+    def diff(
+        self, folder: str | Path
+    ) -> tuple[str, list[dict[str, Any]], Any, CommentOperations]:
         """Compare current files against pristine and generate batchUpdate requests.
 
         This is local-only and does not make any API calls.
@@ -117,7 +150,7 @@ class DocsClient:
             folder: Path to document folder (containing document.xml)
 
         Returns:
-            Tuple of (document_id, requests, change_tree)
+            Tuple of (document_id, requests, change_tree, comment_ops)
         """
         folder = Path(folder)
 
@@ -137,7 +170,31 @@ class DocsClient:
             pristine_xml, current_xml, pristine_styles, current_styles
         )
 
-        return document_id, requests, change_tree
+        # Diff comments
+        comment_ops = CommentOperations()
+        comments_path = folder / COMMENTS_XML
+        if comments_path.exists():
+            current_comments_xml = comments_path.read_text(encoding="utf-8")
+            pristine_comments_xml = self._read_pristine_comments(folder)
+
+            # Detect new comment-refs in document.xml
+            current_ref_ids = extract_comment_ref_ids(current_xml)
+            pristine_ref_ids = extract_comment_ref_ids(pristine_xml)
+            new_ref_ids = current_ref_ids - pristine_ref_ids
+
+            # Compute positions for new comment-refs
+            new_positions = None
+            if new_ref_ids:
+                all_positions = compute_comment_ref_positions(current_xml)
+                new_positions = [
+                    p for p in all_positions if p.comment_ref_id in new_ref_ids
+                ]
+
+            comment_ops = diff_comments(
+                pristine_comments_xml, current_comments_xml, new_positions
+            )
+
+        return document_id, requests, change_tree, comment_ops
 
     async def push(self, folder: str | Path, *, force: bool = False) -> PushResult:
         """Push local changes to Google Docs using 3-batch strategy.
@@ -151,15 +208,56 @@ class DocsClient:
         """
         _ = force  # reserved for future use
         folder = Path(folder)
-        document_id, requests, _change_tree = self.diff(folder)
+        document_id, requests, _change_tree, comment_ops = self.diff(folder)
 
-        if not requests:
+        if not requests and not comment_ops.has_operations:
             return PushResult(
                 success=True,
                 document_id=document_id,
                 changes_applied=0,
                 message="No changes to apply",
             )
+
+        # --- Comment operations (BEFORE document changes) ---
+        # Comments use Drive API v3 (separate from Docs batchUpdate).
+        # Anchor positions are computed against the current live document
+        # (which matches pristine), so we must create comments before any
+        # document changes shift positions.
+        comments_created = 0
+        replies_created = 0
+        comments_resolved = 0
+
+        if comment_ops.has_operations:
+            for new_comment in comment_ops.new_comments:
+                anchor_json: str | None = None
+                if (
+                    new_comment.start_index is not None
+                    and new_comment.end_index is not None
+                ):
+                    anchor_json = _build_anchor_json(
+                        new_comment.start_index,
+                        new_comment.end_index,
+                        new_comment.quoted_text,
+                    )
+                await self._transport.create_comment(
+                    document_id, new_comment.content, anchor_json
+                )
+                comments_created += 1
+
+            for new_reply in comment_ops.new_replies:
+                await self._transport.create_reply(
+                    document_id, new_reply.comment_id, new_reply.content
+                )
+                replies_created += 1
+
+            for resolve in comment_ops.resolves:
+                await self._transport.create_reply(
+                    document_id,
+                    resolve.comment_id,
+                    "",
+                    action="resolve",
+                )
+                comments_resolved += 1
 
         # --- Classify requests ---
         tab_create_requests: list[dict[str, Any]] = []
@@ -331,11 +429,27 @@ class DocsClient:
                 document_id, cleanup_requests + footnote_requests
             )
 
+        # Build result message
+        parts: list[str] = []
+        if requests:
+            parts.append(f"{len(requests)} document changes")
+        if comments_created:
+            parts.append(f"{comments_created} comments created")
+        if replies_created:
+            parts.append(f"{replies_created} replies added")
+        if comments_resolved:
+            parts.append(f"{comments_resolved} comments resolved")
+
+        message = "Applied " + ", ".join(parts) if parts else "No changes to apply"
+
         return PushResult(
             success=True,
             document_id=document_id,
             changes_applied=len(requests),
-            message=f"Applied {len(requests)} changes",
+            message=message,
+            comments_created=comments_created,
+            replies_created=replies_created,
+            comments_resolved=comments_resolved,
         )
 
     def _create_pristine_copy(
@@ -357,6 +471,16 @@ class DocsClient:
                 zf.write(file_path, arcname)
 
         return zip_path
+
+    def _read_pristine_comments(self, folder: Path) -> str | None:
+        """Read pristine comments.xml from zip, if it exists."""
+        zip_path = folder / PRISTINE_DIR / PRISTINE_ZIP
+        if not zip_path.exists():
+            return None
+        with zipfile.ZipFile(zip_path, "r") as zf:
+            if COMMENTS_XML in zf.namelist():
+                return zf.read(COMMENTS_XML).decode("utf-8")
+        return None
 
     def _read_pristine(self, folder: Path) -> tuple[str, str | None, str]:
         """Read pristine XML files from zip."""

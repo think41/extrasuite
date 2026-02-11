@@ -183,6 +183,81 @@ Each `<tab>` contains `<body>` plus optional `<header>`, `<footer>`, and `<footn
 
 ---
 
+## Comments
+
+Comments appear in two files: inline `<comment-ref>` tags in `document.xml` show where comments are, and `comments.xml` stores the full comment content and replies.
+
+### Reading Comments
+
+In `document.xml`, commented text is wrapped with `<comment-ref>`:
+
+```xml
+<p>Some text <comment-ref id="AABcdEf" message="This needs revisi..." replies="2" resolved="false"><b>important section</b></comment-ref> more text.</p>
+```
+
+- `id` links to the full comment in `comments.xml`
+- `message`, `replies`, `resolved` are read-only summaries (regenerated on pull)
+
+In `comments.xml`, full comment details:
+
+```xml
+<comments fileId="DOCUMENT_ID">
+  <comment id="AABcdEf" author="John Doe &lt;john@example.com&gt;"
+           time="2025-01-15T10:30:00Z" resolved="false">
+    <content>This paragraph needs revision.</content>
+    <replies>
+      <reply id="BBBcdEf" author="Jane Smith &lt;jane@example.com&gt;"
+             time="2025-01-15T11:00:00Z">I agree, let me fix it.</reply>
+    </replies>
+  </comment>
+</comments>
+```
+
+### Adding a New Comment
+
+1. Wrap the target text in `document.xml` with `<comment-ref id="any_unique_id">`:
+
+```xml
+<p>This <comment-ref id="my_comment_1">section needs work</comment-ref> badly.</p>
+```
+
+2. Add a matching entry in `comments.xml`:
+
+```xml
+<comment id="my_comment_1">
+  <content>This section needs a citation.</content>
+</comment>
+```
+
+For unanchored comments (no specific text), just add in `comments.xml` without a `<comment-ref>`.
+
+### Replying to a Comment
+
+Add a `<reply>` without `id` inside an existing comment's `<replies>` in `comments.xml`:
+
+```xml
+<comment id="AABcdEf">
+  <replies>
+    <reply id="BBBcdEf" ...>Existing reply</reply>
+    <reply>I will revise this paragraph.</reply>
+  </replies>
+</comment>
+```
+
+### Resolving a Comment
+
+Set `resolved="true"` on an existing comment in `comments.xml`:
+
+```xml
+<comment id="AABcdEf" resolved="true"/>
+```
+
+### Workflow Tip
+
+When instructed to address a comment, make the document edit in `document.xml` AND add a reply in `comments.xml` explaining what was done. Then resolve the comment if appropriate.
+
+---
+
 ## Specialized Guides
 
 - **[date-time.md](date-time.md)** — Date/time element formats, attributes, and examples
