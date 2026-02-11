@@ -168,7 +168,7 @@ wheels = [
 
 [[package]]
 name = "extradoc"
-version = "0.1.0"
+version = "0.2.1"
 source = { editable = "../extradoc" }
 dependencies = [
     { name = "certifi" },
@@ -197,7 +197,7 @@ dev = []
 
 [[package]]
 name = "extraform"
-version = "0.1.0"
+version = "0.2.1"
 source = { editable = "../extraform" }
 dependencies = [
     { name = "httpx" },
@@ -216,7 +216,7 @@ provides-extras = ["dev"]
 
 [[package]]
 name = "extrascript"
-version = "0.1.0"
+version = "0.2.1"
 source = { editable = "../extrascript" }
 dependencies = [
     { name = "httpx" },
@@ -236,7 +236,7 @@ provides-extras = ["dev"]
 
 [[package]]
 name = "extrasheet"
-version = "0.1.0"
+version = "0.2.1"
 source = { editable = "../extrasheet" }
 dependencies = [
     { name = "httpx" },
@@ -256,7 +256,7 @@ provides-extras = ["dev"]
 
 [[package]]
 name = "extraslide"
-version = "0.1.0"
+version = "0.2.1"
 source = { editable = "../extraslide" }
 dependencies = [
     { name = "httpx" },
@@ -278,7 +278,7 @@ provides-extras = ["dev"]
 
 [[package]]
 name = "extrasuite"
-version = "0.4.0"
+version = "0.5.2"
 source = { editable = "." }
 dependencies = [
     { name = "extradoc" },
