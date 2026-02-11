@@ -1,3 +1,8 @@
+---
+name: extradoc
+description: Read, write, and edit existing Google Docs. Use when user asks to work with Google Docs, documents, or shares a docs.google.com/documents URL.
+---
+
 # ExtraDoc Agent Guide
 
 Edit Google Docs via local XML files using the pull-edit-push workflow.
@@ -5,10 +10,10 @@ Edit Google Docs via local XML files using the pull-edit-push workflow.
 ## Workflow
 
 ```bash
-python -m extradoc pull <url>       # Download document to local folder
-# ... edit XML files ...
-python -m extradoc push <folder>    # Apply changes to Google Docs
-python -m extradoc diff <folder>    # Dry run — shows batchUpdate JSON without calling API
+uv run python -m extradoc pull <url> <folder>      # Download document to local folder
+# <folder> now has document.xml and styles.xml that you can edit
+uv run python -m extradoc push <folder>    # Changes you made to document.xml and styles.xml are pushed back to the google document
+uv run python -m extradoc diff <folder>    # See a diff of your changes, only for debugging — not required for push
 ```
 
 **Always re-pull after push** — the `.pristine/` state is not auto-updated.
@@ -17,10 +22,10 @@ python -m extradoc diff <folder>    # Dry run — shows batchUpdate JSON without
 
 ```
 <document_id>/
-  document.xml            # Document content — edit this
-  styles.xml              # Style definitions (referenced by class attributes)
+  document.xml            # Document content
+  styles.xml              # Style definitions
   .pristine/              # DO NOT TOUCH — used by diff/push
-  .raw/                   # Raw API response (for debugging)
+  .raw/                   # Raw API response (only for debugging)
 ```
 
 Start with `document.xml`. Read `styles.xml` only when you need to understand or modify styling.
@@ -53,7 +58,7 @@ Start with `document.xml`. Read `styles.xml` only when you need to understand or
 | `<a href="...">` | Hyperlink |
 | `<span class="...">` | Custom inline style |
 
-### Special / Read-Only
+### Special Elements
 
 | Element | Can Add | Can Modify | Can Delete | Notes |
 |---------|---------|------------|------------|-------|
@@ -61,10 +66,10 @@ Start with `document.xml`. Read `styles.xml` only when you need to understand or
 | `<pagebreak/>` | Yes | N/A | Yes | |
 | `<columnbreak/>` | No | No | No | API limitation — no `insertColumnBreak` |
 | `<image/>` | No | No | No | API exists (`insertInlineImage`) but not yet implemented |
-| `<footnote>` | Partial | Yes | Yes | Content population has known issues |
+| `<footnote>` | Yes | Yes | Yes | |
 | `<autotext/>` | No | No | No | API limitation |
-| `<person/>` | Yes | No | Yes | Insert via `insertPerson` API |
-| `<date/>` | Yes | No | Yes | Insert via `insertDate` API. Attrs: `timestamp`, `dateFormat`, `locale`, `timeFormat`, `timeZoneId` |
+| `<person/>` | Yes | Yes | Yes | Attr: `email`. The `name` attr is read-only (auto-resolved by Google) |
+| `<date/>` | Yes | Yes | Yes | E.g. `<date timestamp="2025-12-25T00:00:00Z" dateFormat="DATE_FORMAT_MONTH_DAY_YEAR_ABBREVIATED"/>`. See [date-time.md](date-time.md) for all formats |
 | `<richlink/>` | No | No | No | Rich link chip. Attrs: `url`, `title`. Takes 1 index unit |
 | `<equation/>` | No | No | No | Equation. Attr: `length` (index units consumed) |
 
@@ -171,7 +176,7 @@ Each `<tab>` contains `<body>` plus optional `<header>`, `<footer>`, and `<footn
 2. **Always re-pull after push.** The `.pristine/` state is not auto-updated.
 3. **Do not modify `.pristine/` or `.raw/`.** Internal directories used by push.
 4. **Every `<td>` must contain at least one `<p>`.** Even empty cells.
-5. **`<hr/>`, `<image/>`, `<autotext/>`, `<person/>` are read-only.** Cannot add/remove.
+5. **`<hr/>`, `<image/>`, `<autotext/>` are read-only.** Cannot add/remove.
 6. **XML-escape special characters.** `&amp;` `&lt;` `&gt;` `&quot;` in text content.
 7. **List items are flat.** No `<ul>`/`<ol>` wrappers — nesting via `level` attribute only.
 8. **The `<style>` wrapper applies a class to multiple consecutive elements.** Not a style definition.
@@ -180,5 +185,6 @@ Each `<tab>` contains `<body>` plus optional `<header>`, `<footer>`, and `<footn
 
 ## Specialized Guides
 
+- **[date-time.md](date-time.md)** — Date/time element formats, attributes, and examples
 - **[style-reference.md](style-reference.md)** — Complete style property reference, inheritance rules, table cell styling
 - **[troubleshooting.md](troubleshooting.md)** — Common errors, API limitations, debugging tips

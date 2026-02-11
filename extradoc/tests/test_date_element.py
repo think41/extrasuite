@@ -178,7 +178,7 @@ class TestDateInsert:
         gen = ContentGenerator()
         node = _make_content_node(
             ChangeOp.ADDED,
-            after_xml='<p><date timestamp="2026-06-15T10:30:00Z" dateFormat="DATE_FORMAT_MONTH_DAY_YEAR_ABBREVIATED" locale="en-GB" timeFormat="TIME_FORMAT_HOURS_MINUTES" timeZoneId="America/New_York"/></p>',
+            after_xml='<p><date timestamp="2026-06-15T10:30:00Z" dateFormat="DATE_FORMAT_MONTH_DAY_YEAR_ABBREVIATED" locale="en-GB" timeFormat="TIME_FORMAT_HOUR_MINUTE" timeZoneId="America/New_York"/></p>',
             pristine_start=1,
             pristine_end=1,
         )
@@ -187,7 +187,7 @@ class TestDateInsert:
         props = date_req["insertDate"]["dateElementProperties"]
         assert props["timestamp"] == "2026-06-15T10:30:00Z"
         assert props["locale"] == "en-GB"
-        assert props["timeFormat"] == "TIME_FORMAT_HOURS_MINUTES"
+        assert props["timeFormat"] == "TIME_FORMAT_HOUR_MINUTE"
         assert props["timeZoneId"] == "America/New_York"
 
     def test_insert_date_bare(self):
