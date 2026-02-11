@@ -2,6 +2,19 @@
 
 All notable changes to the extradoc library will be documented in this file.
 
+## [0.2.0] - 2026-02-11
+
+### Breaking Changes
+
+- Removed CLI entry point (`python -m extradoc`). Use `extrasuite doc pull/diff/push` instead.
+- Removed dependency on `extrasuite` (client) package.
+
+### Added
+
+- `DocsClient` class for programmatic pull/diff/push.
+- `LocalFileTransport` in `transport.py`.
+- Expanded `__init__.py` exports (`DocsClient`, `PushResult`, all transport types).
+
 ## [0.1.0] - 2026-02-11
 
 ### Added

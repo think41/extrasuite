@@ -2,6 +2,14 @@
 
 All notable changes to the extraform library will be documented in this file.
 
+## [0.2.0] - 2026-02-11
+
+### Breaking Changes
+
+- Removed CLI entry point (`python -m extraform`). Use `extrasuite form pull/diff/push` instead.
+- Removed dependency on `extrasuite` (client) package.
+- Removed `[project.scripts]` entry point.
+
 ## [0.1.0] - 2026-02-11
 
 ### Added
