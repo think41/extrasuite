@@ -112,7 +112,7 @@ class TestBlockIndexer:
     def test_toc_with_paragraphs(self):
         """TOC: 1(start) + paragraph lengths + 1(end). Subsequent content indexes correct."""
         children = _parse_and_index(
-            "<p>Before</p>" "<toc><p>Chapter 1</p><p>Chapter 2</p></toc>" "<p>After</p>"
+            "<p>Before</p><toc><p>Chapter 1</p><p>Chapter 2</p></toc><p>After</p>"
         )
         assert len(children) == 3
         p_before = children[0]

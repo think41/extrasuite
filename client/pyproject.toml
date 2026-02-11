@@ -22,7 +22,16 @@ classifiers = [
     "Topic :: Internet :: WWW/HTTP :: Session",
 ]
 
-dependencies = []
+dependencies = [
+    "extrasheet>=0.1.0",
+    "extraslide>=0.1.0",
+    "extraform>=0.1.0",
+    "extrascript>=0.1.0",
+    "extradoc>=0.1.0",
+]
+
+[project.scripts]
+extrasuite = "extrasuite.client.cli:main"
 
 [project.optional-dependencies]
 # certifi is recommended for macOS SSL certificate handling
@@ -72,6 +81,8 @@ ignore = [
 [tool.ruff.lint.per-file-ignores]
 # credentials.py uses intentional lazy imports for optional dependencies
 "src/extrasuite/client/credentials.py" = ["PLC0415"]
+# cli.py uses lazy imports to avoid loading all modules at startup
+"src/extrasuite/client/cli.py" = ["PLC0415"]
 # tests also use lazy imports to check if google-auth is available
 "tests/test_credentials.py" = ["PLC0415"]
 
@@ -89,3 +100,10 @@ dev-dependencies = [
     "pytest>=8.0",
     "ruff>=0.7.0",
 ]
+
+[tool.uv.sources]
+extrasheet = { path = "../extrasheet", editable = true }
+extraslide = { path = "../extraslide", editable = true }
+extraform = { path = "../extraform", editable = true }
+extrascript = { path = "../extrascript", editable = true }
+extradoc = { path = "../extradoc", editable = true }

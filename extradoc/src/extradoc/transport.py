@@ -2,14 +2,19 @@
 
 Defines the Transport protocol and implementations:
 - GoogleDocsTransport: Production transport using Google Docs API
+- LocalFileTransport: Test transport reading from local golden files
 """
 
 from __future__ import annotations
 
+import json
 import ssl
 from abc import ABC, abstractmethod
 from dataclasses import dataclass
-from typing import Any
+from typing import TYPE_CHECKING, Any
+
+if TYPE_CHECKING:
+    from pathlib import Path
 
 import certifi
 import httpx
@@ -183,3 +188,42 @@ class GoogleDocsTransport(Transport):
     async def close(self) -> None:
         """Close the HTTP client."""
         await self._client.aclose()
+
+
+class LocalFileTransport(Transport):
+    """Test transport that reads from local golden files.
+
+    Expected directory structure:
+        golden_dir/
+            <document_id>.json
+    """
+
+    def __init__(self, golden_dir: Path) -> None:
+        """Initialize the transport.
+
+        Args:
+            golden_dir: Directory containing golden test files
+        """
+        self._golden_dir = golden_dir
+
+    async def get_document(self, document_id: str) -> DocumentData:
+        """Read document data from local file."""
+        path = self._golden_dir / f"{document_id}.json"
+        response = json.loads(path.read_text(encoding="utf-8"))
+
+        return DocumentData(
+            document_id=response.get("documentId", document_id),
+            title=response.get("title", ""),
+            raw=response,
+        )
+
+    async def batch_update(
+        self,
+        document_id: str,  # noqa: ARG002
+        requests: list[dict[str, Any]],
+    ) -> dict[str, Any]:
+        """Mock batch_update for testing - returns empty replies."""
+        return {"replies": [{}] * len(requests)}
+
+    async def close(self) -> None:
+        """No-op for local file transport."""

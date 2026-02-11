@@ -24,12 +24,8 @@ classifiers = [
     "Programming Language :: Python :: 3.13",
 ]
 dependencies = [
-    "extrasuite>=0.4.0",
     "httpx>=0.27.0",
 ]
-
-[project.scripts]
-extrascript = "extrascript.__main__:main"
 
 [project.optional-dependencies]
 dev = [
@@ -70,7 +66,6 @@ ignore = [
 ]
 
 [tool.ruff.lint.per-file-ignores]
-"src/extrascript/__main__.py" = ["PLC0415"]
 "src/extrascript/linter.py" = ["TCH003"]
 "tests/*.py" = ["TCH", "PLC0415", "ARG"]
 

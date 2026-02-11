@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from extrascript.__main__ import parse_file_id, parse_script_id
+from extrascript.client import parse_file_id, parse_script_id
 
 
 def test_parse_script_id_from_url() -> None:

@@ -173,9 +173,7 @@ def _generate_smart_moves(
 
     # Build working order: start with old order, remove deleted items
     working_order = [
-        item_id
-        for i, item_id in enumerate(old_item_order)
-        if i not in deleted_indices
+        item_id for i, item_id in enumerate(old_item_order) if i not in deleted_indices
     ]
 
     # Filter new_item_order to only include items in working_order
@@ -198,12 +196,14 @@ def _generate_smart_moves(
 
         if current_idx != target_idx:
             # Need to move this item
-            requests.append({
-                "moveItem": {
-                    "originalLocation": {"index": current_idx},
-                    "newLocation": {"index": target_idx},
+            requests.append(
+                {
+                    "moveItem": {
+                        "originalLocation": {"index": current_idx},
+                        "newLocation": {"index": target_idx},
+                    }
                 }
-            })
+            )
             # Update working order to reflect the move
             working_order.pop(current_idx)
             working_order.insert(target_idx, target_item)

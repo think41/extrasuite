@@ -1896,9 +1896,7 @@ class TestDiffDimensionHidden:
         )
         data_tsv = "A\n1\n2\n"
 
-        dimension_pristine = json.dumps(
-            {"rowMetadata": [{"row": 2, "pixelSize": 21}]}
-        )
+        dimension_pristine = json.dumps({"rowMetadata": [{"row": 2, "pixelSize": 21}]})
         dimension_current = json.dumps(
             {"rowMetadata": [{"row": 2, "pixelSize": 21, "hidden": True}]}
         )

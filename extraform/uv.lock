@@ -164,7 +164,6 @@ name = "extraform"
 version = "0.1.0"
 source = { editable = "." }
 dependencies = [
-    { name = "extrasuite" },
     { name = "httpx" },
 ]
 
@@ -179,7 +178,6 @@ dev = [
 
 [package.metadata]
 requires-dist = [
-    { name = "extrasuite", specifier = ">=0.4.0" },
     { name = "httpx", specifier = ">=0.27.0" },
     { name = "mypy", marker = "extra == 'dev'", specifier = ">=1.8.0" },
     { name = "pytest", marker = "extra == 'dev'", specifier = ">=8.0.0" },
@@ -188,15 +186,6 @@ requires-dist = [
     { name = "ruff", marker = "extra == 'dev'", specifier = ">=0.3.0" },
 ]
 provides-extras = ["dev"]
-
-[[package]]
-name = "extrasuite"
-version = "0.4.0"
-source = { registry = "https://pypi.org/simple" }
-sdist = { url = "https://files.pythonhosted.org/packages/a1/18/e23806daf8643906fe4395b186354aaeb95d422f83cf0c3c5c6ecd4c3431/extrasuite-0.4.0.tar.gz", hash = "sha256:f88fc91a80248d5718cde4e74fa526089cfb7c4a79c406d0853e288b49c9ac08", size = 11411, upload-time = "2026-02-10T16:39:42.177Z" }
-wheels = [
-    { url = "https://files.pythonhosted.org/packages/88/95/1ae5ee84739ae1d8077b43491ce41ccdf2b6793b399bd26457a18b9bf324/extrasuite-0.4.0-py3-none-any.whl", hash = "sha256:f494ecd21cf6771da844ec47677b94d7e2e95d619989031aec01917106721a76", size = 11918, upload-time = "2026-02-10T16:39:41.21Z" },
-]
 
 [[package]]
 name = "h11"

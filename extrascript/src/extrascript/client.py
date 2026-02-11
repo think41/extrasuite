@@ -1,28 +1,33 @@
 """ScriptClient - Main API for extrascript.
 
 Provides pull, push, diff, create, and store_script_metadata commands
-for the Google Apps Script workflow. API calls are made directly via
-httpx.AsyncClient (no transport abstraction).
+for the Google Apps Script workflow. Uses a Transport abstraction for
+API communication.
 """
 
 from __future__ import annotations
 
 import json
-import ssl
+import re
 import zipfile
 from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any
 
-import certifi
-import httpx
-
 from extrascript.linter import LintResult, lint_project
-
-# Apps Script API v1 base URL
-API_BASE = "https://script.googleapis.com/v1"
-SHEETS_API_BASE = "https://sheets.googleapis.com/v4"
-DEFAULT_TIMEOUT = 60
+from extrascript.transport import (
+    APIError,  # noqa: F401 (re-export for backward compat)
+    AuthenticationError,  # noqa: F401 (re-export for backward compat)
+    NotFoundError,  # noqa: F401 (re-export for backward compat)
+    ProjectContent,  # noqa: F401 (re-export for backward compat)
+    ProjectMetadata,  # noqa: F401 (re-export for backward compat)
+    ScriptAPIError,  # noqa: F401 (re-export for backward compat)
+    ScriptFile,
+    Transport,
+    TransportError,  # noqa: F401 (re-export for backward compat)
+    _parse_project_content,  # noqa: F401 (re-export for backward compat)
+    _parse_project_metadata,  # noqa: F401 (re-export for backward compat)
+)
 
 # Maps Apps Script file types to local file extensions
 FILE_TYPE_TO_EXT: dict[str, str] = {
@@ -39,39 +44,7 @@ EXT_TO_FILE_TYPE: dict[str, str] = {
 }
 
 
-# --- Data classes ---
-
-
-@dataclass(frozen=True)
-class ScriptFile:
-    """A single file within an Apps Script project."""
-
-    name: str
-    type: str  # SERVER_JS, HTML, or JSON
-    source: str
-    create_time: str = ""
-    update_time: str = ""
-
-
-@dataclass(frozen=True)
-class ProjectMetadata:
-    """Metadata about an Apps Script project."""
-
-    script_id: str
-    title: str
-    parent_id: str = ""  # Non-empty for bound scripts
-    create_time: str = ""
-    update_time: str = ""
-    raw: dict[str, Any] = field(default_factory=dict)
-
-
-@dataclass(frozen=True)
-class ProjectContent:
-    """Content of an Apps Script project (all files)."""
-
-    script_id: str
-    files: tuple[ScriptFile, ...]
-    raw: dict[str, Any] = field(default_factory=dict)
+# --- Data classes (client-specific) ---
 
 
 @dataclass
@@ -99,56 +72,23 @@ class PushResult:
     files_pushed: int = 0
 
 
-# --- Errors ---
-
-
-class ScriptAPIError(Exception):
-    """Base exception for Apps Script API errors."""
-
-
-class AuthenticationError(ScriptAPIError):
-    """Raised when authentication fails (401/403)."""
-
-
-class NotFoundError(ScriptAPIError):
-    """Raised when a script project is not found (404)."""
-
-
-class APIError(ScriptAPIError):
-    """Raised when the API returns an error."""
-
-    def __init__(self, message: str, status_code: int) -> None:
-        super().__init__(message)
-        self.status_code = status_code
-
-
 # --- Client ---
 
 
 class ScriptClient:
     """Client for managing Google Apps Script projects.
 
-    Makes API calls directly via httpx.AsyncClient.
+    Uses a Transport for all API communication.
 
     Example:
-        >>> client = ScriptClient(access_token="ya29...")
+        >>> from extrascript.transport import GoogleAppsScriptTransport
+        >>> transport = GoogleAppsScriptTransport(access_token="ya29...")
+        >>> client = ScriptClient(transport)
         >>> await client.pull("1abc...", Path("./output"))
     """
 
-    def __init__(self, access_token: str) -> None:
-        ssl_context = ssl.create_default_context(cafile=certifi.where())
-        self._client = httpx.AsyncClient(
-            timeout=DEFAULT_TIMEOUT,
-            verify=ssl_context,
-            headers={
-                "Authorization": f"Bearer {access_token}",
-                "Accept": "application/json",
-            },
-        )
-
-    async def close(self) -> None:
-        """Close the underlying HTTP client."""
-        await self._client.aclose()
+    def __init__(self, transport: Transport) -> None:
+        self._transport = transport
 
     # --- Pull ---
 
@@ -185,8 +125,8 @@ class ScriptClient:
         project_dir = output_path / script_id
 
         # Fetch metadata and content
-        metadata = await self._get_project(script_id)
-        content = await self._get_content(script_id)
+        metadata = await self._transport.get_project(script_id)
+        content = await self._transport.get_content(script_id)
 
         written: list[Path] = []
 
@@ -318,7 +258,11 @@ class ScriptClient:
                 script_id=script_id,
             )
 
-        await self._update_content(script_id, script_files)
+        # Convert ScriptFile objects to dicts for transport
+        file_dicts: list[dict[str, Any]] = [
+            {"name": f.name, "type": f.type, "source": f.source} for f in script_files
+        ]
+        await self._transport.update_content(script_id, file_dicts)
 
         # Update pristine to match current state
         self._update_pristine_after_push(folder, current_files)
@@ -367,7 +311,7 @@ class ScriptClient:
         Returns:
             List of paths to written files.
         """
-        metadata = await self._create_project(title, parent_id)
+        metadata = await self._transport.create_project(title, parent_id)
         return await self.pull(metadata.script_id, output_path)
 
     # --- Developer Metadata ---
@@ -383,22 +327,7 @@ class ScriptClient:
             parent_id: The spreadsheet ID.
             script_id: The Apps Script project ID to store.
         """
-        url = f"{SHEETS_API_BASE}/spreadsheets/{parent_id}:batchUpdate"
-        body: dict[str, Any] = {
-            "requests": [
-                {
-                    "createDeveloperMetadata": {
-                        "developerMetadata": {
-                            "metadataKey": "extrascript.scriptId",
-                            "metadataValue": script_id,
-                            "location": {"spreadsheet": True},
-                            "visibility": "PROJECT",
-                        }
-                    }
-                }
-            ]
-        }
-        await self._post(url, body)
+        await self._transport.store_script_metadata(parent_id, script_id)
 
     # --- Lint ---
 
@@ -412,100 +341,6 @@ class ScriptClient:
             LintResult with diagnostics.
         """
         return lint_project(Path(folder))
-
-    # --- Private API methods ---
-
-    async def _get_project(self, script_id: str) -> ProjectMetadata:
-        """Fetch project metadata from Apps Script API."""
-        url = f"{API_BASE}/projects/{script_id}"
-        data = await self._get(url)
-        return _parse_project_metadata(data)
-
-    async def _get_content(self, script_id: str) -> ProjectContent:
-        """Fetch all files in a project from Apps Script API."""
-        url = f"{API_BASE}/projects/{script_id}/content"
-        data = await self._get(url)
-        return _parse_project_content(script_id, data)
-
-    async def _update_content(
-        self, script_id: str, files: list[ScriptFile]
-    ) -> ProjectContent:
-        """Replace all files in a project (atomic operation)."""
-        url = f"{API_BASE}/projects/{script_id}/content"
-        body: dict[str, Any] = {
-            "files": [
-                {"name": f.name, "type": f.type, "source": f.source} for f in files
-            ]
-        }
-        data = await self._put(url, body)
-        return _parse_project_content(script_id, data)
-
-    async def _create_project(
-        self, title: str, parent_id: str | None = None
-    ) -> ProjectMetadata:
-        """Create a new Apps Script project via API."""
-        url = f"{API_BASE}/projects"
-        body: dict[str, str] = {"title": title}
-        if parent_id:
-            body["parentId"] = parent_id
-        data = await self._post(url, body)
-        return _parse_project_metadata(data)
-
-    # --- HTTP helpers ---
-
-    async def _get(self, url: str) -> dict[str, Any]:
-        try:
-            resp = await self._client.get(url)
-            resp.raise_for_status()
-            result: dict[str, Any] = resp.json()
-            return result
-        except httpx.HTTPStatusError as e:
-            self._handle_http_error(e)
-            raise
-        except httpx.RequestError as e:
-            raise ScriptAPIError(f"Network error: {e}") from e
-
-    async def _post(self, url: str, body: dict[str, Any]) -> dict[str, Any]:
-        try:
-            resp = await self._client.post(url, json=body)
-            resp.raise_for_status()
-            result: dict[str, Any] = resp.json()
-            return result
-        except httpx.HTTPStatusError as e:
-            self._handle_http_error(e)
-            raise
-        except httpx.RequestError as e:
-            raise ScriptAPIError(f"Network error: {e}") from e
-
-    async def _put(self, url: str, body: dict[str, Any]) -> dict[str, Any]:
-        try:
-            resp = await self._client.put(url, json=body)
-            resp.raise_for_status()
-            result: dict[str, Any] = resp.json()
-            return result
-        except httpx.HTTPStatusError as e:
-            self._handle_http_error(e)
-            raise
-        except httpx.RequestError as e:
-            raise ScriptAPIError(f"Network error: {e}") from e
-
-    def _handle_http_error(self, e: httpx.HTTPStatusError) -> None:
-        status = e.response.status_code
-        if status == 401:
-            raise AuthenticationError("Invalid or expired access token") from e
-        if status == 403:
-            body = e.response.text
-            raise AuthenticationError(
-                f"Access denied (403): {body}. "
-                "The Apps Script API requires user OAuth tokens "
-                "(service accounts are not supported). Check your scopes."
-            ) from e
-        if status == 404:
-            raise NotFoundError(
-                "Script project not found. Check the script ID and permissions."
-            ) from e
-        body = e.response.text
-        raise APIError(f"API error ({status}): {body}", status_code=status) from e
 
 
 # --- Module-level helpers ---
@@ -574,31 +409,41 @@ def _files_dict_to_script_files(files: dict[str, str]) -> list[ScriptFile]:
     return result
 
 
-def _parse_project_metadata(data: dict[str, Any]) -> ProjectMetadata:
-    return ProjectMetadata(
-        script_id=data.get("scriptId", ""),
-        title=data.get("title", ""),
-        parent_id=data.get("parentId", ""),
-        create_time=data.get("createTime", ""),
-        update_time=data.get("updateTime", ""),
-        raw=data,
-    )
+# --- URL parsing helpers ---
 
 
-def _parse_project_content(script_id: str, data: dict[str, Any]) -> ProjectContent:
-    files: list[ScriptFile] = []
-    for f in data.get("files", []):
-        files.append(
-            ScriptFile(
-                name=f.get("name", ""),
-                type=f.get("type", "SERVER_JS"),
-                source=f.get("source", ""),
-                create_time=f.get("createTime", ""),
-                update_time=f.get("updateTime", ""),
-            )
-        )
-    return ProjectContent(
-        script_id=data.get("scriptId", script_id),
-        files=tuple(files),
-        raw=data,
-    )
+def parse_script_id(id_or_url: str) -> str:
+    """Extract script ID from a URL or return as-is.
+
+    Supports URLs like:
+      https://script.google.com/d/SCRIPT_ID/edit
+      https://script.google.com/home/projects/SCRIPT_ID/edit
+    """
+    patterns = [
+        r"script\.google\.com/d/([a-zA-Z0-9_-]+)",
+        r"script\.google\.com/home/projects/([a-zA-Z0-9_-]+)",
+        r"script\.google\.com/macros/d/([a-zA-Z0-9_-]+)",
+    ]
+    for pattern in patterns:
+        match = re.search(pattern, id_or_url)
+        if match:
+            return match.group(1)
+    return id_or_url
+
+
+def parse_file_id(id_or_url: str) -> str:
+    """Extract Google Drive file ID from a URL or return as-is.
+
+    Supports Sheets, Docs, Slides, and Forms URLs.
+    """
+    patterns = [
+        r"docs\.google\.com/spreadsheets/d/([a-zA-Z0-9_-]+)",
+        r"docs\.google\.com/document/d/([a-zA-Z0-9_-]+)",
+        r"docs\.google\.com/presentation/d/([a-zA-Z0-9_-]+)",
+        r"docs\.google\.com/forms/d/([a-zA-Z0-9_-]+)",
+    ]
+    for pattern in patterns:
+        match = re.search(pattern, id_or_url)
+        if match:
+            return match.group(1)
+    return id_or_url

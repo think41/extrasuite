@@ -203,7 +203,7 @@ class TestDiffEngine:
         """Document with TOC should produce no spurious diffs when unchanged."""
         engine = DiffEngine()
         xml = _make_doc(
-            "<p>Before</p>" "<toc><p>Chapter 1</p><p>Chapter 2</p></toc>" "<p>After</p>"
+            "<p>Before</p><toc><p>Chapter 1</p><p>Chapter 2</p></toc><p>After</p>"
         )
         requests, _tree = engine.diff(xml, xml)
         assert requests == []
@@ -211,12 +211,8 @@ class TestDiffEngine:
     def test_toc_with_content_change_after(self):
         """Content change after TOC should use correct indexes."""
         engine = DiffEngine()
-        pristine = _make_doc(
-            "<p>Before</p>" "<toc><p>Chapter 1</p></toc>" "<p>After</p>"
-        )
-        current = _make_doc(
-            "<p>Before</p>" "<toc><p>Chapter 1</p></toc>" "<p>Changed</p>"
-        )
+        pristine = _make_doc("<p>Before</p><toc><p>Chapter 1</p></toc><p>After</p>")
+        current = _make_doc("<p>Before</p><toc><p>Chapter 1</p></toc><p>Changed</p>")
         requests, _tree = engine.diff(pristine, current)
         assert len(requests) > 0
         rt = _req_types(requests)
@@ -227,7 +223,7 @@ class TestDiffEngine:
         """Document with equation should produce no spurious diffs when unchanged."""
         engine = DiffEngine()
         xml = _make_doc(
-            '<p><equation length="23"/> This is an equation</p>' "<p>After equation</p>"
+            '<p><equation length="23"/> This is an equation</p><p>After equation</p>'
         )
         requests, _tree = engine.diff(xml, xml)
         assert requests == []
@@ -235,8 +231,8 @@ class TestDiffEngine:
     def test_equation_content_change_after(self):
         """Content change after equation paragraph should use correct indexes."""
         engine = DiffEngine()
-        pristine = _make_doc('<p><equation length="23"/> eq</p>' "<p>Original</p>")
-        current = _make_doc('<p><equation length="23"/> eq</p>' "<p>Changed</p>")
+        pristine = _make_doc('<p><equation length="23"/> eq</p><p>Original</p>')
+        current = _make_doc('<p><equation length="23"/> eq</p><p>Changed</p>')
         requests, _tree = engine.diff(pristine, current)
         assert len(requests) > 0
         rt = _req_types(requests)
