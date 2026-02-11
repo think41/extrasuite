@@ -22,6 +22,17 @@ manager = CredentialsManager(
 
 # Service account file (no server needed)
 manager = CredentialsManager(service_account_path="/path/to/sa.json")
+
+# Custom gateway.json path (raises FileNotFoundError if missing)
+manager = CredentialsManager(gateway_config_path="/path/to/gateway.json")
+
+# Explicit delegation URLs (for domain-wide delegation)
+manager = CredentialsManager(
+    auth_url="https://server.example.com/api/token/auth",
+    exchange_url="https://server.example.com/api/token/exchange",
+    delegation_auth_url="https://server.example.com/api/delegation/auth",
+    delegation_exchange_url="https://server.example.com/api/delegation/exchange",
+)
 ```
 
 ### get_token() -> Token
@@ -55,6 +66,25 @@ token = manager.get_oauth_token(
 
 **How it works:** Same browser-based OAuth flow, but the server uses domain-wide delegation to generate a token that acts as the authenticated user (not as a service account). Cached separately in `~/.config/extrasuite/oauth_token.json` with scope-aware invalidation.
 
+## CLI
+
+The unified CLI is stateless - auth parameters are passed on each command:
+
+```bash
+# Using gateway.json for authentication
+extrasuite sheet pull --gateway /path/to/gateway.json <url>
+
+# Using service account
+extrasuite sheet pull --service-account /path/to/sa.json <url>
+
+# Default: uses env vars or ~/.config/extrasuite/gateway.json
+extrasuite sheet pull <url>
+
+# Offline commands (no auth needed)
+extrasuite sheet diff <folder>
+extrasuite script lint <folder>
+```
+
 ## When to use which
 
 | Use case | Method | Token type |
@@ -66,10 +96,24 @@ token = manager.get_oauth_token(
 
 ## Configuration precedence
 
-1. Constructor parameters (`auth_url`, `exchange_url`)
-2. Environment variables (`EXTRASUITE_AUTH_URL`, `EXTRASUITE_EXCHANGE_URL`)
+1. Constructor parameters (`auth_url`, `exchange_url`, `delegation_auth_url`, `delegation_exchange_url`, `gateway_config_path`, `service_account_path`)
+2. Environment variables (`EXTRASUITE_SERVER_URL`, `EXTRASUITE_AUTH_URL`, `EXTRASUITE_EXCHANGE_URL`, `EXTRASUITE_DELEGATION_AUTH_URL`, `EXTRASUITE_DELEGATION_EXCHANGE_URL`)
 3. `~/.config/extrasuite/gateway.json`
-4. `SERVICE_ACCOUNT_PATH` env var or `service_account_path` param (fallback, no server needed)
+4. `SERVICE_ACCOUNT_PATH` env var (fallback, no server needed)
+
+## gateway.json format
+
+```json
+{"EXTRASUITE_SERVER_URL": "https://your-server.example.com"}
+```
+
+From `EXTRASUITE_SERVER_URL`, the following are derived:
+- `{server}/api/token/auth`
+- `{server}/api/token/exchange`
+- `{server}/api/delegation/auth`
+- `{server}/api/delegation/exchange`
+
+Explicit URL keys (`EXTRASUITE_AUTH_URL`, `EXTRASUITE_EXCHANGE_URL`, `EXTRASUITE_DELEGATION_AUTH_URL`, `EXTRASUITE_DELEGATION_EXCHANGE_URL`) override server-derived values.
 
 ## Development
 

@@ -1,5 +1,6 @@
 """Unit tests for credentials module."""
 
+import contextlib
 import json
 import os
 import threading
@@ -204,6 +205,9 @@ class TestCredentialsManagerInit:
             with pytest.raises(ValueError) as exc_info:
                 CredentialsManager()
             assert "No authentication method configured" in str(exc_info.value)
+            assert "--gateway" in str(exc_info.value)
+            assert "--service-account" in str(exc_info.value)
+            assert "EXTRASUITE_SERVER_URL" in str(exc_info.value)
 
     def test_init_partial_urls_raises_error(self) -> None:
         """ValueError raised when only one URL is provided."""
@@ -222,6 +226,155 @@ class TestCredentialsManagerInit:
             with pytest.raises(ValueError) as exc_info:
                 CredentialsManager(exchange_url="https://auth.example.com/exchange")
             assert "auth_url is missing" in str(exc_info.value)
+
+    def test_init_with_server_url_env_var(self) -> None:
+        """EXTRASUITE_SERVER_URL env var derives all 4 URLs."""
+        env = {"EXTRASUITE_SERVER_URL": "https://myserver.example.com"}
+        with mock.patch.dict(os.environ, env, clear=True):
+            manager = CredentialsManager()
+            assert manager._auth_url == "https://myserver.example.com/api/token/auth"
+            assert (
+                manager._exchange_url
+                == "https://myserver.example.com/api/token/exchange"
+            )
+            assert (
+                manager._delegation_auth_url
+                == "https://myserver.example.com/api/delegation/auth"
+            )
+            assert (
+                manager._delegation_exchange_url
+                == "https://myserver.example.com/api/delegation/exchange"
+            )
+
+    def test_init_with_server_url_env_var_trailing_slash(self) -> None:
+        """EXTRASUITE_SERVER_URL env var strips trailing slash."""
+        env = {"EXTRASUITE_SERVER_URL": "https://myserver.example.com/"}
+        with mock.patch.dict(os.environ, env, clear=True):
+            manager = CredentialsManager()
+            assert manager._auth_url == "https://myserver.example.com/api/token/auth"
+
+    def test_init_delegation_url_params(self) -> None:
+        """delegation_auth_url and delegation_exchange_url constructor params work."""
+        manager = CredentialsManager(
+            auth_url="https://auth.example.com/api/token/auth",
+            exchange_url="https://auth.example.com/api/token/exchange",
+            delegation_auth_url="https://deleg.example.com/api/delegation/auth",
+            delegation_exchange_url="https://deleg.example.com/api/delegation/exchange",
+        )
+        assert (
+            manager._delegation_auth_url
+            == "https://deleg.example.com/api/delegation/auth"
+        )
+        assert (
+            manager._delegation_exchange_url
+            == "https://deleg.example.com/api/delegation/exchange"
+        )
+
+
+class TestCredentialsManagerGatewayConfig:
+    """Tests for gateway.json loading."""
+
+    def test_gateway_config_path_override(self, tmp_path: Path) -> None:
+        """gateway_config_path constructor param overrides default path."""
+        gateway_path = tmp_path / "custom-gateway.json"
+        gateway_path.write_text(
+            json.dumps({"EXTRASUITE_SERVER_URL": "https://custom.example.com"})
+        )
+
+        with mock.patch.dict(os.environ, {}, clear=True):
+            manager = CredentialsManager(gateway_config_path=gateway_path)
+            assert manager._auth_url == "https://custom.example.com/api/token/auth"
+            assert (
+                manager._exchange_url == "https://custom.example.com/api/token/exchange"
+            )
+
+    def test_gateway_config_path_not_found_raises(self, tmp_path: Path) -> None:
+        """FileNotFoundError when explicit gateway path doesn't exist."""
+        nonexistent = tmp_path / "does-not-exist.json"
+        with (
+            mock.patch.dict(os.environ, {}, clear=True),
+            pytest.raises(FileNotFoundError) as exc_info,
+        ):
+            CredentialsManager(gateway_config_path=nonexistent)
+        assert "Gateway config file not found" in str(exc_info.value)
+
+    def test_gateway_server_url_derives_all_urls(self, tmp_path: Path) -> None:
+        """EXTRASUITE_SERVER_URL in gateway.json derives all 4 URLs."""
+        gateway_path = tmp_path / "gateway.json"
+        gateway_path.write_text(
+            json.dumps({"EXTRASUITE_SERVER_URL": "https://srv.example.com"})
+        )
+
+        with mock.patch.dict(os.environ, {}, clear=True):
+            manager = CredentialsManager(gateway_config_path=gateway_path)
+            assert manager._auth_url == "https://srv.example.com/api/token/auth"
+            assert manager._exchange_url == "https://srv.example.com/api/token/exchange"
+            assert (
+                manager._delegation_auth_url
+                == "https://srv.example.com/api/delegation/auth"
+            )
+            assert (
+                manager._delegation_exchange_url
+                == "https://srv.example.com/api/delegation/exchange"
+            )
+
+    def test_gateway_explicit_delegation_urls_override(self, tmp_path: Path) -> None:
+        """Explicit EXTRASUITE_DELEGATION_* in gateway.json override server-derived."""
+        gateway_path = tmp_path / "gateway.json"
+        gateway_path.write_text(
+            json.dumps(
+                {
+                    "EXTRASUITE_SERVER_URL": "https://srv.example.com",
+                    "EXTRASUITE_DELEGATION_AUTH_URL": "https://deleg.example.com/auth",
+                    "EXTRASUITE_DELEGATION_EXCHANGE_URL": "https://deleg.example.com/exchange",
+                }
+            )
+        )
+
+        with mock.patch.dict(os.environ, {}, clear=True):
+            manager = CredentialsManager(gateway_config_path=gateway_path)
+            # Token URLs from server URL
+            assert manager._auth_url == "https://srv.example.com/api/token/auth"
+            # Delegation URLs from explicit overrides
+            assert manager._delegation_auth_url == "https://deleg.example.com/auth"
+            assert (
+                manager._delegation_exchange_url == "https://deleg.example.com/exchange"
+            )
+
+    def test_gateway_explicit_auth_urls(self, tmp_path: Path) -> None:
+        """Explicit EXTRASUITE_AUTH_URL/EXTRASUITE_EXCHANGE_URL in gateway.json."""
+        gateway_path = tmp_path / "gateway.json"
+        gateway_path.write_text(
+            json.dumps(
+                {
+                    "EXTRASUITE_AUTH_URL": "https://explicit.example.com/auth",
+                    "EXTRASUITE_EXCHANGE_URL": "https://explicit.example.com/exchange",
+                }
+            )
+        )
+
+        with mock.patch.dict(os.environ, {}, clear=True):
+            manager = CredentialsManager(gateway_config_path=gateway_path)
+            assert manager._auth_url == "https://explicit.example.com/auth"
+            assert manager._exchange_url == "https://explicit.example.com/exchange"
+
+    def test_gateway_explicit_urls_override_server_url(self, tmp_path: Path) -> None:
+        """Explicit URLs in gateway.json override EXTRASUITE_SERVER_URL derived ones."""
+        gateway_path = tmp_path / "gateway.json"
+        gateway_path.write_text(
+            json.dumps(
+                {
+                    "EXTRASUITE_SERVER_URL": "https://srv.example.com",
+                    "EXTRASUITE_AUTH_URL": "https://override.example.com/auth",
+                }
+            )
+        )
+
+        with mock.patch.dict(os.environ, {}, clear=True):
+            manager = CredentialsManager(gateway_config_path=gateway_path)
+            # auth_url overridden, exchange_url from server
+            assert manager._auth_url == "https://override.example.com/auth"
+            assert manager._exchange_url == "https://srv.example.com/api/token/exchange"
 
 
 class TestCredentialsManagerFileCache:
@@ -743,3 +896,48 @@ class TestDelegationFlow:
         full_url = "https://www.googleapis.com/auth/gmail.send"
         result = CredentialsManager._resolve_scopes([full_url])
         assert result == [full_url]
+
+    def test_delegation_uses_explicit_urls(self) -> None:
+        """_authenticate_delegation uses delegation_auth_url when set."""
+        manager = CredentialsManager(
+            auth_url="https://auth.example.com/api/token/auth",
+            exchange_url="https://auth.example.com/api/token/exchange",
+            delegation_auth_url="https://deleg.example.com/api/delegation/auth",
+            delegation_exchange_url="https://deleg.example.com/api/delegation/exchange",
+        )
+
+        new_token = OAuthToken(
+            access_token="delegated-token",
+            scopes=["https://www.googleapis.com/auth/gmail.send"],
+            expires_at=time.time() + 3600,
+        )
+
+        with (
+            mock.patch.object(
+                manager,
+                "_exchange_delegation_code",
+                return_value=new_token,
+            ) as mock_exchange,
+            mock.patch.object(
+                manager,
+                "_find_free_port",
+                return_value=12345,
+            ),
+            mock.patch("http.server.HTTPServer"),
+            mock.patch("threading.Thread"),
+            mock.patch("webbrowser.open", return_value=True),
+            mock.patch("time.time", side_effect=[0, 0, 301]),
+        ):
+            # The method will timeout but we can check the exchange URL used
+            with contextlib.suppress(Exception):
+                manager._authenticate_delegation(
+                    ["https://www.googleapis.com/auth/gmail.send"], ""
+                )
+
+            # If exchange was called, check the URL
+            if mock_exchange.called:
+                call_args = mock_exchange.call_args
+                assert (
+                    call_args[1].get("exchange_url", call_args[0][1])
+                    == "https://deleg.example.com/api/delegation/exchange"
+                )

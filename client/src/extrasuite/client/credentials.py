@@ -127,34 +127,20 @@ class CredentialsManager:
     2. Service account file - uses credentials from a JSON key file
 
     Precedence order for configuration:
-    1. auth_url/exchange_url constructor parameters
-    2. EXTRASUITE_AUTH_URL/EXTRASUITE_EXCHANGE_URL environment variables
+    1. Constructor parameters
+    2. Environment variables (EXTRASUITE_SERVER_URL, EXTRASUITE_AUTH_URL, etc.)
     3. ~/.config/extrasuite/gateway.json (created by install script)
-    4. service_account_path constructor parameter
-    5. SERVICE_ACCOUNT_PATH environment variable
-
-    Tokens are cached in ~/.config/extrasuite/token.json with secure file
-    permissions (readable only by owner). This follows the same pattern used
-    by gcloud, aws-cli, and other CLI tools that store short-lived tokens.
+    4. service_account_path constructor parameter / SERVICE_ACCOUNT_PATH env var
 
     Args:
         auth_url: URL to start authentication (e.g., "https://server.com/api/token/auth").
-            The port parameter will be appended as a query string.
-        exchange_url: URL to exchange auth code for token (e.g., "https://server.com/api/token/exchange").
+        exchange_url: URL to exchange auth code for token.
+        delegation_auth_url: URL for delegation auth flow.
+        delegation_exchange_url: URL to exchange delegation auth code.
         service_account_path: Path to service account JSON file (optional).
         token_cache_path: Path to cache tokens. Defaults to ~/.config/extrasuite/token.json
-
-    Example:
-        # Using explicit URLs
-        manager = CredentialsManager(
-            auth_url="https://auth.example.com/api/token/auth",
-            exchange_url="https://auth.example.com/api/token/exchange",
-        )
-        token = manager.get_token()
-
-        # Using service account file
-        manager = CredentialsManager(service_account_path="/path/to/sa.json")
-        token = manager.get_token()
+        gateway_config_path: Path to gateway.json. Defaults to ~/.config/extrasuite/gateway.json.
+            If explicitly set and file doesn't exist, raises FileNotFoundError.
     """
 
     DEFAULT_CACHE_PATH = Path.home() / ".config" / "extrasuite" / "token.json"
@@ -165,32 +151,61 @@ class CredentialsManager:
         self,
         auth_url: str | None = None,
         exchange_url: str | None = None,
+        delegation_auth_url: str | None = None,
+        delegation_exchange_url: str | None = None,
         service_account_path: str | Path | None = None,
         token_cache_path: str | Path | None = None,
+        gateway_config_path: str | Path | None = None,
     ) -> None:
-        """Initialize the credentials manager.
+        # Store explicit gateway path (used by _load_gateway_config)
+        self._gateway_config_path = (
+            Path(gateway_config_path) if gateway_config_path else None
+        )
 
-        Args:
-            auth_url: URL to start authentication flow.
-            exchange_url: URL to exchange auth code for token.
-            service_account_path: Path to service account JSON file.
-            token_cache_path: Path to cache tokens.
-
-        Raises:
-            ValueError: If neither auth_url/exchange_url nor service_account_path
-                is provided (via constructor, environment variables, or gateway.json).
-        """
         # Resolve configuration with precedence: constructor > env var > gateway.json
         self._auth_url = auth_url or os.environ.get("EXTRASUITE_AUTH_URL")
         self._exchange_url = exchange_url or os.environ.get("EXTRASUITE_EXCHANGE_URL")
+        self._delegation_auth_url = delegation_auth_url or os.environ.get(
+            "EXTRASUITE_DELEGATION_AUTH_URL"
+        )
+        self._delegation_exchange_url = delegation_exchange_url or os.environ.get(
+            "EXTRASUITE_DELEGATION_EXCHANGE_URL"
+        )
+
+        # Check EXTRASUITE_SERVER_URL env var (derives all 4 URLs)
+        server_url_env = os.environ.get("EXTRASUITE_SERVER_URL")
+        if server_url_env:
+            server_url_env = server_url_env.rstrip("/")
+            if not self._auth_url:
+                self._auth_url = f"{server_url_env}/api/token/auth"
+            if not self._exchange_url:
+                self._exchange_url = f"{server_url_env}/api/token/exchange"
+            if not self._delegation_auth_url:
+                self._delegation_auth_url = f"{server_url_env}/api/delegation/auth"
+            if not self._delegation_exchange_url:
+                self._delegation_exchange_url = (
+                    f"{server_url_env}/api/delegation/exchange"
+                )
 
         # If not set, try gateway.json
-        if not self._auth_url or not self._exchange_url:
+        if (
+            not self._auth_url
+            or not self._exchange_url
+            or not self._delegation_auth_url
+            or not self._delegation_exchange_url
+        ):
             gateway_urls = self._load_gateway_config()
             if gateway_urls:
                 self._auth_url = self._auth_url or gateway_urls.get("auth_url")
                 self._exchange_url = self._exchange_url or gateway_urls.get(
                     "exchange_url"
+                )
+                self._delegation_auth_url = (
+                    self._delegation_auth_url or gateway_urls.get("delegation_auth_url")
+                )
+                self._delegation_exchange_url = (
+                    self._delegation_exchange_url
+                    or gateway_urls.get("delegation_exchange_url")
                 )
 
         sa_path = service_account_path or os.environ.get("SERVICE_ACCOUNT_PATH")
@@ -207,10 +222,13 @@ class CredentialsManager:
             )
         if not has_extrasuite and not self._sa_path:
             raise ValueError(
-                "No authentication method configured. "
-                "Set EXTRASUITE_AUTH_URL and EXTRASUITE_EXCHANGE_URL environment variables, "
-                "install skills via the ExtraSuite website (creates gateway.json), "
-                "or pass auth_url/exchange_url or service_account_path to constructor."
+                "No authentication method configured.\n\n"
+                "Fix with ONE of these options:\n"
+                "  1. Pass --gateway /path/to/gateway.json (contains server URLs)\n"
+                "  2. Pass --service-account /path/to/sa.json (direct Google credentials)\n"
+                "  3. Set EXTRASUITE_SERVER_URL environment variable\n"
+                "  4. Create ~/.config/extrasuite/gateway.json with:\n"
+                '     {"EXTRASUITE_SERVER_URL": "https://your-server.example.com"}'
             )
 
         # ExtraSuite protocol takes precedence if both are configured
@@ -361,43 +379,53 @@ class CredentialsManager:
     def _load_gateway_config(self) -> dict[str, str] | None:
         """Load endpoint URLs from gateway.json if it exists.
 
-        The gateway.json file is created by the install script and contains
-        the authentication endpoint URLs configured during skill installation.
-
-        Supports both formats:
-        - New format: EXTRASUITE_AUTH_URL and EXTRASUITE_EXCHANGE_URL
-        - Legacy format: EXTRASUITE_SERVER_URL (deprecated, will derive URLs)
+        Supports these formats in gateway.json:
+        - EXTRASUITE_SERVER_URL: Derives all 4 endpoints (preferred)
+        - EXTRASUITE_AUTH_URL / EXTRASUITE_EXCHANGE_URL: Explicit token URLs
+        - EXTRASUITE_DELEGATION_AUTH_URL / EXTRASUITE_DELEGATION_EXCHANGE_URL: Explicit delegation URLs
 
         Returns:
-            Dictionary with 'auth_url' and 'exchange_url' if gateway.json exists
-            and is valid, None otherwise.
+            Dictionary with up to 4 URL keys, or None if file not found.
+
+        Raises:
+            FileNotFoundError: If explicit gateway_config_path was set and doesn't exist.
         """
-        if not self.GATEWAY_CONFIG_PATH.exists():
+        config_path = self._gateway_config_path or self.GATEWAY_CONFIG_PATH
+
+        if self._gateway_config_path and not config_path.exists():
+            raise FileNotFoundError(f"Gateway config file not found: {config_path}")
+
+        if not config_path.exists():
             return None
         try:
-            data = json.loads(self.GATEWAY_CONFIG_PATH.read_text())
+            data = json.loads(config_path.read_text())
 
-            # Check for new format first
-            auth_url = data.get("EXTRASUITE_AUTH_URL")
-            exchange_url = data.get("EXTRASUITE_EXCHANGE_URL")
+            result: dict[str, str] = {}
 
-            # Fall back to legacy EXTRASUITE_SERVER_URL format
-            if not auth_url or not exchange_url:
-                server_url = data.get("EXTRASUITE_SERVER_URL")
-                if server_url:
-                    # Remove trailing slash if present
-                    server_url = server_url.rstrip("/")
-                    auth_url = f"{server_url}/api/token/auth"
-                    exchange_url = f"{server_url}/api/token/exchange"
-                    print(
-                        "Warning: gateway.json uses deprecated EXTRASUITE_SERVER_URL format. "
-                        "Please update to use EXTRASUITE_AUTH_URL and EXTRASUITE_EXCHANGE_URL."
-                    )
+            # Derive from EXTRASUITE_SERVER_URL if present
+            server_url = data.get("EXTRASUITE_SERVER_URL")
+            if server_url:
+                server_url = server_url.rstrip("/")
+                result["auth_url"] = f"{server_url}/api/token/auth"
+                result["exchange_url"] = f"{server_url}/api/token/exchange"
+                result["delegation_auth_url"] = f"{server_url}/api/delegation/auth"
+                result["delegation_exchange_url"] = (
+                    f"{server_url}/api/delegation/exchange"
+                )
 
-            return {
-                "auth_url": auth_url,
-                "exchange_url": exchange_url,
-            }
+            # Explicit URLs override server-derived values
+            if data.get("EXTRASUITE_AUTH_URL"):
+                result["auth_url"] = data["EXTRASUITE_AUTH_URL"]
+            if data.get("EXTRASUITE_EXCHANGE_URL"):
+                result["exchange_url"] = data["EXTRASUITE_EXCHANGE_URL"]
+            if data.get("EXTRASUITE_DELEGATION_AUTH_URL"):
+                result["delegation_auth_url"] = data["EXTRASUITE_DELEGATION_AUTH_URL"]
+            if data.get("EXTRASUITE_DELEGATION_EXCHANGE_URL"):
+                result["delegation_exchange_url"] = data[
+                    "EXTRASUITE_DELEGATION_EXCHANGE_URL"
+                ]
+
+            return result if result else None
         except (json.JSONDecodeError, OSError):
             return None
 
@@ -481,10 +509,18 @@ class CredentialsManager:
         if not self._auth_url:
             raise ValueError("ExtraSuite server not configured")
 
-        # Derive delegation URLs from existing auth URL base
-        base_url = self._auth_url.rsplit("/api/", 1)[0]
-        delegation_auth_url = f"{base_url}/api/delegation/auth"
-        delegation_exchange_url = f"{base_url}/api/delegation/exchange"
+        # Use explicit delegation URLs if set, otherwise derive from auth URL base
+        if self._delegation_auth_url:
+            delegation_auth_url = self._delegation_auth_url
+        else:
+            base_url = self._auth_url.rsplit("/api/", 1)[0]
+            delegation_auth_url = f"{base_url}/api/delegation/auth"
+
+        if self._delegation_exchange_url:
+            delegation_exchange_url = self._delegation_exchange_url
+        else:
+            base_url = self._auth_url.rsplit("/api/", 1)[0]
+            delegation_exchange_url = f"{base_url}/api/delegation/exchange"
 
         port = self._find_free_port()
 
