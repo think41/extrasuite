@@ -2,6 +2,20 @@
 
 All notable changes to the extrasuite client library will be documented in this file.
 
+## [0.5.0] - 2026-02-11
+
+### Breaking Changes
+
+- Removed `login`/`logout` commands. Authentication is now stateless via per-command flags.
+
+### Added
+
+- Unified CLI with `extrasuite sheet/slide/form/doc/script pull/diff/push` subcommands.
+- `--gateway` and `--service-account` flags on pull/push/create commands for per-command auth.
+- Rich help text with folder layouts per module.
+- `extrasuite` console script entry point.
+- Now depends on all 5 modules (extrasheet, extraslide, extraform, extrascript, extradoc) at `>=0.2.0`.
+
 ## [0.4.0] - 2026-02-10
 
 ### Breaking Changes
