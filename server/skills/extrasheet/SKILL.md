@@ -1,3 +1,8 @@
+---
+name: extrasheet
+description: Read, write, and manipulate Google Sheets. Use when user asks to work with Google Sheets, spreadsheets, or shares a docs.google.com/spreadsheets URL.
+---
+
 # ExtraSheet Agent Guide
 
 Edit Google Sheets via local files using the pull-edit-diff-push workflow.
@@ -5,10 +10,10 @@ Edit Google Sheets via local files using the pull-edit-diff-push workflow.
 ## Workflow
 
 ```bash
-uv run python -m extrasheet pull <url> <root-folder>    # Download spreadsheet to <root-folder>/<spreadsheet_id>/
-# ... edit files in <root-folder>/<spreadsheet_id>/
-uv run python -m extrasheet push <root-folder>/<spreadsheet_id>   # Apply changes to Google Sheets
-uv run python -m extrasheet diff <root-folder>/<spreadsheet_id>   # Preview changes (dry run)
+uvx extrasuite sheet pull <url> [output_dir]              # Download spreadsheet to <output_dir>/<spreadsheet_id>/
+# ... edit files in <output_dir>/<spreadsheet_id>/
+uvx extrasuite sheet diff <output_dir>/<spreadsheet_id>   # Preview changes (dry run)
+uvx extrasuite sheet push <output_dir>/<spreadsheet_id>   # Apply changes to Google Sheets
 ```
 
 **After push, always re-pull before making more changes** — the pristine state is not auto-updated.
@@ -185,7 +190,7 @@ All of these can be done in a single push:
    ```json
    {"title": "New Sheet Title", "folder": "<NewSheet>", "sheetType": "GRID"}
    ```
-5. Run `extrasheet push`
+5. Run `uvx extrasuite sheet push <folder>`
 
 The diff engine automatically generates `addSheet` before any content updates, so everything works in one push. No need to create the sheet first and re-pull.
 
@@ -193,7 +198,7 @@ The diff engine automatically generates `addSheet` before any content updates, s
 
 1. Remove the sheet's entry from `spreadsheet.json` → `sheets[]`
 2. Remove the sheet's folder from disk
-3. Run `extrasheet push`
+3. Run `uvx extrasuite sheet push <folder>`
 
 Both steps (1 and 2) are required. The diff detects deletion by comparing the sheet list in `spreadsheet.json` against the pristine copy.
 

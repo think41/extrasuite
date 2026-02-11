@@ -12,8 +12,8 @@ Common issues, API limitations, and debugging tips for extradoc.
 
 **Fix:** Always re-pull after push:
 ```bash
-uv run python -m extradoc push <folder>
-uv run python -m extradoc pull <url> <folder>    # Re-pull to refresh pristine state
+uvx extrasuite doc push <folder>
+uvx extrasuite doc pull <url> <folder>    # Re-pull to refresh pristine state
 # Now safe to edit again
 ```
 
@@ -23,9 +23,9 @@ uv run python -m extradoc pull <url> <folder>    # Re-pull to refresh pristine s
 
 **Fix:** Re-pull to get a fresh copy:
 ```bash
-uv run python -m extradoc pull <url> <folder>
+uvx extrasuite doc pull <url> <folder>
 # Make your edits again on the fresh copy
-uv run python -m extradoc push <folder>
+uvx extrasuite doc push <folder>
 ```
 
 ### "Horizontal rule count changed" error
@@ -93,7 +93,7 @@ These are hard limits of the Google Docs API. No workaround is available.
 Use `diff` as a dry run to preview what push will do:
 
 ```bash
-uv run python -m extradoc diff <folder>
+uvx extrasuite doc diff <folder>
 ```
 
 This outputs the `batchUpdate` JSON that would be sent to the API. Review it to verify:
@@ -103,7 +103,7 @@ This outputs the `batchUpdate` JSON that would be sent to the API. Review it to 
 
 Save diff output for comparison:
 ```bash
-uv run python -m extradoc diff <folder> > diff-output.json
+uvx extrasuite doc diff <folder> > diff-output.json
 ```
 
 ---
@@ -230,4 +230,4 @@ When push doesn't work as expected:
 4. **Are all table cells present?** Even merged cells need physical `<td>` elements.
 5. **Did you add/remove an `<hr/>`?** This is not supported.
 6. **Does your style exist?** Check that the `class` value maps to a `<style>` in `styles.xml`.
-7. **Run `uv run python -m extradoc diff`** to preview what will be pushed and look for unexpected changes.
+7. **Run `uvx extrasuite doc diff`** to preview what will be pushed and look for unexpected changes.

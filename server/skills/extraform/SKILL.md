@@ -1,3 +1,8 @@
+---
+name: extraform
+description: Create and edit Google Forms. Use when user asks to work with Google Forms, surveys, or shares a docs.google.com/forms URL.
+---
+
 # ExtraForm Agent Guide
 
 Create and edit Google Forms (questions, quizzes, sections) via local files using the pull-edit-diff-push workflow.
@@ -5,10 +10,10 @@ Create and edit Google Forms (questions, quizzes, sections) via local files usin
 ## Workflow
 
 ```bash
-uv run python -m extraform pull <url> <root-folder>    # Download form to <root-folder>/<form_id>/
-# ... edit form.json in <root-folder>/<form_id>/
-uv run python -m extraform diff <root-folder>/<form_id>   # Preview changes (dry run)
-uv run python -m extraform push <root-folder>/<form_id>   # Apply changes to Google Forms
+uvx extrasuite form pull <url> [output_dir]              # Download form to <output_dir>/<form_id>/
+# ... edit form.json in <output_dir>/<form_id>/
+uvx extrasuite form diff <output_dir>/<form_id>          # Preview changes (dry run)
+uvx extrasuite form push <output_dir>/<form_id>          # Apply changes to Google Forms
 ```
 
 **After push, always re-pull before making more changes** — the pristine state is not auto-updated.

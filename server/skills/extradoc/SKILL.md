@@ -10,10 +10,10 @@ Edit Google Docs via local XML files using the pull-edit-push workflow.
 ## Workflow
 
 ```bash
-uv run python -m extradoc pull <url> <folder>      # Download document to local folder
-# <folder> now has document.xml and styles.xml that you can edit
-uv run python -m extradoc push <folder>    # Changes you made to document.xml and styles.xml are pushed back to the google document
-uv run python -m extradoc diff <folder>    # See a diff of your changes, only for debugging — not required for push
+uvx extrasuite doc pull <url> [output_dir]    # Download document to local folder
+# <output_dir>/<document_id>/ now has document.xml and styles.xml that you can edit
+uvx extrasuite doc diff <folder>              # Preview changes (dry run)
+uvx extrasuite doc push <folder>              # Push changes back to the Google document
 ```
 
 **Always re-pull after push** — the `.pristine/` state is not auto-updated.

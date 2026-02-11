@@ -265,7 +265,9 @@ def cmd_form_pull(args: Any) -> None:
                 max_responses=args.max_responses,
                 save_raw=not args.no_raw,
             )
-            print(f"\nPulled to {result.folder}/")
+            print(
+                f"\nPulled {len(result.files_written)} files to {output_dir / form_id}/"
+            )
         finally:
             await transport.close()
 

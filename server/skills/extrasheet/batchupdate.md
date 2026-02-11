@@ -16,8 +16,8 @@ Most operations work declaratively (edit files → push). Use `batchUpdate` only
 ## Usage
 
 ```bash
-extrasheet batchUpdate <spreadsheet_url_or_id> requests.json
-extrasheet pull <url>  # Always re-pull after batchUpdate
+uvx extrasuite sheet batchUpdate <spreadsheet_url_or_id> requests.json
+uvx extrasuite sheet pull <url>  # Always re-pull after batchUpdate
 ```
 
 **Always re-pull after batchUpdate** — the local state is now stale.
@@ -270,16 +270,16 @@ When combining structural and content changes:
 
 ```bash
 # 1. Structural change via batchUpdate
-extrasheet batchUpdate <url> structural.json
+uvx extrasuite sheet batchUpdate <url> structural.json
 
 # 2. Re-pull to get updated state
-extrasheet pull <url>
+uvx extrasuite sheet pull <url>
 
 # 3. Make content changes declaratively
 # ... edit files ...
 
 # 4. Push content changes
-extrasheet push <folder>
+uvx extrasuite sheet push <folder>
 ```
 
 ---
