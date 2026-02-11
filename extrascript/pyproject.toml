@@ -4,7 +4,7 @@ build-backend = "hatchling.build"
 
 [project]
 name = "extrascript"
-version = "0.2.0"
+version = "0.2.1"
 requires-python = ">=3.10"
 description = "Google Apps Script management for LLM agents - pull, edit, push, and lint"
 readme = "README.md"

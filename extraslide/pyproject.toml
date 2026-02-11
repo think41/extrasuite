@@ -1,6 +1,6 @@
 [project]
 name = "extraslide"
-version = "0.2.0"
+version = "0.2.1"
 description = "A Python library that simplifies editing Google Slides through an HTML-like abstraction"
 readme = "README.md"
 license = "MIT"
