@@ -2206,3 +2206,424 @@ class TestGenerateDataSourceTableRequests:
 
         # Deleting data source tables is not supported via batchUpdate
         assert len(requests) == 0
+
+
+class TestFormatRuleGaps:
+    """Tests for format rule gap fixes: wrapStrategy, padding, textDirection, textRotation, borders, deletion."""
+
+    def test_wrap_strategy_pushed(self) -> None:
+        """Test that wrapStrategy is included in repeatCell."""
+        diff_result = DiffResult(
+            spreadsheet_id="test123",
+            sheet_diffs=[
+                SheetDiff(
+                    sheet_id=0,
+                    sheet_name="Sheet1",
+                    folder_name="Sheet1",
+                    format_rule_changes=[
+                        FormatRuleChange(
+                            range_key="A1:B5",
+                            change_type="added",
+                            old_format=None,
+                            new_format={"wrapStrategy": "WRAP"},
+                        )
+                    ],
+                )
+            ],
+        )
+        requests = generate_requests(diff_result)
+        assert len(requests) == 1
+        cell_format = requests[0]["repeatCell"]["cell"]["userEnteredFormat"]
+        assert cell_format["wrapStrategy"] == "WRAP"
+        assert "wrapStrategy" in requests[0]["repeatCell"]["fields"]
+
+    def test_padding_pushed(self) -> None:
+        """Test that padding is included in repeatCell."""
+        diff_result = DiffResult(
+            spreadsheet_id="test123",
+            sheet_diffs=[
+                SheetDiff(
+                    sheet_id=0,
+                    sheet_name="Sheet1",
+                    folder_name="Sheet1",
+                    format_rule_changes=[
+                        FormatRuleChange(
+                            range_key="A1",
+                            change_type="added",
+                            old_format=None,
+                            new_format={
+                                "padding": {
+                                    "top": 5,
+                                    "bottom": 5,
+                                    "left": 10,
+                                    "right": 10,
+                                }
+                            },
+                        )
+                    ],
+                )
+            ],
+        )
+        requests = generate_requests(diff_result)
+        assert len(requests) == 1
+        cell_format = requests[0]["repeatCell"]["cell"]["userEnteredFormat"]
+        assert cell_format["padding"]["top"] == 5
+        assert "padding" in requests[0]["repeatCell"]["fields"]
+
+    def test_text_direction_pushed(self) -> None:
+        """Test that textDirection is included in repeatCell."""
+        diff_result = DiffResult(
+            spreadsheet_id="test123",
+            sheet_diffs=[
+                SheetDiff(
+                    sheet_id=0,
+                    sheet_name="Sheet1",
+                    folder_name="Sheet1",
+                    format_rule_changes=[
+                        FormatRuleChange(
+                            range_key="A1",
+                            change_type="added",
+                            old_format=None,
+                            new_format={"textDirection": "RIGHT_TO_LEFT"},
+                        )
+                    ],
+                )
+            ],
+        )
+        requests = generate_requests(diff_result)
+        assert len(requests) == 1
+        cell_format = requests[0]["repeatCell"]["cell"]["userEnteredFormat"]
+        assert cell_format["textDirection"] == "RIGHT_TO_LEFT"
+
+    def test_text_rotation_pushed(self) -> None:
+        """Test that textRotation is included in repeatCell."""
+        diff_result = DiffResult(
+            spreadsheet_id="test123",
+            sheet_diffs=[
+                SheetDiff(
+                    sheet_id=0,
+                    sheet_name="Sheet1",
+                    folder_name="Sheet1",
+                    format_rule_changes=[
+                        FormatRuleChange(
+                            range_key="A1",
+                            change_type="added",
+                            old_format=None,
+                            new_format={"textRotation": {"angle": 45}},
+                        )
+                    ],
+                )
+            ],
+        )
+        requests = generate_requests(diff_result)
+        assert len(requests) == 1
+        cell_format = requests[0]["repeatCell"]["cell"]["userEnteredFormat"]
+        assert cell_format["textRotation"]["angle"] == 45
+
+    def test_borders_generate_update_borders_request(self) -> None:
+        """Test that borders generate updateBorders (not repeatCell)."""
+        diff_result = DiffResult(
+            spreadsheet_id="test123",
+            sheet_diffs=[
+                SheetDiff(
+                    sheet_id=0,
+                    sheet_name="Sheet1",
+                    folder_name="Sheet1",
+                    format_rule_changes=[
+                        FormatRuleChange(
+                            range_key="A1:B5",
+                            change_type="added",
+                            old_format=None,
+                            new_format={
+                                "borders": {
+                                    "top": {"style": "SOLID", "color": "#FF0000"},
+                                    "bottom": {"style": "SOLID"},
+                                }
+                            },
+                        )
+                    ],
+                )
+            ],
+        )
+        requests = generate_requests(diff_result)
+        # Should have only updateBorders (no repeatCell since no non-border formats)
+        assert len(requests) == 1
+        assert "updateBorders" in requests[0]
+        borders = requests[0]["updateBorders"]
+        assert borders["top"]["style"] == "SOLID"
+        assert borders["top"]["color"]["red"] == 1.0
+        assert borders["bottom"]["style"] == "SOLID"
+        assert "left" not in borders
+        assert "right" not in borders
+
+    def test_format_with_borders_and_other_props(self) -> None:
+        """Test that borders + other props generate both repeatCell and updateBorders."""
+        diff_result = DiffResult(
+            spreadsheet_id="test123",
+            sheet_diffs=[
+                SheetDiff(
+                    sheet_id=0,
+                    sheet_name="Sheet1",
+                    folder_name="Sheet1",
+                    format_rule_changes=[
+                        FormatRuleChange(
+                            range_key="A1:B5",
+                            change_type="added",
+                            old_format=None,
+                            new_format={
+                                "backgroundColor": "#00FF00",
+                                "borders": {
+                                    "top": {"style": "SOLID"},
+                                },
+                            },
+                        )
+                    ],
+                )
+            ],
+        )
+        requests = generate_requests(diff_result)
+        assert len(requests) == 2
+        assert "repeatCell" in requests[0]
+        assert "updateBorders" in requests[1]
+
+    def test_format_rule_deletion_clears_formatting(self) -> None:
+        """Test that deleting a format rule clears the formatting on the range."""
+        diff_result = DiffResult(
+            spreadsheet_id="test123",
+            sheet_diffs=[
+                SheetDiff(
+                    sheet_id=0,
+                    sheet_name="Sheet1",
+                    folder_name="Sheet1",
+                    format_rule_changes=[
+                        FormatRuleChange(
+                            range_key="A1:B5",
+                            change_type="deleted",
+                            old_format={
+                                "backgroundColor": "#FF0000",
+                                "textFormat": {"bold": True},
+                            },
+                            new_format=None,
+                        )
+                    ],
+                )
+            ],
+        )
+        requests = generate_requests(diff_result)
+        assert len(requests) == 1
+        assert "repeatCell" in requests[0]
+        repeat = requests[0]["repeatCell"]
+        assert repeat["cell"]["userEnteredFormat"] == {}
+        assert "backgroundColor" in repeat["fields"]
+        assert "textFormat" in repeat["fields"]
+
+    def test_format_rule_deletion_with_borders_clears_borders(self) -> None:
+        """Test that deleting a format rule with borders also clears borders."""
+        diff_result = DiffResult(
+            spreadsheet_id="test123",
+            sheet_diffs=[
+                SheetDiff(
+                    sheet_id=0,
+                    sheet_name="Sheet1",
+                    folder_name="Sheet1",
+                    format_rule_changes=[
+                        FormatRuleChange(
+                            range_key="A1:B5",
+                            change_type="deleted",
+                            old_format={
+                                "backgroundColor": "#FF0000",
+                                "borders": {"top": {"style": "SOLID"}},
+                            },
+                            new_format=None,
+                        )
+                    ],
+                )
+            ],
+        )
+        requests = generate_requests(diff_result)
+        assert len(requests) == 2
+        assert "repeatCell" in requests[0]
+        assert "updateBorders" in requests[1]
+        # Verify borders are cleared with NONE style
+        borders = requests[1]["updateBorders"]
+        assert borders["top"]["style"] == "NONE"
+        assert borders["bottom"]["style"] == "NONE"
+
+
+class TestDimensionGaps:
+    """Tests for dimension gap fixes: hidden property, deletion."""
+
+    def test_dimension_hidden_pushed(self) -> None:
+        """Test that hidden property is included in updateDimensionProperties."""
+        diff_result = DiffResult(
+            spreadsheet_id="test123",
+            sheet_diffs=[
+                SheetDiff(
+                    sheet_id=0,
+                    sheet_name="Sheet1",
+                    folder_name="Sheet1",
+                    dimension_changes=[
+                        DimensionChange(
+                            dimension_type="ROWS",
+                            index=3,
+                            change_type="modified",
+                            old_size=21,
+                            new_size=21,
+                            old_hidden=False,
+                            new_hidden=True,
+                        )
+                    ],
+                )
+            ],
+        )
+        requests = generate_requests(diff_result)
+        assert len(requests) == 1
+        props = requests[0]["updateDimensionProperties"]
+        assert props["properties"]["hiddenByUser"] is True
+        assert "hiddenByUser" in props["fields"]
+
+    def test_dimension_deletion_resets_to_default_row(self) -> None:
+        """Test that deleting a row dimension resets to default height (21px)."""
+        diff_result = DiffResult(
+            spreadsheet_id="test123",
+            sheet_diffs=[
+                SheetDiff(
+                    sheet_id=0,
+                    sheet_name="Sheet1",
+                    folder_name="Sheet1",
+                    dimension_changes=[
+                        DimensionChange(
+                            dimension_type="ROWS",
+                            index=5,
+                            change_type="deleted",
+                            old_size=50,
+                            new_size=None,
+                        )
+                    ],
+                )
+            ],
+        )
+        requests = generate_requests(diff_result)
+        assert len(requests) == 1
+        props = requests[0]["updateDimensionProperties"]
+        assert props["properties"]["pixelSize"] == 21
+
+    def test_dimension_deletion_resets_to_default_column(self) -> None:
+        """Test that deleting a column dimension resets to default width (100px)."""
+        diff_result = DiffResult(
+            spreadsheet_id="test123",
+            sheet_diffs=[
+                SheetDiff(
+                    sheet_id=0,
+                    sheet_name="Sheet1",
+                    folder_name="Sheet1",
+                    dimension_changes=[
+                        DimensionChange(
+                            dimension_type="COLUMNS",
+                            index=2,
+                            change_type="deleted",
+                            old_size=200,
+                            new_size=None,
+                        )
+                    ],
+                )
+            ],
+        )
+        requests = generate_requests(diff_result)
+        assert len(requests) == 1
+        props = requests[0]["updateDimensionProperties"]
+        assert props["properties"]["pixelSize"] == 100
+
+    def test_dimension_hidden_only_change(self) -> None:
+        """Test dimension change with only hidden changing (size stays same)."""
+        diff_result = DiffResult(
+            spreadsheet_id="test123",
+            sheet_diffs=[
+                SheetDiff(
+                    sheet_id=0,
+                    sheet_name="Sheet1",
+                    folder_name="Sheet1",
+                    dimension_changes=[
+                        DimensionChange(
+                            dimension_type="COLUMNS",
+                            index=0,
+                            change_type="modified",
+                            old_size=100,
+                            new_size=100,
+                            old_hidden=None,
+                            new_hidden=True,
+                        )
+                    ],
+                )
+            ],
+        )
+        requests = generate_requests(diff_result)
+        assert len(requests) == 1
+        props = requests[0]["updateDimensionProperties"]
+        assert props["properties"]["pixelSize"] == 100
+        assert props["properties"]["hiddenByUser"] is True
+
+
+class TestSheetPropertyGaps:
+    """Tests for sheet property gap fixes: tabColor, rightToLeft."""
+
+    def test_tab_color_pushed(self) -> None:
+        """Test that tabColor change generates updateSheetProperties."""
+        diff_result = DiffResult(
+            spreadsheet_id="test123",
+            sheet_property_changes=[
+                SheetPropertyChange(
+                    sheet_id=0,
+                    sheet_name="Sheet1",
+                    property_name="tabColor",
+                    old_value=None,
+                    new_value="#FF0000",
+                )
+            ],
+        )
+        requests = generate_requests(diff_result)
+        assert len(requests) == 1
+        assert "updateSheetProperties" in requests[0]
+        props = requests[0]["updateSheetProperties"]
+        assert "tabColorStyle" in props["fields"]
+        rgb = props["properties"]["tabColorStyle"]["rgbColor"]
+        assert rgb["red"] == 1.0
+
+    def test_tab_color_cleared(self) -> None:
+        """Test that clearing tabColor generates updateSheetProperties."""
+        diff_result = DiffResult(
+            spreadsheet_id="test123",
+            sheet_property_changes=[
+                SheetPropertyChange(
+                    sheet_id=0,
+                    sheet_name="Sheet1",
+                    property_name="tabColor",
+                    old_value="#FF0000",
+                    new_value=None,
+                )
+            ],
+        )
+        requests = generate_requests(diff_result)
+        assert len(requests) == 1
+        props = requests[0]["updateSheetProperties"]
+        assert props["properties"]["tabColorStyle"]["rgbColor"] == {}
+
+    def test_right_to_left_pushed(self) -> None:
+        """Test that rightToLeft change generates updateSheetProperties."""
+        diff_result = DiffResult(
+            spreadsheet_id="test123",
+            sheet_property_changes=[
+                SheetPropertyChange(
+                    sheet_id=0,
+                    sheet_name="Sheet1",
+                    property_name="rightToLeft",
+                    old_value=None,
+                    new_value=True,
+                )
+            ],
+        )
+        requests = generate_requests(diff_result)
+        assert len(requests) == 1
+        props = requests[0]["updateSheetProperties"]
+        assert props["properties"]["rightToLeft"] is True
+        assert "rightToLeft" in props["fields"]

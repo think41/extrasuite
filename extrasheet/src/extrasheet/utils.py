@@ -342,7 +342,8 @@ def is_default_dimension(dimension: Any, is_row: bool = True) -> bool:
     expected_default = default_row_size if is_row else default_col_size
 
     # Hidden rows/columns are never default
-    if dimension.get("hidden"):
+    # API returns "hiddenByUser" but on-disk format uses "hidden"
+    if dimension.get("hidden") or dimension.get("hiddenByUser"):
         return False
 
     # Check if size matches default (or is close enough)

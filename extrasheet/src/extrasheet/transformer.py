@@ -797,7 +797,7 @@ class SpreadsheetTransformer:
                     row_entry: dict[str, Any] = {"row": actual_idx + 1}
                     if dim.get("pixelSize"):
                         row_entry["pixelSize"] = dim["pixelSize"]
-                    if dim.get("hidden"):
+                    if dim.get("hiddenByUser") or dim.get("hidden"):
                         row_entry["hidden"] = True
                     if dim.get("developerMetadata"):
                         row_entry["developerMetadata"] = dim["developerMetadata"]
@@ -813,7 +813,7 @@ class SpreadsheetTransformer:
                     }
                     if dim.get("pixelSize"):
                         col_entry["pixelSize"] = dim["pixelSize"]
-                    if dim.get("hidden"):
+                    if dim.get("hiddenByUser") or dim.get("hidden"):
                         col_entry["hidden"] = True
                     if dim.get("developerMetadata"):
                         col_entry["developerMetadata"] = dim["developerMetadata"]

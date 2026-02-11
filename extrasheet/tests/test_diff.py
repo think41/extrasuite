@@ -1835,3 +1835,188 @@ class TestDiffDataSourceTables:
         sheet_diff = result.sheet_diffs[0]
         assert len(sheet_diff.data_source_table_changes) == 1
         assert sheet_diff.data_source_table_changes[0].change_type == "modified"
+
+
+class TestDiffDimensionHidden:
+    """Tests for dimension hidden property diffing."""
+
+    def test_hidden_column_detected(self, tmp_path: Path) -> None:
+        """Test that changing hidden on a column is detected."""
+        spreadsheet_json = json.dumps(
+            {
+                "spreadsheetId": "test123",
+                "title": "Test",
+                "sheets": [{"sheetId": 0, "title": "Sheet1", "folder": "Sheet1"}],
+            }
+        )
+        data_tsv = "A\tB\n1\t2\n"
+
+        dimension_pristine = json.dumps(
+            {"columnMetadata": [{"column": "A", "pixelSize": 100, "hidden": False}]}
+        )
+        dimension_current = json.dumps(
+            {"columnMetadata": [{"column": "A", "pixelSize": 100, "hidden": True}]}
+        )
+
+        create_pristine_zip(
+            tmp_path,
+            {
+                "spreadsheet.json": spreadsheet_json,
+                "Sheet1/data.tsv": data_tsv,
+                "Sheet1/dimension.json": dimension_pristine,
+            },
+        )
+        write_current_files(
+            tmp_path,
+            {
+                "spreadsheet.json": spreadsheet_json,
+                "Sheet1/data.tsv": data_tsv,
+                "Sheet1/dimension.json": dimension_current,
+            },
+        )
+
+        result = diff(tmp_path)
+        assert len(result.sheet_diffs) == 1
+        dim_changes = result.sheet_diffs[0].dimension_changes
+        assert len(dim_changes) == 1
+        assert dim_changes[0].change_type == "modified"
+        assert dim_changes[0].old_hidden is False
+        assert dim_changes[0].new_hidden is True
+        assert dim_changes[0].old_size == 100
+        assert dim_changes[0].new_size == 100
+
+    def test_hidden_row_detected(self, tmp_path: Path) -> None:
+        """Test that changing hidden on a row is detected."""
+        spreadsheet_json = json.dumps(
+            {
+                "spreadsheetId": "test123",
+                "title": "Test",
+                "sheets": [{"sheetId": 0, "title": "Sheet1", "folder": "Sheet1"}],
+            }
+        )
+        data_tsv = "A\n1\n2\n"
+
+        dimension_pristine = json.dumps(
+            {"rowMetadata": [{"row": 2, "pixelSize": 21}]}
+        )
+        dimension_current = json.dumps(
+            {"rowMetadata": [{"row": 2, "pixelSize": 21, "hidden": True}]}
+        )
+
+        create_pristine_zip(
+            tmp_path,
+            {
+                "spreadsheet.json": spreadsheet_json,
+                "Sheet1/data.tsv": data_tsv,
+                "Sheet1/dimension.json": dimension_pristine,
+            },
+        )
+        write_current_files(
+            tmp_path,
+            {
+                "spreadsheet.json": spreadsheet_json,
+                "Sheet1/data.tsv": data_tsv,
+                "Sheet1/dimension.json": dimension_current,
+            },
+        )
+
+        result = diff(tmp_path)
+        dim_changes = result.sheet_diffs[0].dimension_changes
+        assert len(dim_changes) == 1
+        assert dim_changes[0].new_hidden is True
+
+
+class TestDiffSheetPropertyGaps:
+    """Tests for sheet property gap fixes: tabColor, rightToLeft."""
+
+    def test_tab_color_change_detected(self, tmp_path: Path) -> None:
+        """Test that tabColor change is detected."""
+        pristine_json = json.dumps(
+            {
+                "spreadsheetId": "test123",
+                "title": "Test",
+                "sheets": [{"sheetId": 0, "title": "Sheet1", "folder": "Sheet1"}],
+            }
+        )
+        current_json = json.dumps(
+            {
+                "spreadsheetId": "test123",
+                "title": "Test",
+                "sheets": [
+                    {
+                        "sheetId": 0,
+                        "title": "Sheet1",
+                        "folder": "Sheet1",
+                        "tabColor": "#FF0000",
+                    }
+                ],
+            }
+        )
+        data_tsv = "A\n1\n"
+
+        create_pristine_zip(
+            tmp_path,
+            {
+                "spreadsheet.json": pristine_json,
+                "Sheet1/data.tsv": data_tsv,
+            },
+        )
+        write_current_files(
+            tmp_path,
+            {
+                "spreadsheet.json": current_json,
+                "Sheet1/data.tsv": data_tsv,
+            },
+        )
+
+        result = diff(tmp_path)
+        assert len(result.sheet_property_changes) == 1
+        change = result.sheet_property_changes[0]
+        assert change.property_name == "tabColor"
+        assert change.new_value == "#FF0000"
+
+    def test_right_to_left_change_detected(self, tmp_path: Path) -> None:
+        """Test that rightToLeft change is detected."""
+        pristine_json = json.dumps(
+            {
+                "spreadsheetId": "test123",
+                "title": "Test",
+                "sheets": [{"sheetId": 0, "title": "Sheet1", "folder": "Sheet1"}],
+            }
+        )
+        current_json = json.dumps(
+            {
+                "spreadsheetId": "test123",
+                "title": "Test",
+                "sheets": [
+                    {
+                        "sheetId": 0,
+                        "title": "Sheet1",
+                        "folder": "Sheet1",
+                        "rightToLeft": True,
+                    }
+                ],
+            }
+        )
+        data_tsv = "A\n1\n"
+
+        create_pristine_zip(
+            tmp_path,
+            {
+                "spreadsheet.json": pristine_json,
+                "Sheet1/data.tsv": data_tsv,
+            },
+        )
+        write_current_files(
+            tmp_path,
+            {
+                "spreadsheet.json": current_json,
+                "Sheet1/data.tsv": data_tsv,
+            },
+        )
+
+        result = diff(tmp_path)
+        assert len(result.sheet_property_changes) == 1
+        change = result.sheet_property_changes[0]
+        assert change.property_name == "rightToLeft"
+        assert change.new_value is True

@@ -231,6 +231,26 @@ def _generate_sheet_property_requests(
             elif change.property_name == "hidden":
                 properties["hidden"] = change.new_value
                 fields.append("hidden")
+            elif change.property_name == "rightToLeft":
+                properties["rightToLeft"] = change.new_value
+                fields.append("rightToLeft")
+            elif change.property_name in ("tabColor", "tabColorStyle"):
+                if change.new_value:
+                    # tabColor is a hex string, tabColorStyle is {"rgbColor": "#hex"}
+                    if change.property_name == "tabColor":
+                        hex_color = change.new_value
+                    else:
+                        hex_color = change.new_value.get("rgbColor", "")
+                    if hex_color:
+                        properties["tabColorStyle"] = {
+                            "rgbColor": hex_to_rgb(hex_color)
+                        }
+                    else:
+                        properties["tabColorStyle"] = {"rgbColor": {}}
+                else:
+                    # Clear tab color
+                    properties["tabColorStyle"] = {"rgbColor": {}}
+                fields.append("tabColorStyle")
             elif change.property_name == "frozenRowCount":
                 grid_properties["frozenRowCount"] = change.new_value or 0
                 grid_fields.append("frozenRowCount")
@@ -632,7 +652,8 @@ def _generate_format_rule_requests(
 ) -> list[dict[str, Any]]:
     """Generate requests for format rule changes.
 
-    Uses repeatCell to apply formatting to ranges.
+    Uses repeatCell to apply formatting to ranges, and updateBorders
+    for border changes (which require a separate API request type).
     """
     requests: list[dict[str, Any]] = []
 
@@ -640,8 +661,22 @@ def _generate_format_rule_requests(
         grid_range = a1_range_to_grid_range(change.range_key, sheet_id)
 
         if change.change_type == "deleted":
-            # To delete formatting, we'd need to clear the format
-            # For now, we skip deleted format rules as clearing is complex
+            # Clear formatting on the range by applying empty format
+            # Get all format fields that were in the old format
+            old_fields = _get_format_fields(change.old_format)
+            if old_fields:
+                requests.append(
+                    {
+                        "repeatCell": {
+                            "range": grid_range,
+                            "cell": {"userEnteredFormat": {}},
+                            "fields": f"userEnteredFormat({old_fields})",
+                        }
+                    }
+                )
+            # Clear borders if they were set
+            if change.old_format and "borders" in change.old_format:
+                requests.append(_build_clear_borders_request(grid_range))
             continue
 
         if change.change_type in ("added", "modified"):
@@ -660,7 +695,66 @@ def _generate_format_rule_requests(
                     }
                 )
 
+            # Handle borders separately (requires updateBorders request)
+            if change.new_format and "borders" in change.new_format:
+                requests.append(
+                    _build_update_borders_request(
+                        grid_range, change.new_format["borders"]
+                    )
+                )
+
     return requests
+
+
+def _build_update_borders_request(
+    grid_range: dict[str, Any], borders: dict[str, Any]
+) -> dict[str, Any]:
+    """Build an updateBorders request from a borders dict.
+
+    Converts hex colors to RGB format for the API.
+    """
+    request: dict[str, Any] = {"range": grid_range}
+
+    for side in ["top", "bottom", "left", "right"]:
+        if side in borders:
+            request[side] = _convert_border_for_api(borders[side])
+
+    return {"updateBorders": request}
+
+
+def _build_clear_borders_request(grid_range: dict[str, Any]) -> dict[str, Any]:
+    """Build an updateBorders request to clear all borders on a range."""
+    none_border = {"style": "NONE"}
+    return {
+        "updateBorders": {
+            "range": grid_range,
+            "top": none_border,
+            "bottom": none_border,
+            "left": none_border,
+            "right": none_border,
+        }
+    }
+
+
+def _convert_border_for_api(border: dict[str, Any]) -> dict[str, Any]:
+    """Convert a single border definition for the API.
+
+    Converts hex color to RGB format.
+    """
+    result: dict[str, Any] = {}
+
+    if "style" in border:
+        result["style"] = border["style"]
+    if "width" in border:
+        result["width"] = border["width"]
+    if "color" in border:
+        color = border["color"]
+        if isinstance(color, str) and color.startswith("#"):
+            result["color"] = hex_to_rgb(color)
+        else:
+            result["color"] = color
+
+    return result
 
 
 def _convert_to_cell_format(format_dict: dict[str, Any] | None) -> dict[str, Any]:
@@ -688,6 +782,22 @@ def _convert_to_cell_format(format_dict: dict[str, Any] | None) -> dict[str, Any
     if "verticalAlignment" in format_dict:
         cell_format["verticalAlignment"] = format_dict["verticalAlignment"]
 
+    # Wrap strategy
+    if "wrapStrategy" in format_dict:
+        cell_format["wrapStrategy"] = format_dict["wrapStrategy"]
+
+    # Padding
+    if "padding" in format_dict:
+        cell_format["padding"] = format_dict["padding"]
+
+    # Text direction
+    if "textDirection" in format_dict:
+        cell_format["textDirection"] = format_dict["textDirection"]
+
+    # Text rotation
+    if "textRotation" in format_dict:
+        cell_format["textRotation"] = format_dict["textRotation"]
+
     # Other formats
     if "hyperlinkDisplayType" in format_dict:
         cell_format["hyperlinkDisplayType"] = format_dict["hyperlinkDisplayType"]
@@ -711,6 +821,14 @@ def _get_format_fields(format_dict: dict[str, Any] | None) -> str:
         fields.append("horizontalAlignment")
     if "verticalAlignment" in format_dict:
         fields.append("verticalAlignment")
+    if "wrapStrategy" in format_dict:
+        fields.append("wrapStrategy")
+    if "padding" in format_dict:
+        fields.append("padding")
+    if "textDirection" in format_dict:
+        fields.append("textDirection")
+    if "textRotation" in format_dict:
+        fields.append("textRotation")
     if "hyperlinkDisplayType" in format_dict:
         fields.append("hyperlinkDisplayType")
 
@@ -839,40 +957,72 @@ def _group_cells_into_ranges(cells: list[str], sheet_id: int) -> list[dict[str, 
     return ranges
 
 
+_DEFAULT_ROW_HEIGHT = 21
+_DEFAULT_COL_WIDTH = 100
+
+
 def _generate_dimension_requests(
     changes: list[DimensionChange], sheet_id: int
 ) -> list[dict[str, Any]]:
-    """Generate requests for dimension (row/column size) changes.
+    """Generate requests for dimension (row/column size and hidden) changes.
 
-    Uses updateDimensionProperties to resize rows/columns.
+    Uses updateDimensionProperties to resize rows/columns and toggle visibility.
     """
     requests: list[dict[str, Any]] = []
 
     for change in changes:
+        dim_range = {
+            "sheetId": sheet_id,
+            "dimension": change.dimension_type,
+            "startIndex": change.index,
+            "endIndex": change.index + 1,
+        }
+
         if change.change_type == "deleted":
-            # Deleted dimension means we want to reset to default
-            # We can use updateDimensionProperties with pixelSize = default
-            # For now, skip deletion
-            continue
-
-        if change.change_type in ("added", "modified"):
-            if change.new_size is None:
-                continue
-
+            # Reset to default size and unhide
+            default_size = (
+                _DEFAULT_ROW_HEIGHT
+                if change.dimension_type == "ROWS"
+                else _DEFAULT_COL_WIDTH
+            )
+            properties: dict[str, Any] = {"pixelSize": default_size}
+            fields = ["pixelSize"]
+            if change.old_hidden:
+                properties["hiddenByUser"] = False
+                fields.append("hiddenByUser")
             requests.append(
                 {
                     "updateDimensionProperties": {
-                        "range": {
-                            "sheetId": sheet_id,
-                            "dimension": change.dimension_type,
-                            "startIndex": change.index,
-                            "endIndex": change.index + 1,
-                        },
-                        "properties": {"pixelSize": change.new_size},
-                        "fields": "pixelSize",
+                        "range": dim_range,
+                        "properties": properties,
+                        "fields": ",".join(fields),
                     }
                 }
             )
+            continue
+
+        if change.change_type in ("added", "modified"):
+            properties: dict[str, Any] = {}
+            fields: list[str] = []
+
+            if change.new_size is not None:
+                properties["pixelSize"] = change.new_size
+                fields.append("pixelSize")
+
+            if change.new_hidden is not None:
+                properties["hiddenByUser"] = change.new_hidden
+                fields.append("hiddenByUser")
+
+            if properties:
+                requests.append(
+                    {
+                        "updateDimensionProperties": {
+                            "range": dim_range,
+                            "properties": properties,
+                            "fields": ",".join(fields),
+                        }
+                    }
+                )
 
     return requests
 

@@ -78,6 +78,8 @@ class DimensionChange:
     change_type: Literal["added", "deleted", "modified"]
     old_size: int | None
     new_size: int | None
+    old_hidden: bool | None = None
+    new_hidden: bool | None = None
 
 
 @dataclass
@@ -501,7 +503,18 @@ def _diff_sheet_properties(
         sheet_name = current_sheet.get("title", folder_name)
 
         # Check properties that can be changed
-        for prop in ["title", "hidden"]:
+        for prop in ["title", "hidden", "rightToLeft"]:
+            pristine_val = pristine_sheet.get(prop)
+            current_val = current_sheet.get(prop)
+            if pristine_val != current_val:
+                changes.append(
+                    SheetPropertyChange(
+                        sheet_id, sheet_name, prop, pristine_val, current_val
+                    )
+                )
+
+        # Check tabColor/tabColorStyle (stored as hex string)
+        for prop in ["tabColor", "tabColorStyle"]:
             pristine_val = pristine_sheet.get(prop)
             current_val = current_sheet.get(prop)
             if pristine_val != current_val:
@@ -1424,101 +1437,117 @@ def _diff_dimensions(
             return int(row["row"]) - 1  # Convert 1-based to 0-based
         return int(row.get("index", 0))
 
+    def _extract_dim_props(
+        dim: dict[str, Any],
+    ) -> tuple[int | None, bool | None]:
+        """Extract pixelSize and hidden from a dimension entry."""
+        return dim.get("pixelSize"), dim.get("hidden")
+
     # Diff column dimensions
     pristine_cols = pristine_dimension.get("columnMetadata", [])
     current_cols = current_dimension.get("columnMetadata", [])
 
-    pristine_cols_by_idx = {
-        get_col_index(col): col.get("pixelSize") for col in pristine_cols
-    }
-    current_cols_by_idx = {
-        get_col_index(col): col.get("pixelSize") for col in current_cols
-    }
+    pristine_cols_by_idx = {get_col_index(col): col for col in pristine_cols}
+    current_cols_by_idx = {get_col_index(col): col for col in current_cols}
 
     all_col_indices = set(pristine_cols_by_idx.keys()) | set(current_cols_by_idx.keys())
 
     for idx in all_col_indices:
-        pristine_size = pristine_cols_by_idx.get(idx)
-        current_size = current_cols_by_idx.get(idx)
+        pristine_col = pristine_cols_by_idx.get(idx)
+        current_col = current_cols_by_idx.get(idx)
 
-        if pristine_size is None and current_size is not None:
+        if pristine_col is None and current_col is not None:
+            size, hidden = _extract_dim_props(current_col)
             changes.append(
                 DimensionChange(
                     dimension_type="COLUMNS",
                     index=idx,
                     change_type="added",
                     old_size=None,
-                    new_size=current_size,
+                    new_size=size,
+                    new_hidden=hidden,
                 )
             )
-        elif pristine_size is not None and current_size is None:
+        elif pristine_col is not None and current_col is None:
+            size, hidden = _extract_dim_props(pristine_col)
             changes.append(
                 DimensionChange(
                     dimension_type="COLUMNS",
                     index=idx,
                     change_type="deleted",
-                    old_size=pristine_size,
+                    old_size=size,
                     new_size=None,
+                    old_hidden=hidden,
                 )
             )
-        elif pristine_size != current_size:
-            changes.append(
-                DimensionChange(
-                    dimension_type="COLUMNS",
-                    index=idx,
-                    change_type="modified",
-                    old_size=pristine_size,
-                    new_size=current_size,
+        elif pristine_col is not None and current_col is not None:
+            p_size, p_hidden = _extract_dim_props(pristine_col)
+            c_size, c_hidden = _extract_dim_props(current_col)
+            if p_size != c_size or p_hidden != c_hidden:
+                changes.append(
+                    DimensionChange(
+                        dimension_type="COLUMNS",
+                        index=idx,
+                        change_type="modified",
+                        old_size=p_size,
+                        new_size=c_size,
+                        old_hidden=p_hidden,
+                        new_hidden=c_hidden,
+                    )
                 )
-            )
 
     # Diff row dimensions
     pristine_rows = pristine_dimension.get("rowMetadata", [])
     current_rows = current_dimension.get("rowMetadata", [])
 
-    pristine_rows_by_idx = {
-        get_row_index(row): row.get("pixelSize") for row in pristine_rows
-    }
-    current_rows_by_idx = {
-        get_row_index(row): row.get("pixelSize") for row in current_rows
-    }
+    pristine_rows_by_idx = {get_row_index(row): row for row in pristine_rows}
+    current_rows_by_idx = {get_row_index(row): row for row in current_rows}
 
     all_row_indices = set(pristine_rows_by_idx.keys()) | set(current_rows_by_idx.keys())
 
     for idx in all_row_indices:
-        pristine_size = pristine_rows_by_idx.get(idx)
-        current_size = current_rows_by_idx.get(idx)
+        pristine_row = pristine_rows_by_idx.get(idx)
+        current_row = current_rows_by_idx.get(idx)
 
-        if pristine_size is None and current_size is not None:
+        if pristine_row is None and current_row is not None:
+            size, hidden = _extract_dim_props(current_row)
             changes.append(
                 DimensionChange(
                     dimension_type="ROWS",
                     index=idx,
                     change_type="added",
                     old_size=None,
-                    new_size=current_size,
+                    new_size=size,
+                    new_hidden=hidden,
                 )
             )
-        elif pristine_size is not None and current_size is None:
+        elif pristine_row is not None and current_row is None:
+            size, hidden = _extract_dim_props(pristine_row)
             changes.append(
                 DimensionChange(
                     dimension_type="ROWS",
                     index=idx,
                     change_type="deleted",
-                    old_size=pristine_size,
+                    old_size=size,
                     new_size=None,
+                    old_hidden=hidden,
                 )
             )
-        elif pristine_size != current_size:
-            changes.append(
-                DimensionChange(
-                    dimension_type="ROWS",
-                    index=idx,
-                    change_type="modified",
-                    old_size=pristine_size,
-                    new_size=current_size,
+        elif pristine_row is not None and current_row is not None:
+            p_size, p_hidden = _extract_dim_props(pristine_row)
+            c_size, c_hidden = _extract_dim_props(current_row)
+            if p_size != c_size or p_hidden != c_hidden:
+                changes.append(
+                    DimensionChange(
+                        dimension_type="ROWS",
+                        index=idx,
+                        change_type="modified",
+                        old_size=p_size,
+                        new_size=c_size,
+                        old_hidden=p_hidden,
+                        new_hidden=c_hidden,
+                    )
                 )
-            )
 
     return changes
 
