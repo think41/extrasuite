@@ -2,6 +2,13 @@
 
 All notable changes to the extrasuite client library will be documented in this file.
 
+## [0.5.3] - 2026-02-12
+
+### Changed
+
+- Bump extradoc dependency to `>=0.2.2` (inline comment-ref support)
+- Wire pull/diff/push with comment-ref flow for Google Docs comments
+
 ## [0.5.0] - 2026-02-11
 
 ### Breaking Changes
