@@ -51,7 +51,6 @@ class PushResult:
     document_id: str
     changes_applied: int
     message: str = ""
-    comments_created: int = 0
     replies_created: int = 0
     comments_resolved: int = 0
 
@@ -225,7 +224,6 @@ class DocsClient:
         # Anchor positions are computed against the current live document
         # (which matches pristine), so we must create comments before any
         # document changes shift positions.
-        comments_created = 0
         replies_created = 0
         comments_resolved = 0
 
@@ -431,8 +429,6 @@ class DocsClient:
         parts: list[str] = []
         if requests:
             parts.append(f"{len(requests)} document changes")
-        if comments_created:
-            parts.append(f"{comments_created} comments created")
         if replies_created:
             parts.append(f"{replies_created} replies added")
         if comments_resolved:
@@ -445,7 +441,6 @@ class DocsClient:
             document_id=document_id,
             changes_applied=len(requests),
             message=message,
-            comments_created=comments_created,
             replies_created=replies_created,
             comments_resolved=comments_resolved,
         )

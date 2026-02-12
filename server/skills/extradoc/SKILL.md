@@ -24,6 +24,7 @@ uvx extrasuite doc push <folder>              # Push changes back to the Google 
 <document_id>/
   document.xml            # Document content
   styles.xml              # Style definitions
+  comments.xml            # Document comments and replies (if any)
   .pristine/              # DO NOT TOUCH — used by diff/push
   .raw/                   # Raw API response (only for debugging)
 ```

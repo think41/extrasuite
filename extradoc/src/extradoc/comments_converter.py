@@ -10,7 +10,6 @@ stores comment content, replies, and resolved status.
 
 from __future__ import annotations
 
-import json
 import re
 import xml.etree.ElementTree as ET
 from dataclasses import dataclass, field
@@ -444,35 +443,3 @@ def diff_comments(
                     )
 
     return ops
-
-
-def _parse_anchor(anchor_json: str | None) -> tuple[int | None, int | None]:
-    """Extract startIndex and endIndex from opaque anchor JSON.
-
-    The anchor JSON from Drive API looks like:
-    {"r":"head","a":[{"txt":{"o":42,"l":13}}]}
-
-    Where 'o' is offset (startIndex) and 'l' is length.
-
-    Args:
-        anchor_json: The anchor JSON string from the API
-
-    Returns:
-        Tuple of (start_index, end_index), both None if parsing fails
-    """
-    if not anchor_json:
-        return None, None
-
-    try:
-        anchor = json.loads(anchor_json)
-        anchors = anchor.get("a", [])
-        if anchors:
-            txt = anchors[0].get("txt", {})
-            offset = txt.get("o")
-            length = txt.get("l")
-            if offset is not None and length is not None:
-                return int(offset), int(offset) + int(length)
-    except (json.JSONDecodeError, KeyError, IndexError, TypeError):
-        pass
-
-    return None, None

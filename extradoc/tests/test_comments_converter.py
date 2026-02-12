@@ -10,7 +10,6 @@ from extradoc.comments_converter import (
     NewComment,
     NewReply,
     ResolveComment,
-    _parse_anchor,
     compute_comment_ref_positions,
     convert_comments_to_xml,
     diff_comments,
@@ -191,44 +190,6 @@ class TestParseCommentsXml:
 </comments>"""
         _, comments = parse_comments_xml(xml)
         assert comments[0]["resolved"] is True
-
-
-# --- _parse_anchor tests ---
-
-
-class TestParseAnchor:
-    def test_basic_anchor(self) -> None:
-        anchor = '{"r":"head","a":[{"txt":{"o":42,"l":13}}]}'
-        start, end = _parse_anchor(anchor)
-        assert start == 42
-        assert end == 55
-
-    def test_none_anchor(self) -> None:
-        start, end = _parse_anchor(None)
-        assert start is None
-        assert end is None
-
-    def test_empty_anchor(self) -> None:
-        start, end = _parse_anchor("")
-        assert start is None
-        assert end is None
-
-    def test_invalid_json(self) -> None:
-        start, end = _parse_anchor("not json")
-        assert start is None
-        assert end is None
-
-    def test_missing_txt_field(self) -> None:
-        anchor = '{"r":"head","a":[{"other":{}}]}'
-        start, end = _parse_anchor(anchor)
-        assert start is None
-        assert end is None
-
-    def test_missing_a_field(self) -> None:
-        anchor = '{"r":"head"}'
-        start, end = _parse_anchor(anchor)
-        assert start is None
-        assert end is None
 
 
 # --- extract_comment_ref_ids tests ---
