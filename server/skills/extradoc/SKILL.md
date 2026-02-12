@@ -185,7 +185,7 @@ Each `<tab>` contains `<body>` plus optional `<header>`, `<footer>`, and `<footn
 
 ## Comments
 
-Comments appear in two files: inline `<comment-ref>` tags in `document.xml` show where comments are, and `comments.xml` stores the full comment content and replies.
+Comments appear in two files: `<comment-ref>` tags in `document.xml` show where each comment is anchored (read-only), and `comments.xml` stores the full comment content and replies. Adding new top-level comments is not supported by the Google API — you can only reply to existing comments and resolve them.
 
 ### Reading Comments
 
@@ -196,40 +196,20 @@ In `document.xml`, commented text is wrapped with `<comment-ref>`:
 ```
 
 - `id` links to the full comment in `comments.xml`
-- `message`, `replies`, `resolved` are read-only summaries (regenerated on pull)
+- `<comment-ref>` tags are **read-only** — do not add, remove, or modify them
 
 In `comments.xml`, full comment details:
 
 ```xml
 <comments fileId="DOCUMENT_ID">
-  <comment id="AABcdEf" author="John Doe &lt;john@example.com&gt;"
-           time="2025-01-15T10:30:00Z" resolved="false">
+  <comment id="AABcdEf" author="John Doe" time="2025-01-15T10:30:00Z" resolved="false">
     <content>This paragraph needs revision.</content>
     <replies>
-      <reply id="BBBcdEf" author="Jane Smith &lt;jane@example.com&gt;"
-             time="2025-01-15T11:00:00Z">I agree, let me fix it.</reply>
+      <reply id="BBBcdEf" author="Jane Smith" time="2025-01-15T11:00:00Z">I agree, let me fix it.</reply>
     </replies>
   </comment>
 </comments>
 ```
-
-### Adding a New Comment
-
-1. Wrap the target text in `document.xml` with `<comment-ref id="any_unique_id">`:
-
-```xml
-<p>This <comment-ref id="my_comment_1">section needs work</comment-ref> badly.</p>
-```
-
-2. Add a matching entry in `comments.xml`:
-
-```xml
-<comment id="my_comment_1">
-  <content>This section needs a citation.</content>
-</comment>
-```
-
-For unanchored comments (no specific text), just add in `comments.xml` without a `<comment-ref>`.
 
 ### Replying to a Comment
 

@@ -476,26 +476,3 @@ def _parse_anchor(anchor_json: str | None) -> tuple[int | None, int | None]:
         pass
 
     return None, None
-
-
-def _build_anchor_json(
-    start_index: int,
-    end_index: int,
-    quoted_text: str = "",  # noqa: ARG001
-) -> str:
-    """Construct anchor JSON for a new comment.
-
-    Args:
-        start_index: Start position in document
-        end_index: End position in document
-        quoted_text: Text at the anchor position
-
-    Returns:
-        JSON string for the anchor field
-    """
-    length = end_index - start_index
-    anchor: dict[str, Any] = {
-        "r": "head",
-        "a": [{"txt": {"o": start_index, "l": length}}],
-    }
-    return json.dumps(anchor, separators=(",", ":"))

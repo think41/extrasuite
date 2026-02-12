@@ -2,7 +2,6 @@
 
 from __future__ import annotations
 
-import json
 from typing import Any
 
 from extradoc.comments_converter import (
@@ -11,7 +10,6 @@ from extradoc.comments_converter import (
     NewComment,
     NewReply,
     ResolveComment,
-    _build_anchor_json,
     _parse_anchor,
     compute_comment_ref_positions,
     convert_comments_to_xml,
@@ -231,25 +229,6 @@ class TestParseAnchor:
         start, end = _parse_anchor(anchor)
         assert start is None
         assert end is None
-
-
-# --- _build_anchor_json tests ---
-
-
-class TestBuildAnchorJson:
-    def test_basic(self) -> None:
-        result = _build_anchor_json(10, 25, "some text")
-        parsed = json.loads(result)
-        assert parsed["r"] == "head"
-        assert parsed["a"][0]["txt"]["o"] == 10
-        assert parsed["a"][0]["txt"]["l"] == 15
-
-    def test_roundtrip(self) -> None:
-        original_start, original_end = 42, 55
-        anchor_json = _build_anchor_json(original_start, original_end)
-        start, end = _parse_anchor(anchor_json)
-        assert start == original_start
-        assert end == original_end
 
 
 # --- extract_comment_ref_ids tests ---

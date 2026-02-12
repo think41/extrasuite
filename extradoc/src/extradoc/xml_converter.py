@@ -657,6 +657,9 @@ def _convert_text_run_with_comments(
             # Open boundary (if starts within this run)
             if anchor.start_index >= run_start:
                 boundaries.append((anchor.start_index, "open", anchor))
+            elif anchor not in open_comments:
+                # Comment started before this run — open at run start
+                boundaries.append((run_start, "open", anchor))
             # Close boundary (if ends within this run)
             if anchor.end_index <= run_end:
                 boundaries.append((anchor.end_index, "close", anchor))

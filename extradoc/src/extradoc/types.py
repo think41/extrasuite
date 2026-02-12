@@ -6,8 +6,12 @@ No logic — just types.
 
 from __future__ import annotations
 
+import re
 from dataclasses import dataclass, field
 from enum import Enum
+
+_COMMENT_REF_OPEN = re.compile(r"<comment-ref[^>]*>")
+_COMMENT_REF_CLOSE = re.compile(r"</comment-ref>")
 
 # --- Enums ---
 
@@ -65,8 +69,16 @@ class ParagraphBlock:
     footnotes: list[FootnoteRef] = field(default_factory=list)
 
     def content_hash(self) -> str:
-        """Content hash for exact matching."""
-        return self.xml
+        """Content hash for exact matching.
+
+        Strips <comment-ref> tags before comparison so that adding or
+        removing comment annotations doesn't cause spurious diffs.
+        Comment-refs are purely annotations that don't affect text,
+        styles, or indexing.
+        """
+        xml = _COMMENT_REF_OPEN.sub("", self.xml)
+        xml = _COMMENT_REF_CLOSE.sub("", xml)
+        return xml
 
     def structural_key(self) -> str:
         """Key for structural matching (type-based)."""

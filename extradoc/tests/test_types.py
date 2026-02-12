@@ -20,6 +20,35 @@ def test_paragraph_block_content_hash():
     assert p.content_hash() == "<p>hello</p>"
 
 
+def test_paragraph_block_content_hash_strips_comment_refs():
+    """Adding a comment-ref should not change the content hash."""
+    plain = ParagraphBlock(
+        tag="p", xml='<p><span class="s1"><i>Some text</i></span></p>'
+    )
+    with_ref = ParagraphBlock(
+        tag="p",
+        xml='<p><span class="s1"><i><comment-ref id="c1">Some text</comment-ref></i></span></p>',
+    )
+    assert plain.content_hash() == with_ref.content_hash()
+
+
+def test_paragraph_block_content_hash_strips_comment_ref_with_attrs():
+    """Comment-ref with multiple attributes should be stripped."""
+    plain = ParagraphBlock(tag="p", xml="<p>hello world</p>")
+    with_ref = ParagraphBlock(
+        tag="p",
+        xml='<p><comment-ref id="c1" message="test" replies="0" resolved="false">hello world</comment-ref></p>',
+    )
+    assert plain.content_hash() == with_ref.content_hash()
+
+
+def test_paragraph_block_xml_preserves_comment_refs():
+    """The raw xml field should still contain comment-ref tags."""
+    xml = '<p><comment-ref id="c1">text</comment-ref></p>'
+    p = ParagraphBlock(tag="p", xml=xml)
+    assert "comment-ref" in p.xml
+
+
 def test_paragraph_block_structural_key():
     p = ParagraphBlock(tag="h1", xml="<h1>Title</h1>")
     assert p.structural_key() == "para:h1"

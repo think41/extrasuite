@@ -7,6 +7,7 @@ the same pattern as SheetsClient, SlidesClient, and FormsClient.
 from __future__ import annotations
 
 import json
+import logging
 import re
 import zipfile
 from dataclasses import dataclass
@@ -15,7 +16,6 @@ from typing import TYPE_CHECKING, Any
 
 from extradoc.comments_converter import (
     CommentOperations,
-    _build_anchor_json,
     compute_comment_ref_positions,
     convert_comments_to_xml,
     diff_comments,
@@ -31,6 +31,8 @@ from extradoc.xml_converter import convert_document_to_xml
 
 if TYPE_CHECKING:
     from extradoc.transport import Transport
+
+logger = logging.getLogger(__name__)
 
 # File and directory name constants
 DOCUMENT_XML = "document.xml"
@@ -228,21 +230,17 @@ class DocsClient:
         comments_resolved = 0
 
         if comment_ops.has_operations:
-            for new_comment in comment_ops.new_comments:
-                anchor_json: str | None = None
-                if (
-                    new_comment.start_index is not None
-                    and new_comment.end_index is not None
-                ):
-                    anchor_json = _build_anchor_json(
-                        new_comment.start_index,
-                        new_comment.end_index,
-                        new_comment.quoted_text,
-                    )
-                await self._transport.create_comment(
-                    document_id, new_comment.content, anchor_json
+            # New top-level comments are not supported. The Google Drive
+            # API cannot anchor comments to specific text in Google Docs —
+            # every strategy we tried results in "Original content deleted".
+            # See extradoc/docs/comment-anchoring-limitation.md for the
+            # full investigation and Google Issue Tracker references.
+            if comment_ops.new_comments:
+                logger.warning(
+                    "Skipping %d new comment(s): creating top-level comments "
+                    "is not supported by the Google Drive API",
+                    len(comment_ops.new_comments),
                 )
-                comments_created += 1
 
             for new_reply in comment_ops.new_replies:
                 await self._transport.create_reply(

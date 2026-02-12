@@ -113,25 +113,6 @@ class Transport(ABC):
         ...
 
     @abstractmethod
-    async def create_comment(
-        self,
-        file_id: str,
-        content: str,
-        anchor_json: str | None = None,
-    ) -> dict[str, Any]:
-        """Create a new comment on a file.
-
-        Args:
-            file_id: The file identifier
-            content: Comment text
-            anchor_json: Optional anchor JSON for positioned comments
-
-        Returns:
-            API response with the created comment
-        """
-        ...
-
-    @abstractmethod
     async def create_reply(
         self,
         file_id: str,
@@ -221,19 +202,6 @@ class GoogleDocsTransport(Transport):
             if not page_token:
                 break
         return all_comments
-
-    async def create_comment(
-        self,
-        file_id: str,
-        content: str,
-        anchor_json: str | None = None,
-    ) -> dict[str, Any]:
-        """Create a new comment via Drive API v3."""
-        url = f"{DRIVE_API_BASE}/{file_id}/comments?fields=id,content,anchor,author,createdTime"
-        body: dict[str, Any] = {"content": content}
-        if anchor_json is not None:
-            body["anchor"] = anchor_json
-        return await self._post_request(url, body)
 
     async def create_reply(
         self,
@@ -342,15 +310,6 @@ class LocalFileTransport(Transport):
         data = json.loads(path.read_text(encoding="utf-8"))
         result: list[dict[str, Any]] = data.get("comments", [])
         return result
-
-    async def create_comment(
-        self,
-        file_id: str,  # noqa: ARG002
-        content: str,
-        anchor_json: str | None = None,  # noqa: ARG002
-    ) -> dict[str, Any]:
-        """Mock create_comment for testing."""
-        return {"id": "mock_comment_id", "content": content}
 
     async def create_reply(
         self,
