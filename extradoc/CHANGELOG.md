@@ -2,6 +2,18 @@
 
 All notable changes to the extradoc library will be documented in this file.
 
+## [0.2.2] - 2026-02-12
+
+### Added
+
+- Inline `<comment-ref>` tags for Google Docs comments
+- `comments.xml` added to SKILL.md directory listing
+
+### Fixed
+
+- Comment-ref bugs: mark new comments as unsupported
+- Clean up dead code in comment handling
+
 ## [0.2.0] - 2026-02-11
 
 ### Breaking Changes
