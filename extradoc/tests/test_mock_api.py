@@ -105,9 +105,7 @@ def test_batch_update_increments_revision() -> None:
     initial_revision = initial_doc["revisionId"]
 
     # Make a simple update
-    requests = [
-        {"insertText": {"location": {"index": 1}, "text": "Hi"}}
-    ]
+    requests = [{"insertText": {"location": {"index": 1}, "text": "Hi"}}]
 
     response = api.batch_update(requests)
     new_revision = response["writeControl"]["requiredRevisionId"]
@@ -429,9 +427,7 @@ def test_delete_paragraph_bullets_basic() -> None:
     doc = create_minimal_document()
     api = MockGoogleDocsAPI(doc)
 
-    requests = [
-        {"deleteParagraphBullets": {"range": {"startIndex": 1, "endIndex": 5}}}
-    ]
+    requests = [{"deleteParagraphBullets": {"range": {"startIndex": 1, "endIndex": 5}}}]
 
     response = api.batch_update(requests)
     assert len(response["replies"]) == 1
@@ -797,3 +793,960 @@ def test_validation_error_defaults_to_400() -> None:
     """Test that ValidationError defaults to status 400."""
     error = ValidationError("Bad request")
     assert error.status_code == 400
+
+
+# ========================================================================
+# Deletion Request Tests
+# ========================================================================
+
+
+def test_delete_positioned_object_basic() -> None:
+    """Test basic positioned object deletion."""
+    doc = create_minimal_document()
+    api = MockGoogleDocsAPI(doc)
+
+    requests = [{"deletePositionedObject": {"objectId": "obj123"}}]
+
+    response = api.batch_update(requests)
+    assert len(response["replies"]) == 1
+    assert response["replies"][0] == {}
+
+
+def test_delete_positioned_object_missing_object_id() -> None:
+    """Test that missing objectId is rejected."""
+    doc = create_minimal_document()
+    api = MockGoogleDocsAPI(doc)
+
+    requests = [{"deletePositionedObject": {}}]
+
+    with pytest.raises(ValidationError) as exc_info:
+        api.batch_update(requests)
+
+    assert "objectid is required" in str(exc_info.value).lower()
+
+
+def test_delete_header_basic() -> None:
+    """Test basic header deletion."""
+    doc = create_minimal_document()
+    api = MockGoogleDocsAPI(doc)
+
+    # First create a header
+    create_requests = [{"createHeader": {"type": "DEFAULT"}}]
+    create_response = api.batch_update(create_requests)
+    header_id = create_response["replies"][0]["createHeader"]["headerId"]
+
+    # Then delete it
+    delete_requests = [{"deleteHeader": {"headerId": header_id}}]
+    response = api.batch_update(delete_requests)
+    assert len(response["replies"]) == 1
+    assert response["replies"][0] == {}
+
+
+def test_delete_header_missing_header_id() -> None:
+    """Test that missing headerId is rejected."""
+    doc = create_minimal_document()
+    api = MockGoogleDocsAPI(doc)
+
+    requests = [{"deleteHeader": {}}]
+
+    with pytest.raises(ValidationError) as exc_info:
+        api.batch_update(requests)
+
+    assert "headerid is required" in str(exc_info.value).lower()
+
+
+def test_delete_header_nonexistent() -> None:
+    """Test that deleting nonexistent header fails."""
+    doc = create_minimal_document()
+    api = MockGoogleDocsAPI(doc)
+
+    requests = [{"deleteHeader": {"headerId": "nonexistent"}}]
+
+    with pytest.raises(ValidationError) as exc_info:
+        api.batch_update(requests)
+
+    assert "header not found" in str(exc_info.value).lower()
+
+
+def test_delete_footer_basic() -> None:
+    """Test basic footer deletion."""
+    doc = create_minimal_document()
+    api = MockGoogleDocsAPI(doc)
+
+    # First create a footer
+    create_requests = [{"createFooter": {"type": "DEFAULT"}}]
+    create_response = api.batch_update(create_requests)
+    footer_id = create_response["replies"][0]["createFooter"]["footerId"]
+
+    # Then delete it
+    delete_requests = [{"deleteFooter": {"footerId": footer_id}}]
+    response = api.batch_update(delete_requests)
+    assert len(response["replies"]) == 1
+    assert response["replies"][0] == {}
+
+
+def test_delete_footer_missing_footer_id() -> None:
+    """Test that missing footerId is rejected."""
+    doc = create_minimal_document()
+    api = MockGoogleDocsAPI(doc)
+
+    requests = [{"deleteFooter": {}}]
+
+    with pytest.raises(ValidationError) as exc_info:
+        api.batch_update(requests)
+
+    assert "footerid is required" in str(exc_info.value).lower()
+
+
+def test_delete_footer_nonexistent() -> None:
+    """Test that deleting nonexistent footer fails."""
+    doc = create_minimal_document()
+    api = MockGoogleDocsAPI(doc)
+
+    requests = [{"deleteFooter": {"footerId": "nonexistent"}}]
+
+    with pytest.raises(ValidationError) as exc_info:
+        api.batch_update(requests)
+
+    assert "footer not found" in str(exc_info.value).lower()
+
+
+# ========================================================================
+# Creation Request Tests
+# ========================================================================
+
+
+def test_create_header_basic() -> None:
+    """Test basic header creation."""
+    doc = create_minimal_document()
+    api = MockGoogleDocsAPI(doc)
+
+    requests = [{"createHeader": {"type": "DEFAULT"}}]
+
+    response = api.batch_update(requests)
+    assert len(response["replies"]) == 1
+    assert "createHeader" in response["replies"][0]
+    assert "headerId" in response["replies"][0]["createHeader"]
+
+
+def test_create_header_missing_type() -> None:
+    """Test that missing type is rejected."""
+    doc = create_minimal_document()
+    api = MockGoogleDocsAPI(doc)
+
+    requests = [{"createHeader": {}}]
+
+    with pytest.raises(ValidationError) as exc_info:
+        api.batch_update(requests)
+
+    assert "type is required" in str(exc_info.value).lower()
+
+
+def test_create_footer_basic() -> None:
+    """Test basic footer creation."""
+    doc = create_minimal_document()
+    api = MockGoogleDocsAPI(doc)
+
+    requests = [{"createFooter": {"type": "DEFAULT"}}]
+
+    response = api.batch_update(requests)
+    assert len(response["replies"]) == 1
+    assert "createFooter" in response["replies"][0]
+    assert "footerId" in response["replies"][0]["createFooter"]
+
+
+def test_create_footer_missing_type() -> None:
+    """Test that missing type is rejected."""
+    doc = create_minimal_document()
+    api = MockGoogleDocsAPI(doc)
+
+    requests = [{"createFooter": {}}]
+
+    with pytest.raises(ValidationError) as exc_info:
+        api.batch_update(requests)
+
+    assert "type is required" in str(exc_info.value).lower()
+
+
+def test_create_footnote_basic() -> None:
+    """Test basic footnote creation."""
+    doc = create_minimal_document()
+    api = MockGoogleDocsAPI(doc)
+
+    requests = [{"createFootnote": {"location": {"index": 1}}}]
+
+    response = api.batch_update(requests)
+    assert len(response["replies"]) == 1
+    assert "createFootnote" in response["replies"][0]
+    assert "footnoteId" in response["replies"][0]["createFootnote"]
+
+
+def test_create_footnote_in_header_fails() -> None:
+    """Test that creating footnote in header fails."""
+    doc = create_minimal_document()
+    api = MockGoogleDocsAPI(doc)
+
+    # First create a header
+    create_requests = [{"createHeader": {"type": "DEFAULT"}}]
+    create_response = api.batch_update(create_requests)
+    header_id = create_response["replies"][0]["createHeader"]["headerId"]
+
+    # Try to create footnote in header
+    requests = [{"createFootnote": {"location": {"index": 1, "segmentId": header_id}}}]
+
+    with pytest.raises(ValidationError) as exc_info:
+        api.batch_update(requests)
+
+    assert "cannot create footnote" in str(exc_info.value).lower()
+
+
+def test_create_footnote_missing_location() -> None:
+    """Test that missing location is rejected."""
+    doc = create_minimal_document()
+    api = MockGoogleDocsAPI(doc)
+
+    requests = [{"createFootnote": {}}]
+
+    with pytest.raises(ValidationError) as exc_info:
+        api.batch_update(requests)
+
+    assert "must specify either location" in str(exc_info.value).lower()
+
+
+def test_add_document_tab_basic() -> None:
+    """Test basic document tab addition."""
+    doc = create_minimal_document()
+    api = MockGoogleDocsAPI(doc)
+
+    requests = [{"addDocumentTab": {}}]
+
+    response = api.batch_update(requests)
+    assert len(response["replies"]) == 1
+    assert "addDocumentTab" in response["replies"][0]
+    assert "tabId" in response["replies"][0]["addDocumentTab"]
+
+
+def test_add_document_tab_with_properties() -> None:
+    """Test adding document tab with properties."""
+    doc = create_minimal_document()
+    api = MockGoogleDocsAPI(doc)
+
+    requests = [{"addDocumentTab": {"tabProperties": {"title": "New Tab", "index": 1}}}]
+
+    response = api.batch_update(requests)
+    assert len(response["replies"]) == 1
+    assert "tabId" in response["replies"][0]["addDocumentTab"]
+
+
+# ========================================================================
+# Update Request Tests
+# ========================================================================
+
+
+def test_update_table_column_properties_basic() -> None:
+    """Test basic table column properties update."""
+    doc = create_minimal_document()
+    api = MockGoogleDocsAPI(doc)
+
+    requests = [
+        {
+            "updateTableColumnProperties": {
+                "tableStartLocation": {"index": 1},
+                "tableColumnProperties": {
+                    "widthType": "FIXED_WIDTH",
+                    "width": {"magnitude": 100, "unit": "PT"},
+                },
+                "fields": "widthType,width",
+            }
+        }
+    ]
+
+    response = api.batch_update(requests)
+    assert len(response["replies"]) == 1
+    assert response["replies"][0] == {}
+
+
+def test_update_table_column_properties_too_narrow() -> None:
+    """Test that too narrow column width is rejected."""
+    doc = create_minimal_document()
+    api = MockGoogleDocsAPI(doc)
+
+    requests = [
+        {
+            "updateTableColumnProperties": {
+                "tableStartLocation": {"index": 1},
+                "tableColumnProperties": {
+                    "widthType": "FIXED_WIDTH",
+                    "width": {"magnitude": 3, "unit": "PT"},
+                },
+                "fields": "width",
+            }
+        }
+    ]
+
+    with pytest.raises(ValidationError) as exc_info:
+        api.batch_update(requests)
+
+    assert "at least 5 points" in str(exc_info.value).lower()
+
+
+def test_update_table_column_properties_missing_fields() -> None:
+    """Test that missing fields is rejected."""
+    doc = create_minimal_document()
+    api = MockGoogleDocsAPI(doc)
+
+    requests = [
+        {
+            "updateTableColumnProperties": {
+                "tableStartLocation": {"index": 1},
+                "tableColumnProperties": {"widthType": "FIXED_WIDTH"},
+            }
+        }
+    ]
+
+    with pytest.raises(ValidationError) as exc_info:
+        api.batch_update(requests)
+
+    assert "fields is required" in str(exc_info.value).lower()
+
+
+def test_update_table_cell_style_basic() -> None:
+    """Test basic table cell style update."""
+    doc = create_minimal_document()
+    api = MockGoogleDocsAPI(doc)
+
+    requests = [
+        {
+            "updateTableCellStyle": {
+                "tableStartLocation": {"index": 1},
+                "tableCellStyle": {
+                    "backgroundColor": {"color": {"rgbColor": {"red": 1.0}}}
+                },
+                "fields": "backgroundColor",
+            }
+        }
+    ]
+
+    response = api.batch_update(requests)
+    assert len(response["replies"]) == 1
+    assert response["replies"][0] == {}
+
+
+def test_update_table_cell_style_missing_fields() -> None:
+    """Test that missing fields is rejected."""
+    doc = create_minimal_document()
+    api = MockGoogleDocsAPI(doc)
+
+    requests = [
+        {
+            "updateTableCellStyle": {
+                "tableStartLocation": {"index": 1},
+                "tableCellStyle": {"backgroundColor": {}},
+            }
+        }
+    ]
+
+    with pytest.raises(ValidationError) as exc_info:
+        api.batch_update(requests)
+
+    assert "fields is required" in str(exc_info.value).lower()
+
+
+def test_update_table_row_style_basic() -> None:
+    """Test basic table row style update."""
+    doc = create_minimal_document()
+    api = MockGoogleDocsAPI(doc)
+
+    requests = [
+        {
+            "updateTableRowStyle": {
+                "tableStartLocation": {"index": 1},
+                "tableRowStyle": {"minRowHeight": {"magnitude": 30, "unit": "PT"}},
+                "fields": "minRowHeight",
+            }
+        }
+    ]
+
+    response = api.batch_update(requests)
+    assert len(response["replies"]) == 1
+    assert response["replies"][0] == {}
+
+
+def test_update_table_row_style_missing_fields() -> None:
+    """Test that missing fields is rejected."""
+    doc = create_minimal_document()
+    api = MockGoogleDocsAPI(doc)
+
+    requests = [
+        {
+            "updateTableRowStyle": {
+                "tableStartLocation": {"index": 1},
+                "tableRowStyle": {"minRowHeight": {"magnitude": 30}},
+            }
+        }
+    ]
+
+    with pytest.raises(ValidationError) as exc_info:
+        api.batch_update(requests)
+
+    assert "fields is required" in str(exc_info.value).lower()
+
+
+def test_update_document_style_basic() -> None:
+    """Test basic document style update."""
+    doc = create_minimal_document()
+    api = MockGoogleDocsAPI(doc)
+
+    requests = [
+        {
+            "updateDocumentStyle": {
+                "documentStyle": {
+                    "background": {
+                        "color": {"color": {"rgbColor": {"red": 1.0, "green": 1.0}}}
+                    }
+                },
+                "fields": "background",
+            }
+        }
+    ]
+
+    response = api.batch_update(requests)
+    assert len(response["replies"]) == 1
+    assert response["replies"][0] == {}
+
+
+def test_update_document_style_missing_fields() -> None:
+    """Test that missing fields is rejected."""
+    doc = create_minimal_document()
+    api = MockGoogleDocsAPI(doc)
+
+    requests = [{"updateDocumentStyle": {"documentStyle": {"background": {}}}}]
+
+    with pytest.raises(ValidationError) as exc_info:
+        api.batch_update(requests)
+
+    assert "fields is required" in str(exc_info.value).lower()
+
+
+def test_update_section_style_basic() -> None:
+    """Test basic section style update."""
+    doc = create_minimal_document()
+    api = MockGoogleDocsAPI(doc)
+
+    requests = [
+        {
+            "updateSectionStyle": {
+                "range": {"startIndex": 1, "endIndex": 5},
+                "sectionStyle": {"columnSeparatorStyle": "BETWEEN_EACH_COLUMN"},
+                "fields": "columnSeparatorStyle",
+            }
+        }
+    ]
+
+    response = api.batch_update(requests)
+    assert len(response["replies"]) == 1
+    assert response["replies"][0] == {}
+
+
+def test_update_section_style_in_header_fails() -> None:
+    """Test that updating section style in header fails."""
+    doc = create_minimal_document()
+    api = MockGoogleDocsAPI(doc)
+
+    # First create a header
+    create_requests = [{"createHeader": {"type": "DEFAULT"}}]
+    create_response = api.batch_update(create_requests)
+    header_id = create_response["replies"][0]["createHeader"]["headerId"]
+
+    # Try to update section style in header
+    requests = [
+        {
+            "updateSectionStyle": {
+                "range": {"startIndex": 1, "endIndex": 2, "segmentId": header_id},
+                "sectionStyle": {"columnSeparatorStyle": "BETWEEN_EACH_COLUMN"},
+                "fields": "columnSeparatorStyle",
+            }
+        }
+    ]
+
+    with pytest.raises(ValidationError) as exc_info:
+        api.batch_update(requests)
+
+    assert "can only be applied to body" in str(exc_info.value).lower()
+
+
+def test_update_document_tab_properties_basic() -> None:
+    """Test basic document tab properties update."""
+    doc = create_minimal_document()
+    api = MockGoogleDocsAPI(doc)
+
+    requests = [
+        {
+            "updateDocumentTabProperties": {
+                "tabProperties": {"tabId": "tab1", "title": "Updated Title"},
+                "fields": "title",
+            }
+        }
+    ]
+
+    response = api.batch_update(requests)
+    assert len(response["replies"]) == 1
+    assert response["replies"][0] == {}
+
+
+def test_update_document_tab_properties_missing_tab_id() -> None:
+    """Test that missing tabId is rejected."""
+    doc = create_minimal_document()
+    api = MockGoogleDocsAPI(doc)
+
+    requests = [
+        {
+            "updateDocumentTabProperties": {
+                "tabProperties": {"title": "Updated Title"},
+                "fields": "title",
+            }
+        }
+    ]
+
+    with pytest.raises(ValidationError) as exc_info:
+        api.batch_update(requests)
+
+    assert "tabid is required" in str(exc_info.value).lower()
+
+
+# ========================================================================
+# Table Operation Tests
+# ========================================================================
+
+
+def test_merge_table_cells_basic() -> None:
+    """Test basic table cell merging."""
+    doc = create_minimal_document()
+    api = MockGoogleDocsAPI(doc)
+
+    requests = [
+        {
+            "mergeTableCells": {
+                "tableRange": {
+                    "tableCellLocation": {
+                        "tableStartLocation": {"index": 1},
+                        "rowIndex": 0,
+                        "columnIndex": 0,
+                    },
+                    "rowSpan": 2,
+                    "columnSpan": 2,
+                }
+            }
+        }
+    ]
+
+    response = api.batch_update(requests)
+    assert len(response["replies"]) == 1
+    assert response["replies"][0] == {}
+
+
+def test_merge_table_cells_missing_table_range() -> None:
+    """Test that missing tableRange is rejected."""
+    doc = create_minimal_document()
+    api = MockGoogleDocsAPI(doc)
+
+    requests = [{"mergeTableCells": {}}]
+
+    with pytest.raises(ValidationError) as exc_info:
+        api.batch_update(requests)
+
+    assert "tablerange is required" in str(exc_info.value).lower()
+
+
+def test_unmerge_table_cells_basic() -> None:
+    """Test basic table cell unmerging."""
+    doc = create_minimal_document()
+    api = MockGoogleDocsAPI(doc)
+
+    requests = [
+        {
+            "unmergeTableCells": {
+                "tableRange": {
+                    "tableCellLocation": {
+                        "tableStartLocation": {"index": 1},
+                        "rowIndex": 0,
+                        "columnIndex": 0,
+                    },
+                    "rowSpan": 2,
+                    "columnSpan": 2,
+                }
+            }
+        }
+    ]
+
+    response = api.batch_update(requests)
+    assert len(response["replies"]) == 1
+    assert response["replies"][0] == {}
+
+
+def test_unmerge_table_cells_missing_table_range() -> None:
+    """Test that missing tableRange is rejected."""
+    doc = create_minimal_document()
+    api = MockGoogleDocsAPI(doc)
+
+    requests = [{"unmergeTableCells": {}}]
+
+    with pytest.raises(ValidationError) as exc_info:
+        api.batch_update(requests)
+
+    assert "tablerange is required" in str(exc_info.value).lower()
+
+
+def test_pin_table_header_rows_basic() -> None:
+    """Test basic table header row pinning."""
+    doc = create_minimal_document()
+    api = MockGoogleDocsAPI(doc)
+
+    requests = [
+        {
+            "pinTableHeaderRows": {
+                "tableStartLocation": {"index": 1},
+                "pinnedHeaderRowsCount": 2,
+            }
+        }
+    ]
+
+    response = api.batch_update(requests)
+    assert len(response["replies"]) == 1
+    assert response["replies"][0] == {}
+
+
+def test_pin_table_header_rows_missing_count() -> None:
+    """Test that missing pinnedHeaderRowsCount is rejected."""
+    doc = create_minimal_document()
+    api = MockGoogleDocsAPI(doc)
+
+    requests = [{"pinTableHeaderRows": {"tableStartLocation": {"index": 1}}}]
+
+    with pytest.raises(ValidationError) as exc_info:
+        api.batch_update(requests)
+
+    assert "pinnedheaderrowscount is required" in str(exc_info.value).lower()
+
+
+# ========================================================================
+# Insertion Request Tests
+# ========================================================================
+
+
+def test_insert_inline_image_basic() -> None:
+    """Test basic inline image insertion."""
+    doc = create_minimal_document()
+    api = MockGoogleDocsAPI(doc)
+
+    requests = [
+        {
+            "insertInlineImage": {
+                "uri": "https://example.com/image.png",
+                "location": {"index": 1},
+            }
+        }
+    ]
+
+    response = api.batch_update(requests)
+    assert len(response["replies"]) == 1
+    assert "insertInlineImage" in response["replies"][0]
+    assert "objectId" in response["replies"][0]["insertInlineImage"]
+
+
+def test_insert_inline_image_missing_uri() -> None:
+    """Test that missing uri is rejected."""
+    doc = create_minimal_document()
+    api = MockGoogleDocsAPI(doc)
+
+    requests = [{"insertInlineImage": {"location": {"index": 1}}}]
+
+    with pytest.raises(ValidationError) as exc_info:
+        api.batch_update(requests)
+
+    assert "uri is required" in str(exc_info.value).lower()
+
+
+def test_insert_inline_image_uri_too_long() -> None:
+    """Test that too long URI is rejected."""
+    doc = create_minimal_document()
+    api = MockGoogleDocsAPI(doc)
+
+    long_uri = "https://example.com/" + "x" * 2050
+
+    requests = [{"insertInlineImage": {"uri": long_uri, "location": {"index": 1}}}]
+
+    with pytest.raises(ValidationError) as exc_info:
+        api.batch_update(requests)
+
+    assert "less than 2 kb" in str(exc_info.value).lower()
+
+
+def test_insert_page_break_basic() -> None:
+    """Test basic page break insertion."""
+    doc = create_minimal_document()
+    api = MockGoogleDocsAPI(doc)
+
+    requests = [{"insertPageBreak": {"location": {"index": 1}}}]
+
+    response = api.batch_update(requests)
+    assert len(response["replies"]) == 1
+    assert response["replies"][0] == {}
+
+
+def test_insert_page_break_in_header_fails() -> None:
+    """Test that inserting page break in header fails."""
+    doc = create_minimal_document()
+    api = MockGoogleDocsAPI(doc)
+
+    # First create a header
+    create_requests = [{"createHeader": {"type": "DEFAULT"}}]
+    create_response = api.batch_update(create_requests)
+    header_id = create_response["replies"][0]["createHeader"]["headerId"]
+
+    # Try to insert page break in header
+    requests = [{"insertPageBreak": {"location": {"index": 1, "segmentId": header_id}}}]
+
+    with pytest.raises(ValidationError) as exc_info:
+        api.batch_update(requests)
+
+    assert "cannot insert page break" in str(exc_info.value).lower()
+
+
+def test_insert_section_break_basic() -> None:
+    """Test basic section break insertion."""
+    doc = create_minimal_document()
+    api = MockGoogleDocsAPI(doc)
+
+    requests = [
+        {"insertSectionBreak": {"location": {"index": 1}, "sectionType": "CONTINUOUS"}}
+    ]
+
+    response = api.batch_update(requests)
+    assert len(response["replies"]) == 1
+    assert response["replies"][0] == {}
+
+
+def test_insert_section_break_missing_section_type() -> None:
+    """Test that missing sectionType is rejected."""
+    doc = create_minimal_document()
+    api = MockGoogleDocsAPI(doc)
+
+    requests = [{"insertSectionBreak": {"location": {"index": 1}}}]
+
+    with pytest.raises(ValidationError) as exc_info:
+        api.batch_update(requests)
+
+    assert "sectiontype is required" in str(exc_info.value).lower()
+
+
+def test_insert_section_break_in_footer_fails() -> None:
+    """Test that inserting section break in footer fails."""
+    doc = create_minimal_document()
+    api = MockGoogleDocsAPI(doc)
+
+    # First create a footer
+    create_requests = [{"createFooter": {"type": "DEFAULT"}}]
+    create_response = api.batch_update(create_requests)
+    footer_id = create_response["replies"][0]["createFooter"]["footerId"]
+
+    # Try to insert section break in footer
+    requests = [
+        {
+            "insertSectionBreak": {
+                "location": {"index": 1, "segmentId": footer_id},
+                "sectionType": "CONTINUOUS",
+            }
+        }
+    ]
+
+    with pytest.raises(ValidationError) as exc_info:
+        api.batch_update(requests)
+
+    assert "cannot insert section break" in str(exc_info.value).lower()
+
+
+def test_insert_person_basic() -> None:
+    """Test basic person insertion."""
+    doc = create_minimal_document()
+    api = MockGoogleDocsAPI(doc)
+
+    requests = [
+        {
+            "insertPerson": {
+                "location": {"index": 1},
+                "personProperties": {"email": "user@example.com"},
+            }
+        }
+    ]
+
+    response = api.batch_update(requests)
+    assert len(response["replies"]) == 1
+    assert response["replies"][0] == {}
+
+
+def test_insert_person_missing_properties() -> None:
+    """Test that missing personProperties is rejected."""
+    doc = create_minimal_document()
+    api = MockGoogleDocsAPI(doc)
+
+    requests = [{"insertPerson": {"location": {"index": 1}}}]
+
+    with pytest.raises(ValidationError) as exc_info:
+        api.batch_update(requests)
+
+    assert "personproperties is required" in str(exc_info.value).lower()
+
+
+def test_insert_date_basic() -> None:
+    """Test basic date insertion."""
+    doc = create_minimal_document()
+    api = MockGoogleDocsAPI(doc)
+
+    requests = [
+        {
+            "insertDate": {
+                "location": {"index": 1},
+                "dateElementProperties": {"format": "YYYY-MM-DD"},
+            }
+        }
+    ]
+
+    response = api.batch_update(requests)
+    assert len(response["replies"]) == 1
+    assert response["replies"][0] == {}
+
+
+def test_insert_date_missing_properties() -> None:
+    """Test that missing dateElementProperties is rejected."""
+    doc = create_minimal_document()
+    api = MockGoogleDocsAPI(doc)
+
+    requests = [{"insertDate": {"location": {"index": 1}}}]
+
+    with pytest.raises(ValidationError) as exc_info:
+        api.batch_update(requests)
+
+    assert "dateelementproperties is required" in str(exc_info.value).lower()
+
+
+# ========================================================================
+# Replacement Request Tests
+# ========================================================================
+
+
+def test_replace_image_basic() -> None:
+    """Test basic image replacement."""
+    doc = create_minimal_document()
+    api = MockGoogleDocsAPI(doc)
+
+    requests = [
+        {
+            "replaceImage": {
+                "imageObjectId": "image123",
+                "uri": "https://example.com/newimage.png",
+            }
+        }
+    ]
+
+    response = api.batch_update(requests)
+    assert len(response["replies"]) == 1
+    assert response["replies"][0] == {}
+
+
+def test_replace_image_missing_object_id() -> None:
+    """Test that missing imageObjectId is rejected."""
+    doc = create_minimal_document()
+    api = MockGoogleDocsAPI(doc)
+
+    requests = [{"replaceImage": {"uri": "https://example.com/image.png"}}]
+
+    with pytest.raises(ValidationError) as exc_info:
+        api.batch_update(requests)
+
+    assert "imageobjectid is required" in str(exc_info.value).lower()
+
+
+def test_replace_image_uri_too_long() -> None:
+    """Test that too long URI is rejected."""
+    doc = create_minimal_document()
+    api = MockGoogleDocsAPI(doc)
+
+    long_uri = "https://example.com/" + "x" * 2050
+
+    requests = [{"replaceImage": {"imageObjectId": "image123", "uri": long_uri}}]
+
+    with pytest.raises(ValidationError) as exc_info:
+        api.batch_update(requests)
+
+    assert "less than 2 kb" in str(exc_info.value).lower()
+
+
+def test_replace_named_range_content_basic() -> None:
+    """Test basic named range content replacement."""
+    doc = create_minimal_document()
+    api = MockGoogleDocsAPI(doc)
+
+    requests = [
+        {
+            "replaceNamedRangeContent": {
+                "namedRangeName": "myrange",
+                "text": "New content",
+            }
+        }
+    ]
+
+    response = api.batch_update(requests)
+    assert len(response["replies"]) == 1
+    assert response["replies"][0] == {}
+
+
+def test_replace_named_range_content_missing_text() -> None:
+    """Test that missing text is rejected."""
+    doc = create_minimal_document()
+    api = MockGoogleDocsAPI(doc)
+
+    requests = [{"replaceNamedRangeContent": {"namedRangeName": "myrange"}}]
+
+    with pytest.raises(ValidationError) as exc_info:
+        api.batch_update(requests)
+
+    assert "text is required" in str(exc_info.value).lower()
+
+
+def test_replace_named_range_content_missing_identifier() -> None:
+    """Test that missing identifier is rejected."""
+    doc = create_minimal_document()
+    api = MockGoogleDocsAPI(doc)
+
+    requests = [{"replaceNamedRangeContent": {"text": "New content"}}]
+
+    with pytest.raises(ValidationError) as exc_info:
+        api.batch_update(requests)
+
+    assert "must specify either" in str(exc_info.value).lower()
+
+
+def test_delete_tab_basic() -> None:
+    """Test basic tab deletion."""
+    doc = create_minimal_document()
+    api = MockGoogleDocsAPI(doc)
+
+    requests = [{"deleteTab": {"tabId": "tab1"}}]
+
+    response = api.batch_update(requests)
+    assert len(response["replies"]) == 1
+    assert response["replies"][0] == {}
+
+
+def test_delete_tab_missing_tab_id() -> None:
+    """Test that missing tabId is rejected."""
+    doc = create_minimal_document()
+    api = MockGoogleDocsAPI(doc)
+
+    requests = [{"deleteTab": {}}]
+
+    with pytest.raises(ValidationError) as exc_info:
+        api.batch_update(requests)
+
+    assert "tabid is required" in str(exc_info.value).lower()

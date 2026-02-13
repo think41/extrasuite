@@ -195,9 +195,9 @@ class TestDiffEngine:
         cell_mods_before = [
             i for i, t in enumerate(rt) if t in cell_mod_types and i < delete_row_idx
         ]
-        assert (
-            len(cell_mods_before) >= 2
-        ), f"Expected cell mod requests before deleteTableRow, got request order: {rt}"
+        assert len(cell_mods_before) >= 2, (
+            f"Expected cell mod requests before deleteTableRow, got request order: {rt}"
+        )
 
     def test_toc_no_spurious_diff(self):
         """Document with TOC should produce no spurious diffs when unchanged."""
