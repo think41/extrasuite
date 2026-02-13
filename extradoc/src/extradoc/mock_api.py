@@ -38,6 +38,173 @@ class ValidationError(MockAPIError):
     pass
 
 
+class DocumentStructureTracker:
+    """Track structural elements in a document for validation.
+
+    This class scans the document and maintains indexes of all structural
+    elements (tables, TableOfContents, equations, section breaks) to enable
+    validation of operations that might violate structural constraints.
+    """
+
+    def __init__(self, document: dict[str, Any]) -> None:
+        """Initialize tracker by scanning document.
+
+        Args:
+            document: Complete Document object from Google Docs API
+        """
+        # Store (start_index, end_index) tuples for each element type
+        self.tables: list[tuple[int, int]] = []
+        self.table_of_contents: list[tuple[int, int]] = []
+        self.equations: list[tuple[int, int]] = []
+        # Section breaks only have a single index (they're structural markers)
+        self.section_breaks: list[int] = []
+
+        self._scan_document(document)
+
+    def _scan_document(self, document: dict[str, Any]) -> None:
+        """Scan document and record all structural elements.
+
+        Args:
+            document: Document to scan
+        """
+        for tab in document.get("tabs", []):
+            document_tab = tab.get("documentTab", {})
+            body = document_tab.get("body", {})
+            self._scan_content(body.get("content", []))
+
+    def _scan_content(self, content: list[dict[str, Any]]) -> None:
+        """Recursively scan content for structural elements.
+
+        Args:
+            content: List of structural elements
+        """
+        for element in content:
+            start = element.get("startIndex", 0)
+            end = element.get("endIndex", 0)
+
+            if "table" in element:
+                self.tables.append((start, end))
+            elif "tableOfContents" in element:
+                self.table_of_contents.append((start, end))
+                # Recursively scan TOC content
+                toc = element["tableOfContents"]
+                self._scan_content(toc.get("content", []))
+            elif "sectionBreak" in element:
+                # Section breaks are at a single index
+                self.section_breaks.append(start)
+            elif "paragraph" in element:
+                # Check for equations within paragraphs
+                para = element["paragraph"]
+                for para_elem in para.get("elements", []):
+                    if "equation" in para_elem:
+                        eq_start = para_elem.get("startIndex", 0)
+                        eq_end = para_elem.get("endIndex", 0)
+                        self.equations.append((eq_start, eq_end))
+
+    def validate_delete_range(self, start_index: int, end_index: int) -> None:
+        """Validate that deletion doesn't violate structural rules.
+
+        Args:
+            start_index: Start of deletion range
+            end_index: End of deletion range (exclusive)
+
+        Raises:
+            ValidationError: If deletion violates structural constraints
+        """
+        # Validate tables
+        # NOTE: We only check if deletion partially overlaps the TABLE ITSELF
+        # (the structural element boundaries), not content within table cells.
+        # Deletions completely within cells are handled by table cell validation.
+        for table_start, table_end in self.tables:
+            # Check if deletion is completely contained within table
+            # (i.e., within table cells, not touching table structure boundaries)
+            if start_index > table_start and end_index < table_end:
+                # Deletion is within the table, allow it
+                # (table cell validation will handle cell-specific rules)
+                continue
+
+            # Check if deletion partially overlaps the table structure boundaries
+            # This means deleting part of the table but not all of it
+            if self._is_partial_overlap(start_index, end_index, table_start, table_end):
+                raise ValidationError(
+                    f"Cannot partially delete table at indices {table_start}-{table_end}. "
+                    f"Deletion range {start_index}-{end_index} only partially overlaps. "
+                    "Delete the entire table or content within cells only."
+                )
+
+            # Check newline before table (the character immediately before table_start)
+            # Only error if we delete the newline but NOT the table itself
+            if table_start > 1 and start_index < table_start == end_index:
+                raise ValidationError(
+                    f"Cannot delete newline before table without deleting the table. "
+                    f"Table at index {table_start}, deletion range {start_index}-{end_index} "
+                    "deletes the preceding newline but not the table."
+                )
+
+        # Validate TableOfContents
+        for toc_start, toc_end in self.table_of_contents:
+            if self._is_partial_overlap(start_index, end_index, toc_start, toc_end):
+                raise ValidationError(
+                    f"Cannot partially delete table of contents at indices {toc_start}-{toc_end}. "
+                    f"Deletion range {start_index}-{end_index} only partially overlaps. "
+                    "Delete the entire table of contents or nothing."
+                )
+            # Check newline before TOC
+            # Only error if we delete the newline but NOT the TOC itself
+            if toc_start > 1 and start_index < toc_start == end_index:
+                raise ValidationError(
+                    f"Cannot delete newline before table of contents without deleting it. "
+                    f"TOC at index {toc_start}, deletion range {start_index}-{end_index} "
+                    "deletes the preceding newline but not the TOC."
+                )
+
+        # Validate Equations
+        for eq_start, eq_end in self.equations:
+            if self._is_partial_overlap(start_index, end_index, eq_start, eq_end):
+                raise ValidationError(
+                    f"Cannot partially delete equation at indices {eq_start}-{eq_end}. "
+                    f"Deletion range {start_index}-{end_index} only partially overlaps. "
+                    "Delete the entire equation or nothing."
+                )
+
+        # Validate SectionBreaks
+        for sb_index in self.section_breaks:
+            # Check if deletion includes newline before section break
+            # but doesn't include the section break itself
+            # Section break starts at sb_index
+            # The newline before it ends at sb_index (exclusive range)
+            # So deleting X-sb_index deletes the newline but not the break
+            if sb_index > 1 and start_index < sb_index == end_index:
+                # Deletion ends exactly at section break, meaning it deletes
+                # the newline before it but not the break itself
+                raise ValidationError(
+                    f"Cannot delete newline before section break without deleting the break. "
+                    f"Section break at index {sb_index}, deletion range {start_index}-{end_index} "
+                    "deletes the preceding newline but not the break."
+                )
+
+    def _is_partial_overlap(
+        self, del_start: int, del_end: int, elem_start: int, elem_end: int
+    ) -> bool:
+        """Check if deletion partially overlaps element.
+
+        Args:
+            del_start: Deletion start index
+            del_end: Deletion end index
+            elem_start: Element start index
+            elem_end: Element end index
+
+        Returns:
+            True if there's overlap but not complete deletion
+        """
+        # Has overlap
+        has_overlap = del_start < elem_end and del_end > elem_start
+        # Complete deletion (deletion fully contains element)
+        is_complete = del_start <= elem_start and del_end >= elem_end
+        # Partial means overlap but not complete
+        return has_overlap and not is_complete
+
+
 class MockGoogleDocsAPI:
     """Mock implementation of Google Docs API.
 
@@ -66,6 +233,9 @@ class MockGoogleDocsAPI:
         # Track named ranges (keyed by ID)
         self._named_ranges: dict[str, dict[str, Any]] = {}
         self._extract_named_ranges()
+
+        # Track structural elements for validation
+        self._structure_tracker = DocumentStructureTracker(self._document)
 
     def _extract_named_ranges(self) -> None:
         """Extract all named ranges from document into tracking dict."""
@@ -131,6 +301,10 @@ class MockGoogleDocsAPI:
             # Update revision ID after successful batch
             self._revision_counter += 1
             self._revision_id = f"mock_revision_{self._revision_counter}"
+
+            # Rebuild structure tracker to reflect any changes
+            # (In a full implementation, we'd update it incrementally)
+            self._structure_tracker = DocumentStructureTracker(self._document)
 
             return {
                 "replies": replies,
@@ -1572,6 +1746,172 @@ class MockGoogleDocsAPI:
         text = re.sub(r"[\ue000-\uf8ff]", "", text)
         return text
 
+    def _validate_no_surrogate_pair_split(
+        self, segment: dict[str, Any], start_index: int, end_index: int
+    ) -> None:
+        """Validate that deletion doesn't split a surrogate pair.
+
+        Surrogate pairs in UTF-16:
+        - High surrogate: 0xD800-0xDBFF
+        - Low surrogate: 0xDC00-0xDFFF
+        - Together they represent characters outside the Basic Multilingual Plane
+        - Examples: emoji (😀), some Chinese characters, mathematical symbols
+
+        Args:
+            segment: The segment containing the content
+            start_index: Start of deletion range
+            end_index: End of deletion range
+
+        Raises:
+            ValidationError: If deletion would split a surrogate pair
+        """
+        # Walk through all text content in the segment
+        for element in segment.get("content", []):
+            self._check_surrogate_pairs_in_element(element, start_index, end_index)
+
+    def _check_surrogate_pairs_in_element(
+        self, element: dict[str, Any], start_index: int, end_index: int
+    ) -> None:
+        """Recursively check surrogate pairs in an element.
+
+        Args:
+            element: Structural element to check
+            start_index: Start of deletion range
+            end_index: End of deletion range
+
+        Raises:
+            ValidationError: If deletion would split a surrogate pair
+        """
+        if "paragraph" in element:
+            for para_elem in element["paragraph"].get("elements", []):
+                if "textRun" in para_elem:
+                    text = para_elem["textRun"].get("content", "")
+                    elem_start = para_elem.get("startIndex", 0)
+                    self._validate_text_surrogate_pairs(
+                        text, elem_start, start_index, end_index
+                    )
+        elif "table" in element:
+            # Recursively check table cells
+            table = element["table"]
+            for row in table.get("tableRows", []):
+                for cell in row.get("tableCells", []):
+                    for cell_elem in cell.get("content", []):
+                        self._check_surrogate_pairs_in_element(
+                            cell_elem, start_index, end_index
+                        )
+        elif "tableOfContents" in element:
+            # Recursively check TOC content
+            toc = element["tableOfContents"]
+            for toc_elem in toc.get("content", []):
+                self._check_surrogate_pairs_in_element(toc_elem, start_index, end_index)
+
+    def _validate_text_surrogate_pairs(
+        self, text: str, elem_start: int, del_start: int, del_end: int
+    ) -> None:
+        """Validate that deletion boundaries don't split surrogate pairs in text.
+
+        Python strings use Unicode code points, not UTF-16 code units directly.
+        Characters outside the Basic Multilingual Plane (BMP) like emoji are
+        represented as surrogate pairs in UTF-16, consuming 2 code units each.
+
+        Args:
+            text: The text content (Python Unicode string)
+            elem_start: Starting index of this text run in document
+            del_start: Start of deletion range
+            del_end: End of deletion range
+
+        Raises:
+            ValidationError: If deletion would split a surrogate pair
+        """
+        # Track current position in UTF-16 code units
+        current_index = elem_start
+
+        for char in text:
+            char_code = ord(char)
+
+            # Check if this character requires a surrogate pair in UTF-16
+            # Characters >= U+10000 need surrogate pairs
+            if char_code >= 0x10000:
+                # This character will be encoded as a surrogate pair (2 UTF-16 units)
+                # The pair occupies indices [current_index, current_index + 2)
+                pair_start = current_index
+                pair_end = current_index + 2
+
+                # Check if deletion boundary falls within the pair
+                # Invalid if start or end is in the middle of the pair
+                # (between pair_start and pair_end, but not at the boundaries)
+                if pair_start < del_start < pair_end or pair_start < del_end < pair_end:
+                    raise ValidationError(
+                        f"Cannot delete one code unit of a surrogate pair. "
+                        f"Character '{char}' (U+{char_code:04X}) at index {pair_start} "
+                        f"spans indices {pair_start}-{pair_end}. Deletion range "
+                        f"{del_start}-{del_end} would split it."
+                    )
+
+                # This character consumed 2 UTF-16 code units
+                current_index += 2
+            else:
+                # Regular BMP character (1 UTF-16 code unit)
+                current_index += 1
+
+    def _validate_no_table_cell_final_newline_deletion(
+        self, tab: dict[str, Any], segment_id: str | None, start_index: int, end_index: int
+    ) -> None:
+        """Validate that deletion doesn't include final newline from table cells.
+
+        Note: This check only applies when deleting content WITHIN table cells.
+        When deleting an entire table structure, cell final newlines are allowed
+        to be deleted as part of the table deletion.
+
+        Args:
+            tab: Tab object
+            segment_id: Segment ID (must be None/body for tables)
+            start_index: Start of deletion range
+            end_index: End of deletion range
+
+        Raises:
+            ValidationError: If deletion would remove final newline from a cell
+                while not deleting the entire table
+        """
+        # Tables only exist in the body
+        if segment_id is not None:
+            return
+
+        segment, _ = self._get_segment(tab, segment_id)
+
+        # Check all tables in the segment
+        for element in segment.get("content", []):
+            if "table" in element:
+                table_start = element.get("startIndex", 0)
+                table_end = element.get("endIndex", 0)
+
+                # If deletion includes the entire table, allow it
+                # (deleting entire table necessarily deletes cell final newlines)
+                if start_index <= table_start and end_index >= table_end:
+                    continue
+
+                # Otherwise check individual cells
+                table = element["table"]
+                for row in table.get("tableRows", []):
+                    for cell in row.get("tableCells", []):
+                        cell_content = cell.get("content", [])
+                        if cell_content:
+                            # Get the last element's endIndex (final newline position)
+                            cell_end = cell_content[-1].get("endIndex", 0)
+                            cell_start = cell_content[0].get("startIndex", 0)
+
+                            # Check if deletion range includes this cell
+                            if start_index < cell_end and end_index > cell_start:
+                                # Deletion overlaps with this cell
+                                # Check if it includes the final newline
+                                if end_index >= cell_end:
+                                    raise ValidationError(
+                                        f"Cannot delete the final newline of a table cell. "
+                                        f"Cell at indices {cell_start}-{cell_end}, "
+                                        f"deletion range {start_index}-{end_index} includes "
+                                        f"final newline at index {cell_end - 1}"
+                                    )
+
     def _get_tab(self, tab_id: str | None) -> dict[str, Any]:
         """Get tab by ID, or first tab if None.
 
@@ -1779,27 +2119,16 @@ class MockGoogleDocsAPI:
                 f"Deletion range {start_index}-{end_index} includes final newline at {max_index - 1}"
             )
 
-        # Validate we're not partially deleting structural elements
-        for element in content:
-            elem_start = element.get("startIndex", 0)
-            elem_end = element.get("endIndex", 0)
+        # Validate we're not splitting surrogate pairs
+        self._validate_no_surrogate_pair_split(segment, start_index, end_index)
 
-            # Check if deletion partially overlaps a table
-            if "table" in element:
-                # Partial overlap is not allowed
-                if (start_index < elem_end and end_index > elem_start) and not (
-                    start_index <= elem_start and end_index >= elem_end
-                ):
-                    raise ValidationError(
-                        f"Cannot partially delete table at {elem_start}-{elem_end}. "
-                        "Delete the entire table or content within cells only."
-                    )
+        # Validate we're not deleting final newline from table cells
+        self._validate_no_table_cell_final_newline_deletion(
+            tab, segment_id, start_index, end_index
+        )
 
-                # Cannot delete newline before table
-                if elem_start > 0 and start_index <= elem_start < end_index:
-                    raise ValidationError(
-                        f"Cannot delete newline before table at index {elem_start}"
-                    )
+        # Validate structural element constraints (TOC, equations, section breaks)
+        self._structure_tracker.validate_delete_range(start_index, end_index)
 
         # In a full implementation, we would:
         # 1. Remove the specified range from all TextRuns

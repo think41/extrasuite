@@ -57,6 +57,466 @@ def create_minimal_document() -> dict[str, any]:
     }
 
 
+def create_document_with_emoji() -> dict[str, any]:
+    """Create document with emoji for surrogate pair testing.
+
+    Returns a document with "Hello😀World\n" where 😀 is a surrogate pair.
+    Indexes: H(1) e(2) l(3) l(4) o(5) 😀(6-8, 2 units) W(8) o(9) r(10) l(11) d(12) \n(13)
+    Total: 14 UTF-16 code units (endIndex 14)
+    Note: 😀 = U+1F600 = surrogate pair 0xD83D 0xDE00, occupies indices 6-8
+    """
+    return {
+        "documentId": "test_emoji_doc",
+        "title": "Emoji Test Document",
+        "revisionId": "initial_revision",
+        "tabs": [
+            {
+                "tabProperties": {
+                    "tabId": "tab1",
+                    "title": "Tab 1",
+                    "index": 0,
+                },
+                "documentTab": {
+                    "body": {
+                        "content": [
+                            {
+                                "startIndex": 1,
+                                "endIndex": 14,
+                                "paragraph": {
+                                    "elements": [
+                                        {
+                                            "startIndex": 1,
+                                            "endIndex": 14,
+                                            "textRun": {
+                                                "content": "Hello😀World\n",
+                                                "textStyle": {},
+                                            },
+                                        }
+                                    ],
+                                    "paragraphStyle": {},
+                                },
+                            }
+                        ]
+                    },
+                    "headers": {},
+                    "footers": {},
+                    "footnotes": {},
+                    "namedRanges": {},
+                },
+            }
+        ],
+    }
+
+
+def create_document_with_table() -> dict[str, any]:
+    """Create document with a table for cell testing.
+
+    Structure:
+    - "Before\n" (1-7)
+    - Table (8-39)
+      - Row 1: Cell 1 "A\n" (9-11), Cell 2 "B\n" (12-14)
+      - Row 2: Cell 3 "C\n" (15-17), Cell 4 "D\n" (18-20)
+    - "After\n" (21-27)
+
+    The table cells have final newlines at indices 10, 13, 16, 19
+    """
+    return {
+        "documentId": "test_table_doc",
+        "title": "Table Test Document",
+        "revisionId": "initial_revision",
+        "tabs": [
+            {
+                "tabProperties": {
+                    "tabId": "tab1",
+                    "title": "Tab 1",
+                    "index": 0,
+                },
+                "documentTab": {
+                    "body": {
+                        "content": [
+                            {
+                                "startIndex": 1,
+                                "endIndex": 8,
+                                "paragraph": {
+                                    "elements": [
+                                        {
+                                            "startIndex": 1,
+                                            "endIndex": 8,
+                                            "textRun": {
+                                                "content": "Before\n",
+                                                "textStyle": {},
+                                            },
+                                        }
+                                    ],
+                                    "paragraphStyle": {},
+                                },
+                            },
+                            {
+                                "startIndex": 8,
+                                "endIndex": 21,
+                                "table": {
+                                    "rows": 2,
+                                    "columns": 2,
+                                    "tableRows": [
+                                        {
+                                            "tableCells": [
+                                                {
+                                                    "content": [
+                                                        {
+                                                            "startIndex": 9,
+                                                            "endIndex": 11,
+                                                            "paragraph": {
+                                                                "elements": [
+                                                                    {
+                                                                        "startIndex": 9,
+                                                                        "endIndex": 11,
+                                                                        "textRun": {
+                                                                            "content": "A\n",
+                                                                            "textStyle": {},
+                                                                        },
+                                                                    }
+                                                                ],
+                                                                "paragraphStyle": {},
+                                                            },
+                                                        }
+                                                    ]
+                                                },
+                                                {
+                                                    "content": [
+                                                        {
+                                                            "startIndex": 12,
+                                                            "endIndex": 14,
+                                                            "paragraph": {
+                                                                "elements": [
+                                                                    {
+                                                                        "startIndex": 12,
+                                                                        "endIndex": 14,
+                                                                        "textRun": {
+                                                                            "content": "B\n",
+                                                                            "textStyle": {},
+                                                                        },
+                                                                    }
+                                                                ],
+                                                                "paragraphStyle": {},
+                                                            },
+                                                        }
+                                                    ]
+                                                },
+                                            ]
+                                        },
+                                        {
+                                            "tableCells": [
+                                                {
+                                                    "content": [
+                                                        {
+                                                            "startIndex": 15,
+                                                            "endIndex": 17,
+                                                            "paragraph": {
+                                                                "elements": [
+                                                                    {
+                                                                        "startIndex": 15,
+                                                                        "endIndex": 17,
+                                                                        "textRun": {
+                                                                            "content": "C\n",
+                                                                            "textStyle": {},
+                                                                        },
+                                                                    }
+                                                                ],
+                                                                "paragraphStyle": {},
+                                                            },
+                                                        }
+                                                    ]
+                                                },
+                                                {
+                                                    "content": [
+                                                        {
+                                                            "startIndex": 18,
+                                                            "endIndex": 20,
+                                                            "paragraph": {
+                                                                "elements": [
+                                                                    {
+                                                                        "startIndex": 18,
+                                                                        "endIndex": 20,
+                                                                        "textRun": {
+                                                                            "content": "D\n",
+                                                                            "textStyle": {},
+                                                                        },
+                                                                    }
+                                                                ],
+                                                                "paragraphStyle": {},
+                                                            },
+                                                        }
+                                                    ]
+                                                },
+                                            ]
+                                        },
+                                    ],
+                                },
+                            },
+                            {
+                                "startIndex": 21,
+                                "endIndex": 27,
+                                "paragraph": {
+                                    "elements": [
+                                        {
+                                            "startIndex": 21,
+                                            "endIndex": 27,
+                                            "textRun": {
+                                                "content": "After\n",
+                                                "textStyle": {},
+                                            },
+                                        }
+                                    ],
+                                    "paragraphStyle": {},
+                                },
+                            },
+                        ]
+                    },
+                    "headers": {},
+                    "footers": {},
+                    "footnotes": {},
+                    "namedRanges": {},
+                },
+            }
+        ],
+    }
+
+
+def create_document_with_toc() -> dict[str, any]:
+    """Create document with TableOfContents.
+
+    Structure:
+    - "Title\n" (1-7)
+    - TableOfContents (8-10)
+    - "Content\n" (11-19)
+    """
+    return {
+        "documentId": "test_toc_doc",
+        "title": "TOC Test Document",
+        "revisionId": "initial_revision",
+        "tabs": [
+            {
+                "tabProperties": {
+                    "tabId": "tab1",
+                    "title": "Tab 1",
+                    "index": 0,
+                },
+                "documentTab": {
+                    "body": {
+                        "content": [
+                            {
+                                "startIndex": 1,
+                                "endIndex": 7,
+                                "paragraph": {
+                                    "elements": [
+                                        {
+                                            "startIndex": 1,
+                                            "endIndex": 7,
+                                            "textRun": {
+                                                "content": "Title\n",
+                                                "textStyle": {},
+                                            },
+                                        }
+                                    ],
+                                    "paragraphStyle": {"namedStyleType": "HEADING_1"},
+                                },
+                            },
+                            {
+                                "startIndex": 7,
+                                "endIndex": 10,
+                                "tableOfContents": {
+                                    "content": [
+                                        {
+                                            "startIndex": 8,
+                                            "endIndex": 10,
+                                            "paragraph": {
+                                                "elements": [
+                                                    {
+                                                        "startIndex": 8,
+                                                        "endIndex": 10,
+                                                        "textRun": {
+                                                            "content": "\n",
+                                                            "textStyle": {},
+                                                        },
+                                                    }
+                                                ],
+                                                "paragraphStyle": {},
+                                            },
+                                        }
+                                    ]
+                                },
+                            },
+                            {
+                                "startIndex": 10,
+                                "endIndex": 18,
+                                "paragraph": {
+                                    "elements": [
+                                        {
+                                            "startIndex": 10,
+                                            "endIndex": 18,
+                                            "textRun": {
+                                                "content": "Content\n",
+                                                "textStyle": {},
+                                            },
+                                        }
+                                    ],
+                                    "paragraphStyle": {},
+                                },
+                            },
+                        ]
+                    },
+                    "headers": {},
+                    "footers": {},
+                    "footnotes": {},
+                    "namedRanges": {},
+                },
+            }
+        ],
+    }
+
+
+def create_document_with_section_break() -> dict[str, any]:
+    """Create document with SectionBreak.
+
+    Structure:
+    - "Section 1\n" (1-11)
+    - SectionBreak (11-12)
+    - "Section 2\n" (12-22)
+    """
+    return {
+        "documentId": "test_section_doc",
+        "title": "Section Break Test Document",
+        "revisionId": "initial_revision",
+        "tabs": [
+            {
+                "tabProperties": {
+                    "tabId": "tab1",
+                    "title": "Tab 1",
+                    "index": 0,
+                },
+                "documentTab": {
+                    "body": {
+                        "content": [
+                            {
+                                "startIndex": 1,
+                                "endIndex": 11,
+                                "paragraph": {
+                                    "elements": [
+                                        {
+                                            "startIndex": 1,
+                                            "endIndex": 11,
+                                            "textRun": {
+                                                "content": "Section 1\n",
+                                                "textStyle": {},
+                                            },
+                                        }
+                                    ],
+                                    "paragraphStyle": {},
+                                },
+                            },
+                            {
+                                "startIndex": 11,
+                                "endIndex": 12,
+                                "sectionBreak": {
+                                    "sectionStyle": {
+                                        "columnSeparatorStyle": "NONE",
+                                        "contentDirection": "LEFT_TO_RIGHT",
+                                    }
+                                },
+                            },
+                            {
+                                "startIndex": 12,
+                                "endIndex": 22,
+                                "paragraph": {
+                                    "elements": [
+                                        {
+                                            "startIndex": 12,
+                                            "endIndex": 22,
+                                            "textRun": {
+                                                "content": "Section 2\n",
+                                                "textStyle": {},
+                                            },
+                                        }
+                                    ],
+                                    "paragraphStyle": {},
+                                },
+                            },
+                        ]
+                    },
+                    "headers": {},
+                    "footers": {},
+                    "footnotes": {},
+                    "namedRanges": {},
+                },
+            }
+        ],
+    }
+
+
+def create_document_with_equation() -> dict[str, any]:
+    """Create document with Equation.
+
+    Structure:
+    - "Formula: " (1-10)
+    - Equation "x+y" (10-13)
+    - "\n" (13-14)
+    """
+    return {
+        "documentId": "test_equation_doc",
+        "title": "Equation Test Document",
+        "revisionId": "initial_revision",
+        "tabs": [
+            {
+                "tabProperties": {
+                    "tabId": "tab1",
+                    "title": "Tab 1",
+                    "index": 0,
+                },
+                "documentTab": {
+                    "body": {
+                        "content": [
+                            {
+                                "startIndex": 1,
+                                "endIndex": 14,
+                                "paragraph": {
+                                    "elements": [
+                                        {
+                                            "startIndex": 1,
+                                            "endIndex": 10,
+                                            "textRun": {
+                                                "content": "Formula: ",
+                                                "textStyle": {},
+                                            },
+                                        },
+                                        {
+                                            "startIndex": 10,
+                                            "endIndex": 13,
+                                            "equation": {"suggestedInsertionIds": []},
+                                        },
+                                        {
+                                            "startIndex": 13,
+                                            "endIndex": 14,
+                                            "textRun": {
+                                                "content": "\n",
+                                                "textStyle": {},
+                                            },
+                                        },
+                                    ],
+                                    "paragraphStyle": {},
+                                },
+                            }
+                        ]
+                    },
+                    "headers": {},
+                    "footers": {},
+                    "footnotes": {},
+                    "namedRanges": {},
+                },
+            }
+        ],
+    }
+
+
 def test_mock_api_initialization() -> None:
     """Test that MockGoogleDocsAPI initializes correctly."""
     doc = create_minimal_document()
@@ -1750,3 +2210,371 @@ def test_delete_tab_missing_tab_id() -> None:
         api.batch_update(requests)
 
     assert "tabid is required" in str(exc_info.value).lower()
+
+
+# ========================================================================
+# NEW EDGE CASE TESTS - Surrogate Pairs, Table Cells, Structural Elements
+# ========================================================================
+
+
+# ------------------------------------------------------------------------
+# Surrogate Pair Tests
+# ------------------------------------------------------------------------
+
+
+def test_delete_surrogate_pair_split_at_start_fails() -> None:
+    """Test that deleting just the high surrogate of an emoji fails."""
+    doc = create_document_with_emoji()  # "Hello😀World\n"
+    api = MockGoogleDocsAPI(doc)
+
+    # Emoji 😀 occupies indices 6-8 (2 UTF-16 code units: high and low surrogate)
+    # Try to delete just the first unit (high surrogate) at index 6-7
+    requests = [{"deleteContentRange": {"range": {"startIndex": 6, "endIndex": 7}}}]
+
+    with pytest.raises(ValidationError) as exc_info:
+        api.batch_update(requests)
+
+    assert "surrogate pair" in str(exc_info.value).lower()
+
+
+def test_delete_surrogate_pair_split_at_end_fails() -> None:
+    """Test that deletion ending in middle of surrogate pair fails."""
+    doc = create_document_with_emoji()  # "Hello😀World\n"
+    api = MockGoogleDocsAPI(doc)
+
+    # Emoji 😀 occupies indices 6-8
+    # Try to delete "o" + first half of emoji (5-7, which cuts the emoji)
+    requests = [{"deleteContentRange": {"range": {"startIndex": 5, "endIndex": 7}}}]
+
+    with pytest.raises(ValidationError) as exc_info:
+        api.batch_update(requests)
+
+    assert "surrogate pair" in str(exc_info.value).lower()
+
+
+def test_delete_full_surrogate_pair_succeeds() -> None:
+    """Test that deleting a complete surrogate pair succeeds."""
+    doc = create_document_with_emoji()  # "Hello😀World\n"
+    api = MockGoogleDocsAPI(doc)
+
+    # Delete the full emoji (both code units)
+    requests = [{"deleteContentRange": {"range": {"startIndex": 6, "endIndex": 8}}}]
+
+    response = api.batch_update(requests)
+    assert len(response["replies"]) == 1
+    assert response["replies"][0] == {}
+
+
+def test_delete_text_including_surrogate_pair_succeeds() -> None:
+    """Test that deleting text that includes complete surrogate pairs succeeds."""
+    doc = create_document_with_emoji()  # "Hello😀World\n"
+    api = MockGoogleDocsAPI(doc)
+
+    # Delete "lo😀Wor" (indices 4-11, includes full emoji)
+    requests = [{"deleteContentRange": {"range": {"startIndex": 4, "endIndex": 11}}}]
+
+    response = api.batch_update(requests)
+    assert len(response["replies"]) == 1
+
+
+def test_insert_text_strips_private_use_area() -> None:
+    """Test that private use area characters (U+E000-U+F8FF) are stripped."""
+    doc = create_minimal_document()
+    api = MockGoogleDocsAPI(doc)
+
+    # Insert text with private use area character
+    # U+E000 is in the private use area
+    text_with_private = "Test\ue000Text"
+
+    requests = [{"insertText": {"location": {"index": 1}, "text": text_with_private}}]
+
+    # Should not raise an error (private use chars are stripped)
+    response = api.batch_update(requests)
+    assert len(response["replies"]) == 1
+
+
+# ------------------------------------------------------------------------
+# Table Cell Final Newline Tests
+# ------------------------------------------------------------------------
+
+
+def test_delete_table_cell_final_newline_fails() -> None:
+    """Test that deleting final newline from table cell fails."""
+    doc = create_document_with_table()
+    api = MockGoogleDocsAPI(doc)
+
+    # Cell 1 has content "A\n" at indices 9-11
+    # Final newline is at index 10
+    # Try to delete it (10-11)
+    requests = [{"deleteContentRange": {"range": {"startIndex": 10, "endIndex": 11}}}]
+
+    with pytest.raises(ValidationError) as exc_info:
+        api.batch_update(requests)
+
+    assert "final newline of a table cell" in str(exc_info.value).lower()
+
+
+def test_delete_table_cell_content_excluding_final_newline_succeeds() -> None:
+    """Test that deleting cell content except final newline succeeds."""
+    doc = create_document_with_table()
+    api = MockGoogleDocsAPI(doc)
+
+    # Cell 1 has content "A\n" at indices 9-11
+    # Delete just "A" (9-10), leaving the final newline
+    requests = [{"deleteContentRange": {"range": {"startIndex": 9, "endIndex": 10}}}]
+
+    response = api.batch_update(requests)
+    assert len(response["replies"]) == 1
+    assert response["replies"][0] == {}
+
+
+def test_delete_across_multiple_cells_including_final_newlines_fails() -> None:
+    """Test that deletion spanning multiple cells including final newlines fails."""
+    doc = create_document_with_table()
+    api = MockGoogleDocsAPI(doc)
+
+    # Try to delete from cell 1 through cell 2, including final newlines
+    # Cell 1: 9-11, Cell 2: 12-14
+    # This should fail because it includes cell 1's final newline
+    requests = [{"deleteContentRange": {"range": {"startIndex": 9, "endIndex": 14}}}]
+
+    with pytest.raises(ValidationError) as exc_info:
+        api.batch_update(requests)
+
+    assert "final newline" in str(exc_info.value).lower()
+
+
+# ------------------------------------------------------------------------
+# TableOfContents Tests
+# ------------------------------------------------------------------------
+
+
+def test_delete_partial_table_of_contents_fails() -> None:
+    """Test that partially deleting TableOfContents fails."""
+    doc = create_document_with_toc()
+    api = MockGoogleDocsAPI(doc)
+
+    # TOC is at indices 7-10
+    # Try to partially delete it (8-9)
+    requests = [{"deleteContentRange": {"range": {"startIndex": 8, "endIndex": 9}}}]
+
+    with pytest.raises(ValidationError) as exc_info:
+        api.batch_update(requests)
+
+    assert "table of contents" in str(exc_info.value).lower()
+    assert "partially" in str(exc_info.value).lower()
+
+
+def test_delete_full_table_of_contents_succeeds() -> None:
+    """Test that deleting entire TableOfContents succeeds."""
+    doc = create_document_with_toc()
+    api = MockGoogleDocsAPI(doc)
+
+    # TOC is at indices 7-10
+    # Delete the entire TOC
+    requests = [{"deleteContentRange": {"range": {"startIndex": 7, "endIndex": 10}}}]
+
+    response = api.batch_update(requests)
+    assert len(response["replies"]) == 1
+    assert response["replies"][0] == {}
+
+
+def test_delete_newline_before_table_of_contents_fails() -> None:
+    """Test that deleting newline before TableOfContents fails."""
+    doc = create_document_with_toc()
+    api = MockGoogleDocsAPI(doc)
+
+    # TOC starts at index 7, newline before it is at 6
+    # Try to delete the newline (6-7)
+    requests = [{"deleteContentRange": {"range": {"startIndex": 6, "endIndex": 7}}}]
+
+    with pytest.raises(ValidationError) as exc_info:
+        api.batch_update(requests)
+
+    assert "table of contents" in str(exc_info.value).lower()
+    assert "newline" in str(exc_info.value).lower()
+
+
+# ------------------------------------------------------------------------
+# SectionBreak Tests
+# ------------------------------------------------------------------------
+
+
+def test_delete_newline_before_section_break_fails() -> None:
+    """Test that deleting newline before section break fails."""
+    doc = create_document_with_section_break()
+    api = MockGoogleDocsAPI(doc)
+
+    # Section break is at index 11, newline before it is at 10
+    # Try to delete the newline (10-11)
+    requests = [{"deleteContentRange": {"range": {"startIndex": 10, "endIndex": 11}}}]
+
+    with pytest.raises(ValidationError) as exc_info:
+        api.batch_update(requests)
+
+    assert "section break" in str(exc_info.value).lower()
+    assert "newline" in str(exc_info.value).lower()
+
+
+def test_delete_section_break_without_newline_succeeds() -> None:
+    """Test that deleting section break without its preceding newline succeeds."""
+    doc = create_document_with_section_break()
+    api = MockGoogleDocsAPI(doc)
+
+    # Section break is at index 11-12
+    # We cannot delete the newline before it (10-11)
+    # But we CAN delete the section break itself (11-12)
+    requests = [{"deleteContentRange": {"range": {"startIndex": 11, "endIndex": 12}}}]
+
+    response = api.batch_update(requests)
+    assert len(response["replies"]) == 1
+    assert response["replies"][0] == {}
+
+
+# ------------------------------------------------------------------------
+# Equation Tests
+# ------------------------------------------------------------------------
+
+
+def test_delete_partial_equation_fails() -> None:
+    """Test that partially deleting an equation fails."""
+    doc = create_document_with_equation()
+    api = MockGoogleDocsAPI(doc)
+
+    # Equation is at indices 10-13
+    # Try to partially delete it (10-12)
+    requests = [{"deleteContentRange": {"range": {"startIndex": 10, "endIndex": 12}}}]
+
+    with pytest.raises(ValidationError) as exc_info:
+        api.batch_update(requests)
+
+    assert "equation" in str(exc_info.value).lower()
+    assert "partially" in str(exc_info.value).lower()
+
+
+def test_delete_full_equation_succeeds() -> None:
+    """Test that deleting entire equation succeeds."""
+    doc = create_document_with_equation()
+    api = MockGoogleDocsAPI(doc)
+
+    # Equation is at indices 10-13
+    # Delete the entire equation
+    requests = [{"deleteContentRange": {"range": {"startIndex": 10, "endIndex": 13}}}]
+
+    response = api.batch_update(requests)
+    assert len(response["replies"]) == 1
+    assert response["replies"][0] == {}
+
+
+def test_insert_inline_image_in_footnote_fails() -> None:
+    """Test that inserting image in footnote fails."""
+    doc = create_minimal_document()
+    api = MockGoogleDocsAPI(doc)
+
+    # First create a footnote
+    create_requests = [{"createFootnote": {"location": {"index": 1}}}]
+    create_response = api.batch_update(create_requests)
+    footnote_id = create_response["replies"][0]["createFootnote"]["footnoteId"]
+
+    # Try to insert image in the footnote
+    requests = [
+        {
+            "insertInlineImage": {
+                "uri": "https://example.com/image.png",
+                "location": {"index": 1, "segmentId": footnote_id},
+            }
+        }
+    ]
+
+    with pytest.raises(ValidationError) as exc_info:
+        api.batch_update(requests)
+
+    assert "cannot insert image in footnote" in str(exc_info.value).lower()
+
+
+# ------------------------------------------------------------------------
+# Complex Edge Case Combinations
+# ------------------------------------------------------------------------
+
+
+def test_delete_table_preserves_structure_tracker() -> None:
+    """Test that structure tracker is rebuilt after operations."""
+    doc = create_document_with_table()
+    api = MockGoogleDocsAPI(doc)
+
+    # Verify table is tracked before deletion
+    assert len(api._structure_tracker.tables) == 1
+    assert api._structure_tracker.tables[0] == (8, 21)
+
+    # Delete the entire table (including content)
+    requests = [{"deleteContentRange": {"range": {"startIndex": 8, "endIndex": 21}}}]
+
+    # This should succeed (full table deletion is allowed)
+    response = api.batch_update(requests)
+    assert len(response["replies"]) == 1
+
+    # Structure tracker should be rebuilt (though content unchanged in mock)
+    assert api._structure_tracker is not None
+
+
+def test_delete_newline_before_table_alone_fails() -> None:
+    """Test that deleting only newline before table fails."""
+    doc = create_document_with_table()
+    api = MockGoogleDocsAPI(doc)
+
+    # Table starts at index 8
+    # Try to delete just the newline before it (7-8)
+    requests = [{"deleteContentRange": {"range": {"startIndex": 7, "endIndex": 8}}}]
+
+    with pytest.raises(ValidationError) as exc_info:
+        api.batch_update(requests)
+
+    assert "newline before table" in str(exc_info.value).lower()
+
+
+def test_multiple_structural_elements_in_document() -> None:
+    """Test document with multiple structural element types."""
+    # Create a document combining table, TOC, and section break
+    doc = create_document_with_table()
+
+    # Verify structure tracker finds the table
+    api = MockGoogleDocsAPI(doc)
+    assert len(api._structure_tracker.tables) == 1
+
+    # Operations should still validate correctly
+    # Try to partially delete the table (should fail)
+    requests = [{"deleteContentRange": {"range": {"startIndex": 9, "endIndex": 15}}}]
+
+    with pytest.raises(ValidationError) as exc_info:
+        api.batch_update(requests)
+
+    assert "table" in str(exc_info.value).lower()
+
+
+def test_insert_text_at_table_boundary_fails() -> None:
+    """Test that inserting text at table start boundary fails."""
+    doc = create_document_with_table()
+    api = MockGoogleDocsAPI(doc)
+
+    # Table starts at index 8
+    # Try to insert text right at the table boundary
+    requests = [{"insertText": {"location": {"index": 8}, "text": "Bad"}}]
+
+    with pytest.raises(ValidationError) as exc_info:
+        api.batch_update(requests)
+
+    assert "table" in str(exc_info.value).lower()
+
+
+def test_delete_content_with_emoji_and_table_succeeds() -> None:
+    """Test complex deletion with both emoji and table structures."""
+    # This is a regression test ensuring multiple validation layers work together
+    doc = create_document_with_table()
+    api = MockGoogleDocsAPI(doc)
+
+    # Delete text before the table (indices 1-7, "Before\n")
+    requests = [{"deleteContentRange": {"range": {"startIndex": 1, "endIndex": 7}}}]
+
+    response = api.batch_update(requests)
+    assert len(response["replies"]) == 1
+    assert response["replies"][0] == {}
