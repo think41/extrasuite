@@ -1,0 +1,429 @@
+"""Composite transport for recording mode - compares real API with mock.
+
+This module provides a composite transport that calls both the real Google Docs
+API and the mock API in parallel, compares their responses, and logs any
+mismatches for analysis.
+"""
+
+from __future__ import annotations
+
+import json
+from datetime import datetime
+from pathlib import Path
+from typing import Any
+
+from extradoc.mock_api import MockGoogleDocsAPI
+from extradoc.transport import DocumentData, Transport
+
+
+class MismatchLogger:
+    """Logs mismatches between real and mock API responses."""
+
+    def __init__(self, log_dir: Path) -> None:
+        """Initialize the mismatch logger.
+
+        Args:
+            log_dir: Directory to save mismatch logs
+        """
+        self.log_dir = log_dir
+        self.log_dir.mkdir(parents=True, exist_ok=True)
+        self.mismatch_count = 0
+
+    def log_get_mismatch(
+        self,
+        document_id: str,
+        real_response: dict[str, Any],
+        mock_response: dict[str, Any],
+    ) -> None:
+        """Log a mismatch in get_document responses.
+
+        Args:
+            document_id: The document ID
+            real_response: Response from real API
+            mock_response: Response from mock API
+        """
+        self.mismatch_count += 1
+        timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
+        mismatch_dir = self.log_dir / f"get_mismatch_{timestamp}_{self.mismatch_count}"
+        mismatch_dir.mkdir(parents=True, exist_ok=True)
+
+        # Save metadata
+        metadata = {
+            "timestamp": timestamp,
+            "operation": "get_document",
+            "document_id": document_id,
+        }
+        (mismatch_dir / "metadata.json").write_text(
+            json.dumps(metadata, indent=2), encoding="utf-8"
+        )
+
+        # Save real response
+        (mismatch_dir / "real_response.json").write_text(
+            json.dumps(real_response, indent=2), encoding="utf-8"
+        )
+
+        # Save mock response
+        (mismatch_dir / "mock_response.json").write_text(
+            json.dumps(mock_response, indent=2), encoding="utf-8"
+        )
+
+        print(f"⚠️  GET mismatch logged to: {mismatch_dir}")
+
+    def log_batch_update_mismatch(
+        self,
+        document_id: str,
+        requests: list[dict[str, Any]],
+        input_document: dict[str, Any],
+        real_response: dict[str, Any],
+        mock_response: dict[str, Any],
+        real_document_after: dict[str, Any],
+        mock_document_after: dict[str, Any],
+    ) -> None:
+        """Log a mismatch in batch_update responses.
+
+        Args:
+            document_id: The document ID
+            requests: The batchUpdate requests that were sent
+            input_document: Document state before the update
+            real_response: Response from real API
+            mock_response: Response from mock API
+            real_document_after: Document state after real API update
+            mock_document_after: Document state after mock API update
+        """
+        self.mismatch_count += 1
+        timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
+        mismatch_dir = (
+            self.log_dir / f"batch_update_mismatch_{timestamp}_{self.mismatch_count}"
+        )
+        mismatch_dir.mkdir(parents=True, exist_ok=True)
+
+        # Save metadata
+        metadata = {
+            "timestamp": timestamp,
+            "operation": "batch_update",
+            "document_id": document_id,
+            "num_requests": len(requests),
+        }
+        (mismatch_dir / "metadata.json").write_text(
+            json.dumps(metadata, indent=2), encoding="utf-8"
+        )
+
+        # Save input document
+        (mismatch_dir / "input_document.json").write_text(
+            json.dumps(input_document, indent=2), encoding="utf-8"
+        )
+
+        # Save requests
+        (mismatch_dir / "requests.json").write_text(
+            json.dumps({"requests": requests}, indent=2), encoding="utf-8"
+        )
+
+        # Save real API results
+        (mismatch_dir / "real_response.json").write_text(
+            json.dumps(real_response, indent=2), encoding="utf-8"
+        )
+        (mismatch_dir / "real_document_after.json").write_text(
+            json.dumps(real_document_after, indent=2), encoding="utf-8"
+        )
+
+        # Save mock API results
+        (mismatch_dir / "mock_response.json").write_text(
+            json.dumps(mock_response, indent=2), encoding="utf-8"
+        )
+        (mismatch_dir / "mock_document_after.json").write_text(
+            json.dumps(mock_document_after, indent=2), encoding="utf-8"
+        )
+
+        print(f"⚠️  BATCH_UPDATE mismatch logged to: {mismatch_dir}")
+
+    def get_summary(self) -> str:
+        """Get a summary of logged mismatches.
+
+        Returns:
+            Summary string
+        """
+        if self.mismatch_count == 0:
+            return "✅ No mismatches detected"
+        return f"⚠️  {self.mismatch_count} mismatch(es) logged to {self.log_dir}"
+
+
+class MockTransport(Transport):
+    """Transport that wraps MockGoogleDocsAPI.
+
+    This adapter makes MockGoogleDocsAPI compatible with the Transport interface.
+    """
+
+    def __init__(self, initial_document: dict[str, Any]) -> None:
+        """Initialize the mock transport.
+
+        Args:
+            initial_document: Initial document state for the mock API
+        """
+        self.mock_api = MockGoogleDocsAPI(initial_document)
+        self.document_id = initial_document.get("documentId", "mock_doc")
+
+    async def get_document(self, document_id: str) -> DocumentData:
+        """Get document from mock API.
+
+        Args:
+            document_id: Document ID (ignored, uses mock state)
+
+        Returns:
+            DocumentData with mock state
+        """
+        response = self.mock_api.get()
+        return DocumentData(
+            document_id=response.get("documentId", document_id),
+            title=response.get("title", ""),
+            raw=response,
+        )
+
+    async def batch_update(
+        self, document_id: str, requests: list[dict[str, Any]]
+    ) -> dict[str, Any]:
+        """Apply batch update to mock API.
+
+        Args:
+            document_id: Document ID (ignored)
+            requests: Update requests
+
+        Returns:
+            Mock API response
+        """
+        return self.mock_api.batch_update(requests)
+
+    async def list_comments(self, file_id: str) -> list[dict[str, Any]]:
+        """Mock comments - returns empty list.
+
+        Args:
+            file_id: File ID
+
+        Returns:
+            Empty list
+        """
+        return []
+
+    async def create_reply(
+        self,
+        file_id: str,
+        comment_id: str,
+        content: str,
+        action: str | None = None,
+    ) -> dict[str, Any]:
+        """Mock create reply.
+
+        Args:
+            file_id: File ID
+            comment_id: Comment ID
+            content: Reply content
+            action: Optional action
+
+        Returns:
+            Mock reply
+        """
+        result: dict[str, Any] = {
+            "id": "mock_reply_id",
+            "content": content,
+        }
+        if action:
+            result["action"] = action
+        return result
+
+    async def close(self) -> None:
+        """No-op for mock transport."""
+        pass
+
+
+class CompositeTransport(Transport):
+    """Composite transport that calls both real and mock APIs.
+
+    This transport calls both the real Google Docs API and a mock API,
+    compares their responses, and logs any mismatches. It always returns
+    the real API's response.
+    """
+
+    def __init__(
+        self,
+        real_transport: Transport,
+        mismatch_logger: MismatchLogger | None = None,
+    ) -> None:
+        """Initialize the composite transport.
+
+        Args:
+            real_transport: The real Google Docs transport
+            mismatch_logger: Optional logger for mismatches (created if not provided)
+        """
+        self.real_transport = real_transport
+        self.mock_transport: MockTransport | None = None
+        self.mismatch_logger = mismatch_logger or MismatchLogger(
+            Path("mismatch_logs")
+        )
+
+    async def get_document(self, document_id: str) -> DocumentData:
+        """Get document from real API and initialize mock.
+
+        Args:
+            document_id: Document ID
+
+        Returns:
+            DocumentData from real API
+        """
+        # Get from real API
+        real_data = await self.real_transport.get_document(document_id)
+
+        # Initialize mock transport with the real document state
+        self.mock_transport = MockTransport(real_data.raw)
+
+        # Get from mock (should match since we just initialized it)
+        mock_data = await self.mock_transport.get_document(document_id)
+
+        # Compare responses (should be identical on first get)
+        if not self._documents_match(real_data.raw, mock_data.raw):
+            self.mismatch_logger.log_get_mismatch(
+                document_id, real_data.raw, mock_data.raw
+            )
+
+        return real_data
+
+    async def batch_update(
+        self, document_id: str, requests: list[dict[str, Any]]
+    ) -> dict[str, Any]:
+        """Apply batch update to both APIs and compare.
+
+        Args:
+            document_id: Document ID
+            requests: Update requests
+
+        Returns:
+            Response from real API
+        """
+        if self.mock_transport is None:
+            raise RuntimeError("Must call get_document before batch_update")
+
+        # Get document state before update (for logging)
+        input_document = self.mock_transport.mock_api.get()
+
+        # Apply to real API
+        real_response = await self.real_transport.batch_update(document_id, requests)
+
+        # Get real document state after update
+        real_data_after = await self.real_transport.get_document(document_id)
+
+        # Apply to mock API
+        try:
+            mock_response = await self.mock_transport.batch_update(
+                document_id, requests
+            )
+            mock_data_after = await self.mock_transport.get_document(document_id)
+
+            # Compare responses
+            if not self._batch_update_responses_match(
+                real_response, mock_response
+            ) or not self._documents_match(
+                real_data_after.raw, mock_data_after.raw
+            ):
+                self.mismatch_logger.log_batch_update_mismatch(
+                    document_id=document_id,
+                    requests=requests,
+                    input_document=input_document,
+                    real_response=real_response,
+                    mock_response=mock_response,
+                    real_document_after=real_data_after.raw,
+                    mock_document_after=mock_data_after.raw,
+                )
+        except Exception as e:
+            # Mock API raised an error - log this as a mismatch
+            print(f"⚠️  Mock API raised error: {e}")
+            self.mismatch_logger.log_batch_update_mismatch(
+                document_id=document_id,
+                requests=requests,
+                input_document=input_document,
+                real_response=real_response,
+                mock_response={"error": str(e), "type": type(e).__name__},
+                real_document_after=real_data_after.raw,
+                mock_document_after=input_document,  # No change since it errored
+            )
+
+        return real_response
+
+    async def list_comments(self, file_id: str) -> list[dict[str, Any]]:
+        """List comments from real API only.
+
+        Args:
+            file_id: File ID
+
+        Returns:
+            Comments from real API
+        """
+        return await self.real_transport.list_comments(file_id)
+
+    async def create_reply(
+        self,
+        file_id: str,
+        comment_id: str,
+        content: str,
+        action: str | None = None,
+    ) -> dict[str, Any]:
+        """Create reply using real API only.
+
+        Args:
+            file_id: File ID
+            comment_id: Comment ID
+            content: Reply content
+            action: Optional action
+
+        Returns:
+            Reply from real API
+        """
+        return await self.real_transport.create_reply(
+            file_id, comment_id, content, action
+        )
+
+    async def close(self) -> None:
+        """Close both transports."""
+        await self.real_transport.close()
+        if self.mock_transport:
+            await self.mock_transport.close()
+
+    def _documents_match(
+        self, doc1: dict[str, Any], doc2: dict[str, Any]
+    ) -> bool:
+        """Compare two documents for equality.
+
+        Args:
+            doc1: First document
+            doc2: Second document
+
+        Returns:
+            True if documents match
+        """
+        # Normalize by removing fields that are expected to differ
+        def normalize(doc: dict[str, Any]) -> dict[str, Any]:
+            normalized = doc.copy()
+            # Remove revision IDs as they may differ
+            normalized.pop("revisionId", None)
+            # Remove suggestionsViewMode as it's client-side
+            normalized.pop("suggestionsViewMode", None)
+            return normalized
+
+        return normalize(doc1) == normalize(doc2)
+
+    def _batch_update_responses_match(
+        self, response1: dict[str, Any], response2: dict[str, Any]
+    ) -> bool:
+        """Compare two batch update responses for equality.
+
+        Args:
+            response1: First response
+            response2: Second response
+
+        Returns:
+            True if responses match
+        """
+        # Normalize by removing fields that are expected to differ
+        def normalize(response: dict[str, Any]) -> dict[str, Any]:
+            normalized = response.copy()
+            normalized.pop("documentId", None)
+            return normalized
+
+        return normalize(response1) == normalize(response2)
