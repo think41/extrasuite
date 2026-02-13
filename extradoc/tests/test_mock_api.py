@@ -3122,11 +3122,14 @@ def test_emoji_at_segment_end() -> None:
     response = api.batch_update(requests)
     assert len(response["replies"]) == 1
 
+    # Create a fresh API instance with the original document for the partial delete test
+    api2 = MockGoogleDocsAPI(doc)
+
     # But trying to delete partial emoji (6-7) should fail
     requests = [{"deleteContentRange": {"range": {"startIndex": 6, "endIndex": 7}}}]
 
     with pytest.raises(ValidationError) as exc_info:
-        api.batch_update(requests)
+        api2.batch_update(requests)
 
     assert "surrogate pair" in str(exc_info.value).lower()
 
