@@ -886,3 +886,254 @@ def test_multiple_operations_maintain_document_consistency() -> None:
     # Verify named range exists
     named_ranges = updated_doc["tabs"][0]["documentTab"]["namedRanges"]
     assert "original" in named_ranges
+
+
+def test_complex_batch_sequential_index_updates() -> None:
+    """Test that each request in a batch sees the updated state from previous requests.
+
+    This is critical: when processing batch updates, each request must operate on
+    the document state AFTER all previous requests have been applied.
+    """
+    doc = create_minimal_document()  # "Hello\n" at indices 1-7
+    api = MockGoogleDocsAPI(doc)
+
+    # Build a complex sequence where each operation depends on previous ones
+    requests = [
+        # 1. Insert "Start " at beginning
+        #    Result: "Start Hello\n" (indices 1-13)
+        {
+            "insertText": {
+                "location": {"index": 1},
+                "text": "Start ",
+            }
+        },
+        # 2. Insert "Beautiful " after "Start "
+        #    Must use index 7 (after "Start "), not 1
+        #    Result: "Start Beautiful Hello\n" (indices 1-23)
+        {
+            "insertText": {
+                "location": {"index": 7},
+                "text": "Beautiful ",
+            }
+        },
+        # 3. Delete "Beautiful " (indices 7-17)
+        #    Result: "Start Hello\n" (indices 1-13)
+        {
+            "deleteContentRange": {
+                "range": {"startIndex": 7, "endIndex": 17},
+            }
+        },
+        # 4. Insert "World" before final newline
+        #    Document is now "Start Hello\n", insert at index 12
+        #    Result: "Start HelloWorld\n" (indices 1-18)
+        {
+            "insertText": {
+                "location": {"index": 12},
+                "text": "World",
+            }
+        },
+        # 5. Create named range for "HelloWorld" (indices 7-17)
+        {
+            "createNamedRange": {
+                "name": "greeting",
+                "range": {"startIndex": 7, "endIndex": 17},
+            }
+        },
+        # 6. Insert space before "World"
+        #    Result: "Start Hello World\n" (indices 1-19)
+        {
+            "insertText": {
+                "location": {"index": 12},
+                "text": " ",
+            }
+        },
+    ]
+
+    response = api.batch_update(requests)
+
+    # Verify response structure
+    assert len(response["replies"]) == 6
+    assert response["replies"][0] == {}  # insertText
+    assert response["replies"][1] == {}  # insertText
+    assert response["replies"][2] == {}  # deleteContentRange
+    assert response["replies"][3] == {}  # insertText
+    assert "createNamedRange" in response["replies"][4]
+    assert response["replies"][5] == {}  # insertText
+
+    # Get final document
+    updated_doc = api.get()
+    body_content = updated_doc["tabs"][0]["documentTab"]["body"]["content"]
+
+    # Verify final text
+    assert len(body_content) == 1
+    paragraph = body_content[0]
+    assert paragraph["paragraph"]["elements"][0]["textRun"]["content"] == "Start Hello World\n"
+    assert paragraph["endIndex"] == 19
+
+    # Verify named range was created and still exists
+    # Note: The range was created for "HelloWorld" at 7-17, but after the space
+    # insertion at 12, it should still be at 7-17 (Google Docs doesn't auto-update ranges)
+    named_ranges = updated_doc["tabs"][0]["documentTab"]["namedRanges"]
+    assert "greeting" in named_ranges
+
+
+def test_batch_with_dependent_operations() -> None:
+    """Test batch where later operations depend on earlier ones' side effects."""
+    doc = create_minimal_document()  # "Hello\n"
+    api = MockGoogleDocsAPI(doc)
+
+    requests = [
+        # 1. Insert text with newline to create multiple paragraphs
+        #    Result: "Line1\nHello\n" (two paragraphs: 1-7 and 7-13)
+        {
+            "insertText": {
+                "location": {"index": 1},
+                "text": "Line1\n",
+            }
+        },
+        # 2. Insert in the SECOND paragraph (which is now at index 7+)
+        #    Insert at index 7 (beginning of second paragraph)
+        #    Result: "Line1\nPrefix Hello\n"
+        {
+            "insertText": {
+                "location": {"index": 7},
+                "text": "Prefix ",
+            }
+        },
+        # 3. Create named range in first paragraph
+        {
+            "createNamedRange": {
+                "name": "line1",
+                "range": {"startIndex": 1, "endIndex": 6},
+            }
+        },
+        # 4. Create named range in second paragraph
+        #    Second paragraph now starts at 7, contains "Prefix Hello\n"
+        {
+            "createNamedRange": {
+                "name": "line2",
+                "range": {"startIndex": 7, "endIndex": 13},  # "Prefix"
+            }
+        },
+    ]
+
+    response = api.batch_update(requests)
+    updated_doc = api.get()
+
+    # Verify we have two paragraphs
+    body_content = updated_doc["tabs"][0]["documentTab"]["body"]["content"]
+    assert len(body_content) == 2
+
+    # Verify paragraph 1
+    assert body_content[0]["paragraph"]["elements"][0]["textRun"]["content"] == "Line1\n"
+    assert body_content[0]["endIndex"] == 7
+
+    # Verify paragraph 2
+    assert body_content[1]["paragraph"]["elements"][0]["textRun"]["content"] == "Prefix Hello\n"
+    assert body_content[1]["startIndex"] == 7
+
+    # Verify both named ranges exist
+    named_ranges = updated_doc["tabs"][0]["documentTab"]["namedRanges"]
+    assert "line1" in named_ranges
+    assert "line2" in named_ranges
+
+
+def test_batch_with_multiple_deletes_and_inserts() -> None:
+    """Test alternating deletes and inserts with proper index tracking."""
+    # Start with a longer document
+    doc = create_minimal_document()
+    doc["tabs"][0]["documentTab"]["body"]["content"][0]["paragraph"]["elements"][0]["textRun"]["content"] = "AAABBBCCCDDDEEE\n"
+    doc["tabs"][0]["documentTab"]["body"]["content"][0]["paragraph"]["elements"][0]["endIndex"] = 17
+    doc["tabs"][0]["documentTab"]["body"]["content"][0]["endIndex"] = 17
+
+    api = MockGoogleDocsAPI(doc)
+
+    requests = [
+        # Start: "AAABBBCCCDDDEEE\n" (1-17)
+
+        # 1. Delete "AAA" (1-4)
+        #    Result: "BBBCCCDDDEEE\n" (1-14)
+        {
+            "deleteContentRange": {
+                "range": {"startIndex": 1, "endIndex": 4},
+            }
+        },
+        # 2. Insert "XXX" at beginning
+        #    Result: "XXXBBBCCCDDDEEE\n" (1-17)
+        {
+            "insertText": {
+                "location": {"index": 1},
+                "text": "XXX",
+            }
+        },
+        # 3. Delete "BBB" (now at indices 4-7)
+        #    Result: "XXXCCCDDDEEE\n" (1-14)
+        {
+            "deleteContentRange": {
+                "range": {"startIndex": 4, "endIndex": 7},
+            }
+        },
+        # 4. Insert "YYY" where BBB was
+        #    Result: "XXXYYYCCCDDDEEE\n" (1-17)
+        {
+            "insertText": {
+                "location": {"index": 4},
+                "text": "YYY",
+            }
+        },
+        # 5. Delete "DDD" (now at indices 10-13)
+        #    Result: "XXXYYYCCCEEE\n" (1-14)
+        {
+            "deleteContentRange": {
+                "range": {"startIndex": 10, "endIndex": 13},
+            }
+        },
+    ]
+
+    response = api.batch_update(requests)
+    updated_doc = api.get()
+
+    # Verify final result
+    body_content = updated_doc["tabs"][0]["documentTab"]["body"]["content"]
+    paragraph = body_content[0]
+
+    final_text = paragraph["paragraph"]["elements"][0]["textRun"]["content"]
+    assert final_text == "XXXYYYCCCEEE\n"
+    assert paragraph["endIndex"] == 14  # 13 chars + 1 for start index
+
+
+def test_batch_creates_and_deletes_named_ranges() -> None:
+    """Test creating and deleting named ranges in same batch."""
+    doc = create_minimal_document()
+    api = MockGoogleDocsAPI(doc)
+
+    requests = [
+        # 1. Create named range "temp"
+        {
+            "createNamedRange": {
+                "name": "temp",
+                "range": {"startIndex": 1, "endIndex": 3},
+            }
+        },
+        # 2. Create another named range "keep"
+        {
+            "createNamedRange": {
+                "name": "keep",
+                "range": {"startIndex": 3, "endIndex": 6},
+            }
+        },
+        # 3. Delete "temp" by name
+        {
+            "deleteNamedRange": {
+                "name": "temp",
+            }
+        },
+    ]
+
+    response = api.batch_update(requests)
+    updated_doc = api.get()
+
+    # Verify only "keep" exists
+    named_ranges = updated_doc["tabs"][0]["documentTab"]["namedRanges"]
+    assert "keep" in named_ranges
+    assert "temp" not in named_ranges
