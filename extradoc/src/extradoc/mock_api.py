@@ -237,6 +237,11 @@ class MockGoogleDocsAPI:
         # Track structural elements for validation
         self._structure_tracker = DocumentStructureTracker(self._document)
 
+        # Track header/footer types to prevent duplicates
+        self._header_types: set[str] = set()
+        self._footer_types: set[str] = set()
+        self._extract_header_footer_types()
+
     def _extract_named_ranges(self) -> None:
         """Extract all named ranges from document into tracking dict."""
         for tab in self._document.get("tabs", []):
@@ -250,6 +255,13 @@ class MockGoogleDocsAPI:
                             "name": name,
                             "range": range_info.get("ranges", [{}])[0],
                         }
+
+    def _extract_header_footer_types(self) -> None:
+        """Extract existing header/footer types from document."""
+        # In a real implementation, we would parse the document structure
+        # to find existing headers/footers and their types.
+        # For this mock, types are tracked as headers/footers are created.
+        pass
 
     def get(self) -> dict[str, Any]:
         """Get the current document state.
@@ -656,10 +668,24 @@ class MockGoogleDocsAPI:
                 "Cannot specify both location and endOfSegmentLocation"
             )
 
-        # Simplified: just validate the index
+        # Validate location
         if location:
             index = location["index"]
             tab_id = location.get("tabId")
+            segment_id = location.get("segmentId")
+
+            # Tables cannot be inserted in footnotes
+            # (can be inserted in headers/footers but not footnotes)
+            if segment_id:
+                tab = self._get_tab(tab_id)
+                document_tab = tab.get("documentTab", {})
+                footnotes = document_tab.get("footnotes", {})
+                if segment_id in footnotes:
+                    raise ValidationError(
+                        "Cannot insert table in footnote. "
+                        "Tables can be inserted in body, headers, and footers, but not footnotes."
+                    )
+
             # Validate tab exists
             self._get_tab(tab_id)
             if index < 1:
@@ -902,6 +928,13 @@ class MockGoogleDocsAPI:
         if not header_type:
             raise ValidationError("type is required")
 
+        # Check if header of this type already exists
+        if header_type in self._header_types:
+            raise ValidationError(
+                f"A header of type {header_type} already exists. "
+                "Only one header of each type (DEFAULT, FIRST_PAGE, EVEN_PAGE) is allowed."
+            )
+
         section_break_location = request.get("sectionBreakLocation")
         tab_id = None
         if section_break_location:
@@ -912,10 +945,10 @@ class MockGoogleDocsAPI:
         # Generate unique ID
         header_id = f"header_{uuid.uuid4().hex[:16]}"
 
-        # In a full implementation, we would:
-        # - Check if header of this type already exists (400 error if so)
-        # - Create the header segment
-        # - Add it to the document structure
+        # Track this header type
+        self._header_types.add(header_type)
+
+        # Create the header segment and add to document structure
         document_tab = tab.get("documentTab", {})
         if "headers" not in document_tab:
             document_tab["headers"] = {}
@@ -954,6 +987,13 @@ class MockGoogleDocsAPI:
         if not footer_type:
             raise ValidationError("type is required")
 
+        # Check if footer of this type already exists
+        if footer_type in self._footer_types:
+            raise ValidationError(
+                f"A footer of type {footer_type} already exists. "
+                "Only one footer of each type (DEFAULT, FIRST_PAGE, EVEN_PAGE) is allowed."
+            )
+
         section_break_location = request.get("sectionBreakLocation")
         tab_id = None
         if section_break_location:
@@ -964,10 +1004,10 @@ class MockGoogleDocsAPI:
         # Generate unique ID
         footer_id = f"footer_{uuid.uuid4().hex[:16]}"
 
-        # In a full implementation, we would:
-        # - Check if footer of this type already exists (400 error if so)
-        # - Create the footer segment
-        # - Add it to the document structure
+        # Track this footer type
+        self._footer_types.add(footer_type)
+
+        # Create the footer segment and add to document structure
         document_tab = tab.get("documentTab", {})
         if "footers" not in document_tab:
             document_tab["footers"] = {}

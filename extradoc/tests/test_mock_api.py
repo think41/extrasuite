@@ -2578,3 +2578,608 @@ def test_delete_content_with_emoji_and_table_succeeds() -> None:
     response = api.batch_update(requests)
     assert len(response["replies"]) == 1
     assert response["replies"][0] == {}
+
+
+# ========================================================================
+# ADDITIONAL REAL-WORLD EDGE CASES - Based on Comprehensive API Review
+# ========================================================================
+
+
+# ------------------------------------------------------------------------
+# Header/Footer Duplicate Creation Tests
+# ------------------------------------------------------------------------
+
+
+def test_create_duplicate_header_fails() -> None:
+    """Test that creating a header of type that already exists fails."""
+    doc = create_minimal_document()
+    api = MockGoogleDocsAPI(doc)
+
+    # Create first header
+    requests = [{"createHeader": {"type": "DEFAULT"}}]
+    response = api.batch_update(requests)
+    assert "createHeader" in response["replies"][0]
+
+    # Try to create another DEFAULT header (should fail)
+    with pytest.raises(ValidationError) as exc_info:
+        api.batch_update(requests)
+
+    assert "header" in str(exc_info.value).lower()
+    assert "already exists" in str(exc_info.value).lower()
+
+
+def test_create_duplicate_footer_fails() -> None:
+    """Test that creating a footer of type that already exists fails."""
+    doc = create_minimal_document()
+    api = MockGoogleDocsAPI(doc)
+
+    # Create first footer
+    requests = [{"createFooter": {"type": "DEFAULT"}}]
+    response = api.batch_update(requests)
+    assert "createFooter" in response["replies"][0]
+
+    # Try to create another DEFAULT footer (should fail)
+    with pytest.raises(ValidationError) as exc_info:
+        api.batch_update(requests)
+
+    assert "footer" in str(exc_info.value).lower()
+    assert "already exists" in str(exc_info.value).lower()
+
+
+def test_create_different_header_types_succeeds() -> None:
+    """Test that creating headers of different types succeeds."""
+    doc = create_minimal_document()
+    api = MockGoogleDocsAPI(doc)
+
+    # Create DEFAULT header
+    requests = [{"createHeader": {"type": "DEFAULT"}}]
+    response = api.batch_update(requests)
+    assert "createHeader" in response["replies"][0]
+
+    # Create FIRST_PAGE header (different type, should succeed)
+    requests = [{"createHeader": {"type": "FIRST_PAGE"}}]
+    response = api.batch_update(requests)
+    assert "createHeader" in response["replies"][0]
+
+
+# ------------------------------------------------------------------------
+# Multiple Surrogate Pairs Tests
+# ------------------------------------------------------------------------
+
+
+def test_delete_multiple_emojis_split_fails() -> None:
+    """Test that deleting across multiple emojis with partial split fails."""
+    # Create doc with multiple emojis: "Hi😀😁Test\n"
+    # H(1) i(2) 😀(3-5) 😁(5-7) T(7) e(8) s(9) t(10) \n(11)
+    doc = {
+        "documentId": "test_multi_emoji",
+        "title": "Multi Emoji Test",
+        "revisionId": "initial_revision",
+        "tabs": [
+            {
+                "tabProperties": {"tabId": "tab1", "title": "Tab 1", "index": 0},
+                "documentTab": {
+                    "body": {
+                        "content": [
+                            {
+                                "startIndex": 1,
+                                "endIndex": 12,
+                                "paragraph": {
+                                    "elements": [
+                                        {
+                                            "startIndex": 1,
+                                            "endIndex": 12,
+                                            "textRun": {
+                                                "content": "Hi😀😁Test\n",
+                                                "textStyle": {},
+                                            },
+                                        }
+                                    ],
+                                    "paragraphStyle": {},
+                                },
+                            }
+                        ]
+                    },
+                    "headers": {},
+                    "footers": {},
+                    "footnotes": {},
+                    "namedRanges": {},
+                },
+            }
+        ],
+    }
+
+    api = MockGoogleDocsAPI(doc)
+
+    # Try to delete "i😀" but only partially (2-4, cuts first emoji)
+    requests = [{"deleteContentRange": {"range": {"startIndex": 2, "endIndex": 4}}}]
+
+    with pytest.raises(ValidationError) as exc_info:
+        api.batch_update(requests)
+
+    assert "surrogate pair" in str(exc_info.value).lower()
+
+
+def test_delete_multiple_complete_emojis_succeeds() -> None:
+    """Test that deleting multiple complete emojis succeeds."""
+    # Same doc as above
+    doc = {
+        "documentId": "test_multi_emoji",
+        "title": "Multi Emoji Test",
+        "revisionId": "initial_revision",
+        "tabs": [
+            {
+                "tabProperties": {"tabId": "tab1", "title": "Tab 1", "index": 0},
+                "documentTab": {
+                    "body": {
+                        "content": [
+                            {
+                                "startIndex": 1,
+                                "endIndex": 12,
+                                "paragraph": {
+                                    "elements": [
+                                        {
+                                            "startIndex": 1,
+                                            "endIndex": 12,
+                                            "textRun": {
+                                                "content": "Hi😀😁Test\n",
+                                                "textStyle": {},
+                                            },
+                                        }
+                                    ],
+                                    "paragraphStyle": {},
+                                },
+                            }
+                        ]
+                    },
+                    "headers": {},
+                    "footers": {},
+                    "footnotes": {},
+                    "namedRanges": {},
+                },
+            }
+        ],
+    }
+
+    api = MockGoogleDocsAPI(doc)
+
+    # Delete both emojis completely (3-7)
+    requests = [{"deleteContentRange": {"range": {"startIndex": 3, "endIndex": 7}}}]
+
+    response = api.batch_update(requests)
+    assert len(response["replies"]) == 1
+
+
+# ------------------------------------------------------------------------
+# Insert at Invalid Locations Tests
+# ------------------------------------------------------------------------
+
+
+def test_insert_page_break_in_footnote_fails() -> None:
+    """Test that inserting page break in footnote fails."""
+    doc = create_minimal_document()
+    api = MockGoogleDocsAPI(doc)
+
+    # Create a footnote first
+    create_requests = [{"createFootnote": {"location": {"index": 1}}}]
+    create_response = api.batch_update(create_requests)
+    footnote_id = create_response["replies"][0]["createFootnote"]["footnoteId"]
+
+    # Try to insert page break in footnote
+    requests = [{"insertPageBreak": {"location": {"index": 1, "segmentId": footnote_id}}}]
+
+    with pytest.raises(ValidationError) as exc_info:
+        api.batch_update(requests)
+
+    assert "page break" in str(exc_info.value).lower()
+    assert "footnote" in str(exc_info.value).lower()
+
+
+def test_insert_section_break_in_header_fails() -> None:
+    """Test that inserting section break in header fails."""
+    doc = create_minimal_document()
+    api = MockGoogleDocsAPI(doc)
+
+    # Create a header first
+    create_requests = [{"createHeader": {"type": "DEFAULT"}}]
+    create_response = api.batch_update(create_requests)
+    header_id = create_response["replies"][0]["createHeader"]["headerId"]
+
+    # Try to insert section break in header
+    requests = [
+        {
+            "insertSectionBreak": {
+                "location": {"index": 1, "segmentId": header_id},
+                "sectionType": "CONTINUOUS",
+            }
+        }
+    ]
+
+    with pytest.raises(ValidationError) as exc_info:
+        api.batch_update(requests)
+
+    assert "section break" in str(exc_info.value).lower()
+    assert "header" in str(exc_info.value).lower()
+
+
+def test_insert_table_in_footnote_fails() -> None:
+    """Test that inserting table in footnote fails."""
+    doc = create_minimal_document()
+    api = MockGoogleDocsAPI(doc)
+
+    # Create a footnote first
+    create_requests = [{"createFootnote": {"location": {"index": 1}}}]
+    create_response = api.batch_update(create_requests)
+    footnote_id = create_response["replies"][0]["createFootnote"]["footnoteId"]
+
+    # Try to insert table in footnote
+    requests = [
+        {
+            "insertTable": {
+                "location": {"index": 1, "segmentId": footnote_id},
+                "rows": 2,
+                "columns": 2,
+            }
+        }
+    ]
+
+    with pytest.raises(ValidationError) as exc_info:
+        api.batch_update(requests)
+
+    assert "table" in str(exc_info.value).lower()
+    assert "footnote" in str(exc_info.value).lower()
+
+
+# ------------------------------------------------------------------------
+# Nested Footnote Tests
+# ------------------------------------------------------------------------
+
+
+def test_create_footnote_in_footnote_fails() -> None:
+    """Test that creating a footnote inside another footnote fails."""
+    doc = create_minimal_document()
+    api = MockGoogleDocsAPI(doc)
+
+    # Create outer footnote
+    create_requests = [{"createFootnote": {"location": {"index": 1}}}]
+    create_response = api.batch_update(create_requests)
+    footnote_id = create_response["replies"][0]["createFootnote"]["footnoteId"]
+
+    # Try to create nested footnote
+    requests = [{"createFootnote": {"location": {"index": 1, "segmentId": footnote_id}}}]
+
+    with pytest.raises(ValidationError) as exc_info:
+        api.batch_update(requests)
+
+    assert "footnote" in str(exc_info.value).lower()
+
+
+# ------------------------------------------------------------------------
+# Delete Non-Existent Entity Tests
+# ------------------------------------------------------------------------
+
+
+def test_delete_nonexistent_named_range_fails() -> None:
+    """Test that deleting non-existent named range fails."""
+    doc = create_minimal_document()
+    api = MockGoogleDocsAPI(doc)
+
+    # Try to delete named range that doesn't exist
+    requests = [{"deleteNamedRange": {"namedRangeId": "nonexistent_id_12345"}}]
+
+    with pytest.raises(ValidationError) as exc_info:
+        api.batch_update(requests)
+
+    assert "named range not found" in str(exc_info.value).lower()
+
+
+# ------------------------------------------------------------------------
+# Empty/Minimal Content Tests
+# ------------------------------------------------------------------------
+
+
+def test_delete_from_empty_segment_fails() -> None:
+    """Test that deleting from an empty segment fails."""
+    # Create a document with minimal content
+    doc = {
+        "documentId": "test_empty",
+        "title": "Empty Test",
+        "revisionId": "initial_revision",
+        "tabs": [
+            {
+                "tabProperties": {"tabId": "tab1", "title": "Tab 1", "index": 0},
+                "documentTab": {
+                    "body": {
+                        "content": [
+                            {
+                                "startIndex": 1,
+                                "endIndex": 2,
+                                "paragraph": {
+                                    "elements": [
+                                        {
+                                            "startIndex": 1,
+                                            "endIndex": 2,
+                                            "textRun": {"content": "\n", "textStyle": {}},
+                                        }
+                                    ],
+                                    "paragraphStyle": {},
+                                },
+                            }
+                        ]
+                    },
+                    "headers": {},
+                    "footers": {},
+                    "footnotes": {},
+                    "namedRanges": {},
+                },
+            }
+        ],
+    }
+
+    api = MockGoogleDocsAPI(doc)
+
+    # Try to delete the only newline (should fail - can't delete segment final newline)
+    requests = [{"deleteContentRange": {"range": {"startIndex": 1, "endIndex": 2}}}]
+
+    with pytest.raises(ValidationError) as exc_info:
+        api.batch_update(requests)
+
+    assert "final newline" in str(exc_info.value).lower()
+
+
+# ------------------------------------------------------------------------
+# Index Boundary Tests
+# ------------------------------------------------------------------------
+
+
+def test_insert_at_index_zero_fails() -> None:
+    """Test that inserting at index 0 fails."""
+    doc = create_minimal_document()
+    api = MockGoogleDocsAPI(doc)
+
+    # Try to insert at index 0 (invalid, must be >= 1)
+    requests = [{"insertText": {"location": {"index": 0}, "text": "Bad"}}]
+
+    with pytest.raises(ValidationError) as exc_info:
+        api.batch_update(requests)
+
+    assert "at least 1" in str(exc_info.value).lower()
+
+
+def test_delete_with_start_index_zero_fails() -> None:
+    """Test that deletion with startIndex 0 fails."""
+    doc = create_minimal_document()
+    api = MockGoogleDocsAPI(doc)
+
+    # Try to delete starting from index 0
+    requests = [{"deleteContentRange": {"range": {"startIndex": 0, "endIndex": 3}}}]
+
+    with pytest.raises(ValidationError) as exc_info:
+        api.batch_update(requests)
+
+    assert "at least 1" in str(exc_info.value).lower()
+
+
+def test_delete_with_end_before_start_fails() -> None:
+    """Test that deletion with endIndex <= startIndex fails."""
+    doc = create_minimal_document()
+    api = MockGoogleDocsAPI(doc)
+
+    # endIndex equals startIndex
+    requests = [{"deleteContentRange": {"range": {"startIndex": 5, "endIndex": 5}}}]
+
+    with pytest.raises(ValidationError) as exc_info:
+        api.batch_update(requests)
+
+    assert "greater than" in str(exc_info.value).lower()
+
+    # endIndex less than startIndex
+    requests = [{"deleteContentRange": {"range": {"startIndex": 10, "endIndex": 5}}}]
+
+    with pytest.raises(ValidationError) as exc_info:
+        api.batch_update(requests)
+
+    assert "greater than" in str(exc_info.value).lower()
+
+
+# ------------------------------------------------------------------------
+# Complex Structural Scenarios
+# ------------------------------------------------------------------------
+
+
+def test_delete_across_paragraph_and_table_boundary_fails() -> None:
+    """Test that deletion from paragraph into table structure fails."""
+    doc = create_document_with_table()
+    api = MockGoogleDocsAPI(doc)
+
+    # Try to delete from before table through part of table (6-15)
+    # This crosses from paragraph into table structure
+    requests = [{"deleteContentRange": {"range": {"startIndex": 6, "endIndex": 15}}}]
+
+    with pytest.raises(ValidationError) as exc_info:
+        api.batch_update(requests)
+
+    # Should fail due to partial table deletion or newline before table
+    assert "table" in str(exc_info.value).lower()
+
+
+def test_delete_empty_table_cell_content_succeeds() -> None:
+    """Test that deleting all content from a table cell (except final newline) succeeds."""
+    doc = create_document_with_table()
+    api = MockGoogleDocsAPI(doc)
+
+    # Cell 1 has "A\n" at indices 9-11
+    # Delete just "A" leaving the newline
+    requests = [{"deleteContentRange": {"range": {"startIndex": 9, "endIndex": 10}}}]
+
+    response = api.batch_update(requests)
+    assert len(response["replies"]) == 1
+
+
+# ------------------------------------------------------------------------
+# Surrogate Pair Edge Cases
+# ------------------------------------------------------------------------
+
+
+def test_emoji_at_document_start() -> None:
+    """Test operations with emoji at the very start of document."""
+    # "😀Hello\n" - emoji at start
+    doc = {
+        "documentId": "test_emoji_start",
+        "title": "Emoji Start Test",
+        "revisionId": "initial_revision",
+        "tabs": [
+            {
+                "tabProperties": {"tabId": "tab1", "title": "Tab 1", "index": 0},
+                "documentTab": {
+                    "body": {
+                        "content": [
+                            {
+                                "startIndex": 1,
+                                "endIndex": 9,
+                                "paragraph": {
+                                    "elements": [
+                                        {
+                                            "startIndex": 1,
+                                            "endIndex": 9,
+                                            "textRun": {
+                                                "content": "😀Hello\n",
+                                                "textStyle": {},
+                                            },
+                                        }
+                                    ],
+                                    "paragraphStyle": {},
+                                },
+                            }
+                        ]
+                    },
+                    "headers": {},
+                    "footers": {},
+                    "footnotes": {},
+                    "namedRanges": {},
+                },
+            }
+        ],
+    }
+
+    api = MockGoogleDocsAPI(doc)
+
+    # Try to delete just high surrogate of emoji at start (1-2)
+    requests = [{"deleteContentRange": {"range": {"startIndex": 1, "endIndex": 2}}}]
+
+    with pytest.raises(ValidationError) as exc_info:
+        api.batch_update(requests)
+
+    assert "surrogate pair" in str(exc_info.value).lower()
+
+
+def test_emoji_at_segment_end() -> None:
+    """Test operations with emoji at the end of segment (before final newline)."""
+    # "Hello😀\n" - emoji before final newline
+    doc = {
+        "documentId": "test_emoji_end",
+        "title": "Emoji End Test",
+        "revisionId": "initial_revision",
+        "tabs": [
+            {
+                "tabProperties": {"tabId": "tab1", "title": "Tab 1", "index": 0},
+                "documentTab": {
+                    "body": {
+                        "content": [
+                            {
+                                "startIndex": 1,
+                                "endIndex": 9,
+                                "paragraph": {
+                                    "elements": [
+                                        {
+                                            "startIndex": 1,
+                                            "endIndex": 9,
+                                            "textRun": {
+                                                "content": "Hello😀\n",
+                                                "textStyle": {},
+                                            },
+                                        }
+                                    ],
+                                    "paragraphStyle": {},
+                                },
+                            }
+                        ]
+                    },
+                    "headers": {},
+                    "footers": {},
+                    "footnotes": {},
+                    "namedRanges": {},
+                },
+            }
+        ],
+    }
+
+    api = MockGoogleDocsAPI(doc)
+
+    # Delete the complete emoji before final newline (6-8)
+    requests = [{"deleteContentRange": {"range": {"startIndex": 6, "endIndex": 8}}}]
+
+    response = api.batch_update(requests)
+    assert len(response["replies"]) == 1
+
+    # But trying to delete partial emoji (6-7) should fail
+    requests = [{"deleteContentRange": {"range": {"startIndex": 6, "endIndex": 7}}}]
+
+    with pytest.raises(ValidationError) as exc_info:
+        api.batch_update(requests)
+
+    assert "surrogate pair" in str(exc_info.value).lower()
+
+
+# ------------------------------------------------------------------------
+# Table Cell Final Newline in Complex Scenarios
+# ------------------------------------------------------------------------
+
+
+def test_delete_across_multiple_table_cells_respecting_final_newlines() -> None:
+    """Test that deletion across cells respects individual cell final newlines."""
+    doc = create_document_with_table()
+    api = MockGoogleDocsAPI(doc)
+
+    # Try to delete content from cell 1 "A\n" and cell 2 "B\n"
+    # but respecting final newlines: delete "A" from cell 1 and "B" from cell 2
+    # Cell 1: 9-11, Cell 2: 12-14
+    # Delete A (9-10) and B (12-13) separately should work
+
+    # First delete A from cell 1
+    requests = [{"deleteContentRange": {"range": {"startIndex": 9, "endIndex": 10}}}]
+    response = api.batch_update(requests)
+    assert len(response["replies"]) == 1
+
+    # Then delete B from cell 2
+    requests = [{"deleteContentRange": {"range": {"startIndex": 12, "endIndex": 13}}}]
+    response = api.batch_update(requests)
+    assert len(response["replies"]) == 1
+
+
+# ------------------------------------------------------------------------
+# Write Control / Revision Tests
+# ------------------------------------------------------------------------
+
+
+def test_write_control_with_very_old_revision_fails() -> None:
+    """Test that using very old revision ID fails."""
+    doc = create_minimal_document()
+    api = MockGoogleDocsAPI(doc)
+
+    # Make several updates to advance revision
+    for i in range(5):
+        requests = [{"insertText": {"location": {"index": 1}, "text": f"Update{i}"}}]
+        api.batch_update(requests)
+
+    # Try to use the original revision ID
+    old_revision = "initial_revision"
+    write_control = {"requiredRevisionId": old_revision}
+    requests = [{"insertText": {"location": {"index": 1}, "text": "Should fail"}}]
+
+    with pytest.raises(ValidationError) as exc_info:
+        api.batch_update(requests, write_control)
+
+    assert "modified" in str(exc_info.value).lower() or "revision" in str(
+        exc_info.value
+    ).lower()
