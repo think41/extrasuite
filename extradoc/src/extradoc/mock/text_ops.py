@@ -25,6 +25,10 @@ def _strip_link_style(run_style: dict[str, Any]) -> dict[str, Any]:
     If the run has explicit non-link styles (bold, italic, strikethrough, etc.),
     those are kept. If the run only has link auto-styling (link, foregroundColor,
     underline), the result is {} — the underline was just link decoration.
+
+    Note: This heuristic cannot distinguish styles that were explicitly set
+    via updateTextStyle from styles inherited during insertText. The real API
+    tracks this provenance, so some cases will remain inaccurate.
     """
     # Check if there are explicit styles beyond link auto-styling
     _explicit_keys = {

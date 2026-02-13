@@ -268,8 +268,10 @@ def handle_update_paragraph_style(
                 # When setting a heading style, the real API:
                 # 1. Clears bullet.textStyle to {}
                 # 2. Removes bold, italic, underline from all text runs
-                #    (headings are bold by default; inherited italic/underline
-                #    are stripped as they become redundant under the heading style)
+                #    (headings are bold by default; the real API also clears
+                #    italic/underline that were inherited during insertText,
+                #    though it preserves ones set via updateTextStyle — we
+                #    can't distinguish these, so we clear all three)
                 bullet = paragraph.get("bullet")
                 if bullet:
                     bullet["textStyle"] = {}

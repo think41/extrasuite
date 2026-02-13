@@ -90,9 +90,9 @@ def handle_create_paragraph_bullets(
     # Apply bullet to each paragraph in range
     for paragraph in get_paragraphs_in_range(tab, start_index, end_index):
         # Build bullet textStyle — inherit bold from first non-empty text run.
-        # The real API copies bold (and sometimes italic when explicitly set via
-        # updateTextStyle), but we can't distinguish explicit vs inherited styles,
-        # so we only copy bold to avoid false positives.
+        # The real API also copies italic when it was explicitly set via
+        # updateTextStyle, but we can't distinguish explicit vs inherited
+        # styles, so we only copy bold to avoid false positives.
         bullet_text_style: dict[str, Any] = {}
         first_elements = paragraph.get("elements", [])
         for elem in first_elements:
