@@ -151,10 +151,13 @@ def _insert_text_simple(segment: dict[str, Any], index: int, text: str) -> None:
                     )
 
                     if "link" in run_style:
-                        # Link runs: split into before (link), inserted (no style), after (link)
-                        # The real API gives inserted text empty textStyle {}
+                        # Link runs: split into before (link), inserted (inherited), after (link)
+                        # The real API inherits non-link text properties (bold, italic, etc.)
                         before = content_str[:offset_in_run]
                         after = content_str[offset_in_run:]
+                        inherited_style = copy.deepcopy(run_style)
+                        inherited_style.pop("link", None)
+                        inherited_style.pop("foregroundColor", None)
                         new_elements: list[dict[str, Any]] = []
                         if before:
                             new_elements.append(
@@ -173,7 +176,7 @@ def _insert_text_simple(segment: dict[str, Any], index: int, text: str) -> None:
                                 "endIndex": 0,
                                 "textRun": {
                                     "content": text,
-                                    "textStyle": {},
+                                    "textStyle": inherited_style,
                                 },
                             }
                         )
@@ -234,13 +237,16 @@ def _insert_text_with_newlines(segment: dict[str, Any], index: int, text: str) -
                 if not inserted and run_start <= index <= run_end:
                     offset = calculate_utf16_offset(run_content, index - run_start)
                     if "link" in run_style:
-                        # Link runs: split into before (link), inserted (no style), after (link)
-                        # The real API gives inserted text empty textStyle {}
+                        # Link runs: split into before (link), inserted (inherited), after (link)
+                        # The real API inherits non-link text properties (bold, italic, etc.)
                         before = run_content[:offset]
                         after = run_content[offset:]
+                        inherited_style = copy.deepcopy(run_style)
+                        inherited_style.pop("link", None)
+                        inherited_style.pop("foregroundColor", None)
                         if before:
                             runs.append((before, copy.deepcopy(run_style)))
-                        runs.append((text, {}))
+                        runs.append((text, inherited_style))
                         if after:
                             runs.append((after, copy.deepcopy(run_style)))
                     else:
