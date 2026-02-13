@@ -220,10 +220,7 @@ def handle_insert_table_row(
                                     },
                                 }
                             ],
-                            "paragraphStyle": {
-                                "namedStyleType": "NORMAL_TEXT",
-                                "direction": "LEFT_TO_RIGHT",
-                            },
+                            "paragraphStyle": table_cell_paragraph_style(),
                         },
                     }
                 ],

@@ -89,16 +89,16 @@ def handle_create_paragraph_bullets(
 
     # Apply bullet to each paragraph in range
     for paragraph in get_paragraphs_in_range(tab, start_index, end_index):
-        # Build bullet textStyle — inherit from first text run
+        # Build bullet textStyle — inherit bold from first non-empty text run.
+        # The real API only copies "bold" to bullet.textStyle (not italic, underline, etc.)
         bullet_text_style: dict[str, Any] = {}
         first_elements = paragraph.get("elements", [])
         for elem in first_elements:
             tr = elem.get("textRun")
             if tr and tr.get("content", "").strip():
                 src_style = tr.get("textStyle", {})
-                for key in ("bold", "italic", "fontSize"):
-                    if key in src_style:
-                        bullet_text_style[key] = src_style[key]
+                if src_style.get("bold"):
+                    bullet_text_style["bold"] = True
                 break
 
         paragraph["bullet"] = {

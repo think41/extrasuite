@@ -41,7 +41,8 @@ def reindex_segment(segment: dict[str, Any], *, is_body: bool = True) -> None:
     is_first_element = True
     for element in content:
         if "sectionBreak" in element:
-            element["startIndex"] = current_idx
+            # Real API omits startIndex on sectionBreak (always first element)
+            element.pop("startIndex", None)
             element["endIndex"] = current_idx + 1
             current_idx += 1
             is_first_element = False

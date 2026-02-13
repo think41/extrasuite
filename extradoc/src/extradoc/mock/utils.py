@@ -111,10 +111,7 @@ def make_empty_cell(start_index: int) -> dict[str, Any]:
                             },
                         }
                     ],
-                    "paragraphStyle": {
-                        "namedStyleType": "NORMAL_TEXT",
-                        "direction": "LEFT_TO_RIGHT",
-                    },
+                    "paragraphStyle": table_cell_paragraph_style(),
                 },
             }
         ],
