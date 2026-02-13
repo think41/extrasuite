@@ -137,22 +137,61 @@ def _insert_text_simple(segment: dict[str, Any], index: int, text: str) -> None:
             paragraph = element["paragraph"]
             para_elements = paragraph.get("elements", [])
 
-            for para_elem in para_elements:
+            for pe_idx, para_elem in enumerate(para_elements):
                 run_start = para_elem.get("startIndex", 0)
                 run_end = para_elem.get("endIndex", 0)
 
                 if run_start <= index <= run_end and "textRun" in para_elem:
                     text_run = para_elem["textRun"]
                     content_str = text_run.get("content", "")
+                    run_style = text_run.get("textStyle", {})
 
                     offset_in_run = calculate_utf16_offset(
                         content_str, index - run_start
                     )
 
-                    new_content = (
-                        content_str[:offset_in_run] + text + content_str[offset_in_run:]
-                    )
-                    text_run["content"] = new_content
+                    if "link" in run_style:
+                        # Link runs: split into before (link), inserted (no style), after (link)
+                        before = content_str[:offset_in_run]
+                        after = content_str[offset_in_run:]
+                        new_elements: list[dict[str, Any]] = []
+                        if before:
+                            new_elements.append(
+                                {
+                                    "startIndex": 0,
+                                    "endIndex": 0,
+                                    "textRun": {
+                                        "content": before,
+                                        "textStyle": copy.deepcopy(run_style),
+                                    },
+                                }
+                            )
+                        new_elements.append(
+                            {
+                                "startIndex": 0,
+                                "endIndex": 0,
+                                "textRun": {"content": text, "textStyle": {}},
+                            }
+                        )
+                        if after:
+                            new_elements.append(
+                                {
+                                    "startIndex": 0,
+                                    "endIndex": 0,
+                                    "textRun": {
+                                        "content": after,
+                                        "textStyle": copy.deepcopy(run_style),
+                                    },
+                                }
+                            )
+                        para_elements[pe_idx : pe_idx + 1] = new_elements
+                    else:
+                        new_content = (
+                            content_str[:offset_in_run]
+                            + text
+                            + content_str[offset_in_run:]
+                        )
+                        text_run["content"] = new_content
                     # Don't update indices — reindex handles it
                     return
 
@@ -175,7 +214,9 @@ def _insert_text_with_newlines(segment: dict[str, Any], index: int, text: str) -
             para_elements = paragraph.get("elements", [])
             para_style = copy.deepcopy(paragraph.get("paragraphStyle", {}))
 
-            # Step 1: Collect all runs, inserting text into the target run
+            # Step 1: Collect all runs, inserting text into the target run.
+            # When inserting into a link-styled run, the inserted text gets
+            # empty textStyle {} (the real API does not propagate link styles).
             runs: list[tuple[str, dict[str, Any]]] = []
             inserted = False
             for pe in para_elements:
@@ -188,8 +229,18 @@ def _insert_text_with_newlines(segment: dict[str, Any], index: int, text: str) -
 
                 if not inserted and run_start <= index <= run_end:
                     offset = calculate_utf16_offset(run_content, index - run_start)
-                    new_content = run_content[:offset] + text + run_content[offset:]
-                    runs.append((new_content, copy.deepcopy(run_style)))
+                    if "link" in run_style:
+                        # Link runs: split into before (link), inserted (no style), after (link)
+                        before = run_content[:offset]
+                        after = run_content[offset:]
+                        if before:
+                            runs.append((before, copy.deepcopy(run_style)))
+                        runs.append((text, {}))
+                        if after:
+                            runs.append((after, copy.deepcopy(run_style)))
+                    else:
+                        new_content = run_content[:offset] + text + run_content[offset:]
+                        runs.append((new_content, copy.deepcopy(run_style)))
                     inserted = True
                 else:
                     runs.append((run_content, copy.deepcopy(run_style)))

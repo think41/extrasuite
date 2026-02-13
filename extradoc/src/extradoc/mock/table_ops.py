@@ -290,6 +290,13 @@ def handle_insert_table_column(
 
     table["columns"] = num_cols + 1
 
+    # Update tableColumnProperties
+    table_style = table.setdefault("tableStyle", {})
+    col_props = table_style.get("tableColumnProperties", [])
+    if col_props:
+        col_props.insert(target_col_idx, {"widthType": "EVENLY_DISTRIBUTED"})
+        table_style["tableColumnProperties"] = col_props
+
     # No index recalculation or shifting — reindex handles it
     return {}
 
@@ -373,6 +380,12 @@ def handle_delete_table_column(
             if col_index < len(cells):
                 cells.pop(col_index)
         table["columns"] = num_cols - 1
+
+        # Update tableColumnProperties
+        table_style = table.get("tableStyle", {})
+        col_props = table_style.get("tableColumnProperties", [])
+        if col_props and col_index < len(col_props):
+            col_props.pop(col_index)
 
     # No index shifting or recalculation — reindex handles it
     return {}
