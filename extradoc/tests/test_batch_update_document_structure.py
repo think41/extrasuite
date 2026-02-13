@@ -866,7 +866,7 @@ def test_multiple_operations_maintain_document_consistency() -> None:
         },
         {
             "insertText": {
-                "location": {"index": 13},  # After "Start Hello\n"
+                "location": {"index": 12},  # Before final newline in "Start Hello\n"
                 "text": " End",
             }
         },

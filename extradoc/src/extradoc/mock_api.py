@@ -2285,10 +2285,6 @@ class MockGoogleDocsAPI:
             text: The text to insert (contains newlines)
             text_len: Length in UTF-16 code units
         """
-        # For simplicity, split the text on newlines and insert multiple paragraphs
-        # This is a simplified implementation
-        parts = text.split("\n")
-
         content = segment.get("content", [])
 
         # Find the paragraph containing the insertion index
@@ -2297,56 +2293,86 @@ class MockGoogleDocsAPI:
             elem_end = element.get("endIndex", 0)
 
             if elem_start <= index < elem_end and "paragraph" in element:
-                # Split this paragraph at the insertion point
-                # For now, simplified: insert all text as one paragraph if it ends with \n
-                # Otherwise treat as multiple paragraphs
+                # Get the existing paragraph's text content
+                paragraph = element["paragraph"]
+                para_elements = paragraph.get("elements", [])
 
-                if text.endswith("\n"):
-                    # Multiple paragraphs need to be created
-                    # Simplified: just update the current paragraph with first part + newline
-                    # and create new paragraph for rest
+                # Extract all text from the paragraph
+                existing_text = ""
+                for para_elem in para_elements:
+                    if "textRun" in para_elem:
+                        existing_text += para_elem["textRun"].get("content", "")
 
-                    new_paragraphs = []
-                    current_idx = index
+                # Calculate where to insert in the existing text
+                offset_in_paragraph = index - elem_start
+                offset_in_text = self._calculate_utf16_offset(existing_text, offset_in_paragraph)
 
-                    for i, part in enumerate(parts):
-                        if i == len(parts) - 1 and part == "":
-                            # Empty final part after final newline
-                            break
+                # Split existing text at insertion point
+                text_before = existing_text[:offset_in_text]
+                text_after = existing_text[offset_in_text:]
 
-                        # Create paragraph for this part
-                        part_with_newline = part + "\n" if i < len(parts) - 1 else part
-                        part_len = utf16_len(part_with_newline)
+                # Combine: text_before + inserted_text + text_after
+                full_text = text_before + text + text_after
 
-                        new_para = {
-                            "startIndex": current_idx,
-                            "endIndex": current_idx + part_len,
-                            "paragraph": {
-                                "elements": [
-                                    {
-                                        "startIndex": current_idx,
-                                        "endIndex": current_idx + part_len,
-                                        "textRun": {
-                                            "content": part_with_newline,
-                                            "textStyle": {},
-                                        },
-                                    }
-                                ],
-                                "paragraphStyle": {},
-                            },
-                        }
-                        new_paragraphs.append(new_para)
-                        current_idx += part_len
+                # Split on newlines to create paragraphs
+                # Each newline creates a paragraph boundary
+                lines = full_text.split("\n")
 
-                    # Remove old paragraph and insert new ones
-                    content[elem_idx : elem_idx + 1] = new_paragraphs
+                # Create new paragraph structures
+                new_paragraphs = []
+                current_idx = elem_start
 
-                    # Shift all subsequent elements
-                    self._shift_indexes_after(content, elem_end, text_len)
-                    return
+                for i, line in enumerate(lines):
+                    # Skip the last empty element if text ends with \n
+                    if i == len(lines) - 1 and line == "":
+                        break
 
-        # Fallback: just do simple insertion
-        self._insert_text_simple(segment, index, text, text_len)
+                    # Add newline back (except we already split on it)
+                    line_with_newline = line + "\n"
+                    line_len = utf16_len(line_with_newline)
+
+                    new_para = {
+                        "startIndex": current_idx,
+                        "endIndex": current_idx + line_len,
+                        "paragraph": {
+                            "elements": [
+                                {
+                                    "startIndex": current_idx,
+                                    "endIndex": current_idx + line_len,
+                                    "textRun": {
+                                        "content": line_with_newline,
+                                        "textStyle": {},
+                                    },
+                                }
+                            ],
+                            "paragraphStyle": paragraph.get("paragraphStyle", {}),
+                        },
+                    }
+                    new_paragraphs.append(new_para)
+                    current_idx += line_len
+
+                # Replace the old paragraph with new ones
+                content[elem_idx : elem_idx + 1] = new_paragraphs
+
+                # Shift all subsequent elements (those after the newly created paragraphs)
+                # Find the end index of the last new paragraph
+                if new_paragraphs:
+                    last_new_para_end = new_paragraphs[-1]["endIndex"]
+                    # Shift all elements that start at or after the original elem_end
+                    # They need to be shifted by text_len
+                    for i in range(elem_idx + len(new_paragraphs), len(content)):
+                        elem = content[i]
+                        elem["startIndex"] += text_len
+                        elem["endIndex"] += text_len
+                        # Also shift nested elements
+                        if "paragraph" in elem:
+                            for para_elem in elem["paragraph"].get("elements", []):
+                                para_elem["startIndex"] += text_len
+                                para_elem["endIndex"] += text_len
+                return
+
+        # If we get here, we couldn't find the right place to insert
+        raise ValidationError(f"Could not find paragraph to insert at index {index}")
 
     def _delete_content_from_segment(
         self, segment: dict[str, Any], start_index: int, end_index: int
