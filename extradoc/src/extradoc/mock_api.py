@@ -200,6 +200,36 @@ class MockGoogleDocsAPI:
             "createNamedRange": self._handle_create_named_range,
             "deleteNamedRange": self._handle_delete_named_range,
             "replaceAllText": self._handle_replace_all_text,
+            # Deletion requests
+            "deletePositionedObject": self._handle_delete_positioned_object,
+            "deleteHeader": self._handle_delete_header,
+            "deleteFooter": self._handle_delete_footer,
+            # Creation requests
+            "createHeader": self._handle_create_header,
+            "createFooter": self._handle_create_footer,
+            "createFootnote": self._handle_create_footnote,
+            "addDocumentTab": self._handle_add_document_tab,
+            # Update requests
+            "updateTableColumnProperties": self._handle_update_table_column_properties,
+            "updateTableCellStyle": self._handle_update_table_cell_style,
+            "updateTableRowStyle": self._handle_update_table_row_style,
+            "updateDocumentStyle": self._handle_update_document_style,
+            "updateSectionStyle": self._handle_update_section_style,
+            "updateDocumentTabProperties": self._handle_update_document_tab_properties,
+            # Table operations
+            "mergeTableCells": self._handle_merge_table_cells,
+            "unmergeTableCells": self._handle_unmerge_table_cells,
+            "pinTableHeaderRows": self._handle_pin_table_header_rows,
+            # Insertion requests
+            "insertInlineImage": self._handle_insert_inline_image,
+            "insertPageBreak": self._handle_insert_page_break,
+            "insertSectionBreak": self._handle_insert_section_break,
+            "insertPerson": self._handle_insert_person,
+            "insertDate": self._handle_insert_date,
+            # Replacement requests
+            "replaceImage": self._handle_replace_image,
+            "replaceNamedRangeContent": self._handle_replace_named_range_content,
+            "deleteTab": self._handle_delete_tab,
         }
 
         handler = handler_map.get(request_type)
@@ -239,7 +269,9 @@ class MockGoogleDocsAPI:
         has_end_of_segment = end_of_segment is not None
 
         if not has_location and not has_end_of_segment:
-            raise ValidationError("Must specify either location or endOfSegmentLocation")
+            raise ValidationError(
+                "Must specify either location or endOfSegmentLocation"
+            )
         if has_location and has_end_of_segment:
             raise ValidationError(
                 "Cannot specify both location and endOfSegmentLocation"
@@ -341,9 +373,7 @@ class MockGoogleDocsAPI:
 
         return {}
 
-    def _handle_update_paragraph_style(
-        self, request: dict[str, Any]
-    ) -> dict[str, Any]:
+    def _handle_update_paragraph_style(self, request: dict[str, Any]) -> dict[str, Any]:
         """Handle UpdateParagraphStyleRequest.
 
         Args:
@@ -444,7 +474,9 @@ class MockGoogleDocsAPI:
             raise ValidationError("columns must be at least 1")
 
         if not location and not end_of_segment:
-            raise ValidationError("Must specify either location or endOfSegmentLocation")
+            raise ValidationError(
+                "Must specify either location or endOfSegmentLocation"
+            )
         if location and end_of_segment:
             raise ValidationError(
                 "Cannot specify both location and endOfSegmentLocation"
@@ -573,9 +605,7 @@ class MockGoogleDocsAPI:
         else:
             # Delete all ranges with this name
             to_delete = [
-                rid
-                for rid, info in self._named_ranges.items()
-                if info["name"] == name
+                rid for rid, info in self._named_ranges.items() if info["name"] == name
             ]
             for rid in to_delete:
                 del self._named_ranges[rid]
@@ -600,6 +630,928 @@ class MockGoogleDocsAPI:
         # Simplified: return 0 occurrences
         # Full implementation would search and replace text
         return {"replaceAllText": {"occurrencesChanged": 0}}
+
+    # ========================================================================
+    # Deletion Requests
+    # ========================================================================
+
+    def _handle_delete_positioned_object(
+        self, request: dict[str, Any]
+    ) -> dict[str, Any]:
+        """Handle DeletePositionedObjectRequest.
+
+        Args:
+            request: DeletePositionedObjectRequest data.
+
+        Returns:
+            Empty reply.
+        """
+        object_id = request.get("objectId")
+        if not object_id:
+            raise ValidationError("objectId is required")
+
+        tab_id = request.get("tabId")
+        # Validate tab exists
+        self._get_tab(tab_id)
+
+        # In a full implementation, we would:
+        # - Verify the positioned object exists
+        # - Remove it from the document's positionedObjects
+        return {}
+
+    def _handle_delete_header(self, request: dict[str, Any]) -> dict[str, Any]:
+        """Handle DeleteHeaderRequest.
+
+        Args:
+            request: DeleteHeaderRequest data.
+
+        Returns:
+            Empty reply.
+        """
+        header_id = request.get("headerId")
+        if not header_id:
+            raise ValidationError("headerId is required")
+
+        tab_id = request.get("tabId")
+        tab = self._get_tab(tab_id)
+
+        # In a full implementation, we would:
+        # - Verify the header exists
+        # - Remove it from the document
+        document_tab = tab.get("documentTab", {})
+        headers = document_tab.get("headers", {})
+        if header_id not in headers:
+            raise ValidationError(f"Header not found: {header_id}")
+
+        return {}
+
+    def _handle_delete_footer(self, request: dict[str, Any]) -> dict[str, Any]:
+        """Handle DeleteFooterRequest.
+
+        Args:
+            request: DeleteFooterRequest data.
+
+        Returns:
+            Empty reply.
+        """
+        footer_id = request.get("footerId")
+        if not footer_id:
+            raise ValidationError("footerId is required")
+
+        tab_id = request.get("tabId")
+        tab = self._get_tab(tab_id)
+
+        # In a full implementation, we would:
+        # - Verify the footer exists
+        # - Remove it from the document
+        document_tab = tab.get("documentTab", {})
+        footers = document_tab.get("footers", {})
+        if footer_id not in footers:
+            raise ValidationError(f"Footer not found: {footer_id}")
+
+        return {}
+
+    # ========================================================================
+    # Creation Requests
+    # ========================================================================
+
+    def _handle_create_header(self, request: dict[str, Any]) -> dict[str, Any]:
+        """Handle CreateHeaderRequest.
+
+        Args:
+            request: CreateHeaderRequest data.
+
+        Returns:
+            Reply with created header ID.
+        """
+        header_type = request.get("type")
+        if not header_type:
+            raise ValidationError("type is required")
+
+        section_break_location = request.get("sectionBreakLocation")
+        tab_id = None
+        if section_break_location:
+            tab_id = section_break_location.get("tabId")
+
+        tab = self._get_tab(tab_id)
+
+        # Generate unique ID
+        header_id = f"header_{uuid.uuid4().hex[:16]}"
+
+        # In a full implementation, we would:
+        # - Check if header of this type already exists (400 error if so)
+        # - Create the header segment
+        # - Add it to the document structure
+        document_tab = tab.get("documentTab", {})
+        if "headers" not in document_tab:
+            document_tab["headers"] = {}
+
+        document_tab["headers"][header_id] = {
+            "content": [
+                {
+                    "startIndex": 1,
+                    "endIndex": 2,
+                    "paragraph": {
+                        "elements": [
+                            {
+                                "startIndex": 1,
+                                "endIndex": 2,
+                                "textRun": {"content": "\n", "textStyle": {}},
+                            }
+                        ],
+                        "paragraphStyle": {},
+                    },
+                }
+            ]
+        }
+
+        return {"createHeader": {"headerId": header_id}}
+
+    def _handle_create_footer(self, request: dict[str, Any]) -> dict[str, Any]:
+        """Handle CreateFooterRequest.
+
+        Args:
+            request: CreateFooterRequest data.
+
+        Returns:
+            Reply with created footer ID.
+        """
+        footer_type = request.get("type")
+        if not footer_type:
+            raise ValidationError("type is required")
+
+        section_break_location = request.get("sectionBreakLocation")
+        tab_id = None
+        if section_break_location:
+            tab_id = section_break_location.get("tabId")
+
+        tab = self._get_tab(tab_id)
+
+        # Generate unique ID
+        footer_id = f"footer_{uuid.uuid4().hex[:16]}"
+
+        # In a full implementation, we would:
+        # - Check if footer of this type already exists (400 error if so)
+        # - Create the footer segment
+        # - Add it to the document structure
+        document_tab = tab.get("documentTab", {})
+        if "footers" not in document_tab:
+            document_tab["footers"] = {}
+
+        document_tab["footers"][footer_id] = {
+            "content": [
+                {
+                    "startIndex": 1,
+                    "endIndex": 2,
+                    "paragraph": {
+                        "elements": [
+                            {
+                                "startIndex": 1,
+                                "endIndex": 2,
+                                "textRun": {"content": "\n", "textStyle": {}},
+                            }
+                        ],
+                        "paragraphStyle": {},
+                    },
+                }
+            ]
+        }
+
+        return {"createFooter": {"footerId": footer_id}}
+
+    def _handle_create_footnote(self, request: dict[str, Any]) -> dict[str, Any]:
+        """Handle CreateFootnoteRequest.
+
+        Args:
+            request: CreateFootnoteRequest data.
+
+        Returns:
+            Reply with created footnote ID.
+        """
+        location = request.get("location")
+        end_of_segment = request.get("endOfSegmentLocation")
+
+        if not location and not end_of_segment:
+            raise ValidationError(
+                "Must specify either location or endOfSegmentLocation"
+            )
+        if location and end_of_segment:
+            raise ValidationError(
+                "Cannot specify both location and endOfSegmentLocation"
+            )
+
+        # Validate location
+        if location:
+            index = location["index"]
+            tab_id = location.get("tabId")
+            segment_id = location.get("segmentId")
+
+            # Footnotes must be in body (segment_id must be empty/None)
+            if segment_id:
+                raise ValidationError(
+                    "Cannot create footnote in header, footer, or another footnote"
+                )
+
+            tab = self._get_tab(tab_id)
+            # Validate index is within bounds
+            if index < 1:
+                raise ValidationError(f"Index must be at least 1, got {index}")
+
+        # Generate unique ID
+        footnote_id = f"footnote_{uuid.uuid4().hex[:16]}"
+
+        # In a full implementation, we would:
+        # - Create the footnote segment with space + newline
+        # - Insert the footnote reference at the specified location
+        # - Add it to the document structure
+
+        if location:
+            tab_id = location.get("tabId")
+        else:
+            tab_id = end_of_segment.get("tabId") if end_of_segment else None
+
+        tab = self._get_tab(tab_id)
+        document_tab = tab.get("documentTab", {})
+        if "footnotes" not in document_tab:
+            document_tab["footnotes"] = {}
+
+        document_tab["footnotes"][footnote_id] = {
+            "content": [
+                {
+                    "startIndex": 1,
+                    "endIndex": 3,
+                    "paragraph": {
+                        "elements": [
+                            {
+                                "startIndex": 1,
+                                "endIndex": 3,
+                                "textRun": {"content": " \n", "textStyle": {}},
+                            }
+                        ],
+                        "paragraphStyle": {},
+                    },
+                }
+            ]
+        }
+
+        return {"createFootnote": {"footnoteId": footnote_id}}
+
+    def _handle_add_document_tab(self, request: dict[str, Any]) -> dict[str, Any]:
+        """Handle AddDocumentTabRequest.
+
+        Args:
+            request: AddDocumentTabRequest data.
+
+        Returns:
+            Reply with new tab ID.
+        """
+        tab_properties = request.get("tabProperties", {})
+
+        # Generate unique ID
+        tab_id = f"tab_{uuid.uuid4().hex[:16]}"
+
+        # In a full implementation, we would:
+        # - Insert the new tab at the specified index
+        # - Increment indexes of subsequent tabs
+        # - Create the tab structure with empty body
+
+        new_tab = {
+            "tabProperties": {
+                "tabId": tab_id,
+                "title": tab_properties.get("title", "Untitled Tab"),
+                "index": tab_properties.get(
+                    "index", len(self._document.get("tabs", []))
+                ),
+            },
+            "documentTab": {
+                "body": {
+                    "content": [
+                        {
+                            "startIndex": 1,
+                            "endIndex": 2,
+                            "paragraph": {
+                                "elements": [
+                                    {
+                                        "startIndex": 1,
+                                        "endIndex": 2,
+                                        "textRun": {"content": "\n", "textStyle": {}},
+                                    }
+                                ],
+                                "paragraphStyle": {},
+                            },
+                        }
+                    ]
+                },
+                "headers": {},
+                "footers": {},
+                "footnotes": {},
+                "namedRanges": {},
+            },
+        }
+
+        if "tabs" not in self._document:
+            self._document["tabs"] = []
+        self._document["tabs"].append(new_tab)
+
+        return {"addDocumentTab": {"tabId": tab_id}}
+
+    # ========================================================================
+    # Update Requests
+    # ========================================================================
+
+    def _handle_update_table_column_properties(
+        self, request: dict[str, Any]
+    ) -> dict[str, Any]:
+        """Handle UpdateTableColumnPropertiesRequest.
+
+        Args:
+            request: UpdateTableColumnPropertiesRequest data.
+
+        Returns:
+            Empty reply.
+        """
+        table_start_location = request.get("tableStartLocation")
+        table_column_properties = request.get("tableColumnProperties")
+        fields = request.get("fields")
+
+        if not table_start_location:
+            raise ValidationError("tableStartLocation is required")
+        if table_column_properties is None:
+            raise ValidationError("tableColumnProperties is required")
+        if not fields:
+            raise ValidationError("fields is required")
+
+        tab_id = table_start_location.get("tabId")
+        self._get_tab(tab_id)
+
+        # Validate minimum column width if width is being updated
+        if "width" in fields or "*" in fields:
+            width = table_column_properties.get("width", {})
+            if width:
+                magnitude = width.get("magnitude", 0)
+                unit = width.get("unit", "PT")
+                if unit == "PT" and magnitude < 5:
+                    raise ValidationError("Column width must be at least 5 points")
+
+        # In a full implementation, we would:
+        # - Find the table at the specified location
+        # - Update the specified columns (or all if columnIndices not provided)
+        # - Apply the column properties
+        return {}
+
+    def _handle_update_table_cell_style(
+        self, request: dict[str, Any]
+    ) -> dict[str, Any]:
+        """Handle UpdateTableCellStyleRequest.
+
+        Args:
+            request: UpdateTableCellStyleRequest data.
+
+        Returns:
+            Empty reply.
+        """
+        table_cell_style = request.get("tableCellStyle")
+        fields = request.get("fields")
+
+        if table_cell_style is None:
+            raise ValidationError("tableCellStyle is required")
+        if not fields:
+            raise ValidationError("fields is required")
+
+        # Must have either tableRange or tableStartLocation
+        table_range = request.get("tableRange")
+        table_start_location = request.get("tableStartLocation")
+
+        if not table_range and not table_start_location:
+            raise ValidationError(
+                "Must specify either tableRange or tableStartLocation"
+            )
+
+        if table_range:
+            tab_id = table_range.get("tabId")
+        else:
+            tab_id = table_start_location.get("tabId") if table_start_location else None
+
+        self._get_tab(tab_id)
+
+        # In a full implementation, we would:
+        # - Find the table and cells
+        # - Apply the style updates
+        # - Handle border updates for adjacent cells
+        return {}
+
+    def _handle_update_table_row_style(self, request: dict[str, Any]) -> dict[str, Any]:
+        """Handle UpdateTableRowStyleRequest.
+
+        Args:
+            request: UpdateTableRowStyleRequest data.
+
+        Returns:
+            Empty reply.
+        """
+        table_start_location = request.get("tableStartLocation")
+        table_row_style = request.get("tableRowStyle")
+        fields = request.get("fields")
+
+        if not table_start_location:
+            raise ValidationError("tableStartLocation is required")
+        if table_row_style is None:
+            raise ValidationError("tableRowStyle is required")
+        if not fields:
+            raise ValidationError("fields is required")
+
+        tab_id = table_start_location.get("tabId")
+        self._get_tab(tab_id)
+
+        # In a full implementation, we would:
+        # - Find the table at the specified location
+        # - Update the specified rows (or all if rowIndices not provided)
+        # - Apply the row style properties
+        return {}
+
+    def _handle_update_document_style(self, request: dict[str, Any]) -> dict[str, Any]:
+        """Handle UpdateDocumentStyleRequest.
+
+        Args:
+            request: UpdateDocumentStyleRequest data.
+
+        Returns:
+            Empty reply.
+        """
+        document_style = request.get("documentStyle")
+        fields = request.get("fields")
+
+        if document_style is None:
+            raise ValidationError("documentStyle is required")
+        if not fields:
+            raise ValidationError("fields is required")
+
+        tab_id = request.get("tabId")
+        self._get_tab(tab_id)
+
+        # In a full implementation, we would:
+        # - Update the document-level style properties
+        # - Handle cascading changes to match Docs editor behavior
+        return {}
+
+    def _handle_update_section_style(self, request: dict[str, Any]) -> dict[str, Any]:
+        """Handle UpdateSectionStyleRequest.
+
+        Args:
+            request: UpdateSectionStyleRequest data.
+
+        Returns:
+            Empty reply.
+        """
+        range_obj = request.get("range")
+        section_style = request.get("sectionStyle")
+        fields = request.get("fields")
+
+        if not range_obj:
+            raise ValidationError("range is required")
+        if section_style is None:
+            raise ValidationError("sectionStyle is required")
+        if not fields:
+            raise ValidationError("fields is required")
+
+        # Validate segment ID must be empty (body-only)
+        segment_id = range_obj.get("segmentId")
+        if segment_id:
+            raise ValidationError(
+                "Section styles can only be applied to body, not headers/footers/footnotes"
+            )
+
+        start_index = range_obj["startIndex"]
+        end_index = range_obj["endIndex"]
+        tab_id = range_obj.get("tabId")
+
+        tab = self._get_tab(tab_id)
+        self._validate_range(tab, start_index, end_index)
+
+        # In a full implementation, we would:
+        # - Find all section breaks in the range
+        # - Update their section styles
+        # - Handle cascading changes
+        return {}
+
+    def _handle_update_document_tab_properties(
+        self, request: dict[str, Any]
+    ) -> dict[str, Any]:
+        """Handle UpdateDocumentTabPropertiesRequest.
+
+        Args:
+            request: UpdateDocumentTabPropertiesRequest data.
+
+        Returns:
+            Empty reply.
+        """
+        tab_properties = request.get("tabProperties")
+        fields = request.get("fields")
+
+        if not tab_properties:
+            raise ValidationError("tabProperties is required")
+        if not fields:
+            raise ValidationError("fields is required")
+
+        tab_id = tab_properties.get("tabId")
+        if not tab_id:
+            raise ValidationError("tabProperties.tabId is required")
+
+        # Validate tab exists
+        self._get_tab(tab_id)
+
+        # In a full implementation, we would:
+        # - Update the tab properties
+        # - Apply the changes to the document structure
+        return {}
+
+    # ========================================================================
+    # Table Operations
+    # ========================================================================
+
+    def _handle_merge_table_cells(self, request: dict[str, Any]) -> dict[str, Any]:
+        """Handle MergeTableCellsRequest.
+
+        Args:
+            request: MergeTableCellsRequest data.
+
+        Returns:
+            Empty reply.
+        """
+        table_range = request.get("tableRange")
+        if not table_range:
+            raise ValidationError("tableRange is required")
+
+        # Validate range is rectangular
+        # In a full implementation, we would:
+        # - Verify the range is rectangular
+        # - Concatenate text from all cells
+        # - Store in "head" cell (upper-left for LTR, upper-right for RTL)
+        # - Mark other cells as merged
+
+        tab_id = table_range.get("tabId")
+        self._get_tab(tab_id)
+
+        return {}
+
+    def _handle_unmerge_table_cells(self, request: dict[str, Any]) -> dict[str, Any]:
+        """Handle UnmergeTableCellsRequest.
+
+        Args:
+            request: UnmergeTableCellsRequest data.
+
+        Returns:
+            Empty reply.
+        """
+        table_range = request.get("tableRange")
+        if not table_range:
+            raise ValidationError("tableRange is required")
+
+        # In a full implementation, we would:
+        # - Find merged cells in the range
+        # - Unmerge them
+        # - Keep text in the "head" cell
+
+        tab_id = table_range.get("tabId")
+        self._get_tab(tab_id)
+
+        return {}
+
+    def _handle_pin_table_header_rows(self, request: dict[str, Any]) -> dict[str, Any]:
+        """Handle PinTableHeaderRowsRequest.
+
+        Args:
+            request: PinTableHeaderRowsRequest data.
+
+        Returns:
+            Empty reply.
+        """
+        table_start_location = request.get("tableStartLocation")
+        pinned_header_rows_count = request.get("pinnedHeaderRowsCount")
+
+        if not table_start_location:
+            raise ValidationError("tableStartLocation is required")
+        if pinned_header_rows_count is None:
+            raise ValidationError("pinnedHeaderRowsCount is required")
+
+        tab_id = table_start_location.get("tabId")
+        self._get_tab(tab_id)
+
+        # In a full implementation, we would:
+        # - Find the table
+        # - Update the pinned header rows count
+        return {}
+
+    # ========================================================================
+    # Insertion Requests
+    # ========================================================================
+
+    def _handle_insert_inline_image(self, request: dict[str, Any]) -> dict[str, Any]:
+        """Handle InsertInlineImageRequest.
+
+        Args:
+            request: InsertInlineImageRequest data.
+
+        Returns:
+            Reply with inserted object ID.
+        """
+        uri = request.get("uri")
+        location = request.get("location")
+        end_of_segment = request.get("endOfSegmentLocation")
+
+        if not uri:
+            raise ValidationError("uri is required")
+
+        if not location and not end_of_segment:
+            raise ValidationError(
+                "Must specify either location or endOfSegmentLocation"
+            )
+        if location and end_of_segment:
+            raise ValidationError(
+                "Cannot specify both location and endOfSegmentLocation"
+            )
+
+        # Validate URI length
+        if len(uri) > 2048:  # 2 KB
+            raise ValidationError("URI must be less than 2 KB")
+
+        # Validate location
+        if location:
+            index = location["index"]
+            tab_id = location.get("tabId")
+            segment_id = location.get("segmentId")
+
+            # Images cannot be in footnotes
+            if segment_id:
+                tab = self._get_tab(tab_id)
+                _segment, segment_type = self._get_segment(tab, segment_id)
+                if segment_type == "footnote":
+                    raise ValidationError("Cannot insert image in footnote")
+
+            # Validate index
+            if index < 1:
+                raise ValidationError(f"Index must be at least 1, got {index}")
+
+        # Generate unique ID
+        object_id = f"inlineImage_{uuid.uuid4().hex[:16]}"
+
+        # In a full implementation, we would:
+        # - Validate image URL is accessible
+        # - Insert the InlineObjectElement at the specified location
+        # - Add the inline object to the document
+        return {"insertInlineImage": {"objectId": object_id}}
+
+    def _handle_insert_page_break(self, request: dict[str, Any]) -> dict[str, Any]:
+        """Handle InsertPageBreakRequest.
+
+        Args:
+            request: InsertPageBreakRequest data.
+
+        Returns:
+            Empty reply.
+        """
+        location = request.get("location")
+        end_of_segment = request.get("endOfSegmentLocation")
+
+        if not location and not end_of_segment:
+            raise ValidationError(
+                "Must specify either location or endOfSegmentLocation"
+            )
+        if location and end_of_segment:
+            raise ValidationError(
+                "Cannot specify both location and endOfSegmentLocation"
+            )
+
+        # Validate location
+        if location:
+            index = location["index"]
+            tab_id = location.get("tabId")
+            segment_id = location.get("segmentId")
+
+            # Page breaks must be in body (segment_id must be empty/None)
+            if segment_id:
+                raise ValidationError(
+                    "Cannot insert page break in header, footer, or footnote"
+                )
+
+            self._get_tab(tab_id)
+            if index < 1:
+                raise ValidationError(f"Index must be at least 1, got {index}")
+
+        # In a full implementation, we would:
+        # - Insert the page break element at the specified location
+        # - Add a newline after the page break
+        return {}
+
+    def _handle_insert_section_break(self, request: dict[str, Any]) -> dict[str, Any]:
+        """Handle InsertSectionBreakRequest.
+
+        Args:
+            request: InsertSectionBreakRequest data.
+
+        Returns:
+            Empty reply.
+        """
+        location = request.get("location")
+        end_of_segment = request.get("endOfSegmentLocation")
+        section_type = request.get("sectionType")
+
+        if not location and not end_of_segment:
+            raise ValidationError(
+                "Must specify either location or endOfSegmentLocation"
+            )
+        if location and end_of_segment:
+            raise ValidationError(
+                "Cannot specify both location and endOfSegmentLocation"
+            )
+        if not section_type:
+            raise ValidationError("sectionType is required")
+
+        # Validate location
+        if location:
+            index = location["index"]
+            tab_id = location.get("tabId")
+            segment_id = location.get("segmentId")
+
+            # Section breaks must be in body (segment_id must be empty/None)
+            if segment_id:
+                raise ValidationError(
+                    "Cannot insert section break in header, footer, or footnote"
+                )
+
+            self._get_tab(tab_id)
+            if index < 1:
+                raise ValidationError(f"Index must be at least 1, got {index}")
+
+        # In a full implementation, we would:
+        # - Insert the section break element at the specified location
+        # - Add a newline before the section break
+        return {}
+
+    def _handle_insert_person(self, request: dict[str, Any]) -> dict[str, Any]:
+        """Handle InsertPersonRequest.
+
+        Args:
+            request: InsertPersonRequest data.
+
+        Returns:
+            Empty reply.
+        """
+        location = request.get("location")
+        end_of_segment = request.get("endOfSegmentLocation")
+        person_properties = request.get("personProperties")
+
+        if not location and not end_of_segment:
+            raise ValidationError(
+                "Must specify either location or endOfSegmentLocation"
+            )
+        if location and end_of_segment:
+            raise ValidationError(
+                "Cannot specify both location and endOfSegmentLocation"
+            )
+        if not person_properties:
+            raise ValidationError("personProperties is required")
+
+        # Validate location
+        if location:
+            index = location["index"]
+            tab_id = location.get("tabId")
+            segment_id = location.get("segmentId")
+
+            # Person mentions cannot be in equations
+            if segment_id:
+                tab = self._get_tab(tab_id)
+                _segment, _segment_type = self._get_segment(tab, segment_id)
+                # In a full implementation, check for equations
+
+            if index < 1:
+                raise ValidationError(f"Index must be at least 1, got {index}")
+
+        # In a full implementation, we would:
+        # - Insert the person element at the specified location
+        return {}
+
+    def _handle_insert_date(self, request: dict[str, Any]) -> dict[str, Any]:
+        """Handle InsertDateRequest.
+
+        Args:
+            request: InsertDateRequest data.
+
+        Returns:
+            Empty reply.
+        """
+        location = request.get("location")
+        end_of_segment = request.get("endOfSegmentLocation")
+        date_element_properties = request.get("dateElementProperties")
+
+        if not location and not end_of_segment:
+            raise ValidationError(
+                "Must specify either location or endOfSegmentLocation"
+            )
+        if location and end_of_segment:
+            raise ValidationError(
+                "Cannot specify both location and endOfSegmentLocation"
+            )
+        if not date_element_properties:
+            raise ValidationError("dateElementProperties is required")
+
+        # Validate location
+        if location:
+            index = location["index"]
+            tab_id = location.get("tabId")
+
+            if index < 1:
+                raise ValidationError(f"Index must be at least 1, got {index}")
+
+            # Validate tab exists
+            self._get_tab(tab_id)
+
+        # In a full implementation, we would:
+        # - Insert the date element at the specified location
+        return {}
+
+    # ========================================================================
+    # Replacement Requests
+    # ========================================================================
+
+    def _handle_replace_image(self, request: dict[str, Any]) -> dict[str, Any]:
+        """Handle ReplaceImageRequest.
+
+        Args:
+            request: ReplaceImageRequest data.
+
+        Returns:
+            Empty reply.
+        """
+        image_object_id = request.get("imageObjectId")
+        uri = request.get("uri")
+
+        if not image_object_id:
+            raise ValidationError("imageObjectId is required")
+        if not uri:
+            raise ValidationError("uri is required")
+
+        # Validate URI length
+        if len(uri) > 2048:  # 2 KB
+            raise ValidationError("URI must be less than 2 KB")
+
+        tab_id = request.get("tabId")
+        self._get_tab(tab_id)
+
+        # In a full implementation, we would:
+        # - Find the image object
+        # - Replace it with the new image
+        # - Remove some image effects to match Docs editor behavior
+        return {}
+
+    def _handle_replace_named_range_content(
+        self, request: dict[str, Any]
+    ) -> dict[str, Any]:
+        """Handle ReplaceNamedRangeContentRequest.
+
+        Args:
+            request: ReplaceNamedRangeContentRequest data.
+
+        Returns:
+            Empty reply.
+        """
+        text = request.get("text")
+        named_range_id = request.get("namedRangeId")
+        named_range_name = request.get("namedRangeName")
+
+        if text is None:
+            raise ValidationError("text is required")
+
+        if not named_range_id and not named_range_name:
+            raise ValidationError("Must specify either namedRangeId or namedRangeName")
+
+        # In a full implementation, we would:
+        # - Find the named range(s)
+        # - Replace content in the first range
+        # - Delete content in other discontinuous ranges
+        # - Validate the result doesn't create invalid structure
+        return {}
+
+    def _handle_delete_tab(self, request: dict[str, Any]) -> dict[str, Any]:
+        """Handle DeleteTabRequest.
+
+        Args:
+            request: DeleteTabRequest data.
+
+        Returns:
+            Empty reply.
+        """
+        tab_id = request.get("tabId")
+        if not tab_id:
+            raise ValidationError("tabId is required")
+
+        # Validate tab exists
+        self._get_tab(tab_id)
+
+        # In a full implementation, we would:
+        # - Delete the tab and all child tabs
+        # - Remove from document structure
+        return {}
 
     # ========================================================================
     # Implementation Helpers
