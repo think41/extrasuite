@@ -4,7 +4,7 @@ A pure-function mock of the [Google Docs batchUpdate API](../../../docs/googledo
 
 ## Status: Work in Progress
 
-**37/61 test scenarios pass.** We test by sending the same `batchUpdate` request to both Google's real API and our mock via `CompositeTransport` (see `composite_transport.py`), then diffing the output. IDs are excluded from comparison.
+**45/61 test scenarios pass** (6 genuine failures + 10 stale-index real API errors). We test by sending the same `batchUpdate` request to both Google's real API and our mock via `CompositeTransport` (see `composite_transport.py`), then diffing the output. IDs are excluded from comparison.
 
 ```bash
 cd extradoc

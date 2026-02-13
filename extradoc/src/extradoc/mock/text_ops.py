@@ -152,6 +152,7 @@ def _insert_text_simple(segment: dict[str, Any], index: int, text: str) -> None:
 
                     if "link" in run_style:
                         # Link runs: split into before (link), inserted (no style), after (link)
+                        # The real API gives inserted text empty textStyle {}
                         before = content_str[:offset_in_run]
                         after = content_str[offset_in_run:]
                         new_elements: list[dict[str, Any]] = []
@@ -170,7 +171,10 @@ def _insert_text_simple(segment: dict[str, Any], index: int, text: str) -> None:
                             {
                                 "startIndex": 0,
                                 "endIndex": 0,
-                                "textRun": {"content": text, "textStyle": {}},
+                                "textRun": {
+                                    "content": text,
+                                    "textStyle": {},
+                                },
                             }
                         )
                         if after:
@@ -231,6 +235,7 @@ def _insert_text_with_newlines(segment: dict[str, Any], index: int, text: str) -
                     offset = calculate_utf16_offset(run_content, index - run_start)
                     if "link" in run_style:
                         # Link runs: split into before (link), inserted (no style), after (link)
+                        # The real API gives inserted text empty textStyle {}
                         before = run_content[:offset]
                         after = run_content[offset:]
                         if before:
