@@ -901,6 +901,13 @@ class MockGoogleDocsAPI:
     def _handle_insert_table(self, request: dict[str, Any]) -> dict[str, Any]:
         """Handle InsertTableRequest.
 
+        Inserts a table at the specified location. The API:
+        1. Splits the paragraph at the insertion point (inserts \\n)
+        2. Inserts the table structure with empty cells
+        3. Inserts a trailing \\n paragraph after the table
+
+        Index space: table = 2 + rows * (1 + 2*cols), plus 1 for split \\n, plus 1 for trailing \\n.
+
         Args:
             request: InsertTableRequest data.
 
@@ -926,57 +933,487 @@ class MockGoogleDocsAPI:
                 "Cannot specify both location and endOfSegmentLocation"
             )
 
-        # Validate location
+        # Resolve insertion point
         if location:
             index = location["index"]
             tab_id = location.get("tabId")
             segment_id = location.get("segmentId")
+        else:
+            tab_id = end_of_segment.get("tabId") if end_of_segment else None
+            segment_id = end_of_segment.get("segmentId") if end_of_segment else None
+            tab = self._get_tab(tab_id)
+            segment, _ = self._get_segment(tab, segment_id)
+            seg_content = segment.get("content", [])
+            index = seg_content[-1].get("endIndex", 1) - 1 if seg_content else 1
 
-            # Tables cannot be inserted in footnotes
-            # (can be inserted in headers/footers but not footnotes)
-            if segment_id:
-                tab = self._get_tab(tab_id)
-                document_tab = tab.get("documentTab", {})
-                footnotes = document_tab.get("footnotes", {})
-                if segment_id in footnotes:
-                    raise ValidationError(
-                        "Cannot insert table in footnote. "
-                        "Tables can be inserted in body, headers, and footers, but not footnotes."
-                    )
+        # Validation
+        if segment_id:
+            tab = self._get_tab(tab_id)
+            document_tab = tab.get("documentTab", {})
+            footnotes = document_tab.get("footnotes", {})
+            if segment_id in footnotes:
+                raise ValidationError(
+                    "Cannot insert table in footnote. "
+                    "Tables can be inserted in body, headers, and footers, "
+                    "but not footnotes."
+                )
 
-            # Validate tab exists
-            self._get_tab(tab_id)
-            if index < 1:
-                raise ValidationError("index must be at least 1")
+        tab = self._get_tab(tab_id)
+        if index < 1:
+            raise ValidationError("index must be at least 1")
+
+        segment, _ = self._get_segment(tab, segment_id)
+
+        # Step 1: Insert \n to split the paragraph at the insertion point
+        self._insert_text_into_segment(segment, index, "\n", 1)
+
+        # Step 2: Find the content array position right after the split
+        content = segment.get("content", [])
+        inject_idx = None
+        for i, element in enumerate(content):
+            if element.get("startIndex", 0) == index + 1:
+                inject_idx = i
+                break
+
+        if inject_idx is None:
+            raise ValidationError(
+                f"Could not find insertion point for table at index {index}"
+            )
+
+        # Step 3: Build table and trailing paragraph
+        table_base = index + 1
+        table_index_size = 2 + rows * (1 + 2 * columns)
+        table_elem, table_end_idx = self._build_table_element(table_base, rows, columns)
+        after_para_elem = {
+            "startIndex": table_end_idx,
+            "endIndex": table_end_idx + 1,
+            "paragraph": {
+                "elements": [
+                    {
+                        "startIndex": table_end_idx,
+                        "endIndex": table_end_idx + 1,
+                        "textRun": {"content": "\n", "textStyle": {}},
+                    }
+                ],
+                "paragraphStyle": {},
+            },
+        }
+
+        # Step 4: Insert table + trailing para into content array
+        content.insert(inject_idx, table_elem)
+        content.insert(inject_idx + 1, after_para_elem)
+
+        # Step 5: Shift all subsequent elements
+        extra_shift = table_index_size + 1  # table + trailing \n
+        for i in range(inject_idx + 2, len(content)):
+            self._shift_element_recursive(content[i], extra_shift)
 
         return {}
 
+    def _build_table_element(
+        self, base_index: int, rows: int, columns: int
+    ) -> tuple[dict[str, Any], int]:
+        """Build a complete table element with proper index spacing.
+
+        Args:
+            base_index: Starting index of the table.
+            rows: Number of rows.
+            columns: Number of columns.
+
+        Returns:
+            Tuple of (table element dict, end index of table).
+        """
+        current_idx = base_index
+        table_rows: list[dict[str, Any]] = []
+
+        for _r in range(rows):
+            row_start = current_idx
+            current_idx += 1  # row marker
+
+            cells: list[dict[str, Any]] = []
+            for _c in range(columns):
+                cell_start = current_idx
+                current_idx += 1  # cell marker
+
+                para_start = current_idx
+                para_end = current_idx + 1
+                current_idx = para_end
+
+                cells.append(
+                    {
+                        "startIndex": cell_start,
+                        "endIndex": current_idx,
+                        "content": [
+                            {
+                                "startIndex": para_start,
+                                "endIndex": para_end,
+                                "paragraph": {
+                                    "elements": [
+                                        {
+                                            "startIndex": para_start,
+                                            "endIndex": para_end,
+                                            "textRun": {
+                                                "content": "\n",
+                                                "textStyle": {},
+                                            },
+                                        }
+                                    ],
+                                    "paragraphStyle": {
+                                        "namedStyleType": "NORMAL_TEXT",
+                                        "direction": "LEFT_TO_RIGHT",
+                                    },
+                                },
+                            }
+                        ],
+                        "tableCellStyle": {
+                            "rowSpan": 1,
+                            "columnSpan": 1,
+                            "backgroundColor": {},
+                            "paddingLeft": {"magnitude": 5, "unit": "PT"},
+                            "paddingRight": {"magnitude": 5, "unit": "PT"},
+                            "paddingTop": {"magnitude": 5, "unit": "PT"},
+                            "paddingBottom": {"magnitude": 5, "unit": "PT"},
+                            "contentAlignment": "TOP",
+                        },
+                    }
+                )
+
+            table_rows.append(
+                {
+                    "startIndex": row_start,
+                    "endIndex": current_idx,
+                    "tableCells": cells,
+                    "tableRowStyle": {"minRowHeight": {"unit": "PT"}},
+                }
+            )
+
+        table_end = current_idx + 1  # table end marker
+        table_element = {
+            "startIndex": base_index,
+            "endIndex": table_end,
+            "table": {
+                "rows": rows,
+                "columns": columns,
+                "tableRows": table_rows,
+            },
+        }
+        return table_element, table_end
+
     def _handle_insert_table_row(self, request: dict[str, Any]) -> dict[str, Any]:
-        """Handle InsertTableRowRequest."""
+        """Handle InsertTableRowRequest.
+
+        Inserts an empty row above or below the reference cell's row.
+
+        Args:
+            request: InsertTableRowRequest data.
+
+        Returns:
+            Empty reply.
+        """
         table_cell_location = request.get("tableCellLocation")
         if not table_cell_location:
             raise ValidationError("tableCellLocation is required")
+
+        insert_below = request.get("insertBelow", False)
+
+        table_start_location = table_cell_location.get("tableStartLocation", {})
+        row_index = table_cell_location.get("rowIndex", 0)
+        tab_id = table_start_location.get("tabId")
+        segment_id = table_start_location.get("segmentId")
+        table_start_idx = table_start_location.get("index")
+
+        tab = self._get_tab(tab_id)
+        segment, _ = self._get_segment(tab, segment_id)
+        table_element, _elem_idx = self._find_table_at_index(segment, table_start_idx)
+        table = table_element["table"]
+        table_rows = table.get("tableRows", [])
+        num_cols = table.get("columns", 0)
+
+        if row_index < 0 or row_index >= len(table_rows):
+            raise ValidationError(
+                f"rowIndex {row_index} out of range (0-{len(table_rows) - 1})"
+            )
+
+        # Determine insertion position
+        target_row_idx = row_index + 1 if insert_below else row_index
+
+        # Calculate where the new row starts in index space
+        if target_row_idx < len(table_rows):
+            new_row_start = table_rows[target_row_idx]["startIndex"]
+        else:
+            # After last row
+            new_row_start = table_rows[-1]["endIndex"]
+
+        # Build new row: 1 (row marker) + num_cols * 2 (cell marker + \n)
+        new_row_size = 1 + num_cols * 2
+        current_idx = new_row_start
+        row_start = current_idx
+        current_idx += 1
+
+        new_cells: list[dict[str, Any]] = []
+        for _c in range(num_cols):
+            cell_start = current_idx
+            current_idx += 1
+            para_start = current_idx
+            para_end = current_idx + 1
+            current_idx = para_end
+            new_cells.append(
+                {
+                    "startIndex": cell_start,
+                    "endIndex": current_idx,
+                    "content": [
+                        {
+                            "startIndex": para_start,
+                            "endIndex": para_end,
+                            "paragraph": {
+                                "elements": [
+                                    {
+                                        "startIndex": para_start,
+                                        "endIndex": para_end,
+                                        "textRun": {
+                                            "content": "\n",
+                                            "textStyle": {},
+                                        },
+                                    }
+                                ],
+                                "paragraphStyle": {
+                                    "namedStyleType": "NORMAL_TEXT",
+                                    "direction": "LEFT_TO_RIGHT",
+                                },
+                            },
+                        }
+                    ],
+                    "tableCellStyle": {
+                        "rowSpan": 1,
+                        "columnSpan": 1,
+                        "backgroundColor": {},
+                        "paddingLeft": {"magnitude": 5, "unit": "PT"},
+                        "paddingRight": {"magnitude": 5, "unit": "PT"},
+                        "paddingTop": {"magnitude": 5, "unit": "PT"},
+                        "paddingBottom": {"magnitude": 5, "unit": "PT"},
+                        "contentAlignment": "TOP",
+                    },
+                }
+            )
+
+        new_row = {
+            "startIndex": row_start,
+            "endIndex": current_idx,
+            "tableCells": new_cells,
+            "tableRowStyle": {"minRowHeight": {"unit": "PT"}},
+        }
+
+        # Insert the new row
+        table_rows.insert(target_row_idx, new_row)
+        table["rows"] = len(table_rows)
+
+        # Shift subsequent rows
+        for r in range(target_row_idx + 1, len(table_rows)):
+            self._shift_table_row(table_rows[r], new_row_size)
+
+        # Update table end index
+        table_element["endIndex"] += new_row_size
+
+        # Shift all content elements after the table
+        content = segment.get("content", [])
+        table_end = table_element["endIndex"]
+        for elem in content:
+            if (
+                elem.get("startIndex", 0) >= table_end - new_row_size
+                and elem is not table_element
+            ):
+                self._shift_element_recursive(elem, new_row_size)
+
         return {}
 
     def _handle_insert_table_column(self, request: dict[str, Any]) -> dict[str, Any]:
-        """Handle InsertTableColumnRequest."""
+        """Handle InsertTableColumnRequest.
+
+        Inserts an empty column to the left or right of the reference cell's column.
+        Rebuilds the table with correct index spacing after insertion.
+
+        Args:
+            request: InsertTableColumnRequest data.
+
+        Returns:
+            Empty reply.
+        """
         table_cell_location = request.get("tableCellLocation")
         if not table_cell_location:
             raise ValidationError("tableCellLocation is required")
+
+        insert_right = request.get("insertRight", False)
+
+        table_start_location = table_cell_location.get("tableStartLocation", {})
+        col_index = table_cell_location.get("columnIndex", 0)
+        tab_id = table_start_location.get("tabId")
+        segment_id = table_start_location.get("segmentId")
+        table_start_idx = table_start_location.get("index")
+
+        tab = self._get_tab(tab_id)
+        segment, _ = self._get_segment(tab, segment_id)
+        table_element, _elem_idx = self._find_table_at_index(segment, table_start_idx)
+        table = table_element["table"]
+        table_rows = table.get("tableRows", [])
+        num_cols = table.get("columns", 0)
+
+        if col_index < 0 or col_index >= num_cols:
+            raise ValidationError(
+                f"columnIndex {col_index} out of range (0-{num_cols - 1})"
+            )
+
+        target_col_idx = col_index + 1 if insert_right else col_index
+
+        # Each new cell adds 2 index units per row
+        total_shift = len(table_rows) * 2
+
+        # Rebuild the table: for each row, insert a new empty cell at target_col_idx
+        # then recalculate all indices from the table start
+        for row in table_rows:
+            cells = row.get("tableCells", [])
+            # Insert new empty cell (placeholder - indices will be recalculated)
+            new_cell = self._make_empty_cell(0)  # temp indices
+            cells.insert(target_col_idx, new_cell)
+
+        table["columns"] = num_cols + 1
+
+        # Recalculate all table indices from base
+        self._recalculate_table_indices(table_element)
+
+        # Shift content after table
+        content = segment.get("content", [])
+        for elem in content:
+            if (
+                elem is not table_element
+                and elem.get("startIndex", 0) >= table_element["endIndex"] - total_shift
+            ):
+                self._shift_element_recursive(elem, total_shift)
+
         return {}
 
     def _handle_delete_table_row(self, request: dict[str, Any]) -> dict[str, Any]:
-        """Handle DeleteTableRowRequest."""
+        """Handle DeleteTableRowRequest.
+
+        Deletes the row containing the reference cell. If no rows remain,
+        the entire table is deleted.
+
+        Args:
+            request: DeleteTableRowRequest data.
+
+        Returns:
+            Empty reply.
+        """
         table_cell_location = request.get("tableCellLocation")
         if not table_cell_location:
             raise ValidationError("tableCellLocation is required")
+
+        table_start_location = table_cell_location.get("tableStartLocation", {})
+        row_index = table_cell_location.get("rowIndex", 0)
+        tab_id = table_start_location.get("tabId")
+        segment_id = table_start_location.get("segmentId")
+        table_start_idx = table_start_location.get("index")
+
+        tab = self._get_tab(tab_id)
+        segment, _ = self._get_segment(tab, segment_id)
+        table_element, elem_idx = self._find_table_at_index(segment, table_start_idx)
+        table = table_element["table"]
+        table_rows = table.get("tableRows", [])
+
+        if row_index < 0 or row_index >= len(table_rows):
+            raise ValidationError(
+                f"rowIndex {row_index} out of range (0-{len(table_rows) - 1})"
+            )
+
+        row_to_delete = table_rows[row_index]
+        row_size = row_to_delete["endIndex"] - row_to_delete["startIndex"]
+
+        content = segment.get("content", [])
+
+        if len(table_rows) <= 1:
+            # Delete entire table
+            table_size = table_element["endIndex"] - table_element["startIndex"]
+            content.pop(elem_idx)
+            # Shift subsequent elements
+            for i in range(elem_idx, len(content)):
+                self._shift_element_recursive(content[i], -table_size)
+        else:
+            # Delete just the row
+            table_rows.pop(row_index)
+            table["rows"] = len(table_rows)
+
+            # Shift subsequent rows
+            for r in range(row_index, len(table_rows)):
+                self._shift_table_row(table_rows[r], -row_size)
+
+            table_element["endIndex"] -= row_size
+
+            # Shift subsequent content elements
+            for i in range(elem_idx + 1, len(content)):
+                self._shift_element_recursive(content[i], -row_size)
+
         return {}
 
     def _handle_delete_table_column(self, request: dict[str, Any]) -> dict[str, Any]:
-        """Handle DeleteTableColumnRequest."""
+        """Handle DeleteTableColumnRequest.
+
+        Deletes the column containing the reference cell. If no columns remain,
+        the entire table is deleted. Rebuilds table indices after deletion.
+
+        Args:
+            request: DeleteTableColumnRequest data.
+
+        Returns:
+            Empty reply.
+        """
         table_cell_location = request.get("tableCellLocation")
         if not table_cell_location:
             raise ValidationError("tableCellLocation is required")
+
+        table_start_location = table_cell_location.get("tableStartLocation", {})
+        col_index = table_cell_location.get("columnIndex", 0)
+        tab_id = table_start_location.get("tabId")
+        segment_id = table_start_location.get("segmentId")
+        table_start_idx = table_start_location.get("index")
+
+        tab = self._get_tab(tab_id)
+        segment, _ = self._get_segment(tab, segment_id)
+        table_element, elem_idx = self._find_table_at_index(segment, table_start_idx)
+        table = table_element["table"]
+        table_rows = table.get("tableRows", [])
+        num_cols = table.get("columns", 0)
+
+        if col_index < 0 or col_index >= num_cols:
+            raise ValidationError(
+                f"columnIndex {col_index} out of range (0-{num_cols - 1})"
+            )
+
+        content = segment.get("content", [])
+        old_table_end = table_element["endIndex"]
+
+        if num_cols <= 1:
+            # Delete entire table
+            table_size = table_element["endIndex"] - table_element["startIndex"]
+            content.pop(elem_idx)
+            for i in range(elem_idx, len(content)):
+                self._shift_element_recursive(content[i], -table_size)
+        else:
+            # Remove the column from each row, then recalculate indices
+            for row in table_rows:
+                cells = row.get("tableCells", [])
+                if col_index < len(cells):
+                    cells.pop(col_index)
+
+            table["columns"] = num_cols - 1
+
+            # Recalculate all table indices
+            self._recalculate_table_indices(table_element)
+
+            total_shift = old_table_end - table_element["endIndex"]
+
+            # Shift subsequent content elements
+            for i in range(elem_idx + 1, len(content)):
+                self._shift_element_recursive(content[i], -total_shift)
+
         return {}
 
     def _handle_create_named_range(self, request: dict[str, Any]) -> dict[str, Any]:
@@ -2030,11 +2467,16 @@ class MockGoogleDocsAPI:
     def _handle_delete_tab(self, request: dict[str, Any]) -> dict[str, Any]:
         """Handle DeleteTabRequest.
 
+        Deletes a tab from the document. Cannot delete the last remaining tab.
+
         Args:
             request: DeleteTabRequest data.
 
         Returns:
             Empty reply.
+
+        Raises:
+            ValidationError: If tab not found or is the last tab.
         """
         tab_id = request.get("tabId")
         if not tab_id:
@@ -2043,9 +2485,19 @@ class MockGoogleDocsAPI:
         # Validate tab exists
         self._get_tab(tab_id)
 
-        # In a full implementation, we would:
-        # - Delete the tab and all child tabs
-        # - Remove from document structure
+        tabs = self._document.get("tabs", [])
+
+        # Cannot delete the last tab
+        if len(tabs) <= 1:
+            raise ValidationError(
+                "Cannot delete the last tab. Document must have at least one tab."
+            )
+
+        # Remove the tab
+        self._document["tabs"] = [
+            t for t in tabs if t.get("tabProperties", {}).get("tabId") != tab_id
+        ]
+
         return {}
 
     # ========================================================================
@@ -2991,9 +3443,179 @@ class MockGoogleDocsAPI:
 
         elif "table" in element:
             for row in element["table"].get("tableRows", []):
-                for cell in row.get("tableCells", []):
-                    for cell_elem in cell.get("content", []):
-                        self._shift_element_recursive(cell_elem, shift_amount)
+                self._shift_table_row(row, shift_amount)
+
+    def _shift_table_row(self, row: dict[str, Any], shift: int) -> None:
+        """Shift all indices in a table row.
+
+        Args:
+            row: Table row object
+            shift: Amount to shift
+        """
+        row["startIndex"] += shift
+        row["endIndex"] += shift
+        for cell in row.get("tableCells", []):
+            self._shift_table_cell(cell, shift)
+
+    def _shift_table_cell(self, cell: dict[str, Any], shift: int) -> None:
+        """Shift all indices in a table cell.
+
+        Args:
+            cell: Table cell object
+            shift: Amount to shift
+        """
+        cell["startIndex"] += shift
+        cell["endIndex"] += shift
+        for cell_elem in cell.get("content", []):
+            self._shift_element_recursive(cell_elem, shift)
+
+    def _make_empty_cell(self, start_index: int) -> dict[str, Any]:
+        """Create an empty table cell with default styling.
+
+        Args:
+            start_index: Starting index for the cell.
+
+        Returns:
+            Cell dict with one empty paragraph.
+        """
+        para_start = start_index + 1
+        para_end = para_start + 1
+        return {
+            "startIndex": start_index,
+            "endIndex": para_end,
+            "content": [
+                {
+                    "startIndex": para_start,
+                    "endIndex": para_end,
+                    "paragraph": {
+                        "elements": [
+                            {
+                                "startIndex": para_start,
+                                "endIndex": para_end,
+                                "textRun": {
+                                    "content": "\n",
+                                    "textStyle": {},
+                                },
+                            }
+                        ],
+                        "paragraphStyle": {
+                            "namedStyleType": "NORMAL_TEXT",
+                            "direction": "LEFT_TO_RIGHT",
+                        },
+                    },
+                }
+            ],
+            "tableCellStyle": {
+                "rowSpan": 1,
+                "columnSpan": 1,
+                "backgroundColor": {},
+                "paddingLeft": {"magnitude": 5, "unit": "PT"},
+                "paddingRight": {"magnitude": 5, "unit": "PT"},
+                "paddingTop": {"magnitude": 5, "unit": "PT"},
+                "paddingBottom": {"magnitude": 5, "unit": "PT"},
+                "contentAlignment": "TOP",
+            },
+        }
+
+    def _recalculate_table_indices(self, table_element: dict[str, Any]) -> None:
+        """Recalculate all indices in a table element from its start index.
+
+        This is useful after inserting/deleting rows or columns, where
+        the cell content sizes may vary. It walks through all rows and cells,
+        computing the correct index for each based on content sizes.
+
+        Args:
+            table_element: The table structural element to recalculate.
+        """
+        table = table_element["table"]
+        table_rows = table.get("tableRows", [])
+        current_idx = table_element["startIndex"]
+
+        for row in table_rows:
+            row["startIndex"] = current_idx
+            current_idx += 1  # row marker
+
+            for cell in row.get("tableCells", []):
+                cell["startIndex"] = current_idx
+                current_idx += 1  # cell marker
+
+                # Recalculate content indices
+                for content_elem in cell.get("content", []):
+                    content_size = self._content_element_size(content_elem)
+                    content_elem["startIndex"] = current_idx
+                    content_elem["endIndex"] = current_idx + content_size
+                    # Update nested paragraph/table elements
+                    self._reindex_content_element(content_elem, current_idx)
+                    current_idx += content_size
+
+                cell["endIndex"] = current_idx
+
+            row["endIndex"] = current_idx
+
+        table_element["endIndex"] = current_idx + 1  # table end marker
+
+    def _content_element_size(self, element: dict[str, Any]) -> int:
+        """Calculate the index size of a content element.
+
+        Args:
+            element: A structural element (paragraph, table, etc.)
+
+        Returns:
+            Number of index units this element occupies.
+        """
+        if "paragraph" in element:
+            total = 0
+            for pe in element["paragraph"].get("elements", []):
+                if "textRun" in pe:
+                    total += utf16_len(pe["textRun"].get("content", ""))
+                else:
+                    # Non-text elements (inlineObject, etc.) are 1 unit
+                    total += pe.get("endIndex", 0) - pe.get("startIndex", 0)
+            return total
+        # For nested tables or other elements, use existing indices
+        end: int = element.get("endIndex", 0)
+        start: int = element.get("startIndex", 0)
+        return end - start
+
+    def _reindex_content_element(
+        self, element: dict[str, Any], base_index: int
+    ) -> None:
+        """Reindex a content element's children starting from base_index.
+
+        Args:
+            element: Content element to reindex.
+            base_index: Starting index.
+        """
+        if "paragraph" in element:
+            current = base_index
+            for pe in element["paragraph"].get("elements", []):
+                size = pe.get("endIndex", 0) - pe.get("startIndex", 0)
+                if "textRun" in pe:
+                    size = utf16_len(pe["textRun"].get("content", ""))
+                pe["startIndex"] = current
+                pe["endIndex"] = current + size
+                current += size
+
+    def _find_table_at_index(
+        self, segment: dict[str, Any], table_start_index: int
+    ) -> tuple[dict[str, Any], int]:
+        """Find a table element by its start index.
+
+        Args:
+            segment: Segment containing the table.
+            table_start_index: Start index of the table.
+
+        Returns:
+            Tuple of (table structural element, index in content array).
+
+        Raises:
+            ValidationError: If table not found.
+        """
+        content = segment.get("content", [])
+        for i, element in enumerate(content):
+            if "table" in element and element.get("startIndex", 0) == table_start_index:
+                return element, i
+        raise ValidationError(f"Table not found at index {table_start_index}")
 
     def _calculate_utf16_offset(self, text: str, utf16_units: int) -> int:
         """Calculate string offset for a given UTF-16 code unit offset.

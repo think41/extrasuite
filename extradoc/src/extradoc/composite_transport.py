@@ -469,6 +469,7 @@ class CompositeTransport(Transport):
             "headerId",
             "footnoteId",
             "namedRangeId",
+            "tabId",
         }
 
         def normalize(obj: Any) -> Any:

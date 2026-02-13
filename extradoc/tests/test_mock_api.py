@@ -2188,15 +2188,40 @@ def test_replace_named_range_content_missing_identifier() -> None:
 
 
 def test_delete_tab_basic() -> None:
-    """Test basic tab deletion."""
+    """Test basic tab deletion (must have >1 tab)."""
+    doc = create_minimal_document()
+    api = MockGoogleDocsAPI(doc)
+
+    # First add a second tab, then delete the original
+    requests = [
+        {"addDocumentTab": {"tabProperties": {"title": "Tab 2"}}},
+        {"deleteTab": {"tabId": "tab1"}},
+    ]
+
+    response = api.batch_update(requests)
+    assert len(response["replies"]) == 2
+    # addDocumentTab reply has tabId
+    assert "addDocumentTab" in response["replies"][0]
+    # deleteTab reply is empty
+    assert response["replies"][1] == {}
+
+    # Verify tab was removed
+    result = api.get()
+    assert len(result["tabs"]) == 1
+    assert result["tabs"][0]["tabProperties"]["tabId"] != "tab1"
+
+
+def test_delete_tab_last_tab_rejected() -> None:
+    """Test that deleting the last tab is rejected."""
     doc = create_minimal_document()
     api = MockGoogleDocsAPI(doc)
 
     requests = [{"deleteTab": {"tabId": "tab1"}}]
 
-    response = api.batch_update(requests)
-    assert len(response["replies"]) == 1
-    assert response["replies"][0] == {}
+    with pytest.raises(ValidationError) as exc_info:
+        api.batch_update(requests)
+
+    assert "last tab" in str(exc_info.value).lower()
 
 
 def test_delete_tab_missing_tab_id() -> None:
@@ -2766,7 +2791,9 @@ def test_insert_page_break_in_footnote_fails() -> None:
     footnote_id = create_response["replies"][0]["createFootnote"]["footnoteId"]
 
     # Try to insert page break in footnote
-    requests = [{"insertPageBreak": {"location": {"index": 1, "segmentId": footnote_id}}}]
+    requests = [
+        {"insertPageBreak": {"location": {"index": 1, "segmentId": footnote_id}}}
+    ]
 
     with pytest.raises(ValidationError) as exc_info:
         api.batch_update(requests)
@@ -2846,7 +2873,9 @@ def test_create_footnote_in_footnote_fails() -> None:
     footnote_id = create_response["replies"][0]["createFootnote"]["footnoteId"]
 
     # Try to create nested footnote
-    requests = [{"createFootnote": {"location": {"index": 1, "segmentId": footnote_id}}}]
+    requests = [
+        {"createFootnote": {"location": {"index": 1, "segmentId": footnote_id}}}
+    ]
 
     with pytest.raises(ValidationError) as exc_info:
         api.batch_update(requests)
@@ -2899,7 +2928,10 @@ def test_delete_from_empty_segment_fails() -> None:
                                         {
                                             "startIndex": 1,
                                             "endIndex": 2,
-                                            "textRun": {"content": "\n", "textStyle": {}},
+                                            "textRun": {
+                                                "content": "\n",
+                                                "textStyle": {},
+                                            },
                                         }
                                     ],
                                     "paragraphStyle": {},
@@ -3183,6 +3215,7 @@ def test_write_control_with_very_old_revision_fails() -> None:
     with pytest.raises(ValidationError) as exc_info:
         api.batch_update(requests, write_control)
 
-    assert "modified" in str(exc_info.value).lower() or "revision" in str(
-        exc_info.value
-    ).lower()
+    assert (
+        "modified" in str(exc_info.value).lower()
+        or "revision" in str(exc_info.value).lower()
+    )

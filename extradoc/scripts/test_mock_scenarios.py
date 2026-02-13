@@ -973,6 +973,939 @@ def build_scenarios(info: dict[str, Any]) -> list[dict[str, Any]]:
             }
         )
 
+    # =========================================================================
+    # Phase 1: Additional scenarios using existing operations
+    # =========================================================================
+
+    # --- LISTS/BULLETS ---
+
+    # 35. Numbered list (NUMBERED_DECIMAL_ALPHA_ROMAN preset)
+    scenarios.append(
+        {
+            "name": "Numbered list (decimal/alpha/roman)",
+            "requests": [
+                {
+                    "insertText": {
+                        "location": {"index": insert_idx, "tabId": tab_id},
+                        "text": "\nFirst item\nSecond item\nThird item",
+                    }
+                },
+                {
+                    "createParagraphBullets": {
+                        "range": {
+                            "startIndex": insert_idx + 1,
+                            "endIndex": insert_idx + 34,
+                            "tabId": tab_id,
+                        },
+                        "bulletPreset": "NUMBERED_DECIMAL_ALPHA_ROMAN",
+                    }
+                },
+            ],
+        }
+    )
+
+    # 36. Delete bullets from existing bulleted paragraph
+    # First create bullets, then delete them in a separate scenario
+    scenarios.append(
+        {
+            "name": "Create then delete bullets (two-step)",
+            "requests": [
+                {
+                    "insertText": {
+                        "location": {"index": insert_idx, "tabId": tab_id},
+                        "text": "\nBullet to remove",
+                    }
+                },
+                {
+                    "createParagraphBullets": {
+                        "range": {
+                            "startIndex": insert_idx + 1,
+                            "endIndex": insert_idx + 17,
+                            "tabId": tab_id,
+                        },
+                        "bulletPreset": "BULLET_DISC_CIRCLE_SQUARE",
+                    }
+                },
+                {
+                    "deleteParagraphBullets": {
+                        "range": {
+                            "startIndex": insert_idx + 1,
+                            "endIndex": insert_idx + 17,
+                            "tabId": tab_id,
+                        },
+                    }
+                },
+            ],
+        }
+    )
+
+    # 37. Convert heading to bullet list
+    scenarios.append(
+        {
+            "name": "Convert heading to bullet list",
+            "requests": [
+                {
+                    "insertText": {
+                        "location": {"index": insert_idx, "tabId": tab_id},
+                        "text": "\nHeading becomes bullet",
+                    }
+                },
+                {
+                    "updateParagraphStyle": {
+                        "range": {
+                            "startIndex": insert_idx + 1,
+                            "endIndex": insert_idx + 23,
+                            "tabId": tab_id,
+                        },
+                        "paragraphStyle": {"namedStyleType": "HEADING_2"},
+                        "fields": "namedStyleType",
+                    }
+                },
+                {
+                    "createParagraphBullets": {
+                        "range": {
+                            "startIndex": insert_idx + 1,
+                            "endIndex": insert_idx + 23,
+                            "tabId": tab_id,
+                        },
+                        "bulletPreset": "BULLET_DISC_CIRCLE_SQUARE",
+                    }
+                },
+            ],
+        }
+    )
+
+    # 38. Bullet with styled text (bold+italic survives bullet creation)
+    scenarios.append(
+        {
+            "name": "Bullet with bold+italic text",
+            "requests": [
+                {
+                    "insertText": {
+                        "location": {"index": insert_idx, "tabId": tab_id},
+                        "text": "\nStyled bullet",
+                    }
+                },
+                {
+                    "updateTextStyle": {
+                        "range": {
+                            "startIndex": insert_idx + 1,
+                            "endIndex": insert_idx + 14,
+                            "tabId": tab_id,
+                        },
+                        "textStyle": {"bold": True, "italic": True},
+                        "fields": "bold,italic",
+                    }
+                },
+                {
+                    "createParagraphBullets": {
+                        "range": {
+                            "startIndex": insert_idx + 1,
+                            "endIndex": insert_idx + 14,
+                            "tabId": tab_id,
+                        },
+                        "bulletPreset": "BULLET_DISC_CIRCLE_SQUARE",
+                    }
+                },
+            ],
+        }
+    )
+
+    # 39. Checkbox bullet preset
+    scenarios.append(
+        {
+            "name": "Checkbox bullet preset",
+            "requests": [
+                {
+                    "insertText": {
+                        "location": {"index": insert_idx, "tabId": tab_id},
+                        "text": "\nCheckbox item 1\nCheckbox item 2",
+                    }
+                },
+                {
+                    "createParagraphBullets": {
+                        "range": {
+                            "startIndex": insert_idx + 1,
+                            "endIndex": insert_idx + 32,
+                            "tabId": tab_id,
+                        },
+                        "bulletPreset": "BULLET_CHECKBOX",
+                    }
+                },
+            ],
+        }
+    )
+
+    # --- LINKS ---
+
+    # 40. Link on existing text (not freshly inserted)
+    if len(paragraphs) > 3:
+        p = paragraphs[1]
+        link_end = min(p["start"] + 5, p["end"] - 1)
+        if link_end > p["start"]:
+            scenarios.append(
+                {
+                    "name": "Link on existing text",
+                    "requests": [
+                        {
+                            "updateTextStyle": {
+                                "range": {
+                                    "startIndex": p["start"],
+                                    "endIndex": link_end,
+                                    "tabId": tab_id,
+                                },
+                                "textStyle": {
+                                    "link": {"url": "https://example.com"},
+                                },
+                                "fields": "link",
+                            }
+                        },
+                    ],
+                }
+            )
+
+    # 41. Remove link (updateTextStyle with empty link)
+    scenarios.append(
+        {
+            "name": "Add link then remove it",
+            "requests": [
+                {
+                    "insertText": {
+                        "location": {"index": insert_idx, "tabId": tab_id},
+                        "text": "linked text",
+                    }
+                },
+                {
+                    "updateTextStyle": {
+                        "range": {
+                            "startIndex": insert_idx,
+                            "endIndex": insert_idx + 11,
+                            "tabId": tab_id,
+                        },
+                        "textStyle": {
+                            "link": {"url": "https://example.com"},
+                        },
+                        "fields": "link",
+                    }
+                },
+                {
+                    "updateTextStyle": {
+                        "range": {
+                            "startIndex": insert_idx,
+                            "endIndex": insert_idx + 11,
+                            "tabId": tab_id,
+                        },
+                        "textStyle": {},
+                        "fields": "link",
+                    }
+                },
+            ],
+        }
+    )
+
+    # 42. Link + bold + italic combined
+    scenarios.append(
+        {
+            "name": "Link with bold+italic",
+            "requests": [
+                {
+                    "insertText": {
+                        "location": {"index": insert_idx, "tabId": tab_id},
+                        "text": "styled link",
+                    }
+                },
+                {
+                    "updateTextStyle": {
+                        "range": {
+                            "startIndex": insert_idx,
+                            "endIndex": insert_idx + 11,
+                            "tabId": tab_id,
+                        },
+                        "textStyle": {
+                            "bold": True,
+                            "italic": True,
+                            "link": {"url": "https://example.com"},
+                        },
+                        "fields": "bold,italic,link",
+                    }
+                },
+            ],
+        }
+    )
+
+    # 43. Multiple different links in one paragraph
+    scenarios.append(
+        {
+            "name": "Multiple links in one paragraph",
+            "requests": [
+                {
+                    "insertText": {
+                        "location": {"index": insert_idx, "tabId": tab_id},
+                        "text": "link1 middle link2",
+                    }
+                },
+                {
+                    "updateTextStyle": {
+                        "range": {
+                            "startIndex": insert_idx,
+                            "endIndex": insert_idx + 5,
+                            "tabId": tab_id,
+                        },
+                        "textStyle": {
+                            "link": {"url": "https://example.com/1"},
+                        },
+                        "fields": "link",
+                    }
+                },
+                {
+                    "updateTextStyle": {
+                        "range": {
+                            "startIndex": insert_idx + 12,
+                            "endIndex": insert_idx + 17,
+                            "tabId": tab_id,
+                        },
+                        "textStyle": {
+                            "link": {"url": "https://example.com/2"},
+                        },
+                        "fields": "link",
+                    }
+                },
+            ],
+        }
+    )
+
+    # 44. Link spanning paragraph boundary
+    scenarios.append(
+        {
+            "name": "Link spanning two paragraphs",
+            "requests": [
+                {
+                    "insertText": {
+                        "location": {"index": insert_idx, "tabId": tab_id},
+                        "text": "\nPara A link\nPara B link",
+                    }
+                },
+                {
+                    "updateTextStyle": {
+                        "range": {
+                            "startIndex": insert_idx + 1,
+                            "endIndex": insert_idx + 24,
+                            "tabId": tab_id,
+                        },
+                        "textStyle": {
+                            "link": {"url": "https://example.com"},
+                        },
+                        "fields": "link",
+                    }
+                },
+            ],
+        }
+    )
+
+    # --- DELETE + RECREATE ---
+
+    # 45. Delete all body content (keep final \n), then insert heading + paragraphs + bullets
+    if last_idx > 3:
+        scenarios.append(
+            {
+                "name": "Delete all body, recreate with heading+bullets",
+                "requests": [
+                    {
+                        "deleteContentRange": {
+                            "range": {
+                                "startIndex": 1,
+                                "endIndex": last_idx - 1,
+                                "tabId": tab_id,
+                            },
+                        }
+                    },
+                    {
+                        "insertText": {
+                            "location": {"index": 1, "tabId": tab_id},
+                            "text": "New Title\nBullet one\nBullet two",
+                        }
+                    },
+                    {
+                        "updateParagraphStyle": {
+                            "range": {
+                                "startIndex": 1,
+                                "endIndex": 10,
+                                "tabId": tab_id,
+                            },
+                            "paragraphStyle": {"namedStyleType": "HEADING_1"},
+                            "fields": "namedStyleType",
+                        }
+                    },
+                    {
+                        "createParagraphBullets": {
+                            "range": {
+                                "startIndex": 11,
+                                "endIndex": 31,
+                                "tabId": tab_id,
+                            },
+                            "bulletPreset": "BULLET_DISC_CIRCLE_SQUARE",
+                        }
+                    },
+                ],
+            }
+        )
+
+    # 46. Delete 3 consecutive paragraphs, insert replacement with different styles
+    if len(paragraphs) > 6:
+        p1 = paragraphs[1]
+        p3 = paragraphs[3]
+        del_start = p1["start"]
+        del_end = p3["end"] - 1  # keep final \n of p3
+        if del_end > del_start:
+            # After delete, del_start is where we insert
+            scenarios.append(
+                {
+                    "name": "Delete 3 paras, insert styled replacement",
+                    "requests": [
+                        {
+                            "deleteContentRange": {
+                                "range": {
+                                    "startIndex": del_start,
+                                    "endIndex": del_end,
+                                    "tabId": tab_id,
+                                },
+                            }
+                        },
+                        {
+                            "insertText": {
+                                "location": {"index": del_start, "tabId": tab_id},
+                                "text": "Replacement heading\nReplacement body",
+                            }
+                        },
+                        {
+                            "updateParagraphStyle": {
+                                "range": {
+                                    "startIndex": del_start,
+                                    "endIndex": del_start + 19,
+                                    "tabId": tab_id,
+                                },
+                                "paragraphStyle": {"namedStyleType": "HEADING_3"},
+                                "fields": "namedStyleType",
+                            }
+                        },
+                    ],
+                }
+            )
+
+    # 47. Interleaved insert/delete/style in one batch (tests index tracking)
+    if len(paragraphs) > 4:
+        safe_idx = paragraphs[1]["start"]
+        scenarios.append(
+            {
+                "name": "Interleaved insert/delete/style batch",
+                "requests": [
+                    # Insert text
+                    {
+                        "insertText": {
+                            "location": {"index": safe_idx, "tabId": tab_id},
+                            "text": "ABCDE",
+                        }
+                    },
+                    # Style part of it
+                    {
+                        "updateTextStyle": {
+                            "range": {
+                                "startIndex": safe_idx,
+                                "endIndex": safe_idx + 3,
+                                "tabId": tab_id,
+                            },
+                            "textStyle": {"bold": True},
+                            "fields": "bold",
+                        }
+                    },
+                    # Delete different part
+                    {
+                        "deleteContentRange": {
+                            "range": {
+                                "startIndex": safe_idx + 3,
+                                "endIndex": safe_idx + 5,
+                                "tabId": tab_id,
+                            },
+                        }
+                    },
+                    # Style remaining text italic
+                    {
+                        "updateTextStyle": {
+                            "range": {
+                                "startIndex": safe_idx,
+                                "endIndex": safe_idx + 3,
+                                "tabId": tab_id,
+                            },
+                            "textStyle": {"italic": True},
+                            "fields": "italic",
+                        }
+                    },
+                ],
+            }
+        )
+
+    # 48. Replace paragraph content (delete text, keep \n, insert new text)
+    if len(paragraphs) > 4:
+        p = paragraphs[2]
+        text_len = p["end"] - p["start"] - 1
+        if text_len > 0:
+            scenarios.append(
+                {
+                    "name": "Replace paragraph content (keep newline)",
+                    "requests": [
+                        {
+                            "deleteContentRange": {
+                                "range": {
+                                    "startIndex": p["start"],
+                                    "endIndex": p["end"] - 1,
+                                    "tabId": tab_id,
+                                },
+                            }
+                        },
+                        {
+                            "insertText": {
+                                "location": {
+                                    "index": p["start"],
+                                    "tabId": tab_id,
+                                },
+                                "text": "Replacement content",
+                            }
+                        },
+                    ],
+                }
+            )
+
+    # 49. Delete from body + header + footer in one batch
+    if headers and footers:
+        hdr_id = next(iter(headers))
+        hdr = headers[hdr_id]
+        ftr_id = next(iter(footers))
+        ftr = footers[ftr_id]
+        hdr_text_len = hdr["end"] - hdr["start"] - 1
+        ftr_text_len = ftr["end"] - ftr["start"] - 1
+        reqs: list[dict[str, Any]] = []
+        # Insert+delete in body
+        reqs.append(
+            {
+                "insertText": {
+                    "location": {"index": insert_idx, "tabId": tab_id},
+                    "text": "BODY_TEMP",
+                }
+            }
+        )
+        reqs.append(
+            {
+                "deleteContentRange": {
+                    "range": {
+                        "startIndex": insert_idx,
+                        "endIndex": insert_idx + 9,
+                        "tabId": tab_id,
+                    },
+                }
+            }
+        )
+        # Insert+delete in header
+        if hdr_text_len > 0:
+            reqs.append(
+                {
+                    "insertText": {
+                        "location": {
+                            "index": hdr["start"],
+                            "segmentId": hdr_id,
+                            "tabId": tab_id,
+                        },
+                        "text": "HDR_TEMP",
+                    }
+                }
+            )
+            reqs.append(
+                {
+                    "deleteContentRange": {
+                        "range": {
+                            "startIndex": hdr["start"],
+                            "endIndex": hdr["start"] + 8,
+                            "segmentId": hdr_id,
+                            "tabId": tab_id,
+                        },
+                    }
+                }
+            )
+        # Insert+delete in footer
+        if ftr_text_len > 0:
+            reqs.append(
+                {
+                    "insertText": {
+                        "location": {
+                            "index": ftr["start"],
+                            "segmentId": ftr_id,
+                            "tabId": tab_id,
+                        },
+                        "text": "FTR_TEMP",
+                    }
+                }
+            )
+            reqs.append(
+                {
+                    "deleteContentRange": {
+                        "range": {
+                            "startIndex": ftr["start"],
+                            "endIndex": ftr["start"] + 8,
+                            "segmentId": ftr_id,
+                            "tabId": tab_id,
+                        },
+                    }
+                }
+            )
+        scenarios.append(
+            {
+                "name": "Insert+delete in body+header+footer",
+                "requests": reqs,
+            }
+        )
+
+    # 50. Multiple numbered list items with different styles
+    scenarios.append(
+        {
+            "name": "Numbered list with styled items",
+            "requests": [
+                {
+                    "insertText": {
+                        "location": {"index": insert_idx, "tabId": tab_id},
+                        "text": "\nBold item\nItalic item\nPlain item",
+                    }
+                },
+                {
+                    "createParagraphBullets": {
+                        "range": {
+                            "startIndex": insert_idx + 1,
+                            "endIndex": insert_idx + 33,
+                            "tabId": tab_id,
+                        },
+                        "bulletPreset": "NUMBERED_DECIMAL_ALPHA_ROMAN",
+                    }
+                },
+                {
+                    "updateTextStyle": {
+                        "range": {
+                            "startIndex": insert_idx + 1,
+                            "endIndex": insert_idx + 10,
+                            "tabId": tab_id,
+                        },
+                        "textStyle": {"bold": True},
+                        "fields": "bold",
+                    }
+                },
+                {
+                    "updateTextStyle": {
+                        "range": {
+                            "startIndex": insert_idx + 11,
+                            "endIndex": insert_idx + 22,
+                            "tabId": tab_id,
+                        },
+                        "textStyle": {"italic": True},
+                        "fields": "italic",
+                    }
+                },
+            ],
+        }
+    )
+
+    # =========================================================================
+    # Phase 2: Tab operations
+    # =========================================================================
+
+    # 51. Add a new empty tab
+    scenarios.append(
+        {
+            "name": "Add new empty tab",
+            "requests": [
+                {
+                    "addDocumentTab": {
+                        "tabProperties": {
+                            "title": "New Tab",
+                        },
+                    }
+                },
+            ],
+        }
+    )
+
+    # 52. Add tab then insert text into it
+    # Note: addDocumentTab returns the tabId in the reply, but since we don't
+    # have the ID upfront, we use a two-request approach where we reference
+    # the new tab. However, the real API requires knowing the tabId to target
+    # it. For this test, we just verify tab creation works.
+    scenarios.append(
+        {
+            "name": "Add tab (with title and index)",
+            "requests": [
+                {
+                    "addDocumentTab": {
+                        "tabProperties": {
+                            "title": "Tab With Content",
+                            "index": 1,
+                        },
+                    }
+                },
+            ],
+        }
+    )
+
+    # 53. Add tab + edit body in same batch
+    scenarios.append(
+        {
+            "name": "Add tab + edit body in same batch",
+            "requests": [
+                {
+                    "addDocumentTab": {
+                        "tabProperties": {
+                            "title": "Another Tab",
+                        },
+                    }
+                },
+                {
+                    "insertText": {
+                        "location": {"index": insert_idx, "tabId": tab_id},
+                        "text": "Body edit with tab add",
+                    }
+                },
+            ],
+        }
+    )
+
+    # =========================================================================
+    # Phase 3: Insert table scenarios
+    # =========================================================================
+
+    # 54. Insert 2x2 table at end of segment
+    scenarios.append(
+        {
+            "name": "Insert 2x2 table at end",
+            "requests": [
+                {
+                    "insertTable": {
+                        "rows": 2,
+                        "columns": 2,
+                        "endOfSegmentLocation": {"tabId": tab_id},
+                    }
+                },
+            ],
+        }
+    )
+
+    # 55. Insert 3x3 table at specific location
+    scenarios.append(
+        {
+            "name": "Insert 3x3 table at location",
+            "requests": [
+                {
+                    "insertTable": {
+                        "rows": 3,
+                        "columns": 3,
+                        "location": {"index": insert_idx, "tabId": tab_id},
+                    }
+                },
+            ],
+        }
+    )
+
+    # 56. Insert 1x1 table (simplest case)
+    scenarios.append(
+        {
+            "name": "Insert 1x1 table",
+            "requests": [
+                {
+                    "insertTable": {
+                        "rows": 1,
+                        "columns": 1,
+                        "endOfSegmentLocation": {"tabId": tab_id},
+                    }
+                },
+            ],
+        }
+    )
+
+    # 57. Insert table then insert text into body after it
+    scenarios.append(
+        {
+            "name": "Insert table then add text after",
+            "requests": [
+                {
+                    "insertTable": {
+                        "rows": 2,
+                        "columns": 2,
+                        "endOfSegmentLocation": {"tabId": tab_id},
+                    }
+                },
+                {
+                    "insertText": {
+                        "location": {"index": insert_idx, "tabId": tab_id},
+                        "text": "Text before table",
+                    }
+                },
+            ],
+        }
+    )
+
+    # =========================================================================
+    # Phase 4: Table row/column operations
+    # (These depend on the document having a table. We insert one first.)
+    # =========================================================================
+
+    # For table row/column tests, we use the tables already in the document
+    # if available, otherwise skip
+    tables = info["tables"]
+    if tables:
+        t = tables[0]
+        table_start = t["start"]
+        table_rows = t["rows"]
+        table_cols = t["cols"]
+
+        # 58. Insert row below first row
+        scenarios.append(
+            {
+                "name": "Insert table row below",
+                "requests": [
+                    {
+                        "insertTableRow": {
+                            "tableCellLocation": {
+                                "tableStartLocation": {
+                                    "index": table_start,
+                                    "tabId": tab_id,
+                                },
+                                "rowIndex": 0,
+                                "columnIndex": 0,
+                            },
+                            "insertBelow": True,
+                        }
+                    },
+                ],
+            }
+        )
+
+        # 59. Insert row above first row
+        scenarios.append(
+            {
+                "name": "Insert table row above",
+                "requests": [
+                    {
+                        "insertTableRow": {
+                            "tableCellLocation": {
+                                "tableStartLocation": {
+                                    "index": table_start,
+                                    "tabId": tab_id,
+                                },
+                                "rowIndex": 0,
+                                "columnIndex": 0,
+                            },
+                            "insertBelow": False,
+                        }
+                    },
+                ],
+            }
+        )
+
+        # 60. Insert column to the right
+        scenarios.append(
+            {
+                "name": "Insert table column right",
+                "requests": [
+                    {
+                        "insertTableColumn": {
+                            "tableCellLocation": {
+                                "tableStartLocation": {
+                                    "index": table_start,
+                                    "tabId": tab_id,
+                                },
+                                "rowIndex": 0,
+                                "columnIndex": 0,
+                            },
+                            "insertRight": True,
+                        }
+                    },
+                ],
+            }
+        )
+
+        # 61. Delete a row (if more than 1 row)
+        if table_rows > 1:
+            scenarios.append(
+                {
+                    "name": "Delete table row",
+                    "requests": [
+                        {
+                            "deleteTableRow": {
+                                "tableCellLocation": {
+                                    "tableStartLocation": {
+                                        "index": table_start,
+                                        "tabId": tab_id,
+                                    },
+                                    "rowIndex": table_rows - 1,
+                                    "columnIndex": 0,
+                                },
+                            }
+                        },
+                    ],
+                }
+            )
+
+        # 62. Delete a column (if more than 1 column)
+        if table_cols > 1:
+            scenarios.append(
+                {
+                    "name": "Delete table column",
+                    "requests": [
+                        {
+                            "deleteTableColumn": {
+                                "tableCellLocation": {
+                                    "tableStartLocation": {
+                                        "index": table_start,
+                                        "tabId": tab_id,
+                                    },
+                                    "rowIndex": 0,
+                                    "columnIndex": table_cols - 1,
+                                },
+                            }
+                        },
+                    ],
+                }
+            )
+
+        # 63. Insert row then insert column (combined)
+        scenarios.append(
+            {
+                "name": "Insert row then insert column",
+                "requests": [
+                    {
+                        "insertTableRow": {
+                            "tableCellLocation": {
+                                "tableStartLocation": {
+                                    "index": table_start,
+                                    "tabId": tab_id,
+                                },
+                                "rowIndex": 0,
+                                "columnIndex": 0,
+                            },
+                            "insertBelow": True,
+                        }
+                    },
+                    {
+                        "insertTableColumn": {
+                            "tableCellLocation": {
+                                "tableStartLocation": {
+                                    "index": table_start,
+                                    "tabId": tab_id,
+                                },
+                                "rowIndex": 0,
+                                "columnIndex": 0,
+                            },
+                            "insertRight": True,
+                        }
+                    },
+                ],
+            }
+        )
+
     return scenarios
 
 
