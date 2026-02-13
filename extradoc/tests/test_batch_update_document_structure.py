@@ -517,10 +517,11 @@ def test_create_header_adds_header_segment() -> None:
     assert len(header["content"]) == 1
 
     # Header should have a single paragraph with "\n"
+    # Non-body segments: first element has no startIndex, endIndex=1
     paragraph = header["content"][0]
     assert "paragraph" in paragraph
-    assert paragraph["startIndex"] == 1
-    assert paragraph["endIndex"] == 2
+    assert "startIndex" not in paragraph
+    assert paragraph["endIndex"] == 1
     assert paragraph["paragraph"]["elements"][0]["textRun"]["content"] == "\n"
 
 
@@ -557,9 +558,10 @@ def test_create_footer_adds_footer_segment() -> None:
     assert len(footer["content"]) == 1
 
     # Footer should have a single paragraph with "\n"
+    # Non-body segments: first element has no startIndex, endIndex=1
     paragraph = footer["content"][0]
-    assert paragraph["startIndex"] == 1
-    assert paragraph["endIndex"] == 2
+    assert "startIndex" not in paragraph
+    assert paragraph["endIndex"] == 1
     assert paragraph["paragraph"]["elements"][0]["textRun"]["content"] == "\n"
 
 
@@ -595,9 +597,10 @@ def test_create_footnote_adds_footnote_segment() -> None:
     assert "content" in footnote
 
     # Footnote should have content with " \n" (space + newline)
+    # Non-body segments: first element has no startIndex
     paragraph = footnote["content"][0]
-    assert paragraph["startIndex"] == 1
-    assert paragraph["endIndex"] == 3
+    assert "startIndex" not in paragraph
+    assert paragraph["endIndex"] == 2
     assert paragraph["paragraph"]["elements"][0]["textRun"]["content"] == " \n"
 
 

@@ -68,6 +68,12 @@ ignore = [
     "E501",   # line too long (handled by formatter)
 ]
 
+[tool.ruff.lint.per-file-ignores]
+# Handler functions use a consistent (document, request, structure_tracker) signature
+# for dispatch even when not all params are used.
+"src/extradoc/mock/*_ops.py" = ["ARG001"]
+"src/extradoc/mock/stubs.py" = ["ARG001"]
+
 [tool.ruff.lint.isort]
 known-first-party = ["extradoc"]
 
