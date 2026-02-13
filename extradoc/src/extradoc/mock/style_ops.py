@@ -173,6 +173,24 @@ def handle_update_text_style(
                     if fc == _link_blue:
                         ts.pop("foregroundColor", None)
 
+    # Update bullet.textStyle for affected bulleted paragraphs.
+    # The real API only updates bullet.textStyle when "bold" is being changed.
+    # It rebuilds bullet.textStyle from the first non-empty text run's bold.
+    if "bold" in field_list:
+        for paragraph in get_paragraphs_in_range(tab, start_index, end_index):
+            bullet = paragraph.get("bullet")
+            if not bullet:
+                continue
+            new_bullet_ts: dict[str, Any] = {}
+            for elem in paragraph.get("elements", []):
+                tr = elem.get("textRun")
+                if tr and tr.get("content", "").strip():
+                    src_style = tr.get("textStyle", {})
+                    if src_style.get("bold"):
+                        new_bullet_ts["bold"] = True
+                    break
+            bullet["textStyle"] = new_bullet_ts
+
     # Run consolidation is now handled by normalize_segment in reindex pass
     return {}
 
@@ -231,6 +249,11 @@ def handle_update_paragraph_style(
         if named_style in _heading_styles:
             if "headingId" not in ps:
                 ps["headingId"] = f"h.{uuid.uuid4().hex[:16]}"
+            # When setting a heading style on a bulleted paragraph,
+            # the real API clears bullet.textStyle to {}
+            bullet = paragraph.get("bullet")
+            if bullet:
+                bullet["textStyle"] = {}
         else:
             ps.pop("headingId", None)
 
