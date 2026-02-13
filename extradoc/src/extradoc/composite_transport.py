@@ -179,7 +179,9 @@ class MockTransport(Transport):
         )
 
     async def batch_update(
-        self, document_id: str, requests: list[dict[str, Any]]
+        self,
+        document_id: str,  # noqa: ARG002
+        requests: list[dict[str, Any]],
     ) -> dict[str, Any]:
         """Apply batch update to mock API.
 
@@ -192,7 +194,7 @@ class MockTransport(Transport):
         """
         return self.mock_api.batch_update(requests)
 
-    async def list_comments(self, file_id: str) -> list[dict[str, Any]]:
+    async def list_comments(self, file_id: str) -> list[dict[str, Any]]:  # noqa: ARG002
         """Mock comments - returns empty list.
 
         Args:
@@ -205,8 +207,8 @@ class MockTransport(Transport):
 
     async def create_reply(
         self,
-        file_id: str,
-        comment_id: str,
+        file_id: str,  # noqa: ARG002
+        comment_id: str,  # noqa: ARG002
         content: str,
         action: str | None = None,
     ) -> dict[str, Any]:
@@ -255,9 +257,7 @@ class CompositeTransport(Transport):
         """
         self.real_transport = real_transport
         self.mock_transport: MockTransport | None = None
-        self.mismatch_logger = mismatch_logger or MismatchLogger(
-            Path("mismatch_logs")
-        )
+        self.mismatch_logger = mismatch_logger or MismatchLogger(Path("mismatch_logs"))
 
     async def get_document(self, document_id: str) -> DocumentData:
         """Get document from real API and initialize mock.
@@ -278,7 +278,10 @@ class CompositeTransport(Transport):
         mock_data = await self.mock_transport.get_document(document_id)
 
         # Compare responses (should be identical on first get)
-        if not self._documents_match(real_data.raw, mock_data.raw):
+        match, diffs = self._documents_match(real_data.raw, mock_data.raw)
+        if not match:
+            print("GET document diffs:")
+            print("\n".join(diffs))
             self.mismatch_logger.log_get_mismatch(
                 document_id, real_data.raw, mock_data.raw
             )
@@ -316,12 +319,23 @@ class CompositeTransport(Transport):
             )
             mock_data_after = await self.mock_transport.get_document(document_id)
 
-            # Compare responses
-            if not self._batch_update_responses_match(
+            # Compare responses and documents
+            resp_match, resp_diffs = self._batch_update_responses_match(
                 real_response, mock_response
-            ) or not self._documents_match(
+            )
+            doc_match, doc_diffs = self._documents_match(
                 real_data_after.raw, mock_data_after.raw
-            ):
+            )
+
+            if not resp_match or not doc_match:
+                all_diffs = []
+                if not resp_match:
+                    all_diffs.append("Response diffs:")
+                    all_diffs.extend(resp_diffs)
+                if not doc_match:
+                    all_diffs.append("Document diffs:")
+                    all_diffs.extend(doc_diffs)
+                print("\n".join(all_diffs))
                 self.mismatch_logger.log_batch_update_mismatch(
                     document_id=document_id,
                     requests=requests,
@@ -385,45 +399,96 @@ class CompositeTransport(Transport):
         if self.mock_transport:
             await self.mock_transport.close()
 
+    @staticmethod
+    def _find_diffs(d1: Any, d2: Any, path: str = "") -> list[str]:
+        """Recursively find differences between two JSON-like structures.
+
+        Args:
+            d1: First structure (real).
+            d2: Second structure (mock).
+            path: Current JSON path for reporting.
+
+        Returns:
+            List of human-readable diff descriptions.
+        """
+        diffs: list[str] = []
+        if type(d1) is not type(d2):
+            diffs.append(
+                f"  TYPE at {path}: real={type(d1).__name__} vs mock={type(d2).__name__}"
+            )
+            return diffs
+        if isinstance(d1, dict):
+            all_keys = set(d1.keys()) | set(d2.keys())
+            for k in sorted(all_keys):
+                if k not in d1:
+                    val = str(d2[k])[:120]
+                    diffs.append(f"  EXTRA in mock at {path}.{k}: {val}")
+                elif k not in d2:
+                    val = str(d1[k])[:120]
+                    diffs.append(f"  MISSING in mock at {path}.{k}: {val}")
+                else:
+                    diffs.extend(
+                        CompositeTransport._find_diffs(d1[k], d2[k], f"{path}.{k}")
+                    )
+        elif isinstance(d1, list):
+            if len(d1) != len(d2):
+                diffs.append(f"  LENGTH at {path}: real={len(d1)} vs mock={len(d2)}")
+            for i in range(min(len(d1), len(d2))):
+                diffs.extend(
+                    CompositeTransport._find_diffs(d1[i], d2[i], f"{path}[{i}]")
+                )
+        elif d1 != d2:
+            diffs.append(
+                f"  VALUE at {path}: real={str(d1)[:120]} vs mock={str(d2)[:120]}"
+            )
+        return diffs
+
     def _documents_match(
         self, doc1: dict[str, Any], doc2: dict[str, Any]
-    ) -> bool:
+    ) -> tuple[bool, list[str]]:
         """Compare two documents for equality.
 
         Args:
-            doc1: First document
-            doc2: Second document
+            doc1: First document (real)
+            doc2: Second document (mock)
 
         Returns:
-            True if documents match
+            Tuple of (match, list of diff descriptions)
         """
+
         # Normalize by removing fields that are expected to differ
         def normalize(doc: dict[str, Any]) -> dict[str, Any]:
             normalized = doc.copy()
-            # Remove revision IDs as they may differ
             normalized.pop("revisionId", None)
-            # Remove suggestionsViewMode as it's client-side
             normalized.pop("suggestionsViewMode", None)
             return normalized
 
-        return normalize(doc1) == normalize(doc2)
+        n1, n2 = normalize(doc1), normalize(doc2)
+        if n1 == n2:
+            return True, []
+        return False, self._find_diffs(n1, n2)
 
     def _batch_update_responses_match(
         self, response1: dict[str, Any], response2: dict[str, Any]
-    ) -> bool:
+    ) -> tuple[bool, list[str]]:
         """Compare two batch update responses for equality.
 
         Args:
-            response1: First response
-            response2: Second response
+            response1: First response (real)
+            response2: Second response (mock)
 
         Returns:
-            True if responses match
+            Tuple of (match, list of diff descriptions)
         """
+
         # Normalize by removing fields that are expected to differ
         def normalize(response: dict[str, Any]) -> dict[str, Any]:
             normalized = response.copy()
             normalized.pop("documentId", None)
+            normalized.pop("writeControl", None)
             return normalized
 
-        return normalize(response1) == normalize(response2)
+        n1, n2 = normalize(response1), normalize(response2)
+        if n1 == n2:
+            return True, []
+        return False, self._find_diffs(n1, n2)

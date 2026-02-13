@@ -523,6 +523,15 @@ class MockGoogleDocsAPI:
     def _handle_update_text_style(self, request: dict[str, Any]) -> dict[str, Any]:
         """Handle UpdateTextStyleRequest.
 
+        Applies text style changes to text runs overlapping the range.
+        Only fields listed in the `fields` mask are updated. Fields present in
+        the mask but absent from `textStyle` are cleared (removed).
+
+        This is a simplified implementation that applies the style to entire
+        text runs that overlap the range, without splitting runs at range
+        boundaries. This matches real API behavior for the common case where
+        the range aligns with run boundaries.
+
         Args:
             request: UpdateTextStyleRequest data.
 
@@ -547,20 +556,54 @@ class MockGoogleDocsAPI:
         end_index = range_obj["endIndex"]
         tab_id = range_obj.get("tabId")
 
-        # Simplified: just validate the range exists
         tab = self._get_tab(tab_id)
         self._validate_range(tab, start_index, end_index)
 
-        # In a full implementation, we would:
-        # - Parse the field mask
-        # - Find all TextRuns in the range
-        # - Apply the style updates
-        # - Handle style inheritance
+        # Parse field mask
+        field_list = [f.strip() for f in fields.split(",")]
+
+        # Default values for text style fields - the real API omits these
+        # rather than storing them explicitly
+        _text_style_defaults: dict[str, Any] = {
+            "bold": False,
+            "italic": False,
+            "underline": False,
+            "strikethrough": False,
+            "smallCaps": False,
+            "baselineOffset": "NONE",
+        }
+
+        # Apply to all text runs overlapping the range
+        for paragraph in self._get_paragraphs_in_range(tab, start_index, end_index):
+            for element in paragraph.get("elements", []):
+                el_start = element.get("startIndex", 0)
+                el_end = element.get("endIndex", 0)
+                # Check overlap
+                if el_end <= start_index or el_start >= end_index:
+                    continue
+                text_run = element.get("textRun")
+                if not text_run:
+                    continue
+                ts = text_run.setdefault("textStyle", {})
+                for field in field_list:
+                    if field in text_style:
+                        value = text_style[field]
+                        # If value equals the default, remove it instead of storing
+                        if _text_style_defaults.get(field) == value:
+                            ts.pop(field, None)
+                        else:
+                            ts[field] = value
+                    else:
+                        ts.pop(field, None)
 
         return {}
 
     def _handle_update_paragraph_style(self, request: dict[str, Any]) -> dict[str, Any]:
         """Handle UpdateParagraphStyleRequest.
+
+        Applies paragraph style changes to all paragraphs overlapping the range.
+        Only fields listed in the `fields` mask are updated. Fields present in the
+        mask but absent from `paragraphStyle` are cleared (removed).
 
         Args:
             request: UpdateParagraphStyleRequest data.
@@ -585,6 +628,32 @@ class MockGoogleDocsAPI:
 
         tab = self._get_tab(tab_id)
         self._validate_range(tab, start_index, end_index)
+
+        # Parse field mask
+        field_list = [f.strip() for f in fields.split(",")]
+
+        # When a namedStyleType is set, the real API inherits default values
+        # for certain fields from the named style (e.g. direction: LEFT_TO_RIGHT).
+        # Fields that are part of the named style defaults should not be cleared
+        # even if they're in the field mask but not in the provided style.
+        _named_style_defaults: dict[str, Any] = {
+            "direction": "LEFT_TO_RIGHT",
+        }
+        has_named_style = "namedStyleType" in paragraph_style
+
+        # Apply to all paragraphs in range
+        for paragraph in self._get_paragraphs_in_range(tab, start_index, end_index):
+            ps = paragraph.setdefault("paragraphStyle", {})
+            for field in field_list:
+                if field in paragraph_style:
+                    # Set the field to the provided value
+                    ps[field] = paragraph_style[field]
+                elif has_named_style and field in _named_style_defaults:
+                    # When applying a named style, inherit defaults instead of clearing
+                    ps.setdefault(field, _named_style_defaults[field])
+                else:
+                    # Field in mask but not in style => clear it
+                    ps.pop(field, None)
 
         return {}
 
@@ -621,6 +690,9 @@ class MockGoogleDocsAPI:
     ) -> dict[str, Any]:
         """Handle DeleteParagraphBulletsRequest.
 
+        Removes bullet formatting from all paragraphs that overlap the range.
+        Also removes bullet-related indentation (indentStart, indentFirstLine).
+
         Args:
             request: DeleteParagraphBulletsRequest data.
 
@@ -637,6 +709,15 @@ class MockGoogleDocsAPI:
 
         tab = self._get_tab(tab_id)
         self._validate_range(tab, start_index, end_index)
+
+        # Find and modify all paragraphs overlapping the range
+        for paragraph in self._get_paragraphs_in_range(tab, start_index, end_index):
+            # Remove bullet field
+            paragraph.pop("bullet", None)
+            # Remove bullet-related indentation from paragraphStyle
+            ps = paragraph.get("paragraphStyle", {})
+            ps.pop("indentStart", None)
+            ps.pop("indentFirstLine", None)
 
         return {}
 
@@ -810,7 +891,9 @@ class MockGoogleDocsAPI:
                 if range_name in named_ranges_obj:
                     ranges_list = named_ranges_obj[range_name].get("namedRanges", [])
                     named_ranges_obj[range_name]["namedRanges"] = [
-                        r for r in ranges_list if r.get("namedRangeId") != named_range_id
+                        r
+                        for r in ranges_list
+                        if r.get("namedRangeId") != named_range_id
                     ]
                     # Remove the name entry if no ranges left
                     if not named_ranges_obj[range_name]["namedRanges"]:
@@ -1916,7 +1999,11 @@ class MockGoogleDocsAPI:
                 current_index += 1
 
     def _validate_no_table_cell_final_newline_deletion(
-        self, tab: dict[str, Any], segment_id: str | None, start_index: int, end_index: int
+        self,
+        tab: dict[str, Any],
+        segment_id: str | None,
+        start_index: int,
+        end_index: int,
     ) -> None:
         """Validate that deletion doesn't include final newline from table cells.
 
@@ -1961,17 +2048,19 @@ class MockGoogleDocsAPI:
                             cell_end = cell_content[-1].get("endIndex", 0)
                             cell_start = cell_content[0].get("startIndex", 0)
 
-                            # Check if deletion range includes this cell
-                            if start_index < cell_end and end_index > cell_start:
-                                # Deletion overlaps with this cell
-                                # Check if it includes the final newline
-                                if end_index >= cell_end:
-                                    raise ValidationError(
-                                        f"Cannot delete the final newline of a table cell. "
-                                        f"Cell at indices {cell_start}-{cell_end}, "
-                                        f"deletion range {start_index}-{end_index} includes "
-                                        f"final newline at index {cell_end - 1}"
-                                    )
+                            # Check if deletion range overlaps this cell
+                            # and includes the final newline
+                            if (
+                                start_index < cell_end
+                                and end_index > cell_start
+                                and end_index >= cell_end
+                            ):
+                                raise ValidationError(
+                                    f"Cannot delete the final newline of a table cell. "
+                                    f"Cell at indices {cell_start}-{cell_end}, "
+                                    f"deletion range {start_index}-{end_index} includes "
+                                    f"final newline at index {cell_end - 1}"
+                                )
 
     def _get_tab(self, tab_id: str | None) -> dict[str, Any]:
         """Get tab by ID, or first tab if None.
@@ -2073,6 +2162,39 @@ class MockGoogleDocsAPI:
                 raise ValidationError(
                     f"endIndex ({end_index}) exceeds document length ({max_index})"
                 )
+
+    def _get_paragraphs_in_range(
+        self,
+        tab: dict[str, Any],
+        start_index: int,
+        end_index: int,
+        segment_id: str | None = None,
+    ) -> list[dict[str, Any]]:
+        """Get all paragraphs whose range overlaps [start_index, end_index).
+
+        Args:
+            tab: Tab object.
+            start_index: Range start index.
+            end_index: Range end index.
+            segment_id: Segment ID or None for body.
+
+        Returns:
+            List of paragraph dicts that overlap the range.
+        """
+        segment, _ = self._get_segment(tab, segment_id)
+        content = segment.get("content", [])
+        result: list[dict[str, Any]] = []
+        for element in content:
+            paragraph = element.get("paragraph")
+            if not paragraph:
+                continue
+            el_start = element.get("startIndex", 0)
+            el_end = element.get("endIndex", 0)
+            # Paragraph overlaps range if it starts before range ends
+            # and ends after range starts
+            if el_end > start_index and el_start < end_index:
+                result.append(paragraph)
+        return result
 
     def _insert_text_impl(
         self, text: str, index: int, tab_id: str | None, segment_id: str | None
@@ -2200,8 +2322,6 @@ class MockGoogleDocsAPI:
             text: The text to insert
             text_len: Length of text in UTF-16 code units
         """
-        content = segment.get("content", [])
-
         # If text contains newlines, handle paragraph creation
         if "\n" in text and text != "\n":
             # Complex case: split into paragraphs
@@ -2305,7 +2425,9 @@ class MockGoogleDocsAPI:
 
                 # Calculate where to insert in the existing text
                 offset_in_paragraph = index - elem_start
-                offset_in_text = self._calculate_utf16_offset(existing_text, offset_in_paragraph)
+                offset_in_text = self._calculate_utf16_offset(
+                    existing_text, offset_in_paragraph
+                )
 
                 # Split existing text at insertion point
                 text_before = existing_text[:offset_in_text]
@@ -2355,9 +2477,7 @@ class MockGoogleDocsAPI:
                 content[elem_idx : elem_idx + 1] = new_paragraphs
 
                 # Shift all subsequent elements (those after the newly created paragraphs)
-                # Find the end index of the last new paragraph
                 if new_paragraphs:
-                    last_new_para_end = new_paragraphs[-1]["endIndex"]
                     # Shift all elements that start at or after the original elem_end
                     # They need to be shifted by text_len
                     for i in range(elem_idx + len(new_paragraphs), len(content)):
@@ -2393,7 +2513,11 @@ class MockGoogleDocsAPI:
             elem_end = element.get("endIndex", 0)
 
             # Check if this element overlaps with deletion range
-            if elem_start < end_index and elem_end > start_index and "paragraph" in element:
+            if (
+                elem_start < end_index
+                and elem_end > start_index
+                and "paragraph" in element
+            ):
                 paragraph = element["paragraph"]
                 para_elements = paragraph.get("elements", [])
 
@@ -2461,8 +2585,12 @@ class MockGoogleDocsAPI:
                 if "paragraph" in element:
                     para_elements = element["paragraph"].get("elements", [])
                     for para_elem in para_elements:
-                        para_elem["startIndex"] = para_elem.get("startIndex", 0) + shift_amount
-                        para_elem["endIndex"] = para_elem.get("endIndex", 0) + shift_amount
+                        para_elem["startIndex"] = (
+                            para_elem.get("startIndex", 0) + shift_amount
+                        )
+                        para_elem["endIndex"] = (
+                            para_elem.get("endIndex", 0) + shift_amount
+                        )
 
                 elif "table" in element:
                     # Shift table cell indexes

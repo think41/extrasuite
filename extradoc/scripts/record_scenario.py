@@ -19,7 +19,7 @@ from __future__ import annotations
 
 import argparse
 import asyncio
-import json
+import os
 import re
 import subprocess
 import sys
@@ -31,6 +31,10 @@ sys.path.insert(0, str(Path(__file__).parent.parent / "src"))
 from extradoc.client import DocsClient
 from extradoc.composite_transport import CompositeTransport, MismatchLogger
 from extradoc.transport import GoogleDocsTransport
+
+# Add client package to path for CredentialsManager
+sys.path.insert(0, str(Path(__file__).parent.parent.parent / "client" / "src"))
+from extrasuite.client import CredentialsManager
 
 
 def extract_document_id(url: str) -> str:
@@ -52,7 +56,10 @@ def extract_document_id(url: str) -> str:
 
 
 def get_access_token() -> str:
-    """Get access token from extrasuite credentials.
+    """Get access token from extrasuite CredentialsManager.
+
+    Uses the standard CredentialsManager which supports gateway.json,
+    service account files, and environment variables.
 
     Returns:
         Access token
@@ -61,35 +68,15 @@ def get_access_token() -> str:
         RuntimeError: If unable to get token
     """
     try:
-        # Use extrasuite CLI to get token (assumes it's installed)
-        result = subprocess.run(
-            ["extradoc", "get-token"],
-            capture_output=True,
-            text=True,
-            check=True,
-        )
-        token = result.stdout.strip()
-        if not token:
-            raise RuntimeError("Empty token returned")
-        return token
-    except subprocess.CalledProcessError as e:
-        raise RuntimeError(f"Failed to get access token: {e.stderr}") from e
-    except FileNotFoundError:
-        # Fallback: try to read from config file
-        config_path = Path.home() / ".config" / "extrasuite" / "token_cache.json"
-        if config_path.exists():
-            data = json.loads(config_path.read_text())
-            token = data.get("access_token")
-            if token:
-                return token
-        raise RuntimeError(
-            "extradoc CLI not found and no cached token available. "
-            "Please install extrasuite or set up credentials."
-        )
+        manager = CredentialsManager()
+        token = manager.get_token()
+        return token.access_token
+    except Exception as e:
+        raise RuntimeError(f"Failed to get access token: {e}") from e
 
 
 def edit_xml_with_claude(folder: Path, instructions: str) -> None:
-    """Use Claude Code headless mode to edit XMLs per instructions.
+    """Use Claude Code print mode to edit XMLs per instructions.
 
     Args:
         folder: Folder containing document.xml and styles.xml
@@ -114,18 +101,21 @@ Make minimal changes - only what's necessary to fulfill the instructions.
 """
 
     try:
-        # Run Claude Code in headless mode
-        # Format: claude-code --headless "<prompt>"
+        # Run Claude Code in print mode (-p)
+        # Unset CLAUDECODE env var to avoid nested session check
+        env = {k: v for k, v in os.environ.items() if k != "CLAUDECODE"}
         result = subprocess.run(
             [
-                "claude-code",
-                "--headless",
+                "claude",
+                "-p",
+                "--dangerously-skip-permissions",
                 prompt,
             ],
             cwd=folder,
             capture_output=True,
             text=True,
             timeout=300,  # 5 minute timeout
+            env=env,
         )
 
         if result.returncode != 0:
@@ -134,15 +124,15 @@ Make minimal changes - only what's necessary to fulfill the instructions.
             print(f"STDERR:\n{result.stderr}")
             raise RuntimeError(f"Claude Code failed: {result.stderr}")
 
-        print(f"✅ Claude Code completed successfully")
+        print("✅ Claude Code completed successfully")
         print(f"   Output:\n{result.stdout}")
 
-    except subprocess.TimeoutExpired:
-        raise RuntimeError("Claude Code execution timed out after 5 minutes")
-    except FileNotFoundError:
+    except subprocess.TimeoutExpired as e:
+        raise RuntimeError("Claude Code execution timed out after 5 minutes") from e
+    except FileNotFoundError as e:
         raise RuntimeError(
-            "claude-code command not found. Please install Claude Code CLI."
-        )
+            "claude command not found. Please install Claude Code CLI."
+        ) from e
 
 
 async def run_scenario(
@@ -184,9 +174,7 @@ async def run_scenario(
         # PULL
         print("\n📥 PULLING document...")
         output_dir.mkdir(parents=True, exist_ok=True)
-        written_files = await client.pull(
-            document_id, output_dir, save_raw=True
-        )
+        written_files = await client.pull(document_id, output_dir, save_raw=True)
         print(f"✅ Pulled {len(written_files)} files:")
         for file in written_files:
             print(f"   - {file}")
@@ -204,7 +192,7 @@ async def run_scenario(
         push_result = await client.push(doc_folder)
 
         if push_result.success:
-            print(f"✅ Push successful!")
+            print("✅ Push successful!")
             print(f"   Changes applied: {push_result.changes_applied}")
             if push_result.replies_created:
                 print(f"   Replies created: {push_result.replies_created}")
