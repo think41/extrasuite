@@ -665,34 +665,59 @@ class MockGoogleDocsAPI:
             paragraph["elements"] = new_elements
 
         # When a link is set, the real API auto-adds underline and
-        # foregroundColor (Google's link blue) to the styled text runs
-        if text_style.get("link"):
-            _link_blue = {
-                "color": {
-                    "rgbColor": {
-                        "red": 0.06666667,
-                        "green": 0.33333334,
-                        "blue": 0.8,
-                    }
+        # foregroundColor (Google's link blue) to the styled text runs.
+        # When a link is cleared, the real API also removes those auto-added styles.
+        _link_blue = {
+            "color": {
+                "rgbColor": {
+                    "red": 0.06666667,
+                    "green": 0.33333334,
+                    "blue": 0.8,
                 }
             }
-            for paragraph in self._get_paragraphs_in_range(tab, start_index, end_index):
-                for element in paragraph.get("elements", []):
-                    el_start = element.get("startIndex", 0)
-                    el_end = element.get("endIndex", 0)
-                    if el_end <= start_index or el_start >= end_index:
-                        continue
-                    text_run = element.get("textRun")
-                    if not text_run:
-                        continue
-                    ts = text_run.get("textStyle", {})
-                    if "link" in ts:
-                        ts.setdefault("underline", True)
-                        ts.setdefault("foregroundColor", _link_blue)
+        }
+        if "link" in field_list:
+            if text_style.get("link"):
+                # Adding a link: auto-add underline and foregroundColor
+                for paragraph in self._get_paragraphs_in_range(
+                    tab, start_index, end_index
+                ):
+                    for element in paragraph.get("elements", []):
+                        el_start = element.get("startIndex", 0)
+                        el_end = element.get("endIndex", 0)
+                        if el_end <= start_index or el_start >= end_index:
+                            continue
+                        text_run = element.get("textRun")
+                        if not text_run:
+                            continue
+                        ts = text_run.get("textStyle", {})
+                        if "link" in ts:
+                            ts.setdefault("underline", True)
+                            ts.setdefault("foregroundColor", _link_blue)
+            else:
+                # Clearing a link: remove auto-added foregroundColor (link blue)
+                # but preserve underline since we can't distinguish auto-added
+                # from pre-existing. Only remove foregroundColor if it matches
+                # the link blue.
+                for paragraph in self._get_paragraphs_in_range(
+                    tab, start_index, end_index
+                ):
+                    for element in paragraph.get("elements", []):
+                        el_start = element.get("startIndex", 0)
+                        el_end = element.get("endIndex", 0)
+                        if el_end <= start_index or el_start >= end_index:
+                            continue
+                        text_run = element.get("textRun")
+                        if not text_run:
+                            continue
+                        ts = text_run.get("textStyle", {})
+                        fc = ts.get("foregroundColor", {})
+                        if fc == _link_blue:
+                            ts.pop("foregroundColor", None)
 
-        # Consolidate adjacent runs with identical styles
-        body = tab.get("documentTab", {}).get("body", {})
-        self._consolidate_segment(body)
+        # Consolidate adjacent runs with identical styles (only in affected range)
+        for paragraph in self._get_paragraphs_in_range(tab, start_index, end_index):
+            self._consolidate_runs(paragraph)
         return {}
 
     def _handle_update_paragraph_style(self, request: dict[str, Any]) -> dict[str, Any]:
@@ -824,12 +849,15 @@ class MockGoogleDocsAPI:
         # Build nesting levels for the list definition
         glyphs = self._BULLET_PRESETS.get(bullet_preset, ["●", "○", "■"])
         is_numbered = bullet_preset.startswith("NUMBERED_")
+        is_checkbox = bullet_preset == "BULLET_CHECKBOX"
         nesting_levels: list[dict[str, Any]] = []
         for level in range(9):
             level_def: dict[str, Any] = {
                 "bulletAlignment": "START",
                 "indentFirstLine": {"magnitude": 18 + level * 36, "unit": "PT"},
                 "indentStart": {"magnitude": 36 + level * 36, "unit": "PT"},
+                "textStyle": {"underline": False},
+                "startNumber": 1,
             }
             if is_numbered:
                 level_def["glyphType"] = (
@@ -837,6 +865,9 @@ class MockGoogleDocsAPI:
                     if bullet_preset == "NUMBERED_DECIMAL_ALPHA_ROMAN"
                     else "DECIMAL"
                 )
+                level_def["glyphFormat"] = f"%{level}."
+            elif is_checkbox:
+                level_def["glyphType"] = "GLYPH_TYPE_UNSPECIFIED"
                 level_def["glyphFormat"] = f"%{level}"
             else:
                 glyph_idx = level % len(glyphs) if glyphs else 0
@@ -980,33 +1011,21 @@ class MockGoogleDocsAPI:
                 f"Could not find insertion point for table at index {index}"
             )
 
-        # Step 3: Build table and trailing paragraph
+        # Step 3: Build table element
         table_base = index + 1
         table_index_size = 2 + rows * (1 + 2 * columns)
-        table_elem, table_end_idx = self._build_table_element(table_base, rows, columns)
-        after_para_elem = {
-            "startIndex": table_end_idx,
-            "endIndex": table_end_idx + 1,
-            "paragraph": {
-                "elements": [
-                    {
-                        "startIndex": table_end_idx,
-                        "endIndex": table_end_idx + 1,
-                        "textRun": {"content": "\n", "textStyle": {}},
-                    }
-                ],
-                "paragraphStyle": {},
-            },
-        }
+        table_elem, _table_end_idx = self._build_table_element(
+            table_base, rows, columns
+        )
 
-        # Step 4: Insert table + trailing para into content array
+        # Step 4: Insert table into content array
+        # The \n split already created a trailing paragraph at inject_idx,
+        # so we just insert the table before it (no extra trailing para needed).
         content.insert(inject_idx, table_elem)
-        content.insert(inject_idx + 1, after_para_elem)
 
-        # Step 5: Shift all subsequent elements
-        extra_shift = table_index_size + 1  # table + trailing \n
-        for i in range(inject_idx + 2, len(content)):
-            self._shift_element_recursive(content[i], extra_shift)
+        # Step 5: Shift all subsequent elements (the split paragraph + rest)
+        for i in range(inject_idx + 1, len(content)):
+            self._shift_element_recursive(content[i], table_index_size)
 
         return {}
 
@@ -1014,6 +1033,9 @@ class MockGoogleDocsAPI:
         self, base_index: int, rows: int, columns: int
     ) -> tuple[dict[str, Any], int]:
         """Build a complete table element with proper index spacing.
+
+        The table starts at base_index. The first row starts at base_index + 1
+        (the table itself occupies one index unit as a start marker).
 
         Args:
             base_index: Starting index of the table.
@@ -1023,7 +1045,7 @@ class MockGoogleDocsAPI:
         Returns:
             Tuple of (table element dict, end index of table).
         """
-        current_idx = base_index
+        current_idx = base_index + 1  # skip table start marker
         table_rows: list[dict[str, Any]] = []
 
         for _r in range(rows):
@@ -1058,10 +1080,7 @@ class MockGoogleDocsAPI:
                                             },
                                         }
                                     ],
-                                    "paragraphStyle": {
-                                        "namedStyleType": "NORMAL_TEXT",
-                                        "direction": "LEFT_TO_RIGHT",
-                                    },
+                                    "paragraphStyle": self._table_cell_paragraph_style(),
                                 },
                             }
                         ],
@@ -1095,9 +1114,49 @@ class MockGoogleDocsAPI:
                 "rows": rows,
                 "columns": columns,
                 "tableRows": table_rows,
+                "tableStyle": {
+                    "tableColumnProperties": [
+                        {"widthType": "EVENLY_DISTRIBUTED"} for _ in range(columns)
+                    ],
+                },
             },
         }
         return table_element, table_end
+
+    @staticmethod
+    def _table_cell_paragraph_style() -> dict[str, Any]:
+        """Return the default paragraph style for a new table cell.
+
+        Matches the full set of defaults the real Google Docs API returns.
+        """
+        _border_default = {
+            "color": {},
+            "width": {"unit": "PT"},
+            "padding": {"unit": "PT"},
+            "dashStyle": "SOLID",
+        }
+        return {
+            "namedStyleType": "NORMAL_TEXT",
+            "direction": "LEFT_TO_RIGHT",
+            "alignment": "START",
+            "lineSpacing": 100,
+            "spacingMode": "COLLAPSE_LISTS",
+            "spaceAbove": {"unit": "PT"},
+            "spaceBelow": {"unit": "PT"},
+            "borderTop": dict(_border_default),
+            "borderBottom": dict(_border_default),
+            "borderLeft": dict(_border_default),
+            "borderRight": dict(_border_default),
+            "borderBetween": dict(_border_default),
+            "indentFirstLine": {"unit": "PT"},
+            "indentStart": {"unit": "PT"},
+            "indentEnd": {"unit": "PT"},
+            "keepLinesTogether": False,
+            "keepWithNext": False,
+            "avoidWidowAndOrphan": False,
+            "shading": {"backgroundColor": {}},
+            "pageBreakBefore": False,
+        }
 
     def _handle_insert_table_row(self, request: dict[str, Any]) -> dict[str, Any]:
         """Handle InsertTableRowRequest.
@@ -1839,13 +1898,14 @@ class MockGoogleDocsAPI:
         """
         tab_properties = request.get("tabProperties", {})
 
-        # Generate unique ID
-        tab_id = f"tab_{uuid.uuid4().hex[:16]}"
+        # Generate unique ID with "t." prefix to match real API format
+        tab_id = f"t.{uuid.uuid4().hex[:16]}"
 
-        # In a full implementation, we would:
-        # - Insert the new tab at the specified index
-        # - Increment indexes of subsequent tabs
-        # - Create the tab structure with empty body
+        # Copy documentStyle and namedStyles from the first tab (real API does this)
+        first_tab = self._document.get("tabs", [{}])[0]
+        first_doc_tab = first_tab.get("documentTab", {})
+        document_style = copy.deepcopy(first_doc_tab.get("documentStyle", {}))
+        named_styles = copy.deepcopy(first_doc_tab.get("namedStyles", {}))
 
         new_tab = {
             "tabProperties": {
@@ -1859,6 +1919,17 @@ class MockGoogleDocsAPI:
                 "body": {
                     "content": [
                         {
+                            "sectionBreak": {
+                                "sectionStyle": {
+                                    "columnSeparatorStyle": "NONE",
+                                    "contentDirection": "LEFT_TO_RIGHT",
+                                    "sectionType": "CONTINUOUS",
+                                },
+                            },
+                            "startIndex": 0,
+                            "endIndex": 1,
+                        },
+                        {
                             "startIndex": 1,
                             "endIndex": 2,
                             "paragraph": {
@@ -1869,11 +1940,16 @@ class MockGoogleDocsAPI:
                                         "textRun": {"content": "\n", "textStyle": {}},
                                     }
                                 ],
-                                "paragraphStyle": {},
+                                "paragraphStyle": {
+                                    "namedStyleType": "NORMAL_TEXT",
+                                    "direction": "LEFT_TO_RIGHT",
+                                },
                             },
-                        }
+                        },
                     ]
                 },
+                "documentStyle": document_style,
+                "namedStyles": named_styles,
                 "headers": {},
                 "footers": {},
                 "footnotes": {},
@@ -1883,9 +1959,15 @@ class MockGoogleDocsAPI:
 
         if "tabs" not in self._document:
             self._document["tabs"] = []
-        self._document["tabs"].append(new_tab)
+        # Insert at the specified index position (real API respects index)
+        tab_index = tab_properties.get("index", len(self._document["tabs"]))
+        self._document["tabs"].insert(tab_index, new_tab)
 
-        return {"addDocumentTab": {"tabId": tab_id}}
+        return {
+            "addDocumentTab": {
+                "tabProperties": new_tab["tabProperties"],
+            }
+        }
 
     # ========================================================================
     # Update Requests
@@ -2798,6 +2880,8 @@ class MockGoogleDocsAPI:
         start_index: int,
         end_index: int,
         segment_id: str | None = None,
+        *,
+        inclusive: bool = False,
     ) -> list[dict[str, Any]]:
         """Get all paragraphs whose range overlaps [start_index, end_index).
 
@@ -2806,6 +2890,9 @@ class MockGoogleDocsAPI:
             start_index: Range start index.
             end_index: Range end index.
             segment_id: Segment ID or None for body.
+            inclusive: If True, use inclusive boundary check (el_end >= start_index).
+                The real Google Docs API uses inclusive boundaries for
+                paragraph-level operations like createParagraphBullets.
 
         Returns:
             List of paragraph dicts that overlap the range.
@@ -2821,8 +2908,12 @@ class MockGoogleDocsAPI:
             el_end = element.get("endIndex", 0)
             # Paragraph overlaps range if it starts before range ends
             # and ends after range starts
-            if el_end > start_index and el_start < end_index:
-                result.append(paragraph)
+            if inclusive:
+                if el_end >= start_index and el_start < end_index:
+                    result.append(paragraph)
+            else:
+                if el_end > start_index and el_start < end_index:
+                    result.append(paragraph)
         return result
 
     def _insert_text_impl(
@@ -2952,6 +3043,10 @@ class MockGoogleDocsAPI:
         style after operations like updateTextStyle and deleteContentRange.
         This method replicates that behavior.
 
+        Note: The real API does NOT merge a trailing newline run into the
+        preceding run, even when styles match. The paragraph-terminating
+        newline always stays as a separate element.
+
         Args:
             paragraph: Paragraph object to consolidate.
         """
@@ -2962,14 +3057,20 @@ class MockGoogleDocsAPI:
         consolidated: list[dict[str, Any]] = [elements[0]]
         for elem in elements[1:]:
             prev = consolidated[-1]
+            prev_content = prev.get("textRun", {}).get("content", "")
+            elem_content = elem.get("textRun", {}).get("content", "")
             if (
                 "textRun" in prev
                 and "textRun" in elem
                 and prev["textRun"].get("textStyle", {})
                 == elem["textRun"].get("textStyle", {})
+                # Don't merge trailing \n into preceding run
+                and elem_content != "\n"
+                # Don't merge into a run that is just \n
+                and prev_content != "\n"
             ):
                 # Merge: extend the previous run
-                prev["textRun"]["content"] += elem["textRun"].get("content", "")
+                prev["textRun"]["content"] += elem_content
                 prev["endIndex"] = elem["endIndex"]
             else:
                 consolidated.append(elem)
@@ -3171,14 +3272,18 @@ class MockGoogleDocsAPI:
                         )
                         current_idx += seg_len
 
+                    para_dict: dict[str, Any] = {
+                        "elements": elements,
+                        "paragraphStyle": copy.deepcopy(para_style),
+                    }
+                    # Inherit bullet from source paragraph (real API does this)
+                    if "bullet" in paragraph:
+                        para_dict["bullet"] = copy.deepcopy(paragraph["bullet"])
                     new_elements.append(
                         {
                             "startIndex": para_start,
                             "endIndex": current_idx,
-                            "paragraph": {
-                                "elements": elements,
-                                "paragraphStyle": copy.deepcopy(para_style),
-                            },
+                            "paragraph": para_dict,
                         }
                     )
 
@@ -3186,13 +3291,7 @@ class MockGoogleDocsAPI:
                 content[elem_idx : elem_idx + 1] = new_elements
 
                 for i in range(elem_idx + len(new_elements), len(content)):
-                    elem = content[i]
-                    elem["startIndex"] += text_len
-                    elem["endIndex"] += text_len
-                    if "paragraph" in elem:
-                        for pe in elem["paragraph"].get("elements", []):
-                            pe["startIndex"] += text_len
-                            pe["endIndex"] += text_len
+                    self._shift_element_recursive(content[i], text_len)
                 return
 
         # If we get here, we couldn't find the right place to insert
@@ -3376,15 +3475,9 @@ class MockGoogleDocsAPI:
         last_idx = affected_indices[-1]
         content[first_idx : last_idx + 1] = new_elements
 
-        # Shift all subsequent elements
+        # Shift all subsequent elements (including tables with nested rows/cells)
         for i in range(first_idx + len(new_elements), len(content)):
-            elem = content[i]
-            elem["startIndex"] -= deletion_len
-            elem["endIndex"] -= deletion_len
-            if "paragraph" in elem:
-                for pe in elem["paragraph"].get("elements", []):
-                    pe["startIndex"] -= deletion_len
-                    pe["endIndex"] -= deletion_len
+            self._shift_element_recursive(content[i], -deletion_len)
 
     def _shift_indexes_after(
         self, content: list[dict[str, Any]], after_index: int, shift_amount: int
@@ -3417,12 +3510,9 @@ class MockGoogleDocsAPI:
                         )
 
                 elif "table" in element:
-                    # Shift table cell indexes
-                    table = element["table"]
-                    for row in table.get("tableRows", []):
-                        for cell in row.get("tableCells", []):
-                            for cell_elem in cell.get("content", []):
-                                self._shift_element_recursive(cell_elem, shift_amount)
+                    # Shift table row/cell/content indexes
+                    for row in element["table"].get("tableRows", []):
+                        self._shift_table_row(row, shift_amount)
 
     def _shift_element_recursive(
         self, element: dict[str, Any], shift_amount: int
@@ -3452,8 +3542,10 @@ class MockGoogleDocsAPI:
             row: Table row object
             shift: Amount to shift
         """
-        row["startIndex"] += shift
-        row["endIndex"] += shift
+        if "startIndex" in row:
+            row["startIndex"] += shift
+        if "endIndex" in row:
+            row["endIndex"] += shift
         for cell in row.get("tableCells", []):
             self._shift_table_cell(cell, shift)
 
@@ -3464,8 +3556,10 @@ class MockGoogleDocsAPI:
             cell: Table cell object
             shift: Amount to shift
         """
-        cell["startIndex"] += shift
-        cell["endIndex"] += shift
+        if "startIndex" in cell:
+            cell["startIndex"] += shift
+        if "endIndex" in cell:
+            cell["endIndex"] += shift
         for cell_elem in cell.get("content", []):
             self._shift_element_recursive(cell_elem, shift)
 

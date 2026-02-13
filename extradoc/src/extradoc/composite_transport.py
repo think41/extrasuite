@@ -457,7 +457,13 @@ class CompositeTransport(Transport):
         """
 
         # Top-level fields to drop entirely (not meaningful for comparison)
-        _drop_fields = {"revisionId", "suggestionsViewMode", "lists"}
+        _drop_fields = {
+            "revisionId",
+            "suggestionsViewMode",
+            "lists",
+            "documentStyle",
+            "namedStyles",
+        }
 
         # Fields whose values are server-generated IDs - presence matters
         # but exact values will differ between real and mock

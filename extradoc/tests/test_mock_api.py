@@ -1483,7 +1483,8 @@ def test_add_document_tab_basic() -> None:
     response = api.batch_update(requests)
     assert len(response["replies"]) == 1
     assert "addDocumentTab" in response["replies"][0]
-    assert "tabId" in response["replies"][0]["addDocumentTab"]
+    assert "tabProperties" in response["replies"][0]["addDocumentTab"]
+    assert "tabId" in response["replies"][0]["addDocumentTab"]["tabProperties"]
 
 
 def test_add_document_tab_with_properties() -> None:
@@ -1495,7 +1496,8 @@ def test_add_document_tab_with_properties() -> None:
 
     response = api.batch_update(requests)
     assert len(response["replies"]) == 1
-    assert "tabId" in response["replies"][0]["addDocumentTab"]
+    assert "tabProperties" in response["replies"][0]["addDocumentTab"]
+    assert "tabId" in response["replies"][0]["addDocumentTab"]["tabProperties"]
 
 
 # ========================================================================

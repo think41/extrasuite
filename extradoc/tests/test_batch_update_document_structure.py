@@ -14,8 +14,6 @@ Unlike test_mock_api.py which focuses on validation, these tests verify:
 
 from __future__ import annotations
 
-import pytest
-
 from extradoc.mock_api import MockGoogleDocsAPI
 
 
@@ -132,7 +130,7 @@ def test_insert_text_with_newline_creates_new_paragraph() -> None:
         }
     ]
 
-    response = api.batch_update(requests)
+    api.batch_update(requests)
     updated_doc = api.get()
 
     # Verify two paragraphs now exist
@@ -166,7 +164,7 @@ def test_insert_text_at_end_of_segment_location() -> None:
         }
     ]
 
-    response = api.batch_update(requests)
+    api.batch_update(requests)
     updated_doc = api.get()
 
     # Should insert before final newline
@@ -174,7 +172,9 @@ def test_insert_text_at_end_of_segment_location() -> None:
     paragraph = body_content[0]
 
     # Text should be "Hello World\n"
-    assert paragraph["paragraph"]["elements"][0]["textRun"]["content"] == "Hello World\n"
+    assert (
+        paragraph["paragraph"]["elements"][0]["textRun"]["content"] == "Hello World\n"
+    )
     assert paragraph["endIndex"] == 13
 
 
@@ -219,7 +219,7 @@ def test_delete_content_range_simple_updates_document() -> None:
         }
     ]
 
-    response = api.batch_update(requests)
+    api.batch_update(requests)
     updated_doc = api.get()
 
     # Verify document structure
@@ -291,7 +291,7 @@ def test_delete_content_range_with_emoji_updates_indexes_correctly() -> None:
         }
     ]
 
-    response = api.batch_update(requests)
+    api.batch_update(requests)
     updated_doc = api.get()
 
     # Verify document structure
@@ -648,10 +648,10 @@ def test_add_document_tab_creates_new_tab() -> None:
 
     response = api.batch_update(requests)
 
-    # Verify response includes tabId
+    # Verify response includes tabProperties with tabId
     assert "addDocumentTab" in response["replies"][0]
-    assert "tabId" in response["replies"][0]["addDocumentTab"]
-    new_tab_id = response["replies"][0]["addDocumentTab"]["tabId"]
+    assert "tabProperties" in response["replies"][0]["addDocumentTab"]
+    new_tab_id = response["replies"][0]["addDocumentTab"]["tabProperties"]["tabId"]
 
     # Get updated document
     updated_doc = api.get()
@@ -669,10 +669,11 @@ def test_add_document_tab_creates_new_tab() -> None:
     assert new_tab is not None
     assert new_tab["tabProperties"]["title"] == "New Tab"
 
-    # Verify new tab has empty body with single paragraph
+    # Verify new tab has sectionBreak + empty paragraph (matches real API)
     body = new_tab["documentTab"]["body"]
-    assert len(body["content"]) == 1
-    assert body["content"][0]["paragraph"]["elements"][0]["textRun"]["content"] == "\n"
+    assert len(body["content"]) == 2
+    assert "sectionBreak" in body["content"][0]
+    assert body["content"][1]["paragraph"]["elements"][0]["textRun"]["content"] == "\n"
 
 
 # ============================================================================
@@ -684,8 +685,12 @@ def test_multiple_inserts_in_sequence_update_indexes() -> None:
     """TC-030: Multiple inserts in sequence update indexes correctly."""
     doc = create_minimal_document()
     # Change initial content to just "Middle\n"
-    doc["tabs"][0]["documentTab"]["body"]["content"][0]["paragraph"]["elements"][0]["textRun"]["content"] = "Middle\n"
-    doc["tabs"][0]["documentTab"]["body"]["content"][0]["paragraph"]["elements"][0]["endIndex"] = 8
+    doc["tabs"][0]["documentTab"]["body"]["content"][0]["paragraph"]["elements"][0][
+        "textRun"
+    ]["content"] = "Middle\n"
+    doc["tabs"][0]["documentTab"]["body"]["content"][0]["paragraph"]["elements"][0][
+        "endIndex"
+    ] = 8
     doc["tabs"][0]["documentTab"]["body"]["content"][0]["endIndex"] = 8
 
     api = MockGoogleDocsAPI(doc)
@@ -707,7 +712,7 @@ def test_multiple_inserts_in_sequence_update_indexes() -> None:
         },
     ]
 
-    response = api.batch_update(requests)
+    api.batch_update(requests)
     updated_doc = api.get()
 
     # Verify final content
@@ -715,7 +720,10 @@ def test_multiple_inserts_in_sequence_update_indexes() -> None:
     paragraph = body_content[0]
 
     # Should be "Start Middle End\n"
-    assert paragraph["paragraph"]["elements"][0]["textRun"]["content"] == "Start Middle End\n"
+    assert (
+        paragraph["paragraph"]["elements"][0]["textRun"]["content"]
+        == "Start Middle End\n"
+    )
     # Total length: 17 chars + starting index 1 = 18
     assert paragraph["endIndex"] == 18
 
@@ -724,8 +732,12 @@ def test_delete_then_insert_at_same_location() -> None:
     """TC-031: Delete then insert at same location."""
     doc = create_minimal_document()
     # Change to "Hello World\n"
-    doc["tabs"][0]["documentTab"]["body"]["content"][0]["paragraph"]["elements"][0]["textRun"]["content"] = "Hello World\n"
-    doc["tabs"][0]["documentTab"]["body"]["content"][0]["paragraph"]["elements"][0]["endIndex"] = 13
+    doc["tabs"][0]["documentTab"]["body"]["content"][0]["paragraph"]["elements"][0][
+        "textRun"
+    ]["content"] = "Hello World\n"
+    doc["tabs"][0]["documentTab"]["body"]["content"][0]["paragraph"]["elements"][0][
+        "endIndex"
+    ] = 13
     doc["tabs"][0]["documentTab"]["body"]["content"][0]["endIndex"] = 13
 
     api = MockGoogleDocsAPI(doc)
@@ -745,14 +757,17 @@ def test_delete_then_insert_at_same_location() -> None:
         },
     ]
 
-    response = api.batch_update(requests)
+    api.batch_update(requests)
     updated_doc = api.get()
 
     # Verify final content is "Hello Universe\n"
     body_content = updated_doc["tabs"][0]["documentTab"]["body"]["content"]
     paragraph = body_content[0]
 
-    assert paragraph["paragraph"]["elements"][0]["textRun"]["content"] == "Hello Universe\n"
+    assert (
+        paragraph["paragraph"]["elements"][0]["textRun"]["content"]
+        == "Hello Universe\n"
+    )
     # Total: 15 chars + starting index 1 = 16
     assert paragraph["endIndex"] == 16
 
@@ -777,7 +792,7 @@ def test_insert_emoji_accounts_for_surrogate_pairs() -> None:
         }
     ]
 
-    response = api.batch_update(requests)
+    api.batch_update(requests)
     updated_doc = api.get()
 
     # Verify document structure
@@ -872,7 +887,7 @@ def test_multiple_operations_maintain_document_consistency() -> None:
         },
     ]
 
-    response = api.batch_update(requests)
+    api.batch_update(requests)
     updated_doc = api.get()
 
     # Verify all operations reflected in document
@@ -967,7 +982,10 @@ def test_complex_batch_sequential_index_updates() -> None:
     # Verify final text
     assert len(body_content) == 1
     paragraph = body_content[0]
-    assert paragraph["paragraph"]["elements"][0]["textRun"]["content"] == "Start Hello World\n"
+    assert (
+        paragraph["paragraph"]["elements"][0]["textRun"]["content"]
+        == "Start Hello World\n"
+    )
     assert paragraph["endIndex"] == 19
 
     # Verify named range was created and still exists
@@ -1017,7 +1035,7 @@ def test_batch_with_dependent_operations() -> None:
         },
     ]
 
-    response = api.batch_update(requests)
+    api.batch_update(requests)
     updated_doc = api.get()
 
     # Verify we have two paragraphs
@@ -1025,11 +1043,16 @@ def test_batch_with_dependent_operations() -> None:
     assert len(body_content) == 2
 
     # Verify paragraph 1
-    assert body_content[0]["paragraph"]["elements"][0]["textRun"]["content"] == "Line1\n"
+    assert (
+        body_content[0]["paragraph"]["elements"][0]["textRun"]["content"] == "Line1\n"
+    )
     assert body_content[0]["endIndex"] == 7
 
     # Verify paragraph 2
-    assert body_content[1]["paragraph"]["elements"][0]["textRun"]["content"] == "Prefix Hello\n"
+    assert (
+        body_content[1]["paragraph"]["elements"][0]["textRun"]["content"]
+        == "Prefix Hello\n"
+    )
     assert body_content[1]["startIndex"] == 7
 
     # Verify both named ranges exist
@@ -1042,15 +1065,18 @@ def test_batch_with_multiple_deletes_and_inserts() -> None:
     """Test alternating deletes and inserts with proper index tracking."""
     # Start with a longer document
     doc = create_minimal_document()
-    doc["tabs"][0]["documentTab"]["body"]["content"][0]["paragraph"]["elements"][0]["textRun"]["content"] = "AAABBBCCCDDDEEE\n"
-    doc["tabs"][0]["documentTab"]["body"]["content"][0]["paragraph"]["elements"][0]["endIndex"] = 17
+    doc["tabs"][0]["documentTab"]["body"]["content"][0]["paragraph"]["elements"][0][
+        "textRun"
+    ]["content"] = "AAABBBCCCDDDEEE\n"
+    doc["tabs"][0]["documentTab"]["body"]["content"][0]["paragraph"]["elements"][0][
+        "endIndex"
+    ] = 17
     doc["tabs"][0]["documentTab"]["body"]["content"][0]["endIndex"] = 17
 
     api = MockGoogleDocsAPI(doc)
 
     requests = [
         # Start: "AAABBBCCCDDDEEE\n" (1-17)
-
         # 1. Delete "AAA" (1-4)
         #    Result: "BBBCCCDDDEEE\n" (1-14)
         {
@@ -1090,7 +1116,7 @@ def test_batch_with_multiple_deletes_and_inserts() -> None:
         },
     ]
 
-    response = api.batch_update(requests)
+    api.batch_update(requests)
     updated_doc = api.get()
 
     # Verify final result
@@ -1130,7 +1156,7 @@ def test_batch_creates_and_deletes_named_ranges() -> None:
         },
     ]
 
-    response = api.batch_update(requests)
+    api.batch_update(requests)
     updated_doc = api.get()
 
     # Verify only "keep" exists
