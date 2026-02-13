@@ -518,10 +518,8 @@ class MockGoogleDocsAPI:
         segment_id = range_obj.get("segmentId")
 
         self._delete_content_range_impl(start_index, end_index, tab_id, segment_id)
-        # Consolidate adjacent runs with identical styles after deletion
-        tab = self._get_tab(tab_id)
-        segment, _ = self._get_segment(tab, segment_id)
-        self._consolidate_segment(segment)
+        # Note: real API does NOT consolidate text runs after delete.
+        # Runs from merged paragraphs stay separate even if styles match.
         return {}
 
     # Default values for text style fields - the real API omits these
@@ -2764,7 +2762,9 @@ class MockGoogleDocsAPI:
         content = segment.get("content", [])
         deletion_len = end_index - start_index
 
-        # Find indices of all paragraphs that overlap with the deletion range
+        # Find indices of all paragraphs that overlap with the deletion range.
+        # When a paragraph's trailing \n is deleted, the next paragraph merges
+        # into it, so we must include the next paragraph as well.
         affected_indices: list[int] = []
         for i, element in enumerate(content):
             elem_start = element.get("startIndex", 0)
@@ -2776,12 +2776,30 @@ class MockGoogleDocsAPI:
             ):
                 affected_indices.append(i)
 
+        # If the last affected paragraph's \n is being deleted, the next
+        # paragraph must also be included (it merges into the current one).
+        if affected_indices:
+            last_affected = affected_indices[-1]
+            last_elem = content[last_affected]
+            last_end = last_elem.get("endIndex", 0)
+            # The paragraph's \n is at (endIndex - 1). If the deletion range
+            # covers it (end_index >= endIndex), the next paragraph merges.
+            if end_index >= last_end:
+                # Look for the next paragraph element
+                for j in range(last_affected + 1, len(content)):
+                    if "paragraph" in content[j]:
+                        affected_indices.append(j)
+                        break
+
         if not affected_indices:
             return
 
         # Collect all runs from affected paragraphs, deleting text in range.
-        # Each run tracks its source paragraph properties (for bullet, etc.)
-        surviving_runs: list[tuple[str, dict[str, Any], dict[str, Any]]] = []
+        # Each run tracks its source paragraph properties and whether it was
+        # modified (partially deleted). The real API consolidates adjacent runs
+        # with the same style only when at least one was modified by the delete.
+        # (content, style, para_props, was_modified)
+        surviving_runs: list[tuple[str, dict[str, Any], dict[str, Any], bool]] = []
 
         for idx in affected_indices:
             paragraph = content[idx]["paragraph"]
@@ -2799,7 +2817,7 @@ class MockGoogleDocsAPI:
                 if run_end <= start_index or run_start >= end_index:
                     # Run is entirely outside deletion range - keep it
                     surviving_runs.append(
-                        (run_content, copy.deepcopy(run_style), para_props)
+                        (run_content, copy.deepcopy(run_style), para_props, False)
                     )
                 elif run_start >= start_index and run_end <= end_index:
                     # Run is entirely within deletion range - skip it
@@ -2813,8 +2831,30 @@ class MockGoogleDocsAPI:
                     remaining = run_content[:str_from] + run_content[str_to:]
                     if remaining:
                         surviving_runs.append(
-                            (remaining, copy.deepcopy(run_style), para_props)
+                            (remaining, copy.deepcopy(run_style), para_props, True)
                         )
+
+        # Consolidate adjacent runs with the same style when at least one
+        # was modified by the delete. The real API merges a truncated run
+        # with its neighbor, but leaves unmodified runs separate.
+        consolidated: list[tuple[str, dict[str, Any], dict[str, Any], bool]] = []
+        for run in surviving_runs:
+            if (
+                consolidated
+                and (consolidated[-1][3] or run[3])  # at least one modified
+                and consolidated[-1][1] == run[1]  # same textStyle
+            ):
+                # Merge into previous run
+                prev = consolidated[-1]
+                consolidated[-1] = (
+                    prev[0] + run[0],
+                    prev[1],
+                    prev[2],
+                    True,
+                )
+            else:
+                consolidated.append(run)
+        surviving_runs = consolidated
 
         # Re-split surviving runs into paragraphs based on \n boundaries.
         # When paragraphs merge (a \n was deleted), the merged paragraph
@@ -2823,7 +2863,7 @@ class MockGoogleDocsAPI:
         current_group: list[tuple[str, dict[str, Any]]] = []
         first_props_in_group: dict[str, Any] | None = None
 
-        for content_str, style, props in surviving_runs:
+        for content_str, style, props, _modified in surviving_runs:
             if first_props_in_group is None:
                 first_props_in_group = props
             while "\n" in content_str:
