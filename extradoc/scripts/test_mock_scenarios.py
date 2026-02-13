@@ -73,10 +73,48 @@ def get_doc_info(doc: dict[str, Any]) -> dict[str, Any]:
                 }
             )
 
+    # Find headers and footers
+    doc_tab = doc["tabs"][0]["documentTab"]
+    headers = {}
+    for hdr_id, hdr in doc_tab.get("headers", {}).items():
+        hdr_content = hdr.get("content", [])
+        if hdr_content:
+            hdr_start = hdr_content[0].get("startIndex", 0)
+            hdr_end = hdr_content[-1].get("endIndex", 0)
+            hdr_text = ""
+            for elem in hdr_content:
+                if "paragraph" in elem:
+                    for el in elem["paragraph"].get("elements", []):
+                        hdr_text += el.get("textRun", {}).get("content", "")
+            headers[hdr_id] = {
+                "start": hdr_start,
+                "end": hdr_end,
+                "text": hdr_text,
+            }
+
+    footers = {}
+    for ftr_id, ftr in doc_tab.get("footers", {}).items():
+        ftr_content = ftr.get("content", [])
+        if ftr_content:
+            ftr_start = ftr_content[0].get("startIndex", 0)
+            ftr_end = ftr_content[-1].get("endIndex", 0)
+            ftr_text = ""
+            for elem in ftr_content:
+                if "paragraph" in elem:
+                    for el in elem["paragraph"].get("elements", []):
+                        ftr_text += el.get("textRun", {}).get("content", "")
+            footers[ftr_id] = {
+                "start": ftr_start,
+                "end": ftr_end,
+                "text": ftr_text,
+            }
+
     return {
         "last_index": last_index,
         "paragraphs": paragraphs,
         "tables": tables,
+        "headers": headers,
+        "footers": footers,
         "tab_id": doc["tabs"][0]["tabProperties"]["tabId"],
     }
 
@@ -571,6 +609,369 @@ def build_scenarios(info: dict[str, Any]) -> list[dict[str, Any]]:
             ],
         }
     )
+
+    # --- DELETE SCENARIOS ---
+
+    # 21. Delete a few characters from the beginning of a paragraph
+    if len(paragraphs) > 3:
+        p = paragraphs[2]
+        del_end = min(p["start"] + 3, p["end"] - 1)
+        if del_end > p["start"]:
+            scenarios.append(
+                {
+                    "name": "Delete chars from start of paragraph",
+                    "requests": [
+                        {
+                            "deleteContentRange": {
+                                "range": {
+                                    "startIndex": p["start"],
+                                    "endIndex": del_end,
+                                    "tabId": tab_id,
+                                },
+                            }
+                        },
+                    ],
+                }
+            )
+
+    # 22. Delete a few characters from the middle of a paragraph
+    if len(paragraphs) > 3:
+        p = paragraphs[2]
+        text_len = p["end"] - p["start"] - 1  # exclude \n
+        if text_len > 4:
+            mid = p["start"] + text_len // 2
+            del_end = min(mid + 2, p["end"] - 1)
+            scenarios.append(
+                {
+                    "name": "Delete chars from middle of paragraph",
+                    "requests": [
+                        {
+                            "deleteContentRange": {
+                                "range": {
+                                    "startIndex": mid,
+                                    "endIndex": del_end,
+                                    "tabId": tab_id,
+                                },
+                            }
+                        },
+                    ],
+                }
+            )
+
+    # 23. Delete paragraph boundary (merge two paragraphs)
+    if len(paragraphs) > 4:
+        # Delete the \n at the end of paragraph 3 to merge it with paragraph 4
+        p = paragraphs[2]
+        scenarios.append(
+            {
+                "name": "Delete paragraph boundary (merge two paras)",
+                "requests": [
+                    {
+                        "deleteContentRange": {
+                            "range": {
+                                "startIndex": p["end"] - 1,  # the \n
+                                "endIndex": p["end"],
+                                "tabId": tab_id,
+                            },
+                        }
+                    },
+                ],
+            }
+        )
+
+    # 24. Delete from start of document body (index 1)
+    if len(paragraphs) > 1:
+        del_end = min(4, paragraphs[0]["end"] - 1)
+        if del_end > 1:
+            scenarios.append(
+                {
+                    "name": "Delete chars from start of body",
+                    "requests": [
+                        {
+                            "deleteContentRange": {
+                                "range": {
+                                    "startIndex": 1,
+                                    "endIndex": del_end,
+                                    "tabId": tab_id,
+                                },
+                            }
+                        },
+                    ],
+                }
+            )
+
+    # 25. Delete near end of document (but not the final \n)
+    if last_idx > 5:
+        # Insert some text first, then delete part of it
+        scenarios.append(
+            {
+                "name": "Insert then partial delete near end",
+                "requests": [
+                    {
+                        "insertText": {
+                            "location": {"index": insert_idx, "tabId": tab_id},
+                            "text": "ABCDEFGHIJ",
+                        }
+                    },
+                    {
+                        "deleteContentRange": {
+                            "range": {
+                                "startIndex": insert_idx + 3,
+                                "endIndex": insert_idx + 7,
+                                "tabId": tab_id,
+                            },
+                        }
+                    },
+                ],
+            }
+        )
+
+    # 26. Delete spanning multiple paragraphs
+    if len(paragraphs) > 6:
+        p1 = paragraphs[2]
+        p3 = paragraphs[4]
+        # Delete from middle of p1 to middle of p3 (spans 3 paragraphs)
+        del_start = p1["start"] + 2
+        del_end = min(p3["start"] + 2, p3["end"] - 1)
+        if del_end > del_start:
+            scenarios.append(
+                {
+                    "name": "Delete spanning multiple paragraphs",
+                    "requests": [
+                        {
+                            "deleteContentRange": {
+                                "range": {
+                                    "startIndex": del_start,
+                                    "endIndex": del_end,
+                                    "tabId": tab_id,
+                                },
+                            }
+                        },
+                    ],
+                }
+            )
+
+    # 27. Delete in header segment
+    headers = info.get("headers", {})
+    if headers:
+        hdr_id = next(iter(headers))
+        hdr = headers[hdr_id]
+        hdr_text_len = hdr["end"] - hdr["start"] - 1  # exclude final \n
+        if hdr_text_len > 2:
+            del_end = min(hdr["start"] + 2, hdr["end"] - 1)
+            scenarios.append(
+                {
+                    "name": "Delete chars in header",
+                    "requests": [
+                        {
+                            "deleteContentRange": {
+                                "range": {
+                                    "startIndex": hdr["start"],
+                                    "endIndex": del_end,
+                                    "segmentId": hdr_id,
+                                    "tabId": tab_id,
+                                },
+                            }
+                        },
+                    ],
+                }
+            )
+
+    # 28. Delete in footer segment
+    footers = info.get("footers", {})
+    if footers:
+        ftr_id = next(iter(footers))
+        ftr = footers[ftr_id]
+        ftr_text_len = ftr["end"] - ftr["start"] - 1
+        if ftr_text_len > 2:
+            del_end = min(ftr["start"] + 2, ftr["end"] - 1)
+            scenarios.append(
+                {
+                    "name": "Delete chars in footer",
+                    "requests": [
+                        {
+                            "deleteContentRange": {
+                                "range": {
+                                    "startIndex": ftr["start"],
+                                    "endIndex": del_end,
+                                    "segmentId": ftr_id,
+                                    "tabId": tab_id,
+                                },
+                            }
+                        },
+                    ],
+                }
+            )
+
+    # 29. Insert in header then delete
+    if headers:
+        hdr_id = next(iter(headers))
+        hdr = headers[hdr_id]
+        scenarios.append(
+            {
+                "name": "Insert then delete in header",
+                "requests": [
+                    {
+                        "insertText": {
+                            "location": {
+                                "index": hdr["start"],
+                                "segmentId": hdr_id,
+                                "tabId": tab_id,
+                            },
+                            "text": "HDR_TEST",
+                        }
+                    },
+                    {
+                        "deleteContentRange": {
+                            "range": {
+                                "startIndex": hdr["start"],
+                                "endIndex": hdr["start"] + 8,
+                                "segmentId": hdr_id,
+                                "tabId": tab_id,
+                            },
+                        }
+                    },
+                ],
+            }
+        )
+
+    # 30. Insert in footer then delete
+    if footers:
+        ftr_id = next(iter(footers))
+        ftr = footers[ftr_id]
+        scenarios.append(
+            {
+                "name": "Insert then delete in footer",
+                "requests": [
+                    {
+                        "insertText": {
+                            "location": {
+                                "index": ftr["start"],
+                                "segmentId": ftr_id,
+                                "tabId": tab_id,
+                            },
+                            "text": "FTR_TEST",
+                        }
+                    },
+                    {
+                        "deleteContentRange": {
+                            "range": {
+                                "startIndex": ftr["start"],
+                                "endIndex": ftr["start"] + 8,
+                                "segmentId": ftr_id,
+                                "tabId": tab_id,
+                            },
+                        }
+                    },
+                ],
+            }
+        )
+
+    # 31. Delete all content of a paragraph except its \n
+    if len(paragraphs) > 3:
+        p = paragraphs[2]
+        text_len = p["end"] - p["start"] - 1
+        if text_len > 0:
+            scenarios.append(
+                {
+                    "name": "Delete all text in paragraph (keep newline)",
+                    "requests": [
+                        {
+                            "deleteContentRange": {
+                                "range": {
+                                    "startIndex": p["start"],
+                                    "endIndex": p["end"] - 1,
+                                    "tabId": tab_id,
+                                },
+                            }
+                        },
+                    ],
+                }
+            )
+
+    # 32. Insert multiple paragraphs then delete the middle one
+    # Use a stable insertion point (start of paragraph 2) to avoid stale index issues
+    if len(paragraphs) > 3:
+        safe_idx = paragraphs[1]["start"]
+        scenarios.append(
+            {
+                "name": "Insert 3 paragraphs then delete middle",
+                "requests": [
+                    {
+                        "insertText": {
+                            "location": {"index": safe_idx, "tabId": tab_id},
+                            "text": "\nDEL_FIRST\nDEL_MIDDLE\nDEL_LAST",
+                        }
+                    },
+                    {
+                        "deleteContentRange": {
+                            "range": {
+                                "startIndex": safe_idx + 11,
+                                "endIndex": safe_idx + 22,
+                                "tabId": tab_id,
+                            },
+                        }
+                    },
+                ],
+            }
+        )
+
+    # 33. Delete a single character
+    if len(paragraphs) > 2:
+        p = paragraphs[1]
+        scenarios.append(
+            {
+                "name": "Delete single character",
+                "requests": [
+                    {
+                        "deleteContentRange": {
+                            "range": {
+                                "startIndex": p["start"],
+                                "endIndex": p["start"] + 1,
+                                "tabId": tab_id,
+                            },
+                        }
+                    },
+                ],
+            }
+        )
+
+    # 34. Insert text with style, then delete part of styled text
+    if len(paragraphs) > 3:
+        safe_idx = paragraphs[1]["start"]
+        scenarios.append(
+            {
+                "name": "Insert styled text then delete part",
+                "requests": [
+                    {
+                        "insertText": {
+                            "location": {"index": safe_idx, "tabId": tab_id},
+                            "text": "STYLED_DEL_TEST",
+                        }
+                    },
+                    {
+                        "updateTextStyle": {
+                            "range": {
+                                "startIndex": safe_idx,
+                                "endIndex": safe_idx + 15,
+                                "tabId": tab_id,
+                            },
+                            "textStyle": {"bold": True},
+                            "fields": "bold",
+                        }
+                    },
+                    {
+                        "deleteContentRange": {
+                            "range": {
+                                "startIndex": safe_idx + 5,
+                                "endIndex": safe_idx + 10,
+                                "tabId": tab_id,
+                            },
+                        }
+                    },
+                ],
+            }
+        )
 
     return scenarios
 

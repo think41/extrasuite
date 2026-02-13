@@ -518,6 +518,10 @@ class MockGoogleDocsAPI:
         segment_id = range_obj.get("segmentId")
 
         self._delete_content_range_impl(start_index, end_index, tab_id, segment_id)
+        # Consolidate adjacent runs with identical styles after deletion
+        tab = self._get_tab(tab_id)
+        segment, _ = self._get_segment(tab, segment_id)
+        self._consolidate_segment(segment)
         return {}
 
     # Default values for text style fields - the real API omits these
@@ -688,6 +692,9 @@ class MockGoogleDocsAPI:
                         ts.setdefault("underline", True)
                         ts.setdefault("foregroundColor", _link_blue)
 
+        # Consolidate adjacent runs with identical styles
+        body = tab.get("documentTab", {}).get("body", {})
+        self._consolidate_segment(body)
         return {}
 
     def _handle_update_paragraph_style(self, request: dict[str, Any]) -> dict[str, Any]:
@@ -2382,11 +2389,13 @@ class MockGoogleDocsAPI:
         Raises:
             ValidationError: If insertion is invalid.
         """
-        if index < 1:
-            raise ValidationError(f"Index must be at least 1, got {index}")
-
         tab = self._get_tab(tab_id)
         segment, segment_type = self._get_segment(tab, segment_id)
+
+        # Body starts at index 1 (sectionBreak at 0), others start at 0
+        min_index = 1 if segment_type == "body" else 0
+        if index < min_index:
+            raise ValidationError(f"Index must be at least {min_index}, got {index}")
 
         # Validate index is within bounds
         content = segment.get("content", [])
@@ -2441,15 +2450,18 @@ class MockGoogleDocsAPI:
         Raises:
             ValidationError: If deletion is invalid.
         """
-        if start_index < 1:
-            raise ValidationError(f"startIndex must be at least 1, got {start_index}")
+        tab = self._get_tab(tab_id)
+        segment, segment_type = self._get_segment(tab, segment_id)
+
+        min_index = 1 if segment_type == "body" else 0
+        if start_index < min_index:
+            raise ValidationError(
+                f"startIndex must be at least {min_index}, got {start_index}"
+            )
         if end_index <= start_index:
             raise ValidationError(
                 f"endIndex ({end_index}) must be greater than startIndex ({start_index})"
             )
-
-        tab = self._get_tab(tab_id)
-        segment, segment_type = self._get_segment(tab, segment_id)
 
         content = segment.get("content", [])
         if not content:
@@ -2478,6 +2490,51 @@ class MockGoogleDocsAPI:
 
         # Actually delete the content from the document
         self._delete_content_from_segment(segment, start_index, end_index)
+
+    # ========================================================================
+    # Text Run Consolidation
+    # ========================================================================
+
+    def _consolidate_runs(self, paragraph: dict[str, Any]) -> None:
+        """Merge adjacent text runs with identical textStyle.
+
+        The real Google Docs API consolidates adjacent runs with the same
+        style after operations like updateTextStyle and deleteContentRange.
+        This method replicates that behavior.
+
+        Args:
+            paragraph: Paragraph object to consolidate.
+        """
+        elements = paragraph.get("elements", [])
+        if len(elements) <= 1:
+            return
+
+        consolidated: list[dict[str, Any]] = [elements[0]]
+        for elem in elements[1:]:
+            prev = consolidated[-1]
+            if (
+                "textRun" in prev
+                and "textRun" in elem
+                and prev["textRun"].get("textStyle", {})
+                == elem["textRun"].get("textStyle", {})
+            ):
+                # Merge: extend the previous run
+                prev["textRun"]["content"] += elem["textRun"].get("content", "")
+                prev["endIndex"] = elem["endIndex"]
+            else:
+                consolidated.append(elem)
+
+        paragraph["elements"] = consolidated
+
+    def _consolidate_segment(self, segment: dict[str, Any]) -> None:
+        """Consolidate text runs in all paragraphs of a segment.
+
+        Args:
+            segment: Segment (body, header, footer, etc.)
+        """
+        for element in segment.get("content", []):
+            if "paragraph" in element:
+                self._consolidate_runs(element["paragraph"])
 
     # ========================================================================
     # Document Modification Helpers

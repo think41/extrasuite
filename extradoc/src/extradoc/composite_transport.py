@@ -479,6 +479,9 @@ class CompositeTransport(Transport):
                         continue
                     if k in _id_fields:
                         result[k] = "__ID__"
+                    # Real API omits startIndex when 0 (first element in segment)
+                    elif k == "startIndex" and v == 0:
+                        continue
                     else:
                         result[k] = normalize(v)
                 return result
