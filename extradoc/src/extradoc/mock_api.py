@@ -19,7 +19,7 @@ from __future__ import annotations
 import copy
 import re
 import uuid
-from typing import Any
+from typing import Any, ClassVar
 
 from extradoc.indexer import utf16_len
 
@@ -520,17 +520,41 @@ class MockGoogleDocsAPI:
         self._delete_content_range_impl(start_index, end_index, tab_id, segment_id)
         return {}
 
+    # Default values for text style fields - the real API omits these
+    # rather than storing them explicitly
+    _TEXT_STYLE_DEFAULTS: ClassVar[dict[str, Any]] = {
+        "bold": False,
+        "italic": False,
+        "underline": False,
+        "strikethrough": False,
+        "smallCaps": False,
+        "baselineOffset": "NONE",
+    }
+
+    def _apply_text_style_to_ts(
+        self,
+        ts: dict[str, Any],
+        text_style: dict[str, Any],
+        field_list: list[str],
+    ) -> None:
+        """Apply text style fields to a textStyle dict, omitting defaults."""
+        for field in field_list:
+            if field in text_style:
+                value = text_style[field]
+                if self._TEXT_STYLE_DEFAULTS.get(field) == value:
+                    ts.pop(field, None)
+                else:
+                    ts[field] = value
+            else:
+                ts.pop(field, None)
+
     def _handle_update_text_style(self, request: dict[str, Any]) -> dict[str, Any]:
         """Handle UpdateTextStyleRequest.
 
         Applies text style changes to text runs overlapping the range.
-        Only fields listed in the `fields` mask are updated. Fields present in
-        the mask but absent from `textStyle` are cleared (removed).
-
-        This is a simplified implementation that applies the style to entire
-        text runs that overlap the range, without splitting runs at range
-        boundaries. This matches real API behavior for the common case where
-        the range aligns with run boundaries.
+        When the range partially overlaps a text run, the run is split into
+        up to 3 parts: before (unchanged), overlap (styled), after (unchanged).
+        Only fields listed in the `fields` mask are updated.
 
         Args:
             request: UpdateTextStyleRequest data.
@@ -559,42 +583,110 @@ class MockGoogleDocsAPI:
         tab = self._get_tab(tab_id)
         self._validate_range(tab, start_index, end_index)
 
-        # Parse field mask
         field_list = [f.strip() for f in fields.split(",")]
 
-        # Default values for text style fields - the real API omits these
-        # rather than storing them explicitly
-        _text_style_defaults: dict[str, Any] = {
-            "bold": False,
-            "italic": False,
-            "underline": False,
-            "strikethrough": False,
-            "smallCaps": False,
-            "baselineOffset": "NONE",
-        }
-
-        # Apply to all text runs overlapping the range
         for paragraph in self._get_paragraphs_in_range(tab, start_index, end_index):
-            for element in paragraph.get("elements", []):
+            elements = paragraph.get("elements", [])
+            new_elements: list[dict[str, Any]] = []
+
+            for element in elements:
                 el_start = element.get("startIndex", 0)
                 el_end = element.get("endIndex", 0)
-                # Check overlap
-                if el_end <= start_index or el_start >= end_index:
-                    continue
                 text_run = element.get("textRun")
-                if not text_run:
+
+                # No overlap or not a text run -> keep as-is
+                if el_end <= start_index or el_start >= end_index or not text_run:
+                    new_elements.append(element)
                     continue
-                ts = text_run.setdefault("textStyle", {})
-                for field in field_list:
-                    if field in text_style:
-                        value = text_style[field]
-                        # If value equals the default, remove it instead of storing
-                        if _text_style_defaults.get(field) == value:
-                            ts.pop(field, None)
-                        else:
-                            ts[field] = value
+
+                content = text_run.get("content", "")
+                old_style = text_run.get("textStyle", {})
+
+                # Calculate split points within this element's text
+                # Convert from document indices to string offsets
+                split_start = max(start_index, el_start) - el_start
+                split_end = min(end_index, el_end) - el_start
+
+                # Before part (unchanged)
+                if split_start > 0:
+                    before_text = content[:split_start]
+                    new_elements.append(
+                        {
+                            "startIndex": el_start,
+                            "endIndex": el_start + split_start,
+                            "textRun": {
+                                "content": before_text,
+                                "textStyle": dict(old_style),
+                            },
+                        }
+                    )
+
+                # Middle part (styled)
+                middle_text = content[split_start:split_end]
+                middle_style = copy.deepcopy(old_style)
+                self._apply_text_style_to_ts(middle_style, text_style, field_list)
+                new_elements.append(
+                    {
+                        "startIndex": el_start + split_start,
+                        "endIndex": el_start + split_end,
+                        "textRun": {
+                            "content": middle_text,
+                            "textStyle": middle_style,
+                        },
+                    }
+                )
+
+                # After part (unchanged) - but if the only remaining text
+                # is "\n" (paragraph terminator) and no link is being set,
+                # merge it into middle part to match real API behavior.
+                # Links keep the \n as a separate unstyled run.
+                has_link = "link" in text_style and text_style["link"]
+                if split_end < len(content):
+                    after_text = content[split_end:]
+                    if after_text == "\n" and not has_link:
+                        # Merge trailing \n into the styled middle part
+                        mid_el = new_elements[-1]
+                        mid_el["endIndex"] = el_end
+                        mid_el["textRun"]["content"] += "\n"
                     else:
-                        ts.pop(field, None)
+                        new_elements.append(
+                            {
+                                "startIndex": el_start + split_end,
+                                "endIndex": el_end,
+                                "textRun": {
+                                    "content": after_text,
+                                    "textStyle": dict(old_style),
+                                },
+                            }
+                        )
+
+            paragraph["elements"] = new_elements
+
+        # When a link is set, the real API auto-adds underline and
+        # foregroundColor (Google's link blue) to the styled text runs
+        if text_style.get("link"):
+            _link_blue = {
+                "color": {
+                    "rgbColor": {
+                        "red": 0.06666667,
+                        "green": 0.33333334,
+                        "blue": 0.8,
+                    }
+                }
+            }
+            for paragraph in self._get_paragraphs_in_range(tab, start_index, end_index):
+                for element in paragraph.get("elements", []):
+                    el_start = element.get("startIndex", 0)
+                    el_end = element.get("endIndex", 0)
+                    if el_end <= start_index or el_start >= end_index:
+                        continue
+                    text_run = element.get("textRun")
+                    if not text_run:
+                        continue
+                    ts = text_run.get("textStyle", {})
+                    if "link" in ts:
+                        ts.setdefault("underline", True)
+                        ts.setdefault("foregroundColor", _link_blue)
 
         return {}
 
@@ -641,6 +733,16 @@ class MockGoogleDocsAPI:
         }
         has_named_style = "namedStyleType" in paragraph_style
 
+        # Heading styles that require a headingId
+        _heading_styles = {
+            "HEADING_1",
+            "HEADING_2",
+            "HEADING_3",
+            "HEADING_4",
+            "HEADING_5",
+            "HEADING_6",
+        }
+
         # Apply to all paragraphs in range
         for paragraph in self._get_paragraphs_in_range(tab, start_index, end_index):
             ps = paragraph.setdefault("paragraphStyle", {})
@@ -655,12 +757,41 @@ class MockGoogleDocsAPI:
                     # Field in mask but not in style => clear it
                     ps.pop(field, None)
 
+            # Generate headingId when setting a heading style
+            named_style = ps.get("namedStyleType", "")
+            if named_style in _heading_styles:
+                if "headingId" not in ps:
+                    ps["headingId"] = f"h.{uuid.uuid4().hex[:16]}"
+            else:
+                # Remove headingId for non-heading styles
+                ps.pop("headingId", None)
+
         return {}
+
+    # Bullet preset to glyph symbol mappings for first nesting level
+    _BULLET_PRESETS: ClassVar[dict[str, list[str]]] = {
+        "BULLET_DISC_CIRCLE_SQUARE": ["●", "○", "■"],
+        "BULLET_DIAMONDX_ARROW3D_SQUARE": ["❖", "➢", "■"],
+        "BULLET_CHECKBOX": ["☐", "☐", "☐"],
+        "BULLET_ARROW_DIAMOND_DISC": ["➔", "◆", "●"],
+        "BULLET_STAR_CIRCLE_SQUARE": ["★", "○", "■"],
+        "BULLET_ARROW3D_CIRCLE_SQUARE": ["➢", "○", "■"],
+        "BULLET_LEFTTRIANGLE_DIAMOND_DISC": ["◀", "◆", "●"],
+        "NUMBERED_DECIMAL_ALPHA_ROMAN": [],
+        "NUMBERED_DECIMAL_ALPHA_ROMAN_PARENS": [],
+        "NUMBERED_DECIMAL_NESTED": [],
+        "NUMBERED_UPPERALPHA_ALPHA_ROMAN": [],
+        "NUMBERED_UPPERROMAN_UPPERALPHA_DECIMAL": [],
+        "NUMBERED_ZERODECIMAL_ALPHA_ROMAN": [],
+    }
 
     def _handle_create_paragraph_bullets(
         self, request: dict[str, Any]
     ) -> dict[str, Any]:
         """Handle CreateParagraphBulletsRequest.
+
+        Adds bullet formatting to paragraphs in the range. Creates a list
+        definition and sets bullet properties + indentation on each paragraph.
 
         Args:
             request: CreateParagraphBulletsRequest data.
@@ -682,6 +813,47 @@ class MockGoogleDocsAPI:
 
         tab = self._get_tab(tab_id)
         self._validate_range(tab, start_index, end_index)
+
+        list_id = f"kix.{uuid.uuid4().hex[:16]}"
+
+        # Build nesting levels for the list definition
+        glyphs = self._BULLET_PRESETS.get(bullet_preset, ["●", "○", "■"])
+        is_numbered = bullet_preset.startswith("NUMBERED_")
+        nesting_levels: list[dict[str, Any]] = []
+        for level in range(9):
+            level_def: dict[str, Any] = {
+                "bulletAlignment": "START",
+                "indentFirstLine": {"magnitude": 18 + level * 36, "unit": "PT"},
+                "indentStart": {"magnitude": 36 + level * 36, "unit": "PT"},
+            }
+            if is_numbered:
+                level_def["glyphType"] = (
+                    ["DECIMAL", "ALPHA", "ROMAN"][level % 3]
+                    if bullet_preset == "NUMBERED_DECIMAL_ALPHA_ROMAN"
+                    else "DECIMAL"
+                )
+                level_def["glyphFormat"] = f"%{level}"
+            else:
+                glyph_idx = level % len(glyphs) if glyphs else 0
+                level_def["glyphSymbol"] = glyphs[glyph_idx] if glyphs else "●"
+                level_def["glyphFormat"] = f"%{level}"
+            nesting_levels.append(level_def)
+
+        # Add list definition to document
+        document_tab = tab.get("documentTab", {})
+        lists = document_tab.setdefault("lists", {})
+        lists[list_id] = {"listProperties": {"nestingLevels": nesting_levels}}
+
+        # Apply bullet to each paragraph in range
+        for paragraph in self._get_paragraphs_in_range(tab, start_index, end_index):
+            paragraph["bullet"] = {
+                "listId": list_id,
+                "textStyle": {"underline": False},
+            }
+            # Set bullet indentation
+            ps = paragraph.setdefault("paragraphStyle", {})
+            ps["indentFirstLine"] = {"magnitude": 18, "unit": "PT"}
+            ps["indentStart"] = {"magnitude": 36, "unit": "PT"}
 
         return {}
 

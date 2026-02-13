@@ -456,14 +456,53 @@ class CompositeTransport(Transport):
             Tuple of (match, list of diff descriptions)
         """
 
-        # Normalize by removing fields that are expected to differ
-        def normalize(doc: dict[str, Any]) -> dict[str, Any]:
-            normalized = doc.copy()
-            normalized.pop("revisionId", None)
-            normalized.pop("suggestionsViewMode", None)
-            return normalized
+        # Top-level fields to drop entirely (not meaningful for comparison)
+        _drop_fields = {"revisionId", "suggestionsViewMode", "lists"}
 
-        n1, n2 = normalize(doc1), normalize(doc2)
+        # Fields whose values are server-generated IDs - presence matters
+        # but exact values will differ between real and mock
+        _id_fields = {
+            "headingId",
+            "listId",
+            "objectId",
+            "footerId",
+            "headerId",
+            "footnoteId",
+            "namedRangeId",
+        }
+
+        def normalize(obj: Any) -> Any:
+            if isinstance(obj, dict):
+                result: dict[str, Any] = {}
+                for k, v in obj.items():
+                    if k in _drop_fields:
+                        continue
+                    if k in _id_fields:
+                        result[k] = "__ID__"
+                    else:
+                        result[k] = normalize(v)
+                return result
+            if isinstance(obj, list):
+                return [normalize(item) for item in obj]
+            # Normalize float/int: 1.0 == 1, 0.0 == 0
+            if isinstance(obj, float) and obj == int(obj):
+                return int(obj)
+            return obj
+
+        def normalize_colors(obj: Any) -> Any:
+            """Remove zero-valued RGB components (real API omits them)."""
+            if isinstance(obj, dict):
+                if "rgbColor" in obj:
+                    rgb = obj["rgbColor"]
+                    if isinstance(rgb, dict):
+                        obj = dict(obj)
+                        obj["rgbColor"] = {k: v for k, v in rgb.items() if v != 0}
+                return {k: normalize_colors(v) for k, v in obj.items()}
+            if isinstance(obj, list):
+                return [normalize_colors(item) for item in obj]
+            return obj
+
+        n1, n2 = normalize_colors(normalize(doc1)), normalize_colors(normalize(doc2))
         if n1 == n2:
             return True, []
         return False, self._find_diffs(n1, n2)
@@ -481,12 +520,29 @@ class CompositeTransport(Transport):
             Tuple of (match, list of diff descriptions)
         """
 
-        # Normalize by removing fields that are expected to differ
-        def normalize(response: dict[str, Any]) -> dict[str, Any]:
-            normalized = response.copy()
-            normalized.pop("documentId", None)
-            normalized.pop("writeControl", None)
-            return normalized
+        # Server-generated ID fields in replies
+        _reply_id_fields = {
+            "headerId",
+            "footerId",
+            "footnoteId",
+            "namedRangeId",
+            "tabId",
+        }
+
+        def normalize(obj: Any) -> Any:
+            if isinstance(obj, dict):
+                result: dict[str, Any] = {}
+                for k, v in obj.items():
+                    if k in ("documentId", "writeControl"):
+                        continue
+                    if k in _reply_id_fields:
+                        result[k] = "__ID__"
+                    else:
+                        result[k] = normalize(v)
+                return result
+            if isinstance(obj, list):
+                return [normalize(item) for item in obj]
+            return obj
 
         n1, n2 = normalize(response1), normalize(response2)
         if n1 == n2:
