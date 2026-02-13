@@ -179,6 +179,14 @@ def handle_add_document_tab(
     tab_properties = request.get("tabProperties", {})
     tab_id = f"t.{uuid.uuid4().hex[:16]}"
 
+    # Real API returns 400 if a tab with the same title already exists
+    requested_title = tab_properties.get("title", "Untitled Tab")
+    existing_titles = {
+        t.get("tabProperties", {}).get("title", "") for t in document.get("tabs", [])
+    }
+    if requested_title in existing_titles:
+        raise ValidationError("Tab title must be unique")
+
     first_tab = document.get("tabs", [{}])[0]
     first_doc_tab = first_tab.get("documentTab", {})
     document_style = copy.deepcopy(first_doc_tab.get("documentStyle", {}))

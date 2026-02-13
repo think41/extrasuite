@@ -12,8 +12,9 @@ from datetime import datetime
 from pathlib import Path
 from typing import Any
 
+from extradoc.mock.exceptions import MockAPIError
 from extradoc.mock_api import MockGoogleDocsAPI
-from extradoc.transport import DocumentData, Transport
+from extradoc.transport import APIError, DocumentData, Transport
 
 
 class MismatchLogger:
@@ -306,8 +307,18 @@ class CompositeTransport(Transport):
         # Get document state before update (for logging)
         input_document = self.mock_transport.mock_api.get()
 
-        # Apply to real API
-        real_response = await self.real_transport.batch_update(document_id, requests)
+        # Apply to real API - may raise APIError on 400
+        try:
+            real_response = await self.real_transport.batch_update(
+                document_id, requests
+            )
+        except APIError as real_err:
+            if real_err.status_code == 400:
+                # Real API rejected the request. Mock should also reject it.
+                return self._handle_real_api_400(
+                    document_id, requests, input_document, real_err
+                )
+            raise
 
         # Get real document state after update
         real_data_after = await self.real_transport.get_document(document_id)
@@ -346,7 +357,7 @@ class CompositeTransport(Transport):
                     mock_document_after=mock_data_after.raw,
                 )
         except Exception as e:
-            # Mock API raised an error - log this as a mismatch
+            # Mock API raised an error when real succeeded - log as mismatch
             print(f"⚠️  Mock API raised error: {e}")
             self.mismatch_logger.log_batch_update_mismatch(
                 document_id=document_id,
@@ -359,6 +370,61 @@ class CompositeTransport(Transport):
             )
 
         return real_response
+
+    def _handle_real_api_400(
+        self,
+        document_id: str,
+        requests: list[dict[str, Any]],
+        input_document: dict[str, Any],
+        real_err: APIError,
+    ) -> dict[str, Any]:
+        """Handle real API 400 error by verifying mock also rejects.
+
+        When the real API returns 400, the mock should also raise an error.
+        If it doesn't, that means mock validation is too lenient.
+
+        Args:
+            document_id: Document ID
+            requests: The requests that caused the 400
+            input_document: Document state before the request
+            real_err: The APIError from the real API
+
+        Returns:
+            Empty response dict
+
+        Raises:
+            APIError: Always re-raises the original real API error
+        """
+        try:
+            self.mock_transport.mock_api.batch_update(requests)  # type: ignore[union-attr]
+            # Mock succeeded when real API returned 400 — mock is too lenient
+            print(
+                "⚠️  Real API returned 400 but mock succeeded. "
+                "Mock validation too lenient."
+            )
+            print(f"  Real error: {real_err}")
+            self.mismatch_logger.log_batch_update_mismatch(
+                document_id=document_id,
+                requests=requests,
+                input_document=input_document,
+                real_response={"error": str(real_err), "status_code": 400},
+                mock_response={"success": True, "error": "Mock should have rejected"},
+                real_document_after=input_document,
+                mock_document_after=self.mock_transport.mock_api.get()
+                if self.mock_transport
+                else input_document,
+            )
+        except MockAPIError:
+            # Both real and mock rejected — this is correct behavior
+            print("  Both real API and mock rejected request (400). OK.")
+        except Exception as e:
+            # Mock raised a different error — still counts as rejection
+            print(
+                f"  Both real API (400) and mock rejected request "
+                f"({type(e).__name__}: {e}). OK."
+            )
+
+        raise real_err
 
     async def list_comments(self, file_id: str) -> list[dict[str, Any]]:
         """List comments from real API only.

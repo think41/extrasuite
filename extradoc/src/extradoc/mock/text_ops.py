@@ -18,6 +18,35 @@ from extradoc.mock.validation import (
 )
 
 
+def _strip_link_style(run_style: dict[str, Any]) -> dict[str, Any]:
+    """Build inherited style for text inserted into a link run.
+
+    The real API strips link, foregroundColor from the inserted text.
+    If the run has explicit non-link styles (bold, italic, strikethrough, etc.),
+    those are kept. If the run only has link auto-styling (link, foregroundColor,
+    underline), the result is {} — the underline was just link decoration.
+    """
+    # Check if there are explicit styles beyond link auto-styling
+    _explicit_keys = {
+        "bold",
+        "italic",
+        "strikethrough",
+        "smallCaps",
+        "baselineOffset",
+        "fontSize",
+        "weightedFontFamily",
+    }
+    has_explicit = any(k in run_style for k in _explicit_keys)
+    if not has_explicit:
+        return {}
+    # Keep everything except link and foregroundColor
+    return {
+        k: copy.deepcopy(v)
+        for k, v in run_style.items()
+        if k not in ("link", "foregroundColor")
+    }
+
+
 def handle_insert_text(
     document: dict[str, Any],
     request: dict[str, Any],
@@ -151,8 +180,12 @@ def _insert_text_simple(segment: dict[str, Any], index: int, text: str) -> None:
                     )
 
                     if "link" in run_style:
-                        # Link runs: split into before (link), inserted (no style), after (link)
-                        # The real API gives inserted text empty textStyle {}
+                        # Link runs: split into before (link), inserted (inherited), after (link)
+                        # The real API strips link+foregroundColor from the inserted text.
+                        # If the run has explicit non-link styles (bold, italic, etc.),
+                        # those are preserved. If the run only has link auto-styling
+                        # (link, foregroundColor, underline), inserted text gets {}.
+                        inherited_style = _strip_link_style(run_style)
                         before = content_str[:offset_in_run]
                         after = content_str[offset_in_run:]
                         new_elements: list[dict[str, Any]] = []
@@ -173,7 +206,7 @@ def _insert_text_simple(segment: dict[str, Any], index: int, text: str) -> None:
                                 "endIndex": 0,
                                 "textRun": {
                                     "content": text,
-                                    "textStyle": {},
+                                    "textStyle": inherited_style,
                                 },
                             }
                         )
@@ -234,13 +267,13 @@ def _insert_text_with_newlines(segment: dict[str, Any], index: int, text: str) -
                 if not inserted and run_start <= index <= run_end:
                     offset = calculate_utf16_offset(run_content, index - run_start)
                     if "link" in run_style:
-                        # Link runs: split into before (link), inserted (no style), after (link)
-                        # The real API gives inserted text empty textStyle {}
+                        # Link runs: strip link+foregroundColor, keep explicit styles
+                        inherited_style = _strip_link_style(run_style)
                         before = run_content[:offset]
                         after = run_content[offset:]
                         if before:
                             runs.append((before, copy.deepcopy(run_style)))
-                        runs.append((text, {}))
+                        runs.append((text, inherited_style))
                         if after:
                             runs.append((after, copy.deepcopy(run_style)))
                     else:

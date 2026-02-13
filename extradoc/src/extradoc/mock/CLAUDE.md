@@ -4,7 +4,9 @@ A pure-function mock of the [Google Docs batchUpdate API](../../../docs/googledo
 
 ## Status: Work in Progress
 
-**49/61 test scenarios pass** (2 genuine failures + 10 stale-index real API errors). We test by sending the same `batchUpdate` request to both Google's real API and our mock via `CompositeTransport` (see `composite_transport.py`), then diffing the output. IDs are excluded from comparison.
+**57/61 test scenarios pass** (4 remaining failures are all due to explicit-vs-inherited style tracking — see below). We test by sending the same `batchUpdate` request to both Google's real API and our mock via `CompositeTransport` (see `composite_transport.py`), then diffing the output. IDs are excluded from comparison. When the real API returns 400, the mock must also reject the request — `CompositeTransport` verifies this.
+
+**Known limitation — explicit vs inherited styles**: The real API tracks whether textStyle properties were set via `updateTextStyle` (explicit) or inherited during `insertText`. The mock can't distinguish these. This causes 4 failures: heading I/U clearing (S06/S12), bullet.textStyle italic (S36), and run boundary preservation after delete+insert (S46).
 
 ```bash
 cd extradoc

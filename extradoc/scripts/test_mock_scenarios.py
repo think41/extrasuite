@@ -25,7 +25,7 @@ sys.path.insert(0, str(Path(__file__).parent.parent.parent / "client" / "src"))
 from extrasuite.client import CredentialsManager
 
 from extradoc.composite_transport import CompositeTransport, MismatchLogger
-from extradoc.transport import GoogleDocsTransport
+from extradoc.transport import APIError, GoogleDocsTransport
 
 
 def extract_document_id(url: str) -> str:
@@ -1918,6 +1918,14 @@ async def run_scenario(
     requests = scenario["requests"]
     try:
         await composite.batch_update(document_id, requests)
+    except APIError as e:
+        if e.status_code == 400:
+            # Real API returned 400. CompositeTransport already tested
+            # the mock and logged a mismatch if mock didn't also reject.
+            if composite.mismatch_logger.mismatch_count > 0:
+                return False, [f"Real API 400, mock too lenient: {e}"]
+            return True, [f"Both rejected (400): {e}"]
+        return False, [f"API error ({e.status_code}): {e}"]
     except Exception as e:
         return False, [f"Exception: {e}"]
 
@@ -1977,7 +1985,10 @@ async def main(doc_url: str) -> None:
         passed, diffs = await run_scenario(composite, document_id, scenario)
 
         if passed:
-            print("  PASS")
+            if diffs and "Both rejected" in diffs[0]:
+                print("  PASS (both rejected 400)")
+            else:
+                print("  PASS")
         else:
             print("  FAIL")
             for d in diffs:

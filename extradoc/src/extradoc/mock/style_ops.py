@@ -193,8 +193,7 @@ def handle_update_text_style(
             ps = paragraph.get("paragraphStyle", {})
             if ps.get("namedStyleType", "") in _heading_names:
                 continue
-            # Update only the "bold" key in bullet.textStyle, preserving other fields
-            bullet_ts = bullet.get("textStyle", {})
+            # Rebuild bullet.textStyle from scratch — real API replaces, not merges
             has_bold = False
             for elem in paragraph.get("elements", []):
                 tr = elem.get("textRun")
@@ -202,11 +201,7 @@ def handle_update_text_style(
                     if tr.get("textStyle", {}).get("bold"):
                         has_bold = True
                     break
-            if has_bold:
-                bullet_ts["bold"] = True
-            else:
-                bullet_ts.pop("bold", None)
-            bullet["textStyle"] = bullet_ts
+            bullet["textStyle"] = {"bold": True} if has_bold else {}
 
     # Run consolidation is now handled by normalize_segment in reindex pass
     return {}
@@ -272,7 +267,9 @@ def handle_update_paragraph_style(
             if is_setting_heading:
                 # When setting a heading style, the real API:
                 # 1. Clears bullet.textStyle to {}
-                # 2. Removes bold from all text runs (headings are bold by default)
+                # 2. Removes bold, italic, underline from all text runs
+                #    (headings are bold by default; inherited italic/underline
+                #    are stripped as they become redundant under the heading style)
                 bullet = paragraph.get("bullet")
                 if bullet:
                     bullet["textStyle"] = {}
@@ -281,6 +278,8 @@ def handle_update_paragraph_style(
                     if tr:
                         ts = tr.get("textStyle", {})
                         ts.pop("bold", None)
+                        ts.pop("italic", None)
+                        ts.pop("underline", None)
         else:
             ps.pop("headingId", None)
 
