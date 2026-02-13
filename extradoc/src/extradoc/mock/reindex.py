@@ -297,16 +297,48 @@ def _normalize_paragraph(paragraph: dict[str, Any]) -> None:
             parts.append(current)
 
         for part in parts:
-            split_elements.append(
-                {
-                    "startIndex": 0,  # will be fixed by reindex
-                    "endIndex": 0,
-                    "textRun": {
-                        "content": part,
-                        "textStyle": copy.deepcopy(style),
-                    },
-                }
-            )
+            if "link" in style and part.endswith("\n") and len(part) > 1:
+                # Split "text\n" into "text" (with link) and "\n" (without link)
+                text_part = part[:-1]
+                split_elements.append(
+                    {
+                        "startIndex": 0,
+                        "endIndex": 0,
+                        "textRun": {
+                            "content": text_part,
+                            "textStyle": copy.deepcopy(style),
+                        },
+                    }
+                )
+                nl_style = copy.deepcopy(style)
+                nl_style.pop("link", None)
+                nl_style.pop("foregroundColor", None)
+                split_elements.append(
+                    {
+                        "startIndex": 0,
+                        "endIndex": 0,
+                        "textRun": {
+                            "content": "\n",
+                            "textStyle": nl_style,
+                        },
+                    }
+                )
+            else:
+                part_style = copy.deepcopy(style)
+                # The real API strips link from a standalone \n
+                if part == "\n" and "link" in part_style:
+                    part_style.pop("link", None)
+                    part_style.pop("foregroundColor", None)
+                split_elements.append(
+                    {
+                        "startIndex": 0,
+                        "endIndex": 0,
+                        "textRun": {
+                            "content": part,
+                            "textStyle": part_style,
+                        },
+                    }
+                )
 
     # Step 2: No consolidation — the real API preserves run boundaries
     paragraph["elements"] = split_elements

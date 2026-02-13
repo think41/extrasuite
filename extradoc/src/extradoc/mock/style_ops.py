@@ -246,14 +246,24 @@ def handle_update_paragraph_style(
                 ps.pop(field, None)
 
         named_style = ps.get("namedStyleType", "")
+        is_setting_heading = (
+            "namedStyleType" in field_list and named_style in _heading_styles
+        )
         if named_style in _heading_styles:
             if "headingId" not in ps:
                 ps["headingId"] = f"h.{uuid.uuid4().hex[:16]}"
-            # When setting a heading style on a bulleted paragraph,
-            # the real API clears bullet.textStyle to {}
-            bullet = paragraph.get("bullet")
-            if bullet:
-                bullet["textStyle"] = {}
+            if is_setting_heading:
+                # When setting a heading style, the real API:
+                # 1. Clears bullet.textStyle to {}
+                # 2. Removes bold from all text runs (headings are bold by default)
+                bullet = paragraph.get("bullet")
+                if bullet:
+                    bullet["textStyle"] = {}
+                for elem in paragraph.get("elements", []):
+                    tr = elem.get("textRun")
+                    if tr:
+                        ts = tr.get("textStyle", {})
+                        ts.pop("bold", None)
         else:
             ps.pop("headingId", None)
 
