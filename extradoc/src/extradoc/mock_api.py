@@ -850,7 +850,7 @@ class MockGoogleDocsAPI:
                 "listId": list_id,
                 "textStyle": {"underline": False},
             }
-            # Set bullet indentation
+            # Set bullet indentation on paragraph style (matches real API)
             ps = paragraph.setdefault("paragraphStyle", {})
             ps["indentFirstLine"] = {"magnitude": 18, "unit": "PT"}
             ps["indentStart"] = {"magnitude": 36, "unit": "PT"}
@@ -2495,7 +2495,7 @@ class MockGoogleDocsAPI:
             text_len: Length of text in UTF-16 code units
         """
         # If text contains newlines, handle paragraph creation
-        if "\n" in text and text != "\n":
+        if "\n" in text:
             # Complex case: split into paragraphs
             self._insert_text_with_newlines(segment, index, text, text_len)
         else:
@@ -2571,6 +2571,10 @@ class MockGoogleDocsAPI:
     ) -> None:
         """Insert text that contains newlines, creating new paragraphs.
 
+        Preserves existing text runs and their styles. When text with newlines
+        is inserted into a paragraph, the paragraph is split at each newline
+        boundary and text runs are distributed across the resulting paragraphs.
+
         Args:
             segment: The segment to modify
             index: The index to insert at
@@ -2585,82 +2589,103 @@ class MockGoogleDocsAPI:
             elem_end = element.get("endIndex", 0)
 
             if elem_start <= index < elem_end and "paragraph" in element:
-                # Get the existing paragraph's text content
                 paragraph = element["paragraph"]
                 para_elements = paragraph.get("elements", [])
+                para_style = copy.deepcopy(paragraph.get("paragraphStyle", {}))
 
-                # Extract all text from the paragraph
-                existing_text = ""
-                for para_elem in para_elements:
-                    if "textRun" in para_elem:
-                        existing_text += para_elem["textRun"].get("content", "")
+                # Step 1: Collect all runs, inserting text into the target run
+                runs: list[tuple[str, dict[str, Any]]] = []
+                inserted = False
+                for pe in para_elements:
+                    if "textRun" not in pe:
+                        continue
+                    run_start = pe.get("startIndex", 0)
+                    run_end = pe.get("endIndex", 0)
+                    run_content = pe["textRun"].get("content", "")
+                    run_style = pe["textRun"].get("textStyle", {})
 
-                # Calculate where to insert in the existing text
-                offset_in_paragraph = index - elem_start
-                offset_in_text = self._calculate_utf16_offset(
-                    existing_text, offset_in_paragraph
-                )
+                    if not inserted and run_start <= index <= run_end:
+                        # Insert into this run
+                        offset = self._calculate_utf16_offset(
+                            run_content, index - run_start
+                        )
+                        new_content = run_content[:offset] + text + run_content[offset:]
+                        runs.append((new_content, copy.deepcopy(run_style)))
+                        inserted = True
+                    else:
+                        runs.append((run_content, copy.deepcopy(run_style)))
 
-                # Split existing text at insertion point
-                text_before = existing_text[:offset_in_text]
-                text_after = existing_text[offset_in_text:]
+                # Step 2: Split runs at \n boundaries to form paragraph groups
+                # Each group becomes a separate paragraph
+                para_groups: list[list[tuple[str, dict[str, Any]]]] = []
+                current_group: list[tuple[str, dict[str, Any]]] = []
 
-                # Combine: text_before + inserted_text + text_after
-                full_text = text_before + text + text_after
+                for content_str, style in runs:
+                    while "\n" in content_str:
+                        nl_idx = content_str.index("\n")
+                        before = content_str[: nl_idx + 1]  # includes \n
+                        after = content_str[nl_idx + 1 :]
 
-                # Split on newlines to create paragraphs
-                # Each newline creates a paragraph boundary
-                lines = full_text.split("\n")
+                        if before:
+                            current_group.append((before, style))
+                        para_groups.append(current_group)
+                        current_group = []
+                        content_str = after
+                        style = copy.deepcopy(style)
 
-                # Create new paragraph structures
-                new_paragraphs = []
+                    if content_str:
+                        current_group.append((content_str, style))
+
+                if current_group:
+                    para_groups.append(current_group)
+
+                # Step 3: Build new structural elements with proper indices
+                new_elements: list[dict[str, Any]] = []
                 current_idx = elem_start
 
-                for i, line in enumerate(lines):
-                    # Skip the last empty element if text ends with \n
-                    if i == len(lines) - 1 and line == "":
-                        break
+                for group in para_groups:
+                    if not group:
+                        continue
 
-                    # Add newline back (except we already split on it)
-                    line_with_newline = line + "\n"
-                    line_len = utf16_len(line_with_newline)
+                    para_start = current_idx
+                    elements: list[dict[str, Any]] = []
 
-                    new_para = {
-                        "startIndex": current_idx,
-                        "endIndex": current_idx + line_len,
-                        "paragraph": {
-                            "elements": [
-                                {
-                                    "startIndex": current_idx,
-                                    "endIndex": current_idx + line_len,
-                                    "textRun": {
-                                        "content": line_with_newline,
-                                        "textStyle": {},
-                                    },
-                                }
-                            ],
-                            "paragraphStyle": paragraph.get("paragraphStyle", {}),
-                        },
-                    }
-                    new_paragraphs.append(new_para)
-                    current_idx += line_len
+                    for text_content, style in group:
+                        seg_len = utf16_len(text_content)
+                        elements.append(
+                            {
+                                "startIndex": current_idx,
+                                "endIndex": current_idx + seg_len,
+                                "textRun": {
+                                    "content": text_content,
+                                    "textStyle": style,
+                                },
+                            }
+                        )
+                        current_idx += seg_len
 
-                # Replace the old paragraph with new ones
-                content[elem_idx : elem_idx + 1] = new_paragraphs
+                    new_elements.append(
+                        {
+                            "startIndex": para_start,
+                            "endIndex": current_idx,
+                            "paragraph": {
+                                "elements": elements,
+                                "paragraphStyle": copy.deepcopy(para_style),
+                            },
+                        }
+                    )
 
-                # Shift all subsequent elements (those after the newly created paragraphs)
-                if new_paragraphs:
-                    # Shift all elements that start at or after the original elem_end
-                    # They need to be shifted by text_len
-                    for i in range(elem_idx + len(new_paragraphs), len(content)):
-                        elem = content[i]
-                        elem["startIndex"] += text_len
-                        elem["endIndex"] += text_len
-                        # Also shift nested elements
-                        if "paragraph" in elem:
-                            for para_elem in elem["paragraph"].get("elements", []):
-                                para_elem["startIndex"] += text_len
-                                para_elem["endIndex"] += text_len
+                # Step 4: Replace old element and shift subsequent elements
+                content[elem_idx : elem_idx + 1] = new_elements
+
+                for i in range(elem_idx + len(new_elements), len(content)):
+                    elem = content[i]
+                    elem["startIndex"] += text_len
+                    elem["endIndex"] += text_len
+                    if "paragraph" in elem:
+                        for pe in elem["paragraph"].get("elements", []):
+                            pe["startIndex"] += text_len
+                            pe["endIndex"] += text_len
                 return
 
         # If we get here, we couldn't find the right place to insert
@@ -2671,6 +2696,9 @@ class MockGoogleDocsAPI:
     ) -> None:
         """Actually delete content from a segment.
 
+        When deletion crosses paragraph boundaries (removing a \\n), the
+        affected paragraphs are merged. The first paragraph's style is kept.
+
         Args:
             segment: The segment to modify
             start_index: Start of deletion range
@@ -2679,60 +2707,135 @@ class MockGoogleDocsAPI:
         content = segment.get("content", [])
         deletion_len = end_index - start_index
 
-        # Find all paragraphs that overlap with the deletion range
-        for element in content:
+        # Find indices of all paragraphs that overlap with the deletion range
+        affected_indices: list[int] = []
+        for i, element in enumerate(content):
             elem_start = element.get("startIndex", 0)
             elem_end = element.get("endIndex", 0)
-
-            # Check if this element overlaps with deletion range
             if (
                 elem_start < end_index
                 and elem_end > start_index
                 and "paragraph" in element
             ):
-                paragraph = element["paragraph"]
-                para_elements = paragraph.get("elements", [])
+                affected_indices.append(i)
 
-                # Process each text run in the paragraph
-                for para_elem in para_elements:
-                    if "textRun" not in para_elem:
-                        continue
+        if not affected_indices:
+            return
 
-                    run_start = para_elem.get("startIndex", 0)
-                    run_end = para_elem.get("endIndex", 0)
+        # Collect all runs from affected paragraphs, deleting text in range.
+        # Each run tracks its source paragraph properties (for bullet, etc.)
+        surviving_runs: list[tuple[str, dict[str, Any], dict[str, Any]]] = []
 
-                    # Check if this run overlaps with deletion range
-                    if run_start < end_index and run_end > start_index:
-                        text_run = para_elem["textRun"]
-                        content_str = text_run.get("content", "")
+        for idx in affected_indices:
+            paragraph = content[idx]["paragraph"]
+            # Extract all paragraph properties except 'elements'
+            para_props = {k: v for k, v in paragraph.items() if k != "elements"}
 
-                        # Calculate what part of this run to delete
-                        delete_from = max(0, start_index - run_start)
-                        delete_to = min(run_end - run_start, end_index - run_start)
+            for pe in paragraph.get("elements", []):
+                if "textRun" not in pe:
+                    continue
+                run_start = pe.get("startIndex", 0)
+                run_end = pe.get("endIndex", 0)
+                run_content = pe["textRun"].get("content", "")
+                run_style = pe["textRun"].get("textStyle", {})
 
-                        # Convert to string offsets
-                        str_delete_from = self._calculate_utf16_offset(
-                            content_str, delete_from
+                if run_end <= start_index or run_start >= end_index:
+                    # Run is entirely outside deletion range - keep it
+                    surviving_runs.append(
+                        (run_content, copy.deepcopy(run_style), para_props)
+                    )
+                elif run_start >= start_index and run_end <= end_index:
+                    # Run is entirely within deletion range - skip it
+                    continue
+                else:
+                    # Run partially overlaps - keep the non-deleted parts
+                    del_from = max(0, start_index - run_start)
+                    del_to = min(run_end - run_start, end_index - run_start)
+                    str_from = self._calculate_utf16_offset(run_content, del_from)
+                    str_to = self._calculate_utf16_offset(run_content, del_to)
+                    remaining = run_content[:str_from] + run_content[str_to:]
+                    if remaining:
+                        surviving_runs.append(
+                            (remaining, copy.deepcopy(run_style), para_props)
                         )
-                        str_delete_to = self._calculate_utf16_offset(
-                            content_str, delete_to
-                        )
 
-                        # Delete the text
-                        new_content = (
-                            content_str[:str_delete_from] + content_str[str_delete_to:]
-                        )
-                        text_run["content"] = new_content
+        # Re-split surviving runs into paragraphs based on \n boundaries.
+        # When paragraphs merge (a \n was deleted), the merged paragraph
+        # keeps the FIRST paragraph's properties (Google Docs behavior).
+        para_groups: list[tuple[list[tuple[str, dict[str, Any]]], dict[str, Any]]] = []
+        current_group: list[tuple[str, dict[str, Any]]] = []
+        first_props_in_group: dict[str, Any] | None = None
 
-                        # Update this run's endIndex
-                        chars_deleted = delete_to - delete_from
-                        para_elem["endIndex"] = run_end - chars_deleted
+        for content_str, style, props in surviving_runs:
+            if first_props_in_group is None:
+                first_props_in_group = props
+            while "\n" in content_str:
+                nl_idx = content_str.index("\n")
+                before = content_str[: nl_idx + 1]
+                after = content_str[nl_idx + 1 :]
+                if before:
+                    current_group.append((before, style))
+                # Use the first run's props for the paragraph
+                para_groups.append(
+                    (current_group, copy.deepcopy(first_props_in_group or {}))
+                )
+                current_group = []
+                first_props_in_group = None
+                content_str = after
+                style = copy.deepcopy(style)
+            if content_str:
+                current_group.append((content_str, style))
+                if first_props_in_group is None:
+                    first_props_in_group = props
 
-                # Update paragraph endIndex
-                element["endIndex"] = elem_end - deletion_len
+        if current_group and first_props_in_group is not None:
+            para_groups.append((current_group, copy.deepcopy(first_props_in_group)))
+
+        # Build new structural elements
+        first_elem_start = content[affected_indices[0]].get("startIndex", 0)
+        new_elements: list[dict[str, Any]] = []
+        current_idx = first_elem_start
+
+        for group, props in para_groups:
+            if not group:
+                continue
+            para_start = current_idx
+            elements: list[dict[str, Any]] = []
+            for text_content, style in group:
+                seg_len = utf16_len(text_content)
+                elements.append(
+                    {
+                        "startIndex": current_idx,
+                        "endIndex": current_idx + seg_len,
+                        "textRun": {"content": text_content, "textStyle": style},
+                    }
+                )
+                current_idx += seg_len
+            # Use the source paragraph's properties (includes bullet, etc.)
+            para_dict: dict[str, Any] = copy.deepcopy(props)
+            para_dict["elements"] = elements
+            new_elements.append(
+                {
+                    "startIndex": para_start,
+                    "endIndex": current_idx,
+                    "paragraph": para_dict,
+                }
+            )
+
+        # Replace affected elements with new ones
+        first_idx = affected_indices[0]
+        last_idx = affected_indices[-1]
+        content[first_idx : last_idx + 1] = new_elements
 
         # Shift all subsequent elements
-        self._shift_indexes_after(content, end_index, -deletion_len)
+        for i in range(first_idx + len(new_elements), len(content)):
+            elem = content[i]
+            elem["startIndex"] -= deletion_len
+            elem["endIndex"] -= deletion_len
+            if "paragraph" in elem:
+                for pe in elem["paragraph"].get("elements", []):
+                    pe["startIndex"] -= deletion_len
+                    pe["endIndex"] -= deletion_len
 
     def _shift_indexes_after(
         self, content: list[dict[str, Any]], after_index: int, shift_amount: int
