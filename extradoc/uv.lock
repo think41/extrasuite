@@ -318,6 +318,11 @@ dev = [
     { name = "ruff" },
 ]
 
+[package.dev-dependencies]
+dev = [
+    { name = "pytest" },
+]
+
 [package.metadata]
 requires-dist = [
     { name = "certifi", specifier = ">=2024.0.0" },
@@ -334,7 +339,7 @@ requires-dist = [
 provides-extras = ["dev"]
 
 [package.metadata.requires-dev]
-dev = []
+dev = [{ name = "pytest", specifier = ">=9.0.2" }]
 
 [[package]]
 name = "filelock"

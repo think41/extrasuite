@@ -800,7 +800,21 @@ class MockGoogleDocsAPI:
             # Delete specific range by ID
             if named_range_id not in self._named_ranges:
                 raise ValidationError(f"Named range not found: {named_range_id}")
+            range_name = self._named_ranges[named_range_id]["name"]
             del self._named_ranges[named_range_id]
+
+            # Also remove from document structure
+            for tab in self._document.get("tabs", []):
+                document_tab = tab.get("documentTab", {})
+                named_ranges_obj = document_tab.get("namedRanges", {})
+                if range_name in named_ranges_obj:
+                    ranges_list = named_ranges_obj[range_name].get("namedRanges", [])
+                    named_ranges_obj[range_name]["namedRanges"] = [
+                        r for r in ranges_list if r.get("namedRangeId") != named_range_id
+                    ]
+                    # Remove the name entry if no ranges left
+                    if not named_ranges_obj[range_name]["namedRanges"]:
+                        del named_ranges_obj[range_name]
 
         else:
             # Delete all ranges with this name
@@ -809,6 +823,13 @@ class MockGoogleDocsAPI:
             ]
             for rid in to_delete:
                 del self._named_ranges[rid]
+
+            # Also remove from document structure
+            for tab in self._document.get("tabs", []):
+                document_tab = tab.get("documentTab", {})
+                named_ranges_obj = document_tab.get("namedRanges", {})
+                if name in named_ranges_obj:
+                    del named_ranges_obj[name]
 
         return {}
 
@@ -2056,20 +2077,10 @@ class MockGoogleDocsAPI:
     def _insert_text_impl(
         self, text: str, index: int, tab_id: str | None, segment_id: str | None
     ) -> None:
-        """Insert text at a specific index with full validation.
-
-        This is a simplified implementation that validates the operation
-        but doesn't fully update the document structure. A complete
-        implementation would:
-
-        1. Navigate to the correct paragraph containing the index
-        2. Split the TextRun at the insertion point
-        3. Insert new text (creating new paragraphs for newlines)
-        4. Update all indexes for subsequent elements
-        5. Handle style inheritance
+        """Insert text at a specific index with full implementation.
 
         Args:
-            text: Text to insert (not used in simplified validation-only impl).
+            text: Text to insert.
             index: Index to insert at.
             tab_id: Tab ID or None for first tab.
             segment_id: Segment ID or None for body.
@@ -2077,8 +2088,6 @@ class MockGoogleDocsAPI:
         Raises:
             ValidationError: If insertion is invalid.
         """
-        # Note: text parameter is not used in this simplified validation-only impl
-        _ = text  # Suppress unused warning
         if index < 1:
             raise ValidationError(f"Index must be at least 1, got {index}")
 
@@ -2109,8 +2118,11 @@ class MockGoogleDocsAPI:
                         "Insert in the preceding paragraph instead."
                     )
 
-        # In a full implementation, we would update the document structure here
-        # For now, this serves as validation that the operation is legal
+        # Calculate text length in UTF-16 code units
+        text_len = utf16_len(text)
+
+        # Actually insert the text into the document
+        self._insert_text_into_segment(segment, index, text, text_len)
 
     def _delete_content_range_impl(
         self,
@@ -2152,15 +2164,15 @@ class MockGoogleDocsAPI:
         last_element = content[-1]
         max_index = last_element.get("endIndex", 1)
 
+        # Validate we're not splitting surrogate pairs (check this FIRST)
+        self._validate_no_surrogate_pair_split(segment, start_index, end_index)
+
         # Cannot delete the final newline
         if end_index >= max_index:
             raise ValidationError(
                 f"Cannot delete the final newline of {segment_type}. "
                 f"Deletion range {start_index}-{end_index} includes final newline at {max_index - 1}"
             )
-
-        # Validate we're not splitting surrogate pairs
-        self._validate_no_surrogate_pair_split(segment, start_index, end_index)
 
         # Validate we're not deleting final newline from table cells
         self._validate_no_table_cell_final_newline_deletion(
@@ -2170,8 +2182,340 @@ class MockGoogleDocsAPI:
         # Validate structural element constraints (TOC, equations, section breaks)
         self._structure_tracker.validate_delete_range(start_index, end_index)
 
-        # In a full implementation, we would:
-        # 1. Remove the specified range from all TextRuns
-        # 2. Merge paragraphs if deletion crosses paragraph boundary
-        # 3. Update all indexes for subsequent elements
-        # 4. Handle style merging
+        # Actually delete the content from the document
+        self._delete_content_from_segment(segment, start_index, end_index)
+
+    # ========================================================================
+    # Document Modification Helpers
+    # ========================================================================
+
+    def _insert_text_into_segment(
+        self, segment: dict[str, Any], index: int, text: str, text_len: int
+    ) -> None:
+        """Actually insert text into a segment, modifying the document structure.
+
+        Args:
+            segment: The segment to modify
+            index: The index to insert at
+            text: The text to insert
+            text_len: Length of text in UTF-16 code units
+        """
+        content = segment.get("content", [])
+
+        # If text contains newlines, handle paragraph creation
+        if "\n" in text and text != "\n":
+            # Complex case: split into paragraphs
+            self._insert_text_with_newlines(segment, index, text, text_len)
+        else:
+            # Simple case: insert into existing paragraph
+            self._insert_text_simple(segment, index, text, text_len)
+
+    def _insert_text_simple(
+        self, segment: dict[str, Any], index: int, text: str, text_len: int
+    ) -> None:
+        """Insert text without creating new paragraphs.
+
+        Args:
+            segment: The segment to modify
+            index: The index to insert at
+            text: The text to insert (no newlines except possibly final newline)
+            text_len: Length in UTF-16 code units
+        """
+        content = segment.get("content", [])
+
+        # Find the paragraph containing this index
+        for element in content:
+            elem_start = element.get("startIndex", 0)
+            elem_end = element.get("endIndex", 0)
+
+            if elem_start <= index < elem_end and "paragraph" in element:
+                # Found the paragraph, insert text into it
+                paragraph = element["paragraph"]
+                para_elements = paragraph.get("elements", [])
+
+                # Find the text run containing this index
+                for i, para_elem in enumerate(para_elements):
+                    run_start = para_elem.get("startIndex", 0)
+                    run_end = para_elem.get("endIndex", 0)
+
+                    if run_start <= index <= run_end and "textRun" in para_elem:
+                        # Insert into this text run
+                        text_run = para_elem["textRun"]
+                        content_str = text_run.get("content", "")
+
+                        # Calculate offset within this run
+                        offset_in_run = self._calculate_utf16_offset(
+                            content_str, index - run_start
+                        )
+
+                        # Insert the text
+                        new_content = (
+                            content_str[:offset_in_run]
+                            + text
+                            + content_str[offset_in_run:]
+                        )
+                        text_run["content"] = new_content
+
+                        # Update this text run's endIndex
+                        para_elem["endIndex"] = run_end + text_len
+
+                        # Update all subsequent elements in this paragraph
+                        for j in range(i + 1, len(para_elements)):
+                            para_elements[j]["startIndex"] += text_len
+                            para_elements[j]["endIndex"] += text_len
+
+                        # Update paragraph endIndex
+                        element["endIndex"] = elem_end + text_len
+
+                        # Update all subsequent structural elements
+                        self._shift_indexes_after(content, elem_end, text_len)
+                        return
+
+        # If we get here, we couldn't find the right place to insert
+        raise ValidationError(f"Could not find paragraph to insert at index {index}")
+
+    def _insert_text_with_newlines(
+        self, segment: dict[str, Any], index: int, text: str, text_len: int
+    ) -> None:
+        """Insert text that contains newlines, creating new paragraphs.
+
+        Args:
+            segment: The segment to modify
+            index: The index to insert at
+            text: The text to insert (contains newlines)
+            text_len: Length in UTF-16 code units
+        """
+        content = segment.get("content", [])
+
+        # Find the paragraph containing the insertion index
+        for elem_idx, element in enumerate(content):
+            elem_start = element.get("startIndex", 0)
+            elem_end = element.get("endIndex", 0)
+
+            if elem_start <= index < elem_end and "paragraph" in element:
+                # Get the existing paragraph's text content
+                paragraph = element["paragraph"]
+                para_elements = paragraph.get("elements", [])
+
+                # Extract all text from the paragraph
+                existing_text = ""
+                for para_elem in para_elements:
+                    if "textRun" in para_elem:
+                        existing_text += para_elem["textRun"].get("content", "")
+
+                # Calculate where to insert in the existing text
+                offset_in_paragraph = index - elem_start
+                offset_in_text = self._calculate_utf16_offset(existing_text, offset_in_paragraph)
+
+                # Split existing text at insertion point
+                text_before = existing_text[:offset_in_text]
+                text_after = existing_text[offset_in_text:]
+
+                # Combine: text_before + inserted_text + text_after
+                full_text = text_before + text + text_after
+
+                # Split on newlines to create paragraphs
+                # Each newline creates a paragraph boundary
+                lines = full_text.split("\n")
+
+                # Create new paragraph structures
+                new_paragraphs = []
+                current_idx = elem_start
+
+                for i, line in enumerate(lines):
+                    # Skip the last empty element if text ends with \n
+                    if i == len(lines) - 1 and line == "":
+                        break
+
+                    # Add newline back (except we already split on it)
+                    line_with_newline = line + "\n"
+                    line_len = utf16_len(line_with_newline)
+
+                    new_para = {
+                        "startIndex": current_idx,
+                        "endIndex": current_idx + line_len,
+                        "paragraph": {
+                            "elements": [
+                                {
+                                    "startIndex": current_idx,
+                                    "endIndex": current_idx + line_len,
+                                    "textRun": {
+                                        "content": line_with_newline,
+                                        "textStyle": {},
+                                    },
+                                }
+                            ],
+                            "paragraphStyle": paragraph.get("paragraphStyle", {}),
+                        },
+                    }
+                    new_paragraphs.append(new_para)
+                    current_idx += line_len
+
+                # Replace the old paragraph with new ones
+                content[elem_idx : elem_idx + 1] = new_paragraphs
+
+                # Shift all subsequent elements (those after the newly created paragraphs)
+                # Find the end index of the last new paragraph
+                if new_paragraphs:
+                    last_new_para_end = new_paragraphs[-1]["endIndex"]
+                    # Shift all elements that start at or after the original elem_end
+                    # They need to be shifted by text_len
+                    for i in range(elem_idx + len(new_paragraphs), len(content)):
+                        elem = content[i]
+                        elem["startIndex"] += text_len
+                        elem["endIndex"] += text_len
+                        # Also shift nested elements
+                        if "paragraph" in elem:
+                            for para_elem in elem["paragraph"].get("elements", []):
+                                para_elem["startIndex"] += text_len
+                                para_elem["endIndex"] += text_len
+                return
+
+        # If we get here, we couldn't find the right place to insert
+        raise ValidationError(f"Could not find paragraph to insert at index {index}")
+
+    def _delete_content_from_segment(
+        self, segment: dict[str, Any], start_index: int, end_index: int
+    ) -> None:
+        """Actually delete content from a segment.
+
+        Args:
+            segment: The segment to modify
+            start_index: Start of deletion range
+            end_index: End of deletion range (exclusive)
+        """
+        content = segment.get("content", [])
+        deletion_len = end_index - start_index
+
+        # Find all paragraphs that overlap with the deletion range
+        for element in content:
+            elem_start = element.get("startIndex", 0)
+            elem_end = element.get("endIndex", 0)
+
+            # Check if this element overlaps with deletion range
+            if elem_start < end_index and elem_end > start_index and "paragraph" in element:
+                paragraph = element["paragraph"]
+                para_elements = paragraph.get("elements", [])
+
+                # Process each text run in the paragraph
+                for para_elem in para_elements:
+                    if "textRun" not in para_elem:
+                        continue
+
+                    run_start = para_elem.get("startIndex", 0)
+                    run_end = para_elem.get("endIndex", 0)
+
+                    # Check if this run overlaps with deletion range
+                    if run_start < end_index and run_end > start_index:
+                        text_run = para_elem["textRun"]
+                        content_str = text_run.get("content", "")
+
+                        # Calculate what part of this run to delete
+                        delete_from = max(0, start_index - run_start)
+                        delete_to = min(run_end - run_start, end_index - run_start)
+
+                        # Convert to string offsets
+                        str_delete_from = self._calculate_utf16_offset(
+                            content_str, delete_from
+                        )
+                        str_delete_to = self._calculate_utf16_offset(
+                            content_str, delete_to
+                        )
+
+                        # Delete the text
+                        new_content = (
+                            content_str[:str_delete_from] + content_str[str_delete_to:]
+                        )
+                        text_run["content"] = new_content
+
+                        # Update this run's endIndex
+                        chars_deleted = delete_to - delete_from
+                        para_elem["endIndex"] = run_end - chars_deleted
+
+                # Update paragraph endIndex
+                element["endIndex"] = elem_end - deletion_len
+
+        # Shift all subsequent elements
+        self._shift_indexes_after(content, end_index, -deletion_len)
+
+    def _shift_indexes_after(
+        self, content: list[dict[str, Any]], after_index: int, shift_amount: int
+    ) -> None:
+        """Shift all indexes in elements after a certain point.
+
+        Args:
+            content: List of structural elements
+            after_index: Shift indexes after this point
+            shift_amount: Amount to shift (positive for insertion, negative for deletion)
+        """
+        for element in content:
+            elem_start = element.get("startIndex", 0)
+            elem_end = element.get("endIndex", 0)
+
+            # Only shift elements that come after the modification point
+            if elem_start >= after_index:
+                element["startIndex"] = elem_start + shift_amount
+                element["endIndex"] = elem_end + shift_amount
+
+                # Also shift nested elements
+                if "paragraph" in element:
+                    para_elements = element["paragraph"].get("elements", [])
+                    for para_elem in para_elements:
+                        para_elem["startIndex"] = para_elem.get("startIndex", 0) + shift_amount
+                        para_elem["endIndex"] = para_elem.get("endIndex", 0) + shift_amount
+
+                elif "table" in element:
+                    # Shift table cell indexes
+                    table = element["table"]
+                    for row in table.get("tableRows", []):
+                        for cell in row.get("tableCells", []):
+                            for cell_elem in cell.get("content", []):
+                                self._shift_element_recursive(cell_elem, shift_amount)
+
+    def _shift_element_recursive(
+        self, element: dict[str, Any], shift_amount: int
+    ) -> None:
+        """Recursively shift an element and all its children.
+
+        Args:
+            element: Element to shift
+            shift_amount: Amount to shift
+        """
+        element["startIndex"] = element.get("startIndex", 0) + shift_amount
+        element["endIndex"] = element.get("endIndex", 0) + shift_amount
+
+        if "paragraph" in element:
+            for para_elem in element["paragraph"].get("elements", []):
+                para_elem["startIndex"] = para_elem.get("startIndex", 0) + shift_amount
+                para_elem["endIndex"] = para_elem.get("endIndex", 0) + shift_amount
+
+        elif "table" in element:
+            for row in element["table"].get("tableRows", []):
+                for cell in row.get("tableCells", []):
+                    for cell_elem in cell.get("content", []):
+                        self._shift_element_recursive(cell_elem, shift_amount)
+
+    def _calculate_utf16_offset(self, text: str, utf16_units: int) -> int:
+        """Calculate string offset for a given UTF-16 code unit offset.
+
+        Args:
+            text: The text string
+            utf16_units: Number of UTF-16 code units from start
+
+        Returns:
+            String index (Python character position)
+        """
+        if utf16_units == 0:
+            return 0
+
+        units_counted = 0
+        for i, char in enumerate(text):
+            if units_counted >= utf16_units:
+                return i
+            # Emoji and other non-BMP chars are 2 UTF-16 units
+            if ord(char) >= 0x10000:
+                units_counted += 2
+            else:
+                units_counted += 1
+
+        return len(text)
