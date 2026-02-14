@@ -1,113 +1,59 @@
 ## Overview
 
-Python library that transforms Google Docs into an XML-based format optimized for LLM agents. Implements the pull/diff/push workflow.
+Python library that transforms Google Docs into an XML-based format optimized for LLM agents. Implements the pull/diff/push workflow. Agents interact with `document.xml` (semantic markup: `<h1>`, `<p>`, `<li>`, `<table>`) and `styles.xml` (factorized style definitions) instead of the verbose Google Docs API JSON.
 
-Instead of working with complex API responses, agents interact with clean XML files:
-- **document.xml** - Document content with semantic markup (`<h1>`, `<p>`, `<li>`, `<table>`)
-- **styles.xml** - Factorized style definitions (minimal, referenced by class attribute)
+Agent-facing skills that explain the XML format and editing workflow are in `server/skills/extradoc/`.
 
 ## Key Files
 
 | File | Purpose |
 |------|---------|
-| `src/extradoc/__main__.py` | CLI entry point with `pull`, `diff`, `push` commands |
-| `src/extradoc/transport.py` | `Transport` ABC, `GoogleDocsTransport`, `LocalFileTransport` |
-| `src/extradoc/xml_converter.py` | Converts Google Docs JSON to ExtraDoc XML format |
-| `src/extradoc/desugar.py` | Transforms sugar XML back to internal representation for diffing |
-| `src/extradoc/indexer.py` | UTF-16 code unit length calculation |
-| `src/extradoc/style_factorizer.py` | Extracts and minimizes styles |
-| `src/extradoc/style_hash.py` | Deterministic style ID generation |
-| `src/extradoc/style_converter.py` | Declarative style property mappings |
-| `src/extradoc/engine.py` | Top-level diff pipeline orchestrator |
-| `src/extradoc/parser.py` | Parses XML into typed `DocumentBlock` tree |
-| `src/extradoc/block_indexer.py` | UTF-16 index calculator for block trees |
-| `src/extradoc/aligner.py` | Block alignment for tree diffing |
-| `src/extradoc/differ.py` | Tree differ producing `ChangeNode` tree |
-| `src/extradoc/walker.py` | Walks change tree to emit `batchUpdate` requests |
-| `src/extradoc/push.py` | Push orchestration (3-batch strategy) |
-| `src/extradoc/generators/` | Request generators (content, structural, table) |
-| `src/extradoc/request_generators/structural.py` | Structural request utilities (footnote/header/footer ID handling) |
-| `src/extradoc/request_generators/table.py` | Table row/column insert/delete request generation |
+| `src/extradoc/client.py` | `DocsClient` with `pull()`, `diff()`, `push()` — main orchestrator |
+| `src/extradoc/transport.py` | `Transport` ABC (`get_document`, `batch_update`, `list_comments`), `GoogleDocsTransport`, `LocalFileTransport` |
+| `src/extradoc/xml_converter.py` | `convert_document_to_xml(raw_doc, comments)` → `(document_xml, styles_xml)` |
+| `src/extradoc/desugar.py` | Sugar XML (`<h1>`, `<li>`) → internal representation (`<p style="HEADING_1">`, `<p bullet="...">`) |
+| `src/extradoc/engine.py` | `DiffEngine.diff(pristine_xml, current_xml)` → `(requests, change_tree)` |
+| `src/extradoc/parser.py` | `BlockParser.parse(xml)` → `DocumentBlock` tree (`Tab` → `Segment` → `Paragraph`/`Table`) |
+| `src/extradoc/block_indexer.py` | Computes UTF-16 code unit indices on the block tree |
+| `src/extradoc/differ.py` | `TreeDiffer.diff(pristine, current)` → `ChangeNode` tree with `ADDED`/`DELETED`/`MODIFIED` ops |
+| `src/extradoc/walker.py` | `RequestWalker.walk(change_tree)` → `list[dict]` of `batchUpdate` requests (processes segments backwards by index) |
+| `src/extradoc/push.py` | 3-batch push strategy with placeholder→real ID rewriting for headers/footers/footnotes/tabs |
+| `src/extradoc/generators/` | Request generators: `ContentGenerator`, `TableGenerator`, `StructuralGenerator` |
+| `src/extradoc/indexer.py` | UTF-16 code unit length calculation (emoji = 2 units) |
+| `src/extradoc/style_factorizer.py` | Extracts inline styles into shared classes |
 
 ## Documentation
 
-- `docs/extradoc-spec.md` - Complete XML format specification
+- `docs/extradoc-spec.md` - XML format specification
 - `docs/extradoc-diff-specification.md` - Diff specification
 - `docs/gaps.md` - Known bugs and limitations
-- `docs/googledocs/` - Google Docs API reference (120+ pages) - **use this instead of web fetching**
-  - `docs/googledocs/api/` - Individual API request/response types (CreateParagraphBulletsRequest, etc.)
-  - `docs/googledocs/lists.md` - Working with bullet/numbered lists
+- `docs/googledocs/` - Google Docs API reference (120+ pages) — **use this instead of web fetching**
+  - `docs/googledocs/api/` - Individual API request/response types
   - `docs/googledocs/rules-behavior.md` - Index behavior rules for batchUpdate
+
+## Pull Data Flow
+
+`DocsClient.pull()` fetches the document via `Transport.get_document()` → raw JSON dict, then `Transport.list_comments()` → comment list. These feed into `convert_document_to_xml(raw, comments)` which walks the nested Google Docs JSON structure (tabs → body/headers/footers → paragraphs → text runs), converts paragraphs to sugar elements (`<h1>`, `<li type="bullet">`), factorizes inline styles into `styles.xml` classes via `style_factorizer.py`, and positions comment anchors using offset/length or `quotedFileContent` search. The output `document.xml` + `styles.xml` are written to disk alongside `.pristine/document.zip` (the baseline for future diffs) and optionally `.raw/document.json`.
+
+## Diff + Push Data Flow
+
+`DocsClient.diff()` loads current `document.xml` and pristine XML from `.pristine/document.zip`, then delegates to `DiffEngine.diff()`. The engine pipeline: `BlockParser.parse()` builds typed `DocumentBlock` trees from both XMLs, `BlockIndexer` computes UTF-16 indices on the pristine tree, `TreeDiffer.diff()` aligns blocks via `BlockAligner` and produces a `ChangeNode` tree (each node tagged `ADDED`/`DELETED`/`MODIFIED`/`UNCHANGED`), and `RequestWalker.walk()` traverses the change tree backwards by index (highest first, as required by the Google Docs API) delegating to `ContentGenerator`, `TableGenerator`, and `StructuralGenerator` to emit `batchUpdate` request dicts. `DocsClient.push()` then classifies these requests and executes them in 3 batches: (1) tab/header/footer creation → capture real IDs, (2) main content + footnote creation → capture footnote IDs, (3) footnote content with rewritten segment IDs. Placeholder IDs used in XML are mapped to real API-assigned IDs between batches.
+
+## Debugging
+
+When push produces unexpected results, run `diff` first and save its output for inspection — it shows the exact `batchUpdate` requests that will be sent. Compare the pristine XML (unzip `.pristine/document.zip`) against the current `document.xml` to verify the edit is what you intended. After push, re-pull and diff the before/after XMLs to confirm the API applied changes correctly. For index-related bugs, check UTF-16 code unit calculations in `indexer.py` — emoji and surrogate pairs are the usual culprits. Headers, footers, footnotes, and table cells each have independent index spaces starting at 0.
+
+## Mock API
+
+The `src/extradoc/mock/` package provides a pure-function mock of the Google Docs `batchUpdate` API for testing. Handlers modify document structure only; after each request, `reindex_and_normalize_all_tabs()` recomputes all UTF-16 indices from actual text content. The mock tracks style provenance via an `__explicit__` metadata key to replicate the real API's inherited-vs-explicit style behavior. Currently passes 61/61 test scenarios against the real API.
 
 ## Key Gotchas
 
-**UTF-16 indexes:** Google Docs uses UTF-16 code unit indexes, not character counts. Emoji and certain Unicode characters count as 2 units. The `indexer.py` module handles this.
-
-**Separate index spaces:** Headers, footers, and footnotes each have their own index space starting at 0. The body is yet another index space.
-
-**Syntactic sugar:** The XML uses sugar elements like `<h1>`, `<li type="bullet">` for readability. These are desugared to internal representation (`<p style="HEADING_1">`, `<p bullet="...">`) before diffing.
-
-**HR is read-only:** Horizontal rules cannot be added or deleted via the API - only their content can be modified.
-
-**Segment-end newline:** Google Docs API forbids deleting the final newline of a segment (body, header, footer, footnote, table cell). When deleting content at segment end, the delete range must exclude the final newline, and insert operations should not include a trailing newline.
-
-**Pristine state:** After push, always re-pull before making additional changes.
-
-## CLI Interface
-
-```bash
-# Download a document to local folder
-uv run python -m extradoc pull <document_url_or_id> [output_dir]
-# Output: ./<document_id>/ or specified output_dir
-
-# Options:
-#   --no-raw       Don't save raw API response to .raw/ folder
-
-# Preview changes (dry run)
-uv run python -m extradoc diff <folder>
-
-# Apply changes to Google Docs
-uv run python -m extradoc push <folder> [-f|--force] [--verify]
-```
-
-Also works via `uvx extradoc pull/diff/push`.
-
-## Folder Structure
-
-After `pull`, the folder contains:
-```
-<document_id>/
-  document.xml          # ExtraDoc XML (main content)
-  styles.xml            # Factorized style definitions
-  .raw/
-    document.json       # Raw Google Docs API response
-  .pristine/
-    document.zip        # Original state for diff comparison
-```
-
-**document.xml structure:**
-```xml
-<?xml version="1.0" encoding="UTF-8"?>
-<doc id="DOCUMENT_ID" revision="REVISION_ID">
-  <meta>
-    <title>Document Title</title>
-  </meta>
-  <tab id="t.0" title="Tab 1" class="_base">
-    <body>
-      <h1>Heading</h1>
-      <p>Paragraph text.</p>
-      <li type="bullet" level="0">Bullet point</li>
-      <table rows="2" cols="2">
-        <tr><td><p>Cell</p></td><td><p>Cell</p></td></tr>
-      </table>
-    </body>
-    <header id="kix.abc123" class="_base">...</header>
-    <footer id="kix.def456" class="_base">...</footer>
-  </tab>
-</doc>
-```
-
-The agent edits files in place. `diff` and `push` compare against `.pristine/` to determine changes.
+- **UTF-16 indexes:** Google Docs uses UTF-16 code unit indexes, not character counts. `indexer.py` handles this.
+- **Separate index spaces:** Headers, footers, footnotes, and table cells each have their own index space starting at 0.
+- **Syntactic sugar:** `<h1>`, `<li>` are desugared to `<p style="HEADING_1">`, `<p bullet="...">` before diffing.
+- **Segment-end newline:** The API forbids deleting the final `\n` of any segment. Delete ranges must exclude it; inserts must not include trailing `\n`.
+- **Pristine state:** After push, always re-pull before making additional changes.
 
 ## Development
 
@@ -121,87 +67,4 @@ uv run mypy src/extradoc
 
 ## Testing
 
-Tests are end-to-end and work against real Google Docs. Always pull to the `extradoc/output/` directory (gitignored).
-
-**Test workflow:**
-1. **Pull** the document to `output/`
-2. **Edit** the XML files
-3. **Diff** to preview changes - save diff output in same folder for debugging
-4. **Push** to apply changes
-5. **Pull again** to confirm changes were applied correctly
-
-If push fails or subsequent pull doesn't match expectations, the saved diff helps debug.
-
-### Golden File Testing
-
-Golden files store raw API responses for reproducible testing:
-
-```
-tests/golden/
-  <document_id>.json    # Raw Google Docs API response
-```
-
-### Creating New Golden Files
-
-1. Create a Google Doc with the features to test
-2. Pull it: `uv run python -m extradoc pull <url> output/`
-3. Copy `.raw/document.json` to `tests/golden/<document_id>.json`
-4. Verify the output looks correct
-5. Commit the golden file
-
-## Architecture Notes
-
-### Transport-Based Design
-
-```
-┌─────────────────┐     ┌──────────────────┐     ┌─────────────────┐
-│ __main__.py     │────▶│ Transport        │────▶│ Google API /    │
-│ (CLI + pull)    │     │ (data fetching)  │     │ Local Files     │
-├─────────────────┤     └──────────────────┘     └─────────────────┘
-│ PushClient      │
-│ (diff + push)   │
-└─────────────────┘
-```
-
-- `Transport` is an abstract base class with `get_document()`, `batch_update()`, `close()`
-- `GoogleDocsTransport` - Production: makes real API calls via httpx
-
-### Pull Flow
-
-1. **Fetch document** - `transport.get_document()` gets full document JSON
-2. **Convert to XML** - `convert_document_to_xml()` transforms to ExtraDoc format
-3. **Write files** - Save `document.xml`, `styles.xml` to disk
-4. **Save raw** - Optionally save `.raw/document.json`
-5. **Pristine copy** - Create `.pristine/document.zip` for diff/push
-
-### Diff/Push Flow
-
-1. **Parse** - `parser.py` builds `DocumentBlock` trees from pristine and current XML
-2. **Diff** - `differ.py` `TreeDiffer` compares trees, producing a `ChangeNode` tree
-3. **Generate** - `walker.py` walks the change tree to emit `batchUpdate` requests
-4. **Push** - `push.py` `PushClient` orchestrates the 3-batch strategy:
-   - Batch 1: createHeader/createFooter → capture real IDs
-   - Batch 2: Main body + createFootnote → capture real footnote IDs
-   - Batch 3: Footnote content requests (with rewritten segment IDs)
-
-## Current Status
-
-**Working (Pull):**
-- `pull` - Downloads document to local XML files
-- Transport layer (GoogleDocsTransport + LocalFileTransport)
-- XML conversion with semantic markup
-- Style factorization
-- Multi-tab document support
-- Header/footer/footnote support (inline footnote model)
-
-**Working (Push):**
-- Table operations: `insertTable` with cell content, `insertTableRow`, `deleteTableRow`, `insertTableColumn`, `deleteTableColumn`
-- Header/footer operations: `createHeader`, `deleteHeader`, `createFooter`, `deleteFooter`
-- Tab operations: `addDocumentTab`, `deleteTab`
-- Footnote operations: `createFootnote` (at end), `deleteContentRange` (for deletion)
-- ContentBlock operations: `insertText`, `updateTextStyle`, `updateParagraphStyle`, `createParagraphBullets`
-- Text formatting: bold, italic, underline, strikethrough, superscript, subscript, links
-- Paragraph styles: headings (h1-h6), title, subtitle
-- List types: bullet, decimal, alpha, roman
-
-**Known Issues:** See `docs/gaps.md` for current bugs and limitations.
+Golden files in `tests/golden/<document_id>.json` store raw API responses for reproducible pull testing. End-to-end tests work against real Google Docs — always pull to `extradoc/output/` (gitignored).
