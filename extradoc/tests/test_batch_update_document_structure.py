@@ -14,7 +14,7 @@ Unlike test_mock_api.py which focuses on validation, these tests verify:
 
 from __future__ import annotations
 
-from extradoc.mock_api import MockGoogleDocsAPI
+from extradoc.mock.api import MockGoogleDocsAPI
 
 
 def create_minimal_document() -> dict[str, any]:

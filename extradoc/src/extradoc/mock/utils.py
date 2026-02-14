@@ -47,6 +47,22 @@ def strip_control_characters(text: str) -> str:
     return text
 
 
+def styles_equal_ignoring_explicit(s1: dict[str, Any], s2: dict[str, Any]) -> bool:
+    """Compare two textStyle dicts ignoring the __explicit__ metadata key."""
+    d1 = {k: v for k, v in s1.items() if k != "__explicit__"}
+    d2 = {k: v for k, v in s2.items() if k != "__explicit__"}
+    return d1 == d2
+
+
+def merge_explicit_keys(target: dict[str, Any], source: dict[str, Any]) -> None:
+    """Merge __explicit__ keys from source into target (union)."""
+    t_explicit = set(target.get("__explicit__", []))
+    s_explicit = set(source.get("__explicit__", []))
+    merged = t_explicit | s_explicit
+    if merged:
+        target["__explicit__"] = sorted(merged)
+
+
 def table_cell_paragraph_style() -> dict[str, Any]:
     """Return the default paragraph style for a new table cell.
 

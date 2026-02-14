@@ -12,8 +12,8 @@ from datetime import datetime
 from pathlib import Path
 from typing import Any
 
+from extradoc.mock.api import MockGoogleDocsAPI
 from extradoc.mock.exceptions import MockAPIError
-from extradoc.mock_api import MockGoogleDocsAPI
 from extradoc.transport import APIError, DocumentData, Transport
 
 

@@ -11,7 +11,12 @@ from typing import Any
 
 from extradoc.mock.exceptions import ValidationError
 from extradoc.mock.navigation import get_segment, get_tab
-from extradoc.mock.utils import calculate_utf16_offset, strip_control_characters
+from extradoc.mock.utils import (
+    calculate_utf16_offset,
+    merge_explicit_keys,
+    strip_control_characters,
+    styles_equal_ignoring_explicit,
+)
 from extradoc.mock.validation import (
     validate_no_surrogate_pair_split,
     validate_no_table_cell_final_newline_deletion,
@@ -22,33 +27,34 @@ def _strip_link_style(run_style: dict[str, Any]) -> dict[str, Any]:
     """Build inherited style for text inserted into a link run.
 
     The real API strips link, foregroundColor from the inserted text.
-    If the run has explicit non-link styles (bold, italic, strikethrough, etc.),
-    those are kept. If the run only has link auto-styling (link, foregroundColor,
-    underline), the result is {} — the underline was just link decoration.
+    Only properties that were explicitly set via updateTextStyle (tracked
+    in __explicit__) are kept. If there are no explicit non-link styles,
+    the result is {}.
 
-    Note: This heuristic cannot distinguish styles that were explicitly set
-    via updateTextStyle from styles inherited during insertText. The real API
-    tracks this provenance, so some cases will remain inaccurate.
+    Note: styles from the original document that weren't set via
+    updateTextStyle in this mock session will not have __explicit__
+    tracking, so they'll be treated as inherited and stripped. This
+    matches the real API's behavior for most cases but may differ when
+    original-doc styles should be preserved (see S44 in known failures).
     """
-    # Check if there are explicit styles beyond link auto-styling
-    _explicit_keys = {
-        "bold",
-        "italic",
-        "strikethrough",
-        "smallCaps",
-        "baselineOffset",
-        "fontSize",
-        "weightedFontFamily",
-    }
-    has_explicit = any(k in run_style for k in _explicit_keys)
-    if not has_explicit:
+    explicit = set(run_style.get("__explicit__", []))
+    link_auto_keys = {"link", "foregroundColor", "underline"}
+    explicit_non_link = explicit - link_auto_keys
+    if not explicit_non_link:
         return {}
-    # Keep everything except link and foregroundColor
-    return {
-        k: copy.deepcopy(v)
-        for k, v in run_style.items()
-        if k not in ("link", "foregroundColor")
-    }
+    result: dict[str, Any] = {}
+    for k, v in run_style.items():
+        if k == "__explicit__":
+            continue
+        if k in ("link", "foregroundColor"):
+            continue
+        if k == "underline" and "underline" not in explicit:
+            continue
+        result[k] = copy.deepcopy(v)
+    new_explicit = sorted(explicit_non_link & set(result.keys()))
+    if new_explicit:
+        result["__explicit__"] = new_explicit
+    return result
 
 
 def handle_insert_text(
@@ -470,15 +476,17 @@ def _delete_content_from_segment(
     for run in surviving_runs:
         if (
             consolidated
-            and consolidated[-1][1] == run[1]
+            and styles_equal_ignoring_explicit(consolidated[-1][1], run[1])
             and "\n" not in consolidated[-1][0]
             # Only consolidate across paragraph boundaries
             and consolidated[-1][2] is not run[2]
         ):
             prev = consolidated[-1]
+            merged_style = copy.deepcopy(prev[1])
+            merge_explicit_keys(merged_style, run[1])
             consolidated[-1] = (
                 prev[0] + run[0],
-                prev[1],
+                merged_style,
                 prev[2],
                 prev[3] or run[3],
             )

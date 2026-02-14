@@ -99,8 +99,11 @@ def handle_create_paragraph_bullets(
             tr = elem.get("textRun")
             if tr and tr.get("content", "").strip():
                 src_style = tr.get("textStyle", {})
+                explicit = set(src_style.get("__explicit__", []))
                 if src_style.get("bold"):
                     bullet_text_style["bold"] = True
+                if src_style.get("italic") and "italic" in explicit:
+                    bullet_text_style["italic"] = True
                 break
 
         paragraph["bullet"] = {

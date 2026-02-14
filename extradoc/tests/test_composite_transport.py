@@ -6,14 +6,13 @@ import json
 from pathlib import Path
 
 import pytest
-from anyio import from_thread
 
 from extradoc.composite_transport import (
     CompositeTransport,
     MismatchLogger,
     MockTransport,
 )
-from extradoc.mock_api import MockGoogleDocsAPI
+from extradoc.mock.api import MockGoogleDocsAPI
 from extradoc.transport import DocumentData
 
 
@@ -60,7 +59,7 @@ class MockRealTransport:
         self.mock_api = MockGoogleDocsAPI(document)
         self.document_id = document["documentId"]
 
-    async def get_document(self, document_id: str) -> DocumentData:
+    async def get_document(self, _document_id: str) -> DocumentData:
         response = self.mock_api.get()
         return DocumentData(
             document_id=response["documentId"],
@@ -68,16 +67,18 @@ class MockRealTransport:
             raw=response,
         )
 
-    async def batch_update(
-        self, document_id: str, requests: list[dict]
-    ) -> dict:
+    async def batch_update(self, _document_id: str, requests: list[dict]) -> dict:
         return self.mock_api.batch_update(requests)
 
-    async def list_comments(self, file_id: str) -> list[dict]:
+    async def list_comments(self, _file_id: str) -> list[dict]:
         return []
 
     async def create_reply(
-        self, file_id: str, comment_id: str, content: str, action: str | None = None
+        self,
+        _file_id: str,
+        _comment_id: str,
+        content: str,
+        _action: str | None = None,
     ) -> dict:
         return {"id": "reply1", "content": content}
 
@@ -277,7 +278,7 @@ async def test_composite_transport_mock_error():
             self.mock_api = MockGoogleDocsAPI(document)
             self.document_id = document["documentId"]
 
-        async def get_document(self, document_id: str) -> DocumentData:
+        async def get_document(self, _document_id: str) -> DocumentData:
             response = self.mock_api.get()
             return DocumentData(
                 document_id=response["documentId"],
@@ -285,18 +286,20 @@ async def test_composite_transport_mock_error():
                 raw=response,
             )
 
-        async def batch_update(
-            self, document_id: str, requests: list[dict]
-        ) -> dict:
+        async def batch_update(self, _document_id: str, _requests: list[dict]) -> dict:
             # Simulate a "permissive" real API that accepts the request
             # but returns a different result than mock
             return {"replies": [{"insertText": {}}]}
 
-        async def list_comments(self, file_id: str) -> list[dict]:
+        async def list_comments(self, _file_id: str) -> list[dict]:
             return []
 
         async def create_reply(
-            self, file_id: str, comment_id: str, content: str, action: str | None = None
+            self,
+            _file_id: str,
+            _comment_id: str,
+            content: str,
+            _action: str | None = None,
         ) -> dict:
             return {"id": "reply1", "content": content}
 
@@ -337,9 +340,7 @@ async def test_composite_transport_mock_error():
         assert len(mismatch_dirs) > 0
 
         mismatch_dir = mismatch_dirs[0]
-        mock_response = json.loads(
-            (mismatch_dir / "mock_response.json").read_text()
-        )
+        mock_response = json.loads((mismatch_dir / "mock_response.json").read_text())
         assert "error" in mock_response
 
         await composite.close()

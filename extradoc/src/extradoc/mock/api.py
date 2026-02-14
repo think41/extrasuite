@@ -66,6 +66,7 @@ class MockGoogleDocsAPI:
     def get(self) -> dict[str, Any]:
         result = copy.deepcopy(self._document)
         result["revisionId"] = self._revision_id
+        _strip_explicit_keys(result)
         return result
 
     def batch_update(
@@ -200,3 +201,14 @@ class MockGoogleDocsAPI:
             raise ValidationError(f"Unsupported request type: {request_type}")
 
         return handler(self._document, request_data, self._structure_tracker)
+
+
+def _strip_explicit_keys(obj: Any) -> None:
+    """Recursively remove __explicit__ keys from document structure."""
+    if isinstance(obj, dict):
+        obj.pop("__explicit__", None)
+        for v in obj.values():
+            _strip_explicit_keys(v)
+    elif isinstance(obj, list):
+        for item in obj:
+            _strip_explicit_keys(item)

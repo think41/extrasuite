@@ -100,6 +100,12 @@ def handle_update_text_style(
             middle_text = content[split_start:split_end]
             middle_style = copy.deepcopy(old_style)
             _apply_text_style_to_ts(middle_style, text_style, field_list)
+            # Track which fields were explicitly set via updateTextStyle
+            existing_explicit = set(middle_style.get("__explicit__", []))
+            existing_explicit.update(f for f in field_list if f in text_style)
+            # Remove fields that were cleared (in field_list but not in text_style)
+            existing_explicit -= {f for f in field_list if f not in text_style}
+            middle_style["__explicit__"] = sorted(existing_explicit)
             new_elements.append(
                 {
                     "startIndex": el_start + split_start,
@@ -279,9 +285,18 @@ def handle_update_paragraph_style(
                     tr = elem.get("textRun")
                     if tr:
                         ts = tr.get("textStyle", {})
+                        explicit = set(ts.get("__explicit__", []))
+                        # Bold is always cleared (headings are bold by default).
+                        # Italic/underline are only cleared if NOT explicitly
+                        # set via updateTextStyle. The real API also preserves
+                        # I/U from the original document, but we can't track
+                        # provenance for pre-existing styles (only for styles
+                        # set via updateTextStyle during this mock session).
                         ts.pop("bold", None)
-                        ts.pop("italic", None)
-                        ts.pop("underline", None)
+                        if "italic" not in explicit:
+                            ts.pop("italic", None)
+                        if "underline" not in explicit:
+                            ts.pop("underline", None)
         else:
             ps.pop("headingId", None)
 

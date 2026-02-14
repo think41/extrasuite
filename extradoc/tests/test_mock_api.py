@@ -4,7 +4,8 @@ from __future__ import annotations
 
 import pytest
 
-from extradoc.mock_api import MockAPIError, MockGoogleDocsAPI, ValidationError
+from extradoc.mock.api import MockGoogleDocsAPI
+from extradoc.mock.exceptions import MockAPIError, ValidationError
 
 
 def create_minimal_document() -> dict[str, any]:
