@@ -633,21 +633,26 @@ class CompositeTransport(Transport):
         """Check if a diff is a textStyle bold/italic/underline-only divergence.
 
         Allowed when:
-        1. The path contains .textRun.textStyle
+        1. The path contains .textRun.textStyle or .bullet.textStyle
         2. The diverging properties are only from {bold, italic, underline}
         3. One side is {} or missing, the other has only B/I/U keys
         """
         _BIU_KEYS = {"bold", "italic", "underline"}
 
-        # Match paths like ...textRun.textStyle or ...textRun.textStyle.bold
-        if ".textRun.textStyle" not in diff_line:
+        # Match paths like ...textRun.textStyle or ...bullet.textStyle
+        has_text_run_ts = ".textRun.textStyle" in diff_line
+        has_bullet_ts = ".bullet.textStyle" in diff_line
+        if not has_text_run_ts and not has_bullet_ts:
             return False
+
+        # Build regex pattern to match either textRun.textStyle or bullet.textStyle
+        ts_pattern = r"(?:textRun|bullet)\.textStyle"
 
         # Case 1: EXTRA/MISSING for a B/I/U key inside textStyle
         # e.g. "EXTRA in mock at ...textStyle.bold: True"
         # e.g. "MISSING in mock at ...textStyle.italic: True"
         extra_missing = re.search(
-            r"(EXTRA|MISSING) in mock at .*\.textRun\.textStyle\.(\w+):", diff_line
+            rf"(EXTRA|MISSING) in mock at .*\.{ts_pattern}\.(\w+):", diff_line
         )
         if extra_missing:
             key = extra_missing.group(2)
@@ -655,7 +660,7 @@ class CompositeTransport(Transport):
 
         # Case 2: VALUE diff on a B/I/U key
         # e.g. "VALUE at ...textStyle.bold: real=True vs mock=False"
-        value_match = re.search(r"VALUE at .*\.textRun\.textStyle\.(\w+):", diff_line)
+        value_match = re.search(rf"VALUE at .*\.{ts_pattern}\.(\w+):", diff_line)
         if value_match:
             key = value_match.group(1)
             return key in _BIU_KEYS

@@ -87,21 +87,38 @@ def handle_create_paragraph_bullets(
     lists = document_tab.setdefault("lists", {})
     lists[list_id] = {"listProperties": {"nestingLevels": nesting_levels}}
 
+    # Heading styles that are inherently bold in Google Docs
+    _bold_headings = {"HEADING_1", "HEADING_2", "TITLE"}
+
     # Apply bullet to each paragraph in range
     for paragraph in get_paragraphs_in_range(tab, start_index, end_index):
         # Build bullet textStyle — inherit bold from first non-empty text run.
+        # For inherently-bold headings (HEADING_1, HEADING_2, TITLE), always
+        # set bold regardless of text run styles.
         # The real API also copies italic when it was explicitly set via
-        # updateTextStyle, but we can't distinguish explicit vs inherited
-        # styles, so we only copy bold to avoid false positives.
+        # updateTextStyle.
         bullet_text_style: dict[str, Any] = {}
+        ps = paragraph.get("paragraphStyle", {})
+        named_style = ps.get("namedStyleType", "")
+
+        if named_style in _bold_headings:
+            bullet_text_style["bold"] = True
+        else:
+            first_elements = paragraph.get("elements", [])
+            for elem in first_elements:
+                tr = elem.get("textRun")
+                if tr and tr.get("content", "").strip():
+                    if tr.get("textStyle", {}).get("bold"):
+                        bullet_text_style["bold"] = True
+                    break
+
+        # Copy italic only when explicitly set via updateTextStyle
         first_elements = paragraph.get("elements", [])
         for elem in first_elements:
             tr = elem.get("textRun")
             if tr and tr.get("content", "").strip():
                 src_style = tr.get("textStyle", {})
                 explicit = set(src_style.get("__explicit__", []))
-                if src_style.get("bold"):
-                    bullet_text_style["bold"] = True
                 if src_style.get("italic") and "italic" in explicit:
                     bullet_text_style["italic"] = True
                 break

@@ -18,6 +18,8 @@ class DocumentStructureTracker:
 
     def __init__(self, document: dict[str, Any]) -> None:
         self.tables: list[tuple[int, int]] = []
+        # For each table, store the cell content ranges (start, end) for validation
+        self.table_cell_ranges: list[list[tuple[int, int]]] = []
         self.table_of_contents: list[tuple[int, int]] = []
         self.equations: list[tuple[int, int]] = []
         self.section_breaks: list[int] = []
@@ -36,6 +38,15 @@ class DocumentStructureTracker:
 
             if "table" in element:
                 self.tables.append((start, end))
+                cell_ranges: list[tuple[int, int]] = []
+                for row in element["table"].get("tableRows", []):
+                    for cell in row.get("tableCells", []):
+                        cell_content = cell.get("content", [])
+                        if cell_content:
+                            c_start = cell_content[0].get("startIndex", 0)
+                            c_end = cell_content[-1].get("endIndex", 0)
+                            cell_ranges.append((c_start, c_end))
+                self.table_cell_ranges.append(cell_ranges)
             elif "tableOfContents" in element:
                 self.table_of_contents.append((start, end))
                 toc = element["tableOfContents"]
@@ -53,9 +64,24 @@ class DocumentStructureTracker:
     def validate_delete_range(self, start_index: int, end_index: int) -> None:
         """Validate that deletion doesn't violate structural rules."""
         # Validate tables
-        for table_start, table_end in self.tables:
+        for i, (table_start, table_end) in enumerate(self.tables):
             if start_index > table_start and end_index < table_end:
-                continue
+                # Range is inside the table — only valid if it falls entirely
+                # within a single cell's content range (not structural overhead)
+                cell_ranges = (
+                    self.table_cell_ranges[i] if i < len(self.table_cell_ranges) else []
+                )
+                in_cell = any(
+                    c_start <= start_index and end_index <= c_end
+                    for c_start, c_end in cell_ranges
+                )
+                if in_cell:
+                    continue
+                raise ValidationError(
+                    f"Invalid deletion range. Cannot delete the requested range. "
+                    f"Range {start_index}-{end_index} targets table structural "
+                    f"elements, not cell content."
+                )
             if self._is_partial_overlap(start_index, end_index, table_start, table_end):
                 raise ValidationError(
                     f"Cannot partially delete table at indices {table_start}-{table_end}. "
