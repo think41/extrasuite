@@ -179,10 +179,13 @@ def handle_update_text_style(
                     if fc == _link_blue:
                         ts.pop("foregroundColor", None)
 
-    # Update bullet.textStyle for affected bulleted non-heading paragraphs.
-    # The real API rebuilds bullet.textStyle from the first non-empty text run's bold
-    # when "bold" is being changed. Heading paragraphs are excluded — the real API
-    # does not modify bullet.textStyle on heading paragraphs via updateTextStyle.
+    # Update bullet.textStyle for affected bulleted paragraphs.
+    # The real API rebuilds bullet.textStyle from the text runs' bold state
+    # when "bold" is being changed.
+    #
+    # For non-heading paragraphs: checks the first non-empty text run.
+    # For heading paragraphs: checks ALL non-empty text runs — only sets
+    # bullet.textStyle.bold if every non-empty run has bold.
     _heading_names = {
         "HEADING_1",
         "HEADING_2",
@@ -197,16 +200,28 @@ def handle_update_text_style(
             if not bullet:
                 continue
             ps = paragraph.get("paragraphStyle", {})
-            if ps.get("namedStyleType", "") in _heading_names:
-                continue
+            is_heading = ps.get("namedStyleType", "") in _heading_names
             # Rebuild bullet.textStyle from scratch — real API replaces, not merges
-            has_bold = False
-            for elem in paragraph.get("elements", []):
-                tr = elem.get("textRun")
-                if tr and tr.get("content", "").strip():
-                    if tr.get("textStyle", {}).get("bold"):
-                        has_bold = True
-                    break
+            if is_heading:
+                # Headings: ALL non-empty runs must have bold
+                non_empty_runs = [
+                    elem.get("textRun")
+                    for elem in paragraph.get("elements", [])
+                    if elem.get("textRun")
+                    and elem["textRun"].get("content", "").strip()
+                ]
+                has_bold = bool(non_empty_runs) and all(
+                    tr.get("textStyle", {}).get("bold") for tr in non_empty_runs
+                )
+            else:
+                # Non-headings: check first non-empty run only
+                has_bold = False
+                for elem in paragraph.get("elements", []):
+                    tr = elem.get("textRun")
+                    if tr and tr.get("content", "").strip():
+                        if tr.get("textStyle", {}).get("bold"):
+                            has_bold = True
+                        break
             bullet["textStyle"] = {"bold": True} if has_bold else {}
 
     # Run consolidation is now handled by normalize_segment in reindex pass

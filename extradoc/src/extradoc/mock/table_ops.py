@@ -88,18 +88,68 @@ def handle_insert_table(
             f"Could not find insertion point for table at index {index}"
         )
 
-    # Step 3: Build table element (indices will be fixed by reindex)
-    table_elem = _build_table_element(rows, columns)
+    # Step 3: Resolve inherited textStyle from the preceding paragraph's named style.
+    # The real API propagates textStyle properties (e.g. fontSize) from the preceding
+    # paragraph's named style into newly created table cells.
+    inherited_text_style = _resolve_preceding_text_style(tab, inject_idx, content)
 
-    # Step 4: Insert table into content array
+    # Step 4: Build table element (indices will be fixed by reindex)
+    table_elem = _build_table_element(rows, columns, inherited_text_style)
+
+    # Step 5: Insert table into content array
     content.insert(inject_idx, table_elem)
 
     # No index shifting — reindex handles it
     return {}
 
 
-def _build_table_element(rows: int, columns: int) -> dict[str, Any]:
+def _resolve_preceding_text_style(
+    tab: dict[str, Any],
+    inject_idx: int,
+    content: list[dict[str, Any]],
+) -> dict[str, Any]:
+    """Resolve inherited textStyle from the preceding paragraph's named style.
+
+    When the real API inserts a table after an empty heading paragraph (one
+    whose only content is the trailing newline), cells inherit textStyle
+    properties (like fontSize) from the heading's named style definition.
+    Non-empty paragraphs do not trigger this inheritance.
+    """
+    # Find the paragraph just before the insertion point
+    if inject_idx <= 0:
+        return {}
+
+    prev_element = content[inject_idx - 1]
+    paragraph = prev_element.get("paragraph")
+    if not paragraph:
+        return {}
+
+    # Only inherit from empty paragraphs (just the trailing "\n")
+    elements = paragraph.get("elements", [])
+    text = "".join(el.get("textRun", {}).get("content", "") for el in elements)
+    if text != "\n":
+        return {}
+
+    ps = paragraph.get("paragraphStyle", {})
+    named_style_type = ps.get("namedStyleType", "NORMAL_TEXT")
+    if named_style_type == "NORMAL_TEXT":
+        return {}
+
+    # Look up the named style's textStyle in the document
+    document_tab = tab.get("documentTab", {})
+    named_styles = document_tab.get("namedStyles", {}).get("styles", [])
+    for style_def in named_styles:
+        if style_def.get("namedStyleType") == named_style_type:
+            return dict(style_def.get("textStyle", {}))
+
+    return {}
+
+
+def _build_table_element(
+    rows: int, columns: int, cell_text_style: dict[str, Any] | None = None
+) -> dict[str, Any]:
     """Build a complete table element. Indices set to 0 — reindex fixes them."""
+    text_style = dict(cell_text_style) if cell_text_style else {}
     table_rows: list[dict[str, Any]] = []
 
     for _r in range(rows):
@@ -120,7 +170,7 @@ def _build_table_element(rows: int, columns: int) -> dict[str, Any]:
                                         "endIndex": 0,
                                         "textRun": {
                                             "content": "\n",
-                                            "textStyle": {},
+                                            "textStyle": dict(text_style),
                                         },
                                     }
                                 ],
