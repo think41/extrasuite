@@ -325,3 +325,38 @@ def handle_delete_tab(
     ]
 
     return {}
+
+
+def handle_update_document_tab_properties(
+    document: dict[str, Any],
+    request: dict[str, Any],
+    structure_tracker: Any,
+) -> dict[str, Any]:
+    """Handle UpdateDocumentTabPropertiesRequest."""
+    tab_properties = request.get("tabProperties")
+    fields = request.get("fields")
+
+    if not tab_properties:
+        raise ValidationError("tabProperties is required")
+    if not fields:
+        raise ValidationError("fields is required")
+
+    tab_id = tab_properties.get("tabId")
+    if not tab_id:
+        raise ValidationError("tabProperties.tabId is required")
+
+    tab = get_tab(document, tab_id)
+
+    # Parse the fields mask (comma-separated list)
+    field_list = [f.strip() for f in fields.split(",")]
+
+    # Get current tab properties
+    current_props = tab.get("tabProperties", {})
+
+    # Update fields specified in the mask
+    for field in field_list:
+        if field in tab_properties:
+            current_props[field] = tab_properties[field]
+
+    tab["tabProperties"] = current_props
+    return {}

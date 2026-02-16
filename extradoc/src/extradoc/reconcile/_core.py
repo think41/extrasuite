@@ -21,10 +21,13 @@ from extradoc.reconcile._alignment import (
 from extradoc.reconcile._comparators import documents_match
 from extradoc.reconcile._extractors import Segment, extract_segments
 from extradoc.reconcile._generators import (
+    _make_add_document_tab,
     _make_create_footer,
     _make_create_header,
     _make_delete_footer,
     _make_delete_header,
+    _make_delete_tab,
+    _make_update_document_tab_properties,
     generate_requests,
 )
 
@@ -59,13 +62,32 @@ def reconcile(base: Document, desired: Document) -> BatchUpdateDocumentRequest:
 
     tab_align = align_tabs(base_tabs, desired_tabs)
 
-    # Phase 4 will handle added/deleted tabs
-    # For now, process matched tabs only
+    # Process deleted tabs
+    for tab in tab_align.deleted:
+        tab_id = tab.tab_properties.tab_id if tab.tab_properties else None
+        if tab_id:
+            all_requests.append(_make_delete_tab(tab_id))
 
+    # Process matched tabs (check property changes + content changes)
     for base_tab, desired_tab in tab_align.matched:
         tab_id = base_tab.tab_properties.tab_id if base_tab.tab_properties else None
+
+        # Check for tab property changes
+        prop_req = _get_tab_property_update(base_tab, desired_tab)
+        if prop_req:
+            all_requests.append(prop_req)
+
+        # Reconcile tab content
         tab_requests = _reconcile_tab(base_tab, desired_tab, tab_id)
         all_requests.extend(tab_requests)
+
+    # Process added tabs
+    for tab in tab_align.added:
+        create_req = _create_tab_request(tab)
+        if create_req:
+            all_requests.append(create_req)
+        # Note: Content population deferred to Phase 5+ (ID assignment problem)
+        # Similar to segment creation in Phase 3
 
     # Convert request dicts to Request models
     requests = []
@@ -191,6 +213,57 @@ def _reconcile_new_segment(
     # For now, return empty list - segment is created but not populated
     # Phase 4 will implement proper content population
     return []
+
+
+def _get_tab_property_update(base_tab: Tab, desired_tab: Tab) -> dict[str, Any] | None:
+    """Check if tab properties changed and return update request if needed.
+
+    Args:
+        base_tab: Current tab
+        desired_tab: Desired tab
+
+    Returns:
+        updateDocumentTabProperties request dict, or None if no changes
+    """
+    base_props = base_tab.tab_properties
+    desired_props = desired_tab.tab_properties
+
+    if not base_props or not desired_props:
+        return None
+
+    tab_id = base_props.tab_id
+    if not tab_id:
+        return None
+
+    title_changed = base_props.title != desired_props.title
+    index_changed = base_props.index != desired_props.index
+
+    if not (title_changed or index_changed):
+        return None
+
+    return _make_update_document_tab_properties(
+        tab_id=tab_id,
+        title=desired_props.title if title_changed else None,
+        index=desired_props.index if index_changed else None,
+    )
+
+
+def _create_tab_request(tab: Tab) -> dict[str, Any] | None:
+    """Generate an addDocumentTab request for a new tab.
+
+    Args:
+        tab: The tab to create
+
+    Returns:
+        addDocumentTab request dict, or None if tab can't be created
+    """
+    if not tab.tab_properties:
+        return None
+
+    title = tab.tab_properties.title or "Untitled Tab"
+    index = tab.tab_properties.index
+
+    return _make_add_document_tab(title=title, index=index)
 
 
 def verify(
