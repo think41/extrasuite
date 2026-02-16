@@ -227,10 +227,48 @@ All 5 files created, 23 tests passing, lint/mypy/format clean. See `tests/test_r
 3. **Content diff is segment-agnostic**: `_reconcile_segment()` works for body/headers/footers/footnotes without modification
 4. **Mock API completeness**: Found and fixed bugs in mock's delete handlers — shows value of comprehensive testing
 
-### Phase 4: Multi-tab
-- `addDocumentTab`, `deleteTab`, `updateDocumentTabProperties`
-- Content requests scoped to tab via `tab_id` in Location/Range
-- **Tests**: add tab with content, delete tab, rename tab, modify content across tabs
+### Phase 4: Multi-tab — DONE
+
+62 tests passing (58 Phase 1-3 + 4 Phase 4). Tab deletion, property updates, and content modification work fully. Tab creation is partial (tab created but not populated).
+
+**Implementation:** Added tab reconciliation logic to `_core.py:reconcile()`. When tabs don't match by tab_id:
+- **Deleted tab**: generate `deleteTab` request
+- **Matched tab**: check for property changes (title, index) → `updateDocumentTabProperties`, then reconcile content
+- **Added tab**: generate `addDocumentTab` request (empty tab for now)
+
+**Request generators** in `_generators.py`:
+- `_make_add_document_tab(title, index)` → `addDocumentTab` with `tabProperties`
+- `_make_delete_tab(tab_id)` → `deleteTab`
+- `_make_update_document_tab_properties(tab_id, title, index)` → `updateDocumentTabProperties` with field mask
+
+**Helper functions** in `_core.py`:
+- `_get_tab_property_update(base_tab, desired_tab)` → compares tab properties, returns update request if changed
+- `_create_tab_request(tab)` → generates addDocumentTab request from desired tab
+
+**Mock API enhancement** in `segment_ops.py`:
+- Implemented `handle_update_document_tab_properties()` — parses field mask, updates tab properties
+- Moved from stubs (was validation-only) to full implementation
+- Updated `api.py` handler map to use `segment_ops` version
+
+**Tests** in `test_reconcile.py`:
+- `test_delete_tab` — delete a tab from multi-tab document
+- `test_create_tab` — add a new tab (partial: empty tab)
+- `test_rename_tab` — change tab title via updateDocumentTabProperties
+- `test_modify_content_across_tabs` — modify content in multiple tabs simultaneously
+
+**Partial implementation note**: `_create_tab_request()` generates `addDocumentTab` but doesn't populate content. Similar to Phase 3 segment creation, full content population requires solving the ID assignment problem:
+- User's desired document has tab with ID "t.xyz"
+- `addDocumentTab` returns new ID "t.abc" from API
+- Content requests must reference "t.abc", not "t.xyz"
+- This requires multi-pass execution or placeholder ID rewriting (like push.py's 3-batch approach)
+- Deferred to Phase 5+
+
+**Learnings for Phase 5:**
+1. **Tab deletion works cleanly**: Simple deleteTab request
+2. **Tab property updates work**: Field mask properly applied by mock
+3. **Tab creation needs multi-pass**: Same ID assignment problem as segments
+4. **Content processing is tab-scoped**: Existing content reconciliation works across tabs with tab_id parameter
+5. **Mock API quality**: Found missing implementation in stubs, implemented it properly
 
 ### Phase 5: Paragraph styles + text styles
 - `updateParagraphStyle` generation (namedStyleType, alignment, spacing, etc.) with field masks
