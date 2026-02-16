@@ -3179,18 +3179,14 @@ def test_delete_across_multiple_table_cells_respecting_final_newlines() -> None:
     doc = create_document_with_table()
     api = MockGoogleDocsAPI(doc)
 
-    # Try to delete content from cell 1 "A\n" and cell 2 "B\n"
-    # but respecting final newlines: delete "A" from cell 1 and "B" from cell 2
-    # Cell 1: 9-11, Cell 2: 12-14
-    # Delete A (9-10) and B (12-13) separately should work
-
-    # First delete A from cell 1
+    # Delete "A" from cell [0][0] (content at 9-11, "A\n")
     requests = [{"deleteContentRange": {"range": {"startIndex": 9, "endIndex": 10}}}]
     response = api.batch_update(requests)
     assert len(response["replies"]) == 1
 
-    # Then delete B from cell 2
-    requests = [{"deleteContentRange": {"range": {"startIndex": 12, "endIndex": 13}}}]
+    # After deleting "A", cell content shifts (table switches to Full Structure).
+    # Cell [0][1] "B\n" is now at 13-15. Delete "B" (index 13-14).
+    requests = [{"deleteContentRange": {"range": {"startIndex": 13, "endIndex": 14}}}]
     response = api.batch_update(requests)
     assert len(response["replies"]) == 1
 

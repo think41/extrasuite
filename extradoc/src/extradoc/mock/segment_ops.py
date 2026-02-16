@@ -270,6 +270,10 @@ def handle_delete_header(
     if header_id not in headers:
         raise ValidationError(f"Header not found: {header_id}")
 
+    del headers[header_id]
+    # Remove empty headers dict
+    if not headers:
+        document_tab.pop("headers", None)
     return {}
 
 
@@ -291,6 +295,10 @@ def handle_delete_footer(
     if footer_id not in footers:
         raise ValidationError(f"Footer not found: {footer_id}")
 
+    del footers[footer_id]
+    # Remove empty footers dict
+    if not footers:
+        document_tab.pop("footers", None)
     return {}
 
 
