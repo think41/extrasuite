@@ -3,6 +3,7 @@
 Phase 1: paragraph text in body.
 Phase 2: tables (body only).
 Phase 3: multi-segment (headers, footers, footnotes).
+Phase 4: multi-tab.
 """
 
 from typing import Any
@@ -838,3 +839,128 @@ class TestReconcileMultiSegment:
         assert "createFooter" in request_types
         # Note: verify() will fail because content isn't populated
         # This is expected for Phase 3 partial implementation
+
+
+def _make_multi_tab_doc(tabs: list[tuple[str, str, list[str]]]) -> Document:
+    """Helper: create a Document with multiple tabs.
+
+    Args:
+        tabs: List of (tab_id, title, [paragraphs]) tuples
+
+    Returns:
+        Document with multiple tabs
+    """
+    doc_tabs: list[dict[str, Any]] = []
+    for idx, (tab_id, title, paragraphs) in enumerate(tabs):
+        content: list[dict] = [{"sectionBreak": {}}]
+        for text in paragraphs:
+            if not text.endswith("\n"):
+                text = text + "\n"
+            content.append(
+                {"paragraph": {"elements": [{"textRun": {"content": text}}]}}
+            )
+
+        doc_tabs.append(
+            {
+                "tabProperties": {"tabId": tab_id, "title": title, "index": idx},
+                "documentTab": {"body": {"content": content}},
+            }
+        )
+
+    doc = Document.model_validate({"documentId": "test", "tabs": doc_tabs})
+    return reindex_document(doc)
+
+
+class TestReconcileMultiTab:
+    """Phase 4: Tests for multi-tab reconciliation."""
+
+    def test_delete_tab(self):
+        """Delete a tab from a multi-tab document."""
+        base = _make_multi_tab_doc(
+            [
+                ("t.0", "Tab 1", ["First tab content"]),
+                ("t.1", "Tab 2", ["Second tab content"]),
+            ]
+        )
+        desired = _make_multi_tab_doc([("t.0", "Tab 1", ["First tab content"])])
+
+        result = reconcile(base, desired)
+        assert result.requests is not None
+        request_types = [
+            next(iter(req.model_dump(by_alias=True, exclude_none=True).keys()))
+            for req in result.requests
+        ]
+        assert "deleteTab" in request_types
+        ok, diffs = verify(base, result, desired)
+        assert ok, f"Diffs: {diffs}"
+
+    def test_create_tab(self):
+        """Create a new tab.
+
+        NOTE: Phase 4 implementation creates an empty tab (not populated).
+        This test verifies that the addDocumentTab request is generated.
+        Full content population will be implemented in Phase 5+.
+        """
+        base = _make_multi_tab_doc([("t.0", "Tab 1", ["First tab content"])])
+        desired = _make_multi_tab_doc(
+            [
+                ("t.0", "Tab 1", ["First tab content"]),
+                ("t.1", "Tab 2", ["Second tab content"]),
+            ]
+        )
+
+        result = reconcile(base, desired)
+        assert result.requests is not None
+        # Check that we have an addDocumentTab request
+        request_types = [
+            next(iter(req.model_dump(by_alias=True, exclude_none=True).keys()))
+            for req in result.requests
+        ]
+        assert "addDocumentTab" in request_types
+        # Note: verify() will fail because content isn't populated
+        # This is expected for Phase 4 partial implementation
+
+    def test_rename_tab(self):
+        """Change the title of an existing tab."""
+        base = _make_multi_tab_doc(
+            [
+                ("t.0", "Old Title", ["First tab content"]),
+                ("t.1", "Tab 2", ["Second tab content"]),
+            ]
+        )
+        desired = _make_multi_tab_doc(
+            [
+                ("t.0", "New Title", ["First tab content"]),
+                ("t.1", "Tab 2", ["Second tab content"]),
+            ]
+        )
+
+        result = reconcile(base, desired)
+        assert result.requests is not None
+        request_types = [
+            next(iter(req.model_dump(by_alias=True, exclude_none=True).keys()))
+            for req in result.requests
+        ]
+        assert "updateDocumentTabProperties" in request_types
+        ok, diffs = verify(base, result, desired)
+        assert ok, f"Diffs: {diffs}"
+
+    def test_modify_content_across_tabs(self):
+        """Modify content in multiple tabs simultaneously."""
+        base = _make_multi_tab_doc(
+            [
+                ("t.0", "Tab 1", ["Old content"]),
+                ("t.1", "Tab 2", ["Old content"]),
+            ]
+        )
+        desired = _make_multi_tab_doc(
+            [
+                ("t.0", "Tab 1", ["New content"]),
+                ("t.1", "Tab 2", ["New content"]),
+            ]
+        )
+
+        result = reconcile(base, desired)
+        assert result.requests is not None
+        ok, diffs = verify(base, result, desired)
+        assert ok, f"Diffs: {diffs}"

@@ -184,7 +184,7 @@ class MockGoogleDocsAPI:
             "updateTableRowStyle": stubs.handle_update_table_row_style,
             "updateDocumentStyle": stubs.handle_update_document_style,
             "updateSectionStyle": stubs.handle_update_section_style,
-            "updateDocumentTabProperties": stubs.handle_update_document_tab_properties,
+            "updateDocumentTabProperties": segment_ops.handle_update_document_tab_properties,
             "mergeTableCells": stubs.handle_merge_table_cells,
             "unmergeTableCells": stubs.handle_unmerge_table_cells,
             "pinTableHeaderRows": stubs.handle_pin_table_header_rows,

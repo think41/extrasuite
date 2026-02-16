@@ -776,6 +776,65 @@ def _make_delete_footer(footer_id: str, tab_id: str | None) -> dict[str, Any]:
     return req
 
 
+def _make_add_document_tab(title: str, index: int | None = None) -> dict[str, Any]:
+    """Create an addDocumentTab request.
+
+    Args:
+        title: Tab title
+        index: Tab index (position in tab list). None means append to end.
+
+    Returns:
+        addDocumentTab request dict
+    """
+    tab_properties: dict[str, Any] = {"title": title}
+    if index is not None:
+        tab_properties["index"] = index
+    return {"addDocumentTab": {"tabProperties": tab_properties}}
+
+
+def _make_delete_tab(tab_id: str) -> dict[str, Any]:
+    """Create a deleteTab request.
+
+    Args:
+        tab_id: ID of tab to delete
+
+    Returns:
+        deleteTab request dict
+    """
+    return {"deleteTab": {"tabId": tab_id}}
+
+
+def _make_update_document_tab_properties(
+    tab_id: str, title: str | None = None, index: int | None = None
+) -> dict[str, Any]:
+    """Create an updateDocumentTabProperties request.
+
+    Args:
+        tab_id: ID of tab to update
+        title: New title (if changing)
+        index: New index (if changing)
+
+    Returns:
+        updateDocumentTabProperties request dict with appropriate field mask
+    """
+    tab_properties: dict[str, Any] = {"tabId": tab_id}
+    fields: list[str] = []
+
+    if title is not None:
+        tab_properties["title"] = title
+        fields.append("title")
+    if index is not None:
+        tab_properties["index"] = index
+        fields.append("index")
+
+    return {
+        "updateDocumentTabProperties": {
+            "tabProperties": tab_properties,
+            "fields": ",".join(fields),
+        }
+    }
+
+
 # ---------------------------------------------------------------------------
 # RowTable tracker for character index computation
 # ---------------------------------------------------------------------------
