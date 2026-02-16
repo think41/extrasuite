@@ -1,0 +1,88 @@
+<!ELEMENT styles (text | para | listlevel | col | row | cell)*>
+
+<!ELEMENT text EMPTY>
+<!ATTLIST text
+    class         CDATA #REQUIRED
+    bold          CDATA #IMPLIED
+    italic        CDATA #IMPLIED
+    underline     CDATA #IMPLIED
+    strikethrough CDATA #IMPLIED
+    smallCaps     CDATA #IMPLIED
+    superscript   CDATA #IMPLIED
+    subscript     CDATA #IMPLIED
+    font          CDATA #IMPLIED
+    fontWeight    CDATA #IMPLIED
+    size          CDATA #IMPLIED
+    color         CDATA #IMPLIED
+    bgColor       CDATA #IMPLIED
+    link          CDATA #IMPLIED
+    linkBookmark  CDATA #IMPLIED
+    linkHeading   CDATA #IMPLIED
+    linkTab       CDATA #IMPLIED>
+
+<!ELEMENT para EMPTY>
+<!ATTLIST para
+    class          CDATA #REQUIRED
+    namedStyle     CDATA #IMPLIED
+    align          CDATA #IMPLIED
+    direction      CDATA #IMPLIED
+    lineSpacing    CDATA #IMPLIED
+    spacingMode    CDATA #IMPLIED
+    spaceAbove     CDATA #IMPLIED
+    spaceBelow     CDATA #IMPLIED
+    indentLeft     CDATA #IMPLIED
+    indentRight    CDATA #IMPLIED
+    indentFirst    CDATA #IMPLIED
+    keepTogether   CDATA #IMPLIED
+    keepNext       CDATA #IMPLIED
+    avoidWidow     CDATA #IMPLIED
+    pageBreakBefore CDATA #IMPLIED
+    bgColor        CDATA #IMPLIED
+    borderTop      CDATA #IMPLIED
+    borderBottom   CDATA #IMPLIED
+    borderLeft     CDATA #IMPLIED
+    borderRight    CDATA #IMPLIED
+    borderBetween  CDATA #IMPLIED>
+
+<!ELEMENT listlevel EMPTY>
+<!ATTLIST listlevel
+    class       CDATA #REQUIRED
+    glyphType   CDATA #IMPLIED
+    glyphFormat CDATA #IMPLIED
+    glyphSymbol CDATA #IMPLIED
+    bulletAlign CDATA #IMPLIED
+    startNumber CDATA #IMPLIED
+    indentFirst CDATA #IMPLIED
+    indentLeft  CDATA #IMPLIED
+    bold        CDATA #IMPLIED
+    italic      CDATA #IMPLIED
+    size        CDATA #IMPLIED
+    color       CDATA #IMPLIED
+    font        CDATA #IMPLIED>
+
+<!ELEMENT col EMPTY>
+<!ATTLIST col
+    class     CDATA #REQUIRED
+    width     CDATA #IMPLIED
+    widthType CDATA #IMPLIED>
+
+<!ELEMENT row EMPTY>
+<!ATTLIST row
+    class           CDATA #REQUIRED
+    minHeight       CDATA #IMPLIED
+    preventOverflow CDATA #IMPLIED
+    tableHeader     CDATA #IMPLIED>
+
+<!ELEMENT cell EMPTY>
+<!ATTLIST cell
+    class         CDATA #REQUIRED
+    bgColor       CDATA #IMPLIED
+    valign        CDATA #IMPLIED
+    paddingTop    CDATA #IMPLIED
+    paddingBottom CDATA #IMPLIED
+    paddingLeft   CDATA #IMPLIED
+    paddingRight  CDATA #IMPLIED
+    borderTop     CDATA #IMPLIED
+    borderBottom  CDATA #IMPLIED
+    borderLeft    CDATA #IMPLIED
+    borderRight   CDATA #IMPLIED>
