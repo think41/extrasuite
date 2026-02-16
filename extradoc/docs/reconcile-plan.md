@@ -166,11 +166,23 @@ LCS alignment is O(n*m) where n and m are the number of StructuralElements. The 
 
 All 5 files created, 23 tests passing, lint/mypy/format clean. See `tests/test_reconcile.py`.
 
-### Phase 2: Tables (body only)
-- `_alignment.py`: `align_table_rows()` for row matching
-- `_generators.py`: `insertTable`, `deleteContentRange` (whole table), row/column add/delete
-- Recursive cell content diffing (cells contain `list[StructuralElement]`)
-- **Tests**: add/delete tables, add/delete rows/columns, modify cell text
+### Phase 2: Tables (body only) — DONE
+
+52 table tests passing (23 Phase 1 + 21 Phase 2 base + 8 new structural tests). Full structural row/column operations with proper `insertTableRow`, `deleteTableRow`, `insertTableColumn`, `deleteTableColumn` requests.
+
+**Implementation:** Replaced the dimension-based dispatch (`_diff_table_replace` for different dimensions, `_diff_table_cells` for same dimensions) with a unified `_diff_table_structural()` that always uses proper row/column operations. All table diffs now go through structural diff regardless of dimension changes.
+
+**Key components:**
+- `align_sequences()` in `_alignment.py`: Generic LCS alignment with positional fallback (guarantees ≥1 MATCHED entry when both sequences non-empty)
+- `row_fingerprint()`, `column_fingerprint()` in `_extractors.py`: Text-based fingerprints for alignment
+- `_RowTable` tracker: Maintains current table state for UTF-16 index computation during bottom-to-top processing
+- Request generation order: (1) column deletes (right-to-left), (2) column inserts (right-to-left), (3) row ops + cell content (bottom-to-top, interleaved)
+
+**Learnings for Phase 3:**
+1. **Bottom-to-top ordering works**: Processing highest index first keeps all lower indices valid for both structural ops (row/column indices) and content ops (character indices)
+2. **Positional fallback is essential**: When table content is completely different (no LCS matches), positional alignment pairs rows/columns by index, providing stable anchors for structural diff
+3. **State tracking is simpler than index prediction**: The `_RowTable` tracker maintains actual row lengths and computes indices on-demand, eliminating error-prone manual index arithmetic
+4. **Alignment can be reused**: `align_sequences()` is generic and will work for any fingerprint-based alignment (tabs, segments, inline elements in future phases)
 
 ### Phase 3: Multi-segment (headers, footers, footnotes)
 - Segment creation/deletion: `createHeader`/`deleteHeader`, `createFooter`/`deleteFooter`

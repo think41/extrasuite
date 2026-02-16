@@ -69,6 +69,104 @@ def _normalize_text_styles(obj: Any) -> Any:
     return obj
 
 
+def _strip_table_metadata(obj: Any) -> Any:
+    """Strip mock-generated table metadata for comparison.
+
+    Tables created by the mock's insertTable have extra fields
+    (tableCellStyle, tableRowStyle, tableStyle, paragraphStyle on cell
+    paragraphs, startIndex/endIndex on rows/cells) that test-helper-built
+    desired documents don't include. We strip these to focus comparison
+    on text content and structure.
+    """
+    if isinstance(obj, dict):
+        result: dict[str, Any] = {}
+        for k, v in obj.items():
+            if k == "tableRows":
+                result[k] = _strip_table_rows(v)
+            elif k == "tableStyle":
+                continue
+            else:
+                result[k] = _strip_table_metadata(v)
+        return result
+    if isinstance(obj, list):
+        return [_strip_table_metadata(item) for item in obj]
+    return obj
+
+
+def _strip_table_rows(rows: Any) -> Any:
+    if not isinstance(rows, list):
+        return rows
+    result = []
+    for row in rows:
+        if isinstance(row, dict):
+            new_row: dict[str, Any] = {}
+            for k, v in row.items():
+                if k in ("startIndex", "endIndex", "tableRowStyle"):
+                    continue
+                if k == "tableCells":
+                    new_row[k] = _strip_table_cells(v)
+                else:
+                    new_row[k] = _strip_table_metadata(v)
+            result.append(new_row)
+        else:
+            result.append(row)
+    return result
+
+
+def _strip_table_cells(cells: Any) -> Any:
+    if not isinstance(cells, list):
+        return cells
+    result = []
+    for cell in cells:
+        if isinstance(cell, dict):
+            new_cell: dict[str, Any] = {}
+            for k, v in cell.items():
+                if k in ("startIndex", "endIndex", "tableCellStyle"):
+                    continue
+                if k == "content":
+                    new_cell[k] = _strip_cell_para_styles(v)
+                else:
+                    new_cell[k] = _strip_table_metadata(v)
+            result.append(new_cell)
+        else:
+            result.append(cell)
+    return result
+
+
+def _strip_cell_para_styles(content: Any) -> Any:
+    """Strip indices and paragraphStyle from table cell content.
+
+    Table cell content indices differ between Full Structure (mock-generated)
+    and Minimal Structure (test-helper-built) tables. Strip them so
+    comparison focuses on text content.
+    """
+    if not isinstance(content, list):
+        return content
+    result = []
+    for elem in content:
+        if isinstance(elem, dict):
+            new_elem = {
+                k: v for k, v in elem.items() if k not in ("startIndex", "endIndex")
+            }
+            if "paragraph" in new_elem:
+                new_para = dict(new_elem["paragraph"])
+                new_para.pop("paragraphStyle", None)
+                if "elements" in new_para:
+                    new_para["elements"] = [
+                        {
+                            k: v
+                            for k, v in pe.items()
+                            if k not in ("startIndex", "endIndex")
+                        }
+                        for pe in new_para["elements"]
+                    ]
+                new_elem["paragraph"] = new_para
+            result.append(_strip_table_metadata(new_elem))
+        else:
+            result.append(_strip_table_metadata(elem))
+    return result
+
+
 def normalize_document(doc_dict: dict[str, Any]) -> dict[str, Any]:
     """Normalize a document dict for comparison.
 
@@ -77,6 +175,7 @@ def normalize_document(doc_dict: dict[str, Any]) -> dict[str, Any]:
     result: dict[str, Any] = copy.deepcopy(doc_dict)
     result = _strip_keys(result, _IGNORE_KEYS | _STYLE_IGNORE_KEYS)
     result = _normalize_text_styles(result)
+    result = _strip_table_metadata(result)
     return result
 
 
