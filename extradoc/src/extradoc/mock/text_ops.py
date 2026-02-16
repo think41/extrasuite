@@ -517,7 +517,7 @@ def _delete_content_range_impl(
         tab, segment_id, start_index, end_index
     )
 
-    structure_tracker.validate_delete_range(start_index, end_index)
+    structure_tracker.validate_delete_range(start_index, end_index, tab_id, segment_id)
 
     _delete_content_from_segment(segment, start_index, end_index)
 

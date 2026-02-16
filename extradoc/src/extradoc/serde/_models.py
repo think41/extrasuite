@@ -312,6 +312,7 @@ class TabXml:
 
     id: str
     title: str
+    index: int | None = None
     lists: list[ListDefXml] = field(default_factory=list)
     body: list[BlockNode] = field(default_factory=list)
     headers: list[SegmentXml] = field(default_factory=list)
@@ -322,6 +323,8 @@ class TabXml:
         root = Element("tab")
         root.set("id", self.id)
         root.set("title", self.title)
+        if self.index is not None:
+            root.set("index", str(self.index))
         if self.lists:
             lists_elem = SubElement(root, "lists")
             for lst in self.lists:
@@ -342,7 +345,12 @@ class TabXml:
 
     @classmethod
     def from_element(cls, root: Element) -> TabXml:
-        tab = cls(id=root.get("id", ""), title=root.get("title", ""))
+        index_str = root.get("index")
+        tab = cls(
+            id=root.get("id", ""),
+            title=root.get("title", ""),
+            index=int(index_str) if index_str is not None else None,
+        )
         lists_elem = root.find("lists")
         if lists_elem is not None:
             for list_elem in lists_elem.findall("list"):
