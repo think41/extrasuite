@@ -8,7 +8,6 @@ from extradoc.api_types._generated import (
     BatchUpdateDocumentRequest,
     Document,
     Request,
-    StructuralElement,
     Tab,
 )
 from extradoc.mock.api import MockGoogleDocsAPI
@@ -18,7 +17,7 @@ from extradoc.reconcile._alignment import (
     align_tabs,
 )
 from extradoc.reconcile._comparators import documents_match
-from extradoc.reconcile._extractors import extract_segments
+from extradoc.reconcile._extractors import Segment, extract_segments
 from extradoc.reconcile._generators import generate_requests
 
 
@@ -85,14 +84,7 @@ def _reconcile_tab(
         desired_seg = desired_segments.get(seg_id)
 
         if base_seg and desired_seg:
-            # Matched segment - diff content
-            segment_id = base_seg["segment_id"]
-            seg_requests = _reconcile_segment(
-                base_seg["content"],
-                desired_seg["content"],
-                segment_id,
-                tab_id,
-            )
+            seg_requests = _reconcile_segment(base_seg, desired_seg, tab_id)
             requests.extend(seg_requests)
         # Phase 3 will handle added/deleted segments (headers, footers, footnotes)
 
@@ -100,30 +92,13 @@ def _reconcile_tab(
 
 
 def _reconcile_segment(
-    base_content: list[Any],
-    desired_content: list[Any],
-    segment_id: str | None,
+    base_seg: Segment,
+    desired_seg: Segment,
     tab_id: str | None,
 ) -> list[dict[str, Any]]:
     """Reconcile content within a single segment."""
-    # Ensure we have StructuralElement objects
-    base_elements: list[StructuralElement] = []
-    for item in base_content:
-        if isinstance(item, StructuralElement):
-            base_elements.append(item)
-        else:
-            base_elements.append(StructuralElement.model_validate(item))
-
-    desired_elements: list[StructuralElement] = []
-    for item in desired_content:
-        if isinstance(item, StructuralElement):
-            desired_elements.append(item)
-        else:
-            desired_elements.append(StructuralElement.model_validate(item))
-
-    alignment = align_structural_elements(base_elements, desired_elements)
-
-    return generate_requests(alignment, segment_id, tab_id)
+    alignment = align_structural_elements(base_seg.content, desired_seg.content)
+    return generate_requests(alignment, base_seg.segment_id, tab_id)
 
 
 def verify(

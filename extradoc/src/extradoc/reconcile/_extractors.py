@@ -2,13 +2,21 @@
 
 from __future__ import annotations
 
-from typing import TYPE_CHECKING, Any
+from dataclasses import dataclass
+from typing import TYPE_CHECKING
+
+from extradoc.api_types._generated import (
+    Body,
+    Footer,
+    Footnote,
+    Header,
+    StructuralElement,
+)
 
 if TYPE_CHECKING:
     from extradoc.api_types._generated import (
         DocumentTab,
         Paragraph,
-        StructuralElement,
         Tab,
         Table,
     )
@@ -74,11 +82,28 @@ def content_fingerprint(se: StructuralElement) -> str:
     return "UNKNOWN:"
 
 
-SegmentInfo = dict[str, Any]
-# Keys: "segment_id" (str|None), "content" (list[StructuralElement])
+@dataclass(frozen=True)
+class Segment:
+    """A document segment (body, header, footer, or footnote)."""
+
+    source: Body | Header | Footer | Footnote
+
+    @property
+    def segment_id(self) -> str | None:
+        if isinstance(self.source, Header):
+            return self.source.header_id
+        if isinstance(self.source, Footer):
+            return self.source.footer_id
+        if isinstance(self.source, Footnote):
+            return self.source.footnote_id
+        return None  # Body
+
+    @property
+    def content(self) -> list[StructuralElement]:
+        return self.source.content or []
 
 
-def extract_segments(tab: Tab) -> dict[str, SegmentInfo]:
+def extract_segments(tab: Tab) -> dict[str, Segment]:
     """Extract all segments from a tab.
 
     Returns a dict keyed by segment identifier:
@@ -87,33 +112,21 @@ def extract_segments(tab: Tab) -> dict[str, SegmentInfo]:
     - footer_id for each footer
     - footnote_id for each footnote
     """
-    segments: dict[str, SegmentInfo] = {}
+    segments: dict[str, Segment] = {}
     doc_tab: DocumentTab | None = tab.document_tab
     if not doc_tab:
         return segments
 
     if doc_tab.body and doc_tab.body.content:
-        segments["body"] = {
-            "segment_id": None,  # body has no segment_id in API
-            "content": doc_tab.body.content,
-        }
+        segments["body"] = Segment(source=doc_tab.body)
 
     for hid, header in (doc_tab.headers or {}).items():
-        segments[hid] = {
-            "segment_id": hid,
-            "content": header.content or [],
-        }
+        segments[hid] = Segment(source=header)
 
     for fid, footer in (doc_tab.footers or {}).items():
-        segments[fid] = {
-            "segment_id": fid,
-            "content": footer.content or [],
-        }
+        segments[fid] = Segment(source=footer)
 
     for fnid, footnote in (doc_tab.footnotes or {}).items():
-        segments[fnid] = {
-            "segment_id": fnid,
-            "content": footnote.content or [],
-        }
+        segments[fnid] = Segment(source=footnote)
 
     return segments
