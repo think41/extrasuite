@@ -152,6 +152,14 @@ def test_add_paragraph():
 | `mock/reindex.py` | `reindex_and_normalize_all_tabs()` — reused by `reindex_document()` |
 | `indexer.py` | `utf16_len()` — UTF-16 code unit calculation |
 
+## Design Decisions
+
+### Testing philosophy
+Only test via public interface (`reconcile`/`verify`). No unit tests for internal modules (`_extractors`, `_generators`, `_alignment`, `_comparators`) — internal abstractions will evolve as phases are added, but the public API is stable. Every test calls `reconcile()` then `verify()` to ensure end-to-end correctness.
+
+### Performance
+LCS alignment is O(n*m) where n and m are the number of StructuralElements. The comparator does 3 passes (normalize, compare, diff). This is not optimized but correctness comes first. For typical documents (<1000 elements), performance is not a concern.
+
 ## Phased Implementation (Structure First, Styles Later)
 
 ### Phase 1: Scaffolding + paragraph text (body only) — DONE
@@ -233,9 +241,9 @@ Per the mock's `reindex.py`, the first element in body content has `startIndex =
 
 The comparator strips many server-generated keys (`revisionId`, `documentId`, `headingId`, `lists`, `namedStyles`, `documentStyle`, etc.) and removes empty `textStyle`/`paragraphStyle` dicts. This is essential because the mock produces slightly different metadata than a freshly-constructed desired Document.
 
-### `_core.py` — `_reconcile_segment` input handling
+### `Segment` dataclass
 
-Segment content from `extract_segments()` returns `list[StructuralElement]` (Pydantic models), but `_reconcile_segment` defensively handles both Pydantic objects and raw dicts via `isinstance` checks + `model_validate()`. This guards against future changes where content might arrive as dicts.
+`extract_segments()` returns `dict[str, Segment]` where `Segment` is a frozen dataclass wrapping the source model (`Body`/`Header`/`Footer`/`Footnote`). Properties `segment_id` and `content` derive from the source, eliminating untyped dicts and defensive dict-to-model conversion.
 
 ### Pydantic model construction
 
