@@ -91,10 +91,12 @@ class MockGoogleDocsAPI:
                 # Reindex and normalize after each request
                 reindex_and_normalize_all_tabs(self._document)
 
+                # Rebuild structure tracker so subsequent requests
+                # validate against the updated document state
+                self._structure_tracker = DocumentStructureTracker(self._document)
+
             self._revision_counter += 1
             self._revision_id = f"mock_revision_{self._revision_counter}"
-
-            self._structure_tracker = DocumentStructureTracker(self._document)
 
             return {
                 "replies": replies,

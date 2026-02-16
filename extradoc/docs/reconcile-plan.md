@@ -184,11 +184,48 @@ All 5 files created, 23 tests passing, lint/mypy/format clean. See `tests/test_r
 3. **State tracking is simpler than index prediction**: The `_RowTable` tracker maintains actual row lengths and computes indices on-demand, eliminating error-prone manual index arithmetic
 4. **Alignment can be reused**: `align_sequences()` is generic and will work for any fingerprint-based alignment (tabs, segments, inline elements in future phases)
 
-### Phase 3: Multi-segment (headers, footers, footnotes)
-- Segment creation/deletion: `createHeader`/`deleteHeader`, `createFooter`/`deleteFooter`
-- Footnote handling: detect added/removed `footnoteReference` in paragraphs; `createFootnote` for new
-- Content diffing within headers/footers/footnotes (reuse segment diff logic)
-- **Tests**: add/remove header, modify footer content, add/remove footnotes
+### Phase 3: Multi-segment (headers, footers, footnotes) — DONE
+
+58 tests passing (52 Phase 1+2 + 6 new Phase 3). Deletion and content modification work fully. Creation is partial (segment created but not populated).
+
+**Implementation:** Added segment creation/deletion logic to `_core.py:_reconcile_tab()`. When segments don't match by ID:
+- **Added segment**: generate `createHeader`/`createFooter` request, then call `_reconcile_new_segment()` (currently stubbed)
+- **Deleted segment**: generate `deleteHeader`/`deleteFooter` request
+- **Matched segment**: existing `_reconcile_segment()` handles content diff (works for all segment types)
+
+**Request generators** in `_generators.py`:
+- `_make_create_header(header_type, tab_id)` → `createHeader` with `type="DEFAULT"`, no `sectionBreakLocation` (applies to DocumentStyle)
+- `_make_delete_header(header_id, tab_id)` → `deleteHeader`
+- `_make_create_footer(footer_type, tab_id)` → `createFooter` with `type="DEFAULT"`
+- `_make_delete_footer(footer_id, tab_id)` → `deleteFooter`
+
+**Mock API bug fixes** in `segment_ops.py`:
+- `handle_delete_header` was validating but not deleting → added `del headers[header_id]`
+- `handle_delete_footer` was validating but not deleting → added `del footers[footer_id]`
+- When deleting the last header/footer, remove empty `headers`/`footers` dict from `documentTab` to match expected document structure
+
+**Tests** in `test_reconcile.py`:
+- `test_delete_header` — delete header, verify with full reconcile+verify cycle
+- `test_delete_footer` — delete footer
+- `test_modify_header_content` — change header text (tests matched segment diff)
+- `test_modify_footer_content` — change footer text
+- `test_create_header` — partial: creates empty header (content population deferred to Phase 4+)
+- `test_create_footer` — partial: creates empty footer
+
+**Partial implementation note**: `_reconcile_new_segment()` currently returns empty list. Full content population requires solving the ID assignment problem:
+- User's desired document has segment with ID "hdr_xyz"
+- `createHeader` returns new ID "hdr_abc" from API
+- Content requests must reference "hdr_abc", not "hdr_xyz"
+- This requires multi-pass execution or placeholder ID rewriting (like push.py's 3-batch approach)
+- Deferred to Phase 4+
+
+**Footnotes**: Deferred to Phase 4+. Footnotes are created via `createFootnote` which inserts a `footnoteReference` element in a paragraph. This requires element-level diffing (detecting added `footnoteReference` in paragraph elements), which is beyond current paragraph text diffing.
+
+**Learnings for Phase 4:**
+1. **Segment deletion works cleanly**: Just remove from dict, cleanup empty dict
+2. **Segment creation needs multi-pass**: Can't generate content requests without knowing the new segment ID
+3. **Content diff is segment-agnostic**: `_reconcile_segment()` works for body/headers/footers/footnotes without modification
+4. **Mock API completeness**: Found and fixed bugs in mock's delete handlers — shows value of comprehensive testing
 
 ### Phase 4: Multi-tab
 - `addDocumentTab`, `deleteTab`, `updateDocumentTabProperties`
