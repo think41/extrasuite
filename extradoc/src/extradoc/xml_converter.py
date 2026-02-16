@@ -287,6 +287,54 @@ def _convert_body_content(
     return "\n".join(parts)
 
 
+# Map extractor names (from PARAGRAPH_STYLE_PROPS) to XML attribute names.
+# This is the authoritative mapping for paragraph-level properties on pull.
+_PARA_PROP_TO_ATTR: dict[str, str] = {
+    "alignment": "align",
+    "lineSpacing": "lineSpacing",
+    "spaceAbove": "spaceAbove",
+    "spaceBelow": "spaceBelow",
+    "indentLeft": "indentLeft",
+    "indentRight": "indentRight",
+    "indentFirstLine": "indentFirst",
+    # Boolean paragraph properties
+    "keepTogether": "keepTogether",
+    "keepNext": "keepNext",
+    "avoidWidow": "avoidWidow",
+    # Direction
+    "direction": "direction",
+    # Paragraph background (shading)
+    "bgColor": "bgColor",
+    # Paragraph borders
+    "borderTop": "borderTop",
+    "borderBottom": "borderBottom",
+    "borderLeft": "borderLeft",
+    "borderRight": "borderRight",
+}
+
+
+def _build_paragraph_attrs(
+    style: dict[str, Any],
+    named_style: str,
+    ctx: ConversionContext,
+) -> str:
+    """Build XML attribute string for paragraph-level property overrides.
+
+    Only includes properties that differ from the named style's defaults
+    to keep the XML clean.
+    """
+    overrides = _extract_paragraph_overrides(style, named_style, ctx)
+    if not overrides:
+        return ""
+    parts: list[str] = []
+    for prop_name, attr_name in _PARA_PROP_TO_ATTR.items():
+        if prop_name in overrides:
+            parts.append(f'{attr_name}="{_escape(overrides[prop_name])}"')
+    if not parts:
+        return ""
+    return " " + " ".join(parts)
+
+
 def _convert_paragraph(para: dict[str, Any], ctx: ConversionContext) -> str:
     """Convert a paragraph to XML."""
     style = para.get("paragraphStyle", {})
@@ -327,21 +375,7 @@ def _convert_paragraph(para: dict[str, Any], ctx: ConversionContext) -> str:
 
     # Extract paragraph-level property overrides (alignment, spacing, etc.)
     # Only includes properties that differ from the named style's defaults.
-    para_attrs = ""
-    overrides = _extract_paragraph_overrides(style, named_style, ctx)
-    # Map extractor names to XML attribute names
-    _PARA_PROP_TO_ATTR = {
-        "alignment": "align",
-        "lineSpacing": "lineSpacing",
-        "spaceAbove": "spaceAbove",
-        "spaceBelow": "spaceBelow",
-        "indentLeft": "indentLeft",
-        "indentRight": "indentRight",
-        "indentFirstLine": "indentFirst",
-    }
-    for prop_name, attr_name in _PARA_PROP_TO_ATTR.items():
-        if prop_name in overrides:
-            para_attrs += f' {attr_name}="{_escape(overrides[prop_name])}"'
+    para_attrs = _build_paragraph_attrs(style, named_style, ctx)
 
     # Preserve whitespace content for accurate index calculation
     # Even spaces matter for Google Docs UTF-16 indexes
@@ -383,7 +417,11 @@ def _convert_list_item(
     # Convert content
     content = _convert_paragraph_elements(para.get("elements", []), ctx)
 
-    return f'<li type="{list_type}" level="{nesting}">{content}</li>'
+    # Extract paragraph-level property overrides for list items too
+    style = para.get("paragraphStyle", {})
+    para_attrs = _build_paragraph_attrs(style, "NORMAL_TEXT", ctx)
+
+    return f'<li type="{list_type}" level="{nesting}"{para_attrs}>{content}</li>'
 
 
 def _convert_paragraph_elements(
