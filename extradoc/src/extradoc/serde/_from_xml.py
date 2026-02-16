@@ -25,7 +25,6 @@ from ._models import (
     DateNode,
     EquationNode,
     FootnoteRefNode,
-    FormattingNode,
     HrXml,
     ImageNode,
     InlineNode,
@@ -36,7 +35,6 @@ from ._models import (
     PersonNode,
     RichLinkNode,
     SectionBreakXml,
-    SpanNode,
     TableXml,
     TabXml,
     TNode,
@@ -293,29 +291,17 @@ def _convert_inline(
 ) -> list[dict[str, Any]]:
     """Convert an inline node to ParagraphElement dicts."""
     if isinstance(node, TNode):
-        return [{"textRun": {"content": node.text}}]
-
-    if isinstance(node, FormattingNode):
-        sugar_attr, sugar_val = _SUGAR_TO_STYLE[node.tag]
-        class_attrs: dict[str, str] = {}
+        attrs: dict[str, str] = {}
         if node.class_name:
-            class_attrs = dict(styles.lookup("text", node.class_name))
-        class_attrs[sugar_attr] = sugar_val
-        ts = resolve_text_style(class_attrs)
-        ts_d = ts.model_dump(by_alias=True, exclude_none=True)
-        return [
-            {"textRun": {"content": child.text, "textStyle": ts_d}}
-            for child in node.children
-        ]
-
-    if isinstance(node, SpanNode):
-        span_attrs = styles.lookup("text", node.class_name)
-        ts = resolve_text_style(span_attrs)
-        ts_d = ts.model_dump(by_alias=True, exclude_none=True)
-        return [
-            {"textRun": {"content": child.text, "textStyle": ts_d}}
-            for child in node.children
-        ]
+            attrs = dict(styles.lookup("text", node.class_name))
+        if node.sugar_tag and node.sugar_tag in _SUGAR_TO_STYLE:
+            attr_name, attr_val = _SUGAR_TO_STYLE[node.sugar_tag]
+            attrs[attr_name] = attr_val
+        if attrs:
+            ts = resolve_text_style(attrs)
+            ts_d = ts.model_dump(by_alias=True, exclude_none=True)
+            return [{"textRun": {"content": node.text, "textStyle": ts_d}}]
+        return [{"textRun": {"content": node.text}}]
 
     if isinstance(node, LinkNode):
         link_attrs: dict[str, str] = {}
