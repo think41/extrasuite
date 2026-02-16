@@ -732,6 +732,50 @@ def _make_delete_table_column(
     }
 
 
+def _make_create_header(header_type: str, tab_id: str | None) -> dict[str, Any]:
+    """Create a header request.
+
+    Args:
+        header_type: "DEFAULT" or other header type
+        tab_id: Tab ID if creating in a specific tab
+    """
+    req: dict[str, Any] = {"createHeader": {"type": header_type}}
+    # Note: sectionBreakLocation is None, so header applies to DocumentStyle
+    if tab_id:
+        req["createHeader"]["tabId"] = tab_id
+    return req
+
+
+def _make_delete_header(header_id: str, tab_id: str | None) -> dict[str, Any]:
+    """Delete a header request."""
+    req: dict[str, Any] = {"deleteHeader": {"headerId": header_id}}
+    if tab_id:
+        req["deleteHeader"]["tabId"] = tab_id
+    return req
+
+
+def _make_create_footer(footer_type: str, tab_id: str | None) -> dict[str, Any]:
+    """Create a footer request.
+
+    Args:
+        footer_type: "DEFAULT" or other footer type
+        tab_id: Tab ID if creating in a specific tab
+    """
+    req: dict[str, Any] = {"createFooter": {"type": footer_type}}
+    # Note: sectionBreakLocation is None, so footer applies to DocumentStyle
+    if tab_id:
+        req["createFooter"]["tabId"] = tab_id
+    return req
+
+
+def _make_delete_footer(footer_id: str, tab_id: str | None) -> dict[str, Any]:
+    """Delete a footer request."""
+    req: dict[str, Any] = {"deleteFooter": {"footerId": footer_id}}
+    if tab_id:
+        req["deleteFooter"]["tabId"] = tab_id
+    return req
+
+
 # ---------------------------------------------------------------------------
 # RowTable tracker for character index computation
 # ---------------------------------------------------------------------------
