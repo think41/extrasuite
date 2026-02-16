@@ -584,6 +584,12 @@ class StyleCollector:
         self._col_defs: list[StyleDef] = []
         self._row_defs: list[StyleDef] = []
         self._cell_defs: list[StyleDef] = []
+        # Usage counts for default promotion (not tracked for text)
+        self._para_counts: dict[str, int] = {}
+        self._listlevel_counts: dict[str, int] = {}
+        self._col_counts: dict[str, int] = {}
+        self._row_counts: dict[str, int] = {}
+        self._cell_counts: dict[str, int] = {}
 
     def _freeze(self, attrs: dict[str, str]) -> str:
         return "|".join(f"{k}={v}" for k, v in sorted(attrs.items()))
@@ -607,7 +613,9 @@ class StyleCollector:
             name = f"p{len(self._para) + 1}"
             self._para[key] = name
             self._para_defs.append(StyleDef(class_name=name, attrs=dict(attrs)))
-        return self._para[key]
+        name = self._para[key]
+        self._para_counts[name] = self._para_counts.get(name, 0) + 1
+        return name
 
     def add_listlevel_style(self, attrs: dict[str, str]) -> str | None:
         if not attrs:
@@ -617,7 +625,9 @@ class StyleCollector:
             name = f"ls{len(self._listlevel) + 1}"
             self._listlevel[key] = name
             self._listlevel_defs.append(StyleDef(class_name=name, attrs=dict(attrs)))
-        return self._listlevel[key]
+        name = self._listlevel[key]
+        self._listlevel_counts[name] = self._listlevel_counts.get(name, 0) + 1
+        return name
 
     def add_col_style(self, attrs: dict[str, str]) -> str | None:
         if not attrs:
@@ -627,7 +637,9 @@ class StyleCollector:
             name = f"tc{len(self._col) + 1}"
             self._col[key] = name
             self._col_defs.append(StyleDef(class_name=name, attrs=dict(attrs)))
-        return self._col[key]
+        name = self._col[key]
+        self._col_counts[name] = self._col_counts.get(name, 0) + 1
+        return name
 
     def add_row_style(self, attrs: dict[str, str]) -> str | None:
         if not attrs:
@@ -637,7 +649,9 @@ class StyleCollector:
             name = f"tr{len(self._row) + 1}"
             self._row[key] = name
             self._row_defs.append(StyleDef(class_name=name, attrs=dict(attrs)))
-        return self._row[key]
+        name = self._row[key]
+        self._row_counts[name] = self._row_counts.get(name, 0) + 1
+        return name
 
     def add_cell_style(self, attrs: dict[str, str]) -> str | None:
         if not attrs:
@@ -647,7 +661,36 @@ class StyleCollector:
             name = f"c{len(self._cell) + 1}"
             self._cell[key] = name
             self._cell_defs.append(StyleDef(class_name=name, attrs=dict(attrs)))
-        return self._cell[key]
+        name = self._cell[key]
+        self._cell_counts[name] = self._cell_counts.get(name, 0) + 1
+        return name
+
+    def promote_defaults(self) -> dict[str, str]:
+        """Rename the most-frequent style per category to ``_default``.
+
+        Returns a mapping ``{category: old_class_name}`` for categories where
+        a default was promoted.  Text styles are excluded — unstyled ``<t>``
+        elements must remain distinguishable from styled ones.
+        """
+        defaults: dict[str, str] = {}
+        for category, counts, defs in [
+            ("para", self._para_counts, self._para_defs),
+            ("listlevel", self._listlevel_counts, self._listlevel_defs),
+            ("col", self._col_counts, self._col_defs),
+            ("row", self._row_counts, self._row_defs),
+            ("cell", self._cell_counts, self._cell_defs),
+        ]:
+            if not counts:
+                continue
+            most_used = max(counts, key=lambda k: counts[k])
+            if counts[most_used] < 2:
+                continue
+            for sd in defs:
+                if sd.class_name == most_used:
+                    defaults[category] = most_used
+                    sd.class_name = "_default"
+                    break
+        return defaults
 
     def build(self) -> StylesXml:
         """Build the final StylesXml from collected styles."""

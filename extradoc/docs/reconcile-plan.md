@@ -339,3 +339,32 @@ The comparator strips many server-generated keys (`revisionId`, `documentId`, `h
 ### Test helper `_make_doc()`
 
 The `_make_doc(*paragraphs)` helper creates a Document with a section break + N paragraphs, auto-appends `\n`, and calls `reindex_document()`. This makes tests extremely concise — a single line per document.
+
+---
+
+## Known Issues: Style Factorization (serde)
+
+### Problem: Too many paragraphs with class attributes
+
+The serde module's `extract_para_style()` extracts every non-None paragraph style property into an attribute dict, which then becomes a class in `styles.xml`. The Google Docs API returns default values like `alignment: "START"` and `direction: "LEFT_TO_RIGHT"` on most paragraphs. These are semantically meaningless defaults, but because `extract_para_style()` treats any truthy value as worth emitting, they produce styles like:
+
+```xml
+<para class="_default" direction="LEFT_TO_RIGHT" />
+<para class="p3" align="START" direction="LEFT_TO_RIGHT" />
+```
+
+The only difference between `_default` and `p3` is `align="START"`, which is itself the default alignment. This means the majority of paragraphs end up with a `class="p3"` attribute that adds no information.
+
+### Goal
+
+Most elements in `document.xml` should have no `class` attribute. Classes should only appear when a paragraph's style genuinely differs from the document default.
+
+### Approach needed
+
+Rather than selectively filtering individual properties (e.g. skipping `START` alignment, skipping `LEFT_TO_RIGHT` direction), we need a more principled approach. The Google Docs API has a `namedStyles` section in the document that defines the default style for each named style type (NORMAL_TEXT, HEADING_1, etc.). The correct approach is:
+
+1. Read the document's `namedStyles` to get the default property values per style type
+2. When extracting paragraph styles, diff against the named style defaults
+3. Only emit properties that genuinely differ from the document's own defaults
+
+This would eliminate all redundant attributes regardless of what the API happens to return as "truthy" defaults.
