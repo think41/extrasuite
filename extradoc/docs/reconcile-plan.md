@@ -58,16 +58,20 @@ ExtraDoc currently diffs XML representations of Google Docs. This new module ope
 ```python
 # extradoc/src/extradoc/reconcile/__init__.py
 
-def reconcile(base: Document, desired: Document) -> BatchUpdateDocumentRequest
-def verify(base: Document, requests: BatchUpdateDocumentRequest, desired: Document) -> tuple[bool, list[str]]
+def reconcile(base: Document, desired: Document) -> list[BatchUpdateDocumentRequest]
+def resolve_deferred_ids(prior_responses: list[dict[str, Any]], batch: BatchUpdateDocumentRequest) -> BatchUpdateDocumentRequest
+def verify(base: Document, batches: list[BatchUpdateDocumentRequest], desired: Document) -> tuple[bool, list[str]]
 def reindex_document(doc: Document) -> Document  # For test convenience
 
 class ReconcileError(Exception): ...
+class DeferredID: ...  # Placeholder for IDs assigned by API
 ```
 
-- **`reconcile`**: Diffs two Documents with valid indices, returns batch update requests
-- **`verify`**: Applies requests to base via `MockGoogleDocsAPI`, compares result with desired, returns `(match, diff_descriptions)`
+- **`reconcile`**: Diffs two Documents with valid indices, returns **list of batches** that must be executed sequentially with ID resolution between batches
+- **`resolve_deferred_ids`**: Resolves DeferredID placeholders using prior batch responses, returns resolved batch
+- **`verify`**: Applies batches to base via `MockGoogleDocsAPI` with ID resolution, compares result with desired, returns `(match, diff_descriptions)`
 - **`reindex_document`**: Converts Document to dict, runs `reindex_and_normalize_all_tabs()` from `mock/reindex.py`, converts back. Tests create Documents without worrying about indices, then call this.
+- **`DeferredID`**: Frozen dataclass representing a placeholder ID that will be resolved from a prior batch's response
 
 ## File Structure
 
@@ -256,30 +260,90 @@ All 5 files created, 23 tests passing, lint/mypy/format clean. See `tests/test_r
 - `test_rename_tab` — change tab title via updateDocumentTabProperties
 - `test_modify_content_across_tabs` — modify content in multiple tabs simultaneously
 
-**Partial implementation note**: `_create_tab_request()` generates `addDocumentTab` but doesn't populate content. Similar to Phase 3 segment creation, full content population requires solving the ID assignment problem:
-- User's desired document has tab with ID "t.xyz"
-- `addDocumentTab` returns new ID "t.abc" from API
-- Content requests must reference "t.abc", not "t.xyz"
-- This requires multi-pass execution or placeholder ID rewriting (like push.py's 3-batch approach)
-- Deferred to Phase 5+
+**Partial implementation note**: This phase identified the need for multi-batch execution with ID resolution (Phase 5).
 
-**Learnings for Phase 5:**
-1. **Tab deletion works cleanly**: Simple deleteTab request
-2. **Tab property updates work**: Field mask properly applied by mock
-3. **Tab creation needs multi-pass**: Same ID assignment problem as segments
-4. **Content processing is tab-scoped**: Existing content reconciliation works across tabs with tab_id parameter
-5. **Mock API quality**: Found missing implementation in stubs, implemented it properly
+### Phase 5: Multi-batch reconciliation with DeferredID — DONE
 
-### Phase 5: Paragraph styles + text styles
+62 tests passing (all phases complete). Full content population for newly created tabs/headers/footers using multi-batch execution.
+
+**The ID Assignment Problem:**
+- When creating a tab/header/footer, the API assigns a random ID (e.g., `header_abc123`)
+- Content requests must reference this ID, but it's not known until after creation
+- Solution: Multi-batch execution with DeferredID placeholders
+
+**Architecture:**
+
+1. **DFS Traversal with Batch Tracking**
+   - `reconcile()` uses depth-first traversal with `current_batch` parameter
+   - Creating a tab/segment adds request to batch N, content population goes to batch N+1
+   - Uses call stack to track depth → stateless, immutable design
+
+2. **DeferredID Dataclass** (in `api_types/_generated.py`):
+   ```python
+   @dataclass(frozen=True)
+   class DeferredID:
+       placeholder: str           # Unique identifier
+       batch_index: int          # Which batch creates this ID
+       request_index: int        # Position in that batch's request list
+       response_path: str        # JSONPath to extract ID from response
+   ```
+
+3. **Request Generation**:
+   - Location/Range models accept `str | DeferredID` for segment_id/tab_id
+   - Generator functions create requests with DeferredID objects
+   - Example: `Location(index=0, segment_id=DeferredID(...), tab_id="t.0")`
+
+4. **ID Resolution**:
+   - `resolve_deferred_ids(prior_responses, batch)` walks batch recursively
+   - Detects DeferredID dicts (from `model_dump()`) using structure check
+   - Extracts real ID from `prior_responses[batch_index]["replies"][request_index]` using JSONPath
+   - Returns new BatchUpdateDocumentRequest with resolved IDs
+
+5. **Execution**:
+   ```python
+   batches = reconcile(base, desired)
+   response_0 = api.batch_update(doc_id, batches[0])
+   batch_1 = resolve_deferred_ids([response_0], batches[1])
+   response_1 = api.batch_update(doc_id, batch_1)
+   ```
+
+**Implementation Details:**
+
+- **`_create_initial_segment()`**: Creates a segment with initial empty content (just `\n`) representing the API's default state for new headers/footers
+- **`_reconcile_new_segment()`**:
+  - Batch N: Creates header/footer with `createHeader`/`createFooter`
+  - Batch N+1: Diffs initial state vs desired, generates content population requests using DeferredID
+- **`_reconcile_segment()`**: Accepts explicit `segment_id` parameter (can be DeferredID) to override segment.segment_id
+- **`verify()`**: Executes batches sequentially with ID resolution between batches
+
+**Type Safety:**
+- Type aliases: `SegmentID = str | DeferredID | None`, `TabID = str | DeferredID | None`
+- All generator functions use these aliases instead of stringly-typed `str | None`
+- Pydantic models in Location/Range/EndOfSegmentLocation accept DeferredID
+
+**Tests:**
+- `test_create_header` — 2 batches: createHeader, then insertText with DeferredID
+- `test_create_footer` — 2 batches: createFooter, then insertText with DeferredID
+- Both tests verify DeferredID usage and end-to-end correctness via manual batch execution
+
+**Learnings:**
+1. **DFS + batch tracking is clean**: No mutable global state, batch depth tracked via call stack
+2. **DeferredID as first-class type**: Treating it as a Pydantic-compatible type (not just a dict) provides type safety and clarity
+3. **Dict detection in resolve**: After `model_dump()`, DeferredID becomes dict → need structure-based detection
+4. **Segment ID vs dict key**: For body, dict key is `"body"` but `segment_id` is `None` → use `base_seg.segment_id`, not the dict key
+5. **Mock API works transparently**: Once IDs are resolved, mock processes requests normally
+
+### Phase 6: Paragraph styles + text styles (FUTURE)
 - `updateParagraphStyle` generation (namedStyleType, alignment, spacing, etc.) with field masks
 - `updateTextStyle` generation (bold, italic, links, fonts, colors) with field masks
 - Bullet handling: `createParagraphBullets`, `deleteParagraphBullets`
 - **Tests**: heading changes, bold/italic, bullet lists, mixed style changes
 
-### Phase 6: Edge cases + coverage
+### Phase 7: Edge cases + coverage (FUTURE)
 - tableOfContents validation (raise `ReconcileError` if changed)
 - Section breaks (`insertSectionBreak`, `deleteContentRange`)
 - Special paragraph elements: inline objects, page breaks, footnote references, horizontal rules
+- Footnotes: `createFootnote` element-level diffing
 - UTF-16 correctness (emoji)
 - Named ranges
 - Full code coverage audit

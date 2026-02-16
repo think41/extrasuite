@@ -130,6 +130,20 @@ def generate_field_type(
     """Generate the Python type annotation for a property."""
     key = (schema_name, prop_name)
 
+    # Special case: ID fields that support deferred resolution
+    # These fields can accept either a real ID (str) or a DeferredID placeholder
+    DEFERRED_ID_FIELDS = {
+        ("Location", "segmentId"),
+        ("Location", "tabId"),
+        ("Range", "segmentId"),
+        ("Range", "tabId"),
+        ("EndOfSegmentLocation", "segmentId"),
+        ("EndOfSegmentLocation", "tabId"),
+    }
+
+    if key in DEFERRED_ID_FIELDS:
+        return "str | DeferredID"
+
     if key in prop_to_enum:
         return prop_to_enum[key]
 
@@ -224,7 +238,55 @@ def generate_code(schemas: dict[str, dict]) -> str:
     if needs_any:
         lines.append("from typing import Any")
     lines.append("")
+    lines.append("from dataclasses import dataclass")
+    lines.append("")
     lines.append("from pydantic import BaseModel, ConfigDict, Field")
+    lines.append("")
+    lines.append("")
+
+    # Add DeferredID dataclass before enums
+    lines.append("@dataclass(frozen=True)")
+    lines.append("class DeferredID:")
+    lines.append(
+        '    """Placeholder for an ID that will be created in an earlier batch.'
+    )
+    lines.append("")
+    lines.append(
+        "    Used during reconciliation to reference IDs that don't exist yet (new tabs,"
+    )
+    lines.append(
+        "    headers, footers, footnotes). The actual ID is resolved from API responses"
+    )
+    lines.append("    between batch executions.")
+    lines.append("")
+    lines.append("    Attributes:")
+    lines.append(
+        '        placeholder: Unique identifier for debugging (e.g., "tab_0", "header_1")'
+    )
+    lines.append(
+        "        batch_index: Absolute batch index that creates this ID (0, 1, 2, ...)"
+    )
+    lines.append(
+        "        request_index: Index of the creation request within that batch"
+    )
+    lines.append("        response_path: Dot-path to extract real ID from response")
+    lines.append('                      (e.g., "createHeader.headerId")')
+    lines.append('    """')
+    lines.append("")
+    lines.append("    placeholder: str")
+    lines.append("    batch_index: int")
+    lines.append("    request_index: int")
+    lines.append("    response_path: str")
+    lines.append("")
+    lines.append("    def __str__(self) -> str:")
+    lines.append('        return f"DeferredID({self.placeholder})"')
+    lines.append("")
+    lines.append("    def __repr__(self) -> str:")
+    lines.append("        return (")
+    lines.append('            f"DeferredID(placeholder={self.placeholder!r}, "')
+    lines.append('            f"batch={self.batch_index}, req={self.request_index}, "')
+    lines.append('            f"path={self.response_path!r})"')
+    lines.append("        )")
     lines.append("")
     lines.append("")
 

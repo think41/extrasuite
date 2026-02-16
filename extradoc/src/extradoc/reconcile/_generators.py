@@ -15,6 +15,9 @@ from __future__ import annotations
 from dataclasses import dataclass, field
 from typing import TYPE_CHECKING, Any
 
+if TYPE_CHECKING:
+    from extradoc.api_types import SegmentID, TabID
+
 from extradoc.indexer import utf16_len
 from extradoc.reconcile._alignment import AlignedElement, AlignmentOp, align_sequences
 from extradoc.reconcile._extractors import (
@@ -50,8 +53,11 @@ class _Gap:
 
 
 def _make_location(
-    index: int, segment_id: str | None, tab_id: str | None
+    index: int,
+    segment_id: SegmentID,
+    tab_id: TabID,
 ) -> dict[str, Any]:
+    """Create a Location dict. IDs may be DeferredID objects."""
     loc: dict[str, Any] = {"index": index}
     if segment_id:
         loc["segmentId"] = segment_id
@@ -61,8 +67,12 @@ def _make_location(
 
 
 def _make_range(
-    start: int, end: int, segment_id: str | None, tab_id: str | None
+    start: int,
+    end: int,
+    segment_id: SegmentID,
+    tab_id: TabID,
 ) -> dict[str, Any]:
+    """Create a Range dict. IDs may be DeferredID objects."""
     r: dict[str, Any] = {"startIndex": start, "endIndex": end}
     if segment_id:
         r["segmentId"] = segment_id
@@ -72,7 +82,10 @@ def _make_range(
 
 
 def _make_delete_range(
-    start: int, end: int, segment_id: str | None, tab_id: str | None
+    start: int,
+    end: int,
+    segment_id: SegmentID,
+    tab_id: TabID,
 ) -> dict[str, Any]:
     return {
         "deleteContentRange": {"range": _make_range(start, end, segment_id, tab_id)}
@@ -80,7 +93,10 @@ def _make_delete_range(
 
 
 def _make_insert_text(
-    text: str, index: int, segment_id: str | None, tab_id: str | None
+    text: str,
+    index: int,
+    segment_id: SegmentID,
+    tab_id: TabID,
 ) -> dict[str, Any]:
     return {
         "insertText": {
@@ -94,8 +110,8 @@ def _make_insert_table(
     rows: int,
     columns: int,
     index: int,
-    segment_id: str | None,
-    tab_id: str | None,
+    segment_id: SegmentID,
+    tab_id: TabID,
 ) -> dict[str, Any]:
     return {
         "insertTable": {
@@ -110,9 +126,10 @@ def _make_table_cell_location(
     table_start: int,
     row_index: int,
     col_index: int,
-    segment_id: str | None,
-    tab_id: str | None,
+    segment_id: SegmentID,
+    tab_id: TabID,
 ) -> dict[str, Any]:
+    """Create a TableCellLocation dict. IDs may be DeferredID objects."""
     loc: dict[str, Any] = {"index": table_start}
     if segment_id:
         loc["segmentId"] = segment_id
@@ -173,10 +190,18 @@ def _cell_text(cell: TableCell) -> str:
 
 def generate_requests(
     alignment: list[AlignedElement],
-    segment_id: str | None,
-    tab_id: str | None,
+    segment_id: SegmentID,
+    tab_id: TabID,
 ) -> list[dict[str, Any]]:
     """Generate batchUpdate requests from an alignment.
+
+    Args:
+        alignment: List of aligned StructuralElements
+        segment_id: Segment ID context (may be DeferredID for new segments)
+        tab_id: Tab ID context (may be DeferredID for new tabs)
+
+    Returns:
+        List of request dicts (may contain DeferredID objects in location fields)
 
     Handles both gap-based operations (add/delete structural elements)
     and matched table diffs (cell content changes).
@@ -292,7 +317,7 @@ def _filter_section_breaks(
 
 
 def _process_inner_gap(
-    gap: _Gap, segment_id: str | None, tab_id: str | None
+    gap: _Gap, segment_id: SegmentID, tab_id: TabID
 ) -> list[dict[str, Any]]:
     """Process a non-trailing gap (has a right anchor)."""
     requests: list[dict[str, Any]] = []
@@ -365,7 +390,7 @@ def _process_inner_gap(
 
 
 def _process_trailing_gap(
-    gap: _Gap, segment_id: str | None, tab_id: str | None
+    gap: _Gap, segment_id: SegmentID, tab_id: TabID
 ) -> list[dict[str, Any]]:
     """Process a trailing gap (no right anchor). Must protect segment-final \\n."""
     requests: list[dict[str, Any]] = []
@@ -426,8 +451,8 @@ def _process_trailing_paragraph_adds(
     gap: _Gap,
     real_deletes: list[AlignedElement],
     real_adds: list[AlignedElement],
-    segment_id: str | None,
-    tab_id: str | None,
+    segment_id: SegmentID,
+    tab_id: TabID,
 ) -> list[dict[str, Any]]:
     """Handle pure paragraph adds in a trailing gap (Phase 1 logic)."""
     first_del_el = real_deletes[0].base_element if real_deletes else None
@@ -463,8 +488,8 @@ def _process_trailing_adds_with_tables(
     gap: _Gap,
     real_deletes: list[AlignedElement],
     real_adds: list[AlignedElement],
-    segment_id: str | None,
-    tab_id: str | None,
+    segment_id: SegmentID,
+    tab_id: TabID,
 ) -> list[dict[str, Any]]:
     """Handle adds containing tables in a trailing gap.
 
@@ -556,8 +581,8 @@ def _filter_trailing_empty_paras(
 def _insert_adds_individually(
     real_adds: list[AlignedElement],
     insert_idx: int,
-    segment_id: str | None,
-    tab_id: str | None,
+    segment_id: SegmentID,
+    tab_id: TabID,
 ) -> list[dict[str, Any]]:
     """Process adds individually in reverse order at insert_idx.
 
@@ -595,8 +620,8 @@ def _insert_adds_individually(
 def _generate_insert_table_with_content(
     table: Table,
     insert_idx: int,
-    segment_id: str | None,
-    tab_id: str | None,
+    segment_id: SegmentID,
+    tab_id: TabID,
 ) -> list[dict[str, Any]]:
     """Generate insertTable + cell population requests.
 
@@ -644,8 +669,8 @@ def _generate_insert_table_with_content(
 def _generate_table_diff(
     base_se: StructuralElement,
     desired_se: StructuralElement,
-    segment_id: str | None,
-    tab_id: str | None,
+    segment_id: SegmentID,
+    tab_id: TabID,
 ) -> list[dict[str, Any]]:
     """Generate requests to transform base table into desired table.
 
@@ -672,8 +697,8 @@ def _make_insert_table_row(
     table_start: int,
     row_index: int,
     insert_below: bool,
-    segment_id: str | None,
-    tab_id: str | None,
+    segment_id: SegmentID,
+    tab_id: TabID,
 ) -> dict[str, Any]:
     return {
         "insertTableRow": {
@@ -688,8 +713,8 @@ def _make_insert_table_row(
 def _make_delete_table_row(
     table_start: int,
     row_index: int,
-    segment_id: str | None,
-    tab_id: str | None,
+    segment_id: SegmentID,
+    tab_id: TabID,
 ) -> dict[str, Any]:
     return {
         "deleteTableRow": {
@@ -704,8 +729,8 @@ def _make_insert_table_column(
     table_start: int,
     col_index: int,
     insert_right: bool,
-    segment_id: str | None,
-    tab_id: str | None,
+    segment_id: SegmentID,
+    tab_id: TabID,
 ) -> dict[str, Any]:
     return {
         "insertTableColumn": {
@@ -720,8 +745,8 @@ def _make_insert_table_column(
 def _make_delete_table_column(
     table_start: int,
     col_index: int,
-    segment_id: str | None,
-    tab_id: str | None,
+    segment_id: SegmentID,
+    tab_id: TabID,
 ) -> dict[str, Any]:
     return {
         "deleteTableColumn": {
@@ -732,12 +757,12 @@ def _make_delete_table_column(
     }
 
 
-def _make_create_header(header_type: str, tab_id: str | None) -> dict[str, Any]:
+def _make_create_header(header_type: str, tab_id: TabID) -> dict[str, Any]:
     """Create a header request.
 
     Args:
         header_type: "DEFAULT" or other header type
-        tab_id: Tab ID if creating in a specific tab
+        tab_id: Tab ID if creating in a specific tab (may be DeferredID)
     """
     req: dict[str, Any] = {"createHeader": {"type": header_type}}
     # Note: sectionBreakLocation is None, so header applies to DocumentStyle
@@ -746,7 +771,7 @@ def _make_create_header(header_type: str, tab_id: str | None) -> dict[str, Any]:
     return req
 
 
-def _make_delete_header(header_id: str, tab_id: str | None) -> dict[str, Any]:
+def _make_delete_header(header_id: str, tab_id: TabID) -> dict[str, Any]:
     """Delete a header request."""
     req: dict[str, Any] = {"deleteHeader": {"headerId": header_id}}
     if tab_id:
@@ -754,12 +779,12 @@ def _make_delete_header(header_id: str, tab_id: str | None) -> dict[str, Any]:
     return req
 
 
-def _make_create_footer(footer_type: str, tab_id: str | None) -> dict[str, Any]:
+def _make_create_footer(footer_type: str, tab_id: TabID) -> dict[str, Any]:
     """Create a footer request.
 
     Args:
         footer_type: "DEFAULT" or other footer type
-        tab_id: Tab ID if creating in a specific tab
+        tab_id: Tab ID if creating in a specific tab (may be DeferredID)
     """
     req: dict[str, Any] = {"createFooter": {"type": footer_type}}
     # Note: sectionBreakLocation is None, so footer applies to DocumentStyle
@@ -768,7 +793,7 @@ def _make_create_footer(footer_type: str, tab_id: str | None) -> dict[str, Any]:
     return req
 
 
-def _make_delete_footer(footer_id: str, tab_id: str | None) -> dict[str, Any]:
+def _make_delete_footer(footer_id: str, tab_id: TabID) -> dict[str, Any]:
     """Delete a footer request."""
     req: dict[str, Any] = {"deleteFooter": {"footerId": footer_id}}
     if tab_id:
@@ -922,8 +947,8 @@ def _compute_adjusted_row_length(
 def _diff_table_structural(
     base_se: StructuralElement,
     desired_se: StructuralElement,
-    segment_id: str | None,
-    tab_id: str | None,
+    segment_id: SegmentID,
+    tab_id: TabID,
 ) -> list[dict[str, Any]]:
     """Structural table diff with proper row/column operations."""
     table_start = _el_start(base_se)
@@ -1126,8 +1151,8 @@ def _diff_row_cells(
     desired_row: TableRow,
     row_start: int,
     col_alignment: list[tuple[AlignmentOp, int | None, int | None]],
-    segment_id: str | None,
-    tab_id: str | None,
+    segment_id: SegmentID,
+    tab_id: TabID,
 ) -> tuple[list[dict[str, Any]], int]:
     """Diff cells right-to-left for a MATCHED row.
 
@@ -1210,8 +1235,8 @@ def _populate_new_row(
     desired_row: TableRow,
     row_start: int,
     desired_cols_count: int,
-    segment_id: str | None,
-    tab_id: str | None,
+    segment_id: SegmentID,
+    tab_id: TabID,
 ) -> tuple[list[dict[str, Any]], int]:
     """Populate cells of a newly inserted row, right-to-left.
 
@@ -1247,8 +1272,8 @@ def _diff_single_cell_at(
     base_cell: TableCell,
     desired_cell: TableCell,
     cell_start: int,
-    segment_id: str | None,
-    tab_id: str | None,
+    segment_id: SegmentID,
+    tab_id: TabID,
 ) -> list[dict[str, Any]]:
     """Diff a single cell using a computed cell_start index."""
     base_text = _cell_text(base_cell)
@@ -1279,8 +1304,8 @@ def _diff_single_cell_at(
 def _populate_cell_at(
     desired_cell: TableCell,
     cell_start: int,
-    segment_id: str | None,
-    tab_id: str | None,
+    segment_id: SegmentID,
+    tab_id: TabID,
 ) -> list[dict[str, Any]]:
     """Populate an empty cell (just \\n) with desired content."""
     desired_text = _cell_text(desired_cell)
@@ -1293,8 +1318,8 @@ def _populate_cell_at(
 def _diff_single_cell(
     base_cell: TableCell,
     desired_cell: TableCell,
-    segment_id: str | None,
-    tab_id: str | None,
+    segment_id: SegmentID,
+    tab_id: TabID,
 ) -> list[dict[str, Any]]:
     """Diff a single cell's content. Uses deleteContentRange + insertText."""
     base_text = _cell_text(base_cell)
