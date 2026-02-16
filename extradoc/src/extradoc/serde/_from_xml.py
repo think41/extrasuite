@@ -148,9 +148,13 @@ def _convert_tab(tab_xml: TabXml, styles: StylesXml) -> Tab:
             }
         doc_tab_d["footnotes"] = footnotes_d
 
+    tab_props: dict[str, Any] = {"tabId": tab_xml.id, "title": tab_xml.title}
+    if tab_xml.index is not None:
+        tab_props["index"] = tab_xml.index
+
     return Tab.model_validate(
         {
-            "tabProperties": {"tabId": tab_xml.id, "title": tab_xml.title},
+            "tabProperties": tab_props,
             "documentTab": doc_tab_d,
         }
     )
@@ -163,6 +167,8 @@ def _convert_list_def_d(list_def: ListDefXml, styles: StylesXml) -> dict[str, An
         style_attrs: dict[str, str] = {}
         if level_def.class_name:
             style_attrs = styles.lookup("listlevel", level_def.class_name)
+        else:
+            style_attrs = styles.lookup("listlevel", "_default")
 
         nl = resolve_nesting_level(
             style_attrs,
@@ -256,6 +262,8 @@ def _convert_paragraph(
     para_attrs: dict[str, str] = {}
     if para_xml.class_name:
         para_attrs = styles.lookup("para", para_xml.class_name)
+    else:
+        para_attrs = styles.lookup("para", "_default")
 
     ps = resolve_para_style(para_attrs, named_style)
 
@@ -352,7 +360,10 @@ def _convert_table(
     if table_xml.cols:
         col_props = []
         for col in table_xml.cols:
-            col_attrs = styles.lookup("col", col.class_name) if col.class_name else {}
+            if col.class_name:
+                col_attrs = styles.lookup("col", col.class_name)
+            else:
+                col_attrs = styles.lookup("col", "_default")
             cp = resolve_col_style(col_attrs)
             col_props.append(cp.model_dump(by_alias=True, exclude_none=True))
         table_d["tableStyle"] = {"tableColumnProperties": col_props or None}
@@ -362,6 +373,9 @@ def _convert_table(
         row_d: dict[str, Any] = {}
         if row_xml.class_name:
             row_attrs = styles.lookup("row", row_xml.class_name)
+        else:
+            row_attrs = styles.lookup("row", "_default")
+        if row_attrs:
             rs = resolve_row_style(row_attrs)
             row_d["tableRowStyle"] = rs.model_dump(by_alias=True, exclude_none=True)
 
@@ -370,6 +384,9 @@ def _convert_table(
             cell_d: dict[str, Any] = {}
             if cell_xml.class_name:
                 cell_attrs = styles.lookup("cell", cell_xml.class_name)
+            else:
+                cell_attrs = styles.lookup("cell", "_default")
+            if cell_attrs:
                 cs = resolve_cell_style(cell_attrs)
                 cell_style_d = cs.model_dump(by_alias=True, exclude_none=True)
             else:

@@ -98,13 +98,18 @@ def document_to_xml(
             folder = f"{base_folder}_{counter}"
             counter += 1
 
+        tab_index = tab_props.index if tab_props else None
+
         doc_tab = tab.document_tab
         if not doc_tab:
             continue
 
         collector = StyleCollector()
         tab_xml = _convert_tab(tab_id, tab_title, doc_tab, collector)
+        tab_xml.index = tab_index
+        defaults = collector.promote_defaults()
         styles_xml = collector.build()
+        _strip_default_classes(tab_xml, defaults)
         result[folder] = (tab_xml, styles_xml)
 
     return result
@@ -385,3 +390,74 @@ def _convert_table(
         table_xml.rows.append(row_xml)
 
     return table_xml
+
+
+# ---------------------------------------------------------------------------
+# Default style stripping
+# ---------------------------------------------------------------------------
+
+
+def _strip_default_classes(tab_xml: TabXml, defaults: dict[str, str]) -> None:
+    """Walk TabXml and set class_name to None where it matches a promoted default."""
+    if not defaults:
+        return
+
+    para_default = defaults.get("para")
+    cell_default = defaults.get("cell")
+    row_default = defaults.get("row")
+    col_default = defaults.get("col")
+    listlevel_default = defaults.get("listlevel")
+
+    # List definitions
+    if listlevel_default:
+        for list_def in tab_xml.lists:
+            for level in list_def.levels:
+                if level.class_name == listlevel_default:
+                    level.class_name = None
+
+    # All block containers
+    all_blocks = list(tab_xml.body)
+    for seg in tab_xml.headers:
+        all_blocks.extend(seg.blocks)
+    for seg in tab_xml.footers:
+        all_blocks.extend(seg.blocks)
+    for seg in tab_xml.footnotes:
+        all_blocks.extend(seg.blocks)
+
+    _strip_blocks(all_blocks, para_default, cell_default, row_default, col_default)
+
+
+def _strip_blocks(
+    blocks: list[BlockNode],
+    para_default: str | None,
+    cell_default: str | None,
+    row_default: str | None,
+    col_default: str | None,
+) -> None:
+    """Recursively strip default class names from blocks."""
+    for block in blocks:
+        if isinstance(block, ParagraphXml):
+            if para_default and block.class_name == para_default:
+                block.class_name = None
+        elif isinstance(block, TableXml):
+            if col_default:
+                for col in block.cols:
+                    if col.class_name == col_default:
+                        col.class_name = None
+            for row in block.rows:
+                if row_default and row.class_name == row_default:
+                    row.class_name = None
+                for cell in row.cells:
+                    if cell_default and cell.class_name == cell_default:
+                        cell.class_name = None
+                    _strip_blocks(
+                        cell.blocks,
+                        para_default,
+                        cell_default,
+                        row_default,
+                        col_default,
+                    )
+        elif isinstance(block, TocXml):
+            _strip_blocks(
+                block.blocks, para_default, cell_default, row_default, col_default
+            )
