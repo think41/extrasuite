@@ -43,8 +43,8 @@ def build_index(doc: Document, folder_map: dict[str, str] | None = None) -> Inde
 
     for tab in doc.tabs or []:
         tab_props = tab.tab_properties
-        tab_id = tab_props.tab_id or "t.0" if tab_props else "t.0"
-        tab_title = tab_props.title or "Tab 1" if tab_props else "Tab 1"
+        tab_id = (tab_props.tab_id or "t.0") if tab_props else "t.0"
+        tab_title = (tab_props.title or "Tab 1") if tab_props else "Tab 1"
 
         if folder_map:
             folder = folder_map.get(tab_id, sanitize_tab_name(tab_title))

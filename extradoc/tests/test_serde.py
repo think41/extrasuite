@@ -8,33 +8,47 @@ if TYPE_CHECKING:
     from pathlib import Path
 
 from extradoc.api_types._generated import (
+    AutoText,
     Body,
     Bullet,
     Color,
+    ColumnBreak,
+    DateElement,
     Dimension,
     DimensionUnit,
     Document,
     DocumentTab,
+    Equation,
     Footer,
     Footnote,
+    FootnoteReference,
     Header,
+    HorizontalRule,
+    InlineObjectElement,
     Link,
     ListProperties,
     NestingLevel,
     NestingLevelGlyphType,
     OptionalColor,
+    PageBreak,
     Paragraph,
     ParagraphElement,
     ParagraphStyle,
     ParagraphStyleAlignment,
     ParagraphStyleNamedStyleType,
+    Person,
+    PersonProperties,
     RgbColor,
+    RichLink,
+    RichLinkProperties,
+    SectionBreak,
     Shading,
     StructuralElement,
     Tab,
     Table,
     TableCell,
     TableCellStyle,
+    TableOfContents,
     TableRow,
     TabProperties,
     TextRun,
@@ -51,7 +65,6 @@ from extradoc.serde import (
     to_document,
 )
 from extradoc.serde._models import (
-    FormattingNode,
     IndexHeading,
     IndexTab,
     IndexXml,
@@ -272,7 +285,7 @@ class TestModels:
                     tag="p",
                     inlines=[
                         TNode(text="Plain "),
-                        FormattingNode(tag="b", children=[TNode(text="bold")]),
+                        TNode(text="bold", sugar_tag="b"),
                     ],
                 ),
             ],
@@ -281,7 +294,7 @@ class TestModels:
         assert "<h1" in xml
         assert "headingId" in xml
         assert "<t>Hello</t>" in xml
-        assert "<b>" in xml
+        assert "<b>bold</b>" in xml
 
         tab2 = TabXml.from_xml_string(xml)
         assert tab2.id == "t.0"
@@ -290,6 +303,15 @@ class TestModels:
         assert isinstance(first, ParagraphXml)
         assert first.tag == "h1"
         assert first.heading_id == "h.abc"
+
+        # Verify sugar tag round-trip
+        second = tab2.body[1]
+        assert isinstance(second, ParagraphXml)
+        assert len(second.inlines) == 2
+        bold_node = second.inlines[1]
+        assert isinstance(bold_node, TNode)
+        assert bold_node.sugar_tag == "b"
+        assert bold_node.text == "bold"
 
     def test_index_xml_roundtrip(self) -> None:
         index = IndexXml(
@@ -544,6 +566,362 @@ class TestRoundTrip:
         tr = para.elements[0].text_run
         assert tr and tr.text_style and tr.text_style.link
         assert tr.text_style.link.url == "https://example.com"
+
+    def test_footnote_roundtrip(self) -> None:
+        """Footnotes survive round-trip."""
+        doc = _make_doc(
+            [_make_para("Body with footnote")],
+            footnotes={
+                "kix.fn1": Footnote(
+                    footnote_id="kix.fn1",
+                    content=[_make_para("Footnote text")],
+                )
+            },
+        )
+        _index, tabs = from_document(doc)
+        doc2 = to_document(tabs)
+
+        tab = doc2.tabs[0]  # type: ignore
+        dt = tab.document_tab
+        assert dt is not None
+        assert dt.footnotes and "kix.fn1" in dt.footnotes
+
+    def test_section_break_roundtrip(self) -> None:
+        """Section breaks survive round-trip."""
+        content = [
+            StructuralElement(section_break=SectionBreak()),
+            _make_para("After section break"),
+        ]
+        doc = _make_doc(content)
+        _index, tabs = from_document(doc)
+        doc2 = to_document(tabs)
+
+        tab = doc2.tabs[0]  # type: ignore
+        dt = tab.document_tab
+        assert dt and dt.body and dt.body.content
+        assert dt.body.content[0].section_break is not None
+
+    def test_nested_list_roundtrip(self) -> None:
+        """Multi-level nested lists survive round-trip."""
+        lists = {
+            "kix.list1": DocList(
+                list_properties=ListProperties(
+                    nesting_levels=[
+                        NestingLevel(
+                            glyph_type=NestingLevelGlyphType.DECIMAL,
+                            glyph_format="%0.",
+                        ),
+                        NestingLevel(
+                            glyph_type=NestingLevelGlyphType.ALPHA,
+                            glyph_format="%1.",
+                        ),
+                    ]
+                )
+            )
+        }
+        doc = _make_doc(
+            [
+                _make_para(
+                    "Top level",
+                    bullet=Bullet(list_id="kix.list1", nesting_level=0),
+                ),
+                _make_para(
+                    "Nested item",
+                    bullet=Bullet(list_id="kix.list1", nesting_level=1),
+                ),
+            ],
+            lists=lists,
+        )
+        _index, tabs = from_document(doc)
+        doc2 = to_document(tabs)
+
+        tab = doc2.tabs[0]  # type: ignore
+        dt = tab.document_tab
+        assert dt and dt.lists and "kix.list1" in dt.lists
+        nl = dt.lists["kix.list1"].list_properties
+        assert nl and nl.nesting_levels and len(nl.nesting_levels) == 2
+        assert nl.nesting_levels[0].glyph_type == NestingLevelGlyphType.DECIMAL
+        assert nl.nesting_levels[1].glyph_type == NestingLevelGlyphType.ALPHA
+
+        assert dt.body and dt.body.content
+        nested = dt.body.content[1].paragraph
+        assert nested and nested.bullet
+        assert nested.bullet.nesting_level == 1
+
+    def test_mixed_inline_roundtrip(self) -> None:
+        """Paragraph with bold, italic, and link runs survives round-trip."""
+        content = [
+            StructuralElement(
+                paragraph=Paragraph(
+                    elements=[
+                        ParagraphElement(
+                            text_run=TextRun(
+                                content="bold ",
+                                text_style=TextStyle(bold=True),
+                            )
+                        ),
+                        ParagraphElement(
+                            text_run=TextRun(
+                                content="italic ",
+                                text_style=TextStyle(italic=True),
+                            )
+                        ),
+                        ParagraphElement(
+                            text_run=TextRun(
+                                content="link",
+                                text_style=TextStyle(
+                                    link=Link(url="https://example.com")
+                                ),
+                            )
+                        ),
+                        ParagraphElement(
+                            text_run=TextRun(content="\n"),
+                        ),
+                    ],
+                    paragraph_style=ParagraphStyle(
+                        named_style_type=ParagraphStyleNamedStyleType.NORMAL_TEXT,
+                    ),
+                )
+            )
+        ]
+        doc = _make_doc(content)
+        _index, tabs = from_document(doc)
+        doc2 = to_document(tabs)
+
+        tab = doc2.tabs[0]  # type: ignore
+        dt = tab.document_tab
+        assert dt and dt.body and dt.body.content
+        para = dt.body.content[0].paragraph
+        assert para and para.elements
+
+        # Find the text runs (skip trailing \n)
+        runs = [
+            pe.text_run
+            for pe in para.elements
+            if pe.text_run and pe.text_run.content and pe.text_run.content != "\n"
+        ]
+        assert len(runs) == 3
+        assert runs[0].text_style and runs[0].text_style.bold is True
+        assert runs[1].text_style and runs[1].text_style.italic is True
+        assert runs[2].text_style and runs[2].text_style.link
+        assert runs[2].text_style.link.url == "https://example.com"
+
+    def test_toc_roundtrip(self) -> None:
+        """Table of contents survives round-trip."""
+        toc = TableOfContents(
+            content=[_make_para("Chapter 1"), _make_para("Chapter 2")]
+        )
+        doc = _make_doc(
+            [
+                StructuralElement(table_of_contents=toc),
+                _make_para("Body text"),
+            ]
+        )
+        _index, tabs = from_document(doc)
+        doc2 = to_document(tabs)
+
+        tab = doc2.tabs[0]  # type: ignore
+        dt = tab.document_tab
+        assert dt and dt.body and dt.body.content
+        assert dt.body.content[0].table_of_contents is not None
+
+    def test_inline_objects_roundtrip(self) -> None:
+        """Inline objects (image, person, footnoteref, etc.) survive round-trip."""
+        content = [
+            StructuralElement(
+                paragraph=Paragraph(
+                    elements=[
+                        ParagraphElement(
+                            inline_object_element=InlineObjectElement(
+                                inline_object_id="obj.123"
+                            )
+                        ),
+                        ParagraphElement(
+                            footnote_reference=FootnoteReference(footnote_id="fn.1")
+                        ),
+                        ParagraphElement(
+                            person=Person(
+                                person_properties=PersonProperties(
+                                    email="test@example.com"
+                                )
+                            )
+                        ),
+                        ParagraphElement(date_element=DateElement()),
+                        ParagraphElement(
+                            rich_link=RichLink(
+                                rich_link_properties=RichLinkProperties(
+                                    uri="https://example.com"
+                                )
+                            )
+                        ),
+                        ParagraphElement(auto_text=AutoText()),
+                        ParagraphElement(equation=Equation()),
+                        ParagraphElement(column_break=ColumnBreak()),
+                        ParagraphElement(
+                            text_run=TextRun(content="\n"),
+                        ),
+                    ],
+                    paragraph_style=ParagraphStyle(),
+                )
+            )
+        ]
+        doc = _make_doc(content)
+        _index, tabs = from_document(doc)
+        doc2 = to_document(tabs)
+
+        tab = doc2.tabs[0]  # type: ignore
+        dt = tab.document_tab
+        assert dt and dt.body and dt.body.content
+        para = dt.body.content[0].paragraph
+        assert para and para.elements
+
+        # Check each inline type was preserved
+        elems = para.elements
+        assert elems[0].inline_object_element is not None
+        assert elems[0].inline_object_element.inline_object_id == "obj.123"
+        assert elems[1].footnote_reference is not None
+        assert elems[1].footnote_reference.footnote_id == "fn.1"
+        assert elems[2].person is not None
+        assert elems[2].person.person_properties is not None
+        assert elems[2].person.person_properties.email == "test@example.com"
+        assert elems[3].date_element is not None
+        assert elems[4].rich_link is not None
+        assert elems[5].auto_text is not None
+        assert elems[6].equation is not None
+        assert elems[7].column_break is not None
+
+    def test_cell_styles_roundtrip(self) -> None:
+        """Table cell styles (colspan, rowspan, background) survive round-trip."""
+        table = Table(
+            rows=2,
+            columns=3,
+            table_rows=[
+                TableRow(
+                    table_cells=[
+                        TableCell(
+                            content=[_make_para("Merged")],
+                            table_cell_style=TableCellStyle(
+                                column_span=2,
+                                background_color=OptionalColor(
+                                    color=Color(
+                                        rgb_color=RgbColor(red=1.0, green=0.9, blue=0.8)
+                                    )
+                                ),
+                            ),
+                        ),
+                        TableCell(
+                            content=[_make_para("C")],
+                            table_cell_style=TableCellStyle(),
+                        ),
+                    ]
+                ),
+                TableRow(
+                    table_cells=[
+                        TableCell(
+                            content=[_make_para("D")],
+                            table_cell_style=TableCellStyle(),
+                        ),
+                        TableCell(
+                            content=[_make_para("E")],
+                            table_cell_style=TableCellStyle(),
+                        ),
+                        TableCell(
+                            content=[_make_para("F")],
+                            table_cell_style=TableCellStyle(),
+                        ),
+                    ]
+                ),
+            ],
+        )
+        doc = _make_doc([StructuralElement(table=table)])
+        _index, tabs = from_document(doc)
+        doc2 = to_document(tabs)
+
+        tab = doc2.tabs[0]  # type: ignore
+        dt = tab.document_tab
+        assert dt and dt.body and dt.body.content
+        t = dt.body.content[0].table
+        assert t is not None
+        assert t.table_rows
+        first_cell = t.table_rows[0].table_cells[0]
+        assert first_cell.table_cell_style is not None
+        assert first_cell.table_cell_style.column_span == 2
+        assert first_cell.table_cell_style.background_color is not None
+
+    def test_hr_and_pagebreak_roundtrip(self) -> None:
+        """Horizontal rules and page breaks survive round-trip."""
+        content = [
+            _make_para("Before hr"),
+            StructuralElement(
+                paragraph=Paragraph(
+                    elements=[
+                        ParagraphElement(horizontal_rule=HorizontalRule()),
+                        ParagraphElement(text_run=TextRun(content="\n")),
+                    ]
+                )
+            ),
+            _make_para("Between"),
+            StructuralElement(
+                paragraph=Paragraph(
+                    elements=[
+                        ParagraphElement(page_break=PageBreak()),
+                        ParagraphElement(text_run=TextRun(content="\n")),
+                    ]
+                )
+            ),
+            _make_para("After"),
+        ]
+        doc = _make_doc(content)
+        _index, tabs = from_document(doc)
+        doc2 = to_document(tabs)
+
+        tab = doc2.tabs[0]  # type: ignore
+        dt = tab.document_tab
+        assert dt and dt.body and dt.body.content
+        # HR becomes a paragraph with horizontalRule
+        hr_para = dt.body.content[1].paragraph
+        assert hr_para and hr_para.elements
+        assert hr_para.elements[0].horizontal_rule is not None
+        # PageBreak becomes a paragraph with pageBreak
+        pb_para = dt.body.content[3].paragraph
+        assert pb_para and pb_para.elements
+        assert pb_para.elements[0].page_break is not None
+
+    def test_sugar_tag_with_class_roundtrip(self) -> None:
+        """Bold+italic text: sugar tag (b) + class with italic survives round-trip."""
+        ts = TextStyle(bold=True, italic=True)
+        doc = _make_doc([_make_para("Bold italic", text_style=ts)])
+        _index, tabs = from_document(doc)
+
+        # Verify intermediate XML model: should be TNode with sugar_tag="b"
+        folder = next(iter(tabs.keys()))
+        tab_xml, _styles_xml = tabs[folder]
+        para = tab_xml.body[0]
+        assert isinstance(para, ParagraphXml)
+        node = para.inlines[0]
+        assert isinstance(node, TNode)
+        assert node.sugar_tag == "b"
+        assert node.class_name is not None  # italic goes into class
+
+        # Verify round-trip back to Document
+        doc2 = to_document(tabs)
+        tab = doc2.tabs[0]  # type: ignore
+        dt = tab.document_tab
+        assert dt and dt.body and dt.body.content
+        para2 = dt.body.content[0].paragraph
+        assert para2 and para2.elements
+        tr = para2.elements[0].text_run
+        assert tr and tr.text_style
+        assert tr.text_style.bold is True
+        assert tr.text_style.italic is True
+
+    def test_empty_body_roundtrip(self) -> None:
+        """Document with empty body survives round-trip."""
+        doc = _make_doc([])
+        _index, tabs = from_document(doc)
+        doc2 = to_document(tabs)
+        assert doc2.tabs is not None
+        assert len(doc2.tabs) == 1
 
     def test_multiple_tabs(self) -> None:
         """Document with multiple tabs survives round-trip."""
