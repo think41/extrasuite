@@ -97,26 +97,18 @@ class IndexXml:
 
 @dataclass
 class TNode:
-    """<t>text</t> — a plain text node."""
+    """<t> — a text run, optionally with a class and/or sugar tag.
+
+    Examples:
+        <t>plain text</t>
+        <t class="s1">styled text</t>
+        <t><b>bold text</b></t>
+        <t class="s1"><i>italic + styled text</i></t>
+    """
 
     text: str
-
-
-@dataclass
-class FormattingNode:
-    """<b>, <i>, <u>, <s>, <sup>, <sub> — sugar formatting tag."""
-
-    tag: str  # b, i, u, s, sup, sub
-    children: list[TNode] = field(default_factory=list)
     class_name: str | None = None
-
-
-@dataclass
-class SpanNode:
-    """<span class="..."> — styled text without a sugar tag."""
-
-    class_name: str
-    children: list[TNode] = field(default_factory=list)
+    sugar_tag: str | None = None  # b, i, u, s, sup, sub
 
 
 @dataclass
@@ -186,8 +178,6 @@ class ColumnBreakNode:
 
 InlineNode = (
     TNode
-    | FormattingNode
-    | SpanNode
     | LinkNode
     | ImageNode
     | FootnoteRefNode
@@ -388,20 +378,13 @@ def _inline_to_element(node: InlineNode, parent: Element) -> None:
     """Append an inline node as a child Element."""
     if isinstance(node, TNode):
         t = SubElement(parent, "t")
-        t.text = node.text
-    elif isinstance(node, FormattingNode):
-        elem = SubElement(parent, node.tag)
         if node.class_name:
-            elem.set("class", node.class_name)
-        for child in node.children:
-            t = SubElement(elem, "t")
-            t.text = child.text
-    elif isinstance(node, SpanNode):
-        elem = SubElement(parent, "span")
-        elem.set("class", node.class_name)
-        for child in node.children:
-            t = SubElement(elem, "t")
-            t.text = child.text
+            t.set("class", node.class_name)
+        if node.sugar_tag:
+            sugar = SubElement(t, node.sugar_tag)
+            sugar.text = node.text
+        else:
+            t.text = node.text
     elif isinstance(node, LinkNode):
         elem = SubElement(parent, "a")
         elem.set("href", node.href)
@@ -517,21 +500,16 @@ def _inlines_from_element(parent: Element) -> list[InlineNode]:
     for child in parent:
         tag = child.tag
         if tag == "t":
-            inlines.append(TNode(text=child.text or ""))
-        elif tag in _SUGAR_TAGS:
-            t_nodes = [TNode(text=t.text or "") for t in child.findall("t")]
-            inlines.append(
-                FormattingNode(
-                    tag=tag,
-                    children=t_nodes,
-                    class_name=child.get("class"),
-                )
-            )
-        elif tag == "span":
-            t_nodes = [TNode(text=t.text or "") for t in child.findall("t")]
-            inlines.append(
-                SpanNode(class_name=child.get("class", ""), children=t_nodes)
-            )
+            class_name = child.get("class")
+            # Check for sugar tag child (e.g. <t><b>text</b></t>)
+            sugar_tag = None
+            text = child.text or ""
+            for sub in child:
+                if sub.tag in _SUGAR_TAGS:
+                    sugar_tag = sub.tag
+                    text = sub.text or ""
+                    break
+            inlines.append(TNode(text=text, class_name=class_name, sugar_tag=sugar_tag))
         elif tag == "a":
             t_nodes = [TNode(text=t.text or "") for t in child.findall("t")]
             inlines.append(

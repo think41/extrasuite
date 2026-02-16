@@ -4,6 +4,10 @@
     id    CDATA #REQUIRED
     title CDATA #REQUIRED>
 
+<!-- Content entities (defined before use) -->
+<!ENTITY % inline "t | a | image | footnoteref | person | date | richlink | autotext | equation | columnbreak">
+<!ENTITY % block "p | h1 | h2 | h3 | h4 | h5 | h6 | title | subtitle | li | table | hr | pagebreak | sectionbreak | toc">
+
 <!-- List definitions -->
 <!ELEMENT lists (list+)>
 <!ELEMENT list (level+)>
@@ -24,9 +28,6 @@
 <!ATTLIST footer id CDATA #REQUIRED>
 <!ELEMENT footnote (%block;)*>
 <!ATTLIST footnote id CDATA #REQUIRED>
-
-<!-- Block content entity -->
-<!ENTITY % block "p | h1 | h2 | h3 | h4 | h5 | h6 | title | subtitle | li | table | hr | pagebreak | sectionbreak | toc">
 
 <!-- Paragraphs and headings -->
 <!ELEMENT p (%inline;)*>
@@ -56,29 +57,17 @@
     level  CDATA #REQUIRED
     class  CDATA #IMPLIED>
 
-<!-- Inline content entity -->
-<!ENTITY % inline "t | b | i | u | s | sup | sub | span | a | image | footnoteref | person | date | richlink | autotext | equation | columnbreak">
+<!-- Text run: contains text or a single sugar tag -->
+<!ELEMENT t (#PCDATA | b | i | u | s | sup | sub)*>
+<!ATTLIST t class CDATA #IMPLIED>
 
-<!-- Text run -->
-<!ELEMENT t (#PCDATA)>
-
-<!-- Formatting sugar (each wraps inline content) -->
-<!ELEMENT b (t+)>
-<!ATTLIST b class CDATA #IMPLIED>
-<!ELEMENT i (t+)>
-<!ATTLIST i class CDATA #IMPLIED>
-<!ELEMENT u (t+)>
-<!ATTLIST u class CDATA #IMPLIED>
-<!ELEMENT s (t+)>
-<!ATTLIST s class CDATA #IMPLIED>
-<!ELEMENT sup (t+)>
-<!ATTLIST sup class CDATA #IMPLIED>
-<!ELEMENT sub (t+)>
-<!ATTLIST sub class CDATA #IMPLIED>
-
-<!-- Styled span (no sugar) -->
-<!ELEMENT span (t+)>
-<!ATTLIST span class CDATA #REQUIRED>
+<!-- Formatting sugar (inside <t>, wraps PCDATA only, no classnames) -->
+<!ELEMENT b (#PCDATA)>
+<!ELEMENT i (#PCDATA)>
+<!ELEMENT u (#PCDATA)>
+<!ELEMENT s (#PCDATA)>
+<!ELEMENT sup (#PCDATA)>
+<!ELEMENT sub (#PCDATA)>
 
 <!-- Link -->
 <!ELEMENT a (t+)>

@@ -16,7 +16,6 @@ from ._models import (
     DateNode,
     EquationNode,
     FootnoteRefNode,
-    FormattingNode,
     HrXml,
     ImageNode,
     InlineNode,
@@ -30,7 +29,6 @@ from ._models import (
     RowXml,
     SectionBreakXml,
     SegmentXml,
-    SpanNode,
     TableXml,
     TabXml,
     TNode,
@@ -89,8 +87,8 @@ def document_to_xml(
 
     for tab in doc.tabs or []:
         tab_props = tab.tab_properties
-        tab_id = tab_props.tab_id or "t.0" if tab_props else "t.0"
-        tab_title = tab_props.title or "Tab 1" if tab_props else "Tab 1"
+        tab_id = (tab_props.tab_id or "t.0") if tab_props else "t.0"
+        tab_title = (tab_props.title or "Tab 1") if tab_props else "Tab 1"
         folder = sanitize_tab_name(tab_title)
 
         # Ensure unique folder names
@@ -325,30 +323,23 @@ def _convert_text_run(
     all_attrs = extract_text_style(text_style)
 
     if not all_attrs:
-        # Plain text, no styles
         return TNode(text=text)
 
-    t_nodes = [TNode(text=text)]
-
-    # Check for link first
+    # Check for link first — links use LinkNode with class for non-link styles
     href, remaining_after_link = determine_link_href(all_attrs)
     if href:
         class_name = collector.add_text_style(remaining_after_link)
-        return LinkNode(href=href, children=t_nodes, class_name=class_name)
+        return LinkNode(href=href, children=[TNode(text=text)], class_name=class_name)
 
     # Check for sugar tag
     sugar_tag, remaining = determine_sugar_tag(all_attrs)
     if sugar_tag:
         class_name = collector.add_text_style(remaining)
-        return FormattingNode(tag=sugar_tag, children=t_nodes, class_name=class_name)
+        return TNode(text=text, class_name=class_name, sugar_tag=sugar_tag)
 
-    # No sugar tag — use <span>
+    # No sugar tag — TNode with class
     class_name = collector.add_text_style(all_attrs)
-    if class_name:
-        return SpanNode(class_name=class_name, children=t_nodes)
-
-    # Fallback: plain text (shouldn't reach here if all_attrs is non-empty)
-    return TNode(text=text)
+    return TNode(text=text, class_name=class_name)
 
 
 def _convert_table(
