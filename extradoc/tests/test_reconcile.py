@@ -8,6 +8,7 @@ Phase 4: multi-tab.
 
 from typing import Any
 
+from extradoc.api_types import DeferredID
 from extradoc.api_types._generated import Document
 from extradoc.reconcile import reconcile, reindex_document, verify
 
@@ -71,7 +72,10 @@ class TestReconcileNoChange:
         desired = _make_doc("Hello", "World")
         result = reconcile(base, desired)
         # No changes needed
-        assert result.requests is None or len(result.requests) == 0
+        assert len(result) == 0 or (
+            len(result) == 1
+            and (result[0].requests is None or len(result[0].requests) == 0)
+        )
         ok, diffs = verify(base, result, desired)
         assert ok, f"Diffs: {diffs}"
 
@@ -81,8 +85,8 @@ class TestReconcileAddParagraph:
         base = _make_doc("Hello")
         desired = _make_doc("Hello", "World")
         result = reconcile(base, desired)
-        assert result.requests is not None
-        assert len(result.requests) > 0
+        assert len(result) == 1 and result[0].requests is not None
+        assert len(result[0].requests) > 0
         ok, diffs = verify(base, result, desired)
         assert ok, f"Diffs: {diffs}"
 
@@ -90,7 +94,7 @@ class TestReconcileAddParagraph:
         base = _make_doc("World")
         desired = _make_doc("Hello", "World")
         result = reconcile(base, desired)
-        assert result.requests is not None
+        assert len(result) == 1 and result[0].requests is not None
         ok, diffs = verify(base, result, desired)
         assert ok, f"Diffs: {diffs}"
 
@@ -98,7 +102,7 @@ class TestReconcileAddParagraph:
         base = _make_doc("Hello")
         desired = _make_doc("Hello", "Beautiful", "World")
         result = reconcile(base, desired)
-        assert result.requests is not None
+        assert len(result) == 1 and result[0].requests is not None
         ok, diffs = verify(base, result, desired)
         assert ok, f"Diffs: {diffs}"
 
@@ -108,7 +112,7 @@ class TestReconcileDeleteParagraph:
         base = _make_doc("Hello", "World")
         desired = _make_doc("Hello")
         result = reconcile(base, desired)
-        assert result.requests is not None
+        assert len(result) == 1 and result[0].requests is not None
         ok, diffs = verify(base, result, desired)
         assert ok, f"Diffs: {diffs}"
 
@@ -116,7 +120,7 @@ class TestReconcileDeleteParagraph:
         base = _make_doc("Hello", "World")
         desired = _make_doc("World")
         result = reconcile(base, desired)
-        assert result.requests is not None
+        assert len(result) == 1 and result[0].requests is not None
         ok, diffs = verify(base, result, desired)
         assert ok, f"Diffs: {diffs}"
 
@@ -124,7 +128,7 @@ class TestReconcileDeleteParagraph:
         base = _make_doc("Hello", "Beautiful", "World")
         desired = _make_doc("Hello", "World")
         result = reconcile(base, desired)
-        assert result.requests is not None
+        assert len(result) == 1 and result[0].requests is not None
         ok, diffs = verify(base, result, desired)
         assert ok, f"Diffs: {diffs}"
 
@@ -134,7 +138,7 @@ class TestReconcileModifyParagraph:
         base = _make_doc("Hello")
         desired = _make_doc("Goodbye")
         result = reconcile(base, desired)
-        assert result.requests is not None
+        assert len(result) == 1 and result[0].requests is not None
         ok, diffs = verify(base, result, desired)
         assert ok, f"Diffs: {diffs}"
 
@@ -144,7 +148,7 @@ class TestReconcileReorderParagraphs:
         base = _make_doc("Hello", "World")
         desired = _make_doc("World", "Hello")
         result = reconcile(base, desired)
-        assert result.requests is not None
+        assert len(result) == 1 and result[0].requests is not None
         ok, diffs = verify(base, result, desired)
         assert ok, f"Diffs: {diffs}"
 
@@ -152,7 +156,7 @@ class TestReconcileReorderParagraphs:
         base = _make_doc("A", "B", "C")
         desired = _make_doc("C", "B", "A")
         result = reconcile(base, desired)
-        assert result.requests is not None
+        assert len(result) == 1 and result[0].requests is not None
         ok, diffs = verify(base, result, desired)
         assert ok, f"Diffs: {diffs}"
 
@@ -340,7 +344,7 @@ class TestReconcileAddTable:
         table = _make_table([["Cell"]])
         desired = _make_doc_with_content("Hello", table)
         result = reconcile(base, desired)
-        assert result.requests is not None
+        assert len(result) == 1 and result[0].requests is not None
         ok, diffs = verify(base, result, desired)
         assert ok, f"Diffs: {diffs}"
 
@@ -350,7 +354,7 @@ class TestReconcileAddTable:
         table = _make_table([["Cell"]])
         desired = _make_doc_with_content("Hello", table, "World")
         result = reconcile(base, desired)
-        assert result.requests is not None
+        assert len(result) == 1 and result[0].requests is not None
         ok, diffs = verify(base, result, desired)
         assert ok, f"Diffs: {diffs}"
 
@@ -360,7 +364,7 @@ class TestReconcileAddTable:
         table = _make_table([["A", "B"], ["C", "D"]])
         desired = _make_doc_with_content("Hello", table)
         result = reconcile(base, desired)
-        assert result.requests is not None
+        assert len(result) == 1 and result[0].requests is not None
         ok, diffs = verify(base, result, desired)
         assert ok, f"Diffs: {diffs}"
 
@@ -370,7 +374,7 @@ class TestReconcileAddTable:
         table = _make_table([["", ""], ["", ""]])
         desired = _make_doc_with_content("Hello", table)
         result = reconcile(base, desired)
-        assert result.requests is not None
+        assert len(result) == 1 and result[0].requests is not None
         ok, diffs = verify(base, result, desired)
         assert ok, f"Diffs: {diffs}"
 
@@ -382,7 +386,7 @@ class TestReconcileDeleteTable:
         base = _make_doc_with_content("Hello", table)
         desired = _make_doc("Hello")
         result = reconcile(base, desired)
-        assert result.requests is not None
+        assert len(result) == 1 and result[0].requests is not None
         ok, diffs = verify(base, result, desired)
         assert ok, f"Diffs: {diffs}"
 
@@ -392,7 +396,7 @@ class TestReconcileDeleteTable:
         base = _make_doc_with_content("Hello", table, "World")
         desired = _make_doc("Hello", "World")
         result = reconcile(base, desired)
-        assert result.requests is not None
+        assert len(result) == 1 and result[0].requests is not None
         ok, diffs = verify(base, result, desired)
         assert ok, f"Diffs: {diffs}"
 
@@ -405,7 +409,7 @@ class TestReconcileModifyTableCells:
         base = _make_doc_with_content("Hello", base_table)
         desired = _make_doc_with_content("Hello", desired_table)
         result = reconcile(base, desired)
-        assert result.requests is not None
+        assert len(result) == 1 and result[0].requests is not None
         ok, diffs = verify(base, result, desired)
         assert ok, f"Diffs: {diffs}"
 
@@ -416,7 +420,7 @@ class TestReconcileModifyTableCells:
         base = _make_doc_with_content("Hello", base_table)
         desired = _make_doc_with_content("Hello", desired_table)
         result = reconcile(base, desired)
-        assert result.requests is not None
+        assert len(result) == 1 and result[0].requests is not None
         ok, diffs = verify(base, result, desired)
         assert ok, f"Diffs: {diffs}"
 
@@ -427,7 +431,7 @@ class TestReconcileModifyTableCells:
         base = _make_doc_with_content("Hello", base_table)
         desired = _make_doc_with_content("Hello", desired_table)
         result = reconcile(base, desired)
-        assert result.requests is not None
+        assert len(result) == 1 and result[0].requests is not None
         ok, diffs = verify(base, result, desired)
         assert ok, f"Diffs: {diffs}"
 
@@ -457,7 +461,10 @@ class TestReconcileModifyTableCells:
         base = _make_doc_with_content("Hello", table)
         desired = _make_doc_with_content("Hello", table)
         result = reconcile(base, desired)
-        assert result.requests is None or len(result.requests) == 0
+        assert len(result) == 0 or (
+            len(result) == 1
+            and (result[0].requests is None or len(result[0].requests) == 0)
+        )
         ok, diffs = verify(base, result, desired)
         assert ok, f"Diffs: {diffs}"
 
@@ -470,7 +477,7 @@ class TestReconcileTableRows:
         base = _make_doc_with_content("Hello", base_table)
         desired = _make_doc_with_content("Hello", desired_table)
         result = reconcile(base, desired)
-        assert result.requests is not None
+        assert len(result) == 1 and result[0].requests is not None
         ok, diffs = verify(base, result, desired)
         assert ok, f"Diffs: {diffs}"
 
@@ -481,7 +488,7 @@ class TestReconcileTableRows:
         base = _make_doc_with_content("Hello", base_table)
         desired = _make_doc_with_content("Hello", desired_table)
         result = reconcile(base, desired)
-        assert result.requests is not None
+        assert len(result) == 1 and result[0].requests is not None
         ok, diffs = verify(base, result, desired)
         assert ok, f"Diffs: {diffs}"
 
@@ -492,7 +499,7 @@ class TestReconcileTableRows:
         base = _make_doc_with_content("Hello", base_table)
         desired = _make_doc_with_content("Hello", desired_table)
         result = reconcile(base, desired)
-        assert result.requests is not None
+        assert len(result) == 1 and result[0].requests is not None
         ok, diffs = verify(base, result, desired)
         assert ok, f"Diffs: {diffs}"
 
@@ -505,7 +512,7 @@ class TestReconcileTableColumns:
         base = _make_doc_with_content("Hello", base_table)
         desired = _make_doc_with_content("Hello", desired_table)
         result = reconcile(base, desired)
-        assert result.requests is not None
+        assert len(result) == 1 and result[0].requests is not None
         ok, diffs = verify(base, result, desired)
         assert ok, f"Diffs: {diffs}"
 
@@ -516,7 +523,7 @@ class TestReconcileTableColumns:
         base = _make_doc_with_content("Hello", base_table)
         desired = _make_doc_with_content("Hello", desired_table)
         result = reconcile(base, desired)
-        assert result.requests is not None
+        assert len(result) == 1 and result[0].requests is not None
         ok, diffs = verify(base, result, desired)
         assert ok, f"Diffs: {diffs}"
 
@@ -529,7 +536,7 @@ class TestReconcileTableMixed:
         base = _make_doc_with_content("Hello", base_table, "World")
         desired = _make_doc_with_content("Goodbye", desired_table, "Earth")
         result = reconcile(base, desired)
-        assert result.requests is not None
+        assert len(result) == 1 and result[0].requests is not None
         ok, diffs = verify(base, result, desired)
         assert ok, f"Diffs: {diffs}"
 
@@ -542,7 +549,7 @@ class TestReconcileTableMixed:
         base = _make_doc_with_content("Start", t1, "Mid", t2, "End")
         desired = _make_doc_with_content("Start", t1_new, "Mid", t2_new, "End")
         result = reconcile(base, desired)
-        assert result.requests is not None
+        assert len(result) == 1 and result[0].requests is not None
         ok, diffs = verify(base, result, desired)
         assert ok, f"Diffs: {diffs}"
 
@@ -552,7 +559,7 @@ class TestReconcileTableMixed:
         table = _make_table([["Cell"]])
         desired = _make_doc_with_content("Hello", table)
         result = reconcile(base, desired)
-        assert result.requests is not None
+        assert len(result) == 1 and result[0].requests is not None
         ok, diffs = verify(base, result, desired)
         assert ok, f"Diffs: {diffs}"
 
@@ -562,7 +569,7 @@ class TestReconcileTableMixed:
         base = _make_doc_with_content("Hello", table)
         desired = _make_doc("Hello", "World")
         result = reconcile(base, desired)
-        assert result.requests is not None
+        assert len(result) == 1 and result[0].requests is not None
         ok, diffs = verify(base, result, desired)
         assert ok, f"Diffs: {diffs}"
 
@@ -577,7 +584,7 @@ class TestReconcileTableStructural:
         base = _make_doc_with_content("Hello", base_table)
         desired = _make_doc_with_content("Hello", desired_table)
         result = reconcile(base, desired)
-        assert result.requests is not None
+        assert len(result) == 1 and result[0].requests is not None
         ok, diffs = verify(base, result, desired)
         assert ok, f"Diffs: {diffs}"
 
@@ -588,7 +595,7 @@ class TestReconcileTableStructural:
         base = _make_doc_with_content("Hello", base_table)
         desired = _make_doc_with_content("Hello", desired_table)
         result = reconcile(base, desired)
-        assert result.requests is not None
+        assert len(result) == 1 and result[0].requests is not None
         ok, diffs = verify(base, result, desired)
         assert ok, f"Diffs: {diffs}"
 
@@ -599,7 +606,7 @@ class TestReconcileTableStructural:
         base = _make_doc_with_content("Hello", base_table)
         desired = _make_doc_with_content("Hello", desired_table)
         result = reconcile(base, desired)
-        assert result.requests is not None
+        assert len(result) == 1 and result[0].requests is not None
         ok, diffs = verify(base, result, desired)
         assert ok, f"Diffs: {diffs}"
 
@@ -610,7 +617,7 @@ class TestReconcileTableStructural:
         base = _make_doc_with_content("Hello", base_table)
         desired = _make_doc_with_content("Hello", desired_table)
         result = reconcile(base, desired)
-        assert result.requests is not None
+        assert len(result) == 1 and result[0].requests is not None
         ok, diffs = verify(base, result, desired)
         assert ok, f"Diffs: {diffs}"
 
@@ -621,7 +628,7 @@ class TestReconcileTableStructural:
         base = _make_doc_with_content("Hello", base_table)
         desired = _make_doc_with_content("Hello", desired_table)
         result = reconcile(base, desired)
-        assert result.requests is not None
+        assert len(result) == 1 and result[0].requests is not None
         ok, diffs = verify(base, result, desired)
         assert ok, f"Diffs: {diffs}"
 
@@ -632,7 +639,7 @@ class TestReconcileTableStructural:
         base = _make_doc_with_content("Hello", base_table)
         desired = _make_doc_with_content("Hello", desired_table)
         result = reconcile(base, desired)
-        assert result.requests is not None
+        assert len(result) == 1 and result[0].requests is not None
         ok, diffs = verify(base, result, desired)
         assert ok, f"Diffs: {diffs}"
 
@@ -643,7 +650,7 @@ class TestReconcileTableStructural:
         base = _make_doc_with_content("Hello", base_table)
         desired = _make_doc_with_content("Hello", desired_table)
         result = reconcile(base, desired)
-        assert result.requests is not None
+        assert len(result) == 1 and result[0].requests is not None
         ok, diffs = verify(base, result, desired)
         assert ok, f"Diffs: {diffs}"
 
@@ -654,7 +661,7 @@ class TestReconcileTableStructural:
         base = _make_doc_with_content("Hello", base_table)
         desired = _make_doc_with_content("Hello", desired_table)
         result = reconcile(base, desired)
-        assert result.requests is not None
+        assert len(result) == 1 and result[0].requests is not None
         ok, diffs = verify(base, result, desired)
         assert ok, f"Diffs: {diffs}"
 
@@ -757,11 +764,11 @@ class TestReconcileMultiSegment:
         base = _make_doc_with_header("hdr1", "Header Text", "Body")
         desired = _make_doc("Body")
         result = reconcile(base, desired)
-        assert result.requests is not None
+        assert len(result) == 1 and result[0].requests is not None
         # Check that we have a deleteHeader request
         request_types = [
             next(iter(req.model_dump(by_alias=True, exclude_none=True).keys()))
-            for req in result.requests
+            for req in result[0].requests
         ]
         assert "deleteHeader" in request_types
         ok, diffs = verify(base, result, desired)
@@ -772,11 +779,11 @@ class TestReconcileMultiSegment:
         base = _make_doc_with_footer("ftr1", "Footer Text", "Body")
         desired = _make_doc("Body")
         result = reconcile(base, desired)
-        assert result.requests is not None
+        assert len(result) == 1 and result[0].requests is not None
         # Check that we have a deleteFooter request
         request_types = [
             next(iter(req.model_dump(by_alias=True, exclude_none=True).keys()))
-            for req in result.requests
+            for req in result[0].requests
         ]
         assert "deleteFooter" in request_types
         ok, diffs = verify(base, result, desired)
@@ -787,7 +794,7 @@ class TestReconcileMultiSegment:
         base = _make_doc_with_header("hdr1", "Old Header", "Body")
         desired = _make_doc_with_header("hdr1", "New Header", "Body")
         result = reconcile(base, desired)
-        assert result.requests is not None
+        assert len(result) == 1 and result[0].requests is not None
         ok, diffs = verify(base, result, desired)
         assert ok, f"Diffs: {diffs}"
 
@@ -796,49 +803,149 @@ class TestReconcileMultiSegment:
         base = _make_doc_with_footer("ftr1", "Old Footer", "Body")
         desired = _make_doc_with_footer("ftr1", "New Footer", "Body")
         result = reconcile(base, desired)
-        assert result.requests is not None
+        assert len(result) == 1 and result[0].requests is not None
         ok, diffs = verify(base, result, desired)
         assert ok, f"Diffs: {diffs}"
 
     def test_create_header(self):
-        """Create a new header.
+        """Create a new header with content population (multi-batch).
 
-        NOTE: Phase 3 implementation creates an empty header (not populated).
-        This test verifies that the createHeader request is generated.
-        Full content population will be implemented in Phase 4.
+        Batch 0: createHeader (creates empty header)
+        Batch 1: insertText with DeferredID (populates header content)
         """
         base = _make_doc("Body")
         desired = _make_doc_with_header("hdr1", "New Header", "Body")
         result = reconcile(base, desired)
-        assert result.requests is not None
-        # Check that we have a createHeader request
-        request_types = [
+
+        # Should have 2 batches
+        assert len(result) == 2
+
+        # Batch 0: createHeader
+        assert result[0].requests is not None
+        request_types_0 = [
             next(iter(req.model_dump(by_alias=True, exclude_none=True).keys()))
-            for req in result.requests
+            for req in result[0].requests
         ]
-        assert "createHeader" in request_types
-        # Note: verify() will fail because content isn't populated
-        # This is expected for Phase 3 partial implementation
+        assert "createHeader" in request_types_0
+
+        # Batch 1: insertText with DeferredID
+        assert result[1].requests is not None
+        request_types_1 = [
+            next(iter(req.model_dump(by_alias=True, exclude_none=True).keys()))
+            for req in result[1].requests
+        ]
+        assert "insertText" in request_types_1
+
+        # Verify the insertText uses DeferredID
+        insert_req = next(
+            req for req in result[1].requests if req.insert_text is not None
+        )
+        assert insert_req.insert_text is not None
+        assert isinstance(insert_req.insert_text.location.segment_id, DeferredID)
+        assert insert_req.insert_text.text == "New Header"
+
+        # Verify end-to-end by executing batches
+        # (Note: Can't use strict verify() because header IDs are assigned by API)
+        from extradoc.mock.api import MockGoogleDocsAPI
+        from extradoc.reconcile._core import resolve_deferred_ids
+
+        base_dict = base.model_dump(by_alias=True, exclude_none=True)
+        mock = MockGoogleDocsAPI(base_dict)
+
+        # Execute batch 0
+        batch_0_reqs = [
+            req.model_dump(by_alias=True, exclude_none=True)
+            for req in result[0].requests
+        ]
+        response_0 = mock.batch_update(batch_0_reqs)
+
+        # Execute batch 1 with resolved IDs
+        batch_1_resolved = resolve_deferred_ids([response_0], result[1])
+        batch_1_reqs = [
+            req.model_dump(by_alias=True, exclude_none=True)
+            for req in batch_1_resolved.requests
+        ]
+        mock.batch_update(batch_1_reqs)
+
+        # Check result
+        actual = mock.get()
+        headers = actual["tabs"][0]["documentTab"]["headers"]
+        assert len(headers) == 1, "Should have exactly one header"
+        header = next(iter(headers.values()))
+        header_text = header["content"][0]["paragraph"]["elements"][0]["textRun"][
+            "content"
+        ]
+        assert header_text == "New Header\n"
 
     def test_create_footer(self):
-        """Create a new footer.
+        """Create a new footer with content population (multi-batch).
 
-        NOTE: Phase 3 implementation creates an empty footer (not populated).
-        This test verifies that the createFooter request is generated.
-        Full content population will be implemented in Phase 4.
+        Batch 0: createFooter (creates empty footer)
+        Batch 1: insertText with DeferredID (populates footer content)
         """
         base = _make_doc("Body")
         desired = _make_doc_with_footer("ftr1", "New Footer", "Body")
         result = reconcile(base, desired)
-        assert result.requests is not None
-        # Check that we have a createFooter request
-        request_types = [
+
+        # Should have 2 batches
+        assert len(result) == 2
+
+        # Batch 0: createFooter
+        assert result[0].requests is not None
+        request_types_0 = [
             next(iter(req.model_dump(by_alias=True, exclude_none=True).keys()))
-            for req in result.requests
+            for req in result[0].requests
         ]
-        assert "createFooter" in request_types
-        # Note: verify() will fail because content isn't populated
-        # This is expected for Phase 3 partial implementation
+        assert "createFooter" in request_types_0
+
+        # Batch 1: insertText with DeferredID
+        assert result[1].requests is not None
+        request_types_1 = [
+            next(iter(req.model_dump(by_alias=True, exclude_none=True).keys()))
+            for req in result[1].requests
+        ]
+        assert "insertText" in request_types_1
+
+        # Verify the insertText uses DeferredID
+        insert_req = next(
+            req for req in result[1].requests if req.insert_text is not None
+        )
+        assert insert_req.insert_text is not None
+        assert isinstance(insert_req.insert_text.location.segment_id, DeferredID)
+        assert insert_req.insert_text.text == "New Footer"
+
+        # Verify end-to-end by executing batches
+        # (Note: Can't use strict verify() because footer IDs are assigned by API)
+        from extradoc.mock.api import MockGoogleDocsAPI
+        from extradoc.reconcile._core import resolve_deferred_ids
+
+        base_dict = base.model_dump(by_alias=True, exclude_none=True)
+        mock = MockGoogleDocsAPI(base_dict)
+
+        # Execute batch 0
+        batch_0_reqs = [
+            req.model_dump(by_alias=True, exclude_none=True)
+            for req in result[0].requests
+        ]
+        response_0 = mock.batch_update(batch_0_reqs)
+
+        # Execute batch 1 with resolved IDs
+        batch_1_resolved = resolve_deferred_ids([response_0], result[1])
+        batch_1_reqs = [
+            req.model_dump(by_alias=True, exclude_none=True)
+            for req in batch_1_resolved.requests
+        ]
+        mock.batch_update(batch_1_reqs)
+
+        # Check result
+        actual = mock.get()
+        footers = actual["tabs"][0]["documentTab"]["footers"]
+        assert len(footers) == 1, "Should have exactly one footer"
+        footer = next(iter(footers.values()))
+        footer_text = footer["content"][0]["paragraph"]["elements"][0]["textRun"][
+            "content"
+        ]
+        assert footer_text == "New Footer\n"
 
 
 def _make_multi_tab_doc(tabs: list[tuple[str, str, list[str]]]) -> Document:
@@ -885,10 +992,10 @@ class TestReconcileMultiTab:
         desired = _make_multi_tab_doc([("t.0", "Tab 1", ["First tab content"])])
 
         result = reconcile(base, desired)
-        assert result.requests is not None
+        assert len(result) == 1 and result[0].requests is not None
         request_types = [
             next(iter(req.model_dump(by_alias=True, exclude_none=True).keys()))
-            for req in result.requests
+            for req in result[0].requests
         ]
         assert "deleteTab" in request_types
         ok, diffs = verify(base, result, desired)
@@ -910,11 +1017,11 @@ class TestReconcileMultiTab:
         )
 
         result = reconcile(base, desired)
-        assert result.requests is not None
+        assert len(result) == 1 and result[0].requests is not None
         # Check that we have an addDocumentTab request
         request_types = [
             next(iter(req.model_dump(by_alias=True, exclude_none=True).keys()))
-            for req in result.requests
+            for req in result[0].requests
         ]
         assert "addDocumentTab" in request_types
         # Note: verify() will fail because content isn't populated
@@ -936,10 +1043,10 @@ class TestReconcileMultiTab:
         )
 
         result = reconcile(base, desired)
-        assert result.requests is not None
+        assert len(result) == 1 and result[0].requests is not None
         request_types = [
             next(iter(req.model_dump(by_alias=True, exclude_none=True).keys()))
-            for req in result.requests
+            for req in result[0].requests
         ]
         assert "updateDocumentTabProperties" in request_types
         ok, diffs = verify(base, result, desired)
@@ -961,6 +1068,6 @@ class TestReconcileMultiTab:
         )
 
         result = reconcile(base, desired)
-        assert result.requests is not None
+        assert len(result) == 1 and result[0].requests is not None
         ok, diffs = verify(base, result, desired)
         assert ok, f"Diffs: {diffs}"
