@@ -1,0 +1,17 @@
+<!ELEMENT doc (tab+)>
+<!ATTLIST doc
+    id       CDATA #REQUIRED
+    title    CDATA #REQUIRED
+    revision CDATA #IMPLIED>
+
+<!ELEMENT tab (title | subtitle | h1 | h2 | h3)*>
+<!ATTLIST tab
+    id     CDATA #REQUIRED
+    title  CDATA #REQUIRED
+    folder CDATA #REQUIRED>
+
+<!ELEMENT title (#PCDATA)>
+<!ELEMENT subtitle (#PCDATA)>
+<!ELEMENT h1 (#PCDATA)>
+<!ELEMENT h2 (#PCDATA)>
+<!ELEMENT h3 (#PCDATA)>

@@ -1,0 +1,120 @@
+<!-- Root -->
+<!ELEMENT tab (lists?, body, header*, footer*, footnote*)>
+<!ATTLIST tab
+    id    CDATA #REQUIRED
+    title CDATA #REQUIRED>
+
+<!-- List definitions -->
+<!ELEMENT lists (list+)>
+<!ELEMENT list (level+)>
+<!ATTLIST list id CDATA #REQUIRED>
+<!ELEMENT level EMPTY>
+<!ATTLIST level
+    index       CDATA #REQUIRED
+    glyphType   CDATA #IMPLIED
+    glyphFormat CDATA #IMPLIED
+    glyphSymbol CDATA #IMPLIED
+    class       CDATA #IMPLIED>
+
+<!-- Segments -->
+<!ELEMENT body (%block;)*>
+<!ELEMENT header (%block;)*>
+<!ATTLIST header id CDATA #REQUIRED>
+<!ELEMENT footer (%block;)*>
+<!ATTLIST footer id CDATA #REQUIRED>
+<!ELEMENT footnote (%block;)*>
+<!ATTLIST footnote id CDATA #REQUIRED>
+
+<!-- Block content entity -->
+<!ENTITY % block "p | h1 | h2 | h3 | h4 | h5 | h6 | title | subtitle | li | table | hr | pagebreak | sectionbreak | toc">
+
+<!-- Paragraphs and headings -->
+<!ELEMENT p (%inline;)*>
+<!ATTLIST p class CDATA #IMPLIED>
+
+<!ELEMENT h1 (%inline;)*>
+<!ATTLIST h1 class CDATA #IMPLIED headingId CDATA #IMPLIED>
+<!ELEMENT h2 (%inline;)*>
+<!ATTLIST h2 class CDATA #IMPLIED headingId CDATA #IMPLIED>
+<!ELEMENT h3 (%inline;)*>
+<!ATTLIST h3 class CDATA #IMPLIED headingId CDATA #IMPLIED>
+<!ELEMENT h4 (%inline;)*>
+<!ATTLIST h4 class CDATA #IMPLIED headingId CDATA #IMPLIED>
+<!ELEMENT h5 (%inline;)*>
+<!ATTLIST h5 class CDATA #IMPLIED headingId CDATA #IMPLIED>
+<!ELEMENT h6 (%inline;)*>
+<!ATTLIST h6 class CDATA #IMPLIED headingId CDATA #IMPLIED>
+
+<!ELEMENT title (%inline;)*>
+<!ATTLIST title class CDATA #IMPLIED headingId CDATA #IMPLIED>
+<!ELEMENT subtitle (%inline;)*>
+<!ATTLIST subtitle class CDATA #IMPLIED headingId CDATA #IMPLIED>
+
+<!ELEMENT li (%inline;)*>
+<!ATTLIST li
+    parent CDATA #REQUIRED
+    level  CDATA #REQUIRED
+    class  CDATA #IMPLIED>
+
+<!-- Inline content entity -->
+<!ENTITY % inline "t | b | i | u | s | sup | sub | span | a | image | footnoteref | person | date | richlink | autotext | equation | columnbreak">
+
+<!-- Text run -->
+<!ELEMENT t (#PCDATA)>
+
+<!-- Formatting sugar (each wraps inline content) -->
+<!ELEMENT b (t+)>
+<!ATTLIST b class CDATA #IMPLIED>
+<!ELEMENT i (t+)>
+<!ATTLIST i class CDATA #IMPLIED>
+<!ELEMENT u (t+)>
+<!ATTLIST u class CDATA #IMPLIED>
+<!ELEMENT s (t+)>
+<!ATTLIST s class CDATA #IMPLIED>
+<!ELEMENT sup (t+)>
+<!ATTLIST sup class CDATA #IMPLIED>
+<!ELEMENT sub (t+)>
+<!ATTLIST sub class CDATA #IMPLIED>
+
+<!-- Styled span (no sugar) -->
+<!ELEMENT span (t+)>
+<!ATTLIST span class CDATA #REQUIRED>
+
+<!-- Link -->
+<!ELEMENT a (t+)>
+<!ATTLIST a
+    href  CDATA #REQUIRED
+    class CDATA #IMPLIED>
+
+<!-- Special inline elements -->
+<!ELEMENT image EMPTY>
+<!ATTLIST image objectId CDATA #REQUIRED>
+<!ELEMENT footnoteref EMPTY>
+<!ATTLIST footnoteref id CDATA #REQUIRED>
+<!ELEMENT person EMPTY>
+<!ATTLIST person email CDATA #REQUIRED>
+<!ELEMENT date EMPTY>
+<!ELEMENT richlink EMPTY>
+<!ATTLIST richlink url CDATA #REQUIRED>
+<!ELEMENT autotext EMPTY>
+<!ELEMENT equation EMPTY>
+<!ELEMENT columnbreak EMPTY>
+
+<!-- Tables -->
+<!ELEMENT table (col*, tr+)>
+<!ATTLIST table class CDATA #IMPLIED>
+<!ELEMENT col EMPTY>
+<!ATTLIST col class CDATA #IMPLIED>
+<!ELEMENT tr (td+)>
+<!ATTLIST tr class CDATA #IMPLIED>
+<!ELEMENT td (%block;)*>
+<!ATTLIST td
+    class   CDATA #IMPLIED
+    colspan CDATA #IMPLIED
+    rowspan CDATA #IMPLIED>
+
+<!-- Other block elements -->
+<!ELEMENT hr EMPTY>
+<!ELEMENT pagebreak EMPTY>
+<!ELEMENT sectionbreak EMPTY>
+<!ELEMENT toc (%block;)*>
