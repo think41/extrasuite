@@ -19,6 +19,7 @@ if TYPE_CHECKING:
         Paragraph,
         Tab,
         Table,
+        TableRow,
     )
 
 
@@ -71,15 +72,44 @@ def content_fingerprint(se: StructuralElement) -> str:
         text = extract_plain_text_from_paragraph(se.paragraph)
         return f"P:{text}"
     if se.table:
-        rows = se.table.rows or 0
-        cols = se.table.columns or 0
-        text = extract_plain_text_from_table(se.table)
-        return f"T:{rows}x{cols}:{text}"
+        return "T:table"
     if se.section_break:
         return "SB:"
     if se.table_of_contents:
         return "TOC:"
     return "UNKNOWN:"
+
+
+def _cell_text_for_fingerprint(cell_content: list[StructuralElement]) -> str:
+    """Extract plain text from a table cell's content list."""
+    parts: list[str] = []
+    for se in cell_content:
+        if se.paragraph:
+            parts.append(extract_plain_text_from_paragraph(se.paragraph))
+    return "".join(parts)
+
+
+def row_fingerprint(row: TableRow) -> str:
+    """Create a fingerprint for a table row: 'R:cell0_text|cell1_text|...'"""
+    cells = row.table_cells or []
+    cell_texts = []
+    for cell in cells:
+        text = _cell_text_for_fingerprint(cell.content or [])
+        cell_texts.append(text.rstrip("\n"))
+    return "R:" + "|".join(cell_texts)
+
+
+def column_fingerprint(rows: list[TableRow], col_idx: int) -> str:
+    """Create a fingerprint for a table column: 'C:cell0_text|cell1_text|...'"""
+    cell_texts = []
+    for row in rows:
+        cells = row.table_cells or []
+        if col_idx < len(cells):
+            text = _cell_text_for_fingerprint(cells[col_idx].content or [])
+            cell_texts.append(text.rstrip("\n"))
+        else:
+            cell_texts.append("")
+    return "C:" + "|".join(cell_texts)
 
 
 @dataclass(frozen=True)

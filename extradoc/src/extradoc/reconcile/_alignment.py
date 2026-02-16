@@ -73,6 +73,80 @@ def _lcs_table(base_fps: list[str], desired_fps: list[str]) -> list[list[int]]:
     return dp
 
 
+class AlignedSequenceEntry(NamedTuple):
+    """Result of aligning two fingerprint sequences."""
+
+    op: AlignmentOp
+    base_idx: int | None
+    desired_idx: int | None
+
+
+def align_sequences(
+    base_fps: list[str], desired_fps: list[str]
+) -> list[AlignedSequenceEntry]:
+    """Align two fingerprint lists using LCS with positional fallback.
+
+    Returns (op, base_idx, desired_idx) tuples in order.
+
+    If LCS produces zero MATCHED entries, falls back to positional alignment:
+    pair items by index (0<->0, 1<->1, ...), extras are ADDED or DELETED.
+    This guarantees at least min(base_count, desired_count) MATCHED entries.
+    """
+    dp = _lcs_table(base_fps, desired_fps)
+
+    # Backtrack
+    result: list[AlignedSequenceEntry] = []
+    i, j = len(base_fps), len(desired_fps)
+
+    while i > 0 or j > 0:
+        if i > 0 and j > 0 and base_fps[i - 1] == desired_fps[j - 1]:
+            result.append(
+                AlignedSequenceEntry(
+                    op=AlignmentOp.MATCHED, base_idx=i - 1, desired_idx=j - 1
+                )
+            )
+            i -= 1
+            j -= 1
+        elif j > 0 and (i == 0 or dp[i][j - 1] >= dp[i - 1][j]):
+            result.append(
+                AlignedSequenceEntry(
+                    op=AlignmentOp.ADDED, base_idx=None, desired_idx=j - 1
+                )
+            )
+            j -= 1
+        else:
+            result.append(
+                AlignedSequenceEntry(
+                    op=AlignmentOp.DELETED, base_idx=i - 1, desired_idx=None
+                )
+            )
+            i -= 1
+
+    result.reverse()
+
+    # Positional fallback: if no MATCHED entries, pair by index
+    has_match = any(e.op == AlignmentOp.MATCHED for e in result)
+    if not has_match and base_fps and desired_fps:
+        result = []
+        min_len = min(len(base_fps), len(desired_fps))
+        for k in range(min_len):
+            result.append(
+                AlignedSequenceEntry(op=AlignmentOp.MATCHED, base_idx=k, desired_idx=k)
+            )
+        for k in range(min_len, len(base_fps)):
+            result.append(
+                AlignedSequenceEntry(
+                    op=AlignmentOp.DELETED, base_idx=k, desired_idx=None
+                )
+            )
+        for k in range(min_len, len(desired_fps)):
+            result.append(
+                AlignedSequenceEntry(op=AlignmentOp.ADDED, base_idx=None, desired_idx=k)
+            )
+
+    return result
+
+
 def align_structural_elements(
     base_elements: list[StructuralElement],
     desired_elements: list[StructuralElement],
