@@ -751,18 +751,86 @@ def _generate_table_diff(
 ) -> list[dict[str, Any]]:
     """Generate requests to transform base table into desired table.
 
-    Uses structural diff with proper row/column insert/delete operations.
+    When text content is identical, performs style-only diff on matched cells.
+    When text differs, uses structural diff (row/column insert/delete/modify).
     """
     assert base_se.table is not None
     assert desired_se.table is not None
 
-    # Quick check: if text content is identical, no changes needed
     if extract_plain_text_from_table(base_se.table) == extract_plain_text_from_table(
         desired_se.table
     ):
-        return []
+        # Text is identical — only style changes possible
+        return _diff_table_cell_styles_only(
+            base_se.table, desired_se.table, segment_id, tab_id
+        )
 
     return _diff_table_structural(base_se, desired_se, segment_id, tab_id)
+
+
+def _diff_table_cell_styles_only(
+    base_table: Table,
+    desired_table: Table,
+    segment_id: SegmentID,
+    tab_id: TabID,
+) -> list[dict[str, Any]]:
+    """Diff paragraph/text styles within table cells when text is identical.
+
+    Iterates matched row/cell pairs and applies _generate_paragraph_style_diff
+    on each matched paragraph. Uses the base paragraph's actual start_index
+    (valid since no structural changes are made).
+
+    Returns requests sorted right-to-left by paragraph start index.
+    """
+    requests: list[dict[str, Any]] = []
+    base_rows = base_table.table_rows or []
+    desired_rows = desired_table.table_rows or []
+
+    base_row_fps = [row_fingerprint(r) for r in base_rows]
+    desired_row_fps = [row_fingerprint(r) for r in desired_rows]
+    row_align = align_sequences(base_row_fps, desired_row_fps)
+
+    for entry in row_align:
+        if entry.op != AlignmentOp.MATCHED:
+            continue
+        assert entry.base_idx is not None
+        assert entry.desired_idx is not None
+        base_row = base_rows[entry.base_idx]
+        desired_row = desired_rows[entry.desired_idx]
+
+        base_cells = base_row.table_cells or []
+        desired_cells = desired_row.table_cells or []
+
+        for bc, dc in zip(base_cells, desired_cells, strict=False):
+            # Each cell's content is a list of StructuralElements (paragraphs)
+            base_paras = [se for se in (bc.content or []) if se.paragraph]
+            desired_paras = [se for se in (dc.content or []) if se.paragraph]
+
+            # Align cell paragraphs by plain text fingerprint
+            bfps = [_para_text(se) for se in base_paras]
+            dfps = [_para_text(se) for se in desired_paras]
+            para_align = align_sequences(bfps, dfps)
+
+            for pa in para_align:
+                if pa.op != AlignmentOp.MATCHED:
+                    continue
+                assert pa.base_idx is not None
+                assert pa.desired_idx is not None
+                base_se = base_paras[pa.base_idx]
+                desired_se = desired_paras[pa.desired_idx]
+                reqs = _generate_paragraph_style_diff(
+                    base_se, desired_se, segment_id, tab_id
+                )
+                requests.extend(reqs)
+
+    # Sort right-to-left by paragraph start index
+    def _sort_key(r: dict[str, Any]) -> int:
+        inner: dict[str, Any] = next(iter(r.values()), {})
+        rng: dict[str, Any] = inner.get("range", {})
+        return int(rng.get("startIndex", 0))
+
+    requests.sort(key=_sort_key, reverse=True)
+    return requests
 
 
 # ---------------------------------------------------------------------------
@@ -1540,7 +1608,13 @@ def _generate_paragraph_style_diff(
     Checks for paragraph-level style changes, bullet changes, and text run
     style changes. Only processes paragraphs with matching text content.
 
-    Returns requests in order: paragraph style, bullets, text styles (right-to-left).
+    Returns requests in order:
+    1. createParagraphBullets (if adding bullet — must come before updateParagraphStyle
+       so that the subsequent updateParagraphStyle can override the default indentation
+       that createParagraphBullets sets, enabling nesting level > 0)
+    2. updateParagraphStyle
+    3. deleteParagraphBullets (if removing bullet)
+    4. updateTextStyle ranges (right-to-left)
     """
     assert base_se.paragraph is not None
     assert desired_se.paragraph is not None
@@ -1556,7 +1630,19 @@ def _generate_paragraph_style_diff(
     para_start = _el_start(base_se)
     para_end = _el_end(base_se)
 
-    # 1. Paragraph-level style changes
+    base_bullet = base_para.bullet
+    desired_bullet = desired_para.bullet
+
+    # 1. Bullet creation FIRST — so that updateParagraphStyle below can override
+    #    the default indentation (enabling nesting level > 0 for new bullets).
+    if base_bullet is None and desired_bullet is not None:
+        requests.append(
+            _make_create_paragraph_bullets(
+                para_start, para_end, "BULLET_DISC_CIRCLE_SQUARE", segment_id, tab_id
+            )
+        )
+
+    # 2. Paragraph-level style changes
     if not _styles_equal(base_para.paragraph_style, desired_para.paragraph_style):
         style_dict, fields = _compute_style_diff(
             base_para.paragraph_style, desired_para.paragraph_style, ParagraphStyle
@@ -1568,29 +1654,103 @@ def _generate_paragraph_style_diff(
                 )
             )
 
-    # 2. Bullet changes
-    base_bullet = base_para.bullet
-    desired_bullet = desired_para.bullet
-
-    if base_bullet is None and desired_bullet is not None:
-        # Adding bullet
-        requests.append(
-            _make_create_paragraph_bullets(
-                para_start, para_end, "BULLET_DISC_CIRCLE_SQUARE", segment_id, tab_id
-            )
-        )
-    elif base_bullet is not None and desired_bullet is None:
-        # Removing bullet
+    # 3. Bullet removal AFTER paragraph style (clearing style before removing bullet)
+    if base_bullet is not None and desired_bullet is None:
         requests.append(
             _make_delete_paragraph_bullets(para_start, para_end, segment_id, tab_id)
         )
 
-    # 3. Text run style changes (processed right-to-left)
+    # 4. Text run style changes (processed right-to-left)
     text_style_reqs = _generate_text_style_updates(
         base_para, desired_para, para_start, segment_id, tab_id
     )
     requests.extend(text_style_reqs)
 
+    return requests
+
+
+def _generate_text_style_updates_positional(
+    base_para: Paragraph,
+    desired_para: Paragraph,
+    para_start: int,
+    segment_id: SegmentID,
+    tab_id: TabID,
+) -> list[dict[str, Any]]:
+    """Position-based text style update when run counts differ.
+
+    Used when base and desired have different numbers of text runs (e.g., due
+    to link addition splitting the trailing \\n into a separate run). Aligns
+    runs by character position rather than by index.
+
+    For each desired run, finds the base style at that character offset and
+    computes the style diff. Merges contiguous desired runs with identical
+    changes into single updateTextStyle requests (right-to-left).
+    """
+    base_elems = base_para.elements or []
+    desired_elems = desired_para.elements or []
+
+    # Build [(start_offset, end_offset, style), ...] for base runs
+    base_intervals: list[tuple[int, int, TextStyle | None]] = []
+    offset = para_start
+    for el in base_elems:
+        if el.text_run is None:
+            continue
+        run_len = utf16_len(el.text_run.content or "")
+        base_intervals.append((offset, offset + run_len, el.text_run.text_style))
+        offset += run_len
+
+    def _get_base_style_at(pos: int) -> TextStyle | None:
+        for start, end, style in base_intervals:
+            if start <= pos < end:
+                return style
+        return None
+
+    # Process desired runs and find style diffs
+    ranges: list[tuple[int, int, dict[str, Any], list[str]]] = []
+    current_range: tuple[int, int, dict[str, Any], list[str]] | None = None
+
+    offset = para_start
+    for el in desired_elems:
+        if el.text_run is None:
+            continue
+        run = el.text_run
+        run_len = utf16_len(run.content or "")
+        run_end = offset + run_len
+
+        base_style = _get_base_style_at(offset)
+        desired_style = run.text_style
+
+        style_dict, fields = _compute_style_diff(base_style, desired_style, TextStyle)
+
+        if not fields:
+            if current_range:
+                ranges.append(current_range)
+                current_range = None
+            offset = run_end
+            continue
+
+        if (
+            current_range is not None
+            and current_range[1] == offset
+            and current_range[2] == style_dict
+            and current_range[3] == fields
+        ):
+            current_range = (current_range[0], run_end, style_dict, fields)
+        else:
+            if current_range:
+                ranges.append(current_range)
+            current_range = (offset, run_end, style_dict, fields)
+
+        offset = run_end
+
+    if current_range:
+        ranges.append(current_range)
+
+    requests: list[dict[str, Any]] = []
+    for start, end, style_dict, fields in reversed(ranges):
+        requests.append(
+            _make_update_text_style(start, end, style_dict, fields, segment_id, tab_id)
+        )
     return requests
 
 
@@ -1605,6 +1765,9 @@ def _generate_text_style_updates(
 
     Merges contiguous runs with identical style changes into single requests.
     Processes right-to-left (highest index first).
+
+    When base and desired have different run counts (e.g., due to link addition
+    splitting the trailing \\n), falls back to position-based alignment.
     """
     base_elems = base_para.elements or []
     desired_elems = desired_para.elements or []
@@ -1613,9 +1776,11 @@ def _generate_text_style_updates(
     base_runs = [el for el in base_elems if el.text_run]
     desired_runs = [el for el in desired_elems if el.text_run]
 
-    # Text structure must match
+    # Run count mismatch — fall back to position-based comparison
     if len(base_runs) != len(desired_runs):
-        return []
+        return _generate_text_style_updates_positional(
+            base_para, desired_para, para_start, segment_id, tab_id
+        )
 
     # Compute style update ranges (with merging)
     ranges: list[tuple[int, int, dict[str, Any], list[str]]] = []

@@ -12,6 +12,7 @@ _IGNORE_KEYS = frozenset(
         "documentId",
         "suggestionsViewMode",
         "headingId",
+        "listId",  # bullet list ID is server-generated (random kix.xxx string)
         "documentStyle",
         "namedStyles",
         "suggestedDocumentStyleChanges",
