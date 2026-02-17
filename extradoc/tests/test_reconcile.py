@@ -4,13 +4,16 @@ Phase 1: paragraph text in body.
 Phase 2: tables (body only).
 Phase 3: multi-segment (headers, footers, footnotes).
 Phase 4: multi-tab.
+Phase 7: edge cases + coverage.
 """
 
 from typing import Any
 
+import pytest
+
 from extradoc.api_types import DeferredID
 from extradoc.api_types._generated import Document
-from extradoc.reconcile import reconcile, reindex_document, verify
+from extradoc.reconcile import ReconcileError, reconcile, reindex_document, verify
 
 
 def _make_doc(*paragraphs: str, tab_id: str = "t.0") -> Document:
@@ -1261,6 +1264,36 @@ class TestReconcileTextStyles:
             and (result[0].requests is None or len(result[0].requests) == 0)
         )
 
+    def test_mid_run_style_change(self):
+        """Apply bold to only part of a paragraph text (run-count mismatch).
+
+        base: single run "Hello World\\n"
+        desired: two runs — "Hello" (bold) + " World\\n" (plain)
+        LCS matches (same text), but run counts differ → positional fallback.
+        """
+        base = _make_doc_with_styled_content(
+            {"paragraph": {"elements": [{"textRun": {"content": "Hello World\n"}}]}}
+        )
+        desired = _make_doc_with_styled_content(
+            {
+                "paragraph": {
+                    "elements": [
+                        {
+                            "textRun": {
+                                "content": "Hello",
+                                "textStyle": {"bold": True},
+                            }
+                        },
+                        {"textRun": {"content": " World\n"}},
+                    ]
+                }
+            }
+        )
+
+        result = reconcile(base, desired)
+        ok, diffs = verify(base, result, desired)
+        assert ok, f"Diffs: {diffs}"
+
 
 class TestReconcileCombinedStyles:
     """Tests for combined style scenarios."""
@@ -1578,6 +1611,308 @@ class TestReconcileLinkStyle:
                 }
             }
         )
+
+        result = reconcile(base, desired)
+        ok, diffs = verify(base, result, desired)
+        assert ok, f"Diffs: {diffs}"
+
+
+# ---------------------------------------------------------------------------
+# Phase 7: Edge Cases + Coverage
+# ---------------------------------------------------------------------------
+
+
+def _make_doc_with_raw_content(
+    *elements: dict[str, Any], tab_id: str = "t.0"
+) -> Document:
+    """Create a Document from raw element dicts (no automatic paragraph wrapping).
+
+    A section break is prepended automatically.
+    """
+    content: list[dict[str, Any]] = [{"sectionBreak": {}}]
+    for elem in elements:
+        content.append(elem)
+
+    doc = Document.model_validate(
+        {
+            "documentId": "test",
+            "tabs": [
+                {
+                    "tabProperties": {"tabId": tab_id},
+                    "documentTab": {"body": {"content": content}},
+                }
+            ],
+        }
+    )
+    return reindex_document(doc)
+
+
+class TestReconcileTableOfContents:
+    """Tests for tableOfContents read-only validation."""
+
+    def test_toc_delete_raises_error(self):
+        """Removing a TOC raises ReconcileError."""
+        base = _make_doc_with_raw_content(
+            {"tableOfContents": {}},
+            {"paragraph": {"elements": [{"textRun": {"content": "Body\n"}}]}},
+        )
+        desired = _make_doc("Body")
+
+        with pytest.raises(ReconcileError, match="tableOfContents"):
+            reconcile(base, desired)
+
+    def test_toc_add_raises_error(self):
+        """Adding a TOC raises ReconcileError."""
+        base = _make_doc("Body")
+        desired = _make_doc_with_raw_content(
+            {"tableOfContents": {}},
+            {"paragraph": {"elements": [{"textRun": {"content": "Body\n"}}]}},
+        )
+
+        with pytest.raises(ReconcileError, match="tableOfContents"):
+            reconcile(base, desired)
+
+    def test_matched_toc_no_error(self):
+        """Same TOC in base and desired produces no error and no requests."""
+        base = _make_doc_with_raw_content(
+            {"tableOfContents": {}},
+            {"paragraph": {"elements": [{"textRun": {"content": "Body\n"}}]}},
+        )
+        desired = _make_doc_with_raw_content(
+            {"tableOfContents": {}},
+            {"paragraph": {"elements": [{"textRun": {"content": "Body\n"}}]}},
+        )
+
+        result = reconcile(base, desired)
+        # No error and no requests (TOC is skipped, body is identical)
+        assert len(result) == 0 or (
+            len(result) == 1
+            and (result[0].requests is None or len(result[0].requests) == 0)
+        )
+
+
+class TestReconcileSectionBreaks:
+    """Tests for section break change handling."""
+
+    def test_delete_section_break_raises_error(self):
+        """Removing a section break raises ReconcileError."""
+        # Build a document with two section breaks manually
+        doc_dict: dict[str, Any] = {
+            "documentId": "test",
+            "tabs": [
+                {
+                    "tabProperties": {"tabId": "t.0"},
+                    "documentTab": {
+                        "body": {
+                            "content": [
+                                {"sectionBreak": {}},
+                                {
+                                    "paragraph": {
+                                        "elements": [
+                                            {"textRun": {"content": "Para 1\n"}}
+                                        ]
+                                    }
+                                },
+                                {
+                                    "sectionBreak": {
+                                        "sectionStyle": {"sectionType": "NEXT_PAGE"}
+                                    }
+                                },
+                                {
+                                    "paragraph": {
+                                        "elements": [
+                                            {"textRun": {"content": "Para 2\n"}}
+                                        ]
+                                    }
+                                },
+                            ]
+                        }
+                    },
+                }
+            ],
+        }
+        base = reindex_document(Document.model_validate(doc_dict))
+        # desired has only one section break (the initial one)
+        desired = _make_doc("Para 1", "Para 2")
+
+        with pytest.raises(ReconcileError, match="[Ss]ection break"):
+            reconcile(base, desired)
+
+    def test_add_section_break_raises_error(self):
+        """Adding a section break raises ReconcileError."""
+        base = _make_doc("Para 1", "Para 2")
+        # desired has an extra section break in the middle
+        doc_dict: dict[str, Any] = {
+            "documentId": "test",
+            "tabs": [
+                {
+                    "tabProperties": {"tabId": "t.0"},
+                    "documentTab": {
+                        "body": {
+                            "content": [
+                                {"sectionBreak": {}},
+                                {
+                                    "paragraph": {
+                                        "elements": [
+                                            {"textRun": {"content": "Para 1\n"}}
+                                        ]
+                                    }
+                                },
+                                {
+                                    "sectionBreak": {
+                                        "sectionStyle": {"sectionType": "NEXT_PAGE"}
+                                    }
+                                },
+                                {
+                                    "paragraph": {
+                                        "elements": [
+                                            {"textRun": {"content": "Para 2\n"}}
+                                        ]
+                                    }
+                                },
+                            ]
+                        }
+                    },
+                }
+            ],
+        }
+        desired = reindex_document(Document.model_validate(doc_dict))
+
+        with pytest.raises(ReconcileError, match="[Ss]ection break"):
+            reconcile(base, desired)
+
+    def test_normal_document_no_section_break_error(self):
+        """Normal documents (with initial section break matched) have no error."""
+        base = _make_doc("Hello", "World")
+        desired = _make_doc("Hello", "World", "New paragraph")
+
+        # Should not raise — the initial section break is MATCHED
+        result = reconcile(base, desired)
+        ok, diffs = verify(base, result, desired)
+        assert ok, f"Diffs: {diffs}"
+
+
+class TestReconcileSpecialElements:
+    """Tests for paragraphs containing non-text elements."""
+
+    def test_delete_paragraph_with_page_break(self):
+        """Deleting a paragraph containing a page break works fine."""
+        base = _make_doc_with_raw_content(
+            {
+                "paragraph": {
+                    "elements": [{"pageBreak": {}}, {"textRun": {"content": "\n"}}]
+                }
+            },
+            {"paragraph": {"elements": [{"textRun": {"content": "After\n"}}]}},
+        )
+        desired = _make_doc("After")
+
+        # Deletion should succeed
+        result = reconcile(base, desired)
+        ok, diffs = verify(base, result, desired)
+        assert ok, f"Diffs: {diffs}"
+
+    def test_add_paragraph_with_page_break_raises_error(self):
+        """Adding a paragraph with a page break raises ReconcileError."""
+        base = _make_doc("Before")
+        desired = _make_doc_with_raw_content(
+            {"paragraph": {"elements": [{"textRun": {"content": "Before\n"}}]}},
+            {
+                "paragraph": {
+                    "elements": [{"pageBreak": {}}, {"textRun": {"content": "\n"}}]
+                }
+            },
+        )
+
+        with pytest.raises(ReconcileError, match="non-text elements"):
+            reconcile(base, desired)
+
+    def test_matched_paragraph_with_horizontal_rule(self):
+        """Matched paragraph with horizontal rule produces no error."""
+        para = {
+            "paragraph": {
+                "elements": [{"horizontalRule": {}}, {"textRun": {"content": "\n"}}]
+            }
+        }
+        base = _make_doc_with_raw_content(para)
+        desired = _make_doc_with_raw_content(para)
+
+        # No error and no requests (identical)
+        result = reconcile(base, desired)
+        assert len(result) == 0 or (
+            len(result) == 1
+            and (result[0].requests is None or len(result[0].requests) == 0)
+        )
+
+    def test_add_page_break_paragraph_in_middle_raises_error(self):
+        """Adding a page break paragraph between existing paragraphs raises ReconcileError.
+
+        This triggers the inner gap (right anchor present) code path.
+        """
+        base = _make_doc("Before", "After")
+        desired = _make_doc_with_raw_content(
+            {"paragraph": {"elements": [{"textRun": {"content": "Before\n"}}]}},
+            {
+                "paragraph": {
+                    "elements": [{"pageBreak": {}}, {"textRun": {"content": "\n"}}]
+                }
+            },
+            {"paragraph": {"elements": [{"textRun": {"content": "After\n"}}]}},
+        )
+
+        with pytest.raises(ReconcileError, match="non-text elements"):
+            reconcile(base, desired)
+
+
+class TestReconcileUTF16:
+    """Tests verifying UTF-16 index correctness with emoji and multi-unit characters."""
+
+    def test_add_emoji_paragraph(self):
+        """Add a paragraph containing emoji (emoji = 2 UTF-16 code units)."""
+        base = _make_doc("Hello")
+        desired = _make_doc("Hello", "Party \U0001f389")  # 🎉 = U+1F389
+
+        result = reconcile(base, desired)
+        ok, diffs = verify(base, result, desired)
+        assert ok, f"Diffs: {diffs}"
+
+    def test_delete_emoji_paragraph(self):
+        """Delete a paragraph containing emoji."""
+        base = _make_doc("Hello", "Party \U0001f389")
+        desired = _make_doc("Hello")
+
+        result = reconcile(base, desired)
+        ok, diffs = verify(base, result, desired)
+        assert ok, f"Diffs: {diffs}"
+
+    def test_modify_emoji_paragraph(self):
+        """Change a paragraph with one emoji to another."""
+        base = _make_doc("Hello", "Hello \U0001f600")  # 😀
+        desired = _make_doc("Hello", "Hello \U0001f680")  # 🚀
+
+        result = reconcile(base, desired)
+        ok, diffs = verify(base, result, desired)
+        assert ok, f"Diffs: {diffs}"
+
+    def test_emoji_bold(self):
+        """Apply bold style to a paragraph containing emoji."""
+        base_para = {
+            "paragraph": {"elements": [{"textRun": {"content": "Rocket \U0001f680\n"}}]}
+        }
+        desired_para = {
+            "paragraph": {
+                "elements": [
+                    {
+                        "textRun": {
+                            "content": "Rocket \U0001f680\n",
+                            "textStyle": {"bold": True},
+                        }
+                    }
+                ]
+            }
+        }
+        base = _make_doc_with_styled_content(base_para)
+        desired = _make_doc_with_styled_content(desired_para)
 
         result = reconcile(base, desired)
         ok, diffs = verify(base, result, desired)
