@@ -21,6 +21,7 @@ if TYPE_CHECKING:
 from extradoc.api_types._generated import ParagraphStyle, TextStyle
 from extradoc.indexer import utf16_len
 from extradoc.reconcile._alignment import AlignedElement, AlignmentOp, align_sequences
+from extradoc.reconcile._exceptions import ReconcileError
 from extradoc.reconcile._extractors import (
     column_fingerprint,
     extract_plain_text_from_paragraph,
@@ -35,10 +36,6 @@ if TYPE_CHECKING:
         TableCell,
         TableRow,
     )
-
-
-class ReconcileError(Exception):
-    """Raised when reconciliation encounters an unsupported or invalid change."""
 
 
 @dataclass
@@ -400,10 +397,8 @@ def _identify_gaps(alignment: list[AlignedElement]) -> list[_Gap]:
     return gaps
 
 
-def _filter_section_breaks(
-    gap: _Gap,
-) -> tuple[list[AlignedElement], list[AlignedElement]]:
-    """Filter section breaks from deletes and adds, raising ReconcileError if any found."""
+def _validate_no_section_breaks(gap: _Gap) -> None:
+    """Raise ReconcileError if the gap contains any section break deletes or adds."""
     for a in gap.deletes:
         if a.base_element and _is_section_break(a.base_element):
             raise ReconcileError(
@@ -414,17 +409,6 @@ def _filter_section_breaks(
             raise ReconcileError(
                 "Section break insertion is not supported by reconcile()"
             )
-    real_deletes = [
-        a
-        for a in gap.deletes
-        if a.base_element and not _is_section_break(a.base_element)
-    ]
-    real_adds = [
-        a
-        for a in gap.adds
-        if a.desired_element and not _is_section_break(a.desired_element)
-    ]
-    return real_deletes, real_adds
 
 
 # ---------------------------------------------------------------------------
@@ -437,7 +421,9 @@ def _process_inner_gap(
 ) -> list[dict[str, Any]]:
     """Process a non-trailing gap (has a right anchor)."""
     requests: list[dict[str, Any]] = []
-    real_deletes, real_adds = _filter_section_breaks(gap)
+    _validate_no_section_breaks(gap)
+    real_deletes = gap.deletes
+    real_adds = gap.adds
 
     for a in real_adds:
         if a.desired_element and _has_non_text_elements(a.desired_element):
@@ -518,7 +504,9 @@ def _process_trailing_gap(
 ) -> list[dict[str, Any]]:
     """Process a trailing gap (no right anchor). Must protect segment-final \\n."""
     requests: list[dict[str, Any]] = []
-    real_deletes, real_adds = _filter_section_breaks(gap)
+    _validate_no_section_breaks(gap)
+    real_deletes = gap.deletes
+    real_adds = gap.adds
 
     for a in real_adds:
         if a.desired_element and _has_non_text_elements(a.desired_element):
