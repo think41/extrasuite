@@ -18,6 +18,7 @@ from typing import TYPE_CHECKING, Any
 if TYPE_CHECKING:
     from extradoc.api_types import SegmentID, TabID
 
+from extradoc.api_types._generated import ParagraphStyle, TextStyle
 from extradoc.indexer import utf16_len
 from extradoc.reconcile._alignment import AlignedElement, AlignmentOp, align_sequences
 from extradoc.reconcile._extractors import (
@@ -29,6 +30,7 @@ from extradoc.reconcile._extractors import (
 
 if TYPE_CHECKING:
     from extradoc.api_types._generated import (
+        Paragraph,
         StructuralElement,
         Table,
         TableCell,
@@ -184,6 +186,66 @@ def _cell_text(cell: TableCell) -> str:
 
 
 # ---------------------------------------------------------------------------
+# Style comparison utilities
+# ---------------------------------------------------------------------------
+
+
+def _compute_style_diff(
+    base_style: TextStyle | ParagraphStyle | None,
+    desired_style: TextStyle | ParagraphStyle | None,
+    style_type: type[TextStyle] | type[ParagraphStyle],
+) -> tuple[dict[str, Any], list[str]]:
+    """Compare two style objects and compute diff + field mask.
+
+    Returns (style_dict, fields_list) where:
+    - style_dict contains only changed fields with new values
+    - fields_list contains all changed field names (for API mask)
+    - Fields in mask but not in dict will be cleared by API
+    """
+    base_dict = (
+        base_style.model_dump(by_alias=True, exclude_none=True) if base_style else {}
+    )
+    desired_dict = (
+        desired_style.model_dump(by_alias=True, exclude_none=True)
+        if desired_style
+        else {}
+    )
+
+    all_api_names: set[str] = set()
+    for field_name, field_info in style_type.model_fields.items():
+        api_name = field_info.alias or field_name
+        all_api_names.add(api_name)
+
+    changed_fields: list[str] = []
+    result_style: dict[str, Any] = {}
+
+    for api_name in sorted(all_api_names):
+        base_val = base_dict.get(api_name)
+        desired_val = desired_dict.get(api_name)
+
+        if base_val != desired_val:
+            changed_fields.append(api_name)
+            if desired_val is not None:
+                result_style[api_name] = desired_val
+
+    return result_style, changed_fields
+
+
+def _styles_equal(
+    style1: TextStyle | ParagraphStyle | None,
+    style2: TextStyle | ParagraphStyle | None,
+) -> bool:
+    """Check if two styles are equal (None-safe)."""
+    if style1 is None and style2 is None:
+        return True
+    if style1 is None or style2 is None:
+        return False
+    dict1 = style1.model_dump(by_alias=True, exclude_none=True)
+    dict2 = style2.model_dump(by_alias=True, exclude_none=True)
+    return dict1 == dict2
+
+
+# ---------------------------------------------------------------------------
 # Public entry point
 # ---------------------------------------------------------------------------
 
@@ -236,6 +298,21 @@ def generate_requests(
         reqs = _generate_table_diff(base_el, desired_el, segment_id, tab_id)
         if reqs:
             operations.append((_el_end(base_el) - 1, reqs))
+
+    # Collect matched paragraph style diff operations
+    for aligned in alignment:
+        if aligned.op != AlignmentOp.MATCHED:
+            continue
+        base_el = aligned.base_element
+        desired_el = aligned.desired_element
+        if not base_el or not desired_el:
+            continue
+        if not _is_paragraph(base_el) or not _is_paragraph(desired_el):
+            continue
+
+        reqs = _generate_paragraph_style_diff(base_el, desired_el, segment_id, tab_id)
+        if reqs:
+            operations.append((_el_start(base_el), reqs))
 
     # Sort by position descending (right-to-left processing)
     operations.sort(key=lambda x: x[0], reverse=True)
@@ -861,6 +938,77 @@ def _make_update_document_tab_properties(
 
 
 # ---------------------------------------------------------------------------
+# Style request builders
+# ---------------------------------------------------------------------------
+
+
+def _make_update_text_style(
+    start: int,
+    end: int,
+    text_style: dict[str, Any],
+    fields: list[str],
+    segment_id: SegmentID,
+    tab_id: TabID,
+) -> dict[str, Any]:
+    """Create an updateTextStyle request."""
+    return {
+        "updateTextStyle": {
+            "range": _make_range(start, end, segment_id, tab_id),
+            "textStyle": text_style,
+            "fields": ",".join(fields),
+        }
+    }
+
+
+def _make_update_paragraph_style(
+    start: int,
+    end: int,
+    paragraph_style: dict[str, Any],
+    fields: list[str],
+    segment_id: SegmentID,
+    tab_id: TabID,
+) -> dict[str, Any]:
+    """Create an updateParagraphStyle request."""
+    return {
+        "updateParagraphStyle": {
+            "range": _make_range(start, end, segment_id, tab_id),
+            "paragraphStyle": paragraph_style,
+            "fields": ",".join(fields),
+        }
+    }
+
+
+def _make_create_paragraph_bullets(
+    start: int,
+    end: int,
+    bullet_preset: str,
+    segment_id: SegmentID,
+    tab_id: TabID,
+) -> dict[str, Any]:
+    """Create a createParagraphBullets request."""
+    return {
+        "createParagraphBullets": {
+            "range": _make_range(start, end, segment_id, tab_id),
+            "bulletPreset": bullet_preset,
+        }
+    }
+
+
+def _make_delete_paragraph_bullets(
+    start: int,
+    end: int,
+    segment_id: SegmentID,
+    tab_id: TabID,
+) -> dict[str, Any]:
+    """Create a deleteParagraphBullets request."""
+    return {
+        "deleteParagraphBullets": {
+            "range": _make_range(start, end, segment_id, tab_id),
+        }
+    }
+
+
+# ---------------------------------------------------------------------------
 # RowTable tracker for character index computation
 # ---------------------------------------------------------------------------
 
@@ -1374,3 +1522,157 @@ def _collect_add_text(real_adds: list[AlignedElement]) -> str:
             if text:
                 parts.append(text)
     return "".join(parts)
+
+
+# ---------------------------------------------------------------------------
+# Paragraph and text style diffing
+# ---------------------------------------------------------------------------
+
+
+def _generate_paragraph_style_diff(
+    base_se: StructuralElement,
+    desired_se: StructuralElement,
+    segment_id: SegmentID,
+    tab_id: TabID,
+) -> list[dict[str, Any]]:
+    """Generate style update requests for a MATCHED paragraph.
+
+    Checks for paragraph-level style changes, bullet changes, and text run
+    style changes. Only processes paragraphs with matching text content.
+
+    Returns requests in order: paragraph style, bullets, text styles (right-to-left).
+    """
+    assert base_se.paragraph is not None
+    assert desired_se.paragraph is not None
+
+    base_para = base_se.paragraph
+    desired_para = desired_se.paragraph
+
+    # Quick check: text must match (text changes handled by gap processing)
+    if _para_text(base_se) != _para_text(desired_se):
+        return []
+
+    requests: list[dict[str, Any]] = []
+    para_start = _el_start(base_se)
+    para_end = _el_end(base_se)
+
+    # 1. Paragraph-level style changes
+    if not _styles_equal(base_para.paragraph_style, desired_para.paragraph_style):
+        style_dict, fields = _compute_style_diff(
+            base_para.paragraph_style, desired_para.paragraph_style, ParagraphStyle
+        )
+        if fields:
+            requests.append(
+                _make_update_paragraph_style(
+                    para_start, para_end, style_dict, fields, segment_id, tab_id
+                )
+            )
+
+    # 2. Bullet changes
+    base_bullet = base_para.bullet
+    desired_bullet = desired_para.bullet
+
+    if base_bullet is None and desired_bullet is not None:
+        # Adding bullet
+        requests.append(
+            _make_create_paragraph_bullets(
+                para_start, para_end, "BULLET_DISC_CIRCLE_SQUARE", segment_id, tab_id
+            )
+        )
+    elif base_bullet is not None and desired_bullet is None:
+        # Removing bullet
+        requests.append(
+            _make_delete_paragraph_bullets(para_start, para_end, segment_id, tab_id)
+        )
+
+    # 3. Text run style changes (processed right-to-left)
+    text_style_reqs = _generate_text_style_updates(
+        base_para, desired_para, para_start, segment_id, tab_id
+    )
+    requests.extend(text_style_reqs)
+
+    return requests
+
+
+def _generate_text_style_updates(
+    base_para: Paragraph,
+    desired_para: Paragraph,
+    para_start: int,
+    segment_id: SegmentID,
+    tab_id: TabID,
+) -> list[dict[str, Any]]:
+    """Generate text style update requests for text runs.
+
+    Merges contiguous runs with identical style changes into single requests.
+    Processes right-to-left (highest index first).
+    """
+    base_elems = base_para.elements or []
+    desired_elems = desired_para.elements or []
+
+    # Extract text runs only (filter to elements that have text_run)
+    base_runs = [el for el in base_elems if el.text_run]
+    desired_runs = [el for el in desired_elems if el.text_run]
+
+    # Text structure must match
+    if len(base_runs) != len(desired_runs):
+        return []
+
+    # Compute style update ranges (with merging)
+    ranges: list[tuple[int, int, dict[str, Any], list[str]]] = []
+    current_range: tuple[int, int, dict[str, Any], list[str]] | None = None
+
+    offset = para_start
+    for base_elem, desired_elem in zip(base_runs, desired_runs, strict=False):
+        base_run = base_elem.text_run
+        desired_run = desired_elem.text_run
+        assert base_run is not None
+        assert desired_run is not None
+
+        # Verify text match
+        if base_run.content != desired_run.content:
+            return []
+
+        # Compute style diff
+        style_dict, fields = _compute_style_diff(
+            base_run.text_style, desired_run.text_style, TextStyle
+        )
+
+        run_len = utf16_len(base_run.content or "")
+        run_end = offset + run_len
+
+        if not fields:
+            # No style change for this run
+            if current_range:
+                ranges.append(current_range)
+                current_range = None
+            offset = run_end
+            continue
+
+        # Try to merge with current range
+        if (
+            current_range is not None
+            and current_range[1] == offset  # contiguous
+            and current_range[2] == style_dict  # same style changes
+            and current_range[3] == fields  # same field mask
+        ):
+            # Extend range
+            current_range = (current_range[0], run_end, style_dict, fields)
+        else:
+            # Start new range
+            if current_range:
+                ranges.append(current_range)
+            current_range = (offset, run_end, style_dict, fields)
+
+        offset = run_end
+
+    if current_range:
+        ranges.append(current_range)
+
+    # Generate requests right-to-left
+    requests: list[dict[str, Any]] = []
+    for start, end, style_dict, fields in reversed(ranges):
+        requests.append(
+            _make_update_text_style(start, end, style_dict, fields, segment_id, tab_id)
+        )
+
+    return requests
