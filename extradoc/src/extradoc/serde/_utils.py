@@ -32,7 +32,7 @@ def sanitize_tab_name(name: str) -> str:
 
 def rgb_to_hex(r: float, g: float, b: float) -> str:
     """Convert RGB 0-1 floats to #RRGGBB hex string."""
-    return f"#{int(r * 255):02X}{int(g * 255):02X}{int(b * 255):02X}"
+    return f"#{round(r * 255):02X}{round(g * 255):02X}{round(b * 255):02X}"
 
 
 def hex_to_rgb(hex_color: str) -> tuple[float, float, float]:

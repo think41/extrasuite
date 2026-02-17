@@ -225,10 +225,14 @@ def _convert_blocks(
                 StructuralElement.model_validate(
                     {
                         "paragraph": {
+                            "paragraphStyle": {
+                                "namedStyleType": "NORMAL_TEXT",
+                                "direction": "LEFT_TO_RIGHT",
+                            },
                             "elements": [
-                                {"horizontalRule": {}},
+                                {"horizontalRule": {"textStyle": {}}},
                                 {"textRun": {"content": "\n", "textStyle": {}}},
-                            ]
+                            ],
                         }
                     }
                 )
@@ -284,7 +288,10 @@ def _ensure_trailing_paragraph(
             StructuralElement.model_validate(
                 {
                     "paragraph": {
-                        "paragraphStyle": {"namedStyleType": "NORMAL_TEXT"},
+                        "paragraphStyle": {
+                            "namedStyleType": "NORMAL_TEXT",
+                            "direction": "LEFT_TO_RIGHT",
+                        },
                         "elements": [{"textRun": {"content": "\n", "textStyle": {}}}],
                     }
                 }
