@@ -17,7 +17,7 @@ from extradoc.reconcile._core import (
     resolve_deferred_ids,
     verify,
 )
-from extradoc.reconcile._generators import ReconcileError
+from extradoc.reconcile._exceptions import ReconcileError
 
 __all__ = [
     "DeferredID",

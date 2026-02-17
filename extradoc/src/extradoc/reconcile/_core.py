@@ -22,9 +22,9 @@ from extradoc.reconcile._alignment import (
     align_tabs,
 )
 from extradoc.reconcile._comparators import documents_match
+from extradoc.reconcile._exceptions import ReconcileError
 from extradoc.reconcile._extractors import Segment, extract_segments
 from extradoc.reconcile._generators import (
-    ReconcileError,
     _make_add_document_tab,
     _make_create_footer,
     _make_create_header,
@@ -259,7 +259,9 @@ class _Reconciler:
         base_segments = extract_segments(base_tab)
         desired_segments = extract_segments(desired_tab)
 
-        all_segment_ids = set(base_segments.keys()) | set(desired_segments.keys())
+        all_segment_ids = sorted(
+            set(base_segments.keys()) | set(desired_segments.keys())
+        )
 
         for seg_id in all_segment_ids:
             base_seg = base_segments.get(seg_id)
