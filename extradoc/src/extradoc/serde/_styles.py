@@ -6,6 +6,7 @@ Resolve: look up class names to reconstruct Pydantic style objects.
 
 from __future__ import annotations
 
+import json
 from dataclasses import dataclass, field
 from typing import Any
 from xml.etree.ElementTree import Element, SubElement, fromstring
@@ -168,7 +169,8 @@ def extract_text_style(ts: TextStyle | None) -> dict[str, str]:
             attrs["linkBookmark"] = ts.link.bookmark_id
         elif ts.link.heading_id:
             attrs["linkHeading"] = ts.link.heading_id
-        elif ts.link.tab_id:
+        # tab_id can appear alongside bookmarkId/headingId or standalone
+        if ts.link.tab_id:
             attrs["linkTab"] = ts.link.tab_id
     return attrs
 
@@ -227,6 +229,17 @@ def extract_para_style(ps: ParagraphStyle | None) -> dict[str, str]:
         b = para_border_to_str(border)
         if b:
             attrs[name] = b
+    if ps.tab_stops:
+        tab_stops_list = []
+        for ts in ps.tab_stops:
+            ts_d: dict[str, Any] = {}
+            if ts.alignment:
+                ts_d["alignment"] = ts.alignment.value
+            if ts.offset:
+                ts_d["offset"] = ts.offset.model_dump(by_alias=True, exclude_none=True)
+            tab_stops_list.append(ts_d)
+        if tab_stops_list:
+            attrs["tabStops"] = json.dumps(tab_stops_list, separators=(",", ":"))
     return attrs
 
 
@@ -367,9 +380,15 @@ def resolve_text_style(attrs: dict[str, str]) -> TextStyle:
     if link_url:
         d["link"] = {"url": link_url}
     elif link_bm:
-        d["link"] = {"bookmarkId": link_bm}
+        link_d: dict[str, str] = {"bookmarkId": link_bm}
+        if link_tab:
+            link_d["tabId"] = link_tab
+        d["link"] = link_d
     elif link_hd:
-        d["link"] = {"headingId": link_hd}
+        link_d = {"headingId": link_hd}
+        if link_tab:
+            link_d["tabId"] = link_tab
+        d["link"] = link_d
     elif link_tab:
         d["link"] = {"tabId": link_tab}
     return TextStyle.model_validate(d)
@@ -424,6 +443,9 @@ def resolve_para_style(
         border = str_to_para_border(attrs.get(xml_key))
         if border:
             d[api_key] = border.model_dump(by_alias=True, exclude_none=True)
+    tab_stops_json = attrs.get("tabStops")
+    if tab_stops_json:
+        d["tabStops"] = json.loads(tab_stops_json)
     return ParagraphStyle.model_validate(d)
 
 
@@ -553,14 +575,28 @@ def determine_sugar_tag(attrs: dict[str, str]) -> tuple[str | None, dict[str, st
     return None, attrs
 
 
-def determine_link_href(attrs: dict[str, str]) -> tuple[str | None, dict[str, str]]:
-    """Extract link href and return remaining attrs."""
-    for key in ("link", "linkBookmark", "linkHeading", "linkTab"):
+def determine_link_href(
+    attrs: dict[str, str],
+) -> tuple[str | None, dict[str, str], str | None]:
+    """Extract link href and return remaining attrs and link type key.
+
+    Returns (href, remaining_attrs, link_type_key).
+    The link_type_key is the attribute key used (e.g., "link", "linkBookmark").
+    When linkTab coexists with bookmarkId/headingId, linkTab is kept in remaining.
+    """
+    # Check primary link types first
+    for key in ("link", "linkBookmark", "linkHeading"):
         if key in attrs:
             href = attrs[key]
+            # Keep linkTab in remaining when it's a cross-tab link modifier
             remaining = {k: v for k, v in attrs.items() if k != key}
-            return href, remaining
-    return None, attrs
+            return href, remaining, key
+    # linkTab as standalone link
+    if "linkTab" in attrs:
+        href = attrs["linkTab"]
+        remaining = {k: v for k, v in attrs.items() if k != "linkTab"}
+        return href, remaining, "linkTab"
+    return None, attrs, None
 
 
 # ---------------------------------------------------------------------------

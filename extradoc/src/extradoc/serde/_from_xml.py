@@ -7,6 +7,7 @@ from reconcile._core if indices are needed.
 
 from __future__ import annotations
 
+import json
 from typing import Any
 
 from extradoc.api_types._generated import (
@@ -35,8 +36,8 @@ from ._models import (
     PersonNode,
     RichLinkNode,
     SectionBreakXml,
+    TabFiles,
     TableXml,
-    TabXml,
     TNode,
     TocXml,
 )
@@ -74,23 +75,28 @@ _SUGAR_TO_STYLE: dict[str, tuple[str, str]] = {
 
 
 def tabs_to_document(
-    tabs: dict[str, tuple[TabXml, StylesXml]],
+    tabs: dict[str, TabFiles],
     document_id: str = "",
     title: str = "",
+    revision_id: str | None = None,
 ) -> Document:
     """Convert XML models to a Document."""
     doc = Document.model_validate({"documentId": document_id, "title": title})
+    if revision_id:
+        doc.revision_id = revision_id
     doc.tabs = []
 
-    for _folder, (tab_xml, styles_xml) in tabs.items():
-        tab = _convert_tab(tab_xml, styles_xml)
+    for _folder, tab_files in tabs.items():
+        tab = _convert_tab(tab_files)
         doc.tabs.append(tab)
 
     return doc
 
 
-def _convert_tab(tab_xml: TabXml, styles: StylesXml) -> Tab:
-    """Convert a TabXml + StylesXml to a Tab."""
+def _convert_tab(tab_files: TabFiles) -> Tab:
+    """Convert a TabFiles to a Tab."""
+    tab_xml = tab_files.tab
+    styles = tab_files.styles
     doc_tab_d: dict[str, Any] = {}
 
     # Lists
@@ -102,7 +108,7 @@ def _convert_tab(tab_xml: TabXml, styles: StylesXml) -> Tab:
 
     # Body
     if tab_xml.body:
-        body_content = _convert_blocks(tab_xml.body, styles)
+        body_content = _ensure_trailing_paragraph(_convert_blocks(tab_xml.body, styles))
         doc_tab_d["body"] = {
             "content": [
                 se.model_dump(by_alias=True, exclude_none=True) for se in body_content
@@ -113,7 +119,7 @@ def _convert_tab(tab_xml: TabXml, styles: StylesXml) -> Tab:
     if tab_xml.headers:
         headers_d: dict[str, Any] = {}
         for seg in tab_xml.headers:
-            content = _convert_blocks(seg.blocks, styles)
+            content = _ensure_trailing_paragraph(_convert_blocks(seg.blocks, styles))
             headers_d[seg.id] = {
                 "headerId": seg.id,
                 "content": [
@@ -126,7 +132,7 @@ def _convert_tab(tab_xml: TabXml, styles: StylesXml) -> Tab:
     if tab_xml.footers:
         footers_d: dict[str, Any] = {}
         for seg in tab_xml.footers:
-            content = _convert_blocks(seg.blocks, styles)
+            content = _ensure_trailing_paragraph(_convert_blocks(seg.blocks, styles))
             footers_d[seg.id] = {
                 "footerId": seg.id,
                 "content": [
@@ -139,7 +145,7 @@ def _convert_tab(tab_xml: TabXml, styles: StylesXml) -> Tab:
     if tab_xml.footnotes:
         footnotes_d: dict[str, Any] = {}
         for seg in tab_xml.footnotes:
-            content = _convert_blocks(seg.blocks, styles)
+            content = _ensure_trailing_paragraph(_convert_blocks(seg.blocks, styles))
             footnotes_d[seg.id] = {
                 "footnoteId": seg.id,
                 "content": [
@@ -147,6 +153,18 @@ def _convert_tab(tab_xml: TabXml, styles: StylesXml) -> Tab:
                 ],
             }
         doc_tab_d["footnotes"] = footnotes_d
+
+    # Tab extras: documentStyle, namedStyles, inlineObjects, positionedObjects, namedRanges
+    if tab_files.doc_style:
+        doc_tab_d["documentStyle"] = tab_files.doc_style.data
+    if tab_files.named_styles:
+        doc_tab_d["namedStyles"] = tab_files.named_styles.data
+    if tab_files.inline_objects:
+        doc_tab_d["inlineObjects"] = tab_files.inline_objects.data
+    if tab_files.positioned_objects:
+        doc_tab_d["positionedObjects"] = tab_files.positioned_objects.data
+    if tab_files.named_ranges:
+        doc_tab_d["namedRanges"] = tab_files.named_ranges.data
 
     tab_props: dict[str, Any] = {"tabId": tab_xml.id, "title": tab_xml.title}
     if tab_xml.index is not None:
@@ -175,6 +193,8 @@ def _convert_list_def_d(list_def: ListDefXml, styles: StylesXml) -> dict[str, An
             glyph_type=level_def.glyph_type,
             glyph_format=level_def.glyph_format,
             glyph_symbol=level_def.glyph_symbol,
+            bullet_alignment=level_def.bullet_alignment,
+            start_number=level_def.start_number,
         )
         nesting_levels.append(nl.model_dump(by_alias=True, exclude_none=True))
 
@@ -189,7 +209,8 @@ def _convert_blocks(
     elements: list[StructuralElement] = []
     for block in blocks:
         if isinstance(block, SectionBreakXml):
-            elements.append(StructuralElement.model_validate({"sectionBreak": {}}))
+            sb_d = _convert_section_break_d(block)
+            elements.append(StructuralElement.model_validate({"sectionBreak": sb_d}))
         elif isinstance(block, ParagraphXml):
             para = _convert_paragraph(block, styles)
             elements.append(
@@ -206,7 +227,7 @@ def _convert_blocks(
                         "paragraph": {
                             "elements": [
                                 {"horizontalRule": {}},
-                                {"textRun": {"content": "\n"}},
+                                {"textRun": {"content": "\n", "textStyle": {}}},
                             ]
                         }
                     }
@@ -219,7 +240,7 @@ def _convert_blocks(
                         "paragraph": {
                             "elements": [
                                 {"pageBreak": {}},
-                                {"textRun": {"content": "\n"}},
+                                {"textRun": {"content": "\n", "textStyle": {}}},
                             ]
                         }
                     }
@@ -247,6 +268,28 @@ def _convert_blocks(
             elements.append(
                 StructuralElement.model_validate({"tableOfContents": toc_d})
             )
+    return elements
+
+
+def _ensure_trailing_paragraph(
+    elements: list[StructuralElement],
+) -> list[StructuralElement]:
+    """Ensure a segment ends with a paragraph (Google Docs requirement).
+
+    If the segment is empty or ends with a non-paragraph element (table, TOC,
+    section break), append a synthetic empty paragraph.
+    """
+    if not elements or not elements[-1].paragraph:
+        elements.append(
+            StructuralElement.model_validate(
+                {
+                    "paragraph": {
+                        "paragraphStyle": {"namedStyleType": "NORMAL_TEXT"},
+                        "elements": [{"textRun": {"content": "\n", "textStyle": {}}}],
+                    }
+                }
+            )
+        )
     return elements
 
 
@@ -280,8 +323,12 @@ def _convert_paragraph(
     for inline in para_xml.inlines:
         pe_dicts.extend(_convert_inline(inline, styles))
 
-    # Add trailing newline
-    pe_dicts.append({"textRun": {"content": "\n"}})
+    # Add trailing newline — append to last textRun if possible,
+    # otherwise add a standalone \n element (matches API behavior)
+    if pe_dicts and "textRun" in pe_dicts[-1]:
+        pe_dicts[-1]["textRun"]["content"] += "\n"
+    else:
+        pe_dicts.append({"textRun": {"content": "\n", "textStyle": {}}})
 
     para_d: dict[str, Any] = {
         "paragraphStyle": ps.model_dump(by_alias=True, exclude_none=True),
@@ -309,13 +356,15 @@ def _convert_inline(
             ts = resolve_text_style(attrs)
             ts_d = ts.model_dump(by_alias=True, exclude_none=True)
             return [{"textRun": {"content": node.text, "textStyle": ts_d}}]
-        return [{"textRun": {"content": node.text}}]
+        return [{"textRun": {"content": node.text, "textStyle": {}}}]
 
     if isinstance(node, LinkNode):
         link_attrs: dict[str, str] = {}
         if node.class_name:
             link_attrs = dict(styles.lookup("text", node.class_name))
-        link_attrs["link"] = node.href
+        # Use the correct link attribute key for round-trip fidelity
+        link_key = node.link_type or "link"
+        link_attrs[link_key] = node.href
         ts = resolve_text_style(link_attrs)
         ts_d = ts.model_dump(by_alias=True, exclude_none=True)
         return [
@@ -330,16 +379,48 @@ def _convert_inline(
         return [{"footnoteReference": {"footnoteId": node.id}}]
 
     if isinstance(node, PersonNode):
-        return [{"person": {"personProperties": {"email": node.email}}}]
+        pp: dict[str, Any] = {"email": node.email}
+        if node.name:
+            pp["name"] = node.name
+        person_d: dict[str, Any] = {"personProperties": pp}
+        if node.person_id:
+            person_d["personId"] = node.person_id
+        return [{"person": person_d}]
 
     if isinstance(node, DateNode):
-        return [{"dateElement": {}}]
+        de_d: dict[str, Any] = {}
+        if node.date_id:
+            de_d["dateId"] = node.date_id
+        dep: dict[str, Any] = {}
+        if node.timestamp:
+            dep["timestamp"] = node.timestamp
+        if node.date_format:
+            dep["dateFormat"] = node.date_format
+        if node.time_format:
+            dep["timeFormat"] = node.time_format
+        if node.locale:
+            dep["locale"] = node.locale
+        if node.time_zone_id:
+            dep["timeZoneId"] = node.time_zone_id
+        if node.display_text:
+            dep["displayText"] = node.display_text
+        if dep:
+            de_d["dateElementProperties"] = dep
+        return [{"dateElement": de_d}]
 
     if isinstance(node, RichLinkNode):
-        return [{"richLink": {"richLinkProperties": {"uri": node.url}}}]
+        rlp: dict[str, Any] = {"uri": node.url}
+        if node.title:
+            rlp["title"] = node.title
+        if node.mime_type:
+            rlp["mimeType"] = node.mime_type
+        return [{"richLink": {"richLinkProperties": rlp}}]
 
     if isinstance(node, AutoTextNode):
-        return [{"autoText": {}}]
+        at_d: dict[str, Any] = {}
+        if node.type:
+            at_d["type"] = node.type
+        return [{"autoText": at_d}]
 
     if isinstance(node, EquationNode):
         return [{"equation": {}}]
@@ -375,9 +456,11 @@ def _convert_table(
             row_attrs = styles.lookup("row", row_xml.class_name)
         else:
             row_attrs = styles.lookup("row", "_default")
-        if row_attrs:
-            rs = resolve_row_style(row_attrs)
-            row_d["tableRowStyle"] = rs.model_dump(by_alias=True, exclude_none=True)
+        rs = resolve_row_style(row_attrs)
+        row_style_d = rs.model_dump(by_alias=True, exclude_none=True)
+        # API default: minRowHeight with just unit, no magnitude
+        row_style_d.setdefault("minRowHeight", {"unit": "PT"})
+        row_d["tableRowStyle"] = row_style_d
 
         cells: list[dict[str, Any]] = []
         for cell_xml in row_xml.cells:
@@ -386,24 +469,41 @@ def _convert_table(
                 cell_attrs = styles.lookup("cell", cell_xml.class_name)
             else:
                 cell_attrs = styles.lookup("cell", "_default")
-            if cell_attrs:
-                cs = resolve_cell_style(cell_attrs)
-                cell_style_d = cs.model_dump(by_alias=True, exclude_none=True)
-            else:
-                cell_style_d = {}
-
+            cs = resolve_cell_style(cell_attrs)
+            cell_style_d = cs.model_dump(by_alias=True, exclude_none=True)
+            # API defaults: empty backgroundColor, columnSpan=1, rowSpan=1
+            cell_style_d.setdefault("backgroundColor", {})
             if cell_xml.colspan is not None and cell_xml.colspan > 1:
                 cell_style_d["columnSpan"] = cell_xml.colspan
+            else:
+                cell_style_d.setdefault("columnSpan", 1)
             if cell_xml.rowspan is not None and cell_xml.rowspan > 1:
                 cell_style_d["rowSpan"] = cell_xml.rowspan
-
-            if cell_style_d:
-                cell_d["tableCellStyle"] = cell_style_d
+            else:
+                cell_style_d.setdefault("rowSpan", 1)
+            cell_d["tableCellStyle"] = cell_style_d
 
             if cell_xml.blocks:
-                content = _convert_blocks(cell_xml.blocks, styles)
+                content = _ensure_trailing_paragraph(
+                    _convert_blocks(cell_xml.blocks, styles)
+                )
                 cell_d["content"] = [
                     se.model_dump(by_alias=True, exclude_none=True) for se in content
+                ]
+            else:
+                # Empty cell still needs a trailing paragraph
+                empty_para = StructuralElement.model_validate(
+                    {
+                        "paragraph": {
+                            "paragraphStyle": {"namedStyleType": "NORMAL_TEXT"},
+                            "elements": [
+                                {"textRun": {"content": "\n", "textStyle": {}}}
+                            ],
+                        }
+                    }
+                )
+                cell_d["content"] = [
+                    empty_para.model_dump(by_alias=True, exclude_none=True)
                 ]
             cells.append(cell_d)
 
@@ -416,3 +516,49 @@ def _convert_table(
         table_d["columns"] = len(table_rows[0]["tableCells"])
 
     return Table.model_validate(table_d)
+
+
+def _convert_section_break_d(sb: SectionBreakXml) -> dict[str, Any]:
+    """Convert a SectionBreakXml to a sectionBreak dict."""
+    ss_d: dict[str, Any] = {}
+    if sb.section_type:
+        ss_d["sectionType"] = sb.section_type
+    if sb.content_direction:
+        ss_d["contentDirection"] = sb.content_direction
+    if sb.default_header_id:
+        ss_d["defaultHeaderId"] = sb.default_header_id
+    if sb.default_footer_id:
+        ss_d["defaultFooterId"] = sb.default_footer_id
+    if sb.first_page_header_id:
+        ss_d["firstPageHeaderId"] = sb.first_page_header_id
+    if sb.first_page_footer_id:
+        ss_d["firstPageFooterId"] = sb.first_page_footer_id
+    if sb.even_page_header_id:
+        ss_d["evenPageHeaderId"] = sb.even_page_header_id
+    if sb.even_page_footer_id:
+        ss_d["evenPageFooterId"] = sb.even_page_footer_id
+    if sb.use_first_page_header_footer is not None:
+        ss_d["useFirstPageHeaderFooter"] = sb.use_first_page_header_footer
+    if sb.flip_page_orientation is not None:
+        ss_d["flipPageOrientation"] = sb.flip_page_orientation
+    if sb.page_number_start is not None:
+        ss_d["pageNumberStart"] = sb.page_number_start
+    for xml_key, api_key in [
+        ("margin_top", "marginTop"),
+        ("margin_bottom", "marginBottom"),
+        ("margin_left", "marginLeft"),
+        ("margin_right", "marginRight"),
+        ("margin_header", "marginHeader"),
+        ("margin_footer", "marginFooter"),
+    ]:
+        val = getattr(sb, xml_key)
+        if val:
+            num = val.rstrip("pt")
+            ss_d[api_key] = {"magnitude": float(num), "unit": "PT"}
+    if sb.column_properties:
+        ss_d["columnProperties"] = json.loads(sb.column_properties)
+    if sb.column_separator_style:
+        ss_d["columnSeparatorStyle"] = sb.column_separator_style
+    if ss_d:
+        return {"sectionStyle": ss_d}
+    return {}

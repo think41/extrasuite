@@ -12,6 +12,7 @@ if TYPE_CHECKING:
         Document,
         DocumentTab,
         Paragraph,
+        Tab,
     )
 
 # Named styles that appear in the index outline
@@ -42,27 +43,42 @@ def build_index(doc: Document, folder_map: dict[str, str] | None = None) -> Inde
     )
 
     for tab in doc.tabs or []:
-        tab_props = tab.tab_properties
-        tab_id = (tab_props.tab_id or "t.0") if tab_props else "t.0"
-        tab_title = (tab_props.title or "Tab 1") if tab_props else "Tab 1"
-
-        if folder_map:
-            folder = folder_map.get(tab_id, sanitize_tab_name(tab_title))
-        else:
-            folder = sanitize_tab_name(tab_title)
-
-        headings = _extract_outline(tab.document_tab) if tab.document_tab else []
-
-        index.tabs.append(
-            IndexTab(
-                id=tab_id,
-                title=tab_title,
-                folder=folder,
-                headings=headings,
-            )
-        )
+        index.tabs.append(_build_index_tab(tab, folder_map))
 
     return index
+
+
+def _build_index_tab(tab: Tab, folder_map: dict[str, str] | None) -> IndexTab:
+    """Build an IndexTab from a Tab, recursively handling child_tabs."""
+    tab_props = tab.tab_properties
+    tab_id = (tab_props.tab_id or "t.0") if tab_props else "t.0"
+    tab_title = (tab_props.title or "Tab 1") if tab_props else "Tab 1"
+
+    if folder_map:
+        folder = folder_map.get(tab_id, sanitize_tab_name(tab_title))
+    else:
+        folder = sanitize_tab_name(tab_title)
+
+    headings = _extract_outline(tab.document_tab) if tab.document_tab else []
+
+    parent_tab_id = tab_props.parent_tab_id if tab_props else None
+    nesting_level = tab_props.nesting_level if tab_props else None
+    icon_emoji = tab_props.icon_emoji if tab_props else None
+
+    child_tabs: list[IndexTab] = []
+    for child_tab in tab.child_tabs or []:
+        child_tabs.append(_build_index_tab(child_tab, folder_map))
+
+    return IndexTab(
+        id=tab_id,
+        title=tab_title,
+        folder=folder,
+        headings=headings,
+        parent_tab_id=parent_tab_id,
+        nesting_level=nesting_level,
+        icon_emoji=icon_emoji,
+        child_tabs=child_tabs,
+    )
 
 
 def _extract_outline(doc_tab: DocumentTab) -> list[IndexHeading]:

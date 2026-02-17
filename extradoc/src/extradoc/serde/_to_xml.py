@@ -5,6 +5,7 @@ This is the serialize direction: Document → pydantic-xml intermediate models.
 
 from __future__ import annotations
 
+import json
 from typing import TYPE_CHECKING
 
 from ._models import (
@@ -29,6 +30,7 @@ from ._models import (
     RowXml,
     SectionBreakXml,
     SegmentXml,
+    TabFiles,
     TableXml,
     TabXml,
     TNode,
@@ -36,7 +38,6 @@ from ._models import (
 )
 from ._styles import (
     StyleCollector,
-    StylesXml,
     determine_link_href,
     determine_sugar_tag,
     extract_cell_style,
@@ -46,7 +47,14 @@ from ._styles import (
     extract_row_style,
     extract_text_style,
 )
-from ._utils import sanitize_tab_name
+from ._tab_extras import (
+    DocStyleXml,
+    InlineObjectsXml,
+    NamedRangesXml,
+    NamedStylesXml,
+    PositionedObjectsXml,
+)
+from ._utils import dim_to_str, sanitize_tab_name
 
 if TYPE_CHECKING:
     from extradoc.api_types._generated import (
@@ -54,7 +62,9 @@ if TYPE_CHECKING:
         DocumentTab,
         Paragraph,
         ParagraphElement,
+        SectionBreak,
         StructuralElement,
+        Tab,
         Table,
         TextStyle,
     )
@@ -77,15 +87,23 @@ _NAMED_STYLE_TO_TAG: dict[str, str] = {
 
 def document_to_xml(
     doc: Document,
-) -> dict[str, tuple[TabXml, StylesXml]]:
+) -> dict[str, TabFiles]:
     """Convert a Document to XML models.
 
-    Returns dict mapping folder_name → (TabXml, StylesXml) for each tab.
+    Returns dict mapping folder_name → TabFiles for each tab.
     The folder_name is derived from the tab title.
     """
-    result: dict[str, tuple[TabXml, StylesXml]] = {}
+    result: dict[str, TabFiles] = {}
+    _convert_tabs_recursive(doc.tabs or [], result)
+    return result
 
-    for tab in doc.tabs or []:
+
+def _convert_tabs_recursive(
+    tabs: list[Tab],
+    result: dict[str, TabFiles],
+) -> None:
+    """Convert tabs (and their children) to TabFiles, adding to result."""
+    for tab in tabs:
         tab_props = tab.tab_properties
         tab_id = (tab_props.tab_id or "t.0") if tab_props else "t.0"
         tab_title = (tab_props.title or "Tab 1") if tab_props else "Tab 1"
@@ -101,18 +119,24 @@ def document_to_xml(
         tab_index = tab_props.index if tab_props else None
 
         doc_tab = tab.document_tab
-        if not doc_tab:
-            continue
+        if doc_tab:
+            collector = StyleCollector()
+            tab_xml = _convert_tab(tab_id, tab_title, doc_tab, collector)
+            tab_xml.index = tab_index
+            defaults = collector.promote_defaults()
+            styles_xml = collector.build()
+            _strip_default_classes(tab_xml, defaults)
+            tab_files = TabFiles(tab=tab_xml, styles=styles_xml)
+            tab_files.doc_style = _extract_doc_style(doc_tab)
+            tab_files.named_styles = _extract_named_styles(doc_tab)
+            tab_files.inline_objects = _extract_inline_objects(doc_tab)
+            tab_files.positioned_objects = _extract_positioned_objects(doc_tab)
+            tab_files.named_ranges = _extract_named_ranges(doc_tab)
+            result[folder] = tab_files
 
-        collector = StyleCollector()
-        tab_xml = _convert_tab(tab_id, tab_title, doc_tab, collector)
-        tab_xml.index = tab_index
-        defaults = collector.promote_defaults()
-        styles_xml = collector.build()
-        _strip_default_classes(tab_xml, defaults)
-        result[folder] = (tab_xml, styles_xml)
-
-    return result
+        # Process child tabs recursively
+        if tab.child_tabs:
+            _convert_tabs_recursive(tab.child_tabs, result)
 
 
 def _convert_tab(
@@ -180,6 +204,10 @@ def _convert_list_def(
                     glyph_type=nl.glyph_type.value if nl.glyph_type else None,
                     glyph_format=nl.glyph_format,
                     glyph_symbol=nl.glyph_symbol,
+                    bullet_alignment=(
+                        nl.bullet_alignment.value if nl.bullet_alignment else None
+                    ),
+                    start_number=nl.start_number,
                     class_name=class_name,
                 )
             )
@@ -194,7 +222,7 @@ def _convert_content(
     blocks: list[BlockNode] = []
     for se in content:
         if se.section_break:
-            blocks.append(SectionBreakXml())
+            blocks.append(_convert_section_break(se.section_break))
         elif se.paragraph:
             block = _convert_paragraph(se.paragraph, collector)
             if block is not None:
@@ -206,7 +234,73 @@ def _convert_content(
             if se.table_of_contents.content:
                 toc_blocks = _convert_content(se.table_of_contents.content, collector)
             blocks.append(TocXml(blocks=toc_blocks))
+    return _strip_trailing_empty_para(blocks)
+
+
+def _strip_trailing_empty_para(blocks: list[BlockNode]) -> list[BlockNode]:
+    """Strip synthetic trailing empty paragraph from a segment.
+
+    Google Docs requires every segment to end with a paragraph. When a segment
+    ends with a table, TOC, or section break, the API adds an empty trailing
+    paragraph. We strip it so agents don't see this internal detail.
+
+    Also handles the edge case where a segment contains only an empty paragraph
+    (empty segment).
+    """
+    if not blocks:
+        return blocks
+
+    last = blocks[-1]
+    # Check if last is an empty paragraph (no inlines)
+    if not isinstance(last, ParagraphXml) or last.inlines:
+        return blocks
+
+    # Segment with only an empty paragraph → return empty list
+    if len(blocks) == 1:
+        return []
+
+    # Empty paragraph following a non-paragraph element → strip it
+    second_last = blocks[-2]
+    if isinstance(second_last, TableXml | TocXml | SectionBreakXml):
+        return blocks[:-1]
+
     return blocks
+
+
+def _convert_section_break(sb: SectionBreak) -> SectionBreakXml:
+    """Convert a SectionBreak to SectionBreakXml, preserving SectionStyle."""
+    xml = SectionBreakXml()
+    ss = sb.section_style
+    if not ss:
+        return xml
+    if ss.section_type:
+        xml.section_type = ss.section_type.value
+    if ss.content_direction:
+        xml.content_direction = ss.content_direction.value
+    xml.default_header_id = ss.default_header_id
+    xml.default_footer_id = ss.default_footer_id
+    xml.first_page_header_id = ss.first_page_header_id
+    xml.first_page_footer_id = ss.first_page_footer_id
+    xml.even_page_header_id = ss.even_page_header_id
+    xml.even_page_footer_id = ss.even_page_footer_id
+    xml.use_first_page_header_footer = ss.use_first_page_header_footer
+    xml.flip_page_orientation = ss.flip_page_orientation
+    xml.page_number_start = ss.page_number_start
+    xml.margin_top = dim_to_str(ss.margin_top)
+    xml.margin_bottom = dim_to_str(ss.margin_bottom)
+    xml.margin_left = dim_to_str(ss.margin_left)
+    xml.margin_right = dim_to_str(ss.margin_right)
+    xml.margin_header = dim_to_str(ss.margin_header)
+    xml.margin_footer = dim_to_str(ss.margin_footer)
+    if ss.column_properties:
+        col_props = []
+        for cp in ss.column_properties:
+            col_props.append(cp.model_dump(by_alias=True, exclude_none=True))
+        if col_props:
+            xml.column_properties = json.dumps(col_props, separators=(",", ":"))
+    if ss.column_separator_style:
+        xml.column_separator_style = ss.column_separator_style.value
+    return xml
 
 
 def _convert_paragraph(
@@ -300,18 +394,43 @@ def _convert_elements(
             inlines.append(FootnoteRefNode(id=fn_id))
         elif pe.person:
             email = ""
+            name = None
+            person_id = None
             if pe.person.person_properties:
                 email = pe.person.person_properties.email or ""
-            inlines.append(PersonNode(email=email))
+                name = pe.person.person_properties.name
+            person_id = pe.person.person_id
+            inlines.append(PersonNode(email=email, name=name, person_id=person_id))
         elif pe.date_element:
-            inlines.append(DateNode())
+            de = pe.date_element
+            dep = de.date_element_properties
+            inlines.append(
+                DateNode(
+                    date_id=de.date_id,
+                    timestamp=dep.timestamp if dep else None,
+                    date_format=dep.date_format.value
+                    if dep and dep.date_format
+                    else None,
+                    time_format=dep.time_format.value
+                    if dep and dep.time_format
+                    else None,
+                    locale=dep.locale if dep else None,
+                    time_zone_id=dep.time_zone_id if dep else None,
+                    display_text=dep.display_text if dep else None,
+                )
+            )
         elif pe.rich_link:
             url = ""
+            title = None
+            mime_type = None
             if pe.rich_link.rich_link_properties:
                 url = pe.rich_link.rich_link_properties.uri or ""
-            inlines.append(RichLinkNode(url=url))
+                title = pe.rich_link.rich_link_properties.title
+                mime_type = pe.rich_link.rich_link_properties.mime_type
+            inlines.append(RichLinkNode(url=url, title=title, mime_type=mime_type))
         elif pe.auto_text:
-            inlines.append(AutoTextNode())
+            auto_type = pe.auto_text.type.value if pe.auto_text.type else None
+            inlines.append(AutoTextNode(type=auto_type))
         elif pe.equation:
             inlines.append(EquationNode())
         elif pe.column_break:
@@ -331,10 +450,15 @@ def _convert_text_run(
         return TNode(text=text)
 
     # Check for link first — links use LinkNode with class for non-link styles
-    href, remaining_after_link = determine_link_href(all_attrs)
+    href, remaining_after_link, link_type = determine_link_href(all_attrs)
     if href:
         class_name = collector.add_text_style(remaining_after_link)
-        return LinkNode(href=href, children=[TNode(text=text)], class_name=class_name)
+        return LinkNode(
+            href=href,
+            children=[TNode(text=text)],
+            class_name=class_name,
+            link_type=link_type,
+        )
 
     # Check for sugar tag
     sugar_tag, remaining = determine_sugar_tag(all_attrs)
@@ -377,7 +501,7 @@ def _convert_table(
                 blocks=cell_blocks,
                 class_name=cell_class,
             )
-            # colspan/rowspan from TableCellStyle
+            # colspan/rowspan from TableCellStyle (only store non-default values)
             if tc.table_cell_style:
                 cs = tc.table_cell_style.column_span
                 rs = tc.table_cell_style.row_span
@@ -461,3 +585,57 @@ def _strip_blocks(
             _strip_blocks(
                 block.blocks, para_default, cell_default, row_default, col_default
             )
+
+
+# ---------------------------------------------------------------------------
+# Tab extras extraction
+# ---------------------------------------------------------------------------
+
+
+def _extract_doc_style(doc_tab: DocumentTab) -> DocStyleXml | None:
+    """Extract DocumentStyle from a DocumentTab as JSON."""
+    if not doc_tab.document_style:
+        return None
+    data = doc_tab.document_style.model_dump(by_alias=True, exclude_none=True)
+    return DocStyleXml(data=data) if data else None
+
+
+def _extract_named_styles(doc_tab: DocumentTab) -> NamedStylesXml | None:
+    """Extract NamedStyles from a DocumentTab as JSON."""
+    if not doc_tab.named_styles:
+        return None
+    data = doc_tab.named_styles.model_dump(by_alias=True, exclude_none=True)
+    return NamedStylesXml(data=data) if data else None
+
+
+def _extract_inline_objects(doc_tab: DocumentTab) -> InlineObjectsXml | None:
+    """Extract inlineObjects from a DocumentTab as JSON."""
+    if not doc_tab.inline_objects:
+        return None
+    data = {
+        k: v.model_dump(by_alias=True, exclude_none=True)
+        for k, v in doc_tab.inline_objects.items()
+    }
+    return InlineObjectsXml(data=data) if data else None
+
+
+def _extract_positioned_objects(doc_tab: DocumentTab) -> PositionedObjectsXml | None:
+    """Extract positionedObjects from a DocumentTab as JSON."""
+    if not doc_tab.positioned_objects:
+        return None
+    data = {
+        k: v.model_dump(by_alias=True, exclude_none=True)
+        for k, v in doc_tab.positioned_objects.items()
+    }
+    return PositionedObjectsXml(data=data) if data else None
+
+
+def _extract_named_ranges(doc_tab: DocumentTab) -> NamedRangesXml | None:
+    """Extract namedRanges from a DocumentTab as JSON."""
+    if not doc_tab.named_ranges:
+        return None
+    data = {
+        k: v.model_dump(by_alias=True, exclude_none=True)
+        for k, v in doc_tab.named_ranges.items()
+    }
+    return NamedRangesXml(data=data) if data else None
