@@ -259,6 +259,11 @@ class _Reconciler:
         base_segments = extract_segments(base_tab)
         desired_segments = extract_segments(desired_tab)
 
+        # Extract desired lists for bullet preset inference
+        desired_lists = (
+            desired_tab.document_tab.lists if desired_tab.document_tab else None
+        )
+
         all_segment_ids = sorted(
             set(base_segments.keys()) | set(desired_segments.keys())
         )
@@ -270,7 +275,12 @@ class _Reconciler:
             if base_seg and desired_seg:
                 # Matched segment: diff content (stay in current batch)
                 self._reconcile_segment(
-                    base_seg, desired_seg, current_batch, base_seg.segment_id, tab_id
+                    base_seg,
+                    desired_seg,
+                    current_batch,
+                    base_seg.segment_id,
+                    tab_id,
+                    desired_lists,
                 )
             elif desired_seg and not base_seg:
                 # Added segment: create it (current batch), populate (next batch)
@@ -289,7 +299,9 @@ class _Reconciler:
                         "sections. Use the Google Docs API directly to create "
                         "section-specific headers or footers."
                     )
-                self._reconcile_new_segment(desired_seg, current_batch, tab_id)
+                self._reconcile_new_segment(
+                    desired_seg, current_batch, tab_id, desired_lists
+                )
             elif base_seg and not desired_seg:
                 # Deleted segment: delete it (current batch)
                 delete_req = _delete_segment_request(base_seg, tab_id)
@@ -303,12 +315,15 @@ class _Reconciler:
         current_batch: int,
         segment_id: str | DeferredID | None,
         tab_id: TabID,
+        desired_lists: dict[str, Any] | None = None,
     ) -> None:
         alignment = align_structural_elements(base_seg.content, desired_seg.content)
         actual_segment_id = (
             segment_id if segment_id is not None else base_seg.segment_id
         )
-        requests = generate_requests(alignment, actual_segment_id, tab_id)
+        requests = generate_requests(
+            alignment, actual_segment_id, tab_id, desired_lists
+        )
         self._batches[current_batch].extend(requests)
 
     def _reconcile_new_segment(
@@ -316,6 +331,7 @@ class _Reconciler:
         desired_seg: Segment,
         current_batch: int,
         tab_id: TabID,
+        desired_lists: dict[str, Any] | None = None,
     ) -> None:
         """Create a new segment and populate its content using DFS.
 
@@ -368,7 +384,7 @@ class _Reconciler:
         # Populate content in NEXT batch (new header/footer starts with just "\n")
         base_seg = _create_initial_segment(segment_type)
         self._reconcile_segment(
-            base_seg, desired_seg, current_batch + 1, segment_id, tab_id
+            base_seg, desired_seg, current_batch + 1, segment_id, tab_id, desired_lists
         )
 
     def _reconcile_new_tab(self, tab: Tab, current_batch: int) -> None:
@@ -400,15 +416,23 @@ class _Reconciler:
         )
 
         # Populate tab content in NEXT batch
+        desired_lists = tab.document_tab.lists if tab.document_tab else None
         for _seg_id, desired_seg in extract_segments(tab).items():
             if isinstance(desired_seg.source, Body):
                 # Body always exists after tab creation; diff against initial state
                 base_seg = _create_initial_body_segment()
                 self._reconcile_segment(
-                    base_seg, desired_seg, current_batch + 1, None, tab_id
+                    base_seg,
+                    desired_seg,
+                    current_batch + 1,
+                    None,
+                    tab_id,
+                    desired_lists,
                 )
             else:
-                self._reconcile_new_segment(desired_seg, current_batch + 1, tab_id)
+                self._reconcile_new_segment(
+                    desired_seg, current_batch + 1, tab_id, desired_lists
+                )
 
 
 # ------------------------------------------------------------------
