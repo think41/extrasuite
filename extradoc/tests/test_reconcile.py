@@ -759,6 +759,38 @@ class TestReconcileTableStructural:
         ok, diffs = verify(base, result, desired)
         assert ok, f"Diffs: {diffs}"
 
+    def test_swap_duplicate_rows(self):
+        """Swapping two rows with identical content must trigger structural diff.
+
+        Regression test: extract_plain_text_from_table returned the same string
+        for both orderings of duplicate rows, causing _diff_table_cell_styles_only
+        to be called (which produces no structural requests) instead of
+        _diff_table_structural.
+        """
+        base_table = _make_table([["X", "Y"], ["X", "Y"], ["A", "B"]])
+        desired_table = _make_table([["A", "B"], ["X", "Y"], ["X", "Y"]])
+        base = _make_doc_with_content("Hello", base_table)
+        desired = _make_doc_with_content("Hello", desired_table)
+        result = reconcile(base, desired)
+        assert len(result) == 1 and result[0].requests is not None
+        ok, diffs = verify(base, result, desired)
+        assert ok, f"Diffs: {diffs}"
+
+    def test_swap_columns_with_same_text(self):
+        """Swapping two columns with identical cell text must trigger structural diff.
+
+        Similar regression: if two columns share the same per-cell text, the
+        flat-string comparison would not detect the column swap.
+        """
+        base_table = _make_table([["same", "other"], ["same", "other"]])
+        desired_table = _make_table([["other", "same"], ["other", "same"]])
+        base = _make_doc_with_content("Hello", base_table)
+        desired = _make_doc_with_content("Hello", desired_table)
+        result = reconcile(base, desired)
+        assert len(result) == 1 and result[0].requests is not None
+        ok, diffs = verify(base, result, desired)
+        assert ok, f"Diffs: {diffs}"
+
 
 def _make_doc_with_header(
     header_id: str, header_text: str, *body_paragraphs: str, tab_id: str = "t.0"
