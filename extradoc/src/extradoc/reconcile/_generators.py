@@ -1602,50 +1602,6 @@ def _populate_cell_at(
     return [_make_insert_text(text_stripped, cell_start, segment_id, tab_id)]
 
 
-def _diff_single_cell(
-    base_cell: TableCell,
-    desired_cell: TableCell,
-    segment_id: SegmentID,
-    tab_id: TabID,
-) -> list[dict[str, Any]]:
-    """Diff a single cell's content. Uses deleteContentRange + insertText."""
-    base_text = _cell_text(base_cell)
-    desired_text = _cell_text(desired_cell)
-
-    if base_text == desired_text:
-        return []
-
-    # Get the cell's content range from base indices
-    base_content = base_cell.content or []
-    if not base_content:
-        return []
-
-    # Find the text range within the cell (first element start to last element end)
-    cell_start = base_content[0].start_index
-    cell_end = base_content[-1].end_index
-    if cell_start is None or cell_end is None:
-        return []
-
-    requests: list[dict[str, Any]] = []
-
-    # Delete old content (protect cell-ending \n)
-    old_text_stripped = base_text.rstrip("\n")
-    if old_text_stripped:
-        # Delete from cell start to cell_end - 1 (protect final \n)
-        del_end = cell_end - 1
-        if cell_start < del_end:
-            requests.append(_make_delete_range(cell_start, del_end, segment_id, tab_id))
-
-    # Insert new content
-    new_text_stripped = desired_text.rstrip("\n")
-    if new_text_stripped:
-        requests.append(
-            _make_insert_text(new_text_stripped, cell_start, segment_id, tab_id)
-        )
-
-    return requests
-
-
 # ---------------------------------------------------------------------------
 # Helpers
 # ---------------------------------------------------------------------------

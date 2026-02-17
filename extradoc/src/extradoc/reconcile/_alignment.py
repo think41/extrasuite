@@ -81,20 +81,15 @@ class AlignedSequenceEntry(NamedTuple):
     desired_idx: int | None
 
 
-def align_sequences(
+def _lcs_backtrack(
     base_fps: list[str], desired_fps: list[str]
 ) -> list[AlignedSequenceEntry]:
-    """Align two fingerprint lists using LCS with positional fallback.
+    """Backtrack LCS dp table into an alignment sequence (no positional fallback).
 
     Returns (op, base_idx, desired_idx) tuples in order.
-
-    If LCS produces zero MATCHED entries, falls back to positional alignment:
-    pair items by index (0<->0, 1<->1, ...), extras are ADDED or DELETED.
-    This guarantees at least min(base_count, desired_count) MATCHED entries.
+    Unmatched base elements are DELETED; unmatched desired elements are ADDED.
     """
     dp = _lcs_table(base_fps, desired_fps)
-
-    # Backtrack
     result: list[AlignedSequenceEntry] = []
     i, j = len(base_fps), len(desired_fps)
 
@@ -123,6 +118,21 @@ def align_sequences(
             i -= 1
 
     result.reverse()
+    return result
+
+
+def align_sequences(
+    base_fps: list[str], desired_fps: list[str]
+) -> list[AlignedSequenceEntry]:
+    """Align two fingerprint lists using LCS with positional fallback.
+
+    Returns (op, base_idx, desired_idx) tuples in order.
+
+    If LCS produces zero MATCHED entries, falls back to positional alignment:
+    pair items by index (0<->0, 1<->1, ...), extras are ADDED or DELETED.
+    This guarantees at least min(base_count, desired_count) MATCHED entries.
+    """
+    result = _lcs_backtrack(base_fps, desired_fps)
 
     # Positional fallback: if no MATCHED entries, pair by index
     has_match = any(e.op == AlignmentOp.MATCHED for e in result)
@@ -155,51 +165,32 @@ def align_structural_elements(
 
     Returns a list of AlignedElement indicating matched, deleted, or added elements.
     The order respects the desired document order for additions and base order for deletions.
+
+    Uses _lcs_backtrack without a positional fallback: completely-replaced content
+    correctly becomes DELETED + ADDED (gap processing), which generates the right
+    delete/insert requests. The positional fallback used by align_sequences is
+    intentionally omitted here — for paragraphs, a MATCHED element only triggers a
+    style diff, so positionally matching paragraphs with different text would silently
+    drop content changes.
     """
     base_fps = [content_fingerprint(e) for e in base_elements]
     desired_fps = [content_fingerprint(e) for e in desired_elements]
 
-    dp = _lcs_table(base_fps, desired_fps)
+    seq_result = _lcs_backtrack(base_fps, desired_fps)
 
-    # Backtrack to find alignment
     result: list[AlignedElement] = []
-    i, j = len(base_fps), len(desired_fps)
-
-    while i > 0 or j > 0:
-        if i > 0 and j > 0 and base_fps[i - 1] == desired_fps[j - 1]:
-            result.append(
-                AlignedElement(
-                    op=AlignmentOp.MATCHED,
-                    base_idx=i - 1,
-                    desired_idx=j - 1,
-                    base_element=base_elements[i - 1],
-                    desired_element=desired_elements[j - 1],
-                )
+    for entry in seq_result:
+        result.append(
+            AlignedElement(
+                op=entry.op,
+                base_idx=entry.base_idx,
+                desired_idx=entry.desired_idx,
+                base_element=base_elements[entry.base_idx]
+                if entry.base_idx is not None
+                else None,
+                desired_element=desired_elements[entry.desired_idx]
+                if entry.desired_idx is not None
+                else None,
             )
-            i -= 1
-            j -= 1
-        elif j > 0 and (i == 0 or dp[i][j - 1] >= dp[i - 1][j]):
-            result.append(
-                AlignedElement(
-                    op=AlignmentOp.ADDED,
-                    base_idx=None,
-                    desired_idx=j - 1,
-                    base_element=None,
-                    desired_element=desired_elements[j - 1],
-                )
-            )
-            j -= 1
-        else:
-            result.append(
-                AlignedElement(
-                    op=AlignmentOp.DELETED,
-                    base_idx=i - 1,
-                    desired_idx=None,
-                    base_element=base_elements[i - 1],
-                    desired_element=None,
-                )
-            )
-            i -= 1
-
-    result.reverse()
+        )
     return result
