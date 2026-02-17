@@ -444,6 +444,130 @@ def _process_inner_gap(
     # deleting the table).  Trim the delete to preserve the \n.
     right_is_table = gap.right_anchor is not None and _is_table(gap.right_anchor)
 
+    # Special case: exactly one table is being replaced with another table,
+    # possibly alongside paragraph changes.
+    # insertTable always creates a trailing paragraph by splitting at the
+    # insertion index.  When a trailing P("\n") already exists (as the right
+    # anchor or the body's final element), this creates an unwanted extra
+    # paragraph.  Instead, diff the tables IN PLACE using _generate_table_diff,
+    # which only emits row/column/cell operations without any insertTable call.
+    # We also handle any surrounding paragraph deletes/inserts in the same gap.
+    table_del_list = [
+        (i, a)
+        for i, a in enumerate(real_deletes)
+        if a.base_element and _is_table(a.base_element)
+    ]
+    table_add_list = [
+        (i, a)
+        for i, a in enumerate(real_adds)
+        if a.desired_element and _is_table(a.desired_element)
+    ]
+    if len(table_del_list) == 1 and len(table_add_list) == 1:
+        table_del_pos, table_del_aligned = table_del_list[0]
+        table_add_pos, table_add_aligned = table_add_list[0]
+        base_table_el = table_del_aligned.base_element
+        desired_table_el = table_add_aligned.desired_element
+        assert base_table_el is not None
+        assert desired_table_el is not None
+
+        # Split non-table elements by position relative to the table
+        # (using index within real_deletes/real_adds to preserve order)
+        before_dels = real_deletes[:table_del_pos]
+        after_dels = real_deletes[table_del_pos + 1 :]
+        before_adds = real_adds[:table_add_pos]
+        after_adds = real_adds[table_add_pos + 1 :]
+
+        # Modify table in-place (avoids insertTable trailing-para issue)
+        table_reqs = _generate_table_diff(
+            base_table_el, desired_table_el, segment_id, tab_id
+        )
+
+        combined: list[dict[str, Any]] = []
+
+        # "After table" changes first (right-to-left, higher index)
+        if after_dels or after_adds:
+            if after_dels:
+                first_after_el = after_dels[0].base_element
+                last_after_el = after_dels[-1].base_element
+                assert first_after_el is not None
+                assert last_after_el is not None
+                a_del_start = _el_start(first_after_el)
+                a_del_end = _el_end(last_after_el)
+                if right_is_table:
+                    a_del_end = a_del_end - 1
+                if a_del_start < a_del_end:
+                    combined.append(
+                        _make_delete_range(a_del_start, a_del_end, segment_id, tab_id)
+                    )
+                after_text = _collect_add_text(after_adds)
+                if after_text:
+                    if right_is_table:
+                        after_text = after_text.rstrip("\n")
+                    if after_text:
+                        combined.append(
+                            _make_insert_text(
+                                after_text, a_del_start, segment_id, tab_id
+                            )
+                        )
+            else:
+                # Only after-adds, no after-deletes: insert after the table
+                after_text = _collect_add_text(after_adds)
+                if after_text:
+                    if right_is_table:
+                        after_text = after_text.rstrip("\n")
+                    if after_text:
+                        combined.append(
+                            _make_insert_text(
+                                after_text, _el_end(base_table_el), segment_id, tab_id
+                            )
+                        )
+
+        # Table operations (in-place, using original base indices)
+        combined.extend(table_reqs)
+
+        # "Before table" changes last (right-to-left, lower index)
+        if before_dels or before_adds:
+            if before_dels:
+                first_before_el = before_dels[0].base_element
+                last_before_el = before_dels[-1].base_element
+                assert first_before_el is not None
+                assert last_before_el is not None
+                b_del_start = _el_start(first_before_el)
+                b_del_end = _el_end(last_before_el)
+                # The API forbids deleting the \n immediately before a table.
+                # When the last paragraph ends exactly at the table's start,
+                # protect its trailing \n by shrinking the delete range by 1.
+                protect_newline = _el_end(last_before_el) == _el_start(base_table_el)
+                if protect_newline:
+                    b_del_end -= 1
+                if b_del_start < b_del_end:
+                    combined.append(
+                        _make_delete_range(b_del_start, b_del_end, segment_id, tab_id)
+                    )
+                before_text = _collect_add_text(before_adds)
+                if before_text:
+                    # The protected \n remains in the doc, so strip the trailing \n
+                    # from the inserted text to avoid creating an extra empty paragraph.
+                    if protect_newline:
+                        before_text = before_text.rstrip("\n")
+                    if before_text:
+                        combined.append(
+                            _make_insert_text(
+                                before_text, b_del_start, segment_id, tab_id
+                            )
+                        )
+            else:
+                # Only before-adds, no before-deletes: insert before the table
+                before_text = _collect_add_text(before_adds)
+                if before_text:
+                    combined.append(
+                        _make_insert_text(
+                            before_text, _el_start(base_table_el), segment_id, tab_id
+                        )
+                    )
+
+        return combined
+
     # --- DELETE phase ---
     if real_deletes:
         assert first_del_el is not None
@@ -827,6 +951,21 @@ def _generate_table_diff(
     return _diff_table_structural(base_se, desired_se, segment_id, tab_id)
 
 
+def _table_cell_style_changed(base_cell: Any, desired_cell: Any) -> bool:
+    """Return True if tableCellStyle differs between base and desired cells."""
+    base_style = getattr(base_cell, "table_cell_style", None)
+    desired_style = getattr(desired_cell, "table_cell_style", None)
+    base_dict = (
+        base_style.model_dump(by_alias=True, exclude_none=True) if base_style else {}
+    )
+    desired_dict = (
+        desired_style.model_dump(by_alias=True, exclude_none=True)
+        if desired_style
+        else {}
+    )
+    return base_dict != desired_dict
+
+
 def _diff_table_cell_styles_only(
     base_table: Table,
     desired_table: Table,
@@ -840,6 +979,8 @@ def _diff_table_cell_styles_only(
     (valid since no structural changes are made).
 
     Returns requests sorted right-to-left by paragraph start index.
+
+    Raises ReconcileError if tableCellStyle changes are detected (unsupported).
     """
     requests: list[dict[str, Any]] = []
     base_rows = base_table.table_rows or []
@@ -861,6 +1002,12 @@ def _diff_table_cell_styles_only(
         desired_cells = desired_row.table_cells or []
 
         for bc, dc in zip(base_cells, desired_cells, strict=False):
+            if _table_cell_style_changed(bc, dc):
+                raise ReconcileError(
+                    "tableCellStyle changes are not supported by reconcile(). "
+                    "The Google Docs API requires updateTableCellStyle which is "
+                    "not yet implemented. Use the API directly to change cell styles."
+                )
             # Each cell's content is a list of StructuralElements (paragraphs)
             base_paras = [se for se in (bc.content or []) if se.paragraph]
             desired_paras = [se for se in (dc.content or []) if se.paragraph]
@@ -1543,6 +1690,30 @@ def _populate_new_row(
     return requests, new_row_length
 
 
+def _check_multi_para_cell_styles(cell: TableCell) -> None:
+    """Raise ReconcileError if a cell has multiple paragraphs with non-default styles.
+
+    When a desired cell has multiple paragraphs, we use insertText which correctly
+    creates paragraph breaks via embedded \\n. However, per-paragraph styles (such as
+    namedStyleType=HEADING_1) cannot be applied through insertText alone — they would
+    be silently lost. Raise an error to surface this limitation.
+    """
+    paras = [se for se in (cell.content or []) if se.paragraph]
+    if len(paras) <= 1:
+        return
+    for se in paras:
+        ps = se.paragraph and se.paragraph.paragraph_style
+        if ps is not None:
+            style_dict = ps.model_dump(by_alias=True, exclude_none=True)
+            if style_dict:
+                raise ReconcileError(
+                    "Multi-paragraph table cells with paragraph styles (e.g. "
+                    "namedStyleType=HEADING_1) are not supported by reconcile(). "
+                    "The per-paragraph styles would be silently lost. "
+                    "Use the Google Docs API directly to create such cells."
+                )
+
+
 def _diff_single_cell_at(
     base_cell: TableCell,
     desired_cell: TableCell,
@@ -1551,6 +1722,7 @@ def _diff_single_cell_at(
     tab_id: TabID,
 ) -> list[dict[str, Any]]:
     """Diff a single cell using a computed cell_start index."""
+    _check_multi_para_cell_styles(desired_cell)
     base_text = _cell_text(base_cell)
     desired_text = _cell_text(desired_cell)
 
@@ -1583,6 +1755,7 @@ def _populate_cell_at(
     tab_id: TabID,
 ) -> list[dict[str, Any]]:
     """Populate an empty cell (just \\n) with desired content."""
+    _check_multi_para_cell_styles(desired_cell)
     desired_text = _cell_text(desired_cell)
     text_stripped = desired_text.rstrip("\n")
     if not text_stripped:

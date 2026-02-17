@@ -72,7 +72,8 @@ def content_fingerprint(se: StructuralElement) -> str:
         text = extract_plain_text_from_paragraph(se.paragraph)
         return f"P:{text}"
     if se.table:
-        return "T:table"
+        text = extract_plain_text_from_table(se.table)
+        return f"T:{text}"
     if se.section_break:
         return "SB:"
     if se.table_of_contents:

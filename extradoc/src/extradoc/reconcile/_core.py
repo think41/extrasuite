@@ -274,6 +274,21 @@ class _Reconciler:
                 )
             elif desired_seg and not base_seg:
                 # Added segment: create it (current batch), populate (next batch)
+                # Reject new header/footer creation for multi-section tabs:
+                # createHeader/createFooter always omits sectionBreakLocation, so the
+                # header/footer would be applied to the document style (all sections).
+                # In a multi-section document this is almost certainly wrong.
+                source = desired_seg.source
+                if isinstance(source, Header | Footer) and _tab_has_multiple_sections(
+                    base_tab
+                ):
+                    raise ReconcileError(
+                        "Cannot create a new header or footer in a multi-section tab. "
+                        "The createHeader/createFooter API always omits "
+                        "sectionBreakLocation, which applies the header/footer to all "
+                        "sections. Use the Google Docs API directly to create "
+                        "section-specific headers or footers."
+                    )
                 self._reconcile_new_segment(desired_seg, current_batch, tab_id)
             elif base_seg and not desired_seg:
                 # Deleted segment: delete it (current batch)
@@ -439,6 +454,21 @@ def _delete_segment_request(segment: Segment, tab_id: TabID) -> dict[str, Any] |
     # Body always exists (can't be deleted)
     # Footnotes are deleted by removing footnoteReference (element-level, Phase 4+)
     return None
+
+
+def _tab_has_multiple_sections(tab: Tab) -> bool:
+    """Return True if the tab's body contains more than one section break.
+
+    A document with a single section has exactly one sectionBreak (at the very
+    beginning of the body). Each additional section adds another sectionBreak.
+    """
+    doc_tab = tab.document_tab
+    if not doc_tab or not doc_tab.body:
+        return False
+    count = sum(
+        1 for se in (doc_tab.body.content or []) if se.section_break is not None
+    )
+    return count > 1
 
 
 def _create_initial_body_segment() -> Segment:

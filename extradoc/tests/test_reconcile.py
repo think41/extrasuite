@@ -2481,3 +2481,522 @@ class TestDocumentsMatchCellParaStyle:
         result = reconcile(base, desired)
         ok, diffs = verify(base, result, desired)
         assert ok, f"Heading style in table cell should be applied: {diffs}"
+
+
+# ---------------------------------------------------------------------------
+# Issue 14: documents_match must not be in the public API
+# ---------------------------------------------------------------------------
+
+
+class TestIssue14DocumentsMatchNotPublic:
+    """Issue 14: documents_match is an internal utility and must not be exported."""
+
+    def test_not_in_all(self):
+        """documents_match is not in reconcile.__all__."""
+        import extradoc.reconcile as reconcile_module
+
+        assert "documents_match" not in reconcile_module.__all__
+
+    def test_not_directly_importable_from_reconcile(self):
+        """documents_match cannot be imported directly from extradoc.reconcile."""
+        import importlib
+
+        m = importlib.import_module("extradoc.reconcile")
+        assert not hasattr(m, "documents_match")
+
+    def test_still_importable_from_comparators(self):
+        """documents_match remains usable from _comparators for internal use."""
+        from extradoc.reconcile._comparators import documents_match
+
+        assert callable(documents_match)
+
+
+# ---------------------------------------------------------------------------
+# Issue 15: Multi-paragraph cells lose structure (silent failure)
+# ---------------------------------------------------------------------------
+
+
+def _make_multi_para_cell_table(
+    paras: list[dict[str, Any]], start_index: bool = True
+) -> dict[str, Any]:
+    """Build a table with one row and one cell containing multiple paragraphs."""
+    cell: dict[str, Any] = {"content": paras}
+    if start_index:
+        cell["startIndex"] = 0
+    return {
+        "table": {
+            "rows": 1,
+            "columns": 1,
+            "tableRows": [{"tableCells": [cell]}],
+        }
+    }
+
+
+class TestIssue15MultiParagraphCells:
+    """Issue 15: Multi-paragraph cells with non-default styles raise ReconcileError."""
+
+    def test_plain_two_para_cell_populate_works(self):
+        """Populating a cell with two plain-text paragraphs preserves structure.
+
+        insertText with embedded \\n correctly creates paragraph breaks.
+        No ReconcileError should be raised for plain-text multi-paragraph cells.
+        """
+        base = _make_doc_with_content("Intro", _make_table([["Old"]]))
+        desired_table = _make_multi_para_cell_table(
+            [
+                {"paragraph": {"elements": [{"textRun": {"content": "Line 1\n"}}]}},
+                {"paragraph": {"elements": [{"textRun": {"content": "Line 2\n"}}]}},
+            ]
+        )
+        desired = _make_doc_with_content("Intro", desired_table)
+        result = reconcile(base, desired)
+        ok, diffs = verify(base, result, desired)
+        assert ok, f"Plain multi-paragraph cell should be reconciled correctly: {diffs}"
+
+    def test_multi_para_cell_with_heading_style_raises_error(self):
+        """A desired cell with multiple paragraphs and a heading style raises ReconcileError.
+
+        The reconciler inserts combined text via insertText, which loses per-paragraph
+        styles. This must raise an error instead of silently producing wrong output.
+        """
+        base = _make_doc_with_content("Intro", _make_table([["Old"]]))
+        desired_table = _make_multi_para_cell_table(
+            [
+                {
+                    "paragraph": {
+                        "paragraphStyle": {"namedStyleType": "HEADING_1"},
+                        "elements": [{"textRun": {"content": "Heading\n"}}],
+                    }
+                },
+                {"paragraph": {"elements": [{"textRun": {"content": "Body\n"}}]}},
+            ]
+        )
+        desired = _make_doc_with_content("Intro", desired_table)
+
+        with pytest.raises(ReconcileError, match="[Mm]ulti-paragraph"):
+            reconcile(base, desired)
+
+    def test_diff_cell_with_heading_style_in_second_para_raises_error(self):
+        """Diffing a matched cell where desired has two paras and a heading raises error."""
+        # Build a 1x2 table: base col 0 and desired col 0 have same column fingerprint
+        # (same per-column text when stripped), but desired cell has non-default para style.
+        # The easiest way to trigger _diff_single_cell_at with multi-para desired is
+        # to have the tables differ structurally but ensure _populate_cell_at is invoked.
+        base_table = _make_table([["A", "B"]])
+        # desired: same col 1 ("B") but col 0 has two paragraphs with heading style
+        desired_table = _make_multi_para_cell_table(
+            [
+                {
+                    "paragraph": {
+                        "paragraphStyle": {"namedStyleType": "HEADING_2"},
+                        "elements": [{"textRun": {"content": "A\n"}}],
+                    }
+                },
+                {"paragraph": {"elements": [{"textRun": {"content": "Extra\n"}}]}},
+            ]
+        )
+        # Use single-column desired so we stay in the 1-col path
+        base = _make_doc_with_content("Start", base_table)
+        desired = _make_doc_with_content("Start", desired_table)
+
+        with pytest.raises(ReconcileError, match="[Mm]ulti-paragraph"):
+            reconcile(base, desired)
+
+
+# ---------------------------------------------------------------------------
+# Issue 16: Nested tables invisible — content_fingerprint always "T:table"
+# ---------------------------------------------------------------------------
+
+
+class TestIssue16TableFingerprint:
+    """Issue 16: content_fingerprint must distinguish tables by content."""
+
+    def test_different_tables_have_different_fingerprints(self):
+        """Two tables with different cell content must have different fingerprints."""
+        from extradoc.api_types._generated import StructuralElement
+        from extradoc.reconcile._extractors import content_fingerprint
+
+        t1 = StructuralElement.model_validate(
+            {
+                "table": {
+                    "rows": 1,
+                    "columns": 1,
+                    "tableRows": [
+                        {
+                            "tableCells": [
+                                {
+                                    "content": [
+                                        {
+                                            "paragraph": {
+                                                "elements": [
+                                                    {"textRun": {"content": "Alpha\n"}}
+                                                ]
+                                            }
+                                        }
+                                    ]
+                                }
+                            ]
+                        }
+                    ],
+                }
+            }
+        )
+        t2 = StructuralElement.model_validate(
+            {
+                "table": {
+                    "rows": 1,
+                    "columns": 1,
+                    "tableRows": [
+                        {
+                            "tableCells": [
+                                {
+                                    "content": [
+                                        {
+                                            "paragraph": {
+                                                "elements": [
+                                                    {"textRun": {"content": "Beta\n"}}
+                                                ]
+                                            }
+                                        }
+                                    ]
+                                }
+                            ]
+                        }
+                    ],
+                }
+            }
+        )
+        fp1 = content_fingerprint(t1)
+        fp2 = content_fingerprint(t2)
+        assert fp1 != fp2, (
+            "Tables with different content must have different fingerprints, "
+            f"but both got: {fp1!r}"
+        )
+        assert fp1.startswith("T:")
+        assert fp2.startswith("T:")
+
+    def test_same_tables_have_same_fingerprint(self):
+        """Two tables with identical content have the same fingerprint."""
+        from extradoc.api_types._generated import StructuralElement
+        from extradoc.reconcile._extractors import content_fingerprint
+
+        table_dict = {
+            "table": {
+                "rows": 1,
+                "columns": 1,
+                "tableRows": [
+                    {
+                        "tableCells": [
+                            {
+                                "content": [
+                                    {
+                                        "paragraph": {
+                                            "elements": [
+                                                {"textRun": {"content": "Same\n"}}
+                                            ]
+                                        }
+                                    }
+                                ]
+                            }
+                        ]
+                    }
+                ],
+            }
+        }
+        t = StructuralElement.model_validate(table_dict)
+        assert content_fingerprint(t) == content_fingerprint(t)
+
+    def test_two_tables_aligned_correctly(self):
+        """Two distinct tables are aligned with their correct counterparts."""
+        t1 = _make_table([["First"]])
+        t2 = _make_table([["Second"]])
+        t1_new = _make_table([["First Modified"]])
+        t2_new = _make_table([["Second Modified"]])
+
+        base = _make_doc_with_content("Start", t1, "Mid", t2, "End")
+        desired = _make_doc_with_content("Start", t1_new, "Mid", t2_new, "End")
+        result = reconcile(base, desired)
+        ok, diffs = verify(base, result, desired)
+        assert ok, f"Two tables should be modified independently: {diffs}"
+
+
+# ---------------------------------------------------------------------------
+# Issue 17: tableCellStyle changes silently ignored
+# ---------------------------------------------------------------------------
+
+
+def _make_table_with_cell_style(
+    cell_text: str,
+    cell_style: dict[str, Any] | None = None,
+) -> dict[str, Any]:
+    """Build a 1x1 table with optional tableCellStyle on the single cell."""
+    cell: dict[str, Any] = {
+        "startIndex": 0,
+        "content": [
+            {"paragraph": {"elements": [{"textRun": {"content": cell_text + "\n"}}]}}
+        ],
+    }
+    if cell_style is not None:
+        cell["tableCellStyle"] = cell_style
+    return {
+        "table": {
+            "rows": 1,
+            "columns": 1,
+            "tableRows": [{"tableCells": [cell]}],
+        }
+    }
+
+
+class TestIssue17TableCellStyleSilentFailure:
+    """Issue 17: tableCellStyle changes must raise ReconcileError, not be silently ignored."""
+
+    def test_table_cell_style_change_raises_error(self):
+        """Changing tableCellStyle must raise ReconcileError."""
+        base_table = _make_table_with_cell_style(
+            "Cell",
+            {"backgroundColor": {"color": {"rgbColor": {"red": 1.0}}}},
+        )
+        desired_table = _make_table_with_cell_style(
+            "Cell",
+            {"backgroundColor": {"color": {"rgbColor": {"green": 1.0}}}},
+        )
+        base = _make_doc_with_content("Hello", base_table)
+        desired = _make_doc_with_content("Hello", desired_table)
+
+        with pytest.raises(ReconcileError, match="[Tt]able[Cc]ell[Ss]tyle"):
+            reconcile(base, desired)
+
+    def test_table_cell_style_added_raises_error(self):
+        """Adding tableCellStyle to a cell that previously had none raises ReconcileError."""
+        base_table = _make_table_with_cell_style("Cell", None)
+        desired_table = _make_table_with_cell_style(
+            "Cell",
+            {"backgroundColor": {"color": {"rgbColor": {"blue": 1.0}}}},
+        )
+        base = _make_doc_with_content("Hello", base_table)
+        desired = _make_doc_with_content("Hello", desired_table)
+
+        with pytest.raises(ReconcileError, match="[Tt]able[Cc]ell[Ss]tyle"):
+            reconcile(base, desired)
+
+    def test_identical_table_cell_style_no_error(self):
+        """Identical tableCellStyle in both base and desired does not raise."""
+        style = {"backgroundColor": {"color": {"rgbColor": {"red": 0.5}}}}
+        table = _make_table_with_cell_style("Cell", style)
+        base = _make_doc_with_content("Hello", table)
+        desired = _make_doc_with_content("Hello", table)
+
+        # Must not raise
+        result = reconcile(base, desired)
+        assert result is not None
+
+    def test_no_cell_style_no_error(self):
+        """Cells without tableCellStyle work normally."""
+        base = _make_doc_with_content("Hello", _make_table([["Cell"]]))
+        desired = _make_doc_with_content("Hello", _make_table([["New Cell"]]))
+        result = reconcile(base, desired)
+        ok, diffs = verify(base, result, desired)
+        assert ok, f"Tables without tableCellStyle should reconcile: {diffs}"
+
+
+# ---------------------------------------------------------------------------
+# Issue 18: Section-specific headers/footers silently wrong
+# ---------------------------------------------------------------------------
+
+
+def _make_two_section_doc_with_new_header(
+    header_text: str,
+) -> Document:
+    """Build a two-section document with a header that needs sectionBreakLocation."""
+    body_content: list[dict] = [
+        {"sectionBreak": {}},  # initial section break
+        {"paragraph": {"elements": [{"textRun": {"content": "Section 1\n"}}]}},
+        {"sectionBreak": {"sectionStyle": {"sectionType": "NEXT_PAGE"}}},
+        {"paragraph": {"elements": [{"textRun": {"content": "Section 2\n"}}]}},
+    ]
+    if not header_text.endswith("\n"):
+        header_text = header_text + "\n"
+    doc = Document.model_validate(
+        {
+            "documentId": "test",
+            "tabs": [
+                {
+                    "tabProperties": {"tabId": "t.0"},
+                    "documentTab": {
+                        "body": {"content": body_content},
+                        "headers": {
+                            "hdr_new": {
+                                "headerId": "hdr_new",
+                                "content": [
+                                    {
+                                        "paragraph": {
+                                            "elements": [
+                                                {"textRun": {"content": header_text}}
+                                            ]
+                                        }
+                                    }
+                                ],
+                            }
+                        },
+                    },
+                }
+            ],
+        }
+    )
+    return reindex_document(doc)
+
+
+class TestIssue18SectionSpecificHeaders:
+    """Issue 18: Creating headers/footers in multi-section documents raises ReconcileError."""
+
+    def test_create_header_in_single_section_doc_works(self):
+        """Creating a new header in a single-section document works normally."""
+        base = _make_doc("Body")
+        desired = _make_doc_with_header("hdr1", "My Header", "Body")
+
+        # Must not raise for single-section documents
+        result = reconcile(base, desired)
+        assert len(result) == 2  # batch 0: createHeader, batch 1: insertText
+
+    def test_create_header_in_multi_section_doc_raises_error(self):
+        """Creating a new header in a multi-section document raises ReconcileError.
+
+        The createHeader request always omits sectionBreakLocation, which applies
+        the header to all sections. In a multi-section document, this may produce
+        incorrect results, so reconcile() rejects it loudly.
+        """
+        base = reindex_document(
+            Document.model_validate(
+                {
+                    "documentId": "test",
+                    "tabs": [
+                        {
+                            "tabProperties": {"tabId": "t.0"},
+                            "documentTab": {
+                                "body": {
+                                    "content": [
+                                        {"sectionBreak": {}},
+                                        {
+                                            "paragraph": {
+                                                "elements": [
+                                                    {
+                                                        "textRun": {
+                                                            "content": "Section 1\n"
+                                                        }
+                                                    }
+                                                ]
+                                            }
+                                        },
+                                        {
+                                            "sectionBreak": {
+                                                "sectionStyle": {
+                                                    "sectionType": "NEXT_PAGE"
+                                                }
+                                            }
+                                        },
+                                        {
+                                            "paragraph": {
+                                                "elements": [
+                                                    {
+                                                        "textRun": {
+                                                            "content": "Section 2\n"
+                                                        }
+                                                    }
+                                                ]
+                                            }
+                                        },
+                                    ]
+                                }
+                            },
+                        }
+                    ],
+                }
+            )
+        )
+        desired = _make_two_section_doc_with_new_header("New Header")
+
+        with pytest.raises(ReconcileError, match="[Ss]ection"):
+            reconcile(base, desired)
+
+    def test_modify_existing_header_in_multi_section_doc_works(self):
+        """Modifying an existing header in a multi-section document is allowed.
+
+        The header already exists (same ID in base and desired), so no
+        createHeader request is needed — only content diffing.
+        """
+        two_section_body: list[dict] = [
+            {"sectionBreak": {}},
+            {"paragraph": {"elements": [{"textRun": {"content": "Section 1\n"}}]}},
+            {"sectionBreak": {"sectionStyle": {"sectionType": "NEXT_PAGE"}}},
+            {"paragraph": {"elements": [{"textRun": {"content": "Section 2\n"}}]}},
+        ]
+        base = reindex_document(
+            Document.model_validate(
+                {
+                    "documentId": "test",
+                    "tabs": [
+                        {
+                            "tabProperties": {"tabId": "t.0"},
+                            "documentTab": {
+                                "body": {"content": two_section_body},
+                                "headers": {
+                                    "hdr1": {
+                                        "headerId": "hdr1",
+                                        "content": [
+                                            {
+                                                "paragraph": {
+                                                    "elements": [
+                                                        {
+                                                            "textRun": {
+                                                                "content": "Old Header\n"
+                                                            }
+                                                        }
+                                                    ]
+                                                }
+                                            }
+                                        ],
+                                    }
+                                },
+                            },
+                        }
+                    ],
+                }
+            )
+        )
+        desired = reindex_document(
+            Document.model_validate(
+                {
+                    "documentId": "test",
+                    "tabs": [
+                        {
+                            "tabProperties": {"tabId": "t.0"},
+                            "documentTab": {
+                                "body": {"content": two_section_body},
+                                "headers": {
+                                    "hdr1": {
+                                        "headerId": "hdr1",
+                                        "content": [
+                                            {
+                                                "paragraph": {
+                                                    "elements": [
+                                                        {
+                                                            "textRun": {
+                                                                "content": "New Header\n"
+                                                            }
+                                                        }
+                                                    ]
+                                                }
+                                            }
+                                        ],
+                                    }
+                                },
+                            },
+                        }
+                    ],
+                }
+            )
+        )
+
+        # Modifying existing header (same ID) must NOT raise
+        result = reconcile(base, desired)
+        assert result is not None

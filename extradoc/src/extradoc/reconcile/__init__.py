@@ -10,7 +10,6 @@ Public API:
 from __future__ import annotations
 
 from extradoc.api_types import DeferredID
-from extradoc.reconcile._comparators import documents_match
 from extradoc.reconcile._core import (
     reconcile,
     reindex_document,
@@ -22,7 +21,6 @@ from extradoc.reconcile._exceptions import ReconcileError
 __all__ = [
     "DeferredID",
     "ReconcileError",
-    "documents_match",
     "reconcile",
     "reindex_document",
     "resolve_deferred_ids",
