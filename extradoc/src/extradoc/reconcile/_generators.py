@@ -18,7 +18,12 @@ from typing import TYPE_CHECKING, Any
 if TYPE_CHECKING:
     from extradoc.api_types import SegmentID, TabID
 
-from extradoc.api_types._generated import ParagraphStyle, TextStyle
+from extradoc.api_types._generated import (
+    List,
+    NestingLevelGlyphType,
+    ParagraphStyle,
+    TextStyle,
+)
 from extradoc.indexer import utf16_len
 from extradoc.reconcile._alignment import AlignedElement, AlignmentOp, align_sequences
 from extradoc.reconcile._exceptions import ReconcileError
@@ -36,6 +41,78 @@ if TYPE_CHECKING:
         TableCell,
         TableRow,
     )
+
+
+# ---------------------------------------------------------------------------
+# Bullet preset inference
+# ---------------------------------------------------------------------------
+
+# Maps level-0 glyphType to the createParagraphBullets preset string
+_GLYPH_TYPE_TO_PRESET: dict[str, str] = {
+    "DECIMAL": "NUMBERED_DECIMAL_NESTED",
+    "UPPER_ALPHA": "NUMBERED_UPPERALPHA_ALPHA_ROMAN",
+    "ALPHA": "NUMBERED_DECIMAL_ALPHA_ROMAN",
+    "UPPER_ROMAN": "NUMBERED_UPPERROMAN_UPPERALPHA_DECIMAL",
+    "ROMAN": "NUMBERED_UPPERROMAN_UPPERALPHA_DECIMAL",
+    "ZERO_DECIMAL": "NUMBERED_ZERODECIMAL_ALPHA_ROMAN",
+}
+
+# Maps level-0 glyphSymbol to the createParagraphBullets preset string
+_GLYPH_SYMBOL_TO_PRESET: dict[str, str] = {
+    "●": "BULLET_DISC_CIRCLE_SQUARE",
+    "❖": "BULLET_DIAMONDX_ARROW3D_SQUARE",
+    "☐": "BULLET_CHECKBOX",
+    "➔": "BULLET_ARROW_DIAMOND_DISC",
+    "★": "BULLET_STAR_CIRCLE_SQUARE",
+    "➢": "BULLET_ARROW3D_CIRCLE_SQUARE",
+    "◀": "BULLET_LEFTTRIANGLE_DIAMOND_DISC",
+}
+
+_DEFAULT_BULLET_PRESET = "BULLET_DISC_CIRCLE_SQUARE"
+
+
+def _infer_bullet_preset(
+    list_id: str | None,
+    lists: dict[str, List] | None,
+) -> str:
+    """Infer the createParagraphBullets preset from the desired document's list definition.
+
+    Reads the first NestingLevel to detect whether the list is numbered
+    (glyphType set to a real type), a checkbox (GLYPH_TYPE_UNSPECIFIED), or
+    unordered (glyphSymbol set). Falls back to BULLET_DISC_CIRCLE_SQUARE for
+    any missing or unrecognised data.
+    """
+    if not list_id or not lists or list_id not in lists:
+        return _DEFAULT_BULLET_PRESET
+
+    list_obj = lists[list_id]
+    lp = list_obj.list_properties
+    if not lp:
+        return _DEFAULT_BULLET_PRESET
+    nesting = lp.nesting_levels
+    if not nesting:
+        return _DEFAULT_BULLET_PRESET
+
+    level_0 = nesting[0]
+    glyph_type = level_0.glyph_type
+    glyph_symbol = level_0.glyph_symbol
+
+    # Numbered list: a real glyphType is set (not NONE / GLYPH_TYPE_UNSPECIFIED)
+    if glyph_type and glyph_type not in (
+        NestingLevelGlyphType.GLYPH_TYPE_UNSPECIFIED,
+        NestingLevelGlyphType.NONE,
+    ):
+        return _GLYPH_TYPE_TO_PRESET.get(glyph_type.value, "NUMBERED_DECIMAL_NESTED")
+
+    # Checkbox: GLYPH_TYPE_UNSPECIFIED with no glyph symbol
+    if glyph_type == NestingLevelGlyphType.GLYPH_TYPE_UNSPECIFIED:
+        return "BULLET_CHECKBOX"
+
+    # Unordered: glyph symbol determines the preset
+    if glyph_symbol:
+        return _GLYPH_SYMBOL_TO_PRESET.get(glyph_symbol, _DEFAULT_BULLET_PRESET)
+
+    return _DEFAULT_BULLET_PRESET
 
 
 @dataclass
@@ -269,6 +346,7 @@ def generate_requests(
     alignment: list[AlignedElement],
     segment_id: SegmentID,
     tab_id: TabID,
+    desired_lists: dict[str, List] | None = None,
 ) -> list[dict[str, Any]]:
     """Generate batchUpdate requests from an alignment.
 
@@ -276,6 +354,7 @@ def generate_requests(
         alignment: List of aligned StructuralElements
         segment_id: Segment ID context (may be DeferredID for new segments)
         tab_id: Tab ID context (may be DeferredID for new tabs)
+        desired_lists: The desired document's lists dict (used to infer bullet preset)
 
     Returns:
         List of request dicts (may contain DeferredID objects in location fields)
@@ -304,7 +383,7 @@ def generate_requests(
         if gap.is_trailing:
             reqs = _process_trailing_gap(gap, segment_id, tab_id)
         else:
-            reqs = _process_inner_gap(gap, segment_id, tab_id)
+            reqs = _process_inner_gap(gap, segment_id, tab_id, desired_lists)
         if reqs:
             operations.append((pos, reqs))
 
@@ -321,7 +400,9 @@ def generate_requests(
         assert base_el.table is not None
         assert desired_el.table is not None
 
-        reqs = _generate_table_diff(base_el, desired_el, segment_id, tab_id)
+        reqs = _generate_table_diff(
+            base_el, desired_el, segment_id, tab_id, desired_lists
+        )
         if reqs:
             operations.append((_el_end(base_el) - 1, reqs))
 
@@ -336,7 +417,9 @@ def generate_requests(
         if not _is_paragraph(base_el) or not _is_paragraph(desired_el):
             continue
 
-        reqs = _generate_paragraph_style_diff(base_el, desired_el, segment_id, tab_id)
+        reqs = _generate_paragraph_style_diff(
+            base_el, desired_el, segment_id, tab_id, desired_lists
+        )
         if reqs:
             operations.append((_el_start(base_el), reqs))
 
@@ -417,7 +500,10 @@ def _validate_no_section_breaks(gap: _Gap) -> None:
 
 
 def _process_inner_gap(
-    gap: _Gap, segment_id: SegmentID, tab_id: TabID
+    gap: _Gap,
+    segment_id: SegmentID,
+    tab_id: TabID,
+    desired_lists: dict[str, List] | None = None,
 ) -> list[dict[str, Any]]:
     """Process a non-trailing gap (has a right anchor)."""
     requests: list[dict[str, Any]] = []
@@ -479,7 +565,7 @@ def _process_inner_gap(
 
         # Modify table in-place (avoids insertTable trailing-para issue)
         table_reqs = _generate_table_diff(
-            base_table_el, desired_table_el, segment_id, tab_id
+            base_table_el, desired_table_el, segment_id, tab_id, desired_lists
         )
 
         combined: list[dict[str, Any]] = []
@@ -933,6 +1019,7 @@ def _generate_table_diff(
     desired_se: StructuralElement,
     segment_id: SegmentID,
     tab_id: TabID,
+    desired_lists: dict[str, List] | None = None,
 ) -> list[dict[str, Any]]:
     """Generate requests to transform base table into desired table.
 
@@ -945,7 +1032,7 @@ def _generate_table_diff(
     if _tables_have_identical_text_structure(base_se.table, desired_se.table):
         # Same dimensions and same text in each cell position — style changes only
         return _diff_table_cell_styles_only(
-            base_se.table, desired_se.table, segment_id, tab_id
+            base_se.table, desired_se.table, segment_id, tab_id, desired_lists
         )
 
     return _diff_table_structural(base_se, desired_se, segment_id, tab_id)
@@ -971,6 +1058,7 @@ def _diff_table_cell_styles_only(
     desired_table: Table,
     segment_id: SegmentID,
     tab_id: TabID,
+    desired_lists: dict[str, List] | None = None,
 ) -> list[dict[str, Any]]:
     """Diff paragraph/text styles within table cells when text is identical.
 
@@ -1025,7 +1113,7 @@ def _diff_table_cell_styles_only(
                 base_se = base_paras[pa.base_idx]
                 desired_se = desired_paras[pa.desired_idx]
                 reqs = _generate_paragraph_style_diff(
-                    base_se, desired_se, segment_id, tab_id
+                    base_se, desired_se, segment_id, tab_id, desired_lists
                 )
                 requests.extend(reqs)
 
@@ -1790,6 +1878,7 @@ def _generate_paragraph_style_diff(
     desired_se: StructuralElement,
     segment_id: SegmentID,
     tab_id: TabID,
+    desired_lists: dict[str, List] | None = None,
 ) -> list[dict[str, Any]]:
     """Generate style update requests for a MATCHED paragraph.
 
@@ -1824,9 +1913,10 @@ def _generate_paragraph_style_diff(
     # 1. Bullet creation FIRST — so that updateParagraphStyle below can override
     #    the default indentation (enabling nesting level > 0 for new bullets).
     if base_bullet is None and desired_bullet is not None:
+        preset = _infer_bullet_preset(desired_bullet.list_id, desired_lists)
         requests.append(
             _make_create_paragraph_bullets(
-                para_start, para_end, "BULLET_DISC_CIRCLE_SQUARE", segment_id, tab_id
+                para_start, para_end, preset, segment_id, tab_id
             )
         )
 

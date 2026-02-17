@@ -12,12 +12,19 @@ from typing import Any
 import pytest
 
 from extradoc.api_types import DeferredID
-from extradoc.api_types._generated import Document, Paragraph
+from extradoc.api_types._generated import (
+    Document,
+    List,
+    Paragraph,
+)
 from extradoc.mock.api import MockGoogleDocsAPI
 from extradoc.reconcile import ReconcileError, reconcile, reindex_document, verify
 from extradoc.reconcile._comparators import documents_match
 from extradoc.reconcile._core import resolve_deferred_ids
-from extradoc.reconcile._generators import _generate_text_style_updates
+from extradoc.reconcile._generators import (
+    _generate_text_style_updates,
+    _infer_bullet_preset,
+)
 
 
 def _make_doc(*paragraphs: str, tab_id: str = "t.0") -> Document:
@@ -3000,3 +3007,310 @@ class TestIssue18SectionSpecificHeaders:
         # Modifying existing header (same ID) must NOT raise
         result = reconcile(base, desired)
         assert result is not None
+
+
+# ---------------------------------------------------------------------------
+# Helpers for Issue 8 bullet preset tests
+# ---------------------------------------------------------------------------
+
+# Glyph symbols for each unordered preset (matching mock/bullet_ops.py)
+_PRESET_GLYPH_SYMBOLS: dict[str, list[str]] = {
+    "BULLET_DISC_CIRCLE_SQUARE": ["●", "○", "■"],
+    "BULLET_DIAMONDX_ARROW3D_SQUARE": ["❖", "➢", "■"],
+    "BULLET_CHECKBOX": ["☐", "☐", "☐"],
+    "BULLET_ARROW_DIAMOND_DISC": ["➔", "◆", "●"],
+    "BULLET_STAR_CIRCLE_SQUARE": ["★", "○", "■"],
+}
+
+
+def _make_nesting_levels_for_preset(preset: str) -> list[dict[str, Any]]:
+    """Build nesting level dicts that match the real API output for a given preset.
+
+    Unordered presets get glyphSymbol; numbered presets get the appropriate
+    glyphType per level; BULLET_CHECKBOX gets GLYPH_TYPE_UNSPECIFIED.
+    """
+    is_numbered = preset.startswith("NUMBERED_")
+    is_checkbox = preset == "BULLET_CHECKBOX"
+    glyphs = _PRESET_GLYPH_SYMBOLS.get(preset, ["●", "○", "■"])
+
+    # Numbered glyph types: level-0 glyph type per preset (real API, not mock simplified)
+    _NUMBERED_LEVEL0_GLYPH: dict[str, str] = {
+        "NUMBERED_DECIMAL_NESTED": "DECIMAL",
+        "NUMBERED_DECIMAL_ALPHA_ROMAN": "DECIMAL",
+        "NUMBERED_DECIMAL_ALPHA_ROMAN_PARENS": "DECIMAL",
+        "NUMBERED_UPPERALPHA_ALPHA_ROMAN": "UPPER_ALPHA",
+        "NUMBERED_UPPERROMAN_UPPERALPHA_DECIMAL": "UPPER_ROMAN",
+        "NUMBERED_ZERODECIMAL_ALPHA_ROMAN": "ZERO_DECIMAL",
+    }
+
+    levels = []
+    for i in range(9):
+        lvl: dict[str, Any] = {
+            "bulletAlignment": "START",
+            "indentFirstLine": {"magnitude": 18 + i * 36, "unit": "PT"},
+            "indentStart": {"magnitude": 36 + i * 36, "unit": "PT"},
+            "textStyle": {"underline": False},
+            "startNumber": 1,
+            "glyphFormat": f"%{i}.",
+        }
+        if is_numbered:
+            level0_type = _NUMBERED_LEVEL0_GLYPH.get(preset, "DECIMAL")
+            lvl["glyphType"] = level0_type if i == 0 else "DECIMAL"
+        elif is_checkbox:
+            lvl["glyphType"] = "GLYPH_TYPE_UNSPECIFIED"
+        else:
+            lvl["glyphSymbol"] = glyphs[i % len(glyphs)]
+        levels.append(lvl)
+    return levels
+
+
+def _make_doc_with_preset_bullet(
+    text: str,
+    preset: str,
+    *,
+    tab_id: str = "t.0",
+) -> Document:
+    """Create a Document with a bulleted paragraph using the given preset's nesting structure.
+
+    The nesting levels are built to match the real API's list structure for the preset,
+    so _infer_bullet_preset can correctly identify the preset from the desired document.
+    """
+    if not text.endswith("\n"):
+        text = text + "\n"
+    nesting_levels = _make_nesting_levels_for_preset(preset)
+    doc = Document.model_validate(
+        {
+            "documentId": "test",
+            "tabs": [
+                {
+                    "tabProperties": {"tabId": tab_id},
+                    "documentTab": {
+                        "body": {
+                            "content": [
+                                {"sectionBreak": {}},
+                                {
+                                    "paragraph": {
+                                        "elements": [{"textRun": {"content": text}}],
+                                        "bullet": {"listId": "list1"},
+                                        "paragraphStyle": {
+                                            "indentFirstLine": {
+                                                "magnitude": 18,
+                                                "unit": "PT",
+                                            },
+                                            "indentStart": {
+                                                "magnitude": 36,
+                                                "unit": "PT",
+                                            },
+                                        },
+                                    }
+                                },
+                            ]
+                        },
+                        "lists": {
+                            "list1": {
+                                "listProperties": {"nestingLevels": nesting_levels}
+                            }
+                        },
+                    },
+                }
+            ],
+        }
+    )
+    return reindex_document(doc)
+
+
+def _get_bullet_preset_from_result(result: Any) -> str | None:
+    """Extract the bulletPreset from the first createParagraphBullets request."""
+    for batch in result:
+        for req in batch.requests or []:
+            d = req.model_dump(by_alias=True, exclude_none=True)
+            if "createParagraphBullets" in d:
+                return d["createParagraphBullets"].get("bulletPreset")
+    return None
+
+
+def _make_list(glyph_type: str | None = None, glyph_symbol: str | None = None) -> List:
+    """Build a List object with one nesting level for unit-testing _infer_bullet_preset."""
+    lvl_data: dict[str, Any] = {}
+    if glyph_type is not None:
+        lvl_data["glyphType"] = glyph_type
+    if glyph_symbol is not None:
+        lvl_data["glyphSymbol"] = glyph_symbol
+    return List.model_validate({"listProperties": {"nestingLevels": [lvl_data]}})
+
+
+# ---------------------------------------------------------------------------
+# Issue 8: Bullet preset is hardcoded
+# ---------------------------------------------------------------------------
+
+
+class TestInferBulletPreset:
+    """Unit tests for _infer_bullet_preset — tests the mapping logic directly."""
+
+    def test_none_list_id_returns_default(self):
+        lists = {"list1": _make_list(glyph_symbol="●")}
+        assert _infer_bullet_preset(None, lists) == "BULLET_DISC_CIRCLE_SQUARE"
+
+    def test_none_lists_returns_default(self):
+        assert _infer_bullet_preset("list1", None) == "BULLET_DISC_CIRCLE_SQUARE"
+
+    def test_missing_list_id_returns_default(self):
+        lists = {"list1": _make_list(glyph_symbol="●")}
+        assert (
+            _infer_bullet_preset("list_MISSING", lists) == "BULLET_DISC_CIRCLE_SQUARE"
+        )
+
+    def test_no_nesting_levels_returns_default(self):
+        lst = List.model_validate({"listProperties": {"nestingLevels": []}})
+        assert (
+            _infer_bullet_preset("list1", {"list1": lst}) == "BULLET_DISC_CIRCLE_SQUARE"
+        )
+
+    def test_no_list_properties_returns_default(self):
+        lst = List.model_validate({})
+        assert (
+            _infer_bullet_preset("list1", {"list1": lst}) == "BULLET_DISC_CIRCLE_SQUARE"
+        )
+
+    def test_disc_symbol_returns_disc_preset(self):
+        lists = {"list1": _make_list(glyph_symbol="●")}
+        assert _infer_bullet_preset("list1", lists) == "BULLET_DISC_CIRCLE_SQUARE"
+
+    def test_diamond_symbol_returns_diamond_preset(self):
+        lists = {"list1": _make_list(glyph_symbol="❖")}
+        assert _infer_bullet_preset("list1", lists) == "BULLET_DIAMONDX_ARROW3D_SQUARE"
+
+    def test_arrow_symbol_returns_arrow_preset(self):
+        lists = {"list1": _make_list(glyph_symbol="➔")}
+        assert _infer_bullet_preset("list1", lists) == "BULLET_ARROW_DIAMOND_DISC"
+
+    def test_star_symbol_returns_star_preset(self):
+        lists = {"list1": _make_list(glyph_symbol="★")}
+        assert _infer_bullet_preset("list1", lists) == "BULLET_STAR_CIRCLE_SQUARE"
+
+    def test_decimal_glyph_type_returns_decimal_preset(self):
+        lists = {"list1": _make_list(glyph_type="DECIMAL")}
+        assert _infer_bullet_preset("list1", lists) == "NUMBERED_DECIMAL_NESTED"
+
+    def test_upper_alpha_glyph_type_returns_upper_alpha_preset(self):
+        lists = {"list1": _make_list(glyph_type="UPPER_ALPHA")}
+        assert _infer_bullet_preset("list1", lists) == "NUMBERED_UPPERALPHA_ALPHA_ROMAN"
+
+    def test_upper_roman_glyph_type_returns_upper_roman_preset(self):
+        lists = {"list1": _make_list(glyph_type="UPPER_ROMAN")}
+        assert (
+            _infer_bullet_preset("list1", lists)
+            == "NUMBERED_UPPERROMAN_UPPERALPHA_DECIMAL"
+        )
+
+    def test_alpha_glyph_type_returns_alpha_preset(self):
+        lists = {"list1": _make_list(glyph_type="ALPHA")}
+        assert _infer_bullet_preset("list1", lists) == "NUMBERED_DECIMAL_ALPHA_ROMAN"
+
+    def test_zero_decimal_glyph_type_returns_zero_decimal_preset(self):
+        lists = {"list1": _make_list(glyph_type="ZERO_DECIMAL")}
+        assert (
+            _infer_bullet_preset("list1", lists) == "NUMBERED_ZERODECIMAL_ALPHA_ROMAN"
+        )
+
+    def test_glyph_type_unspecified_returns_checkbox_preset(self):
+        lists = {"list1": _make_list(glyph_type="GLYPH_TYPE_UNSPECIFIED")}
+        assert _infer_bullet_preset("list1", lists) == "BULLET_CHECKBOX"
+
+    def test_none_glyph_type_with_no_symbol_returns_default(self):
+        """No glyphType, no glyphSymbol → fall back to default."""
+        lst = List.model_validate({"listProperties": {"nestingLevels": [{}]}})
+        assert (
+            _infer_bullet_preset("list1", {"list1": lst}) == "BULLET_DISC_CIRCLE_SQUARE"
+        )
+
+
+class TestReconcileBulletPreset:
+    """Integration tests: reconcile picks the correct bulletPreset from the desired document."""
+
+    def test_disc_bullet_uses_disc_preset(self):
+        """Adding a disc bullet → preset BULLET_DISC_CIRCLE_SQUARE."""
+        base = _make_doc("Hello")
+        desired = _make_doc_with_preset_bullet("Hello", "BULLET_DISC_CIRCLE_SQUARE")
+        result = reconcile(base, desired)
+        preset = _get_bullet_preset_from_result(result)
+        assert preset == "BULLET_DISC_CIRCLE_SQUARE"
+        ok, diffs = verify(base, result, desired)
+        assert ok, f"Diffs: {diffs}"
+
+    def test_diamond_bullet_uses_diamond_preset(self):
+        """Adding a diamond bullet → preset BULLET_DIAMONDX_ARROW3D_SQUARE."""
+        base = _make_doc("Hello")
+        desired = _make_doc_with_preset_bullet(
+            "Hello", "BULLET_DIAMONDX_ARROW3D_SQUARE"
+        )
+        result = reconcile(base, desired)
+        preset = _get_bullet_preset_from_result(result)
+        assert preset == "BULLET_DIAMONDX_ARROW3D_SQUARE"
+        ok, diffs = verify(base, result, desired)
+        assert ok, f"Diffs: {diffs}"
+
+    def test_numbered_decimal_uses_decimal_preset(self):
+        """Adding a numbered decimal list → preset NUMBERED_DECIMAL_NESTED."""
+        base = _make_doc("Hello")
+        desired = _make_doc_with_preset_bullet("Hello", "NUMBERED_DECIMAL_NESTED")
+        result = reconcile(base, desired)
+        preset = _get_bullet_preset_from_result(result)
+        assert preset == "NUMBERED_DECIMAL_NESTED"
+        # Note: verify() skipped — mock simplifies numbered glyphType to DECIMAL
+        # for all presets, so round-trip comparison would diverge on glyphType fields.
+
+    def test_upper_alpha_uses_upper_alpha_preset(self):
+        """Adding an upper-alpha list → preset NUMBERED_UPPERALPHA_ALPHA_ROMAN."""
+        base = _make_doc("Hello")
+        desired = _make_doc_with_preset_bullet(
+            "Hello", "NUMBERED_UPPERALPHA_ALPHA_ROMAN"
+        )
+        result = reconcile(base, desired)
+        preset = _get_bullet_preset_from_result(result)
+        assert preset == "NUMBERED_UPPERALPHA_ALPHA_ROMAN"
+
+    def test_no_lists_dict_falls_back_to_disc(self):
+        """Desired bullet references a list_id not in the lists dict → disc fallback."""
+        base = _make_doc("Hello")
+        # Build desired without a matching lists entry
+        desired = Document.model_validate(
+            {
+                "documentId": "test",
+                "tabs": [
+                    {
+                        "tabProperties": {"tabId": "t.0"},
+                        "documentTab": {
+                            "body": {
+                                "content": [
+                                    {"sectionBreak": {}},
+                                    {
+                                        "paragraph": {
+                                            "elements": [
+                                                {"textRun": {"content": "Hello\n"}}
+                                            ],
+                                            "bullet": {"listId": "orphan_list"},
+                                            "paragraphStyle": {
+                                                "indentFirstLine": {
+                                                    "magnitude": 18,
+                                                    "unit": "PT",
+                                                },
+                                                "indentStart": {
+                                                    "magnitude": 36,
+                                                    "unit": "PT",
+                                                },
+                                            },
+                                        }
+                                    },
+                                ]
+                            },
+                            # No "lists" key — or lists missing "orphan_list"
+                        },
+                    }
+                ],
+            }
+        )
+        desired = reindex_document(desired)
+        result = reconcile(base, desired)
+        preset = _get_bullet_preset_from_result(result)
+        assert preset == "BULLET_DISC_CIRCLE_SQUARE"
