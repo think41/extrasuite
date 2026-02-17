@@ -134,12 +134,63 @@ def _strip_table_cells(cells: Any) -> Any:
     return result
 
 
-def _strip_cell_para_styles(content: Any) -> Any:
-    """Strip indices and paragraphStyle from table cell content.
+# Fields in cell paragraph styles that are always structural defaults generated
+# by the mock (via insertTable) but never included in test-builder docs.
+# These can be safely stripped from both sides when comparing.
+_CELL_PARA_STYLE_ALWAYS_STRIP = frozenset(
+    {
+        "direction",
+        "spacingMode",
+        "spaceAbove",
+        "spaceBelow",
+        "borderTop",
+        "borderBottom",
+        "borderLeft",
+        "borderRight",
+        "borderBetween",
+        "indentFirstLine",
+        "indentStart",
+        "indentEnd",
+        "keepLinesTogether",
+        "keepWithNext",
+        "avoidWidowAndOrphan",
+        "shading",
+        "pageBreakBefore",
+    }
+)
 
-    Table cell content indices differ between Full Structure (mock-generated)
-    and Minimal Structure (test-helper-built) tables. Strip them so
-    comparison focuses on text content.
+# Cell paragraph style fields with known default values. Strip when value equals
+# the default so that both mock-generated defaults and absent fields compare equal.
+# Non-default values (e.g. namedStyleType=HEADING_1, alignment=CENTER) are kept.
+_CELL_PARA_STYLE_DEFAULT_VALUES: dict[str, Any] = {
+    "namedStyleType": "NORMAL_TEXT",
+    "alignment": "START",
+    "lineSpacing": 100,
+}
+
+
+def _normalize_cell_para_style(para_style: dict[str, Any]) -> dict[str, Any] | None:
+    """Normalize a table cell paragraph style for comparison.
+
+    Strips structural default fields and fields equal to their default values.
+    Returns None if nothing meaningful remains (caller should omit the key).
+    """
+    filtered = {
+        k: v
+        for k, v in para_style.items()
+        if k not in _CELL_PARA_STYLE_ALWAYS_STRIP
+        and _CELL_PARA_STYLE_DEFAULT_VALUES.get(k, object()) != v
+    }
+    return filtered if filtered else None
+
+
+def _strip_cell_para_styles(content: Any) -> Any:
+    """Normalize table cell content for comparison.
+
+    Strips indices and removes structural-default paragraphStyle fields so that
+    mock-generated default styles compare equal to test-builder docs that omit
+    them. Meaningful non-default values (e.g. namedStyleType=HEADING_1,
+    alignment=CENTER) are preserved so verify() catches real failures.
     """
     if not isinstance(content, list):
         return content
@@ -151,7 +202,12 @@ def _strip_cell_para_styles(content: Any) -> Any:
             }
             if "paragraph" in new_elem:
                 new_para = dict(new_elem["paragraph"])
-                new_para.pop("paragraphStyle", None)
+                if "paragraphStyle" in new_para:
+                    normalized = _normalize_cell_para_style(new_para["paragraphStyle"])
+                    if normalized is None:
+                        del new_para["paragraphStyle"]
+                    else:
+                        new_para["paragraphStyle"] = normalized
                 if "elements" in new_para:
                     new_para["elements"] = [
                         {

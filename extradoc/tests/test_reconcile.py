@@ -12,10 +12,12 @@ from typing import Any
 import pytest
 
 from extradoc.api_types import DeferredID
-from extradoc.api_types._generated import Document
+from extradoc.api_types._generated import Document, Paragraph
 from extradoc.mock.api import MockGoogleDocsAPI
 from extradoc.reconcile import ReconcileError, reconcile, reindex_document, verify
+from extradoc.reconcile._comparators import documents_match
 from extradoc.reconcile._core import resolve_deferred_ids
+from extradoc.reconcile._generators import _generate_text_style_updates
 
 
 def _make_doc(*paragraphs: str, tab_id: str = "t.0") -> Document:
@@ -2286,3 +2288,196 @@ class TestDeferredIDRequestIndex:
 
         # Tab 2 was created
         assert len(actual["tabs"]) == 2
+
+
+# ---------------------------------------------------------------------------
+# Issue 12: text mismatch in matched paragraph run raises ReconcileError
+# ---------------------------------------------------------------------------
+
+
+def _make_paragraph(text: str, bold: bool | None = None) -> Paragraph:
+    """Build a minimal Paragraph with a single text run."""
+    text_style: dict[str, Any] = {}
+    if bold is not None:
+        text_style["bold"] = bold
+    el: dict[str, Any] = {"textRun": {"content": text}}
+    if text_style:
+        el["textRun"]["textStyle"] = text_style
+    return Paragraph.model_validate({"elements": [el]})
+
+
+class TestTextRunMismatchRaisesError:
+    """Verify that _generate_text_style_updates raises ReconcileError on text mismatch.
+
+    This guard should never fire in normal operation (matched paragraphs always
+    have the same text), but raising instead of silently returning [] surfaces
+    upstream alignment bugs immediately.
+    """
+
+    def test_different_text_same_run_count_raises(self):
+        """Mismatched run text in a matched paragraph raises ReconcileError."""
+        base = _make_paragraph("Hello\n", bold=False)
+        desired = _make_paragraph("World\n", bold=True)
+
+        with pytest.raises(ReconcileError, match="mismatch"):
+            _generate_text_style_updates(base, desired, 1, None, None)
+
+    def test_matching_text_does_not_raise(self):
+        """Same text, different style — no error, returns style requests."""
+        base = _make_paragraph("Hello\n", bold=False)
+        desired = _make_paragraph("Hello\n", bold=True)
+
+        reqs = _generate_text_style_updates(base, desired, 1, None, None)
+        assert len(reqs) == 1
+        assert "updateTextStyle" in reqs[0]
+
+
+# ---------------------------------------------------------------------------
+# Issue 13: _strip_cell_para_styles is too aggressive
+# ---------------------------------------------------------------------------
+
+
+def _table_doc_dict(cell_para_style: dict[str, Any] | None = None) -> dict[str, Any]:
+    """Build a raw document dict with a 1x1 table; optional cell paragraphStyle."""
+    para: dict[str, Any] = {"elements": [{"textRun": {"content": "Cell\n"}}]}
+    if cell_para_style is not None:
+        para["paragraphStyle"] = cell_para_style
+    return {
+        "documentId": "test",
+        "tabs": [
+            {
+                "tabProperties": {"tabId": "t.0"},
+                "documentTab": {
+                    "body": {
+                        "content": [
+                            {"sectionBreak": {}},
+                            {
+                                "table": {
+                                    "rows": 1,
+                                    "columns": 1,
+                                    "tableRows": [
+                                        {
+                                            "tableCells": [
+                                                {"content": [{"paragraph": para}]}
+                                            ]
+                                        }
+                                    ],
+                                }
+                            },
+                        ]
+                    }
+                },
+            }
+        ],
+    }
+
+
+class TestDocumentsMatchCellParaStyle:
+    """documents_match should detect meaningful cell paragraphStyle differences
+    while tolerating mock-generated structural defaults.
+    """
+
+    def test_mock_default_para_style_matches_absent(self):
+        """Full mock-generated default paragraphStyle compares equal to absent."""
+        # Mock generates this for every insertTable cell
+        mock_defaults = {
+            "namedStyleType": "NORMAL_TEXT",
+            "direction": "LEFT_TO_RIGHT",
+            "alignment": "START",
+            "lineSpacing": 100,
+            "spacingMode": "COLLAPSE_LISTS",
+            "spaceAbove": {"unit": "PT"},
+            "spaceBelow": {"unit": "PT"},
+            "keepLinesTogether": False,
+            "keepWithNext": False,
+            "avoidWidowAndOrphan": False,
+            "pageBreakBefore": False,
+        }
+        actual = _table_doc_dict(mock_defaults)
+        desired = _table_doc_dict(None)
+
+        ok, diffs = documents_match(actual, desired)
+        assert ok, f"Default paragraphStyle should match absent: {diffs}"
+
+    def test_heading_style_detected(self):
+        """Heading paragraphStyle in a cell is detected as different from absent."""
+        actual = _table_doc_dict(None)
+        desired = _table_doc_dict({"namedStyleType": "HEADING_1"})
+
+        ok, diffs = documents_match(actual, desired)
+        assert not ok, "Missing heading in cell should be detected"
+
+    def test_center_alignment_detected(self):
+        """Non-default alignment in a cell paragraph is detected as different."""
+        actual = _table_doc_dict(None)
+        desired = _table_doc_dict({"alignment": "CENTER"})
+
+        ok, diffs = documents_match(actual, desired)
+        assert not ok, "Missing CENTER alignment in cell should be detected"
+
+    def test_matching_heading_style_passes(self):
+        """Both sides with heading style in a cell compare equal."""
+        both = _table_doc_dict({"namedStyleType": "HEADING_2"})
+
+        ok, diffs = documents_match(both, both)
+        assert ok, f"Identical heading style should match: {diffs}"
+
+    def test_reconcile_heading_in_cell(self):
+        """reconcile() + verify() correctly apply heading style inside a table cell."""
+        base_table = {
+            "table": {
+                "rows": 1,
+                "columns": 1,
+                "tableRows": [
+                    {
+                        "tableCells": [
+                            {
+                                "startIndex": 0,
+                                "content": [
+                                    {
+                                        "paragraph": {
+                                            "elements": [
+                                                {"textRun": {"content": "Title\n"}}
+                                            ]
+                                        }
+                                    }
+                                ],
+                            }
+                        ]
+                    }
+                ],
+            }
+        }
+        desired_table = {
+            "table": {
+                "rows": 1,
+                "columns": 1,
+                "tableRows": [
+                    {
+                        "tableCells": [
+                            {
+                                "startIndex": 0,
+                                "content": [
+                                    {
+                                        "paragraph": {
+                                            "paragraphStyle": {
+                                                "namedStyleType": "HEADING_1"
+                                            },
+                                            "elements": [
+                                                {"textRun": {"content": "Title\n"}}
+                                            ],
+                                        }
+                                    }
+                                ],
+                            }
+                        ]
+                    }
+                ],
+            }
+        }
+        base = _make_doc_with_content(base_table)
+        desired = _make_doc_with_content(desired_table)
+
+        result = reconcile(base, desired)
+        ok, diffs = verify(base, result, desired)
+        assert ok, f"Heading style in table cell should be applied: {diffs}"
