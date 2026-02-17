@@ -1810,7 +1810,11 @@ def _generate_text_style_updates(
 
         # Verify text match
         if base_run.content != desired_run.content:
-            return []
+            raise ReconcileError(
+                f"Text content mismatch in matched paragraph run: "
+                f"{base_run.content!r} != {desired_run.content!r}. "
+                f"This indicates a bug in the upstream text alignment."
+            )
 
         # Compute style diff
         style_dict, fields = _compute_style_diff(
