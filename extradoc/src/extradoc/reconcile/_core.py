@@ -23,6 +23,7 @@ from extradoc.reconcile._alignment import (
 from extradoc.reconcile._comparators import documents_match
 from extradoc.reconcile._extractors import Segment, extract_segments
 from extradoc.reconcile._generators import (
+    ReconcileError,
     _make_add_document_tab,
     _make_create_footer,
     _make_create_header,
@@ -39,11 +40,6 @@ _requests: list[tuple[int, dict[str, Any]]] = []
 
 # Counter for generating unique placeholder IDs
 _id_counter: dict[str, int] = {}
-
-
-# Import ReconcileError here to avoid circular import
-class ReconcileError(Exception):
-    """Raised when reconciliation encounters an unsupported or invalid change."""
 
 
 def reindex_document(doc: Document) -> Document:

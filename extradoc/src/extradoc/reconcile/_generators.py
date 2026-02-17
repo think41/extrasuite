@@ -38,6 +38,10 @@ if TYPE_CHECKING:
     )
 
 
+class ReconcileError(Exception):
+    """Raised when reconciliation encounters an unsupported or invalid change."""
+
+
 @dataclass
 class _Gap:
     """A gap between MATCHED elements containing DELETEs and ADDs."""
@@ -161,6 +165,21 @@ def _is_paragraph(se: StructuralElement) -> bool:
     return se.paragraph is not None
 
 
+def _has_non_text_elements(se: StructuralElement) -> bool:
+    """Check if a paragraph contains non-text elements (pageBreak, horizontalRule, etc.)."""
+    if not se.paragraph:
+        return False
+    for elem in se.paragraph.elements or []:
+        if (
+            elem.page_break is not None
+            or elem.horizontal_rule is not None
+            or elem.inline_object_element is not None
+            or elem.footnote_reference is not None
+        ):
+            return True
+    return False
+
+
 def _el_start(se: StructuralElement) -> int:
     return se.start_index if se.start_index is not None else 0
 
@@ -269,6 +288,17 @@ def generate_requests(
     and matched table diffs (cell content changes).
     All operations are processed right-to-left by base index position.
     """
+    # Check for unsupported TOC changes upfront
+    for aligned in alignment:
+        el = aligned.desired_element or aligned.base_element
+        if el and el.table_of_contents is not None:
+            if aligned.op in (AlignmentOp.ADDED, AlignmentOp.DELETED):
+                raise ReconcileError(
+                    "tableOfContents is read-only and cannot be added or removed"
+                )
+            # MATCHED TOC: skip (no changes possible)
+            continue
+
     # Collect gap operations with their positions
     operations: list[tuple[int, list[dict[str, Any]]]] = []
 
@@ -374,7 +404,17 @@ def _identify_gaps(alignment: list[AlignedElement]) -> list[_Gap]:
 def _filter_section_breaks(
     gap: _Gap,
 ) -> tuple[list[AlignedElement], list[AlignedElement]]:
-    """Filter section breaks from deletes and adds, returning (real_deletes, real_adds)."""
+    """Filter section breaks from deletes and adds, raising ReconcileError if any found."""
+    for a in gap.deletes:
+        if a.base_element and _is_section_break(a.base_element):
+            raise ReconcileError(
+                "Section break deletion is not supported by reconcile()"
+            )
+    for a in gap.adds:
+        if a.desired_element and _is_section_break(a.desired_element):
+            raise ReconcileError(
+                "Section break insertion is not supported by reconcile()"
+            )
     real_deletes = [
         a
         for a in gap.deletes
@@ -399,6 +439,14 @@ def _process_inner_gap(
     """Process a non-trailing gap (has a right anchor)."""
     requests: list[dict[str, Any]] = []
     real_deletes, real_adds = _filter_section_breaks(gap)
+
+    for a in real_adds:
+        if a.desired_element and _has_non_text_elements(a.desired_element):
+            raise ReconcileError(
+                "Cannot insert paragraph containing non-text elements "
+                "(pageBreak, horizontalRule, inlineObject, footnoteReference). "
+                "Use the appropriate API requests directly."
+            )
 
     if not real_deletes and not real_adds:
         return []
@@ -472,6 +520,14 @@ def _process_trailing_gap(
     """Process a trailing gap (no right anchor). Must protect segment-final \\n."""
     requests: list[dict[str, Any]] = []
     real_deletes, real_adds = _filter_section_breaks(gap)
+
+    for a in real_adds:
+        if a.desired_element and _has_non_text_elements(a.desired_element):
+            raise ReconcileError(
+                "Cannot insert paragraph containing non-text elements "
+                "(pageBreak, horizontalRule, inlineObject, footnoteReference). "
+                "Use the appropriate API requests directly."
+            )
 
     if not real_deletes and not real_adds:
         return []

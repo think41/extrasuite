@@ -17,6 +17,7 @@ from extradoc.reconcile._core import (
     resolve_deferred_ids,
     verify,
 )
+from extradoc.reconcile._generators import ReconcileError
 
 __all__ = [
     "DeferredID",
@@ -27,7 +28,3 @@ __all__ = [
     "resolve_deferred_ids",
     "verify",
 ]
-
-
-class ReconcileError(Exception):
-    """Raised when reconciliation encounters an unsupported or invalid change."""
