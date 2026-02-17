@@ -4,11 +4,41 @@ Python library that transforms Google Docs into an XML-based format optimized fo
 
 Agent-facing skills that explain the XML format and editing workflow are in `server/skills/extradoc/`.
 
+## Two Implementations (Migration In Progress)
+
+There are currently two implementations of the pull/diff/push workflow:
+
+### Legacy (current `client.py` pipeline)
+
+The production code path used by `DocsClient.pull()`, `diff()`, `push()`. Operates on raw JSON dicts and XML strings directly.
+
+### New (serde + reconcile)
+
+A cleaner architecture being developed to replace the legacy pipeline. Uses typed Pydantic models (`Document`) throughout instead of raw dicts, and separates concerns into two packages:
+
+- **`serde`** — Bidirectional `Document ↔ XML folder` conversion via typed intermediate models
+- **`reconcile`** — Diffs two `Document` objects to produce `BatchUpdateDocumentRequest` batches
+
+The new pipeline flow:
+
+```
+pull:  API → Document → serde.serialize() → folder (XMLs + pristine.zip)
+edit:  agent modifies XML files
+diff:  pristine XML → serde.deserialize() → base Document
+       edited XML   → serde.deserialize() → desired Document
+       reconcile(base, desired) → list[BatchUpdateDocumentRequest]
+push:  sequentially execute each BatchUpdateDocumentRequest
+```
+
+The `client.py` orchestrator has NOT been updated to use serde + reconcile yet. The packages are tested independently and will be integrated once they reach full parity with the legacy pipeline.
+
 ## Key Files
+
+### Legacy pipeline
 
 | File | Purpose |
 |------|---------|
-| `src/extradoc/client.py` | `DocsClient` with `pull()`, `diff()`, `push()` — main orchestrator |
+| `src/extradoc/client.py` | `DocsClient` with `pull()`, `diff()`, `push()` — main orchestrator (uses legacy pipeline) |
 | `src/extradoc/transport.py` | `Transport` ABC (`get_document`, `batch_update`, `list_comments`), `GoogleDocsTransport`, `LocalFileTransport` |
 | `src/extradoc/xml_converter.py` | `convert_document_to_xml(raw_doc, comments)` → `(document_xml, styles_xml)` |
 | `src/extradoc/desugar.py` | Sugar XML (`<h1>`, `<li>`) → internal representation (`<p style="HEADING_1">`, `<p bullet="...">`) |
@@ -22,20 +52,35 @@ Agent-facing skills that explain the XML format and editing workflow are in `ser
 | `src/extradoc/indexer.py` | UTF-16 code unit length calculation (emoji = 2 units) |
 | `src/extradoc/style_factorizer.py` | Extracts inline styles into shared classes |
 
+### New pipeline (serde + reconcile)
+
+| File | Purpose |
+|------|---------|
+| `src/extradoc/serde/` | `Document ↔ XML folder` conversion. See `serde/CLAUDE.md` for details |
+| `src/extradoc/reconcile/` | Diffs two `Document` objects → `list[BatchUpdateDocumentRequest]` |
+| `src/extradoc/reconcile/_core.py` | `reconcile()`, `verify()`, `reindex_document()`, `resolve_deferred_ids()` |
+| `src/extradoc/reconcile/_alignment.py` | LCS-based structural element alignment between base and desired |
+| `src/extradoc/reconcile/_generators.py` | Generates individual `batchUpdate` requests from aligned diffs |
+| `src/extradoc/reconcile/_comparators.py` | `documents_match()` — deep comparison for verification |
+| `src/extradoc/reconcile/_extractors.py` | Extracts text, styles, and structure from Document elements |
+| `src/extradoc/reconcile/_exceptions.py` | `ReconcileError` for unsupported edit patterns |
+| `src/extradoc/api_types/` | Pydantic models generated from Google Docs API schema |
+
 ## Documentation
 
 - `docs/extradoc-spec.md` - XML format specification
 - `docs/extradoc-diff-specification.md` - Diff specification
-- `docs/gaps.md` - Known bugs and limitations
+- `docs/gaps.md` - Known bugs and limitations (legacy pipeline)
+- `docs/reconciliation-gaps.md` - Known gaps in the reconcile module
 - `docs/googledocs/` - Google Docs API reference (120+ pages) — **use this instead of web fetching**
   - `docs/googledocs/api/` - Individual API request/response types
   - `docs/googledocs/rules-behavior.md` - Index behavior rules for batchUpdate
 
-## Pull Data Flow
+## Legacy Pull Data Flow
 
 `DocsClient.pull()` fetches the document via `Transport.get_document()` → raw JSON dict, then `Transport.list_comments()` → comment list. These feed into `convert_document_to_xml(raw, comments)` which walks the nested Google Docs JSON structure (tabs → body/headers/footers → paragraphs → text runs), converts paragraphs to sugar elements (`<h1>`, `<li type="bullet">`), factorizes inline styles into `styles.xml` classes via `style_factorizer.py`, and positions comment anchors using offset/length or `quotedFileContent` search. The output `document.xml` + `styles.xml` are written to disk alongside `.pristine/document.zip` (the baseline for future diffs) and optionally `.raw/document.json`.
 
-## Diff + Push Data Flow
+## Legacy Diff + Push Data Flow
 
 `DocsClient.diff()` loads current `document.xml` and pristine XML from `.pristine/document.zip`, then delegates to `DiffEngine.diff()`. The engine pipeline: `BlockParser.parse()` builds typed `DocumentBlock` trees from both XMLs, `BlockIndexer` computes UTF-16 indices on the pristine tree, `TreeDiffer.diff()` aligns blocks via `BlockAligner` and produces a `ChangeNode` tree (each node tagged `ADDED`/`DELETED`/`MODIFIED`/`UNCHANGED`), and `RequestWalker.walk()` traverses the change tree backwards by index (highest first, as required by the Google Docs API) delegating to `ContentGenerator`, `TableGenerator`, and `StructuralGenerator` to emit `batchUpdate` request dicts. `DocsClient.push()` then classifies these requests and executes them in 3 batches: (1) tab/header/footer creation → capture real IDs, (2) main content + footnote creation → capture footnote IDs, (3) footnote content with rewritten segment IDs. Placeholder IDs used in XML are mapped to real API-assigned IDs between batches.
 
@@ -68,3 +113,7 @@ uv run mypy src/extradoc
 ## Testing
 
 Golden files in `tests/golden/<document_id>.json` store raw API responses for reproducible pull testing. End-to-end tests work against real Google Docs — always pull to `extradoc/output/` (gitignored).
+
+Serde and reconcile have their own test suites:
+- `tests/test_serde.py` — round-trip tests for Document ↔ XML conversion
+- `tests/test_reconcile.py` — reconciliation tests for Document → BatchUpdateDocumentRequest generation

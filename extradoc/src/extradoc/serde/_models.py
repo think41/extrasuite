@@ -7,9 +7,20 @@ Document objects and the on-disk XML files.
 from __future__ import annotations
 
 from dataclasses import dataclass, field
+from typing import TYPE_CHECKING
 from xml.etree.ElementTree import Element, SubElement, fromstring
 
 from ._utils import element_to_string
+
+if TYPE_CHECKING:
+    from ._styles import StylesXml
+    from ._tab_extras import (
+        DocStyleXml,
+        InlineObjectsXml,
+        NamedRangesXml,
+        NamedStylesXml,
+        PositionedObjectsXml,
+    )
 
 # ---------------------------------------------------------------------------
 # Index models (index.xml)
@@ -32,6 +43,10 @@ class IndexTab:
     title: str
     folder: str
     headings: list[IndexHeading] = field(default_factory=list)
+    parent_tab_id: str | None = None
+    nesting_level: int | None = None
+    icon_emoji: str | None = None
+    child_tabs: list[IndexTab] = field(default_factory=list)
 
 
 @dataclass
@@ -50,13 +65,7 @@ class IndexXml:
         if self.revision:
             root.set("revision", self.revision)
         for tab in self.tabs:
-            tab_elem = SubElement(root, "tab")
-            tab_elem.set("id", tab.id)
-            tab_elem.set("title", tab.title)
-            tab_elem.set("folder", tab.folder)
-            for h in tab.headings:
-                h_elem = SubElement(tab_elem, h.tag)
-                h_elem.text = h.text
+            _index_tab_to_element(tab, root)
         return root
 
     def to_xml_string(self) -> str:
@@ -66,18 +75,7 @@ class IndexXml:
     def from_element(cls, root: Element) -> IndexXml:
         tabs: list[IndexTab] = []
         for tab_elem in root.findall("tab"):
-            headings: list[IndexHeading] = []
-            for child in tab_elem:
-                if child.tag in ("title", "subtitle", "h1", "h2", "h3"):
-                    headings.append(IndexHeading(tag=child.tag, text=child.text or ""))
-            tabs.append(
-                IndexTab(
-                    id=tab_elem.get("id", ""),
-                    title=tab_elem.get("title", ""),
-                    folder=tab_elem.get("folder", ""),
-                    headings=headings,
-                )
-            )
+            tabs.append(_index_tab_from_element(tab_elem))
         return cls(
             id=root.get("id", ""),
             title=root.get("title", ""),
@@ -88,6 +86,61 @@ class IndexXml:
     @classmethod
     def from_xml_string(cls, xml: str) -> IndexXml:
         return cls.from_element(fromstring(xml))
+
+    def all_tabs_flat(self) -> list[IndexTab]:
+        """Return all tabs flattened (top-level + nested children)."""
+        result: list[IndexTab] = []
+        for tab in self.tabs:
+            _collect_tabs(tab, result)
+        return result
+
+
+def _index_tab_to_element(tab: IndexTab, parent: Element) -> None:
+    """Serialize an IndexTab (and its children) to XML."""
+    tab_elem = SubElement(parent, "tab")
+    tab_elem.set("id", tab.id)
+    tab_elem.set("title", tab.title)
+    tab_elem.set("folder", tab.folder)
+    if tab.parent_tab_id:
+        tab_elem.set("parentTabId", tab.parent_tab_id)
+    if tab.nesting_level is not None:
+        tab_elem.set("nestingLevel", str(tab.nesting_level))
+    if tab.icon_emoji:
+        tab_elem.set("iconEmoji", tab.icon_emoji)
+    for h in tab.headings:
+        h_elem = SubElement(tab_elem, h.tag)
+        h_elem.text = h.text
+    for child_tab in tab.child_tabs:
+        _index_tab_to_element(child_tab, tab_elem)
+
+
+def _index_tab_from_element(tab_elem: Element) -> IndexTab:
+    """Parse an IndexTab (and its children) from XML."""
+    headings: list[IndexHeading] = []
+    child_tabs: list[IndexTab] = []
+    for child in tab_elem:
+        if child.tag in ("title", "subtitle", "h1", "h2", "h3"):
+            headings.append(IndexHeading(tag=child.tag, text=child.text or ""))
+        elif child.tag == "tab":
+            child_tabs.append(_index_tab_from_element(child))
+    nl_str = tab_elem.get("nestingLevel")
+    return IndexTab(
+        id=tab_elem.get("id", ""),
+        title=tab_elem.get("title", ""),
+        folder=tab_elem.get("folder", ""),
+        headings=headings,
+        parent_tab_id=tab_elem.get("parentTabId"),
+        nesting_level=int(nl_str) if nl_str is not None else None,
+        icon_emoji=tab_elem.get("iconEmoji"),
+        child_tabs=child_tabs,
+    )
+
+
+def _collect_tabs(tab: IndexTab, result: list[IndexTab]) -> None:
+    """Collect all tabs recursively into a flat list."""
+    result.append(tab)
+    for child in tab.child_tabs:
+        _collect_tabs(child, result)
 
 
 # ---------------------------------------------------------------------------
@@ -118,6 +171,7 @@ class LinkNode:
     href: str
     children: list[TNode] = field(default_factory=list)
     class_name: str | None = None
+    link_type: str | None = None  # "link", "linkBookmark", "linkHeading", "linkTab"
 
 
 @dataclass
@@ -139,13 +193,21 @@ class PersonNode:
     """<person email="..."/> — a person mention."""
 
     email: str
+    name: str | None = None
+    person_id: str | None = None
 
 
 @dataclass
 class DateNode:
     """<date/> — a date element."""
 
-    pass
+    date_id: str | None = None
+    timestamp: str | None = None
+    date_format: str | None = None
+    time_format: str | None = None
+    locale: str | None = None
+    time_zone_id: str | None = None
+    display_text: str | None = None
 
 
 @dataclass
@@ -153,13 +215,15 @@ class RichLinkNode:
     """<richlink url="..."/> — a rich link (chip)."""
 
     url: str
+    title: str | None = None
+    mime_type: str | None = None
 
 
 @dataclass
 class AutoTextNode:
     """<autotext/> — auto text (page number, etc.)."""
 
-    pass
+    type: str | None = None
 
 
 @dataclass
@@ -260,7 +324,26 @@ class PageBreakXml:
 class SectionBreakXml:
     """<sectionbreak/> — section break."""
 
-    pass
+    # SectionStyle fields (stored as JSON string for complex types)
+    section_type: str | None = None
+    content_direction: str | None = None
+    default_header_id: str | None = None
+    default_footer_id: str | None = None
+    first_page_header_id: str | None = None
+    first_page_footer_id: str | None = None
+    even_page_header_id: str | None = None
+    even_page_footer_id: str | None = None
+    use_first_page_header_footer: bool | None = None
+    flip_page_orientation: bool | None = None
+    page_number_start: int | None = None
+    margin_top: str | None = None
+    margin_bottom: str | None = None
+    margin_left: str | None = None
+    margin_right: str | None = None
+    margin_header: str | None = None
+    margin_footer: str | None = None
+    column_properties: str | None = None  # JSON-encoded list
+    column_separator_style: str | None = None
 
 
 @dataclass
@@ -279,6 +362,19 @@ BlockNode = ParagraphXml | TableXml | HrXml | PageBreakXml | SectionBreakXml | T
 
 
 @dataclass
+class TabFiles:
+    """All files for a single tab folder."""
+
+    tab: TabXml
+    styles: StylesXml
+    doc_style: DocStyleXml | None = None
+    named_styles: NamedStylesXml | None = None
+    inline_objects: InlineObjectsXml | None = None
+    positioned_objects: PositionedObjectsXml | None = None
+    named_ranges: NamedRangesXml | None = None
+
+
+@dataclass
 class LevelDefXml:
     """<level> within a <list> definition."""
 
@@ -286,6 +382,8 @@ class LevelDefXml:
     glyph_type: str | None = None
     glyph_format: str | None = None
     glyph_symbol: str | None = None
+    bullet_alignment: str | None = None
+    start_number: int | None = None
     class_name: str | None = None
 
 
@@ -398,6 +496,8 @@ def _inline_to_element(node: InlineNode, parent: Element) -> None:
         elem.set("href", node.href)
         if node.class_name:
             elem.set("class", node.class_name)
+        if node.link_type and node.link_type != "link":
+            elem.set("linkType", node.link_type)
         for child in node.children:
             t = SubElement(elem, "t")
             t.text = child.text
@@ -410,13 +510,37 @@ def _inline_to_element(node: InlineNode, parent: Element) -> None:
     elif isinstance(node, PersonNode):
         elem = SubElement(parent, "person")
         elem.set("email", node.email)
+        if node.name:
+            elem.set("name", node.name)
+        if node.person_id:
+            elem.set("personId", node.person_id)
     elif isinstance(node, DateNode):
-        SubElement(parent, "date")
+        elem = SubElement(parent, "date")
+        if node.date_id:
+            elem.set("dateId", node.date_id)
+        if node.timestamp:
+            elem.set("timestamp", node.timestamp)
+        if node.date_format:
+            elem.set("dateFormat", node.date_format)
+        if node.time_format:
+            elem.set("timeFormat", node.time_format)
+        if node.locale:
+            elem.set("locale", node.locale)
+        if node.time_zone_id:
+            elem.set("timeZoneId", node.time_zone_id)
+        if node.display_text:
+            elem.set("displayText", node.display_text)
     elif isinstance(node, RichLinkNode):
         elem = SubElement(parent, "richlink")
         elem.set("url", node.url)
+        if node.title:
+            elem.set("title", node.title)
+        if node.mime_type:
+            elem.set("mimeType", node.mime_type)
     elif isinstance(node, AutoTextNode):
-        SubElement(parent, "autotext")
+        elem = SubElement(parent, "autotext")
+        if node.type:
+            elem.set("type", node.type)
     elif isinstance(node, EquationNode):
         SubElement(parent, "equation")
     elif isinstance(node, ColumnBreakNode):
@@ -465,7 +589,40 @@ def _block_to_element(block: BlockNode, parent: Element) -> None:
     elif isinstance(block, PageBreakXml):
         SubElement(parent, "pagebreak")
     elif isinstance(block, SectionBreakXml):
-        SubElement(parent, "sectionbreak")
+        elem = SubElement(parent, "sectionbreak")
+        _section_break_attrs = {
+            "sectionType": block.section_type,
+            "contentDirection": block.content_direction,
+            "defaultHeaderId": block.default_header_id,
+            "defaultFooterId": block.default_footer_id,
+            "firstPageHeaderId": block.first_page_header_id,
+            "firstPageFooterId": block.first_page_footer_id,
+            "evenPageHeaderId": block.even_page_header_id,
+            "evenPageFooterId": block.even_page_footer_id,
+            "marginTop": block.margin_top,
+            "marginBottom": block.margin_bottom,
+            "marginLeft": block.margin_left,
+            "marginRight": block.margin_right,
+            "marginHeader": block.margin_header,
+            "marginFooter": block.margin_footer,
+            "columnProperties": block.column_properties,
+            "columnSeparatorStyle": block.column_separator_style,
+        }
+        for k, v in _section_break_attrs.items():
+            if v is not None:
+                elem.set(k, v)
+        if block.use_first_page_header_footer is not None:
+            elem.set(
+                "useFirstPageHeaderFooter",
+                str(block.use_first_page_header_footer).lower(),
+            )
+        if block.flip_page_orientation is not None:
+            elem.set(
+                "flipPageOrientation",
+                str(block.flip_page_orientation).lower(),
+            )
+        if block.page_number_start is not None:
+            elem.set("pageNumberStart", str(block.page_number_start))
     elif isinstance(block, TocXml):
         elem = SubElement(parent, "toc")
         for child_block in block.blocks:
@@ -485,6 +642,10 @@ def _list_def_to_element(lst: ListDefXml, parent: Element) -> None:
             lv.set("glyphFormat", level.glyph_format)
         if level.glyph_symbol:
             lv.set("glyphSymbol", level.glyph_symbol)
+        if level.bullet_alignment:
+            lv.set("bulletAlignment", level.bullet_alignment)
+        if level.start_number is not None:
+            lv.set("startNumber", str(level.start_number))
         if level.class_name:
             lv.set("class", level.class_name)
 
@@ -525,6 +686,7 @@ def _inlines_from_element(parent: Element) -> list[InlineNode]:
                     href=child.get("href", ""),
                     children=t_nodes,
                     class_name=child.get("class"),
+                    link_type=child.get("linkType"),
                 )
             )
         elif tag == "image":
@@ -532,13 +694,35 @@ def _inlines_from_element(parent: Element) -> list[InlineNode]:
         elif tag == "footnoteref":
             inlines.append(FootnoteRefNode(id=child.get("id", "")))
         elif tag == "person":
-            inlines.append(PersonNode(email=child.get("email", "")))
+            inlines.append(
+                PersonNode(
+                    email=child.get("email", ""),
+                    name=child.get("name"),
+                    person_id=child.get("personId"),
+                )
+            )
         elif tag == "date":
-            inlines.append(DateNode())
+            inlines.append(
+                DateNode(
+                    date_id=child.get("dateId"),
+                    timestamp=child.get("timestamp"),
+                    date_format=child.get("dateFormat"),
+                    time_format=child.get("timeFormat"),
+                    locale=child.get("locale"),
+                    time_zone_id=child.get("timeZoneId"),
+                    display_text=child.get("displayText"),
+                )
+            )
         elif tag == "richlink":
-            inlines.append(RichLinkNode(url=child.get("url", "")))
+            inlines.append(
+                RichLinkNode(
+                    url=child.get("url", ""),
+                    title=child.get("title"),
+                    mime_type=child.get("mimeType"),
+                )
+            )
         elif tag == "autotext":
-            inlines.append(AutoTextNode())
+            inlines.append(AutoTextNode(type=child.get("type")))
         elif tag == "equation":
             inlines.append(EquationNode())
         elif tag == "columnbreak":
@@ -585,7 +769,36 @@ def _blocks_from_element(parent: Element) -> list[BlockNode]:
         elif tag == "pagebreak":
             blocks.append(PageBreakXml())
         elif tag == "sectionbreak":
-            blocks.append(SectionBreakXml())
+            _pns = child.get("pageNumberStart")
+            _ufp = child.get("useFirstPageHeaderFooter")
+            _fpo = child.get("flipPageOrientation")
+            blocks.append(
+                SectionBreakXml(
+                    section_type=child.get("sectionType"),
+                    content_direction=child.get("contentDirection"),
+                    default_header_id=child.get("defaultHeaderId"),
+                    default_footer_id=child.get("defaultFooterId"),
+                    first_page_header_id=child.get("firstPageHeaderId"),
+                    first_page_footer_id=child.get("firstPageFooterId"),
+                    even_page_header_id=child.get("evenPageHeaderId"),
+                    even_page_footer_id=child.get("evenPageFooterId"),
+                    use_first_page_header_footer=(
+                        _ufp == "true" if _ufp is not None else None
+                    ),
+                    flip_page_orientation=(
+                        _fpo == "true" if _fpo is not None else None
+                    ),
+                    page_number_start=(int(_pns) if _pns is not None else None),
+                    margin_top=child.get("marginTop"),
+                    margin_bottom=child.get("marginBottom"),
+                    margin_left=child.get("marginLeft"),
+                    margin_right=child.get("marginRight"),
+                    margin_header=child.get("marginHeader"),
+                    margin_footer=child.get("marginFooter"),
+                    column_properties=child.get("columnProperties"),
+                    column_separator_style=child.get("columnSeparatorStyle"),
+                )
+            )
         elif tag == "toc":
             blocks.append(TocXml(blocks=_blocks_from_element(child)))
     return blocks
@@ -596,12 +809,15 @@ def _list_def_from_element(elem: Element) -> ListDefXml:
     levels: list[LevelDefXml] = []
     for lv in elem.findall("level"):
         idx_str = lv.get("index", "0")
+        start_str = lv.get("startNumber")
         levels.append(
             LevelDefXml(
                 index=int(idx_str),
                 glyph_type=lv.get("glyphType"),
                 glyph_format=lv.get("glyphFormat"),
                 glyph_symbol=lv.get("glyphSymbol"),
+                bullet_alignment=lv.get("bulletAlignment"),
+                start_number=int(start_str) if start_str is not None else None,
                 class_name=lv.get("class"),
             )
         )
