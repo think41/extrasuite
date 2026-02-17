@@ -13,7 +13,9 @@ import pytest
 
 from extradoc.api_types import DeferredID
 from extradoc.api_types._generated import Document
+from extradoc.mock.api import MockGoogleDocsAPI
 from extradoc.reconcile import ReconcileError, reconcile, reindex_document, verify
+from extradoc.reconcile._core import resolve_deferred_ids
 
 
 def _make_doc(*paragraphs: str, tab_id: str = "t.0") -> Document:
@@ -938,8 +940,6 @@ class TestReconcileMultiSegment:
 
         # Verify end-to-end by executing batches
         # (Note: Can't use strict verify() because header IDs are assigned by API)
-        from extradoc.mock.api import MockGoogleDocsAPI
-        from extradoc.reconcile._core import resolve_deferred_ids
 
         base_dict = base.model_dump(by_alias=True, exclude_none=True)
         mock = MockGoogleDocsAPI(base_dict)
@@ -1008,8 +1008,6 @@ class TestReconcileMultiSegment:
 
         # Verify end-to-end by executing batches
         # (Note: Can't use strict verify() because footer IDs are assigned by API)
-        from extradoc.mock.api import MockGoogleDocsAPI
-        from extradoc.reconcile._core import resolve_deferred_ids
 
         base_dict = base.model_dump(by_alias=True, exclude_none=True)
         mock = MockGoogleDocsAPI(base_dict)
@@ -1735,7 +1733,7 @@ class TestReconcileSectionBreaks:
         # desired has only one section break (the initial one)
         desired = _make_doc("Para 1", "Para 2")
 
-        with pytest.raises(ReconcileError, match="[Ss]ection break"):
+        with pytest.raises(ReconcileError, match=r"[Ss]ection break"):
             reconcile(base, desired)
 
     def test_add_section_break_raises_error(self):
@@ -1778,7 +1776,7 @@ class TestReconcileSectionBreaks:
         }
         desired = reindex_document(Document.model_validate(doc_dict))
 
-        with pytest.raises(ReconcileError, match="[Ss]ection break"):
+        with pytest.raises(ReconcileError, match=r"[Ss]ection break"):
             reconcile(base, desired)
 
     def test_normal_document_no_section_break_error(self):
@@ -1917,3 +1915,309 @@ class TestReconcileUTF16:
         result = reconcile(base, desired)
         ok, diffs = verify(base, result, desired)
         assert ok, f"Diffs: {diffs}"
+
+
+# ---------------------------------------------------------------------------
+# DeferredID request_index correctness (multi-batch scenarios)
+# ---------------------------------------------------------------------------
+
+
+def _make_doc_with_header_and_footer(
+    header_text: str,
+    footer_text: str,
+    *body_paragraphs: str,
+    header_id: str = "hdr1",
+    footer_id: str = "ftr1",
+    tab_id: str = "t.0",
+) -> Document:
+    """Helper: create a Document with both a header and a footer."""
+    body_content: list[dict] = [{"sectionBreak": {}}]
+    for text in body_paragraphs:
+        if not text.endswith("\n"):
+            text = text + "\n"
+        body_content.append(
+            {"paragraph": {"elements": [{"textRun": {"content": text}}]}}
+        )
+
+    doc = Document.model_validate(
+        {
+            "documentId": "test",
+            "tabs": [
+                {
+                    "tabProperties": {"tabId": tab_id},
+                    "documentTab": {
+                        "body": {"content": body_content},
+                        "headers": {
+                            header_id: {
+                                "headerId": header_id,
+                                "content": [
+                                    {
+                                        "paragraph": {
+                                            "elements": [
+                                                {
+                                                    "textRun": {
+                                                        "content": header_text + "\n"
+                                                    }
+                                                }
+                                            ]
+                                        }
+                                    }
+                                ],
+                            }
+                        },
+                        "footers": {
+                            footer_id: {
+                                "footerId": footer_id,
+                                "content": [
+                                    {
+                                        "paragraph": {
+                                            "elements": [
+                                                {
+                                                    "textRun": {
+                                                        "content": footer_text + "\n"
+                                                    }
+                                                }
+                                            ]
+                                        }
+                                    }
+                                ],
+                            }
+                        },
+                    },
+                }
+            ],
+        }
+    )
+    return reindex_document(doc)
+
+
+class TestDeferredIDRequestIndex:
+    """Tests for the request_index bug in multi-batch scenarios.
+
+    The bug: request_index was computed as len(_requests) (flat global list),
+    but it should be the count of entries in the *same* batch, because
+    replies[] only contains entries for that batch.
+    """
+
+    def test_create_header_and_footer_simultaneously(self):
+        """Adding both a header and footer to a tab generates correct DeferredIDs.
+
+        Scenario triggering the bug in _reconcile_new_segment:
+        - batch 0: createHeader, createFooter
+        - batch 1: insertText (header content), insertText (footer content)
+
+        Without the fix, the second _reconcile_new_segment call sees
+        len(_requests) = 2 (createHeader + insertText_header) and records
+        request_index=2 for createFooter, but createFooter is at replies[1].
+        """
+        base = _make_doc("Body")
+        desired = _make_doc_with_header_and_footer("My Header", "My Footer", "Body")
+
+        result = reconcile(base, desired)
+
+        # Should have 2 batches: creation + population
+        assert len(result) == 2
+
+        # Batch 0: createHeader + createFooter (2 creation requests)
+        assert result[0].requests is not None
+        request_types_0 = [
+            next(iter(req.model_dump(by_alias=True, exclude_none=True).keys()))
+            for req in result[0].requests
+        ]
+        assert "createHeader" in request_types_0
+        assert "createFooter" in request_types_0
+
+        # Batch 1: insertText for header + insertText for footer
+        assert result[1].requests is not None
+
+        # Verify DeferredIDs in batch 1 have correct request_index (0 or 1 only)
+        for req in result[1].requests:
+            if req.insert_text is not None:
+                seg_id = req.insert_text.location.segment_id
+                assert isinstance(seg_id, DeferredID)
+                assert seg_id.batch_index == 0
+                assert seg_id.request_index < 2, (
+                    f"request_index={seg_id.request_index} is out of range for "
+                    f"batch 0 which has only 2 replies"
+                )
+
+        # End-to-end: execute batches and verify final content
+
+        base_dict = base.model_dump(by_alias=True, exclude_none=True)
+        mock = MockGoogleDocsAPI(base_dict)
+
+        batch_0_reqs = [
+            req.model_dump(by_alias=True, exclude_none=True)
+            for req in result[0].requests
+        ]
+        response_0 = mock.batch_update(batch_0_reqs)
+
+        batch_1_resolved = resolve_deferred_ids([response_0], result[1])
+        batch_1_reqs = [
+            req.model_dump(by_alias=True, exclude_none=True)
+            for req in batch_1_resolved.requests
+        ]
+        mock.batch_update(batch_1_reqs)
+
+        actual = mock.get()
+        tab = actual["tabs"][0]["documentTab"]
+
+        headers = tab.get("headers", {})
+        assert len(headers) == 1
+        header_text = next(iter(headers.values()))["content"][0]["paragraph"][
+            "elements"
+        ][0]["textRun"]["content"]
+        assert header_text == "My Header\n"
+
+        footers = tab.get("footers", {})
+        assert len(footers) == 1
+        footer_text = next(iter(footers.values()))["content"][0]["paragraph"][
+            "elements"
+        ][0]["textRun"]["content"]
+        assert footer_text == "My Footer\n"
+
+    def test_new_tab_deferred_id_request_index_is_batch_local(self):
+        """The DeferredID for addDocumentTab uses the per-batch position, not flat list index.
+
+        Scenario:
+        - Matched tab t.0 gains a new footer →
+            batch 0: createFooter_t0       (batch-0 index 0)
+            batch 1: insertText_footer_t0  (batch-1 index 0)
+        - New tab t.1 added →
+            batch 0: addDocumentTab_t1     (batch-0 index 1)  ← DeferredID(batch=0, req=1)
+
+        Without the fix, len(_requests)=2 (includes the batch-1 insertText) when
+        addDocumentTab_t1 is appended, so the DeferredID records request_index=2.
+        But batch 0 only has 2 replies ([0]=createFooterReply, [1]=addDocumentTabReply),
+        so resolve_deferred_ids raises ReconcileError("only 2 replies").
+        With the fix, request_index=1 → resolves correctly.
+        """
+        base = _make_multi_tab_doc([("t.0", "Tab 1", ["Content"])])
+
+        # t.0 gains a footer; t.1 is a brand-new empty tab
+        desired_tabs: list[dict] = [
+            {
+                "tabProperties": {"tabId": "t.0", "title": "Tab 1", "index": 0},
+                "documentTab": {
+                    "body": {
+                        "content": [
+                            {"sectionBreak": {}},
+                            {
+                                "paragraph": {
+                                    "elements": [{"textRun": {"content": "Content\n"}}]
+                                }
+                            },
+                        ]
+                    },
+                    "footers": {
+                        "ftr1": {
+                            "footerId": "ftr1",
+                            "content": [
+                                {
+                                    "paragraph": {
+                                        "elements": [
+                                            {"textRun": {"content": "Tab1 Footer\n"}}
+                                        ]
+                                    }
+                                }
+                            ],
+                        }
+                    },
+                },
+            },
+            {
+                "tabProperties": {"tabId": "t.1", "title": "Tab 2", "index": 1},
+                "documentTab": {
+                    "body": {
+                        "content": [
+                            {"sectionBreak": {}},
+                        ]
+                    },
+                },
+            },
+        ]
+        desired = reindex_document(
+            Document.model_validate({"documentId": "test", "tabs": desired_tabs})
+        )
+
+        result = reconcile(base, desired)
+
+        # Must have at least 2 batches
+        assert len(result) >= 2
+
+        # Batch 0 must contain createFooter_t0 and addDocumentTab_t1
+        assert result[0].requests is not None
+        types_0 = [
+            next(iter(req.model_dump(by_alias=True, exclude_none=True).keys()))
+            for req in result[0].requests
+        ]
+        assert "createFooter" in types_0
+        assert "addDocumentTab" in types_0
+        # createFooter must come before addDocumentTab (matched tab processed first)
+        assert types_0.index("createFooter") < types_0.index("addDocumentTab")
+
+        # Find the DeferredID embedded in batch 1 that references addDocumentTab.
+        # Without the fix, this DeferredID has request_index=2 (out of range for
+        # batch 0 which has only 2 replies).
+        batch_0_size = len(types_0)  # should be 2
+        assert batch_0_size == 2
+
+        # Collect all DeferredIDs in batches 1+
+        def _collect_deferred_ids(obj: Any) -> list[DeferredID]:
+            """Recursively collect DeferredID objects from a nested structure."""
+            ids: list[DeferredID] = []
+            if isinstance(obj, DeferredID):
+                ids.append(obj)
+            elif hasattr(obj, "__dict__"):
+                for v in vars(obj).values():
+                    ids.extend(_collect_deferred_ids(v))
+            elif isinstance(obj, dict):
+                for v in obj.values():
+                    ids.extend(_collect_deferred_ids(v))
+            elif isinstance(obj, list | tuple):
+                for item in obj:
+                    ids.extend(_collect_deferred_ids(item))
+            return ids
+
+        for batch_i, batch in enumerate(result[1:], start=1):
+            for deferred in _collect_deferred_ids(batch):
+                if deferred.batch_index == 0:
+                    assert deferred.request_index < batch_0_size, (
+                        f"DeferredID in batch {batch_i} references "
+                        f"batch-0 reply[{deferred.request_index}] but batch 0 "
+                        f"only has {batch_0_size} replies"
+                    )
+
+        # End-to-end: execute batch 0 and batch 1.
+        # resolve_deferred_ids raises ReconcileError without the fix.
+
+        base_dict = base.model_dump(by_alias=True, exclude_none=True)
+        mock = MockGoogleDocsAPI(base_dict)
+
+        batch_0_reqs = [
+            req.model_dump(by_alias=True, exclude_none=True)
+            for req in result[0].requests
+        ]
+        response_0 = mock.batch_update(batch_0_reqs)
+        assert len(response_0["replies"]) == batch_0_size
+
+        # This call raises ReconcileError without the fix
+        batch_1_resolved = resolve_deferred_ids([response_0], result[1])
+        batch_1_reqs = [
+            req.model_dump(by_alias=True, exclude_none=True)
+            for req in batch_1_resolved.requests
+        ]
+        mock.batch_update(batch_1_reqs)
+
+        # Verify the footer was correctly populated (the createFooter path works)
+        actual = mock.get()
+        tab0_doc = actual["tabs"][0]["documentTab"]
+        footers = tab0_doc.get("footers", {})
+        assert len(footers) == 1
+        footer_text = next(iter(footers.values()))["content"][0]["paragraph"][
+            "elements"
+        ][0]["textRun"]["content"]
+        assert footer_text == "Tab1 Footer\n"
+
+        # Tab 2 was created
+        assert len(actual["tabs"]) == 2
