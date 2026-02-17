@@ -24,7 +24,6 @@ from extradoc.reconcile._alignment import AlignedElement, AlignmentOp, align_seq
 from extradoc.reconcile._extractors import (
     column_fingerprint,
     extract_plain_text_from_paragraph,
-    extract_plain_text_from_table,
     row_fingerprint,
 )
 
@@ -799,6 +798,24 @@ def _generate_insert_table_with_content(
 # ---------------------------------------------------------------------------
 
 
+def _tables_have_identical_text_structure(
+    base_table: Table, desired_table: Table
+) -> bool:
+    """Return True iff tables have the same dimensions and identical text in each cell.
+
+    Compares row-by-row using row_fingerprint (which encodes per-cell text) so that
+    row reordering or column reordering within a row is detected as a structural change.
+    """
+    base_rows = base_table.table_rows or []
+    desired_rows = desired_table.table_rows or []
+    if len(base_rows) != len(desired_rows):
+        return False
+    return all(
+        row_fingerprint(br) == row_fingerprint(dr)
+        for br, dr in zip(base_rows, desired_rows, strict=False)
+    )
+
+
 def _generate_table_diff(
     base_se: StructuralElement,
     desired_se: StructuralElement,
@@ -813,10 +830,8 @@ def _generate_table_diff(
     assert base_se.table is not None
     assert desired_se.table is not None
 
-    if extract_plain_text_from_table(base_se.table) == extract_plain_text_from_table(
-        desired_se.table
-    ):
-        # Text is identical — only style changes possible
+    if _tables_have_identical_text_structure(base_se.table, desired_se.table):
+        # Same dimensions and same text in each cell position — style changes only
         return _diff_table_cell_styles_only(
             base_se.table, desired_se.table, segment_id, tab_id
         )
