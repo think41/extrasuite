@@ -333,11 +333,40 @@ All 5 files created, 23 tests passing, lint/mypy/format clean. See `tests/test_r
 4. **Segment ID vs dict key**: For body, dict key is `"body"` but `segment_id` is `None` → use `base_seg.segment_id`, not the dict key
 5. **Mock API works transparently**: Once IDs are resolved, mock processes requests normally
 
-### Phase 6: Paragraph styles + text styles (FUTURE)
-- `updateParagraphStyle` generation (namedStyleType, alignment, spacing, etc.) with field masks
-- `updateTextStyle` generation (bold, italic, links, fonts, colors) with field masks
-- Bullet handling: `createParagraphBullets`, `deleteParagraphBullets`
-- **Tests**: heading changes, bold/italic, bullet lists, mixed style changes
+### Phase 6: Paragraph styles + text styles — DONE
+
+73 tests passing (62 Phase 1-5 + 11 Phase 6). Full paragraph and text style diffing for MATCHED paragraphs.
+
+**Implementation:**
+
+Style comparison utilities in `_generators.py`:
+- `_compute_style_diff(base, desired, style_type)` — field-by-field diff using `model_dump()`, returns `(style_dict, field_mask)`. Fields present in mask but absent from dict are cleared by the API.
+- `_styles_equal(style1, style2)` — None-safe equality check.
+
+Request builders in `_generators.py`:
+- `_make_update_paragraph_style(start, end, style_dict, fields, ...)` → `updateParagraphStyle`
+- `_make_update_text_style(start, end, style_dict, fields, ...)` → `updateTextStyle`
+- `_make_create_paragraph_bullets(start, end, preset, ...)` → `createParagraphBullets`
+- `_make_delete_paragraph_bullets(start, end, ...)` → `deleteParagraphBullets`
+
+Diff functions in `_generators.py`:
+- `_generate_paragraph_style_diff(base_se, desired_se, ...)` — for a MATCHED paragraph pair, generates (1) `updateParagraphStyle` if paragraph style changed, (2) `createParagraphBullets`/`deleteParagraphBullets` if bullet changed, (3) text run style updates
+- `_generate_text_style_updates(base_para, desired_para, ...)` — walks text runs pairwise, merges contiguous runs with identical style changes into single `updateTextStyle` requests (right-to-left)
+
+Integration in `generate_requests()`:
+- Third pass over alignment: for each MATCHED paragraph pair, call `_generate_paragraph_style_diff()`, add result to `operations` list for right-to-left processing.
+
+**Tests** in `test_reconcile.py`:
+- `TestReconcileParagraphStyles` (3 tests): named style type, alignment, identity no-op
+- `TestReconcileTextStyles` (5 tests): make bold, remove bold, multiple fields, font size, identity no-op
+- `TestReconcileCombinedStyles` (3 tests): text+paragraph combined, heading+bold, multi-paragraph
+
+**Known limitations (deferred to Phase 7):**
+- Bullet nesting level changes not supported (only add/remove)
+- `bullet.textStyle` changes not supported
+- Link style addition/removal deferred
+- Table cell styles not covered
+- Mid-run styling (assumes whole runs are styled)
 
 ### Phase 7: Edge cases + coverage (FUTURE)
 - tableOfContents validation (raise `ReconcileError` if changed)

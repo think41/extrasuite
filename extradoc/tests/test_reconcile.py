@@ -337,6 +337,95 @@ def _make_doc_with_content(
     return reindex_document(doc)
 
 
+def _make_styled_para(
+    text: str,
+    bold: bool | None = None,
+    italic: bool | None = None,
+    underline: bool | None = None,
+    font_size_pt: float | None = None,
+    foreground_color_rgb: tuple[float, float, float] | None = None,
+    named_style_type: str | None = None,
+    alignment: str | None = None,
+    line_spacing: float | None = None,
+) -> dict[str, Any]:
+    """Create a paragraph dict with text and inline styles."""
+    if not text.endswith("\n"):
+        text = text + "\n"
+
+    # Build text style
+    text_style: dict[str, Any] = {}
+    if bold is not None:
+        text_style["bold"] = bold
+    if italic is not None:
+        text_style["italic"] = italic
+    if underline is not None:
+        text_style["underline"] = underline
+    if font_size_pt is not None:
+        text_style["fontSize"] = {"magnitude": font_size_pt, "unit": "PT"}
+    if foreground_color_rgb is not None:
+        r, g, b = foreground_color_rgb
+        text_style["foregroundColor"] = {
+            "color": {"rgbColor": {"red": r, "green": g, "blue": b}}
+        }
+
+    # Build paragraph style
+    para_style: dict[str, Any] = {}
+    if named_style_type is not None:
+        para_style["namedStyleType"] = named_style_type
+    if alignment is not None:
+        para_style["alignment"] = alignment
+    if line_spacing is not None:
+        para_style["lineSpacing"] = line_spacing
+
+    # Build paragraph dict
+    para_dict: dict[str, Any] = {
+        "paragraph": {"elements": [{"textRun": {"content": text}}]}
+    }
+
+    if text_style:
+        para_dict["paragraph"]["elements"][0]["textRun"]["textStyle"] = text_style
+    if para_style:
+        para_dict["paragraph"]["paragraphStyle"] = para_style
+
+    return para_dict
+
+
+def _make_doc_with_styled_content(
+    *elements: str | dict[str, Any], tab_id: str = "t.0"
+) -> Document:
+    """Create a Document from paragraphs, styled paragraphs, and tables.
+
+    Strings become plain paragraphs; dicts are used as-is (e.g., from
+    _make_styled_para or _make_table). A section break is prepended automatically.
+    """
+    content: list[dict[str, Any]] = [{"sectionBreak": {}}]
+    for elem in elements:
+        if isinstance(elem, str):
+            text = elem if elem.endswith("\n") else elem + "\n"
+            content.append(
+                {"paragraph": {"elements": [{"textRun": {"content": text}}]}}
+            )
+        elif isinstance(elem, dict):
+            content.append(elem)
+            if "table" in elem:
+                content.append(
+                    {"paragraph": {"elements": [{"textRun": {"content": "\n"}}]}}
+                )
+
+    doc = Document.model_validate(
+        {
+            "documentId": "test",
+            "tabs": [
+                {
+                    "tabProperties": {"tabId": tab_id},
+                    "documentTab": {"body": {"content": content}},
+                }
+            ],
+        }
+    )
+    return reindex_document(doc)
+
+
 class TestReconcileAddTable:
     def test_add_table_at_end(self):
         """Add a 1x1 table after a paragraph."""
@@ -1069,5 +1158,146 @@ class TestReconcileMultiTab:
 
         result = reconcile(base, desired)
         assert len(result) == 1 and result[0].requests is not None
+        ok, diffs = verify(base, result, desired)
+        assert ok, f"Diffs: {diffs}"
+
+
+class TestReconcileParagraphStyles:
+    """Tests for paragraph-level style changes."""
+
+    def test_change_named_style_type(self):
+        """Change paragraph from NORMAL_TEXT to HEADING_1."""
+        base_para = _make_styled_para("Heading", named_style_type="NORMAL_TEXT")
+        desired_para = _make_styled_para("Heading", named_style_type="HEADING_1")
+        base = _make_doc_with_styled_content(base_para)
+        desired = _make_doc_with_styled_content(desired_para)
+
+        result = reconcile(base, desired)
+        ok, diffs = verify(base, result, desired)
+        assert ok, f"Diffs: {diffs}"
+
+    def test_change_alignment(self):
+        """Change paragraph alignment from START to CENTER."""
+        base_para = _make_styled_para("Text", alignment="START")
+        desired_para = _make_styled_para("Text", alignment="CENTER")
+        base = _make_doc_with_styled_content(base_para)
+        desired = _make_doc_with_styled_content(desired_para)
+
+        result = reconcile(base, desired)
+        ok, diffs = verify(base, result, desired)
+        assert ok, f"Diffs: {diffs}"
+
+    def test_identical_paragraph_styles_no_change(self):
+        """Identical paragraph styles produce no requests."""
+        para = _make_styled_para("Text", alignment="CENTER", line_spacing=115.0)
+        base = _make_doc_with_styled_content(para)
+        desired = _make_doc_with_styled_content(para)
+
+        result = reconcile(base, desired)
+        assert len(result) == 0 or (
+            len(result) == 1
+            and (result[0].requests is None or len(result[0].requests) == 0)
+        )
+
+
+class TestReconcileTextStyles:
+    """Tests for text run style changes."""
+
+    def test_make_text_bold(self):
+        """Add bold to plain text."""
+        base_para = _make_styled_para("Hello")
+        desired_para = _make_styled_para("Hello", bold=True)
+        base = _make_doc_with_styled_content(base_para)
+        desired = _make_doc_with_styled_content(desired_para)
+
+        result = reconcile(base, desired)
+        ok, diffs = verify(base, result, desired)
+        assert ok, f"Diffs: {diffs}"
+
+    def test_remove_bold(self):
+        """Remove bold from text."""
+        base_para = _make_styled_para("Hello", bold=True)
+        desired_para = _make_styled_para("Hello")
+        base = _make_doc_with_styled_content(base_para)
+        desired = _make_doc_with_styled_content(desired_para)
+
+        result = reconcile(base, desired)
+        ok, diffs = verify(base, result, desired)
+        assert ok, f"Diffs: {diffs}"
+
+    def test_multiple_text_style_fields(self):
+        """Change multiple text style fields simultaneously."""
+        base_para = _make_styled_para("Hello")
+        desired_para = _make_styled_para(
+            "Hello", bold=True, italic=True, underline=True, font_size_pt=14.0
+        )
+        base = _make_doc_with_styled_content(base_para)
+        desired = _make_doc_with_styled_content(desired_para)
+
+        result = reconcile(base, desired)
+        ok, diffs = verify(base, result, desired)
+        assert ok, f"Diffs: {diffs}"
+
+    def test_change_font_size(self):
+        """Change font size."""
+        base_para = _make_styled_para("Hello", font_size_pt=12.0)
+        desired_para = _make_styled_para("Hello", font_size_pt=18.0)
+        base = _make_doc_with_styled_content(base_para)
+        desired = _make_doc_with_styled_content(desired_para)
+
+        result = reconcile(base, desired)
+        ok, diffs = verify(base, result, desired)
+        assert ok, f"Diffs: {diffs}"
+
+    def test_identical_text_styles_no_change(self):
+        """Identical text styles produce no requests."""
+        para = _make_styled_para("Hello", bold=True, italic=True)
+        base = _make_doc_with_styled_content(para)
+        desired = _make_doc_with_styled_content(para)
+
+        result = reconcile(base, desired)
+        assert len(result) == 0 or (
+            len(result) == 1
+            and (result[0].requests is None or len(result[0].requests) == 0)
+        )
+
+
+class TestReconcileCombinedStyles:
+    """Tests for combined style scenarios."""
+
+    def test_text_and_paragraph_style_change(self):
+        """Change both text and paragraph styles."""
+        base_para = _make_styled_para("Hello", bold=True, alignment="START")
+        desired_para = _make_styled_para("Hello", bold=True, alignment="CENTER")
+        base = _make_doc_with_styled_content(base_para)
+        desired = _make_doc_with_styled_content(desired_para)
+
+        result = reconcile(base, desired)
+        ok, diffs = verify(base, result, desired)
+        assert ok, f"Diffs: {diffs}"
+
+    def test_heading_with_bold(self):
+        """Create a bold heading."""
+        base_para = _make_styled_para("Title", named_style_type="NORMAL_TEXT")
+        desired_para = _make_styled_para(
+            "Title", named_style_type="HEADING_1", bold=True
+        )
+        base = _make_doc_with_styled_content(base_para)
+        desired = _make_doc_with_styled_content(desired_para)
+
+        result = reconcile(base, desired)
+        ok, diffs = verify(base, result, desired)
+        assert ok, f"Diffs: {diffs}"
+
+    def test_style_multiple_paragraphs(self):
+        """Apply different styles to multiple paragraphs."""
+        base_para1 = _make_styled_para("Paragraph 1")
+        base_para2 = _make_styled_para("Paragraph 2")
+        desired_para1 = _make_styled_para("Paragraph 1", bold=True, alignment="CENTER")
+        desired_para2 = _make_styled_para("Paragraph 2", italic=True)
+        base = _make_doc_with_styled_content(base_para1, base_para2)
+        desired = _make_doc_with_styled_content(desired_para1, desired_para2)
+
+        result = reconcile(base, desired)
         ok, diffs = verify(base, result, desired)
         assert ok, f"Diffs: {diffs}"
