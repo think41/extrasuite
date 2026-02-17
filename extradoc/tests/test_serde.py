@@ -895,7 +895,7 @@ class TestRoundTrip:
 
         # Verify intermediate XML model: should be TNode with sugar_tag="b"
         folder = next(iter(tabs.keys()))
-        tab_xml, _styles_xml = tabs[folder]
+        tab_xml = tabs[folder].tab
         para = tab_xml.body[0]
         assert isinstance(para, ParagraphXml)
         node = para.inlines[0]
