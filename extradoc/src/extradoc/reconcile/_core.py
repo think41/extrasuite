@@ -8,6 +8,7 @@ from typing import Any
 from extradoc.api_types import DeferredID, Request, TabID
 from extradoc.api_types._generated import (
     BatchUpdateDocumentRequest,
+    Body,
     Document,
     Footer,
     Header,
@@ -383,7 +384,14 @@ class _Reconciler:
 
         # Populate tab content in NEXT batch
         for _seg_id, desired_seg in extract_segments(tab).items():
-            self._reconcile_new_segment(desired_seg, current_batch + 1, tab_id)
+            if isinstance(desired_seg.source, Body):
+                # Body always exists after tab creation; diff against initial state
+                base_seg = _create_initial_body_segment()
+                self._reconcile_segment(
+                    base_seg, desired_seg, current_batch + 1, None, tab_id
+                )
+            else:
+                self._reconcile_new_segment(desired_seg, current_batch + 1, tab_id)
 
 
 # ------------------------------------------------------------------
@@ -429,6 +437,30 @@ def _delete_segment_request(segment: Segment, tab_id: TabID) -> dict[str, Any] |
     # Body always exists (can't be deleted)
     # Footnotes are deleted by removing footnoteReference (element-level, Phase 4+)
     return None
+
+
+def _create_initial_body_segment() -> Segment:
+    """Return a Segment with the initial content a newly-created tab body has.
+
+    A new tab starts with a sectionBreak (index 0-1) followed by a single
+    paragraph with \\n (index 1-2).  Indices must be set so that downstream
+    request generators insert content at index 1 (body min index) rather
+    than 0.
+    """
+    initial_content = [
+        StructuralElement.model_validate(
+            {"sectionBreak": {}, "startIndex": 0, "endIndex": 1}
+        ),
+        StructuralElement.model_validate(
+            {
+                "paragraph": {"elements": [{"textRun": {"content": "\n"}}]},
+                "startIndex": 1,
+                "endIndex": 2,
+            }
+        ),
+    ]
+    source = Body.model_validate({"content": initial_content})
+    return Segment(source=source)
 
 
 def _create_initial_segment(segment_type: type[Header] | type[Footer]) -> Segment:

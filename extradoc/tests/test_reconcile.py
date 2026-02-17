@@ -1092,11 +1092,10 @@ class TestReconcileMultiTab:
         assert ok, f"Diffs: {diffs}"
 
     def test_create_tab(self):
-        """Create a new tab.
+        """Create a new tab and populate its body content (multi-batch).
 
-        NOTE: Phase 4 implementation creates an empty tab (not populated).
-        This test verifies that the addDocumentTab request is generated.
-        Full content population will be implemented in Phase 5+.
+        Batch 0: addDocumentTab
+        Batch 1: insertText with DeferredID (populates body content)
         """
         base = _make_multi_tab_doc([("t.0", "Tab 1", ["First tab content"])])
         desired = _make_multi_tab_doc(
@@ -1107,15 +1106,49 @@ class TestReconcileMultiTab:
         )
 
         result = reconcile(base, desired)
-        assert len(result) == 1 and result[0].requests is not None
-        # Check that we have an addDocumentTab request
-        request_types = [
+        assert len(result) == 2, "Should have 2 batches: creation + body population"
+
+        request_types_0 = [
             next(iter(req.model_dump(by_alias=True, exclude_none=True).keys()))
+            for req in (result[0].requests or [])
+        ]
+        assert "addDocumentTab" in request_types_0
+
+        request_types_1 = [
+            next(iter(req.model_dump(by_alias=True, exclude_none=True).keys()))
+            for req in (result[1].requests or [])
+        ]
+        assert "insertText" in request_types_1
+
+        # Execute batches and verify body content
+        base_dict = base.model_dump(by_alias=True, exclude_none=True)
+        mock = MockGoogleDocsAPI(base_dict)
+
+        batch_0_reqs = [
+            req.model_dump(by_alias=True, exclude_none=True)
             for req in result[0].requests
         ]
-        assert "addDocumentTab" in request_types
-        # Note: verify() will fail because content isn't populated
-        # This is expected for Phase 4 partial implementation
+        response_0 = mock.batch_update(batch_0_reqs)
+
+        batch_1_resolved = resolve_deferred_ids([response_0], result[1])
+        batch_1_reqs = [
+            req.model_dump(by_alias=True, exclude_none=True)
+            for req in batch_1_resolved.requests
+        ]
+        mock.batch_update(batch_1_reqs)
+
+        actual = mock.get()
+        tabs = actual["tabs"]
+        assert len(tabs) == 2, "Should have 2 tabs"
+        new_tab = tabs[1]
+        assert new_tab["tabProperties"]["title"] == "Tab 2"
+
+        body_text = "".join(
+            elem["paragraph"]["elements"][0]["textRun"]["content"]
+            for elem in new_tab["documentTab"]["body"]["content"]
+            if "paragraph" in elem
+        )
+        assert "Second tab content" in body_text
 
     def test_rename_tab(self):
         """Change the title of an existing tab."""
