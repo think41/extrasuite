@@ -1301,3 +1301,284 @@ class TestReconcileCombinedStyles:
         result = reconcile(base, desired)
         ok, diffs = verify(base, result, desired)
         assert ok, f"Diffs: {diffs}"
+
+
+# ---------------------------------------------------------------------------
+# Helpers for Phase 7 tests
+# ---------------------------------------------------------------------------
+
+# Nesting-level indentation formula used by createParagraphBullets:
+#   indentStart = 36 + level * 36 PT
+#   indentFirstLine = 18 + level * 36 PT
+_BULLET_NESTING_LEVELS = [
+    {
+        "indentStart": {"magnitude": 36 + i * 36, "unit": "PT"},
+        "indentFirstLine": {"magnitude": 18 + i * 36, "unit": "PT"},
+    }
+    for i in range(9)
+]
+
+_LINK_BLUE = {
+    "color": {"rgbColor": {"red": 0.06666667, "green": 0.33333334, "blue": 0.8}}
+}
+
+
+def _make_doc_with_bullet(
+    text: str,
+    nesting_level: int = 0,
+    *,
+    tab_id: str = "t.0",
+) -> Document:
+    """Create a Document with a single bulleted paragraph at the given nesting level.
+
+    Includes the list definition so mock can compute nestingLevel from indentation.
+    """
+    il = 18 + nesting_level * 36
+    is_ = 36 + nesting_level * 36
+    if not text.endswith("\n"):
+        text = text + "\n"
+    bullet: dict[str, Any] = {"listId": "list1"}
+    if nesting_level > 0:
+        bullet["nestingLevel"] = nesting_level
+
+    doc = Document.model_validate(
+        {
+            "documentId": "test",
+            "tabs": [
+                {
+                    "tabProperties": {"tabId": tab_id},
+                    "documentTab": {
+                        "body": {
+                            "content": [
+                                {"sectionBreak": {}},
+                                {
+                                    "paragraph": {
+                                        "elements": [{"textRun": {"content": text}}],
+                                        "bullet": bullet,
+                                        "paragraphStyle": {
+                                            "indentFirstLine": {
+                                                "magnitude": il,
+                                                "unit": "PT",
+                                            },
+                                            "indentStart": {
+                                                "magnitude": is_,
+                                                "unit": "PT",
+                                            },
+                                        },
+                                    }
+                                },
+                            ]
+                        },
+                        "lists": {
+                            "list1": {
+                                "listProperties": {
+                                    "nestingLevels": _BULLET_NESTING_LEVELS
+                                }
+                            }
+                        },
+                    },
+                }
+            ],
+        }
+    )
+    return reindex_document(doc)
+
+
+class TestReconcileBulletNesting:
+    """Tests for bullet nesting level changes."""
+
+    def test_nesting_level_increase(self):
+        """Change bullet nesting level from 0 to 1."""
+        base = _make_doc_with_bullet("Hello", nesting_level=0)
+        desired = _make_doc_with_bullet("Hello", nesting_level=1)
+
+        result = reconcile(base, desired)
+        ok, diffs = verify(base, result, desired)
+        assert ok, f"Diffs: {diffs}"
+
+    def test_nesting_level_decrease(self):
+        """Change bullet nesting level from 2 to 0."""
+        base = _make_doc_with_bullet("Hello", nesting_level=2)
+        desired = _make_doc_with_bullet("Hello", nesting_level=0)
+
+        result = reconcile(base, desired)
+        ok, diffs = verify(base, result, desired)
+        assert ok, f"Diffs: {diffs}"
+
+    def test_add_bullet_at_nesting_level_1(self):
+        """Add a bullet at nesting level 1 to a plain paragraph."""
+        base = _make_doc_with_styled_content("Hello")
+        desired = _make_doc_with_bullet("Hello", nesting_level=1)
+
+        result = reconcile(base, desired)
+        ok, diffs = verify(base, result, desired)
+        assert ok, f"Diffs: {diffs}"
+
+    def test_same_nesting_level_no_change(self):
+        """Same nesting level produces no unnecessary requests."""
+        base = _make_doc_with_bullet("Hello", nesting_level=1)
+        desired = _make_doc_with_bullet("Hello", nesting_level=1)
+
+        result = reconcile(base, desired)
+        assert len(result) == 0 or (
+            len(result) == 1
+            and (result[0].requests is None or len(result[0].requests) == 0)
+        )
+
+
+class TestReconcileTableCellStyles:
+    """Tests for paragraph/text style changes within table cells."""
+
+    def _make_table_cell_doc(
+        self,
+        cell_text: str,
+        bold: bool | None = None,
+        italic: bool | None = None,
+        alignment: str | None = None,
+    ) -> Document:
+        """Create a Document with a 1x1 table with a styled cell."""
+        text_style: dict[str, Any] = {}
+        if bold is not None:
+            text_style["bold"] = bold
+        if italic is not None:
+            text_style["italic"] = italic
+
+        para_style: dict[str, Any] = {}
+        if alignment is not None:
+            para_style["alignment"] = alignment
+
+        el: dict[str, Any] = {"textRun": {"content": cell_text + "\n"}}
+        if text_style:
+            el["textRun"]["textStyle"] = text_style
+
+        para: dict[str, Any] = {"paragraph": {"elements": [el]}}
+        if para_style:
+            para["paragraph"]["paragraphStyle"] = para_style
+
+        return _make_doc_with_styled_content(
+            {
+                "table": {
+                    "rows": 1,
+                    "columns": 1,
+                    "tableRows": [{"tableCells": [{"content": [para]}]}],
+                }
+            }
+        )
+
+    def test_make_cell_text_bold(self):
+        """Apply bold to text in a table cell."""
+        base = self._make_table_cell_doc("Cell content", bold=False)
+        desired = self._make_table_cell_doc("Cell content", bold=True)
+
+        result = reconcile(base, desired)
+        ok, diffs = verify(base, result, desired)
+        assert ok, f"Diffs: {diffs}"
+
+    def test_change_cell_paragraph_alignment(self):
+        """Change alignment in a table cell paragraph."""
+        base = self._make_table_cell_doc("Cell", alignment="START")
+        desired = self._make_table_cell_doc("Cell", alignment="CENTER")
+
+        result = reconcile(base, desired)
+        ok, diffs = verify(base, result, desired)
+        assert ok, f"Diffs: {diffs}"
+
+    def test_multiple_cell_style_changes(self):
+        """Change bold and italic in a table cell."""
+        base = self._make_table_cell_doc("Cell content")
+        desired = self._make_table_cell_doc("Cell content", bold=True, italic=True)
+
+        result = reconcile(base, desired)
+        ok, diffs = verify(base, result, desired)
+        assert ok, f"Diffs: {diffs}"
+
+    def test_identical_cell_styles_no_change(self):
+        """Identical cell styles produce no requests."""
+        base = self._make_table_cell_doc("Cell", bold=True)
+        desired = self._make_table_cell_doc("Cell", bold=True)
+
+        result = reconcile(base, desired)
+        assert len(result) == 0 or (
+            len(result) == 1
+            and (result[0].requests is None or len(result[0].requests) == 0)
+        )
+
+
+class TestReconcileLinkStyle:
+    """Tests for link addition and removal in text runs."""
+
+    def test_add_link(self):
+        """Add a hyperlink to text.
+
+        After applying updateTextStyle with link, the mock splits the trailing \\n
+        into a separate run and auto-adds underline and foregroundColor. The desired
+        document reflects this final state.
+        """
+        base = _make_doc_with_styled_content(
+            {"paragraph": {"elements": [{"textRun": {"content": "Click here\n"}}]}}
+        )
+        # Desired: two runs — linked text + separate \\n (as the mock produces)
+        desired = _make_doc_with_styled_content(
+            {
+                "paragraph": {
+                    "elements": [
+                        {
+                            "textRun": {
+                                "content": "Click here",
+                                "textStyle": {
+                                    "link": {"url": "http://example.com"},
+                                    "underline": True,
+                                    "foregroundColor": _LINK_BLUE,
+                                },
+                            }
+                        },
+                        {"textRun": {"content": "\n"}},
+                    ]
+                }
+            }
+        )
+
+        result = reconcile(base, desired)
+        ok, diffs = verify(base, result, desired)
+        assert ok, f"Diffs: {diffs}"
+
+    def test_remove_link(self):
+        """Remove a hyperlink from text.
+
+        Base has two runs (linked text + separate \\n). Desired has two runs
+        without link styles. The mock keeps runs separate after updateTextStyle.
+        """
+        base = _make_doc_with_styled_content(
+            {
+                "paragraph": {
+                    "elements": [
+                        {
+                            "textRun": {
+                                "content": "Click here",
+                                "textStyle": {
+                                    "link": {"url": "http://example.com"},
+                                    "underline": True,
+                                    "foregroundColor": _LINK_BLUE,
+                                },
+                            }
+                        },
+                        {"textRun": {"content": "\n"}},
+                    ]
+                }
+            }
+        )
+        # Desired: same two runs but without link/underline/foregroundColor
+        desired = _make_doc_with_styled_content(
+            {
+                "paragraph": {
+                    "elements": [
+                        {"textRun": {"content": "Click here"}},
+                        {"textRun": {"content": "\n"}},
+                    ]
+                }
+            }
+        )
+
+        result = reconcile(base, desired)
+        ok, diffs = verify(base, result, desired)
+        assert ok, f"Diffs: {diffs}"

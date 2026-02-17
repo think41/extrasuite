@@ -105,6 +105,38 @@ def validate_range(tab: dict[str, Any], start_index: int, end_index: int) -> Non
             )
 
 
+def _collect_paragraphs_in_range(
+    content: list[dict[str, Any]],
+    start_index: int,
+    end_index: int,
+    result: list[dict[str, Any]],
+    *,
+    inclusive: bool = False,
+) -> None:
+    """Recursively collect paragraphs in range from content list (including inside tables)."""
+    for element in content:
+        el_start = element.get("startIndex", 0)
+        el_end = element.get("endIndex", 0)
+
+        if "paragraph" in element:
+            if inclusive:
+                if el_end >= start_index and el_start < end_index:
+                    result.append(element["paragraph"])
+            else:
+                if el_end > start_index and el_start < end_index:
+                    result.append(element["paragraph"])
+        elif "table" in element and el_end > start_index and el_start < end_index:
+            for row in element["table"].get("tableRows", []):
+                for cell in row.get("tableCells", []):
+                    _collect_paragraphs_in_range(
+                        cell.get("content", []),
+                        start_index,
+                        end_index,
+                        result,
+                        inclusive=inclusive,
+                    )
+
+
 def get_paragraphs_in_range(
     tab: dict[str, Any],
     start_index: int,
@@ -114,6 +146,8 @@ def get_paragraphs_in_range(
     inclusive: bool = False,
 ) -> list[dict[str, Any]]:
     """Get all paragraphs whose range overlaps [start_index, end_index).
+
+    Includes paragraphs inside table cells that overlap the range.
 
     Args:
         tab: Tab object.
@@ -128,18 +162,9 @@ def get_paragraphs_in_range(
     segment, _ = get_segment(tab, segment_id)
     content = segment.get("content", [])
     result: list[dict[str, Any]] = []
-    for element in content:
-        paragraph = element.get("paragraph")
-        if not paragraph:
-            continue
-        el_start = element.get("startIndex", 0)
-        el_end = element.get("endIndex", 0)
-        if inclusive:
-            if el_end >= start_index and el_start < end_index:
-                result.append(paragraph)
-        else:
-            if el_end > start_index and el_start < end_index:
-                result.append(paragraph)
+    _collect_paragraphs_in_range(
+        content, start_index, end_index, result, inclusive=inclusive
+    )
     return result
 
 
