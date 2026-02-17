@@ -137,6 +137,26 @@ PARAGRAPH_STYLE_PROPS: list[tuple[str, ParagraphStyleExtractor]] = [
     ("indentLeft", lambda ps: _get_dimension(ps.get("indentStart"))),
     ("indentRight", lambda ps: _get_dimension(ps.get("indentEnd"))),
     ("indentFirstLine", lambda ps: _get_dimension(ps.get("indentFirstLine"))),
+    # Boolean paragraph properties
+    ("keepTogether", lambda ps: "1" if ps.get("keepLinesTogether") else None),
+    ("keepNext", lambda ps: "1" if ps.get("keepWithNext") else None),
+    ("avoidWidow", lambda ps: "1" if ps.get("avoidWidowAndOrphan") else None),
+    # Direction (skip LEFT_TO_RIGHT as it's the default)
+    ("direction", lambda ps: _get_direction(ps)),
+    # Paragraph background (shading)
+    (
+        "bgColor",
+        lambda ps: (
+            _get_color(ps.get("shading", {}).get("backgroundColor"))
+            if ps.get("shading")
+            else None
+        ),
+    ),
+    # Paragraph borders
+    ("borderTop", lambda ps: _get_border(ps.get("borderTop"))),
+    ("borderBottom", lambda ps: _get_border(ps.get("borderBottom"))),
+    ("borderLeft", lambda ps: _get_border(ps.get("borderLeft"))),
+    ("borderRight", lambda ps: _get_border(ps.get("borderRight"))),
 ]
 
 # Property extractors for Google Docs table cell styles
@@ -233,6 +253,17 @@ def _get_line_spacing(para_style: dict[str, Any]) -> str | None:
     ls = para_style.get("lineSpacing")
     if ls:
         return str(ls)
+    return None
+
+
+def _get_direction(para_style: dict[str, Any]) -> str | None:
+    """Extract text direction from paragraph style.
+
+    Returns None for LEFT_TO_RIGHT (the default) to keep XML clean.
+    """
+    direction = para_style.get("direction")
+    if direction and direction != "LEFT_TO_RIGHT":
+        return str(direction)
     return None
 
 
