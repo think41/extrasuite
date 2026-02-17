@@ -344,6 +344,71 @@ def _normalize_paragraph(paragraph: dict[str, Any]) -> None:
     paragraph["elements"] = split_elements
 
 
+def _update_para_nesting_level(
+    paragraph: dict[str, Any], lists: dict[str, Any]
+) -> None:
+    """Update nestingLevel in a bulleted paragraph based on its indentStart.
+
+    Looks up the paragraph's list definition and finds which nesting level
+    has an indentStart matching the paragraph's current indentStart.
+    """
+    bullet = paragraph.get("bullet")
+    if not bullet:
+        return
+    list_id = bullet.get("listId")
+    if not list_id:
+        return
+    list_def = lists.get(list_id, {})
+    nesting_levels_def = list_def.get("listProperties", {}).get("nestingLevels", [])
+    if not nesting_levels_def:
+        return
+
+    ps = paragraph.get("paragraphStyle", {})
+    indent_start = ps.get("indentStart")
+    if not isinstance(indent_start, dict):
+        return
+    target_magnitude = indent_start.get("magnitude")
+    target_unit = indent_start.get("unit", "PT")
+    if target_magnitude is None:
+        return
+
+    for level_idx, level_def in enumerate(nesting_levels_def):
+        level_indent = level_def.get("indentStart", {})
+        if isinstance(level_indent, dict) and (
+            level_indent.get("magnitude") == target_magnitude
+            and level_indent.get("unit", "PT") == target_unit
+        ):
+            if level_idx == 0:
+                bullet.pop("nestingLevel", None)
+            else:
+                bullet["nestingLevel"] = level_idx
+            return
+
+
+def _update_nesting_levels_in_table(
+    table: dict[str, Any], lists: dict[str, Any]
+) -> None:
+    """Update nestingLevel in all bulleted paragraphs inside a table."""
+    for row in table.get("tableRows", []):
+        for cell in row.get("tableCells", []):
+            for ce in cell.get("content", []):
+                if "paragraph" in ce:
+                    _update_para_nesting_level(ce["paragraph"], lists)
+                elif "table" in ce:
+                    _update_nesting_levels_in_table(ce["table"], lists)
+
+
+def _update_nesting_levels_in_segment(
+    segment: dict[str, Any], lists: dict[str, Any]
+) -> None:
+    """Update nestingLevel in all bulleted paragraphs in a segment."""
+    for element in segment.get("content", []):
+        if "paragraph" in element:
+            _update_para_nesting_level(element["paragraph"], lists)
+        elif "table" in element:
+            _update_nesting_levels_in_table(element["table"], lists)
+
+
 def reindex_and_normalize_all_tabs(document: dict[str, Any]) -> None:
     """Reindex and normalize all segments across all tabs.
 
@@ -354,24 +419,29 @@ def reindex_and_normalize_all_tabs(document: dict[str, Any]) -> None:
     """
     for tab in document.get("tabs", []):
         doc_tab = tab.get("documentTab", {})
+        lists = doc_tab.get("lists", {})
 
         # Body
         body = doc_tab.get("body")
         if body:
             normalize_segment(body)
             reindex_segment(body, is_body=True)
+            _update_nesting_levels_in_segment(body, lists)
 
         # Headers
         for header in doc_tab.get("headers", {}).values():
             normalize_segment(header)
             reindex_segment(header, is_body=False)
+            _update_nesting_levels_in_segment(header, lists)
 
         # Footers
         for footer in doc_tab.get("footers", {}).values():
             normalize_segment(footer)
             reindex_segment(footer, is_body=False)
+            _update_nesting_levels_in_segment(footer, lists)
 
         # Footnotes
         for footnote in doc_tab.get("footnotes", {}).values():
             normalize_segment(footnote)
             reindex_segment(footnote, is_body=False)
+            _update_nesting_levels_in_segment(footnote, lists)
