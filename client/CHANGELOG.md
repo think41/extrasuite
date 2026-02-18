@@ -2,6 +2,27 @@
 
 All notable changes to the extrasuite client library will be documented in this file.
 
+## [0.6.0] - 2026-02-18
+
+### Added
+
+- **`extrasuite gmail compose <file>`** — save a Gmail draft from a markdown file with YAML front matter; body is converted from markdown to HTML (headings, bold, lists, tables all render correctly in Gmail); plain-text fallback included for clients that don't render HTML
+- **`extrasuite gmail edit-draft <draft_id> <file>`** — update an existing Gmail draft in place; draft ID is printed by `compose`
+- **`extrasuite calendar view`** — list calendar events for a time range (`today`, `tomorrow`, `this-week`, `next-week`, `YYYY-MM-DD`)
+- **`extrasuite <sheet|slide|doc|form> create <title>`** — create a new Google Workspace file and automatically share it with the service account
+- **Bundled help system** — all `--help` text is now loaded from markdown files in `client/help/`, making it easy to update documentation without rebuilding
+
+### Changed
+
+- Bump `extradoc` dependency to `>=0.3.0` (paragraph styling reconciliation, Pydantic models)
+- `gmail.compose` and `gmail.edit-draft` use OAuth delegation scope `gmail.compose`
+- `calendar.view` uses OAuth delegation scope `calendar`
+- File `create` commands use OAuth `drive.file` scope
+
+### Added (dependencies)
+
+- `markdown>=3.0` for markdown-to-HTML conversion in gmail commands
+
 ## [0.5.3] - 2026-02-12
 
 ### Changed

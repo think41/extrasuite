@@ -1,6 +1,6 @@
 [project]
 name = "extrasuite"
-version = "0.5.3"
+version = "0.6.0"
 description = "Client library for ExtraSuite - secure OAuth token exchange for CLI tools"
 readme = "README.md"
 requires-python = ">=3.10"
@@ -27,7 +27,7 @@ dependencies = [
     "extraslide>=0.2.1",
     "extraform>=0.2.1",
     "extrascript>=0.2.1",
-    "extradoc>=0.2.2",
+    "extradoc>=0.3.0",
     "markdown>=3.0",
 ]
 
