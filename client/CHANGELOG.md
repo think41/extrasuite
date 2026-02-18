@@ -2,6 +2,19 @@
 
 All notable changes to the extrasuite client library will be documented in this file.
 
+## [0.7.0] - 2026-02-18
+
+### Added
+
+- **`extrasuite contacts sync`** — syncs Google Contacts (people + other contacts) to a local SQLite DB at `~/.config/extrasuite/contacts.db`; supports full and incremental sync with automatic token-expiry fallback
+- **`extrasuite contacts search <query>`** — multi-query fuzzy search ranked by source, touch frequency, recency, and domain clustering from touch sessions
+- **`extrasuite contacts touch <email>`** — records interactions and groups emails into sessions for future ranking
+
+### Changed
+
+- Help text for `diff` commands simplified to one-liner "Debugging tool only" to discourage casual use
+- `SKILL.md` rewritten for concision: shorter intro, `@latest` only on first command, added contacts/create examples
+
 ## [0.6.0] - 2026-02-18
 
 ### Added
