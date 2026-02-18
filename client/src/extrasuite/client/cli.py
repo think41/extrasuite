@@ -647,11 +647,12 @@ def cmd_form_create(args: Any) -> None:
 # --- Gmail commands ---
 
 
-def cmd_gmail_compose(args: Any) -> None:
-    """Save an email draft from a markdown file with front matter."""
-    from extrasuite.client.google_api import create_gmail_draft, parse_email_file
+def _parse_email_file_args(
+    file_path: Path,
+) -> tuple[list[str], str, str, list[str] | None, list[str] | None]:
+    """Read and parse an email markdown file. Returns (to, subject, body, cc, bcc)."""
+    from extrasuite.client.google_api import parse_email_file
 
-    file_path = Path(args.file)
     if not file_path.exists():
         print(f"Error: File not found: {file_path}", file=sys.stderr)
         sys.exit(1)
@@ -678,6 +679,14 @@ def cmd_gmail_compose(args: Any) -> None:
         if metadata.get("bcc")
         else None
     )
+    return to, subject, body, cc, bcc
+
+
+def cmd_gmail_compose(args: Any) -> None:
+    """Save an email draft from a markdown file with front matter."""
+    from extrasuite.client.google_api import create_gmail_draft
+
+    to, subject, body, cc, bcc = _parse_email_file_args(Path(args.file))
 
     access_token = _get_oauth_token(
         args,
@@ -690,6 +699,30 @@ def cmd_gmail_compose(args: Any) -> None:
     )
     draft_id = result.get("id", "")
     print(f"Draft saved (id: {draft_id})")
+
+
+def cmd_gmail_edit_draft(args: Any) -> None:
+    """Update an existing Gmail draft from a markdown file with front matter."""
+    from extrasuite.client.google_api import update_gmail_draft
+
+    to, subject, body, cc, bcc = _parse_email_file_args(Path(args.file))
+
+    access_token = _get_oauth_token(
+        args,
+        scopes=["gmail.compose"],
+        reason="Edit email draft",
+    )
+
+    update_gmail_draft(
+        access_token,
+        draft_id=args.draft_id,
+        to=to,
+        subject=subject,
+        body=body,
+        cc=cc,
+        bcc=bcc,
+    )
+    print(f"Draft updated (id: {args.draft_id})")
 
 
 # --- Calendar commands ---
@@ -1073,6 +1106,16 @@ def build_parser() -> Any:
     sp.add_argument("file", help="Markdown file with front matter")
 
     sp = gmail_sub.add_parser(
+        "edit-draft",
+        help="Update an existing Gmail draft from a markdown file",
+        parents=[auth_parent],
+        description=_load_help("gmail", "edit-draft"),
+        formatter_class=argparse.RawDescriptionHelpFormatter,
+    )
+    sp.add_argument("draft_id", help="Draft ID to update (from compose output)")
+    sp.add_argument("file", help="Markdown file with front matter")
+
+    sp = gmail_sub.add_parser(
         "help",
         help="Show reference documentation",
         formatter_class=argparse.RawDescriptionHelpFormatter,
@@ -1141,6 +1184,7 @@ _COMMANDS: dict[tuple[str, str | None], Any] = {
     ("doc", "push"): cmd_doc_push,
     ("doc", "create"): cmd_doc_create,
     ("gmail", "compose"): cmd_gmail_compose,
+    ("gmail", "edit-draft"): cmd_gmail_edit_draft,
     ("calendar", "view"): cmd_calendar_view,
     ("sheet", "help"): cmd_module_help,
     ("slide", "help"): cmd_module_help,

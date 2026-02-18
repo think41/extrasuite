@@ -18,7 +18,13 @@ cc: charlie@example.com
 bcc: dave@example.com
 ---
 
-Email body goes here. Supports plain text.
+# Heading
+
+Email body in **markdown**. Supports:
+
+- Bold, italic, lists
+- Tables
+- Headings
 
 Multiple paragraphs are preserved.
 ```
@@ -30,10 +36,12 @@ Multiple recipients: comma-separated in a single field value.
 
 ## Output
 
-Prints the draft ID on success. Silent otherwise.
+Prints the draft ID on success. Save it to update the draft later with edit-draft.
 
 ## Notes
 
 - The draft is saved to the authenticated user's Gmail account
+- Markdown in the body is converted to HTML - the draft will be formatted
+- A plain-text fallback is also included for email clients that don't render HTML
 - Open Gmail to review, edit, and send the draft
-- The markdown body is sent as plain text (not rendered HTML)
+- Use `extrasuite gmail edit-draft <draft_id> <file>` to update the draft

@@ -13,8 +13,11 @@ import urllib.error
 import urllib.parse
 import urllib.request
 from datetime import datetime, timedelta
+from email.mime.multipart import MIMEMultipart
 from email.mime.text import MIMEText
 from typing import Any
+
+import markdown as _markdown
 
 try:
     import certifi
@@ -179,6 +182,36 @@ def parse_email_file(content: str) -> tuple[dict[str, str], str]:
     return metadata, body
 
 
+def markdown_to_html(text: str) -> str:
+    """Convert markdown text to HTML suitable for Gmail."""
+    html_body = _markdown.markdown(text, extensions=["nl2br", "tables"])
+    return (
+        '<div style="font-family: Arial, sans-serif; font-size: 14px;'
+        ' line-height: 1.6; color: #333;">'
+        f"{html_body}</div>"
+    )
+
+
+def _build_email_message(
+    to: list[str],
+    subject: str,
+    body: str,
+    cc: list[str] | None = None,
+    bcc: list[str] | None = None,
+) -> MIMEMultipart:
+    """Build a multipart (plain + HTML) MIME message from a markdown body."""
+    msg = MIMEMultipart("alternative")
+    msg["To"] = ", ".join(to)
+    msg["Subject"] = subject
+    if cc:
+        msg["Cc"] = ", ".join(cc)
+    if bcc:
+        msg["Bcc"] = ", ".join(bcc)
+    msg.attach(MIMEText(body, "plain"))
+    msg.attach(MIMEText(markdown_to_html(body), "html"))
+    return msg
+
+
 def create_gmail_draft(
     token: str,
     to: list[str],
@@ -187,21 +220,33 @@ def create_gmail_draft(
     cc: list[str] | None = None,
     bcc: list[str] | None = None,
 ) -> dict[str, Any]:
-    """Create a Gmail draft from the given fields."""
-    msg = MIMEText(body)
-    msg["To"] = ", ".join(to)
-    msg["Subject"] = subject
-    if cc:
-        msg["Cc"] = ", ".join(cc)
-    if bcc:
-        msg["Bcc"] = ", ".join(bcc)
-
+    """Create a Gmail draft. Body is markdown and rendered as HTML in the draft."""
+    msg = _build_email_message(to, subject, body, cc, bcc)
     raw = base64.urlsafe_b64encode(msg.as_bytes()).decode("ascii")
-
     return _api_request(
         "https://gmail.googleapis.com/gmail/v1/users/me/drafts",
         token,
         method="POST",
+        body={"message": {"raw": raw}},
+    )
+
+
+def update_gmail_draft(
+    token: str,
+    draft_id: str,
+    to: list[str],
+    subject: str,
+    body: str,
+    cc: list[str] | None = None,
+    bcc: list[str] | None = None,
+) -> dict[str, Any]:
+    """Update an existing Gmail draft. Body is markdown and rendered as HTML."""
+    msg = _build_email_message(to, subject, body, cc, bcc)
+    raw = base64.urlsafe_b64encode(msg.as_bytes()).decode("ascii")
+    return _api_request(
+        f"https://gmail.googleapis.com/gmail/v1/users/me/drafts/{draft_id}",
+        token,
+        method="PUT",
         body={"message": {"raw": raw}},
     )
 

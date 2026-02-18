@@ -28,6 +28,7 @@ dependencies = [
     "extraform>=0.2.1",
     "extrascript>=0.2.1",
     "extradoc>=0.2.2",
+    "markdown>=3.0",
 ]
 
 [project.scripts]
