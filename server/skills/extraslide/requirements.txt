@@ -1,2 +1,0 @@
-extraslide @ git+https://github.com/sripathikrishnan/extraslide.git
-certifi>=2023.0.0

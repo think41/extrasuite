@@ -2,6 +2,17 @@
 
 Python client library for obtaining Google API access tokens. Supports two token types for different use cases, both obtained via `CredentialsManager`.
 
+## Security Constraint: No Auth in Agent Code
+
+**Agents invoking the CLI must never:**
+- Read token files (`~/.config/extrasuite/token.json`, etc.)
+- Call Google APIs directly (Sheets, Docs, Drive, Gmail, Calendar, etc.)
+- Construct OAuth or service account credentials
+- Pass raw access tokens between commands
+
+The CLI is the authentication boundary. All auth is handled transparently by
+`extrasuite <module> pull/push/create/...`. Agents just run CLI commands.
+
 ## Public API
 
 ### CredentialsManager
@@ -114,6 +125,21 @@ From `EXTRASUITE_SERVER_URL`, the following are derived:
 - `{server}/api/delegation/exchange`
 
 Explicit URL keys (`EXTRASUITE_AUTH_URL`, `EXTRASUITE_EXCHANGE_URL`, `EXTRASUITE_DELEGATION_AUTH_URL`, `EXTRASUITE_DELEGATION_EXCHANGE_URL`) override server-derived values.
+
+## Help Documentation
+
+CLI `--help` text is loaded from bundled markdown files in
+`src/extrasuite/client/help/`. The hierarchy mirrors the CLI:
+
+  help/README.md                 extrasuite --help
+  help/<module>/README.md        extrasuite <module> --help
+  help/<module>/<command>.md     extrasuite <module> <command> --help
+
+Reference files (format-reference.md, sml-reference.md, etc.) are detailed
+docs linked from the command help but not directly shown by --help.
+
+To update help text, edit the markdown file. Changes take effect immediately
+(no rebuild needed for editable installs).
 
 ## Development
 
