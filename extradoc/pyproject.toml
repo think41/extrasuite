@@ -4,7 +4,7 @@ build-backend = "hatchling.build"
 
 [project]
 name = "extradoc"
-version = "0.2.2"
+version = "0.3.0"
 requires-python = ">=3.10"
 description = "File-based Google Docs representation library for LLM agents"
 readme = "README.md"

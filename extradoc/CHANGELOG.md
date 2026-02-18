@@ -2,6 +2,20 @@
 
 All notable changes to the extradoc library will be documented in this file.
 
+## [0.3.0] - 2026-02-18
+
+### Added
+
+- **Paragraph styling reconciliation** in pull/push pipeline — paragraph styles (alignment, spacing, indentation) are now correctly preserved through the pull→edit→push cycle
+- **Typed Pydantic models** generated from the Google Docs API discovery document, replacing untyped dicts in the request/response layer
+- **Mock API package** (`src/extradoc/mock/`) — a pure-Python mock of the Google Docs `batchUpdate` API for testing, refactored from a monolithic file into 13 focused modules with centralized `reindex_and_normalize_all_tabs()`
+- **Style provenance tracking** in the mock via `__explicit__` metadata key, replicating the real API's inherited-vs-explicit style behavior
+- `pydantic>=2.0` added as a dependency
+
+### Changed
+
+- Mock API fidelity improved to 61/61 test scenarios passing against the real API
+
 ## [0.2.2] - 2026-02-12
 
 ### Added
