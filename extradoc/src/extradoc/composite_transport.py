@@ -13,6 +13,7 @@ from datetime import datetime
 from pathlib import Path
 from typing import Any
 
+from extradoc.api_types._generated import Document
 from extradoc.mock.api import MockGoogleDocsAPI
 from extradoc.mock.exceptions import MockAPIError
 from extradoc.transport import APIError, DocumentData, Transport
@@ -161,7 +162,7 @@ class MockTransport(Transport):
         Args:
             initial_document: Initial document state for the mock API
         """
-        self.mock_api = MockGoogleDocsAPI(initial_document)
+        self.mock_api = MockGoogleDocsAPI(Document.model_validate(initial_document))
         self.document_id = initial_document.get("documentId", "mock_doc")
 
     async def get_document(self, document_id: str) -> DocumentData:
@@ -173,7 +174,7 @@ class MockTransport(Transport):
         Returns:
             DocumentData with mock state
         """
-        response = self.mock_api.get()
+        response = self.mock_api._get_raw()
         return DocumentData(
             document_id=response.get("documentId", document_id),
             title=response.get("title", ""),
@@ -194,7 +195,7 @@ class MockTransport(Transport):
         Returns:
             Mock API response
         """
-        return self.mock_api.batch_update(requests)
+        return self.mock_api._batch_update_raw(requests)
 
     async def list_comments(self, file_id: str) -> list[dict[str, Any]]:  # noqa: ARG002
         """Mock comments - returns empty list.
@@ -306,7 +307,7 @@ class CompositeTransport(Transport):
             raise RuntimeError("Must call get_document before batch_update")
 
         # Get document state before update (for logging)
-        input_document = self.mock_transport.mock_api.get()
+        input_document = self.mock_transport.mock_api._get_raw()
 
         # Apply to real API - may raise APIError on 400
         try:
@@ -397,7 +398,7 @@ class CompositeTransport(Transport):
             APIError: Always re-raises the original real API error
         """
         try:
-            self.mock_transport.mock_api.batch_update(requests)  # type: ignore[union-attr]
+            self.mock_transport.mock_api._batch_update_raw(requests)  # type: ignore[union-attr]
             # Mock succeeded when real API returned 400 — mock is too lenient
             print(
                 "⚠️  Real API returned 400 but mock succeeded. "
@@ -411,7 +412,7 @@ class CompositeTransport(Transport):
                 real_response={"error": str(real_err), "status_code": 400},
                 mock_response={"success": True, "error": "Mock should have rejected"},
                 real_document_after=input_document,
-                mock_document_after=self.mock_transport.mock_api.get()
+                mock_document_after=self.mock_transport.mock_api._get_raw()
                 if self.mock_transport
                 else input_document,
             )

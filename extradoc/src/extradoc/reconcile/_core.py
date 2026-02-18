@@ -549,23 +549,18 @@ def verify(
     Returns:
         (match, list_of_differences)
     """
-    base_dict = base.model_dump(by_alias=True, exclude_none=True)
-    mock = MockGoogleDocsAPI(base_dict)
+    mock = MockGoogleDocsAPI(base)
     responses: list[dict[str, Any]] = []
 
     for i, batch in enumerate(batches):
         if i > 0:
             batch = resolve_deferred_ids(responses, batch)
 
-        request_dicts = [
-            req.model_dump(by_alias=True, exclude_none=True)
-            for req in (batch.requests or [])
-        ]
-        if request_dicts:
-            response = mock.batch_update(request_dicts)
-            responses.append(response)
+        if batch.requests:
+            response = mock.batch_update(batch)
+            responses.append(response.model_dump(by_alias=True, exclude_none=True))
 
-    actual_dict = mock.get()
+    actual_dict = mock.get().model_dump(by_alias=True, exclude_none=True)
     desired_dict = desired.model_dump(by_alias=True, exclude_none=True)
 
     return documents_match(actual_dict, desired_dict)

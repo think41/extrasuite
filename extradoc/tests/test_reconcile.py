@@ -13,9 +13,11 @@ import pytest
 
 from extradoc.api_types import DeferredID
 from extradoc.api_types._generated import (
+    BatchUpdateDocumentRequest,
     Document,
     List,
     Paragraph,
+    Request,
 )
 from extradoc.mock.api import MockGoogleDocsAPI
 from extradoc.reconcile import ReconcileError, reconcile, reindex_document, verify
@@ -983,14 +985,18 @@ class TestReconcileMultiSegment:
         # (Note: Can't use strict verify() because header IDs are assigned by API)
 
         base_dict = base.model_dump(by_alias=True, exclude_none=True)
-        mock = MockGoogleDocsAPI(base_dict)
+        mock = MockGoogleDocsAPI(Document.model_validate(base_dict))
 
         # Execute batch 0
         batch_0_reqs = [
             req.model_dump(by_alias=True, exclude_none=True)
             for req in result[0].requests
         ]
-        response_0 = mock.batch_update(batch_0_reqs)
+        response_0 = mock.batch_update(
+            BatchUpdateDocumentRequest(
+                requests=[Request.model_validate(r) for r in batch_0_reqs]
+            )
+        ).model_dump(by_alias=True, exclude_none=True)
 
         # Execute batch 1 with resolved IDs
         batch_1_resolved = resolve_deferred_ids([response_0], result[1])
@@ -998,10 +1004,14 @@ class TestReconcileMultiSegment:
             req.model_dump(by_alias=True, exclude_none=True)
             for req in batch_1_resolved.requests
         ]
-        mock.batch_update(batch_1_reqs)
+        mock.batch_update(
+            BatchUpdateDocumentRequest(
+                requests=[Request.model_validate(r) for r in batch_1_reqs]
+            )
+        )
 
         # Check result
-        actual = mock.get()
+        actual = mock.get().model_dump(by_alias=True, exclude_none=True)
         headers = actual["tabs"][0]["documentTab"]["headers"]
         assert len(headers) == 1, "Should have exactly one header"
         header = next(iter(headers.values()))
@@ -1051,14 +1061,18 @@ class TestReconcileMultiSegment:
         # (Note: Can't use strict verify() because footer IDs are assigned by API)
 
         base_dict = base.model_dump(by_alias=True, exclude_none=True)
-        mock = MockGoogleDocsAPI(base_dict)
+        mock = MockGoogleDocsAPI(Document.model_validate(base_dict))
 
         # Execute batch 0
         batch_0_reqs = [
             req.model_dump(by_alias=True, exclude_none=True)
             for req in result[0].requests
         ]
-        response_0 = mock.batch_update(batch_0_reqs)
+        response_0 = mock.batch_update(
+            BatchUpdateDocumentRequest(
+                requests=[Request.model_validate(r) for r in batch_0_reqs]
+            )
+        ).model_dump(by_alias=True, exclude_none=True)
 
         # Execute batch 1 with resolved IDs
         batch_1_resolved = resolve_deferred_ids([response_0], result[1])
@@ -1066,10 +1080,14 @@ class TestReconcileMultiSegment:
             req.model_dump(by_alias=True, exclude_none=True)
             for req in batch_1_resolved.requests
         ]
-        mock.batch_update(batch_1_reqs)
+        mock.batch_update(
+            BatchUpdateDocumentRequest(
+                requests=[Request.model_validate(r) for r in batch_1_reqs]
+            )
+        )
 
         # Check result
-        actual = mock.get()
+        actual = mock.get().model_dump(by_alias=True, exclude_none=True)
         footers = actual["tabs"][0]["documentTab"]["footers"]
         assert len(footers) == 1, "Should have exactly one footer"
         footer = next(iter(footers.values()))
@@ -1163,22 +1181,30 @@ class TestReconcileMultiTab:
 
         # Execute batches and verify body content
         base_dict = base.model_dump(by_alias=True, exclude_none=True)
-        mock = MockGoogleDocsAPI(base_dict)
+        mock = MockGoogleDocsAPI(Document.model_validate(base_dict))
 
         batch_0_reqs = [
             req.model_dump(by_alias=True, exclude_none=True)
             for req in result[0].requests
         ]
-        response_0 = mock.batch_update(batch_0_reqs)
+        response_0 = mock.batch_update(
+            BatchUpdateDocumentRequest(
+                requests=[Request.model_validate(r) for r in batch_0_reqs]
+            )
+        ).model_dump(by_alias=True, exclude_none=True)
 
         batch_1_resolved = resolve_deferred_ids([response_0], result[1])
         batch_1_reqs = [
             req.model_dump(by_alias=True, exclude_none=True)
             for req in batch_1_resolved.requests
         ]
-        mock.batch_update(batch_1_reqs)
+        mock.batch_update(
+            BatchUpdateDocumentRequest(
+                requests=[Request.model_validate(r) for r in batch_1_reqs]
+            )
+        )
 
-        actual = mock.get()
+        actual = mock.get().model_dump(by_alias=True, exclude_none=True)
         tabs = actual["tabs"]
         assert len(tabs) == 2, "Should have 2 tabs"
         new_tab = tabs[1]
@@ -2118,22 +2144,30 @@ class TestDeferredIDRequestIndex:
         # End-to-end: execute batches and verify final content
 
         base_dict = base.model_dump(by_alias=True, exclude_none=True)
-        mock = MockGoogleDocsAPI(base_dict)
+        mock = MockGoogleDocsAPI(Document.model_validate(base_dict))
 
         batch_0_reqs = [
             req.model_dump(by_alias=True, exclude_none=True)
             for req in result[0].requests
         ]
-        response_0 = mock.batch_update(batch_0_reqs)
+        response_0 = mock.batch_update(
+            BatchUpdateDocumentRequest(
+                requests=[Request.model_validate(r) for r in batch_0_reqs]
+            )
+        ).model_dump(by_alias=True, exclude_none=True)
 
         batch_1_resolved = resolve_deferred_ids([response_0], result[1])
         batch_1_reqs = [
             req.model_dump(by_alias=True, exclude_none=True)
             for req in batch_1_resolved.requests
         ]
-        mock.batch_update(batch_1_reqs)
+        mock.batch_update(
+            BatchUpdateDocumentRequest(
+                requests=[Request.model_validate(r) for r in batch_1_reqs]
+            )
+        )
 
-        actual = mock.get()
+        actual = mock.get().model_dump(by_alias=True, exclude_none=True)
         tab = actual["tabs"][0]["documentTab"]
 
         headers = tab.get("headers", {})
@@ -2266,13 +2300,17 @@ class TestDeferredIDRequestIndex:
         # resolve_deferred_ids raises ReconcileError without the fix.
 
         base_dict = base.model_dump(by_alias=True, exclude_none=True)
-        mock = MockGoogleDocsAPI(base_dict)
+        mock = MockGoogleDocsAPI(Document.model_validate(base_dict))
 
         batch_0_reqs = [
             req.model_dump(by_alias=True, exclude_none=True)
             for req in result[0].requests
         ]
-        response_0 = mock.batch_update(batch_0_reqs)
+        response_0 = mock.batch_update(
+            BatchUpdateDocumentRequest(
+                requests=[Request.model_validate(r) for r in batch_0_reqs]
+            )
+        ).model_dump(by_alias=True, exclude_none=True)
         assert len(response_0["replies"]) == batch_0_size
 
         # This call raises ReconcileError without the fix
@@ -2281,10 +2319,14 @@ class TestDeferredIDRequestIndex:
             req.model_dump(by_alias=True, exclude_none=True)
             for req in batch_1_resolved.requests
         ]
-        mock.batch_update(batch_1_reqs)
+        mock.batch_update(
+            BatchUpdateDocumentRequest(
+                requests=[Request.model_validate(r) for r in batch_1_reqs]
+            )
+        )
 
         # Verify the footer was correctly populated (the createFooter path works)
-        actual = mock.get()
+        actual = mock.get().model_dump(by_alias=True, exclude_none=True)
         tab0_doc = actual["tabs"][0]["documentTab"]
         footers = tab0_doc.get("footers", {})
         assert len(footers) == 1

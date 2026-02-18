@@ -7,6 +7,11 @@ from pathlib import Path
 
 import pytest
 
+from extradoc.api_types._generated import (
+    BatchUpdateDocumentRequest,
+    Document,
+    Request,
+)
 from extradoc.composite_transport import (
     CompositeTransport,
     MismatchLogger,
@@ -56,19 +61,25 @@ class MockRealTransport:
     """Mock implementation of a 'real' transport for testing."""
 
     def __init__(self, document: dict) -> None:
-        self.mock_api = MockGoogleDocsAPI(document)
+        self.mock_api = MockGoogleDocsAPI(Document.model_validate(document))
         self.document_id = document["documentId"]
 
     async def get_document(self, _document_id: str) -> DocumentData:
         response = self.mock_api.get()
+        raw = response.model_dump(by_alias=True, exclude_none=True)
         return DocumentData(
-            document_id=response["documentId"],
-            title=response["title"],
-            raw=response,
+            document_id=response.document_id,
+            title=response.title,
+            raw=raw,
         )
 
     async def batch_update(self, _document_id: str, requests: list[dict]) -> dict:
-        return self.mock_api.batch_update(requests)
+        result = self.mock_api.batch_update(
+            BatchUpdateDocumentRequest(
+                requests=[Request.model_validate(r) for r in requests]
+            )
+        )
+        return result.model_dump(by_alias=True, exclude_none=True)
 
     async def list_comments(self, _file_id: str) -> list[dict]:
         return []
@@ -275,15 +286,16 @@ async def test_composite_transport_mock_error():
     # (for testing error handling)
     class PermissiveRealTransport:
         def __init__(self, document: dict) -> None:
-            self.mock_api = MockGoogleDocsAPI(document)
+            self.mock_api = MockGoogleDocsAPI(Document.model_validate(document))
             self.document_id = document["documentId"]
 
         async def get_document(self, _document_id: str) -> DocumentData:
             response = self.mock_api.get()
+            raw = response.model_dump(by_alias=True, exclude_none=True)
             return DocumentData(
-                document_id=response["documentId"],
-                title=response["title"],
-                raw=response,
+                document_id=response.document_id,
+                title=response.title,
+                raw=raw,
             )
 
         async def batch_update(self, _document_id: str, _requests: list[dict]) -> dict:
