@@ -324,7 +324,8 @@ class TestGoldenRoundTrip:
         serialize(original_doc, output_dir)
 
         # Step 2: XML folder → Document (deserialize from disk)
-        roundtrip_doc = deserialize(output_dir)
+        roundtrip_bundle = deserialize(output_dir)
+        roundtrip_doc = roundtrip_bundle.document
 
         # Step 3: Compare
         original_norm = _normalize_doc(original_doc)
