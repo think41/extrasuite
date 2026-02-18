@@ -8,6 +8,7 @@ Usage:
     extrasuite script   pull|diff|push|create|lint
     extrasuite gmail    compose
     extrasuite calendar view
+    extrasuite contacts sync|search|touch
 """
 
 from __future__ import annotations
@@ -725,6 +726,63 @@ def cmd_gmail_edit_draft(args: Any) -> None:
     print(f"Draft updated (id: {args.draft_id})")
 
 
+# --- Contacts commands ---
+
+
+def cmd_contacts_sync(args: Any) -> None:
+    """Sync Google Contacts to local DB."""
+    from extrasuite.client.contacts import _CONTACTS_SCOPES, sync
+
+    access_token = _get_oauth_token(
+        args,
+        scopes=_CONTACTS_SCOPES,
+        reason="Sync Google Contacts",
+    )
+    people_count, other_count = sync(access_token, verbose=True)
+    print(f"Synced {people_count} contacts and {other_count} other contacts.")
+
+
+def cmd_contacts_search(args: Any) -> None:
+    """Search local contacts DB."""
+    from extrasuite.client.contacts import _DB_PATH, _is_stale, _open_db, search
+
+    queries: list[str] = args.queries
+    if not queries:
+        print("No search queries provided.", file=sys.stderr)
+        sys.exit(1)
+
+    # Check staleness before prompting for auth — avoids browser popup when not needed
+    needs_sync = not _DB_PATH.exists()
+    if not needs_sync:
+        needs_sync = _is_stale(_open_db())
+
+    token = None
+    if needs_sync:
+        from extrasuite.client.contacts import _CONTACTS_SCOPES
+
+        token = _get_oauth_token(
+            args,
+            scopes=_CONTACTS_SCOPES,
+            reason="Sync Google Contacts",
+        )
+
+    results = search(queries, token=token, auto_sync=needs_sync)
+    print(json.dumps(results, indent=2))
+
+
+def cmd_contacts_touch(args: Any) -> None:
+    """Record that these email addresses were contacted."""
+    from extrasuite.client.contacts import touch
+
+    emails: list[str] = args.emails
+    if not emails:
+        print("No email addresses provided.", file=sys.stderr)
+        sys.exit(1)
+
+    touch(emails)
+    print(f"Recorded interaction with {len(emails)} contact(s).")
+
+
 # --- Calendar commands ---
 
 
@@ -1156,6 +1214,46 @@ def build_parser() -> Any:
     )
     sp.add_argument("topic", nargs="?", help="Topic name (omit to list all)")
 
+    # --- contacts ---
+    contacts_parser = subparsers.add_parser(
+        "contacts",
+        help="Google Contacts operations (sync, search, touch)",
+        formatter_class=argparse.RawDescriptionHelpFormatter,
+    )
+    contacts_sub = contacts_parser.add_subparsers(dest="subcommand")
+
+    contacts_sub.add_parser(
+        "sync",
+        help="Sync contacts from Google to local DB",
+        parents=[auth_parent],
+        formatter_class=argparse.RawDescriptionHelpFormatter,
+    )
+
+    sp = contacts_sub.add_parser(
+        "search",
+        help="Search local contacts (auto-syncs if needed)",
+        parents=[auth_parent],
+        formatter_class=argparse.RawDescriptionHelpFormatter,
+    )
+    sp.add_argument(
+        "queries",
+        nargs="+",
+        metavar="QUERY",
+        help='One or more search strings, e.g. "Alice company" "Bob corp"',
+    )
+
+    sp = contacts_sub.add_parser(
+        "touch",
+        help="Record that these email addresses were contacted",
+        formatter_class=argparse.RawDescriptionHelpFormatter,
+    )
+    sp.add_argument(
+        "emails",
+        nargs="+",
+        metavar="EMAIL",
+        help="Email addresses to mark as contacted",
+    )
+
     return parser
 
 
@@ -1186,6 +1284,9 @@ _COMMANDS: dict[tuple[str, str | None], Any] = {
     ("gmail", "compose"): cmd_gmail_compose,
     ("gmail", "edit-draft"): cmd_gmail_edit_draft,
     ("calendar", "view"): cmd_calendar_view,
+    ("contacts", "sync"): cmd_contacts_sync,
+    ("contacts", "search"): cmd_contacts_search,
+    ("contacts", "touch"): cmd_contacts_touch,
     ("sheet", "help"): cmd_module_help,
     ("slide", "help"): cmd_module_help,
     ("form", "help"): cmd_module_help,
