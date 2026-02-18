@@ -654,6 +654,20 @@ def _process_inner_gap(
 
         return combined
 
+    # When replacing paragraphs (both deletes and adds present, no table
+    # boundary special-casing), protect the trailing \n of the last deleted
+    # paragraph.  Deleting a paragraph's \n merges it with the next element,
+    # destroying its paragraph style (e.g. HEADING_1 → NORMAL_TEXT).  By
+    # keeping the \n in place we preserve the paragraph structure and style of
+    # the last replaced paragraph.  The matching trailing \n is then stripped
+    # from the inserted text so no extra empty paragraph is created.
+    protect_para_newline = (
+        bool(real_adds)
+        and not right_is_table
+        and last_del_el is not None
+        and _is_paragraph(last_del_el)
+    )
+
     # --- DELETE phase ---
     if real_deletes:
         assert first_del_el is not None
@@ -662,6 +676,8 @@ def _process_inner_gap(
         delete_end = _el_end(last_del_el)
         if right_is_table:
             delete_end = delete_end - 1  # protect \n before table
+        elif protect_para_newline:
+            delete_end = delete_end - 1  # protect paragraph's own \n
         if delete_start < delete_end:
             requests.append(
                 _make_delete_range(delete_start, delete_end, segment_id, tab_id)
@@ -693,8 +709,9 @@ def _process_inner_gap(
         else:
             # Pure paragraph adds — concatenate text (original Phase 1 logic)
             combined_text = _collect_add_text(real_adds)
-            if right_is_table:
-                # The \n before the table is preserved, so strip trailing \n
+            if right_is_table or protect_para_newline:
+                # The \n is preserved in the doc; strip it from the insert to
+                # avoid creating an unwanted extra empty paragraph.
                 combined_text = combined_text.rstrip("\n")
             if combined_text:
                 requests.append(
