@@ -62,6 +62,16 @@ def _api_request(
 # ---------------------------------------------------------------------------
 
 
+def create_file_via_drive(token: str, title: str, mime_type: str) -> dict[str, Any]:
+    """Create a Google Workspace file via Drive API. Returns a File resource with 'id'."""
+    return _api_request(
+        "https://www.googleapis.com/drive/v3/files",
+        token,
+        method="POST",
+        body={"name": title, "mimeType": mime_type},
+    )
+
+
 def create_spreadsheet(token: str, title: str) -> dict[str, Any]:
     """Create a new Google Sheet. Returns the Sheets API response."""
     return _api_request(

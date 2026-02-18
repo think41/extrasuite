@@ -145,6 +145,15 @@ Three packages are published to PyPI independently using tag-based releases with
 
 **Trusted publishing:** Configured on PyPI to trust GitHub Actions. No API tokens needed - authentication uses OIDC with package-specific GitHub environments (`extrasuite`, `extrasheet`, `extraslide`).
 
+## OAuth Delegation Scopes
+
+The server only allows a specific set of OAuth delegation scopes. When calling `get_oauth_token()`, only request these scopes:
+
+- `gmail.compose` - Create Gmail drafts
+- `calendar` - Read/write Google Calendar
+- `script.projects` - Google Apps Script
+- `drive.file` - Access Drive files created by the app
+
 ## Skills
 
 Agent skills are markdown files (SKILL.md) that teach agents how to use extrasuite. Skills are distributed by the server from the `server/skills/` directory. See https://agentskills.io/home for the agent skills standard.
