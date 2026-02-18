@@ -20,8 +20,10 @@ After push, always re-pull before making more changes.
 
 ## document.xml Format
 
-Semantic HTML-like XML. Block elements: <p>, <h1>-<h6>, <title>, <subtitle>,
-<li>, <table>, <tr>, <td>. Inline: <b>, <i>, <u>, <s>, <a href>, <span class>.
+Semantic HTML-like XML. A document contains one or more tabs. Each tab has a
+<body> and optional <header> and <footer>. Block elements inside body/header/
+footer: <p>, <h1>-<h6>, <title>, <subtitle>, <li>, <table>, <tr>, <td>.
+Inline: <b>, <i>, <u>, <s>, <a href>, <span class>.
 
 ```xml
 <doc id="DOCUMENT_ID" revision="REVISION_ID">
@@ -32,8 +34,41 @@ Semantic HTML-like XML. Block elements: <p>, <h1>-<h6>, <title>, <subtitle>,
       <li type="bullet" level="0">First bullet</li>
       <li type="bullet" level="1">Nested bullet</li>
     </body>
+    <header id="h.abc" class="_base">
+      <p>Document Title</p>
+    </header>
+    <footer id="f.abc" class="_base">
+      <p>(c) 2026 My Company</p>
+    </footer>
   </tab>
 </doc>
+```
+
+## Tabs, Headers & Footers
+
+**Adding a new tab:** Add a <tab> element with a unique id and title before </doc>.
+The id can be any short string not already used (e.g. t.summary, t.newtab).
+
+**Adding a header/footer to an existing tab:** Add <header> and/or <footer>
+elements inside the <tab>, after </body>. Provide any placeholder id — Google
+assigns the real id on push and the re-pulled file will have the real id.
+
+**Headers and footers support the same block elements as <body>.**
+
+```xml
+<!-- New tab with header and footer -->
+<tab id="t.summary" title="Summary" class="_base">
+  <body>
+    <h1>Summary</h1>
+    <p>Content here.</p>
+  </body>
+  <header id="h.new" class="_base">
+    <p><b>My Document Title</b></p>
+  </header>
+  <footer id="f.new" class="_base">
+    <p>(c) 2026 My Company</p>
+  </footer>
+</tab>
 ```
 
 ## Critical Rules
@@ -42,6 +77,7 @@ Semantic HTML-like XML. Block elements: <p>, <h1>-<h6>, <title>, <subtitle>,
   Every <td> must contain at least one <p>, even if empty
   XML-escape special characters: &amp; &lt; &gt; &quot;
   <hr/>, <image/>, <autotext/> are read-only - cannot add or remove
+  After a list, add <p></p> before a heading to break out of the list context
 
 ## Supported Block Tags
 
