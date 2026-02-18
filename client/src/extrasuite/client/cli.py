@@ -509,19 +509,11 @@ def cmd_doc_push(args: Any) -> None:
 
 # --- Create commands ---
 
-_CREATE_SCOPES: dict[str, list[str]] = {
-    "sheet": ["spreadsheets", "drive"],
-    "slide": ["presentations", "drive"],
-    "doc": ["documents", "drive"],
-    "form": ["forms.body", "drive"],
-}
-
-_CREATE_FN_KEY: dict[str, tuple[str, str]] = {
-    # (google_api function name, response key for file id)
-    "sheet": ("create_spreadsheet", "spreadsheetId"),
-    "slide": ("create_presentation", "presentationId"),
-    "doc": ("create_document", "documentId"),
-    "form": ("create_form", "formId"),
+_CREATE_MIME_TYPES: dict[str, str] = {
+    "sheet": "application/vnd.google-apps.spreadsheet",
+    "slide": "application/vnd.google-apps.presentation",
+    "doc": "application/vnd.google-apps.document",
+    "form": "application/vnd.google-apps.form",
 }
 
 _FILE_URL_PATTERNS: dict[str, str] = {
@@ -534,9 +526,8 @@ _FILE_URL_PATTERNS: dict[str, str] = {
 
 def _cmd_create(file_type: str, args: Any) -> None:
     """Create a Google file and share it with the service account."""
-    import extrasuite.client.google_api as gapi
     from extrasuite.client import CredentialsManager
-    from extrasuite.client.google_api import share_file
+    from extrasuite.client.google_api import create_file_via_drive, share_file
 
     manager = CredentialsManager(**_auth_kwargs(args))
 
@@ -544,18 +535,16 @@ def _cmd_create(file_type: str, args: Any) -> None:
     sa_token = manager.get_token()
     sa_email = sa_token.service_account_email
 
-    # Get OAuth token for creating and sharing
-    scopes = _CREATE_SCOPES[file_type]
+    # Get OAuth token with drive.file scope (only allowed drive scope)
     oauth_token = manager.get_oauth_token(
-        scopes=scopes,
+        scopes=["drive.file"],
         reason=f"Create {file_type} and share with service account",
     )
 
-    # Create the file
-    fn_name, id_key = _CREATE_FN_KEY[file_type]
-    create_fn = getattr(gapi, fn_name)
-    result = create_fn(oauth_token.access_token, args.title)
-    file_id = result[id_key]
+    # Create the file via Drive API
+    mime_type = _CREATE_MIME_TYPES[file_type]
+    result = create_file_via_drive(oauth_token.access_token, args.title, mime_type)
+    file_id = result["id"]
 
     # Share with service account
     share_file(oauth_token.access_token, file_id, sa_email)
@@ -649,7 +638,7 @@ def cmd_calendar_view(args: Any) -> None:
     time_min, time_max = parse_time_value(args.when)
     access_token = _get_oauth_token(
         args,
-        scopes=["calendar.readonly"],
+        scopes=["calendar"],
         reason="View calendar events",
     )
 
