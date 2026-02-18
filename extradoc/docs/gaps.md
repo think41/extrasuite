@@ -1,5 +1,7 @@
 # ExtraDoc — Known Bugs & Root Cause Analysis
 
+> **STALE — Do not use.** This document catalogues bugs in the legacy pipeline (`xml_converter.py`, `engine.py`, `walker.py`). For gaps in the current reconcile-based pipeline, see `docs/reconciliation-gaps.md`.
+
 **Last Updated:** 2026-02-09
 **Test Document:** https://docs.google.com/document/d/1JgCnmlnTuV7SUwuF0_xXIi101gmK5vfmjkUKuGdrams/edit
 **Test Method:** Created a comprehensive document exercising all features (title/subtitle, h1-h6, inline formatting, 5 tables with cell styles/column widths/colspan, 6 list types with nesting, footnotes, header/footer, 2 tabs, page break, column break, code block, unicode/emoji). Pushed via extradoc, re-pulled, and compared.

@@ -1,30 +1,30 @@
 ## Serde Package — Document ↔ XML Conversion
 
-Bidirectional converter between Google Docs API `Document` objects and an agent-friendly XML format. Agents read and write XML without needing to know the verbose JSON structure or internal rules of the Google Docs API.
+Bidirectional converter between Google Docs API `Document` objects and the on-disk XML folder. This is the canonical way to read and write the XML representation of a document.
 
-## Role in the Pull/Push Workflow
+**On-disk format spec:** `docs/on-disk-format.md` — authoritative reference for the folder structure, file names, and XML grammar.
 
-```
-pull:  API → Document → serde.serialize() → folder (XMLs + pristine.zip)
-edit:  agent modifies XML files
-diff:  pristine XML → serde.deserialize() → base Document
-       edited XML   → serde.deserialize() → desired Document
-       reconcile(base, desired) → list[BatchUpdateDocumentRequest]
-push:  sequentially execute each BatchUpdateDocumentRequest
-```
+## Public API (`__init__.py`)
+
+| Function | Purpose |
+|----------|---------|
+| `serialize(doc, path)` | Write `Document` → folder of XML files |
+| `deserialize(folder)` | Read folder → `Document` (no indices) |
+| `from_document(doc)` | Convert `Document` → `(IndexXml, dict[folder, TabFiles])` without I/O |
+| `to_document(tabs, ...)` | Convert `dict[folder, TabFiles]` → `Document` without I/O |
+
+Both `deserialize` and `to_document` return a `Document` without indices. Call `reindex_document()` from `reconcile._core` if indices are needed.
 
 ## Consistency vs Accuracy
 
-The XML→Document conversion does NOT need to perfectly reproduce the original API Document. It needs to be **consistent**: when both the base and desired Documents go through the same `XML→Document` path, any systematic bias cancels out. The reconciler only sees the delta.
+The `XML → Document` path does not need to perfectly reproduce the API's `Document`. It needs to be **consistent**: both the base and desired `Document` objects go through the same path, so any systematic bias cancels out in the reconciler's diff.
 
-For example, if `direction: LEFT_TO_RIGHT` is dropped on synthetic trailing paragraphs, it's dropped in **both** base and desired — so the reconciler sees no difference and generates no request for it.
-
-This matters for:
-- **TOC content** — read-only, agents can't edit it, both sides have the same lossy representation
+Fields where accuracy does NOT matter:
+- **TOC content** — read-only, both sides have the same lossy representation
 - **Synthetic trailing paragraphs** — auto-stripped on serialize, auto-added on deserialize
-- **Default/empty values** like `avoidWidowAndOrphan: False` — absent and false are semantically equivalent
+- **Default/empty values** — `avoidWidowAndOrphan: False` and absent are equivalent
 
-The only fields where accuracy matters are ones **the agent is expected to change** in the XML.
+Fields where accuracy DOES matter: anything the agent is expected to change in the XML.
 
 ## Key Files
 
@@ -35,32 +35,14 @@ The only fields where accuracy matters are ones **the agent is expected to chang
 | `_models.py` | — | Dataclass definitions (`TabXml`, `ParagraphXml`, `TabFiles`, etc.) |
 | `_styles.py` | Both | Style extraction, resolution, and CSS-like class system |
 | `_tab_extras.py` | Both | Per-tab extras: `DocStyleXml`, `NamedStylesXml`, `InlineObjectsXml`, etc. |
-| `_index.py` | Document → XML | Builds the `index.xml` heading outline |
+| `_index.py` | Document → XML | Builds `index.xml` heading outline |
 | `_utils.py` | — | Shared utilities (color conversion, dimension parsing) |
-| `__init__.py` | — | Public API: `serialize`, `deserialize`, `from_document`, `to_document` |
-
-## Per-Tab Folder Structure
-
-```
-<tab_folder>/
-  document.xml          # Content: paragraphs, tables, headers, footers, footnotes
-  styles.xml            # Factorized CSS-like style classes
-  docstyle.xml          # DocumentStyle (margins, page size, etc.) — JSON-in-XML
-  namedstyles.xml       # NamedStyles (NORMAL_TEXT, HEADING_1, etc.) — JSON-in-XML
-  objects.xml           # InlineObjects (images, etc.) — JSON-in-XML
-  positionedObjects.xml # PositionedObjects — JSON-in-XML
-  namedranges.xml       # NamedRanges — JSON-in-XML
-```
-
-Only `document.xml` and `styles.xml` are always present. The extras are written only when the tab has data for them.
+| `__init__.py` | — | Public API |
 
 ## What the Conversion Handles Automatically
 
-### Trailing newlines on paragraphs
-Every paragraph in the Google Docs model ends with `\n`. On output (`_to_xml.py`), trailing `\n` is stripped from text runs. On input (`_from_xml.py`), a `\n` text run is appended to every paragraph.
+**Trailing newlines:** Every paragraph ends with `\n` in the API. On serialize, trailing `\n` is stripped. On deserialize, a `\n` text run is appended to every paragraph.
 
-### Trailing empty paragraphs on segments
-Every segment (body, header, footer, footnote, table cell) must end with a paragraph in the Google Docs model. When a segment ends with a non-paragraph element (table, TOC, section break) or is empty, the API requires a synthetic empty paragraph. On output, these are stripped so agents don't see them. On input, they are auto-added if needed.
+**Trailing empty paragraphs:** Every segment must end with a paragraph in the API. Synthetic empty trailing paragraphs are stripped on serialize and auto-added on deserialize.
 
-### Table cell defaults
-The API returns default values on every cell (`columnSpan: 1`, `rowSpan: 1`, `backgroundColor: {}`). These are not stored in XML but are restored during deserialization to match API expectations.
+**Table cell defaults:** The API returns `columnSpan: 1`, `rowSpan: 1`, `backgroundColor: {}` on every cell. These are omitted from XML and restored on deserialize.

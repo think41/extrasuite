@@ -1,5 +1,7 @@
 # ExtraDoc Diff Specification
 
+> **STALE — Do not use.** This document describes the legacy diff engine (`engine.py`, `parser.py`, `differ.py`, `walker.py`). The active diff pipeline is `reconcile(base, desired)` in `src/extradoc/reconcile/`. See `CLAUDE.md` for the current architecture.
+
 ## 1. Document Model
 
 A Google Doc has the following hierarchy:

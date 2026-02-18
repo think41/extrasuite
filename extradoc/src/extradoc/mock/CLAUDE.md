@@ -1,23 +1,35 @@
 # Mock Google Docs API
 
-A pure-function mock of the [Google Docs batchUpdate API](../../../docs/googledocs/api/): given an existing document + a `batchUpdate` request, it produces the new document state. See `MockGoogleDocsAPI` in `api.py` for the interface (`get()` and `batch_update()`).
+A pure-function mock of the [Google Docs batchUpdate API](../../../docs/googledocs/api/): given a document dict + a list of request dicts, it produces the updated document state.
 
-## Status: Work in Progress
+```python
+from extradoc.mock.api import MockGoogleDocsAPI
 
-**61/61 test scenarios pass.** We test by sending the same `batchUpdate` request to both Google's real API and our mock via `CompositeTransport` (see `composite_transport.py`), then diffing the output. IDs are excluded from comparison. When the real API returns 400, the mock must also reject the request — `CompositeTransport` verifies this. A small number of scenarios pass via provenance leniency (B/I/U-only textStyle and bullet.textStyle divergences, and run consolidation differences are tolerated).
+mock = MockGoogleDocsAPI(doc_dict)          # initialize with document as dict
+response = mock.batch_update(request_dicts) # returns {"replies": [...]}
+result = mock.get()                         # returns updated document as dict
+```
 
+**Used by `reconcile.verify()`** — which runs batches sequentially with ID resolution and compares the result against the desired `Document`.
+
+## Status
+
+**61/61 test scenarios pass** against the real Google Docs API via `CompositeTransport`. A small number pass via provenance leniency (B/I/U-only textStyle divergences and run consolidation differences are tolerated — see Known Limitations).
+
+To run scenarios against a live document:
 ```bash
 cd extradoc
 uv run python scripts/test_mock_scenarios.py "https://docs.google.com/document/d/<ID>/edit"
 ```
+Mismatch logs are saved to `mismatch_logs/scenarios/scenario_NN/`.
 
-The script generates 61 diverse `batchUpdate` scenarios (insert text, apply styles, table operations, etc.). In principle, any `batchUpdate` request can be tested this way — the mock could be fuzz-tested by generating random valid requests.
+## How It Works
 
-Mismatch logs are saved to `mismatch_logs/scenarios/scenario_NN/` for debugging.
+`batch_update()` processes requests sequentially. For each request, it dispatches to a handler, then runs `reindex_and_normalize_all_tabs()` from `reindex.py`. **Handlers only modify content structure — they never compute indices.** The centralized reindex pass walks all document content and assigns correct UTF-16 indices from actual text sizes.
 
 ## Style Provenance Tracking (`__explicit__`)
 
-The mock tracks which textStyle properties were set via `updateTextStyle` using an `__explicit__` metadata key (a sorted list of field names) stored in each textStyle dict. This key is internal — `get()` strips it before returning.
+The mock tracks which `textStyle` properties were explicitly set via `updateTextStyle`, using an `__explicit__` metadata key (sorted list of field names) stored in each textStyle dict. This key is internal — `get()` strips it before returning.
 
 **How it flows:**
 - `updateTextStyle` → adds updated fields to `__explicit__` on affected runs
@@ -27,30 +39,14 @@ The mock tracks which textStyle properties were set via `updateTextStyle` using 
 - `createParagraphBullets` → copies italic to `bullet.textStyle` only if in `__explicit__`
 - Run consolidation (delete) → ignores `__explicit__` for equality, merges (union) when consolidating
 
-## Known Limitations (tolerated via provenance leniency)
+## Known Limitations
 
-The mock passes all 61 scenarios, but a few pass via **provenance leniency** in `CompositeTransport._documents_match()`. These tolerate:
+The mock passes all 61 scenarios but some rely on **provenance leniency** in `CompositeTransport._documents_match()`:
 
-1. **B/I/U-only textStyle divergences**: One side has `{bold: true}`, the other `{}` — on `textRun.textStyle` or `bullet.textStyle`
-2. **Run consolidation divergences**: Mock merges adjacent same-style runs that the real API keeps separate (same text content, same styles, different run boundaries)
+1. **B/I/U-only textStyle divergences**: `{bold: true}` vs `{}` on `textRun.textStyle` or `bullet.textStyle`
+2. **Run consolidation divergences**: Mock merges adjacent same-style runs that the real API keeps separate
 
-### Root cause
-
-The real Google Docs API tracks **full lifecycle provenance** — whether each style property on each run was set by the user in the UI, via `updateTextStyle`, or inherited during `insertText`. This provenance survives across API calls indefinitely.
-
-The mock only tracks provenance for styles set via `updateTextStyle` during its session (via the `__explicit__` key). Styles present when the mock is constructed have no provenance info.
-
-### When does this matter in practice?
-
-These divergences only occur in **multi-operation batchUpdate requests** where:
-1. Text is inserted into an already-styled run (inheriting styles), AND
-2. A subsequent operation in the same batch queries style provenance (heading, link insert, or bullet creation)
-
-Single-operation requests and multi-operation requests that don't combine insertText with provenance-sensitive operations are unaffected.
-
-## How It Works
-
-`MockGoogleDocsAPI.batch_update()` processes requests sequentially. For each request, it dispatches to a handler (see `_process_request()` in `api.py` → handler map), then runs `reindex_and_normalize_all_tabs()` from `reindex.py`. **Handlers only modify content structure — they never compute indices.** After each handler, the centralized reindex pass walks all document content and assigns correct UTF-16 indices from actual text sizes. This is the key architectural invariant.
+**Root cause:** The real API tracks full lifecycle provenance (user UI, `updateTextStyle`, `insertText` inheritance) indefinitely. The mock only tracks provenance for styles set via `updateTextStyle` in the current session. These divergences only occur in multi-operation batches combining `insertText` with a provenance-sensitive operation (heading, link insert, or bullet creation) in the same batch.
 
 ## Module Guide
 
@@ -58,15 +54,15 @@ Single-operation requests and multi-operation requests that don't combine insert
 |--------|-------------------|
 | `api.py` | Entry point. Request dispatch. `_strip_explicit_keys()` removes `__explicit__` from `get()` output. |
 | `reindex.py` | Index computation bugs. `reindex_segment()` walks content and assigns `startIndex`/`endIndex`. `normalize_segment()` splits text runs at `\n` boundaries. |
-| `text_ops.py` | `insertText` or `deleteContentRange` bugs. `_strip_link_style()` uses `__explicit__` for link insertion. Consolidation uses `styles_equal_ignoring_explicit()`. |
+| `text_ops.py` | `insertText` or `deleteContentRange` bugs. `_strip_link_style()` for link insertion. Consolidation logic. |
 | `style_ops.py` | `updateTextStyle` (records `__explicit__`) or `updateParagraphStyle` (provenance-aware heading clearing). |
-| `bullet_ops.py` | `createParagraphBullets` (copies italic when in `__explicit__`) / `deleteParagraphBullets`. |
-| `table_ops.py` | `insertTable`, `insertTableRow/Column`, `deleteTableRow/Column` bugs. |
-| `segment_ops.py` | `createHeader/Footer/Footnote`, `addDocumentTab`, `deleteTab` bugs. |
-| `navigation.py` | Finding elements by index (`get_tab`, `get_segment`, `find_table_at_index`, `get_paragraphs_in_range`). |
+| `bullet_ops.py` | `createParagraphBullets` / `deleteParagraphBullets`. |
+| `table_ops.py` | `insertTable`, `insertTableRow/Column`, `deleteTableRow/Column`. |
+| `segment_ops.py` | `createHeader/Footer/Footnote`, `addDocumentTab`, `deleteTab`. |
+| `navigation.py` | Finding elements by index. |
 | `validation.py` | Range validation, structure tracking. |
-| `stubs.py` | Unimplemented handlers that return `{}` (merge cells, inline image, page break, etc.). |
-| `utils.py` | Shared helpers: `styles_equal_ignoring_explicit()`, `merge_explicit_keys()`, `table_cell_paragraph_style()`, `make_empty_cell()`, UTF-16 offset calculation. |
+| `stubs.py` | Unimplemented handlers that return `{}`. |
+| `utils.py` | Shared helpers: `styles_equal_ignoring_explicit()`, `merge_explicit_keys()`, UTF-16 offset calculation. |
 
 ## Key References
 

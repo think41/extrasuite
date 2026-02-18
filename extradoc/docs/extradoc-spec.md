@@ -1,5 +1,7 @@
 # ExtraDoc Format Specification
 
+> **STALE — Do not use.** This document describes the legacy XML format produced by the old `xml_converter.py` pipeline. It has been superseded by `docs/on-disk-format.md`, which documents the current serde-based format. The legacy pipeline files (`xml_converter.py`, `engine.py`, `parser.py`, `differ.py`, `walker.py`) are deprecated.
+
 ## 1. Overview
 
 ExtraDoc converts Google Docs to a flat XML format optimized for LLM editing and efficient diff generation.
