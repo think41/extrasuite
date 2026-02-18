@@ -18,6 +18,9 @@ We normalize away:
 - Empty textStyle ({}) on non-textRun elements (horizontalRule, etc.)
 - Float precision differences from hex↔RGB conversion
 - Trailing \\n run merging (both sides do the same thing)
+- bullet.textStyle (API-derived from text content, not stored in XML)
+- inlineObjectElement.textStyle (not represented in XML format)
+- textStyle on \\n-only textRuns (style on trailing newline is not meaningful)
 """
 
 from __future__ import annotations
@@ -27,25 +30,25 @@ import math
 from pathlib import Path
 from typing import Any
 
+import pytest
+
 from extradoc.api_types._generated import Document
 from extradoc.serde import deserialize, from_document, serialize, to_document
 
 GOLDEN_DIR = Path(__file__).parent / "golden"
-DOC_ID = "14nMj7vggV3XR3WQtYcgrABRABjKk-fqw0UQUCP25rhQ"
+
+# Golden file document IDs
+GOLDEN_DOCS = [
+    "14nMj7vggV3XR3WQtYcgrABRABjKk-fqw0UQUCP25rhQ",  # 3-tab doc with tables, HRs
+    "1YicNYwId9u4okuK4uNfWdTEuKyS1QWb1RcnZl9eVyTc",  # 1-tab doc with lists, images
+]
 
 
-def _load_golden_doc() -> Document:
+def _load_golden_doc(doc_id: str) -> Document:
     """Load a golden file and parse it as a Document."""
-    path = GOLDEN_DIR / f"{DOC_ID}.json"
+    path = GOLDEN_DIR / f"{doc_id}.json"
     raw = json.loads(path.read_text())
     return Document.model_validate(raw)
-
-
-def _is_empty_value(v: Any) -> bool:
-    """Check if a value is an empty default that should be stripped."""
-    if v is False:
-        return True
-    return bool(isinstance(v, dict) and not v)
 
 
 def _is_zero_dim(v: Any) -> bool:
@@ -202,6 +205,34 @@ def _merge_trailing_newline_runs(
     return merged
 
 
+def _strip_non_roundtripped(obj: Any) -> Any:
+    """Strip fields that the serde doesn't round-trip.
+
+    - bullet.textStyle: API-derived from text content, not stored in XML
+    - inlineObjectElement.textStyle: not represented in XML format
+    - textStyle on \\n-only textRuns: style on trailing newline is not meaningful
+    """
+    if isinstance(obj, dict):
+        result: dict[str, Any] = {}
+        for k, v in obj.items():
+            # Strip bullet.textStyle (API-computed from text styles)
+            if k == "bullet" and isinstance(v, dict):
+                v = {bk: bv for bk, bv in v.items() if bk != "textStyle"}
+                if not v:
+                    continue
+            # Strip textStyle from inlineObjectElement
+            if k == "inlineObjectElement" and isinstance(v, dict):
+                v = {ek: ev for ek, ev in v.items() if ek != "textStyle"}
+            # Strip textStyle from \n-only textRuns
+            if k == "textRun" and isinstance(v, dict) and v.get("content") == "\n":
+                v = {tk: tv for tk, tv in v.items() if tk != "textStyle"}
+            result[k] = _strip_non_roundtripped(v)
+        return result
+    if isinstance(obj, list):
+        return [_strip_non_roundtripped(item) for item in obj]
+    return obj
+
+
 def _normalize_elements(obj: Any) -> Any:
     """Walk the structure and merge trailing \\n runs in paragraph elements."""
     if isinstance(obj, dict):
@@ -222,6 +253,7 @@ def _normalize_doc(doc: Document) -> dict[str, Any]:
     d.pop("suggestionsViewMode", None)
     d = _normalize(d)
     d = _normalize_elements(d)
+    d = _strip_non_roundtripped(d)
     return d
 
 
@@ -280,11 +312,12 @@ def _collect_diffs(
 
 
 class TestGoldenRoundTrip:
-    """Test round-trip fidelity using a real Google Docs API response."""
+    """Test round-trip fidelity using real Google Docs API responses."""
 
-    def test_document_to_xml_to_document(self, tmp_path: Path) -> None:
+    @pytest.mark.parametrize("doc_id", GOLDEN_DOCS)
+    def test_document_to_xml_to_document(self, tmp_path: Path, doc_id: str) -> None:
         """Document → XML folder → Document produces equivalent Document."""
-        original_doc = _load_golden_doc()
+        original_doc = _load_golden_doc(doc_id)
 
         # Step 1: Document → XML folder (serialize to disk)
         output_dir = tmp_path / "doc"
@@ -301,7 +334,7 @@ class TestGoldenRoundTrip:
 
         if diffs:
             print(f"\n{'=' * 60}")
-            print(f"Found {len(diffs)} differences:")
+            print(f"Found {len(diffs)} differences for {doc_id}:")
             print(f"{'=' * 60}")
             for i, diff in enumerate(diffs[:50], 1):
                 print(f"  {i}. {diff}")
@@ -311,9 +344,10 @@ class TestGoldenRoundTrip:
 
         assert diffs == [], f"Round-trip produced {len(diffs)} differences"
 
-    def test_in_memory_roundtrip(self) -> None:
+    @pytest.mark.parametrize("doc_id", GOLDEN_DOCS)
+    def test_in_memory_roundtrip(self, doc_id: str) -> None:
         """Document → XML models → Document (no file I/O)."""
-        original_doc = _load_golden_doc()
+        original_doc = _load_golden_doc(doc_id)
 
         # Step 1: Document → XML models
         _index, tabs = from_document(original_doc)
@@ -336,7 +370,7 @@ class TestGoldenRoundTrip:
 
         if diffs:
             print(f"\n{'=' * 60}")
-            print(f"Found {len(diffs)} differences:")
+            print(f"Found {len(diffs)} differences for {doc_id}:")
             print(f"{'=' * 60}")
             for i, diff in enumerate(diffs[:50], 1):
                 print(f"  {i}. {diff}")

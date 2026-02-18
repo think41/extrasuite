@@ -30,6 +30,7 @@ from ._models import (
     RowXml,
     SectionBreakXml,
     SegmentXml,
+    SoftBreakNode,
     TabFiles,
     TableXml,
     TabXml,
@@ -384,8 +385,8 @@ def _convert_elements(
             text = text.rstrip("\n")
             if not text:
                 continue
-            node = _convert_text_run(text, pe.text_run.text_style, collector)
-            inlines.append(node)
+            nodes = _split_soft_breaks(text, pe.text_run.text_style, collector)
+            inlines.extend(nodes)
         elif pe.inline_object_element:
             obj_id = pe.inline_object_element.inline_object_id or ""
             inlines.append(ImageNode(object_id=obj_id))
@@ -469,6 +470,27 @@ def _convert_text_run(
     # No sugar tag — TNode with class
     class_name = collector.add_text_style(all_attrs)
     return TNode(text=text, class_name=class_name)
+
+
+def _split_soft_breaks(
+    text: str,
+    text_style: TextStyle | None,
+    collector: StyleCollector,
+) -> list[InlineNode]:
+    """Split text at \\x0b (soft line break) into TNode + SoftBreakNode sequences.
+
+    \\x0b is invalid in XML 1.0, so we represent it as a <br/> element instead.
+    """
+    if "\x0b" not in text:
+        return [_convert_text_run(text, text_style, collector)]
+    parts = text.split("\x0b")
+    result: list[InlineNode] = []
+    for i, part in enumerate(parts):
+        if part:
+            result.append(_convert_text_run(part, text_style, collector))
+        if i < len(parts) - 1:
+            result.append(SoftBreakNode())
+    return result
 
 
 def _convert_table(
