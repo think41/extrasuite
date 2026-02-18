@@ -1,11 +1,13 @@
 """Unified CLI for ExtraSuite.
 
 Usage:
-    extrasuite sheet pull|diff|push|batchUpdate
-    extrasuite slide pull|diff|push
-    extrasuite form  pull|diff|push
-    extrasuite script pull|diff|push|create|lint
-    extrasuite doc   pull|diff|push
+    extrasuite sheet    pull|diff|push|create|batchUpdate
+    extrasuite slide    pull|diff|push|create
+    extrasuite doc      pull|diff|push|create
+    extrasuite form     pull|diff|push|create
+    extrasuite script   pull|diff|push|create|lint
+    extrasuite gmail    compose
+    extrasuite calendar view
 """
 
 from __future__ import annotations
@@ -505,6 +507,162 @@ def cmd_doc_push(args: Any) -> None:
     asyncio.run(_run())
 
 
+# --- Create commands ---
+
+_CREATE_SCOPES: dict[str, list[str]] = {
+    "sheet": ["spreadsheets", "drive"],
+    "slide": ["presentations", "drive"],
+    "doc": ["documents", "drive"],
+    "form": ["forms.body", "drive"],
+}
+
+_CREATE_FN_KEY: dict[str, tuple[str, str]] = {
+    # (google_api function name, response key for file id)
+    "sheet": ("create_spreadsheet", "spreadsheetId"),
+    "slide": ("create_presentation", "presentationId"),
+    "doc": ("create_document", "documentId"),
+    "form": ("create_form", "formId"),
+}
+
+_FILE_URL_PATTERNS: dict[str, str] = {
+    "sheet": "https://docs.google.com/spreadsheets/d/{id}",
+    "slide": "https://docs.google.com/presentation/d/{id}",
+    "doc": "https://docs.google.com/document/d/{id}",
+    "form": "https://docs.google.com/forms/d/{id}",
+}
+
+
+def _cmd_create(file_type: str, args: Any) -> None:
+    """Create a Google file and share it with the service account."""
+    import extrasuite.client.google_api as gapi
+    from extrasuite.client import CredentialsManager
+    from extrasuite.client.google_api import share_file
+
+    manager = CredentialsManager(**_auth_kwargs(args))
+
+    # Get service account email
+    sa_token = manager.get_token()
+    sa_email = sa_token.service_account_email
+
+    # Get OAuth token for creating and sharing
+    scopes = _CREATE_SCOPES[file_type]
+    oauth_token = manager.get_oauth_token(
+        scopes=scopes,
+        reason=f"Create {file_type} and share with service account",
+    )
+
+    # Create the file
+    fn_name, id_key = _CREATE_FN_KEY[file_type]
+    create_fn = getattr(gapi, fn_name)
+    result = create_fn(oauth_token.access_token, args.title)
+    file_id = result[id_key]
+
+    # Share with service account
+    share_file(oauth_token.access_token, file_id, sa_email)
+
+    url = _FILE_URL_PATTERNS[file_type].format(id=file_id)
+    print(f"\nCreated {file_type}: {args.title}")
+    print(f"URL: {url}")
+    print(f"Shared with: {sa_email}")
+    print(f"\nTo edit, run: extrasuite {file_type} pull {url}")
+
+
+def cmd_sheet_create(args: Any) -> None:
+    """Create a new Google Sheet."""
+    _cmd_create("sheet", args)
+
+
+def cmd_slide_create(args: Any) -> None:
+    """Create a new Google Slides presentation."""
+    _cmd_create("slide", args)
+
+
+def cmd_doc_create(args: Any) -> None:
+    """Create a new Google Doc."""
+    _cmd_create("doc", args)
+
+
+def cmd_form_create(args: Any) -> None:
+    """Create a new Google Form."""
+    _cmd_create("form", args)
+
+
+# --- Gmail commands ---
+
+
+def cmd_gmail_compose(args: Any) -> None:
+    """Save an email draft from a markdown file with front matter."""
+    from extrasuite.client.google_api import create_gmail_draft, parse_email_file
+
+    file_path = Path(args.file)
+    if not file_path.exists():
+        print(f"Error: File not found: {file_path}", file=sys.stderr)
+        sys.exit(1)
+
+    content = file_path.read_text()
+    metadata, body = parse_email_file(content)
+
+    if "to" not in metadata:
+        print("Error: 'to' field is required in front matter.", file=sys.stderr)
+        sys.exit(1)
+    if "subject" not in metadata:
+        print("Error: 'subject' field is required in front matter.", file=sys.stderr)
+        sys.exit(1)
+
+    to = [addr.strip() for addr in metadata["to"].split(",")]
+    subject = metadata["subject"]
+    cc = (
+        [addr.strip() for addr in metadata["cc"].split(",")]
+        if metadata.get("cc")
+        else None
+    )
+    bcc = (
+        [addr.strip() for addr in metadata["bcc"].split(",")]
+        if metadata.get("bcc")
+        else None
+    )
+
+    access_token = _get_oauth_token(
+        args,
+        scopes=["gmail.compose"],
+        reason="Save email draft",
+    )
+
+    result = create_gmail_draft(
+        access_token, to=to, subject=subject, body=body, cc=cc, bcc=bcc
+    )
+    draft_id = result.get("id", "")
+    print(f"Draft saved (id: {draft_id})")
+
+
+# --- Calendar commands ---
+
+
+def cmd_calendar_view(args: Any) -> None:
+    """View calendar events for a time range."""
+    from extrasuite.client.google_api import (
+        format_events_markdown,
+        list_calendar_events,
+        parse_time_value,
+    )
+
+    time_min, time_max = parse_time_value(args.when)
+    access_token = _get_oauth_token(
+        args,
+        scopes=["calendar.readonly"],
+        reason="View calendar events",
+    )
+
+    events = list_calendar_events(
+        access_token,
+        calendar_id=args.calendar,
+        time_min=time_min,
+        time_max=time_max,
+    )
+
+    print(format_events_markdown(events))
+
+
 # --- Epilog text ---
 
 _TOP_EPILOG = """\
@@ -661,6 +819,13 @@ def build_parser() -> Any:
     sp.add_argument("requests_file", help="JSON file with requests")
     sp.add_argument("-v", "--verbose", action="store_true", help="Print API response")
 
+    sp = sheet_sub.add_parser(
+        "create",
+        help="Create a new spreadsheet",
+        parents=[auth_parent],
+    )
+    sp.add_argument("title", help="Spreadsheet title")
+
     # --- slide ---
     slide_parser = subparsers.add_parser(
         "slide",
@@ -698,6 +863,13 @@ def build_parser() -> Any:
         formatter_class=argparse.RawDescriptionHelpFormatter,
     )
     sp.add_argument("folder", help="Presentation folder path")
+
+    sp = slide_sub.add_parser(
+        "create",
+        help="Create a new presentation",
+        parents=[auth_parent],
+    )
+    sp.add_argument("title", help="Presentation title")
 
     # --- form ---
     form_parser = subparsers.add_parser(
@@ -741,6 +913,13 @@ def build_parser() -> Any:
     )
     sp.add_argument("folder", help="Form folder path")
     sp.add_argument("-f", "--force", action="store_true", help="Push despite warnings")
+
+    sp = form_sub.add_parser(
+        "create",
+        help="Create a new form",
+        parents=[auth_parent],
+    )
+    sp.add_argument("title", help="Form title")
 
     # --- script ---
     script_parser = subparsers.add_parser(
@@ -833,6 +1012,74 @@ def build_parser() -> Any:
     sp.add_argument("-f", "--force", action="store_true", help="Push despite warnings")
     sp.add_argument("--verify", action="store_true", help="Pull after push to verify")
 
+    sp = doc_sub.add_parser(
+        "create",
+        help="Create a new document",
+        parents=[auth_parent],
+    )
+    sp.add_argument("title", help="Document title")
+
+    # --- gmail ---
+    gmail_parser = subparsers.add_parser(
+        "gmail",
+        help="Gmail operations",
+        formatter_class=argparse.RawDescriptionHelpFormatter,
+    )
+    gmail_sub = gmail_parser.add_subparsers(dest="subcommand")
+
+    sp = gmail_sub.add_parser(
+        "compose",
+        help="Save an email draft from a markdown file",
+        parents=[auth_parent],
+        epilog="""\
+Markdown file format:
+  ---
+  subject: Meeting notes
+  to: alice@example.com, bob@example.com
+  cc: charlie@example.com
+  bcc: dave@example.com
+  ---
+
+  Email body here.
+""",
+        formatter_class=argparse.RawDescriptionHelpFormatter,
+    )
+    sp.add_argument("file", help="Markdown file with front matter")
+
+    # --- calendar ---
+    calendar_parser = subparsers.add_parser(
+        "calendar",
+        help="Google Calendar operations",
+        formatter_class=argparse.RawDescriptionHelpFormatter,
+    )
+    calendar_sub = calendar_parser.add_subparsers(dest="subcommand")
+
+    sp = calendar_sub.add_parser(
+        "view",
+        help="View calendar events",
+        parents=[auth_parent],
+        epilog="""\
+Time range values:
+  today       Events for today (default)
+  tomorrow    Events for tomorrow
+  yesterday   Events for yesterday
+  this-week   Events for the current week (Mon-Sun)
+  next-week   Events for next week (Mon-Sun)
+  YYYY-MM-DD  Events for a specific date
+""",
+        formatter_class=argparse.RawDescriptionHelpFormatter,
+    )
+    sp.add_argument(
+        "--calendar",
+        default="primary",
+        help="Calendar ID (default: primary)",
+    )
+    sp.add_argument(
+        "--when",
+        default="today",
+        help="Time range: today, tomorrow, yesterday, this-week, next-week, or YYYY-MM-DD (default: today)",
+    )
+
     return parser
 
 
@@ -841,13 +1088,16 @@ _COMMANDS: dict[tuple[str, str | None], Any] = {
     ("sheet", "pull"): cmd_sheet_pull,
     ("sheet", "diff"): cmd_sheet_diff,
     ("sheet", "push"): cmd_sheet_push,
+    ("sheet", "create"): cmd_sheet_create,
     ("sheet", "batchUpdate"): cmd_sheet_batchupdate,
     ("slide", "pull"): cmd_slide_pull,
     ("slide", "diff"): cmd_slide_diff,
     ("slide", "push"): cmd_slide_push,
+    ("slide", "create"): cmd_slide_create,
     ("form", "pull"): cmd_form_pull,
     ("form", "diff"): cmd_form_diff,
     ("form", "push"): cmd_form_push,
+    ("form", "create"): cmd_form_create,
     ("script", "pull"): cmd_script_pull,
     ("script", "diff"): cmd_script_diff,
     ("script", "push"): cmd_script_push,
@@ -856,6 +1106,9 @@ _COMMANDS: dict[tuple[str, str | None], Any] = {
     ("doc", "pull"): cmd_doc_pull,
     ("doc", "diff"): cmd_doc_diff,
     ("doc", "push"): cmd_doc_push,
+    ("doc", "create"): cmd_doc_create,
+    ("gmail", "compose"): cmd_gmail_compose,
+    ("calendar", "view"): cmd_calendar_view,
 }
 
 
