@@ -151,15 +151,20 @@ def _reindex_table(table: dict[str, Any], table_start: int) -> int:
 
             row["endIndex"] = current_idx
     else:
-        # Cells don't have explicit startIndex. Detect the overhead
-        # structure from the first cell's content position.
-        first_content = first_cells[0].get("content", [{}])[0] if first_cells else {}
-        first_content_start = first_content.get("startIndex", table_start + 1)
-        # Total overhead from table start to first cell content
-        total_initial_overhead = first_content_start - table_start
+        # Cells don't have explicit startIndex (e.g. serde-deserialized tables).
+        # Always use 1 as the table-start-marker overhead.  The stale absolute
+        # startIndex values that _reindex_cell_content writes into cell content
+        # on a previous pass must NOT be used here: after the table moves in the
+        # body (e.g. due to a prior deleteContentRange), those stored values no
+        # longer reflect the table's new position, causing the overhead to be
+        # computed as (stale_absolute - new_table_start) which is always wrong.
+        current_idx = table_start + 1  # one position for the table start marker
 
-        # Detect inter-cell overhead from gap between end of cell 1 content
-        # and start of cell 2 content
+        # Detect inter-cell gap from adjacent cell content positions.
+        # This reflects the structural marker count between cells (typically 1).
+        # It is safe to read from stale values because the GAP (difference) is
+        # position-independent: it captures how many body-index positions separate
+        # consecutive cell contents, which is a table-structure constant.
         cell_gap = 1  # default
         if len(first_cells) >= 2:
             c1_content = first_cells[0].get("content", [])
@@ -169,9 +174,6 @@ def _reindex_table(table: dict[str, Any], table_start: int) -> int:
                 c2_start = c2_content[0].get("startIndex", 0)
                 if c2_start > c1_end:
                     cell_gap = c2_start - c1_end
-
-        # Now reindex: start from table_start + total_initial_overhead
-        current_idx = table_start + total_initial_overhead
 
         is_first_cell = True
         for row in rows:

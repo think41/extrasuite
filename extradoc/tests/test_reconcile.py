@@ -1300,6 +1300,49 @@ class TestReconcileParagraphStyles:
             and (result[0].requests is None or len(result[0].requests) == 0)
         )
 
+    def test_modify_text_in_heading1_preserves_style(self):
+        """Editing text within HEADING_1 must not destroy the heading style."""
+        base = _make_doc_with_styled_content(
+            _make_styled_para("Original Title", named_style_type="HEADING_1")
+        )
+        desired = _make_doc_with_styled_content(
+            _make_styled_para("Updated Title", named_style_type="HEADING_1")
+        )
+        result = reconcile(base, desired)
+        ok, diffs = verify(base, result, desired)
+        assert ok, f"HEADING_1 style lost after text edit: {diffs}"
+
+    def test_modify_text_in_heading2_preserves_style(self):
+        """Editing text within HEADING_2 must not destroy the heading style."""
+        base = _make_doc_with_styled_content(
+            _make_styled_para("Section One", named_style_type="HEADING_2")
+        )
+        desired = _make_doc_with_styled_content(
+            _make_styled_para("Section Two", named_style_type="HEADING_2")
+        )
+        result = reconcile(base, desired)
+        ok, diffs = verify(base, result, desired)
+        assert ok, f"HEADING_2 style lost after text edit: {diffs}"
+
+    def test_modify_text_in_heading_mixed_document(self):
+        """Text edits to headings in a document with mixed normal and heading
+        paragraphs preserve all heading styles."""
+        base = _make_doc_with_styled_content(
+            _make_styled_para("Introduction", named_style_type="HEADING_1"),
+            "Some body text.",
+            _make_styled_para("Background", named_style_type="HEADING_2"),
+            "More body text.",
+        )
+        desired = _make_doc_with_styled_content(
+            _make_styled_para("Introduction (Revised)", named_style_type="HEADING_1"),
+            "Some body text.",
+            _make_styled_para("Background and Context", named_style_type="HEADING_2"),
+            "More body text.",
+        )
+        result = reconcile(base, desired)
+        ok, diffs = verify(base, result, desired)
+        assert ok, f"Heading styles lost in mixed document: {diffs}"
+
 
 class TestReconcileTextStyles:
     """Tests for text run style changes."""
