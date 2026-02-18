@@ -19,6 +19,74 @@ import sys
 from pathlib import Path
 from typing import Any
 
+_HELP_DIR = Path(__file__).parent / "help"
+
+
+def _load_help(module: str | None = None, command: str | None = None) -> str:
+    """Load help text from bundled markdown files."""
+    if module is None:
+        path = _HELP_DIR / "README.md"
+    elif command is None:
+        path = _HELP_DIR / module / "README.md"
+    else:
+        path = _HELP_DIR / module / f"{command}.md"
+    try:
+        return path.read_text("utf-8").strip()
+    except FileNotFoundError:
+        return ""
+
+
+# Files served by --help; everything else in the module dir is a reference doc.
+_HELP_COMMAND_FILES = frozenset(
+    {
+        "README.md",
+        "pull.md",
+        "push.md",
+        "diff.md",
+        "create.md",
+        "batchupdate.md",
+        "lint.md",
+    }
+)
+
+
+def cmd_module_help(args: Any) -> None:
+    """Show reference documentation for a module."""
+    module = args.command
+    module_dir = _HELP_DIR / module
+    topic: str | None = getattr(args, "topic", None)
+
+    if topic:
+        path = module_dir / f"{topic}.md"
+        if not path.exists():
+            print(f"Unknown topic '{topic}' for '{module}'.", file=sys.stderr)
+            _print_help_topics(module, module_dir)
+            sys.exit(1)
+        print(path.read_text("utf-8"))
+    else:
+        _print_help_topics(module, module_dir)
+
+
+def _print_help_topics(module: str, module_dir: Path) -> None:
+    """List available reference topics for a module."""
+    ref_files = sorted(
+        f for f in module_dir.glob("*.md") if f.name not in _HELP_COMMAND_FILES
+    )
+    if not ref_files:
+        print(f"No reference docs available for '{module}'.")
+        return
+    print(f"Reference docs for '{module}':\n")
+    for f in ref_files:
+        topic = f.stem
+        # First non-empty line after stripping the leading # header
+        description = ""
+        for line in f.read_text("utf-8").splitlines():
+            line = line.strip().lstrip("#").strip()
+            if line:
+                description = line
+                break
+        print(f"  extrasuite {module} help {topic:<26} {description}")
+
 
 def _parse_spreadsheet_id(id_or_url: str) -> str:
     """Extract spreadsheet ID from URL or return as-is."""
@@ -652,84 +720,6 @@ def cmd_calendar_view(args: Any) -> None:
     print(format_events_markdown(events))
 
 
-# --- Epilog text ---
-
-_TOP_EPILOG = """\
-Workflow:
-  1. extrasuite <type> pull <url>    Download to local folder
-  2. Edit files locally
-  3. extrasuite <type> diff <folder> Preview changes (dry run)
-  4. extrasuite <type> push <folder> Apply changes to Google
-
-Authentication:
-  On first use, opens browser for Google login. Cached in ~/.config/extrasuite/.
-  Use --gateway or --service-account to provide credentials explicitly.
-
-Examples:
-  extrasuite sheet pull https://docs.google.com/spreadsheets/d/abc123
-  extrasuite doc push ./1BxiMVs0XRA5nFMdKvBdBZjgmUUqptlbs74OgVE2upms
-"""
-
-_SHEET_PULL_EPILOG = """\
-Folder layout after pull:
-  <spreadsheet_id>/
-    spreadsheet.json        Start here - title, sheets list, data previews
-    <sheet_name>/
-      data.tsv              Tab-separated cell values
-      formula.json          Cell formulas (only if formulas exist)
-      format.json           Cell formatting (only if non-default)
-    .pristine/              Original state (do not edit)
-"""
-
-_SLIDE_PULL_EPILOG = """\
-Folder layout after pull:
-  <presentation_id>/
-    presentation.json       Start here - title, slide list, dimensions
-    styles.json             Theme colors and font styles
-    id_mapping.json         Object ID mapping
-    slides/
-      01/content.sml        Slide content in SML (Slide Markup Language)
-      02/content.sml
-    .pristine/              Original state (do not edit)
-"""
-
-_FORM_PULL_EPILOG = """\
-Folder layout after pull:
-  <form_id>/
-    form.json               The one file to edit - questions, sections, settings
-    .pristine/              Original state (do not edit)
-"""
-
-_SCRIPT_PULL_EPILOG = """\
-Folder layout after pull:
-  <script_id>/
-    project.json            Project metadata and settings
-    Code.js                 Source files (*.js for scripts, *.html for HTML)
-    Utilities.js
-    .pristine/              Original state (do not edit)
-"""
-
-_DOC_PULL_EPILOG = """\
-Folder layout after pull:
-  <document_id>/
-    document.xml            Semantic markup (h1, p, li, table) - edit this
-    styles.xml              Named and paragraph styles
-    comments.xml            Document comments and replies (if any)
-    .pristine/              Original state (do not edit)
-"""
-
-_PUSH_EPILOG = """\
-Compares current files against .pristine/ to generate changes.
-After a successful push, re-pull to get the updated .pristine/ state.
-"""
-
-_DIFF_EPILOG = """\
-Runs locally - no authentication needed, no API calls.
-Compares current files against .pristine/ and outputs batchUpdate JSON to stdout.
-Equivalent to push --dry-run.
-"""
-
-
 # --- Argument Parser ---
 
 
@@ -739,8 +729,7 @@ def build_parser() -> Any:
 
     parser = argparse.ArgumentParser(
         prog="extrasuite",
-        description="ExtraSuite - Edit Google Workspace files with AI agents",
-        epilog=_TOP_EPILOG,
+        description=_load_help(),
         formatter_class=argparse.RawDescriptionHelpFormatter,
     )
     subparsers = parser.add_subparsers(dest="command")
@@ -760,6 +749,7 @@ def build_parser() -> Any:
     sheet_parser = subparsers.add_parser(
         "sheet",
         help="Google Sheets operations",
+        description=_load_help("sheet"),
         formatter_class=argparse.RawDescriptionHelpFormatter,
     )
     sheet_sub = sheet_parser.add_subparsers(dest="subcommand")
@@ -768,7 +758,7 @@ def build_parser() -> Any:
         "pull",
         help="Download a spreadsheet",
         parents=[auth_parent],
-        epilog=_SHEET_PULL_EPILOG,
+        description=_load_help("sheet", "pull"),
         formatter_class=argparse.RawDescriptionHelpFormatter,
     )
     sp.add_argument("url", help="Spreadsheet URL or ID")
@@ -783,8 +773,8 @@ def build_parser() -> Any:
 
     sp = sheet_sub.add_parser(
         "diff",
-        help="Preview changes",
-        epilog=_DIFF_EPILOG,
+        help="Offline debugging tool - show pending changes",
+        description=_load_help("sheet", "diff"),
         formatter_class=argparse.RawDescriptionHelpFormatter,
     )
     sp.add_argument("folder", help="Spreadsheet folder path")
@@ -793,7 +783,7 @@ def build_parser() -> Any:
         "push",
         help="Apply changes",
         parents=[auth_parent],
-        epilog=_PUSH_EPILOG,
+        description=_load_help("sheet", "push"),
         formatter_class=argparse.RawDescriptionHelpFormatter,
     )
     sp.add_argument("folder", help="Spreadsheet folder path")
@@ -801,8 +791,10 @@ def build_parser() -> Any:
 
     sp = sheet_sub.add_parser(
         "batchUpdate",
-        help="Execute raw batchUpdate requests",
+        help="Advanced: execute raw batchUpdate requests (sort, move, etc.)",
         parents=[auth_parent],
+        description=_load_help("sheet", "batchupdate"),
+        formatter_class=argparse.RawDescriptionHelpFormatter,
     )
     sp.add_argument("url", help="Spreadsheet URL or ID")
     sp.add_argument("requests_file", help="JSON file with requests")
@@ -812,13 +804,23 @@ def build_parser() -> Any:
         "create",
         help="Create a new spreadsheet",
         parents=[auth_parent],
+        description=_load_help("sheet", "create"),
+        formatter_class=argparse.RawDescriptionHelpFormatter,
     )
     sp.add_argument("title", help="Spreadsheet title")
+
+    sp = sheet_sub.add_parser(
+        "help",
+        help="Show reference documentation",
+        formatter_class=argparse.RawDescriptionHelpFormatter,
+    )
+    sp.add_argument("topic", nargs="?", help="Topic name (omit to list all)")
 
     # --- slide ---
     slide_parser = subparsers.add_parser(
         "slide",
         help="Google Slides operations",
+        description=_load_help("slide"),
         formatter_class=argparse.RawDescriptionHelpFormatter,
     )
     slide_sub = slide_parser.add_subparsers(dest="subcommand")
@@ -827,7 +829,7 @@ def build_parser() -> Any:
         "pull",
         help="Download a presentation",
         parents=[auth_parent],
-        epilog=_SLIDE_PULL_EPILOG,
+        description=_load_help("slide", "pull"),
         formatter_class=argparse.RawDescriptionHelpFormatter,
     )
     sp.add_argument("url", help="Presentation URL or ID")
@@ -838,8 +840,8 @@ def build_parser() -> Any:
 
     sp = slide_sub.add_parser(
         "diff",
-        help="Preview changes",
-        epilog=_DIFF_EPILOG,
+        help="Offline debugging tool - show pending changes",
+        description=_load_help("slide", "diff"),
         formatter_class=argparse.RawDescriptionHelpFormatter,
     )
     sp.add_argument("folder", help="Presentation folder path")
@@ -848,7 +850,7 @@ def build_parser() -> Any:
         "push",
         help="Apply changes",
         parents=[auth_parent],
-        epilog=_PUSH_EPILOG,
+        description=_load_help("slide", "push"),
         formatter_class=argparse.RawDescriptionHelpFormatter,
     )
     sp.add_argument("folder", help="Presentation folder path")
@@ -857,13 +859,23 @@ def build_parser() -> Any:
         "create",
         help="Create a new presentation",
         parents=[auth_parent],
+        description=_load_help("slide", "create"),
+        formatter_class=argparse.RawDescriptionHelpFormatter,
     )
     sp.add_argument("title", help="Presentation title")
+
+    sp = slide_sub.add_parser(
+        "help",
+        help="Show reference documentation",
+        formatter_class=argparse.RawDescriptionHelpFormatter,
+    )
+    sp.add_argument("topic", nargs="?", help="Topic name (omit to list all)")
 
     # --- form ---
     form_parser = subparsers.add_parser(
         "form",
         help="Google Forms operations",
+        description=_load_help("form"),
         formatter_class=argparse.RawDescriptionHelpFormatter,
     )
     form_sub = form_parser.add_subparsers(dest="subcommand")
@@ -872,7 +884,7 @@ def build_parser() -> Any:
         "pull",
         help="Download a form",
         parents=[auth_parent],
-        epilog=_FORM_PULL_EPILOG,
+        description=_load_help("form", "pull"),
         formatter_class=argparse.RawDescriptionHelpFormatter,
     )
     sp.add_argument("url", help="Form URL or ID")
@@ -887,8 +899,8 @@ def build_parser() -> Any:
 
     sp = form_sub.add_parser(
         "diff",
-        help="Preview changes",
-        epilog=_DIFF_EPILOG,
+        help="Offline debugging tool - show pending changes",
+        description=_load_help("form", "diff"),
         formatter_class=argparse.RawDescriptionHelpFormatter,
     )
     sp.add_argument("folder", help="Form folder path")
@@ -897,7 +909,7 @@ def build_parser() -> Any:
         "push",
         help="Apply changes",
         parents=[auth_parent],
-        epilog=_PUSH_EPILOG,
+        description=_load_help("form", "push"),
         formatter_class=argparse.RawDescriptionHelpFormatter,
     )
     sp.add_argument("folder", help="Form folder path")
@@ -907,13 +919,23 @@ def build_parser() -> Any:
         "create",
         help="Create a new form",
         parents=[auth_parent],
+        description=_load_help("form", "create"),
+        formatter_class=argparse.RawDescriptionHelpFormatter,
     )
     sp.add_argument("title", help="Form title")
+
+    sp = form_sub.add_parser(
+        "help",
+        help="Show reference documentation",
+        formatter_class=argparse.RawDescriptionHelpFormatter,
+    )
+    sp.add_argument("topic", nargs="?", help="Topic name (omit to list all)")
 
     # --- script ---
     script_parser = subparsers.add_parser(
         "script",
         help="Google Apps Script operations",
+        description=_load_help("script"),
         formatter_class=argparse.RawDescriptionHelpFormatter,
     )
     script_sub = script_parser.add_subparsers(dest="subcommand")
@@ -922,7 +944,7 @@ def build_parser() -> Any:
         "pull",
         help="Download a script project",
         parents=[auth_parent],
-        epilog=_SCRIPT_PULL_EPILOG,
+        description=_load_help("script", "pull"),
         formatter_class=argparse.RawDescriptionHelpFormatter,
     )
     sp.add_argument("url", help="Script URL or ID")
@@ -933,8 +955,8 @@ def build_parser() -> Any:
 
     sp = script_sub.add_parser(
         "diff",
-        help="Preview changes",
-        epilog=_DIFF_EPILOG,
+        help="Show which files changed (offline)",
+        description=_load_help("script", "diff"),
         formatter_class=argparse.RawDescriptionHelpFormatter,
     )
     sp.add_argument("folder", help="Script project folder path")
@@ -943,7 +965,7 @@ def build_parser() -> Any:
         "push",
         help="Apply changes",
         parents=[auth_parent],
-        epilog=_PUSH_EPILOG,
+        description=_load_help("script", "push"),
         formatter_class=argparse.RawDescriptionHelpFormatter,
     )
     sp.add_argument("folder", help="Script project folder path")
@@ -953,18 +975,33 @@ def build_parser() -> Any:
         "create",
         help="Create a new script project",
         parents=[auth_parent],
+        description=_load_help("script", "create"),
+        formatter_class=argparse.RawDescriptionHelpFormatter,
     )
     sp.add_argument("title", help="Project title")
     sp.add_argument("output_dir", nargs="?", help="Output directory (default: .)")
     sp.add_argument("--bind-to", help="Google Drive file URL or ID to bind to")
 
-    sp = script_sub.add_parser("lint", help="Lint script files")
+    sp = script_sub.add_parser(
+        "lint",
+        help="Lint script files (offline)",
+        description=_load_help("script", "lint"),
+        formatter_class=argparse.RawDescriptionHelpFormatter,
+    )
     sp.add_argument("folder", help="Script project folder path")
+
+    sp = script_sub.add_parser(
+        "help",
+        help="Show reference documentation",
+        formatter_class=argparse.RawDescriptionHelpFormatter,
+    )
+    sp.add_argument("topic", nargs="?", help="Topic name (omit to list all)")
 
     # --- doc ---
     doc_parser = subparsers.add_parser(
         "doc",
         help="Google Docs operations",
+        description=_load_help("doc"),
         formatter_class=argparse.RawDescriptionHelpFormatter,
     )
     doc_sub = doc_parser.add_subparsers(dest="subcommand")
@@ -973,7 +1010,7 @@ def build_parser() -> Any:
         "pull",
         help="Download a document",
         parents=[auth_parent],
-        epilog=_DOC_PULL_EPILOG,
+        description=_load_help("doc", "pull"),
         formatter_class=argparse.RawDescriptionHelpFormatter,
     )
     sp.add_argument("url", help="Document URL or ID")
@@ -984,8 +1021,8 @@ def build_parser() -> Any:
 
     sp = doc_sub.add_parser(
         "diff",
-        help="Preview changes",
-        epilog=_DIFF_EPILOG,
+        help="Offline debugging tool - show pending changes",
+        description=_load_help("doc", "diff"),
         formatter_class=argparse.RawDescriptionHelpFormatter,
     )
     sp.add_argument("folder", help="Document folder path")
@@ -994,7 +1031,7 @@ def build_parser() -> Any:
         "push",
         help="Apply changes",
         parents=[auth_parent],
-        epilog=_PUSH_EPILOG,
+        description=_load_help("doc", "push"),
         formatter_class=argparse.RawDescriptionHelpFormatter,
     )
     sp.add_argument("folder", help="Document folder path")
@@ -1005,13 +1042,23 @@ def build_parser() -> Any:
         "create",
         help="Create a new document",
         parents=[auth_parent],
+        description=_load_help("doc", "create"),
+        formatter_class=argparse.RawDescriptionHelpFormatter,
     )
     sp.add_argument("title", help="Document title")
+
+    sp = doc_sub.add_parser(
+        "help",
+        help="Show reference documentation",
+        formatter_class=argparse.RawDescriptionHelpFormatter,
+    )
+    sp.add_argument("topic", nargs="?", help="Topic name (omit to list all)")
 
     # --- gmail ---
     gmail_parser = subparsers.add_parser(
         "gmail",
         help="Gmail operations",
+        description=_load_help("gmail"),
         formatter_class=argparse.RawDescriptionHelpFormatter,
     )
     gmail_sub = gmail_parser.add_subparsers(dest="subcommand")
@@ -1020,25 +1067,23 @@ def build_parser() -> Any:
         "compose",
         help="Save an email draft from a markdown file",
         parents=[auth_parent],
-        epilog="""\
-Markdown file format:
-  ---
-  subject: Meeting notes
-  to: alice@example.com, bob@example.com
-  cc: charlie@example.com
-  bcc: dave@example.com
-  ---
-
-  Email body here.
-""",
+        description=_load_help("gmail", "compose"),
         formatter_class=argparse.RawDescriptionHelpFormatter,
     )
     sp.add_argument("file", help="Markdown file with front matter")
+
+    sp = gmail_sub.add_parser(
+        "help",
+        help="Show reference documentation",
+        formatter_class=argparse.RawDescriptionHelpFormatter,
+    )
+    sp.add_argument("topic", nargs="?", help="Topic name (omit to list all)")
 
     # --- calendar ---
     calendar_parser = subparsers.add_parser(
         "calendar",
         help="Google Calendar operations",
+        description=_load_help("calendar"),
         formatter_class=argparse.RawDescriptionHelpFormatter,
     )
     calendar_sub = calendar_parser.add_subparsers(dest="subcommand")
@@ -1047,15 +1092,7 @@ Markdown file format:
         "view",
         help="View calendar events",
         parents=[auth_parent],
-        epilog="""\
-Time range values:
-  today       Events for today (default)
-  tomorrow    Events for tomorrow
-  yesterday   Events for yesterday
-  this-week   Events for the current week (Mon-Sun)
-  next-week   Events for next week (Mon-Sun)
-  YYYY-MM-DD  Events for a specific date
-""",
+        description=_load_help("calendar", "view"),
         formatter_class=argparse.RawDescriptionHelpFormatter,
     )
     sp.add_argument(
@@ -1068,6 +1105,13 @@ Time range values:
         default="today",
         help="Time range: today, tomorrow, yesterday, this-week, next-week, or YYYY-MM-DD (default: today)",
     )
+
+    sp = calendar_sub.add_parser(
+        "help",
+        help="Show reference documentation",
+        formatter_class=argparse.RawDescriptionHelpFormatter,
+    )
+    sp.add_argument("topic", nargs="?", help="Topic name (omit to list all)")
 
     return parser
 
@@ -1098,6 +1142,13 @@ _COMMANDS: dict[tuple[str, str | None], Any] = {
     ("doc", "create"): cmd_doc_create,
     ("gmail", "compose"): cmd_gmail_compose,
     ("calendar", "view"): cmd_calendar_view,
+    ("sheet", "help"): cmd_module_help,
+    ("slide", "help"): cmd_module_help,
+    ("form", "help"): cmd_module_help,
+    ("script", "help"): cmd_module_help,
+    ("doc", "help"): cmd_module_help,
+    ("gmail", "help"): cmd_module_help,
+    ("calendar", "help"): cmd_module_help,
 }
 
 
