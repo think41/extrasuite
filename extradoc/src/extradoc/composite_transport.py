@@ -234,6 +234,40 @@ class MockTransport(Transport):
             result["action"] = action
         return result
 
+    async def edit_comment(
+        self,
+        file_id: str,  # noqa: ARG002
+        comment_id: str,
+        content: str,
+    ) -> dict[str, Any]:
+        """Mock edit_comment — no-op."""
+        return {"id": comment_id, "content": content}
+
+    async def delete_comment(
+        self,
+        file_id: str,
+        comment_id: str,
+    ) -> None:
+        """Mock delete_comment — no-op."""
+
+    async def edit_reply(
+        self,
+        file_id: str,  # noqa: ARG002
+        comment_id: str,  # noqa: ARG002
+        reply_id: str,
+        content: str,
+    ) -> dict[str, Any]:
+        """Mock edit_reply — no-op."""
+        return {"id": reply_id, "content": content}
+
+    async def delete_reply(
+        self,
+        file_id: str,
+        comment_id: str,
+        reply_id: str,
+    ) -> None:
+        """Mock delete_reply — no-op."""
+
     async def close(self) -> None:
         """No-op for mock transport."""
         pass
@@ -460,6 +494,28 @@ class CompositeTransport(Transport):
         return await self.real_transport.create_reply(
             file_id, comment_id, content, action
         )
+
+    async def edit_comment(
+        self, file_id: str, comment_id: str, content: str
+    ) -> dict[str, Any]:
+        """Edit comment using real API only."""
+        return await self.real_transport.edit_comment(file_id, comment_id, content)
+
+    async def delete_comment(self, file_id: str, comment_id: str) -> None:
+        """Delete comment using real API only."""
+        await self.real_transport.delete_comment(file_id, comment_id)
+
+    async def edit_reply(
+        self, file_id: str, comment_id: str, reply_id: str, content: str
+    ) -> dict[str, Any]:
+        """Edit reply using real API only."""
+        return await self.real_transport.edit_reply(
+            file_id, comment_id, reply_id, content
+        )
+
+    async def delete_reply(self, file_id: str, comment_id: str, reply_id: str) -> None:
+        """Delete reply using real API only."""
+        await self.real_transport.delete_reply(file_id, comment_id, reply_id)
 
     async def close(self) -> None:
         """Close both transports."""

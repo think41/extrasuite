@@ -1,8 +1,8 @@
 """Serde module: Document ↔ folder of XML files.
 
 Public API:
-    serialize(doc, output_path) → list[Path]
-    deserialize(folder) → Document
+    serialize(bundle, output_path) → list[Path]   — DocumentWithComments → folder
+    deserialize(folder) → DocumentWithComments     — folder → DocumentWithComments
     from_document(doc) → (IndexXml, dict[folder, TabFiles])
     to_document(tabs, document_id) → Document
 """
@@ -10,6 +10,12 @@ Public API:
 from __future__ import annotations
 
 from typing import TYPE_CHECKING, TypeVar
+
+from extradoc.api_types._generated import Document
+from extradoc.comments._inject import inject_comment_refs, strip_comment_refs
+from extradoc.comments._types import DocumentWithComments, FileComments
+from extradoc.comments._xml import from_xml as comments_from_xml
+from extradoc.comments._xml import to_xml as comments_to_xml
 
 from ._from_xml import tabs_to_document
 from ._index import build_index
@@ -26,8 +32,6 @@ from ._to_xml import document_to_xml
 
 if TYPE_CHECKING:
     from pathlib import Path
-
-    from extradoc.api_types._generated import Document
 
 
 def from_document(
@@ -67,17 +71,28 @@ def to_document(
     return tabs_to_document(tabs, document_id=document_id, title=title)
 
 
-def serialize(doc: Document, output_path: Path) -> list[Path]:
-    """Write Document to folder structure (index.xml + per-tab folders).
+def serialize(bundle: DocumentWithComments | Document, output_path: Path) -> list[Path]:
+    """Write DocumentWithComments (or plain Document) to folder structure.
+
+    When passed a plain Document, creates an empty FileComments and serializes
+    without any comment injection. When passed a DocumentWithComments, injects
+    <comment-ref> tags and writes comments.xml.
 
     Args:
-        doc: The Document to serialize
+        bundle: The DocumentWithComments (or plain Document) to serialize
         output_path: Root directory to write into
 
     Returns:
         List of created file paths
     """
-    index, tabs = from_document(doc)
+    # Normalize to DocumentWithComments
+    if isinstance(bundle, Document):
+        bundle = DocumentWithComments(
+            document=bundle,
+            comments=FileComments(file_id=bundle.document_id or ""),
+        )
+
+    index, tabs = from_document(bundle.document)
     created: list[Path] = []
 
     output_path.mkdir(parents=True, exist_ok=True)
@@ -92,8 +107,12 @@ def serialize(doc: Document, output_path: Path) -> list[Path]:
         tab_dir = output_path / folder
         tab_dir.mkdir(parents=True, exist_ok=True)
 
+        # Serialize document.xml, then inject comment-refs
+        doc_xml_str = tab_files.tab.to_xml_string()
+        doc_xml_str = inject_comment_refs(doc_xml_str, bundle.comments)
+
         doc_path = tab_dir / "document.xml"
-        doc_path.write_text(tab_files.tab.to_xml_string(), encoding="utf-8")
+        doc_path.write_text(doc_xml_str, encoding="utf-8")
         created.append(doc_path)
 
         styles_path = tab_dir / "styles.xml"
@@ -113,29 +132,40 @@ def serialize(doc: Document, output_path: Path) -> list[Path]:
                 extra_path.write_text(extra.to_xml_string(), encoding="utf-8")
                 created.append(extra_path)
 
+    # Write comments.xml at folder root
+    comments_path = output_path / "comments.xml"
+    comments_path.write_text(comments_to_xml(bundle.comments), encoding="utf-8")
+    created.append(comments_path)
+
     return created
 
 
-def deserialize(folder: Path) -> Document:
-    """Read folder structure back into a Document (without indices).
+def deserialize(folder: Path) -> DocumentWithComments:
+    """Read folder structure back into a DocumentWithComments.
+
+    Strips <comment-ref> tags from each tab's document.xml before parsing.
+    Reads comments.xml if present.
 
     Args:
         folder: Root directory containing index.xml and per-tab folders
 
     Returns:
-        Document without indices. Call reindex_document() if needed.
+        DocumentWithComments without indices. Call reindex_document() if needed.
     """
     index_path = folder / "index.xml"
     index = IndexXml.from_xml_string(index_path.read_text(encoding="utf-8"))
 
     tabs: dict[str, TabFiles] = {}
-    # Use all_tabs_flat() to handle nested tabs
     for index_tab in index.all_tabs_flat():
         tab_dir = folder / index_tab.folder
         doc_path = tab_dir / "document.xml"
         styles_path = tab_dir / "styles.xml"
 
-        tab_xml = TabXml.from_xml_string(doc_path.read_text(encoding="utf-8"))
+        # Strip comment-refs before parsing
+        raw_xml = doc_path.read_text(encoding="utf-8")
+        clean_xml = strip_comment_refs(raw_xml)
+
+        tab_xml = TabXml.from_xml_string(clean_xml)
         styles_xml = StylesXml.from_xml_string(styles_path.read_text(encoding="utf-8"))
         tf = TabFiles(tab=tab_xml, styles=styles_xml)
 
@@ -150,12 +180,21 @@ def deserialize(folder: Path) -> Document:
 
         tabs[index_tab.folder] = tf
 
-    return tabs_to_document(
+    document = tabs_to_document(
         tabs,
         document_id=index.id,
         title=index.title,
         revision_id=index.revision,
     )
+
+    # Read comments.xml
+    comments_path = folder / "comments.xml"
+    if comments_path.exists():
+        file_comments = comments_from_xml(comments_path.read_text(encoding="utf-8"))
+    else:
+        file_comments = FileComments(file_id=index.id)
+
+    return DocumentWithComments(document=document, comments=file_comments)
 
 
 _T = TypeVar("_T")

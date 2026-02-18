@@ -134,6 +134,60 @@ class Transport(ABC):
         ...
 
     @abstractmethod
+    async def edit_comment(
+        self, file_id: str, comment_id: str, content: str
+    ) -> dict[str, Any]:
+        """Edit the content of an existing comment.
+
+        Args:
+            file_id: The file identifier
+            comment_id: The comment to edit
+            content: New comment text
+
+        Returns:
+            API response with the updated comment
+        """
+        ...
+
+    @abstractmethod
+    async def delete_comment(self, file_id: str, comment_id: str) -> None:
+        """Delete a comment.
+
+        Args:
+            file_id: The file identifier
+            comment_id: The comment to delete
+        """
+        ...
+
+    @abstractmethod
+    async def edit_reply(
+        self, file_id: str, comment_id: str, reply_id: str, content: str
+    ) -> dict[str, Any]:
+        """Edit the content of an existing reply.
+
+        Args:
+            file_id: The file identifier
+            comment_id: The parent comment
+            reply_id: The reply to edit
+            content: New reply text
+
+        Returns:
+            API response with the updated reply
+        """
+        ...
+
+    @abstractmethod
+    async def delete_reply(self, file_id: str, comment_id: str, reply_id: str) -> None:
+        """Delete a reply.
+
+        Args:
+            file_id: The file identifier
+            comment_id: The parent comment
+            reply_id: The reply to delete
+        """
+        ...
+
+    @abstractmethod
     async def close(self) -> None:
         """Close any open connections."""
         ...
@@ -220,6 +274,35 @@ class GoogleDocsTransport(Transport):
             body["action"] = action
         return await self._post_request(url, body)
 
+    async def edit_comment(
+        self, file_id: str, comment_id: str, content: str
+    ) -> dict[str, Any]:
+        """Edit a comment via Drive API v3 PATCH."""
+        url = f"{DRIVE_API_BASE}/{file_id}/comments/{comment_id}" f"?fields=id,content"
+        body: dict[str, Any] = {"content": content}
+        return await self._patch_request(url, body)
+
+    async def delete_comment(self, file_id: str, comment_id: str) -> None:
+        """Delete a comment via Drive API v3 DELETE."""
+        url = f"{DRIVE_API_BASE}/{file_id}/comments/{comment_id}"
+        await self._delete_request(url)
+
+    async def edit_reply(
+        self, file_id: str, comment_id: str, reply_id: str, content: str
+    ) -> dict[str, Any]:
+        """Edit a reply via Drive API v3 PATCH."""
+        url = (
+            f"{DRIVE_API_BASE}/{file_id}/comments/{comment_id}/replies/{reply_id}"
+            f"?fields=id,content"
+        )
+        body: dict[str, Any] = {"content": content}
+        return await self._patch_request(url, body)
+
+    async def delete_reply(self, file_id: str, comment_id: str, reply_id: str) -> None:
+        """Delete a reply via Drive API v3 DELETE."""
+        url = f"{DRIVE_API_BASE}/{file_id}/comments/{comment_id}/replies/{reply_id}"
+        await self._delete_request(url)
+
     async def _request(self, url: str) -> dict[str, Any]:
         """Make an authenticated GET request."""
         try:
@@ -243,6 +326,30 @@ class GoogleDocsTransport(Transport):
         except httpx.HTTPStatusError as e:
             self._handle_http_error(e)
             raise  # unreachable, but makes type checker happy
+        except httpx.RequestError as e:
+            raise TransportError(f"Network error: {e}") from e
+
+    async def _patch_request(self, url: str, body: dict[str, Any]) -> dict[str, Any]:
+        """Make an authenticated PATCH request."""
+        try:
+            response = await self._client.patch(url, json=body)
+            response.raise_for_status()
+            result: dict[str, Any] = response.json()
+            return result
+        except httpx.HTTPStatusError as e:
+            self._handle_http_error(e)
+            raise
+        except httpx.RequestError as e:
+            raise TransportError(f"Network error: {e}") from e
+
+    async def _delete_request(self, url: str) -> None:
+        """Make an authenticated DELETE request."""
+        try:
+            response = await self._client.delete(url)
+            response.raise_for_status()
+        except httpx.HTTPStatusError as e:
+            self._handle_http_error(e)
+            raise
         except httpx.RequestError as e:
             raise TransportError(f"Network error: {e}") from e
 
@@ -326,6 +433,40 @@ class LocalFileTransport(Transport):
         if action:
             result["action"] = action
         return result
+
+    async def edit_comment(
+        self,
+        file_id: str,  # noqa: ARG002
+        comment_id: str,
+        content: str,
+    ) -> dict[str, Any]:
+        """Mock edit_comment for testing."""
+        return {"id": comment_id, "content": content}
+
+    async def delete_comment(
+        self,
+        file_id: str,
+        comment_id: str,
+    ) -> None:
+        """Mock delete_comment for testing — no-op."""
+
+    async def edit_reply(
+        self,
+        file_id: str,  # noqa: ARG002
+        comment_id: str,  # noqa: ARG002
+        reply_id: str,
+        content: str,
+    ) -> dict[str, Any]:
+        """Mock edit_reply for testing."""
+        return {"id": reply_id, "content": content}
+
+    async def delete_reply(
+        self,
+        file_id: str,
+        comment_id: str,
+        reply_id: str,
+    ) -> None:
+        """Mock delete_reply for testing — no-op."""
 
     async def close(self) -> None:
         """No-op for local file transport."""

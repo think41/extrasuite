@@ -985,8 +985,8 @@ class TestFileRoundTrip:
         assert (output / "Tab_1" / "styles.xml").exists()
 
         # Deserialize and verify
-        doc2 = deserialize(output)
-        _assert_text_content(doc2, ["Title", "Body text", "Bold words"])
+        bundle2 = deserialize(output)
+        _assert_text_content(bundle2.document, ["Title", "Body text", "Bold words"])
 
     def test_styled_file_roundtrip(self, tmp_path: Path) -> None:
         """Styled text survives file round-trip."""
@@ -1013,7 +1013,7 @@ class TestFileRoundTrip:
 
         output = tmp_path / "styled-doc"
         serialize(doc, output)
-        doc2 = deserialize(output)
+        doc2 = deserialize(output).document
 
         tab = doc2.tabs[0]  # type: ignore
         dt = tab.document_tab
