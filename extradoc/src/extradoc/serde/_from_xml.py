@@ -36,6 +36,7 @@ from ._models import (
     PersonNode,
     RichLinkNode,
     SectionBreakXml,
+    SoftBreakNode,
     TabFiles,
     TableXml,
     TNode,
@@ -306,7 +307,7 @@ def _convert_paragraph(
 ) -> Paragraph:
     """Convert a ParagraphXml to a Paragraph."""
     named_style = _TAG_TO_NAMED_STYLE.get(para_xml.tag)
-    if named_style is None and para_xml.tag == "p":
+    if named_style is None and para_xml.tag in ("p", "li"):
         named_style = ParagraphStyleNamedStyleType.NORMAL_TEXT
 
     para_attrs: dict[str, str] = {}
@@ -325,9 +326,17 @@ def _convert_paragraph(
     if para_xml.tag == "li" and para_xml.parent is not None:
         bullet_d = {"listId": para_xml.parent, "nestingLevel": para_xml.level}
 
-    # Convert inline elements
+    # Convert inline elements — SoftBreakNode (\x0b) is merged into adjacent
+    # text runs to reconstruct the original content, since <br/> is just
+    # our XML representation for the invalid-in-XML-1.0 \x0b character.
     pe_dicts: list[dict[str, Any]] = []
     for inline in para_xml.inlines:
+        if isinstance(inline, SoftBreakNode):
+            if pe_dicts and "textRun" in pe_dicts[-1]:
+                pe_dicts[-1]["textRun"]["content"] += "\x0b"
+            else:
+                pe_dicts.append({"textRun": {"content": "\x0b", "textStyle": {}}})
+            continue
         pe_dicts.extend(_convert_inline(inline, styles))
 
     # Add trailing newline — append to last textRun if possible,
