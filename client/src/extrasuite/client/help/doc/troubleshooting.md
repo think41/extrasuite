@@ -29,6 +29,25 @@ Most common causes:
 - Removed a physical <td> for a merged cell: colspan/rowspan are visual metadata
   only - all physical <td> elements must remain in the XML
 
+### Heading after a list becomes a list item
+
+If you place a heading directly after a list with no separator, Google Docs
+absorbs the heading into the list and strips its heading style:
+
+```xml
+<!-- Wrong: heading is absorbed as a numbered list item -->
+<li type="decimal" level="0">Last item</li>
+<h2>Next Section</h2>
+
+<!-- Correct: empty paragraph breaks the list context -->
+<li type="decimal" level="0">Last item</li>
+<p></p>
+<h2>Next Section</h2>
+```
+
+This applies after both bullet and numbered lists. The push succeeds silently —
+re-pull to verify headings rendered correctly.
+
 ### Style changes not applying
 
 1. Verify the class ID in document.xml matches an id in styles.xml
