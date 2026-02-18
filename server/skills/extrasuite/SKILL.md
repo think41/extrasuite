@@ -1,67 +1,40 @@
 ---
 name: extrasuite
-description: Read, write, and edit Google Workspace files (Sheets, Slides, Docs, Forms, Apps Script, Gmail, Calendar). Use when the user asks to work with any Google Workspace file or shares a docs.google.com URL.
+description: CRUD on google workspace files - Sheets, Slides, Docs, Forms. Compose drafts in Gmail. Fuzzy search through Contacts. Manage Google Calendar and App Script projects. 
 ---
 
-# ExtraSuite
+ExtraSuite is a CLI for Google Workspace. Auth is automatic — a browser window opens on first use, tokens are cached after. Files must be shared with the user's service account before the agent can access them.
 
-Edit Google Workspace files locally using a pull-edit-push workflow.
-
-## Getting Started
+The `extrasuite` command is available via `uvx`. Discover commands using `--help`.
 
 ```bash
-uvx extrasuite --help
-```
-
-No installation needed. `uvx` downloads and runs the latest version automatically.
-If `uvx` is not available, install it with: `pip install uv`
-
-## Discovering Commands
-
-```bash
-uvx extrasuite --help                    # All modules and core workflow
-uvx extrasuite <module> --help           # Module overview: workflow, file format, key rules
+uvx extrasuite@latest --help
+uvx extrasuite <module> --help           # Module overview. Skip @latest for subsequent commands
 uvx extrasuite <module> <cmd> --help     # Command flags and format reference
 ```
 
-Run `--help` at each level before starting. The help output is the documentation.
+## Workflow for Sheets, Slides, Docs, Forms, and App Script
 
-## Workflow (Sheets, Slides, Docs, Forms, Apps Script)
-
-```bash
-uvx extrasuite <module> pull <url>    # Download file to local folder
-# Edit local files
-uvx extrasuite <module> push <folder> # Apply changes to Google
-# Re-pull before making further changes
-```
-
-## Auth
-
-Fully automatic. A browser window opens on first use; tokens are cached and
-reused on subsequent runs. Never read token files or make direct API calls —
-use the CLI only. The CLI is the authentication boundary.
-
-## diff is a Debugging Tool
-
-`diff` shows the API requests that `push` would send. Skip it in normal
-workflow — go directly from editing to push. Only use diff when a push
-produces unexpected results and you need to inspect the generated requests.
-
-## Gmail and Calendar
+Use the `create` command to create a new file.
 
 ```bash
-uvx extrasuite gmail compose <file>   # Save draft from markdown file
-uvx extrasuite calendar view          # View today's events
+uvx extrasuite sheet create "Financial Model for Q2"
+uvx extrasuite doc create "Project Proposal"
 ```
 
----
+`pull` downloads the file as editable local files. Edit them, then `push` to sync changes back.
 
-## Team-Specific Guidance
+```bash
+uvx extrasuite sheet pull "https://docs.google.com/spreadsheets/..." <basefolder>
+uvx extrasuite sheet push <basefolder>/<document-id>
+```
 
-<!-- Add your team's conventions below. Examples:
-- Color palette: primary #1a73e8, secondary #34a853, accent #ea4335
-- Document templates: all docs start with a summary section
-- Sheet conventions: header row always row 1, bold + background #e8f0fe
-- Slide conventions: 16:9, Roboto font, company theme colors
-- Naming conventions: file names use kebab-case
--->
+The same workflow applies for `slide`, `doc`, `form`, and `script`.
+
+## Gmail, Calendar, and Contacts
+
+```bash
+uvx extrasuite gmail compose <file>     # Save draft from markdown file
+uvx extrasuite calendar view            # View today's events
+uvx extrasuite contacts search "alice" "acme corp"  # Multiple queries, fuzzy match
+```
