@@ -4,6 +4,13 @@ from __future__ import annotations
 
 import pytest
 
+from extradoc.api_types._generated import (
+    BatchUpdateDocumentRequest,
+    CreateHeaderRequest,
+    Document,
+    Request,
+    WriteControl,
+)
 from extradoc.mock.api import MockGoogleDocsAPI
 from extradoc.mock.exceptions import MockAPIError, ValidationError
 
@@ -521,81 +528,95 @@ def create_document_with_equation() -> dict[str, any]:
 def test_mock_api_initialization() -> None:
     """Test that MockGoogleDocsAPI initializes correctly."""
     doc = create_minimal_document()
-    api = MockGoogleDocsAPI(doc)
+    api = MockGoogleDocsAPI(Document.model_validate(doc))
 
     # Should deep copy the document
     result = api.get()
-    assert result["documentId"] == "test_doc_123"
-    assert result["title"] == "Test Document"
+    assert result.document_id == "test_doc_123"
+    assert result.title == "Test Document"
 
     # Modifying original should not affect the mock
     doc["title"] = "Modified"
-    assert api.get()["title"] == "Test Document"
+    assert api.get().title == "Test Document"
 
 
 def test_get_returns_copy() -> None:
     """Test that get() returns a copy, not the original."""
     doc = create_minimal_document()
-    api = MockGoogleDocsAPI(doc)
+    api = MockGoogleDocsAPI(Document.model_validate(doc))
 
     result1 = api.get()
-    result1["title"] = "Modified"
+    result1.title = "Modified"
 
     result2 = api.get()
-    assert result2["title"] == "Test Document"
+    assert result2.title == "Test Document"
 
 
 def test_batch_update_empty_requests() -> None:
     """Test batchUpdate with empty requests list."""
     doc = create_minimal_document()
-    api = MockGoogleDocsAPI(doc)
+    api = MockGoogleDocsAPI(Document.model_validate(doc))
 
-    response = api.batch_update([])
+    response = api.batch_update(BatchUpdateDocumentRequest())
 
-    assert response["documentId"] == "test_doc_123"
-    assert response["replies"] == []
-    assert "writeControl" in response
+    assert response.document_id == "test_doc_123"
+    assert (response.replies or []) == []
+    assert response.write_control is not None
 
 
 def test_batch_update_increments_revision() -> None:
     """Test that successful batchUpdate increments revision ID."""
     doc = create_minimal_document()
-    api = MockGoogleDocsAPI(doc)
+    api = MockGoogleDocsAPI(Document.model_validate(doc))
 
     initial_doc = api.get()
-    initial_revision = initial_doc["revisionId"]
+    initial_revision = initial_doc.revision_id
 
     # Make a simple update
     requests = [{"insertText": {"location": {"index": 1}, "text": "Hi"}}]
 
-    response = api.batch_update(requests)
-    new_revision = response["writeControl"]["requiredRevisionId"]
+    response = api.batch_update(
+        BatchUpdateDocumentRequest(
+            requests=[Request.model_validate(r) for r in requests]
+        )
+    )
+    new_revision = response.write_control.required_revision_id
 
     assert new_revision != initial_revision
 
     # Verify get() also returns new revision
     doc_after = api.get()
-    assert doc_after["revisionId"] == new_revision
+    assert doc_after.revision_id == new_revision
 
 
 def test_write_control_required_revision_id() -> None:
     """Test WriteControl with requiredRevisionId."""
     doc = create_minimal_document()
-    api = MockGoogleDocsAPI(doc)
+    api = MockGoogleDocsAPI(Document.model_validate(doc))
 
     initial_doc = api.get()
-    initial_revision = initial_doc["revisionId"]
+    initial_revision = initial_doc.revision_id
 
     # First update should succeed with correct revision
     requests = [{"insertText": {"location": {"index": 1}, "text": "A"}}]
     write_control = {"requiredRevisionId": initial_revision}
 
-    response = api.batch_update(requests, write_control)
-    assert "replies" in response
+    response = api.batch_update(
+        BatchUpdateDocumentRequest(
+            requests=[Request.model_validate(r) for r in requests],
+            write_control=WriteControl.model_validate(write_control),
+        )
+    )
+    assert response.replies is not None
 
     # Second update with old revision should fail
     with pytest.raises(ValidationError) as exc_info:
-        api.batch_update(requests, write_control)
+        api.batch_update(
+            BatchUpdateDocumentRequest(
+                requests=[Request.model_validate(r) for r in requests],
+                write_control=WriteControl.model_validate(write_control),
+            )
+        )
 
     assert "modified" in str(exc_info.value).lower()
 
@@ -603,7 +624,7 @@ def test_write_control_required_revision_id() -> None:
 def test_atomicity_on_error() -> None:
     """Test that failed batchUpdate doesn't modify document."""
     doc = create_minimal_document()
-    api = MockGoogleDocsAPI(doc)
+    api = MockGoogleDocsAPI(Document.model_validate(doc))
 
     initial_doc = api.get()
 
@@ -614,7 +635,11 @@ def test_atomicity_on_error() -> None:
     ]
 
     with pytest.raises(ValidationError):
-        api.batch_update(requests)
+        api.batch_update(
+            BatchUpdateDocumentRequest(
+                requests=[Request.model_validate(r) for r in requests]
+            )
+        )
 
     # Document should be unchanged
     doc_after = api.get()
@@ -629,19 +654,23 @@ def test_atomicity_on_error() -> None:
 def test_insert_text_basic() -> None:
     """Test basic text insertion."""
     doc = create_minimal_document()
-    api = MockGoogleDocsAPI(doc)
+    api = MockGoogleDocsAPI(Document.model_validate(doc))
 
     requests = [{"insertText": {"location": {"index": 1}, "text": "Hi "}}]
 
-    response = api.batch_update(requests)
-    assert len(response["replies"]) == 1
-    assert response["replies"][0] == {}
+    response = api.batch_update(
+        BatchUpdateDocumentRequest(
+            requests=[Request.model_validate(r) for r in requests]
+        )
+    )
+    assert len(response.replies or []) == 1
+    assert response.replies[0].model_dump(by_alias=True, exclude_none=True) == {}
 
 
 def test_insert_text_strips_control_characters() -> None:
     """Test that control characters are stripped."""
     doc = create_minimal_document()
-    api = MockGoogleDocsAPI(doc)
+    api = MockGoogleDocsAPI(Document.model_validate(doc))
 
     # Should strip control characters but allow the text
     requests = [
@@ -649,14 +678,18 @@ def test_insert_text_strips_control_characters() -> None:
     ]
 
     # Should not raise an error (control chars are stripped)
-    response = api.batch_update(requests)
-    assert len(response["replies"]) == 1
+    response = api.batch_update(
+        BatchUpdateDocumentRequest(
+            requests=[Request.model_validate(r) for r in requests]
+        )
+    )
+    assert len(response.replies or []) == 1
 
 
 def test_insert_text_at_end_of_segment() -> None:
     """Test inserting text at end of segment."""
     doc = create_minimal_document()
-    api = MockGoogleDocsAPI(doc)
+    api = MockGoogleDocsAPI(Document.model_validate(doc))
 
     requests = [
         {
@@ -667,20 +700,28 @@ def test_insert_text_at_end_of_segment() -> None:
         }
     ]
 
-    response = api.batch_update(requests)
-    assert len(response["replies"]) == 1
+    response = api.batch_update(
+        BatchUpdateDocumentRequest(
+            requests=[Request.model_validate(r) for r in requests]
+        )
+    )
+    assert len(response.replies or []) == 1
 
 
 def test_insert_text_invalid_index() -> None:
     """Test that inserting at invalid index fails."""
     doc = create_minimal_document()
-    api = MockGoogleDocsAPI(doc)
+    api = MockGoogleDocsAPI(Document.model_validate(doc))
 
     # Index 0 is invalid (must be at least 1)
     requests = [{"insertText": {"location": {"index": 0}, "text": "Bad"}}]
 
     with pytest.raises(ValidationError) as exc_info:
-        api.batch_update(requests)
+        api.batch_update(
+            BatchUpdateDocumentRequest(
+                requests=[Request.model_validate(r) for r in requests]
+            )
+        )
 
     assert "at least 1" in str(exc_info.value)
 
@@ -688,13 +729,17 @@ def test_insert_text_invalid_index() -> None:
 def test_insert_text_beyond_document() -> None:
     """Test that inserting beyond document fails."""
     doc = create_minimal_document()
-    api = MockGoogleDocsAPI(doc)
+    api = MockGoogleDocsAPI(Document.model_validate(doc))
 
     # Index 1000 is way beyond the document
     requests = [{"insertText": {"location": {"index": 1000}, "text": "Bad"}}]
 
     with pytest.raises(ValidationError) as exc_info:
-        api.batch_update(requests)
+        api.batch_update(
+            BatchUpdateDocumentRequest(
+                requests=[Request.model_validate(r) for r in requests]
+            )
+        )
 
     assert "beyond" in str(exc_info.value).lower()
 
@@ -702,13 +747,17 @@ def test_insert_text_beyond_document() -> None:
 def test_insert_text_requires_location() -> None:
     """Test that insertText requires either location or endOfSegmentLocation."""
     doc = create_minimal_document()
-    api = MockGoogleDocsAPI(doc)
+    api = MockGoogleDocsAPI(Document.model_validate(doc))
 
     # Missing both location and endOfSegmentLocation
     requests = [{"insertText": {"text": "Bad"}}]
 
     with pytest.raises(ValidationError) as exc_info:
-        api.batch_update(requests)
+        api.batch_update(
+            BatchUpdateDocumentRequest(
+                requests=[Request.model_validate(r) for r in requests]
+            )
+        )
 
     assert "location" in str(exc_info.value).lower()
 
@@ -716,7 +765,7 @@ def test_insert_text_requires_location() -> None:
 def test_insert_text_cannot_have_both_locations() -> None:
     """Test that insertText cannot have both location types."""
     doc = create_minimal_document()
-    api = MockGoogleDocsAPI(doc)
+    api = MockGoogleDocsAPI(Document.model_validate(doc))
 
     requests = [
         {
@@ -729,7 +778,11 @@ def test_insert_text_cannot_have_both_locations() -> None:
     ]
 
     with pytest.raises(ValidationError) as exc_info:
-        api.batch_update(requests)
+        api.batch_update(
+            BatchUpdateDocumentRequest(
+                requests=[Request.model_validate(r) for r in requests]
+            )
+        )
 
     assert "both" in str(exc_info.value).lower()
 
@@ -742,25 +795,33 @@ def test_insert_text_cannot_have_both_locations() -> None:
 def test_delete_content_range_basic() -> None:
     """Test basic content deletion."""
     doc = create_minimal_document()
-    api = MockGoogleDocsAPI(doc)
+    api = MockGoogleDocsAPI(Document.model_validate(doc))
 
     # Delete part of "Hello" (indices 1-3 = "He")
     requests = [{"deleteContentRange": {"range": {"startIndex": 1, "endIndex": 3}}}]
 
-    response = api.batch_update(requests)
-    assert len(response["replies"]) == 1
+    response = api.batch_update(
+        BatchUpdateDocumentRequest(
+            requests=[Request.model_validate(r) for r in requests]
+        )
+    )
+    assert len(response.replies or []) == 1
 
 
 def test_delete_content_range_invalid_range() -> None:
     """Test that invalid range fails."""
     doc = create_minimal_document()
-    api = MockGoogleDocsAPI(doc)
+    api = MockGoogleDocsAPI(Document.model_validate(doc))
 
     # endIndex <= startIndex is invalid
     requests = [{"deleteContentRange": {"range": {"startIndex": 5, "endIndex": 5}}}]
 
     with pytest.raises(ValidationError) as exc_info:
-        api.batch_update(requests)
+        api.batch_update(
+            BatchUpdateDocumentRequest(
+                requests=[Request.model_validate(r) for r in requests]
+            )
+        )
 
     assert "greater than" in str(exc_info.value).lower()
 
@@ -768,13 +829,17 @@ def test_delete_content_range_invalid_range() -> None:
 def test_delete_content_range_final_newline() -> None:
     """Test that deleting final newline fails."""
     doc = create_minimal_document()
-    api = MockGoogleDocsAPI(doc)
+    api = MockGoogleDocsAPI(Document.model_validate(doc))
 
     # Try to delete the final newline (index 6-7 in "Hello\n")
     requests = [{"deleteContentRange": {"range": {"startIndex": 6, "endIndex": 7}}}]
 
     with pytest.raises(ValidationError) as exc_info:
-        api.batch_update(requests)
+        api.batch_update(
+            BatchUpdateDocumentRequest(
+                requests=[Request.model_validate(r) for r in requests]
+            )
+        )
 
     assert "final newline" in str(exc_info.value).lower()
 
@@ -782,12 +847,16 @@ def test_delete_content_range_final_newline() -> None:
 def test_delete_content_range_requires_range() -> None:
     """Test that deleteContentRange requires range."""
     doc = create_minimal_document()
-    api = MockGoogleDocsAPI(doc)
+    api = MockGoogleDocsAPI(Document.model_validate(doc))
 
     requests = [{"deleteContentRange": {}}]
 
     with pytest.raises(ValidationError) as exc_info:
-        api.batch_update(requests)
+        api.batch_update(
+            BatchUpdateDocumentRequest(
+                requests=[Request.model_validate(r) for r in requests]
+            )
+        )
 
     assert "range is required" in str(exc_info.value)
 
@@ -800,7 +869,7 @@ def test_delete_content_range_requires_range() -> None:
 def test_update_text_style_basic() -> None:
     """Test basic text style update."""
     doc = create_minimal_document()
-    api = MockGoogleDocsAPI(doc)
+    api = MockGoogleDocsAPI(Document.model_validate(doc))
 
     requests = [
         {
@@ -812,14 +881,18 @@ def test_update_text_style_basic() -> None:
         }
     ]
 
-    response = api.batch_update(requests)
-    assert len(response["replies"]) == 1
+    response = api.batch_update(
+        BatchUpdateDocumentRequest(
+            requests=[Request.model_validate(r) for r in requests]
+        )
+    )
+    assert len(response.replies or []) == 1
 
 
 def test_update_text_style_requires_fields() -> None:
     """Test that updateTextStyle requires fields parameter."""
     doc = create_minimal_document()
-    api = MockGoogleDocsAPI(doc)
+    api = MockGoogleDocsAPI(Document.model_validate(doc))
 
     requests = [
         {
@@ -831,7 +904,11 @@ def test_update_text_style_requires_fields() -> None:
     ]
 
     with pytest.raises(ValidationError) as exc_info:
-        api.batch_update(requests)
+        api.batch_update(
+            BatchUpdateDocumentRequest(
+                requests=[Request.model_validate(r) for r in requests]
+            )
+        )
 
     assert "fields is required" in str(exc_info.value)
 
@@ -844,7 +921,7 @@ def test_update_text_style_requires_fields() -> None:
 def test_update_paragraph_style_basic() -> None:
     """Test basic paragraph style update."""
     doc = create_minimal_document()
-    api = MockGoogleDocsAPI(doc)
+    api = MockGoogleDocsAPI(Document.model_validate(doc))
 
     requests = [
         {
@@ -856,8 +933,12 @@ def test_update_paragraph_style_basic() -> None:
         }
     ]
 
-    response = api.batch_update(requests)
-    assert len(response["replies"]) == 1
+    response = api.batch_update(
+        BatchUpdateDocumentRequest(
+            requests=[Request.model_validate(r) for r in requests]
+        )
+    )
+    assert len(response.replies or []) == 1
 
 
 # ========================================================================
@@ -868,7 +949,7 @@ def test_update_paragraph_style_basic() -> None:
 def test_create_paragraph_bullets_basic() -> None:
     """Test creating bullets."""
     doc = create_minimal_document()
-    api = MockGoogleDocsAPI(doc)
+    api = MockGoogleDocsAPI(Document.model_validate(doc))
 
     requests = [
         {
@@ -879,19 +960,27 @@ def test_create_paragraph_bullets_basic() -> None:
         }
     ]
 
-    response = api.batch_update(requests)
-    assert len(response["replies"]) == 1
+    response = api.batch_update(
+        BatchUpdateDocumentRequest(
+            requests=[Request.model_validate(r) for r in requests]
+        )
+    )
+    assert len(response.replies or []) == 1
 
 
 def test_delete_paragraph_bullets_basic() -> None:
     """Test deleting bullets."""
     doc = create_minimal_document()
-    api = MockGoogleDocsAPI(doc)
+    api = MockGoogleDocsAPI(Document.model_validate(doc))
 
     requests = [{"deleteParagraphBullets": {"range": {"startIndex": 1, "endIndex": 5}}}]
 
-    response = api.batch_update(requests)
-    assert len(response["replies"]) == 1
+    response = api.batch_update(
+        BatchUpdateDocumentRequest(
+            requests=[Request.model_validate(r) for r in requests]
+        )
+    )
+    assert len(response.replies or []) == 1
 
 
 # ========================================================================
@@ -902,7 +991,7 @@ def test_delete_paragraph_bullets_basic() -> None:
 def test_insert_table_basic() -> None:
     """Test inserting a table."""
     doc = create_minimal_document()
-    api = MockGoogleDocsAPI(doc)
+    api = MockGoogleDocsAPI(Document.model_validate(doc))
 
     requests = [
         {
@@ -914,20 +1003,28 @@ def test_insert_table_basic() -> None:
         }
     ]
 
-    response = api.batch_update(requests)
-    assert len(response["replies"]) == 1
+    response = api.batch_update(
+        BatchUpdateDocumentRequest(
+            requests=[Request.model_validate(r) for r in requests]
+        )
+    )
+    assert len(response.replies or []) == 1
 
 
 def test_insert_table_invalid_dimensions() -> None:
     """Test that table must have positive dimensions."""
     doc = create_minimal_document()
-    api = MockGoogleDocsAPI(doc)
+    api = MockGoogleDocsAPI(Document.model_validate(doc))
 
     # Zero rows should fail
     requests = [{"insertTable": {"location": {"index": 1}, "rows": 0, "columns": 3}}]
 
     with pytest.raises(ValidationError) as exc_info:
-        api.batch_update(requests)
+        api.batch_update(
+            BatchUpdateDocumentRequest(
+                requests=[Request.model_validate(r) for r in requests]
+            )
+        )
 
     assert "at least 1" in str(exc_info.value)
 
@@ -935,12 +1032,16 @@ def test_insert_table_invalid_dimensions() -> None:
 def test_insert_table_row_requires_location() -> None:
     """Test that insertTableRow requires tableCellLocation."""
     doc = create_minimal_document()
-    api = MockGoogleDocsAPI(doc)
+    api = MockGoogleDocsAPI(Document.model_validate(doc))
 
     requests = [{"insertTableRow": {"insertBelow": True}}]
 
     with pytest.raises(ValidationError) as exc_info:
-        api.batch_update(requests)
+        api.batch_update(
+            BatchUpdateDocumentRequest(
+                requests=[Request.model_validate(r) for r in requests]
+            )
+        )
 
     assert "tableCellLocation is required" in str(exc_info.value)
 
@@ -953,7 +1054,7 @@ def test_insert_table_row_requires_location() -> None:
 def test_create_named_range_basic() -> None:
     """Test creating a named range."""
     doc = create_minimal_document()
-    api = MockGoogleDocsAPI(doc)
+    api = MockGoogleDocsAPI(Document.model_validate(doc))
 
     requests = [
         {
@@ -964,10 +1065,14 @@ def test_create_named_range_basic() -> None:
         }
     ]
 
-    response = api.batch_update(requests)
-    assert len(response["replies"]) == 1
+    response = api.batch_update(
+        BatchUpdateDocumentRequest(
+            requests=[Request.model_validate(r) for r in requests]
+        )
+    )
+    assert len(response.replies or []) == 1
 
-    reply = response["replies"][0]
+    reply = response.replies[0].model_dump(by_alias=True, exclude_none=True)
     assert "createNamedRange" in reply
     assert "namedRangeId" in reply["createNamedRange"]
 
@@ -975,7 +1080,7 @@ def test_create_named_range_basic() -> None:
 def test_create_named_range_validates_name_length() -> None:
     """Test that named range name must be 1-256 UTF-16 code units."""
     doc = create_minimal_document()
-    api = MockGoogleDocsAPI(doc)
+    api = MockGoogleDocsAPI(Document.model_validate(doc))
 
     # Empty name should fail
     requests = [
@@ -988,7 +1093,11 @@ def test_create_named_range_validates_name_length() -> None:
     ]
 
     with pytest.raises(ValidationError) as exc_info:
-        api.batch_update(requests)
+        api.batch_update(
+            BatchUpdateDocumentRequest(
+                requests=[Request.model_validate(r) for r in requests]
+            )
+        )
 
     assert "1-256" in str(exc_info.value)
 
@@ -996,7 +1105,7 @@ def test_create_named_range_validates_name_length() -> None:
 def test_create_named_range_validates_range() -> None:
     """Test that named range validates the range."""
     doc = create_minimal_document()
-    api = MockGoogleDocsAPI(doc)
+    api = MockGoogleDocsAPI(Document.model_validate(doc))
 
     # Invalid range (beyond document)
     requests = [
@@ -1009,7 +1118,11 @@ def test_create_named_range_validates_range() -> None:
     ]
 
     with pytest.raises(ValidationError) as exc_info:
-        api.batch_update(requests)
+        api.batch_update(
+            BatchUpdateDocumentRequest(
+                requests=[Request.model_validate(r) for r in requests]
+            )
+        )
 
     assert "exceeds" in str(exc_info.value).lower()
 
@@ -1017,7 +1130,7 @@ def test_create_named_range_validates_range() -> None:
 def test_delete_named_range_by_id() -> None:
     """Test deleting a named range by ID."""
     doc = create_minimal_document()
-    api = MockGoogleDocsAPI(doc)
+    api = MockGoogleDocsAPI(Document.model_validate(doc))
 
     # First create a named range
     create_requests = [
@@ -1029,20 +1142,30 @@ def test_delete_named_range_by_id() -> None:
         }
     ]
 
-    create_response = api.batch_update(create_requests)
-    range_id = create_response["replies"][0]["createNamedRange"]["namedRangeId"]
+    create_response = api.batch_update(
+        BatchUpdateDocumentRequest(
+            requests=[Request.model_validate(r) for r in create_requests]
+        )
+    )
+    range_id = create_response.replies[0].model_dump(by_alias=True, exclude_none=True)[
+        "createNamedRange"
+    ]["namedRangeId"]
 
     # Now delete it by ID
     delete_requests = [{"deleteNamedRange": {"namedRangeId": range_id}}]
 
-    response = api.batch_update(delete_requests)
-    assert len(response["replies"]) == 1
+    response = api.batch_update(
+        BatchUpdateDocumentRequest(
+            requests=[Request.model_validate(r) for r in delete_requests]
+        )
+    )
+    assert len(response.replies or []) == 1
 
 
 def test_delete_named_range_by_name() -> None:
     """Test deleting named ranges by name."""
     doc = create_minimal_document()
-    api = MockGoogleDocsAPI(doc)
+    api = MockGoogleDocsAPI(Document.model_validate(doc))
 
     # Create two ranges with the same name
     create_requests = [
@@ -1060,25 +1183,37 @@ def test_delete_named_range_by_name() -> None:
         },
     ]
 
-    api.batch_update(create_requests)
+    api.batch_update(
+        BatchUpdateDocumentRequest(
+            requests=[Request.model_validate(r) for r in create_requests]
+        )
+    )
 
     # Delete all with this name
     delete_requests = [{"deleteNamedRange": {"name": "duplicate"}}]
 
-    response = api.batch_update(delete_requests)
-    assert len(response["replies"]) == 1
+    response = api.batch_update(
+        BatchUpdateDocumentRequest(
+            requests=[Request.model_validate(r) for r in delete_requests]
+        )
+    )
+    assert len(response.replies or []) == 1
 
 
 def test_delete_named_range_requires_id_or_name() -> None:
     """Test that deleteNamedRange requires either ID or name."""
     doc = create_minimal_document()
-    api = MockGoogleDocsAPI(doc)
+    api = MockGoogleDocsAPI(Document.model_validate(doc))
 
     # Neither ID nor name provided
     requests = [{"deleteNamedRange": {}}]
 
     with pytest.raises(ValidationError) as exc_info:
-        api.batch_update(requests)
+        api.batch_update(
+            BatchUpdateDocumentRequest(
+                requests=[Request.model_validate(r) for r in requests]
+            )
+        )
 
     assert "must specify" in str(exc_info.value).lower()
 
@@ -1086,12 +1221,16 @@ def test_delete_named_range_requires_id_or_name() -> None:
 def test_delete_named_range_cannot_have_both() -> None:
     """Test that deleteNamedRange cannot have both ID and name."""
     doc = create_minimal_document()
-    api = MockGoogleDocsAPI(doc)
+    api = MockGoogleDocsAPI(Document.model_validate(doc))
 
     requests = [{"deleteNamedRange": {"namedRangeId": "id123", "name": "test"}}]
 
     with pytest.raises(ValidationError) as exc_info:
-        api.batch_update(requests)
+        api.batch_update(
+            BatchUpdateDocumentRequest(
+                requests=[Request.model_validate(r) for r in requests]
+            )
+        )
 
     assert "both" in str(exc_info.value).lower()
 
@@ -1104,7 +1243,7 @@ def test_delete_named_range_cannot_have_both() -> None:
 def test_replace_all_text_basic() -> None:
     """Test basic replace all text."""
     doc = create_minimal_document()
-    api = MockGoogleDocsAPI(doc)
+    api = MockGoogleDocsAPI(Document.model_validate(doc))
 
     requests = [
         {
@@ -1115,10 +1254,14 @@ def test_replace_all_text_basic() -> None:
         }
     ]
 
-    response = api.batch_update(requests)
-    assert len(response["replies"]) == 1
+    response = api.batch_update(
+        BatchUpdateDocumentRequest(
+            requests=[Request.model_validate(r) for r in requests]
+        )
+    )
+    assert len(response.replies or []) == 1
 
-    reply = response["replies"][0]
+    reply = response.replies[0].model_dump(by_alias=True, exclude_none=True)
     assert "replaceAllText" in reply
     assert "occurrencesChanged" in reply["replaceAllText"]
 
@@ -1126,12 +1269,16 @@ def test_replace_all_text_basic() -> None:
 def test_replace_all_text_requires_contains_text() -> None:
     """Test that replaceAllText requires containsText."""
     doc = create_minimal_document()
-    api = MockGoogleDocsAPI(doc)
+    api = MockGoogleDocsAPI(Document.model_validate(doc))
 
     requests = [{"replaceAllText": {"replaceText": "Test"}}]
 
     with pytest.raises(ValidationError) as exc_info:
-        api.batch_update(requests)
+        api.batch_update(
+            BatchUpdateDocumentRequest(
+                requests=[Request.model_validate(r) for r in requests]
+            )
+        )
 
     assert "containsText is required" in str(exc_info.value)
 
@@ -1144,7 +1291,7 @@ def test_replace_all_text_requires_contains_text() -> None:
 def test_multiple_requests_in_order() -> None:
     """Test that multiple requests are processed in order."""
     doc = create_minimal_document()
-    api = MockGoogleDocsAPI(doc)
+    api = MockGoogleDocsAPI(Document.model_validate(doc))
 
     requests = [
         {"insertText": {"location": {"index": 1}, "text": "A"}},
@@ -1157,26 +1304,36 @@ def test_multiple_requests_in_order() -> None:
         },
     ]
 
-    response = api.batch_update(requests)
-    assert len(response["replies"]) == 3
+    response = api.batch_update(
+        BatchUpdateDocumentRequest(
+            requests=[Request.model_validate(r) for r in requests]
+        )
+    )
+    assert len(response.replies or []) == 3
 
     # First two should be empty
-    assert response["replies"][0] == {}
-    assert response["replies"][1] == {}
+    assert response.replies[0].model_dump(by_alias=True, exclude_none=True) == {}
+    assert response.replies[1].model_dump(by_alias=True, exclude_none=True) == {}
 
     # Third should have named range ID
-    assert "createNamedRange" in response["replies"][2]
+    assert "createNamedRange" in response.replies[2].model_dump(
+        by_alias=True, exclude_none=True
+    )
 
 
 def test_invalid_request_type() -> None:
     """Test that invalid request type is rejected."""
     doc = create_minimal_document()
-    api = MockGoogleDocsAPI(doc)
+    api = MockGoogleDocsAPI(Document.model_validate(doc))
 
     requests = [{"unknownRequest": {}}]
 
     with pytest.raises(ValidationError) as exc_info:
-        api.batch_update(requests)
+        api.batch_update(
+            BatchUpdateDocumentRequest(
+                requests=[Request.model_validate(r) for r in requests]
+            )
+        )
 
     assert "unsupported" in str(exc_info.value).lower()
 
@@ -1184,7 +1341,7 @@ def test_invalid_request_type() -> None:
 def test_request_must_have_one_operation() -> None:
     """Test that request must have exactly one operation."""
     doc = create_minimal_document()
-    api = MockGoogleDocsAPI(doc)
+    api = MockGoogleDocsAPI(Document.model_validate(doc))
 
     # Multiple operations in one request
     requests = [
@@ -1195,7 +1352,11 @@ def test_request_must_have_one_operation() -> None:
     ]
 
     with pytest.raises(ValidationError) as exc_info:
-        api.batch_update(requests)
+        api.batch_update(
+            BatchUpdateDocumentRequest(
+                requests=[Request.model_validate(r) for r in requests]
+            )
+        )
 
     assert "exactly one" in str(exc_info.value).lower()
 
@@ -1208,14 +1369,18 @@ def test_request_must_have_one_operation() -> None:
 def test_invalid_tab_id() -> None:
     """Test that invalid tab ID is rejected."""
     doc = create_minimal_document()
-    api = MockGoogleDocsAPI(doc)
+    api = MockGoogleDocsAPI(Document.model_validate(doc))
 
     requests = [
         {"insertText": {"location": {"index": 1, "tabId": "nonexistent"}, "text": "X"}}
     ]
 
     with pytest.raises(ValidationError) as exc_info:
-        api.batch_update(requests)
+        api.batch_update(
+            BatchUpdateDocumentRequest(
+                requests=[Request.model_validate(r) for r in requests]
+            )
+        )
 
     assert "tab not found" in str(exc_info.value).lower()
 
@@ -1223,14 +1388,18 @@ def test_invalid_tab_id() -> None:
 def test_explicit_tab_id() -> None:
     """Test that explicit tab ID works."""
     doc = create_minimal_document()
-    api = MockGoogleDocsAPI(doc)
+    api = MockGoogleDocsAPI(Document.model_validate(doc))
 
     requests = [
         {"insertText": {"location": {"index": 1, "tabId": "tab1"}, "text": "X"}}
     ]
 
-    response = api.batch_update(requests)
-    assert len(response["replies"]) == 1
+    response = api.batch_update(
+        BatchUpdateDocumentRequest(
+            requests=[Request.model_validate(r) for r in requests]
+        )
+    )
+    assert len(response.replies or []) == 1
 
 
 # ========================================================================
@@ -1264,24 +1433,32 @@ def test_validation_error_defaults_to_400() -> None:
 def test_delete_positioned_object_basic() -> None:
     """Test basic positioned object deletion."""
     doc = create_minimal_document()
-    api = MockGoogleDocsAPI(doc)
+    api = MockGoogleDocsAPI(Document.model_validate(doc))
 
     requests = [{"deletePositionedObject": {"objectId": "obj123"}}]
 
-    response = api.batch_update(requests)
-    assert len(response["replies"]) == 1
-    assert response["replies"][0] == {}
+    response = api.batch_update(
+        BatchUpdateDocumentRequest(
+            requests=[Request.model_validate(r) for r in requests]
+        )
+    )
+    assert len(response.replies or []) == 1
+    assert response.replies[0].model_dump(by_alias=True, exclude_none=True) == {}
 
 
 def test_delete_positioned_object_missing_object_id() -> None:
     """Test that missing objectId is rejected."""
     doc = create_minimal_document()
-    api = MockGoogleDocsAPI(doc)
+    api = MockGoogleDocsAPI(Document.model_validate(doc))
 
     requests = [{"deletePositionedObject": {}}]
 
     with pytest.raises(ValidationError) as exc_info:
-        api.batch_update(requests)
+        api.batch_update(
+            BatchUpdateDocumentRequest(
+                requests=[Request.model_validate(r) for r in requests]
+            )
+        )
 
     assert "objectid is required" in str(exc_info.value).lower()
 
@@ -1289,29 +1466,43 @@ def test_delete_positioned_object_missing_object_id() -> None:
 def test_delete_header_basic() -> None:
     """Test basic header deletion."""
     doc = create_minimal_document()
-    api = MockGoogleDocsAPI(doc)
+    api = MockGoogleDocsAPI(Document.model_validate(doc))
 
     # First create a header
     create_requests = [{"createHeader": {"type": "DEFAULT"}}]
-    create_response = api.batch_update(create_requests)
-    header_id = create_response["replies"][0]["createHeader"]["headerId"]
+    create_response = api.batch_update(
+        BatchUpdateDocumentRequest(
+            requests=[Request.model_validate(r) for r in create_requests]
+        )
+    )
+    header_id = create_response.replies[0].model_dump(by_alias=True, exclude_none=True)[
+        "createHeader"
+    ]["headerId"]
 
     # Then delete it
     delete_requests = [{"deleteHeader": {"headerId": header_id}}]
-    response = api.batch_update(delete_requests)
-    assert len(response["replies"]) == 1
-    assert response["replies"][0] == {}
+    response = api.batch_update(
+        BatchUpdateDocumentRequest(
+            requests=[Request.model_validate(r) for r in delete_requests]
+        )
+    )
+    assert len(response.replies or []) == 1
+    assert response.replies[0].model_dump(by_alias=True, exclude_none=True) == {}
 
 
 def test_delete_header_missing_header_id() -> None:
     """Test that missing headerId is rejected."""
     doc = create_minimal_document()
-    api = MockGoogleDocsAPI(doc)
+    api = MockGoogleDocsAPI(Document.model_validate(doc))
 
     requests = [{"deleteHeader": {}}]
 
     with pytest.raises(ValidationError) as exc_info:
-        api.batch_update(requests)
+        api.batch_update(
+            BatchUpdateDocumentRequest(
+                requests=[Request.model_validate(r) for r in requests]
+            )
+        )
 
     assert "headerid is required" in str(exc_info.value).lower()
 
@@ -1319,12 +1510,16 @@ def test_delete_header_missing_header_id() -> None:
 def test_delete_header_nonexistent() -> None:
     """Test that deleting nonexistent header fails."""
     doc = create_minimal_document()
-    api = MockGoogleDocsAPI(doc)
+    api = MockGoogleDocsAPI(Document.model_validate(doc))
 
     requests = [{"deleteHeader": {"headerId": "nonexistent"}}]
 
     with pytest.raises(ValidationError) as exc_info:
-        api.batch_update(requests)
+        api.batch_update(
+            BatchUpdateDocumentRequest(
+                requests=[Request.model_validate(r) for r in requests]
+            )
+        )
 
     assert "header not found" in str(exc_info.value).lower()
 
@@ -1332,29 +1527,43 @@ def test_delete_header_nonexistent() -> None:
 def test_delete_footer_basic() -> None:
     """Test basic footer deletion."""
     doc = create_minimal_document()
-    api = MockGoogleDocsAPI(doc)
+    api = MockGoogleDocsAPI(Document.model_validate(doc))
 
     # First create a footer
     create_requests = [{"createFooter": {"type": "DEFAULT"}}]
-    create_response = api.batch_update(create_requests)
-    footer_id = create_response["replies"][0]["createFooter"]["footerId"]
+    create_response = api.batch_update(
+        BatchUpdateDocumentRequest(
+            requests=[Request.model_validate(r) for r in create_requests]
+        )
+    )
+    footer_id = create_response.replies[0].model_dump(by_alias=True, exclude_none=True)[
+        "createFooter"
+    ]["footerId"]
 
     # Then delete it
     delete_requests = [{"deleteFooter": {"footerId": footer_id}}]
-    response = api.batch_update(delete_requests)
-    assert len(response["replies"]) == 1
-    assert response["replies"][0] == {}
+    response = api.batch_update(
+        BatchUpdateDocumentRequest(
+            requests=[Request.model_validate(r) for r in delete_requests]
+        )
+    )
+    assert len(response.replies or []) == 1
+    assert response.replies[0].model_dump(by_alias=True, exclude_none=True) == {}
 
 
 def test_delete_footer_missing_footer_id() -> None:
     """Test that missing footerId is rejected."""
     doc = create_minimal_document()
-    api = MockGoogleDocsAPI(doc)
+    api = MockGoogleDocsAPI(Document.model_validate(doc))
 
     requests = [{"deleteFooter": {}}]
 
     with pytest.raises(ValidationError) as exc_info:
-        api.batch_update(requests)
+        api.batch_update(
+            BatchUpdateDocumentRequest(
+                requests=[Request.model_validate(r) for r in requests]
+            )
+        )
 
     assert "footerid is required" in str(exc_info.value).lower()
 
@@ -1362,12 +1571,16 @@ def test_delete_footer_missing_footer_id() -> None:
 def test_delete_footer_nonexistent() -> None:
     """Test that deleting nonexistent footer fails."""
     doc = create_minimal_document()
-    api = MockGoogleDocsAPI(doc)
+    api = MockGoogleDocsAPI(Document.model_validate(doc))
 
     requests = [{"deleteFooter": {"footerId": "nonexistent"}}]
 
     with pytest.raises(ValidationError) as exc_info:
-        api.batch_update(requests)
+        api.batch_update(
+            BatchUpdateDocumentRequest(
+                requests=[Request.model_validate(r) for r in requests]
+            )
+        )
 
     assert "footer not found" in str(exc_info.value).lower()
 
@@ -1380,25 +1593,40 @@ def test_delete_footer_nonexistent() -> None:
 def test_create_header_basic() -> None:
     """Test basic header creation."""
     doc = create_minimal_document()
-    api = MockGoogleDocsAPI(doc)
+    api = MockGoogleDocsAPI(Document.model_validate(doc))
 
     requests = [{"createHeader": {"type": "DEFAULT"}}]
 
-    response = api.batch_update(requests)
-    assert len(response["replies"]) == 1
-    assert "createHeader" in response["replies"][0]
-    assert "headerId" in response["replies"][0]["createHeader"]
+    response = api.batch_update(
+        BatchUpdateDocumentRequest(
+            requests=[Request.model_validate(r) for r in requests]
+        )
+    )
+    assert len(response.replies or []) == 1
+    assert "createHeader" in response.replies[0].model_dump(
+        by_alias=True, exclude_none=True
+    )
+    assert (
+        "headerId"
+        in response.replies[0].model_dump(by_alias=True, exclude_none=True)[
+            "createHeader"
+        ]
+    )
 
 
 def test_create_header_missing_type() -> None:
     """Test that missing type is rejected."""
     doc = create_minimal_document()
-    api = MockGoogleDocsAPI(doc)
+    api = MockGoogleDocsAPI(Document.model_validate(doc))
 
     requests = [{"createHeader": {}}]
 
     with pytest.raises(ValidationError) as exc_info:
-        api.batch_update(requests)
+        api.batch_update(
+            BatchUpdateDocumentRequest(
+                requests=[Request.model_validate(r) for r in requests]
+            )
+        )
 
     assert "type is required" in str(exc_info.value).lower()
 
@@ -1406,25 +1634,40 @@ def test_create_header_missing_type() -> None:
 def test_create_footer_basic() -> None:
     """Test basic footer creation."""
     doc = create_minimal_document()
-    api = MockGoogleDocsAPI(doc)
+    api = MockGoogleDocsAPI(Document.model_validate(doc))
 
     requests = [{"createFooter": {"type": "DEFAULT"}}]
 
-    response = api.batch_update(requests)
-    assert len(response["replies"]) == 1
-    assert "createFooter" in response["replies"][0]
-    assert "footerId" in response["replies"][0]["createFooter"]
+    response = api.batch_update(
+        BatchUpdateDocumentRequest(
+            requests=[Request.model_validate(r) for r in requests]
+        )
+    )
+    assert len(response.replies or []) == 1
+    assert "createFooter" in response.replies[0].model_dump(
+        by_alias=True, exclude_none=True
+    )
+    assert (
+        "footerId"
+        in response.replies[0].model_dump(by_alias=True, exclude_none=True)[
+            "createFooter"
+        ]
+    )
 
 
 def test_create_footer_missing_type() -> None:
     """Test that missing type is rejected."""
     doc = create_minimal_document()
-    api = MockGoogleDocsAPI(doc)
+    api = MockGoogleDocsAPI(Document.model_validate(doc))
 
     requests = [{"createFooter": {}}]
 
     with pytest.raises(ValidationError) as exc_info:
-        api.batch_update(requests)
+        api.batch_update(
+            BatchUpdateDocumentRequest(
+                requests=[Request.model_validate(r) for r in requests]
+            )
+        )
 
     assert "type is required" in str(exc_info.value).lower()
 
@@ -1432,31 +1675,52 @@ def test_create_footer_missing_type() -> None:
 def test_create_footnote_basic() -> None:
     """Test basic footnote creation."""
     doc = create_minimal_document()
-    api = MockGoogleDocsAPI(doc)
+    api = MockGoogleDocsAPI(Document.model_validate(doc))
 
     requests = [{"createFootnote": {"location": {"index": 1}}}]
 
-    response = api.batch_update(requests)
-    assert len(response["replies"]) == 1
-    assert "createFootnote" in response["replies"][0]
-    assert "footnoteId" in response["replies"][0]["createFootnote"]
+    response = api.batch_update(
+        BatchUpdateDocumentRequest(
+            requests=[Request.model_validate(r) for r in requests]
+        )
+    )
+    assert len(response.replies or []) == 1
+    assert "createFootnote" in response.replies[0].model_dump(
+        by_alias=True, exclude_none=True
+    )
+    assert (
+        "footnoteId"
+        in response.replies[0].model_dump(by_alias=True, exclude_none=True)[
+            "createFootnote"
+        ]
+    )
 
 
 def test_create_footnote_in_header_fails() -> None:
     """Test that creating footnote in header fails."""
     doc = create_minimal_document()
-    api = MockGoogleDocsAPI(doc)
+    api = MockGoogleDocsAPI(Document.model_validate(doc))
 
     # First create a header
     create_requests = [{"createHeader": {"type": "DEFAULT"}}]
-    create_response = api.batch_update(create_requests)
-    header_id = create_response["replies"][0]["createHeader"]["headerId"]
+    create_response = api.batch_update(
+        BatchUpdateDocumentRequest(
+            requests=[Request.model_validate(r) for r in create_requests]
+        )
+    )
+    header_id = create_response.replies[0].model_dump(by_alias=True, exclude_none=True)[
+        "createHeader"
+    ]["headerId"]
 
     # Try to create footnote in header
     requests = [{"createFootnote": {"location": {"index": 1, "segmentId": header_id}}}]
 
     with pytest.raises(ValidationError) as exc_info:
-        api.batch_update(requests)
+        api.batch_update(
+            BatchUpdateDocumentRequest(
+                requests=[Request.model_validate(r) for r in requests]
+            )
+        )
 
     assert "cannot create footnote" in str(exc_info.value).lower()
 
@@ -1464,12 +1728,16 @@ def test_create_footnote_in_header_fails() -> None:
 def test_create_footnote_missing_location() -> None:
     """Test that missing location is rejected."""
     doc = create_minimal_document()
-    api = MockGoogleDocsAPI(doc)
+    api = MockGoogleDocsAPI(Document.model_validate(doc))
 
     requests = [{"createFootnote": {}}]
 
     with pytest.raises(ValidationError) as exc_info:
-        api.batch_update(requests)
+        api.batch_update(
+            BatchUpdateDocumentRequest(
+                requests=[Request.model_validate(r) for r in requests]
+            )
+        )
 
     assert "must specify either location" in str(exc_info.value).lower()
 
@@ -1477,28 +1745,58 @@ def test_create_footnote_missing_location() -> None:
 def test_add_document_tab_basic() -> None:
     """Test basic document tab addition."""
     doc = create_minimal_document()
-    api = MockGoogleDocsAPI(doc)
+    api = MockGoogleDocsAPI(Document.model_validate(doc))
 
     requests = [{"addDocumentTab": {}}]
 
-    response = api.batch_update(requests)
-    assert len(response["replies"]) == 1
-    assert "addDocumentTab" in response["replies"][0]
-    assert "tabProperties" in response["replies"][0]["addDocumentTab"]
-    assert "tabId" in response["replies"][0]["addDocumentTab"]["tabProperties"]
+    response = api.batch_update(
+        BatchUpdateDocumentRequest(
+            requests=[Request.model_validate(r) for r in requests]
+        )
+    )
+    assert len(response.replies or []) == 1
+    assert "addDocumentTab" in response.replies[0].model_dump(
+        by_alias=True, exclude_none=True
+    )
+    assert (
+        "tabProperties"
+        in response.replies[0].model_dump(by_alias=True, exclude_none=True)[
+            "addDocumentTab"
+        ]
+    )
+    assert (
+        "tabId"
+        in response.replies[0].model_dump(by_alias=True, exclude_none=True)[
+            "addDocumentTab"
+        ]["tabProperties"]
+    )
 
 
 def test_add_document_tab_with_properties() -> None:
     """Test adding document tab with properties."""
     doc = create_minimal_document()
-    api = MockGoogleDocsAPI(doc)
+    api = MockGoogleDocsAPI(Document.model_validate(doc))
 
     requests = [{"addDocumentTab": {"tabProperties": {"title": "New Tab", "index": 1}}}]
 
-    response = api.batch_update(requests)
-    assert len(response["replies"]) == 1
-    assert "tabProperties" in response["replies"][0]["addDocumentTab"]
-    assert "tabId" in response["replies"][0]["addDocumentTab"]["tabProperties"]
+    response = api.batch_update(
+        BatchUpdateDocumentRequest(
+            requests=[Request.model_validate(r) for r in requests]
+        )
+    )
+    assert len(response.replies or []) == 1
+    assert (
+        "tabProperties"
+        in response.replies[0].model_dump(by_alias=True, exclude_none=True)[
+            "addDocumentTab"
+        ]
+    )
+    assert (
+        "tabId"
+        in response.replies[0].model_dump(by_alias=True, exclude_none=True)[
+            "addDocumentTab"
+        ]["tabProperties"]
+    )
 
 
 # ========================================================================
@@ -1509,7 +1807,7 @@ def test_add_document_tab_with_properties() -> None:
 def test_update_table_column_properties_basic() -> None:
     """Test basic table column properties update."""
     doc = create_minimal_document()
-    api = MockGoogleDocsAPI(doc)
+    api = MockGoogleDocsAPI(Document.model_validate(doc))
 
     requests = [
         {
@@ -1524,15 +1822,19 @@ def test_update_table_column_properties_basic() -> None:
         }
     ]
 
-    response = api.batch_update(requests)
-    assert len(response["replies"]) == 1
-    assert response["replies"][0] == {}
+    response = api.batch_update(
+        BatchUpdateDocumentRequest(
+            requests=[Request.model_validate(r) for r in requests]
+        )
+    )
+    assert len(response.replies or []) == 1
+    assert response.replies[0].model_dump(by_alias=True, exclude_none=True) == {}
 
 
 def test_update_table_column_properties_too_narrow() -> None:
     """Test that too narrow column width is rejected."""
     doc = create_minimal_document()
-    api = MockGoogleDocsAPI(doc)
+    api = MockGoogleDocsAPI(Document.model_validate(doc))
 
     requests = [
         {
@@ -1548,7 +1850,11 @@ def test_update_table_column_properties_too_narrow() -> None:
     ]
 
     with pytest.raises(ValidationError) as exc_info:
-        api.batch_update(requests)
+        api.batch_update(
+            BatchUpdateDocumentRequest(
+                requests=[Request.model_validate(r) for r in requests]
+            )
+        )
 
     assert "at least 5 points" in str(exc_info.value).lower()
 
@@ -1556,7 +1862,7 @@ def test_update_table_column_properties_too_narrow() -> None:
 def test_update_table_column_properties_missing_fields() -> None:
     """Test that missing fields is rejected."""
     doc = create_minimal_document()
-    api = MockGoogleDocsAPI(doc)
+    api = MockGoogleDocsAPI(Document.model_validate(doc))
 
     requests = [
         {
@@ -1568,7 +1874,11 @@ def test_update_table_column_properties_missing_fields() -> None:
     ]
 
     with pytest.raises(ValidationError) as exc_info:
-        api.batch_update(requests)
+        api.batch_update(
+            BatchUpdateDocumentRequest(
+                requests=[Request.model_validate(r) for r in requests]
+            )
+        )
 
     assert "fields is required" in str(exc_info.value).lower()
 
@@ -1576,7 +1886,7 @@ def test_update_table_column_properties_missing_fields() -> None:
 def test_update_table_cell_style_basic() -> None:
     """Test basic table cell style update."""
     doc = create_minimal_document()
-    api = MockGoogleDocsAPI(doc)
+    api = MockGoogleDocsAPI(Document.model_validate(doc))
 
     requests = [
         {
@@ -1590,15 +1900,19 @@ def test_update_table_cell_style_basic() -> None:
         }
     ]
 
-    response = api.batch_update(requests)
-    assert len(response["replies"]) == 1
-    assert response["replies"][0] == {}
+    response = api.batch_update(
+        BatchUpdateDocumentRequest(
+            requests=[Request.model_validate(r) for r in requests]
+        )
+    )
+    assert len(response.replies or []) == 1
+    assert response.replies[0].model_dump(by_alias=True, exclude_none=True) == {}
 
 
 def test_update_table_cell_style_missing_fields() -> None:
     """Test that missing fields is rejected."""
     doc = create_minimal_document()
-    api = MockGoogleDocsAPI(doc)
+    api = MockGoogleDocsAPI(Document.model_validate(doc))
 
     requests = [
         {
@@ -1610,7 +1924,11 @@ def test_update_table_cell_style_missing_fields() -> None:
     ]
 
     with pytest.raises(ValidationError) as exc_info:
-        api.batch_update(requests)
+        api.batch_update(
+            BatchUpdateDocumentRequest(
+                requests=[Request.model_validate(r) for r in requests]
+            )
+        )
 
     assert "fields is required" in str(exc_info.value).lower()
 
@@ -1618,7 +1936,7 @@ def test_update_table_cell_style_missing_fields() -> None:
 def test_update_table_row_style_basic() -> None:
     """Test basic table row style update."""
     doc = create_minimal_document()
-    api = MockGoogleDocsAPI(doc)
+    api = MockGoogleDocsAPI(Document.model_validate(doc))
 
     requests = [
         {
@@ -1630,15 +1948,19 @@ def test_update_table_row_style_basic() -> None:
         }
     ]
 
-    response = api.batch_update(requests)
-    assert len(response["replies"]) == 1
-    assert response["replies"][0] == {}
+    response = api.batch_update(
+        BatchUpdateDocumentRequest(
+            requests=[Request.model_validate(r) for r in requests]
+        )
+    )
+    assert len(response.replies or []) == 1
+    assert response.replies[0].model_dump(by_alias=True, exclude_none=True) == {}
 
 
 def test_update_table_row_style_missing_fields() -> None:
     """Test that missing fields is rejected."""
     doc = create_minimal_document()
-    api = MockGoogleDocsAPI(doc)
+    api = MockGoogleDocsAPI(Document.model_validate(doc))
 
     requests = [
         {
@@ -1650,7 +1972,11 @@ def test_update_table_row_style_missing_fields() -> None:
     ]
 
     with pytest.raises(ValidationError) as exc_info:
-        api.batch_update(requests)
+        api.batch_update(
+            BatchUpdateDocumentRequest(
+                requests=[Request.model_validate(r) for r in requests]
+            )
+        )
 
     assert "fields is required" in str(exc_info.value).lower()
 
@@ -1658,7 +1984,7 @@ def test_update_table_row_style_missing_fields() -> None:
 def test_update_document_style_basic() -> None:
     """Test basic document style update."""
     doc = create_minimal_document()
-    api = MockGoogleDocsAPI(doc)
+    api = MockGoogleDocsAPI(Document.model_validate(doc))
 
     requests = [
         {
@@ -1673,20 +1999,28 @@ def test_update_document_style_basic() -> None:
         }
     ]
 
-    response = api.batch_update(requests)
-    assert len(response["replies"]) == 1
-    assert response["replies"][0] == {}
+    response = api.batch_update(
+        BatchUpdateDocumentRequest(
+            requests=[Request.model_validate(r) for r in requests]
+        )
+    )
+    assert len(response.replies or []) == 1
+    assert response.replies[0].model_dump(by_alias=True, exclude_none=True) == {}
 
 
 def test_update_document_style_missing_fields() -> None:
     """Test that missing fields is rejected."""
     doc = create_minimal_document()
-    api = MockGoogleDocsAPI(doc)
+    api = MockGoogleDocsAPI(Document.model_validate(doc))
 
     requests = [{"updateDocumentStyle": {"documentStyle": {"background": {}}}}]
 
     with pytest.raises(ValidationError) as exc_info:
-        api.batch_update(requests)
+        api.batch_update(
+            BatchUpdateDocumentRequest(
+                requests=[Request.model_validate(r) for r in requests]
+            )
+        )
 
     assert "fields is required" in str(exc_info.value).lower()
 
@@ -1694,7 +2028,7 @@ def test_update_document_style_missing_fields() -> None:
 def test_update_section_style_basic() -> None:
     """Test basic section style update."""
     doc = create_minimal_document()
-    api = MockGoogleDocsAPI(doc)
+    api = MockGoogleDocsAPI(Document.model_validate(doc))
 
     requests = [
         {
@@ -1706,20 +2040,30 @@ def test_update_section_style_basic() -> None:
         }
     ]
 
-    response = api.batch_update(requests)
-    assert len(response["replies"]) == 1
-    assert response["replies"][0] == {}
+    response = api.batch_update(
+        BatchUpdateDocumentRequest(
+            requests=[Request.model_validate(r) for r in requests]
+        )
+    )
+    assert len(response.replies or []) == 1
+    assert response.replies[0].model_dump(by_alias=True, exclude_none=True) == {}
 
 
 def test_update_section_style_in_header_fails() -> None:
     """Test that updating section style in header fails."""
     doc = create_minimal_document()
-    api = MockGoogleDocsAPI(doc)
+    api = MockGoogleDocsAPI(Document.model_validate(doc))
 
     # First create a header
     create_requests = [{"createHeader": {"type": "DEFAULT"}}]
-    create_response = api.batch_update(create_requests)
-    header_id = create_response["replies"][0]["createHeader"]["headerId"]
+    create_response = api.batch_update(
+        BatchUpdateDocumentRequest(
+            requests=[Request.model_validate(r) for r in create_requests]
+        )
+    )
+    header_id = create_response.replies[0].model_dump(by_alias=True, exclude_none=True)[
+        "createHeader"
+    ]["headerId"]
 
     # Try to update section style in header
     requests = [
@@ -1733,7 +2077,11 @@ def test_update_section_style_in_header_fails() -> None:
     ]
 
     with pytest.raises(ValidationError) as exc_info:
-        api.batch_update(requests)
+        api.batch_update(
+            BatchUpdateDocumentRequest(
+                requests=[Request.model_validate(r) for r in requests]
+            )
+        )
 
     assert "can only be applied to body" in str(exc_info.value).lower()
 
@@ -1741,7 +2089,7 @@ def test_update_section_style_in_header_fails() -> None:
 def test_update_document_tab_properties_basic() -> None:
     """Test basic document tab properties update."""
     doc = create_minimal_document()
-    api = MockGoogleDocsAPI(doc)
+    api = MockGoogleDocsAPI(Document.model_validate(doc))
 
     requests = [
         {
@@ -1752,15 +2100,19 @@ def test_update_document_tab_properties_basic() -> None:
         }
     ]
 
-    response = api.batch_update(requests)
-    assert len(response["replies"]) == 1
-    assert response["replies"][0] == {}
+    response = api.batch_update(
+        BatchUpdateDocumentRequest(
+            requests=[Request.model_validate(r) for r in requests]
+        )
+    )
+    assert len(response.replies or []) == 1
+    assert response.replies[0].model_dump(by_alias=True, exclude_none=True) == {}
 
 
 def test_update_document_tab_properties_missing_tab_id() -> None:
     """Test that missing tabId is rejected."""
     doc = create_minimal_document()
-    api = MockGoogleDocsAPI(doc)
+    api = MockGoogleDocsAPI(Document.model_validate(doc))
 
     requests = [
         {
@@ -1772,7 +2124,11 @@ def test_update_document_tab_properties_missing_tab_id() -> None:
     ]
 
     with pytest.raises(ValidationError) as exc_info:
-        api.batch_update(requests)
+        api.batch_update(
+            BatchUpdateDocumentRequest(
+                requests=[Request.model_validate(r) for r in requests]
+            )
+        )
 
     assert "tabid is required" in str(exc_info.value).lower()
 
@@ -1785,7 +2141,7 @@ def test_update_document_tab_properties_missing_tab_id() -> None:
 def test_merge_table_cells_basic() -> None:
     """Test basic table cell merging."""
     doc = create_minimal_document()
-    api = MockGoogleDocsAPI(doc)
+    api = MockGoogleDocsAPI(Document.model_validate(doc))
 
     requests = [
         {
@@ -1803,20 +2159,28 @@ def test_merge_table_cells_basic() -> None:
         }
     ]
 
-    response = api.batch_update(requests)
-    assert len(response["replies"]) == 1
-    assert response["replies"][0] == {}
+    response = api.batch_update(
+        BatchUpdateDocumentRequest(
+            requests=[Request.model_validate(r) for r in requests]
+        )
+    )
+    assert len(response.replies or []) == 1
+    assert response.replies[0].model_dump(by_alias=True, exclude_none=True) == {}
 
 
 def test_merge_table_cells_missing_table_range() -> None:
     """Test that missing tableRange is rejected."""
     doc = create_minimal_document()
-    api = MockGoogleDocsAPI(doc)
+    api = MockGoogleDocsAPI(Document.model_validate(doc))
 
     requests = [{"mergeTableCells": {}}]
 
     with pytest.raises(ValidationError) as exc_info:
-        api.batch_update(requests)
+        api.batch_update(
+            BatchUpdateDocumentRequest(
+                requests=[Request.model_validate(r) for r in requests]
+            )
+        )
 
     assert "tablerange is required" in str(exc_info.value).lower()
 
@@ -1824,7 +2188,7 @@ def test_merge_table_cells_missing_table_range() -> None:
 def test_unmerge_table_cells_basic() -> None:
     """Test basic table cell unmerging."""
     doc = create_minimal_document()
-    api = MockGoogleDocsAPI(doc)
+    api = MockGoogleDocsAPI(Document.model_validate(doc))
 
     requests = [
         {
@@ -1842,20 +2206,28 @@ def test_unmerge_table_cells_basic() -> None:
         }
     ]
 
-    response = api.batch_update(requests)
-    assert len(response["replies"]) == 1
-    assert response["replies"][0] == {}
+    response = api.batch_update(
+        BatchUpdateDocumentRequest(
+            requests=[Request.model_validate(r) for r in requests]
+        )
+    )
+    assert len(response.replies or []) == 1
+    assert response.replies[0].model_dump(by_alias=True, exclude_none=True) == {}
 
 
 def test_unmerge_table_cells_missing_table_range() -> None:
     """Test that missing tableRange is rejected."""
     doc = create_minimal_document()
-    api = MockGoogleDocsAPI(doc)
+    api = MockGoogleDocsAPI(Document.model_validate(doc))
 
     requests = [{"unmergeTableCells": {}}]
 
     with pytest.raises(ValidationError) as exc_info:
-        api.batch_update(requests)
+        api.batch_update(
+            BatchUpdateDocumentRequest(
+                requests=[Request.model_validate(r) for r in requests]
+            )
+        )
 
     assert "tablerange is required" in str(exc_info.value).lower()
 
@@ -1863,7 +2235,7 @@ def test_unmerge_table_cells_missing_table_range() -> None:
 def test_pin_table_header_rows_basic() -> None:
     """Test basic table header row pinning."""
     doc = create_minimal_document()
-    api = MockGoogleDocsAPI(doc)
+    api = MockGoogleDocsAPI(Document.model_validate(doc))
 
     requests = [
         {
@@ -1874,20 +2246,28 @@ def test_pin_table_header_rows_basic() -> None:
         }
     ]
 
-    response = api.batch_update(requests)
-    assert len(response["replies"]) == 1
-    assert response["replies"][0] == {}
+    response = api.batch_update(
+        BatchUpdateDocumentRequest(
+            requests=[Request.model_validate(r) for r in requests]
+        )
+    )
+    assert len(response.replies or []) == 1
+    assert response.replies[0].model_dump(by_alias=True, exclude_none=True) == {}
 
 
 def test_pin_table_header_rows_missing_count() -> None:
     """Test that missing pinnedHeaderRowsCount is rejected."""
     doc = create_minimal_document()
-    api = MockGoogleDocsAPI(doc)
+    api = MockGoogleDocsAPI(Document.model_validate(doc))
 
     requests = [{"pinTableHeaderRows": {"tableStartLocation": {"index": 1}}}]
 
     with pytest.raises(ValidationError) as exc_info:
-        api.batch_update(requests)
+        api.batch_update(
+            BatchUpdateDocumentRequest(
+                requests=[Request.model_validate(r) for r in requests]
+            )
+        )
 
     assert "pinnedheaderrowscount is required" in str(exc_info.value).lower()
 
@@ -1900,7 +2280,7 @@ def test_pin_table_header_rows_missing_count() -> None:
 def test_insert_inline_image_basic() -> None:
     """Test basic inline image insertion."""
     doc = create_minimal_document()
-    api = MockGoogleDocsAPI(doc)
+    api = MockGoogleDocsAPI(Document.model_validate(doc))
 
     requests = [
         {
@@ -1911,21 +2291,36 @@ def test_insert_inline_image_basic() -> None:
         }
     ]
 
-    response = api.batch_update(requests)
-    assert len(response["replies"]) == 1
-    assert "insertInlineImage" in response["replies"][0]
-    assert "objectId" in response["replies"][0]["insertInlineImage"]
+    response = api.batch_update(
+        BatchUpdateDocumentRequest(
+            requests=[Request.model_validate(r) for r in requests]
+        )
+    )
+    assert len(response.replies or []) == 1
+    assert "insertInlineImage" in response.replies[0].model_dump(
+        by_alias=True, exclude_none=True
+    )
+    assert (
+        "objectId"
+        in response.replies[0].model_dump(by_alias=True, exclude_none=True)[
+            "insertInlineImage"
+        ]
+    )
 
 
 def test_insert_inline_image_missing_uri() -> None:
     """Test that missing uri is rejected."""
     doc = create_minimal_document()
-    api = MockGoogleDocsAPI(doc)
+    api = MockGoogleDocsAPI(Document.model_validate(doc))
 
     requests = [{"insertInlineImage": {"location": {"index": 1}}}]
 
     with pytest.raises(ValidationError) as exc_info:
-        api.batch_update(requests)
+        api.batch_update(
+            BatchUpdateDocumentRequest(
+                requests=[Request.model_validate(r) for r in requests]
+            )
+        )
 
     assert "uri is required" in str(exc_info.value).lower()
 
@@ -1933,14 +2328,18 @@ def test_insert_inline_image_missing_uri() -> None:
 def test_insert_inline_image_uri_too_long() -> None:
     """Test that too long URI is rejected."""
     doc = create_minimal_document()
-    api = MockGoogleDocsAPI(doc)
+    api = MockGoogleDocsAPI(Document.model_validate(doc))
 
     long_uri = "https://example.com/" + "x" * 2050
 
     requests = [{"insertInlineImage": {"uri": long_uri, "location": {"index": 1}}}]
 
     with pytest.raises(ValidationError) as exc_info:
-        api.batch_update(requests)
+        api.batch_update(
+            BatchUpdateDocumentRequest(
+                requests=[Request.model_validate(r) for r in requests]
+            )
+        )
 
     assert "less than 2 kb" in str(exc_info.value).lower()
 
@@ -1948,30 +2347,44 @@ def test_insert_inline_image_uri_too_long() -> None:
 def test_insert_page_break_basic() -> None:
     """Test basic page break insertion."""
     doc = create_minimal_document()
-    api = MockGoogleDocsAPI(doc)
+    api = MockGoogleDocsAPI(Document.model_validate(doc))
 
     requests = [{"insertPageBreak": {"location": {"index": 1}}}]
 
-    response = api.batch_update(requests)
-    assert len(response["replies"]) == 1
-    assert response["replies"][0] == {}
+    response = api.batch_update(
+        BatchUpdateDocumentRequest(
+            requests=[Request.model_validate(r) for r in requests]
+        )
+    )
+    assert len(response.replies or []) == 1
+    assert response.replies[0].model_dump(by_alias=True, exclude_none=True) == {}
 
 
 def test_insert_page_break_in_header_fails() -> None:
     """Test that inserting page break in header fails."""
     doc = create_minimal_document()
-    api = MockGoogleDocsAPI(doc)
+    api = MockGoogleDocsAPI(Document.model_validate(doc))
 
     # First create a header
     create_requests = [{"createHeader": {"type": "DEFAULT"}}]
-    create_response = api.batch_update(create_requests)
-    header_id = create_response["replies"][0]["createHeader"]["headerId"]
+    create_response = api.batch_update(
+        BatchUpdateDocumentRequest(
+            requests=[Request.model_validate(r) for r in create_requests]
+        )
+    )
+    header_id = create_response.replies[0].model_dump(by_alias=True, exclude_none=True)[
+        "createHeader"
+    ]["headerId"]
 
     # Try to insert page break in header
     requests = [{"insertPageBreak": {"location": {"index": 1, "segmentId": header_id}}}]
 
     with pytest.raises(ValidationError) as exc_info:
-        api.batch_update(requests)
+        api.batch_update(
+            BatchUpdateDocumentRequest(
+                requests=[Request.model_validate(r) for r in requests]
+            )
+        )
 
     assert "cannot insert page break" in str(exc_info.value).lower()
 
@@ -1979,26 +2392,34 @@ def test_insert_page_break_in_header_fails() -> None:
 def test_insert_section_break_basic() -> None:
     """Test basic section break insertion."""
     doc = create_minimal_document()
-    api = MockGoogleDocsAPI(doc)
+    api = MockGoogleDocsAPI(Document.model_validate(doc))
 
     requests = [
         {"insertSectionBreak": {"location": {"index": 1}, "sectionType": "CONTINUOUS"}}
     ]
 
-    response = api.batch_update(requests)
-    assert len(response["replies"]) == 1
-    assert response["replies"][0] == {}
+    response = api.batch_update(
+        BatchUpdateDocumentRequest(
+            requests=[Request.model_validate(r) for r in requests]
+        )
+    )
+    assert len(response.replies or []) == 1
+    assert response.replies[0].model_dump(by_alias=True, exclude_none=True) == {}
 
 
 def test_insert_section_break_missing_section_type() -> None:
     """Test that missing sectionType is rejected."""
     doc = create_minimal_document()
-    api = MockGoogleDocsAPI(doc)
+    api = MockGoogleDocsAPI(Document.model_validate(doc))
 
     requests = [{"insertSectionBreak": {"location": {"index": 1}}}]
 
     with pytest.raises(ValidationError) as exc_info:
-        api.batch_update(requests)
+        api.batch_update(
+            BatchUpdateDocumentRequest(
+                requests=[Request.model_validate(r) for r in requests]
+            )
+        )
 
     assert "sectiontype is required" in str(exc_info.value).lower()
 
@@ -2006,12 +2427,18 @@ def test_insert_section_break_missing_section_type() -> None:
 def test_insert_section_break_in_footer_fails() -> None:
     """Test that inserting section break in footer fails."""
     doc = create_minimal_document()
-    api = MockGoogleDocsAPI(doc)
+    api = MockGoogleDocsAPI(Document.model_validate(doc))
 
     # First create a footer
     create_requests = [{"createFooter": {"type": "DEFAULT"}}]
-    create_response = api.batch_update(create_requests)
-    footer_id = create_response["replies"][0]["createFooter"]["footerId"]
+    create_response = api.batch_update(
+        BatchUpdateDocumentRequest(
+            requests=[Request.model_validate(r) for r in create_requests]
+        )
+    )
+    footer_id = create_response.replies[0].model_dump(by_alias=True, exclude_none=True)[
+        "createFooter"
+    ]["footerId"]
 
     # Try to insert section break in footer
     requests = [
@@ -2024,7 +2451,11 @@ def test_insert_section_break_in_footer_fails() -> None:
     ]
 
     with pytest.raises(ValidationError) as exc_info:
-        api.batch_update(requests)
+        api.batch_update(
+            BatchUpdateDocumentRequest(
+                requests=[Request.model_validate(r) for r in requests]
+            )
+        )
 
     assert "cannot insert section break" in str(exc_info.value).lower()
 
@@ -2032,7 +2463,7 @@ def test_insert_section_break_in_footer_fails() -> None:
 def test_insert_person_basic() -> None:
     """Test basic person insertion."""
     doc = create_minimal_document()
-    api = MockGoogleDocsAPI(doc)
+    api = MockGoogleDocsAPI(Document.model_validate(doc))
 
     requests = [
         {
@@ -2043,20 +2474,28 @@ def test_insert_person_basic() -> None:
         }
     ]
 
-    response = api.batch_update(requests)
-    assert len(response["replies"]) == 1
-    assert response["replies"][0] == {}
+    response = api.batch_update(
+        BatchUpdateDocumentRequest(
+            requests=[Request.model_validate(r) for r in requests]
+        )
+    )
+    assert len(response.replies or []) == 1
+    assert response.replies[0].model_dump(by_alias=True, exclude_none=True) == {}
 
 
 def test_insert_person_missing_properties() -> None:
     """Test that missing personProperties is rejected."""
     doc = create_minimal_document()
-    api = MockGoogleDocsAPI(doc)
+    api = MockGoogleDocsAPI(Document.model_validate(doc))
 
     requests = [{"insertPerson": {"location": {"index": 1}}}]
 
     with pytest.raises(ValidationError) as exc_info:
-        api.batch_update(requests)
+        api.batch_update(
+            BatchUpdateDocumentRequest(
+                requests=[Request.model_validate(r) for r in requests]
+            )
+        )
 
     assert "personproperties is required" in str(exc_info.value).lower()
 
@@ -2064,7 +2503,7 @@ def test_insert_person_missing_properties() -> None:
 def test_insert_date_basic() -> None:
     """Test basic date insertion."""
     doc = create_minimal_document()
-    api = MockGoogleDocsAPI(doc)
+    api = MockGoogleDocsAPI(Document.model_validate(doc))
 
     requests = [
         {
@@ -2075,20 +2514,28 @@ def test_insert_date_basic() -> None:
         }
     ]
 
-    response = api.batch_update(requests)
-    assert len(response["replies"]) == 1
-    assert response["replies"][0] == {}
+    response = api.batch_update(
+        BatchUpdateDocumentRequest(
+            requests=[Request.model_validate(r) for r in requests]
+        )
+    )
+    assert len(response.replies or []) == 1
+    assert response.replies[0].model_dump(by_alias=True, exclude_none=True) == {}
 
 
 def test_insert_date_missing_properties() -> None:
     """Test that missing dateElementProperties is rejected."""
     doc = create_minimal_document()
-    api = MockGoogleDocsAPI(doc)
+    api = MockGoogleDocsAPI(Document.model_validate(doc))
 
     requests = [{"insertDate": {"location": {"index": 1}}}]
 
     with pytest.raises(ValidationError) as exc_info:
-        api.batch_update(requests)
+        api.batch_update(
+            BatchUpdateDocumentRequest(
+                requests=[Request.model_validate(r) for r in requests]
+            )
+        )
 
     assert "dateelementproperties is required" in str(exc_info.value).lower()
 
@@ -2101,7 +2548,7 @@ def test_insert_date_missing_properties() -> None:
 def test_replace_image_basic() -> None:
     """Test basic image replacement."""
     doc = create_minimal_document()
-    api = MockGoogleDocsAPI(doc)
+    api = MockGoogleDocsAPI(Document.model_validate(doc))
 
     requests = [
         {
@@ -2112,20 +2559,28 @@ def test_replace_image_basic() -> None:
         }
     ]
 
-    response = api.batch_update(requests)
-    assert len(response["replies"]) == 1
-    assert response["replies"][0] == {}
+    response = api.batch_update(
+        BatchUpdateDocumentRequest(
+            requests=[Request.model_validate(r) for r in requests]
+        )
+    )
+    assert len(response.replies or []) == 1
+    assert response.replies[0].model_dump(by_alias=True, exclude_none=True) == {}
 
 
 def test_replace_image_missing_object_id() -> None:
     """Test that missing imageObjectId is rejected."""
     doc = create_minimal_document()
-    api = MockGoogleDocsAPI(doc)
+    api = MockGoogleDocsAPI(Document.model_validate(doc))
 
     requests = [{"replaceImage": {"uri": "https://example.com/image.png"}}]
 
     with pytest.raises(ValidationError) as exc_info:
-        api.batch_update(requests)
+        api.batch_update(
+            BatchUpdateDocumentRequest(
+                requests=[Request.model_validate(r) for r in requests]
+            )
+        )
 
     assert "imageobjectid is required" in str(exc_info.value).lower()
 
@@ -2133,14 +2588,18 @@ def test_replace_image_missing_object_id() -> None:
 def test_replace_image_uri_too_long() -> None:
     """Test that too long URI is rejected."""
     doc = create_minimal_document()
-    api = MockGoogleDocsAPI(doc)
+    api = MockGoogleDocsAPI(Document.model_validate(doc))
 
     long_uri = "https://example.com/" + "x" * 2050
 
     requests = [{"replaceImage": {"imageObjectId": "image123", "uri": long_uri}}]
 
     with pytest.raises(ValidationError) as exc_info:
-        api.batch_update(requests)
+        api.batch_update(
+            BatchUpdateDocumentRequest(
+                requests=[Request.model_validate(r) for r in requests]
+            )
+        )
 
     assert "less than 2 kb" in str(exc_info.value).lower()
 
@@ -2148,7 +2607,7 @@ def test_replace_image_uri_too_long() -> None:
 def test_replace_named_range_content_basic() -> None:
     """Test basic named range content replacement."""
     doc = create_minimal_document()
-    api = MockGoogleDocsAPI(doc)
+    api = MockGoogleDocsAPI(Document.model_validate(doc))
 
     requests = [
         {
@@ -2159,20 +2618,28 @@ def test_replace_named_range_content_basic() -> None:
         }
     ]
 
-    response = api.batch_update(requests)
-    assert len(response["replies"]) == 1
-    assert response["replies"][0] == {}
+    response = api.batch_update(
+        BatchUpdateDocumentRequest(
+            requests=[Request.model_validate(r) for r in requests]
+        )
+    )
+    assert len(response.replies or []) == 1
+    assert response.replies[0].model_dump(by_alias=True, exclude_none=True) == {}
 
 
 def test_replace_named_range_content_missing_text() -> None:
     """Test that missing text is rejected."""
     doc = create_minimal_document()
-    api = MockGoogleDocsAPI(doc)
+    api = MockGoogleDocsAPI(Document.model_validate(doc))
 
     requests = [{"replaceNamedRangeContent": {"namedRangeName": "myrange"}}]
 
     with pytest.raises(ValidationError) as exc_info:
-        api.batch_update(requests)
+        api.batch_update(
+            BatchUpdateDocumentRequest(
+                requests=[Request.model_validate(r) for r in requests]
+            )
+        )
 
     assert "text is required" in str(exc_info.value).lower()
 
@@ -2180,12 +2647,16 @@ def test_replace_named_range_content_missing_text() -> None:
 def test_replace_named_range_content_missing_identifier() -> None:
     """Test that missing identifier is rejected."""
     doc = create_minimal_document()
-    api = MockGoogleDocsAPI(doc)
+    api = MockGoogleDocsAPI(Document.model_validate(doc))
 
     requests = [{"replaceNamedRangeContent": {"text": "New content"}}]
 
     with pytest.raises(ValidationError) as exc_info:
-        api.batch_update(requests)
+        api.batch_update(
+            BatchUpdateDocumentRequest(
+                requests=[Request.model_validate(r) for r in requests]
+            )
+        )
 
     assert "must specify either" in str(exc_info.value).lower()
 
@@ -2193,7 +2664,7 @@ def test_replace_named_range_content_missing_identifier() -> None:
 def test_delete_tab_basic() -> None:
     """Test basic tab deletion (must have >1 tab)."""
     doc = create_minimal_document()
-    api = MockGoogleDocsAPI(doc)
+    api = MockGoogleDocsAPI(Document.model_validate(doc))
 
     # First add a second tab, then delete the original
     requests = [
@@ -2201,28 +2672,43 @@ def test_delete_tab_basic() -> None:
         {"deleteTab": {"tabId": "tab1"}},
     ]
 
-    response = api.batch_update(requests)
-    assert len(response["replies"]) == 2
+    response = api.batch_update(
+        BatchUpdateDocumentRequest(
+            requests=[Request.model_validate(r) for r in requests]
+        )
+    )
+    assert len(response.replies or []) == 2
     # addDocumentTab reply has tabId
-    assert "addDocumentTab" in response["replies"][0]
+    assert "addDocumentTab" in response.replies[0].model_dump(
+        by_alias=True, exclude_none=True
+    )
     # deleteTab reply is empty
-    assert response["replies"][1] == {}
+    assert response.replies[1].model_dump(by_alias=True, exclude_none=True) == {}
 
     # Verify tab was removed
     result = api.get()
-    assert len(result["tabs"]) == 1
-    assert result["tabs"][0]["tabProperties"]["tabId"] != "tab1"
+    assert len(result.model_dump(by_alias=True, exclude_none=True)["tabs"]) == 1
+    assert (
+        result.model_dump(by_alias=True, exclude_none=True)["tabs"][0]["tabProperties"][
+            "tabId"
+        ]
+        != "tab1"
+    )
 
 
 def test_delete_tab_last_tab_rejected() -> None:
     """Test that deleting the last tab is rejected."""
     doc = create_minimal_document()
-    api = MockGoogleDocsAPI(doc)
+    api = MockGoogleDocsAPI(Document.model_validate(doc))
 
     requests = [{"deleteTab": {"tabId": "tab1"}}]
 
     with pytest.raises(ValidationError) as exc_info:
-        api.batch_update(requests)
+        api.batch_update(
+            BatchUpdateDocumentRequest(
+                requests=[Request.model_validate(r) for r in requests]
+            )
+        )
 
     assert "last tab" in str(exc_info.value).lower()
 
@@ -2230,12 +2716,16 @@ def test_delete_tab_last_tab_rejected() -> None:
 def test_delete_tab_missing_tab_id() -> None:
     """Test that missing tabId is rejected."""
     doc = create_minimal_document()
-    api = MockGoogleDocsAPI(doc)
+    api = MockGoogleDocsAPI(Document.model_validate(doc))
 
     requests = [{"deleteTab": {}}]
 
     with pytest.raises(ValidationError) as exc_info:
-        api.batch_update(requests)
+        api.batch_update(
+            BatchUpdateDocumentRequest(
+                requests=[Request.model_validate(r) for r in requests]
+            )
+        )
 
     assert "tabid is required" in str(exc_info.value).lower()
 
@@ -2253,14 +2743,18 @@ def test_delete_tab_missing_tab_id() -> None:
 def test_delete_surrogate_pair_split_at_start_fails() -> None:
     """Test that deleting just the high surrogate of an emoji fails."""
     doc = create_document_with_emoji()  # "Hello😀World\n"
-    api = MockGoogleDocsAPI(doc)
+    api = MockGoogleDocsAPI(Document.model_validate(doc))
 
     # Emoji 😀 occupies indices 6-8 (2 UTF-16 code units: high and low surrogate)
     # Try to delete just the first unit (high surrogate) at index 6-7
     requests = [{"deleteContentRange": {"range": {"startIndex": 6, "endIndex": 7}}}]
 
     with pytest.raises(ValidationError) as exc_info:
-        api.batch_update(requests)
+        api.batch_update(
+            BatchUpdateDocumentRequest(
+                requests=[Request.model_validate(r) for r in requests]
+            )
+        )
 
     assert "surrogate pair" in str(exc_info.value).lower()
 
@@ -2268,14 +2762,18 @@ def test_delete_surrogate_pair_split_at_start_fails() -> None:
 def test_delete_surrogate_pair_split_at_end_fails() -> None:
     """Test that deletion ending in middle of surrogate pair fails."""
     doc = create_document_with_emoji()  # "Hello😀World\n"
-    api = MockGoogleDocsAPI(doc)
+    api = MockGoogleDocsAPI(Document.model_validate(doc))
 
     # Emoji 😀 occupies indices 6-8
     # Try to delete "o" + first half of emoji (5-7, which cuts the emoji)
     requests = [{"deleteContentRange": {"range": {"startIndex": 5, "endIndex": 7}}}]
 
     with pytest.raises(ValidationError) as exc_info:
-        api.batch_update(requests)
+        api.batch_update(
+            BatchUpdateDocumentRequest(
+                requests=[Request.model_validate(r) for r in requests]
+            )
+        )
 
     assert "surrogate pair" in str(exc_info.value).lower()
 
@@ -2283,32 +2781,40 @@ def test_delete_surrogate_pair_split_at_end_fails() -> None:
 def test_delete_full_surrogate_pair_succeeds() -> None:
     """Test that deleting a complete surrogate pair succeeds."""
     doc = create_document_with_emoji()  # "Hello😀World\n"
-    api = MockGoogleDocsAPI(doc)
+    api = MockGoogleDocsAPI(Document.model_validate(doc))
 
     # Delete the full emoji (both code units)
     requests = [{"deleteContentRange": {"range": {"startIndex": 6, "endIndex": 8}}}]
 
-    response = api.batch_update(requests)
-    assert len(response["replies"]) == 1
-    assert response["replies"][0] == {}
+    response = api.batch_update(
+        BatchUpdateDocumentRequest(
+            requests=[Request.model_validate(r) for r in requests]
+        )
+    )
+    assert len(response.replies or []) == 1
+    assert response.replies[0].model_dump(by_alias=True, exclude_none=True) == {}
 
 
 def test_delete_text_including_surrogate_pair_succeeds() -> None:
     """Test that deleting text that includes complete surrogate pairs succeeds."""
     doc = create_document_with_emoji()  # "Hello😀World\n"
-    api = MockGoogleDocsAPI(doc)
+    api = MockGoogleDocsAPI(Document.model_validate(doc))
 
     # Delete "lo😀Wor" (indices 4-11, includes full emoji)
     requests = [{"deleteContentRange": {"range": {"startIndex": 4, "endIndex": 11}}}]
 
-    response = api.batch_update(requests)
-    assert len(response["replies"]) == 1
+    response = api.batch_update(
+        BatchUpdateDocumentRequest(
+            requests=[Request.model_validate(r) for r in requests]
+        )
+    )
+    assert len(response.replies or []) == 1
 
 
 def test_insert_text_strips_private_use_area() -> None:
     """Test that private use area characters (U+E000-U+F8FF) are stripped."""
     doc = create_minimal_document()
-    api = MockGoogleDocsAPI(doc)
+    api = MockGoogleDocsAPI(Document.model_validate(doc))
 
     # Insert text with private use area character
     # U+E000 is in the private use area
@@ -2317,8 +2823,12 @@ def test_insert_text_strips_private_use_area() -> None:
     requests = [{"insertText": {"location": {"index": 1}, "text": text_with_private}}]
 
     # Should not raise an error (private use chars are stripped)
-    response = api.batch_update(requests)
-    assert len(response["replies"]) == 1
+    response = api.batch_update(
+        BatchUpdateDocumentRequest(
+            requests=[Request.model_validate(r) for r in requests]
+        )
+    )
+    assert len(response.replies or []) == 1
 
 
 # ------------------------------------------------------------------------
@@ -2329,7 +2839,7 @@ def test_insert_text_strips_private_use_area() -> None:
 def test_delete_table_cell_final_newline_fails() -> None:
     """Test that deleting final newline from table cell fails."""
     doc = create_document_with_table()
-    api = MockGoogleDocsAPI(doc)
+    api = MockGoogleDocsAPI(Document.model_validate(doc))
 
     # Cell 1 has content "A\n" at indices 9-11
     # Final newline is at index 10
@@ -2337,7 +2847,11 @@ def test_delete_table_cell_final_newline_fails() -> None:
     requests = [{"deleteContentRange": {"range": {"startIndex": 10, "endIndex": 11}}}]
 
     with pytest.raises(ValidationError) as exc_info:
-        api.batch_update(requests)
+        api.batch_update(
+            BatchUpdateDocumentRequest(
+                requests=[Request.model_validate(r) for r in requests]
+            )
+        )
 
     assert "final newline of a table cell" in str(exc_info.value).lower()
 
@@ -2345,21 +2859,25 @@ def test_delete_table_cell_final_newline_fails() -> None:
 def test_delete_table_cell_content_excluding_final_newline_succeeds() -> None:
     """Test that deleting cell content except final newline succeeds."""
     doc = create_document_with_table()
-    api = MockGoogleDocsAPI(doc)
+    api = MockGoogleDocsAPI(Document.model_validate(doc))
 
     # Cell 1 has content "A\n" at indices 9-11
     # Delete just "A" (9-10), leaving the final newline
     requests = [{"deleteContentRange": {"range": {"startIndex": 9, "endIndex": 10}}}]
 
-    response = api.batch_update(requests)
-    assert len(response["replies"]) == 1
-    assert response["replies"][0] == {}
+    response = api.batch_update(
+        BatchUpdateDocumentRequest(
+            requests=[Request.model_validate(r) for r in requests]
+        )
+    )
+    assert len(response.replies or []) == 1
+    assert response.replies[0].model_dump(by_alias=True, exclude_none=True) == {}
 
 
 def test_delete_across_multiple_cells_including_final_newlines_fails() -> None:
     """Test that deletion spanning multiple cells including final newlines fails."""
     doc = create_document_with_table()
-    api = MockGoogleDocsAPI(doc)
+    api = MockGoogleDocsAPI(Document.model_validate(doc))
 
     # Try to delete from cell 1 through cell 2, including final newlines
     # Cell 1: 9-11, Cell 2: 12-14
@@ -2367,7 +2885,11 @@ def test_delete_across_multiple_cells_including_final_newlines_fails() -> None:
     requests = [{"deleteContentRange": {"range": {"startIndex": 9, "endIndex": 14}}}]
 
     with pytest.raises(ValidationError) as exc_info:
-        api.batch_update(requests)
+        api.batch_update(
+            BatchUpdateDocumentRequest(
+                requests=[Request.model_validate(r) for r in requests]
+            )
+        )
 
     assert "final newline" in str(exc_info.value).lower()
 
@@ -2380,14 +2902,18 @@ def test_delete_across_multiple_cells_including_final_newlines_fails() -> None:
 def test_delete_partial_table_of_contents_fails() -> None:
     """Test that partially deleting TableOfContents fails."""
     doc = create_document_with_toc()
-    api = MockGoogleDocsAPI(doc)
+    api = MockGoogleDocsAPI(Document.model_validate(doc))
 
     # TOC is at indices 7-10
     # Try to partially delete it (8-9)
     requests = [{"deleteContentRange": {"range": {"startIndex": 8, "endIndex": 9}}}]
 
     with pytest.raises(ValidationError) as exc_info:
-        api.batch_update(requests)
+        api.batch_update(
+            BatchUpdateDocumentRequest(
+                requests=[Request.model_validate(r) for r in requests]
+            )
+        )
 
     assert "table of contents" in str(exc_info.value).lower()
     assert "partially" in str(exc_info.value).lower()
@@ -2396,28 +2922,36 @@ def test_delete_partial_table_of_contents_fails() -> None:
 def test_delete_full_table_of_contents_succeeds() -> None:
     """Test that deleting entire TableOfContents succeeds."""
     doc = create_document_with_toc()
-    api = MockGoogleDocsAPI(doc)
+    api = MockGoogleDocsAPI(Document.model_validate(doc))
 
     # TOC is at indices 7-10
     # Delete the entire TOC
     requests = [{"deleteContentRange": {"range": {"startIndex": 7, "endIndex": 10}}}]
 
-    response = api.batch_update(requests)
-    assert len(response["replies"]) == 1
-    assert response["replies"][0] == {}
+    response = api.batch_update(
+        BatchUpdateDocumentRequest(
+            requests=[Request.model_validate(r) for r in requests]
+        )
+    )
+    assert len(response.replies or []) == 1
+    assert response.replies[0].model_dump(by_alias=True, exclude_none=True) == {}
 
 
 def test_delete_newline_before_table_of_contents_fails() -> None:
     """Test that deleting newline before TableOfContents fails."""
     doc = create_document_with_toc()
-    api = MockGoogleDocsAPI(doc)
+    api = MockGoogleDocsAPI(Document.model_validate(doc))
 
     # TOC starts at index 7, newline before it is at 6
     # Try to delete the newline (6-7)
     requests = [{"deleteContentRange": {"range": {"startIndex": 6, "endIndex": 7}}}]
 
     with pytest.raises(ValidationError) as exc_info:
-        api.batch_update(requests)
+        api.batch_update(
+            BatchUpdateDocumentRequest(
+                requests=[Request.model_validate(r) for r in requests]
+            )
+        )
 
     assert "table of contents" in str(exc_info.value).lower()
     assert "newline" in str(exc_info.value).lower()
@@ -2431,14 +2965,18 @@ def test_delete_newline_before_table_of_contents_fails() -> None:
 def test_delete_newline_before_section_break_fails() -> None:
     """Test that deleting newline before section break fails."""
     doc = create_document_with_section_break()
-    api = MockGoogleDocsAPI(doc)
+    api = MockGoogleDocsAPI(Document.model_validate(doc))
 
     # Section break is at index 11, newline before it is at 10
     # Try to delete the newline (10-11)
     requests = [{"deleteContentRange": {"range": {"startIndex": 10, "endIndex": 11}}}]
 
     with pytest.raises(ValidationError) as exc_info:
-        api.batch_update(requests)
+        api.batch_update(
+            BatchUpdateDocumentRequest(
+                requests=[Request.model_validate(r) for r in requests]
+            )
+        )
 
     assert "section break" in str(exc_info.value).lower()
     assert "newline" in str(exc_info.value).lower()
@@ -2447,16 +2985,20 @@ def test_delete_newline_before_section_break_fails() -> None:
 def test_delete_section_break_without_newline_succeeds() -> None:
     """Test that deleting section break without its preceding newline succeeds."""
     doc = create_document_with_section_break()
-    api = MockGoogleDocsAPI(doc)
+    api = MockGoogleDocsAPI(Document.model_validate(doc))
 
     # Section break is at index 11-12
     # We cannot delete the newline before it (10-11)
     # But we CAN delete the section break itself (11-12)
     requests = [{"deleteContentRange": {"range": {"startIndex": 11, "endIndex": 12}}}]
 
-    response = api.batch_update(requests)
-    assert len(response["replies"]) == 1
-    assert response["replies"][0] == {}
+    response = api.batch_update(
+        BatchUpdateDocumentRequest(
+            requests=[Request.model_validate(r) for r in requests]
+        )
+    )
+    assert len(response.replies or []) == 1
+    assert response.replies[0].model_dump(by_alias=True, exclude_none=True) == {}
 
 
 # ------------------------------------------------------------------------
@@ -2467,14 +3009,18 @@ def test_delete_section_break_without_newline_succeeds() -> None:
 def test_delete_partial_equation_fails() -> None:
     """Test that partially deleting an equation fails."""
     doc = create_document_with_equation()
-    api = MockGoogleDocsAPI(doc)
+    api = MockGoogleDocsAPI(Document.model_validate(doc))
 
     # Equation is at indices 10-13
     # Try to partially delete it (10-12)
     requests = [{"deleteContentRange": {"range": {"startIndex": 10, "endIndex": 12}}}]
 
     with pytest.raises(ValidationError) as exc_info:
-        api.batch_update(requests)
+        api.batch_update(
+            BatchUpdateDocumentRequest(
+                requests=[Request.model_validate(r) for r in requests]
+            )
+        )
 
     assert "equation" in str(exc_info.value).lower()
     assert "partially" in str(exc_info.value).lower()
@@ -2483,26 +3029,36 @@ def test_delete_partial_equation_fails() -> None:
 def test_delete_full_equation_succeeds() -> None:
     """Test that deleting entire equation succeeds."""
     doc = create_document_with_equation()
-    api = MockGoogleDocsAPI(doc)
+    api = MockGoogleDocsAPI(Document.model_validate(doc))
 
     # Equation is at indices 10-13
     # Delete the entire equation
     requests = [{"deleteContentRange": {"range": {"startIndex": 10, "endIndex": 13}}}]
 
-    response = api.batch_update(requests)
-    assert len(response["replies"]) == 1
-    assert response["replies"][0] == {}
+    response = api.batch_update(
+        BatchUpdateDocumentRequest(
+            requests=[Request.model_validate(r) for r in requests]
+        )
+    )
+    assert len(response.replies or []) == 1
+    assert response.replies[0].model_dump(by_alias=True, exclude_none=True) == {}
 
 
 def test_insert_inline_image_in_footnote_fails() -> None:
     """Test that inserting image in footnote fails."""
     doc = create_minimal_document()
-    api = MockGoogleDocsAPI(doc)
+    api = MockGoogleDocsAPI(Document.model_validate(doc))
 
     # First create a footnote
     create_requests = [{"createFootnote": {"location": {"index": 1}}}]
-    create_response = api.batch_update(create_requests)
-    footnote_id = create_response["replies"][0]["createFootnote"]["footnoteId"]
+    create_response = api.batch_update(
+        BatchUpdateDocumentRequest(
+            requests=[Request.model_validate(r) for r in create_requests]
+        )
+    )
+    footnote_id = create_response.replies[0].model_dump(
+        by_alias=True, exclude_none=True
+    )["createFootnote"]["footnoteId"]
 
     # Try to insert image in the footnote
     requests = [
@@ -2515,7 +3071,11 @@ def test_insert_inline_image_in_footnote_fails() -> None:
     ]
 
     with pytest.raises(ValidationError) as exc_info:
-        api.batch_update(requests)
+        api.batch_update(
+            BatchUpdateDocumentRequest(
+                requests=[Request.model_validate(r) for r in requests]
+            )
+        )
 
     assert "cannot insert image in footnote" in str(exc_info.value).lower()
 
@@ -2528,7 +3088,7 @@ def test_insert_inline_image_in_footnote_fails() -> None:
 def test_delete_table_preserves_structure_tracker() -> None:
     """Test that structure tracker is rebuilt after operations."""
     doc = create_document_with_table()
-    api = MockGoogleDocsAPI(doc)
+    api = MockGoogleDocsAPI(Document.model_validate(doc))
 
     # Verify table is tracked before deletion
     assert len(api._structure_tracker.tables) == 1
@@ -2538,8 +3098,12 @@ def test_delete_table_preserves_structure_tracker() -> None:
     requests = [{"deleteContentRange": {"range": {"startIndex": 8, "endIndex": 21}}}]
 
     # This should succeed (full table deletion is allowed)
-    response = api.batch_update(requests)
-    assert len(response["replies"]) == 1
+    response = api.batch_update(
+        BatchUpdateDocumentRequest(
+            requests=[Request.model_validate(r) for r in requests]
+        )
+    )
+    assert len(response.replies or []) == 1
 
     # Structure tracker should be rebuilt (though content unchanged in mock)
     assert api._structure_tracker is not None
@@ -2548,14 +3112,18 @@ def test_delete_table_preserves_structure_tracker() -> None:
 def test_delete_newline_before_table_alone_fails() -> None:
     """Test that deleting only newline before table fails."""
     doc = create_document_with_table()
-    api = MockGoogleDocsAPI(doc)
+    api = MockGoogleDocsAPI(Document.model_validate(doc))
 
     # Table starts at index 8
     # Try to delete just the newline before it (7-8)
     requests = [{"deleteContentRange": {"range": {"startIndex": 7, "endIndex": 8}}}]
 
     with pytest.raises(ValidationError) as exc_info:
-        api.batch_update(requests)
+        api.batch_update(
+            BatchUpdateDocumentRequest(
+                requests=[Request.model_validate(r) for r in requests]
+            )
+        )
 
     assert "newline before table" in str(exc_info.value).lower()
 
@@ -2566,7 +3134,7 @@ def test_multiple_structural_elements_in_document() -> None:
     doc = create_document_with_table()
 
     # Verify structure tracker finds the table
-    api = MockGoogleDocsAPI(doc)
+    api = MockGoogleDocsAPI(Document.model_validate(doc))
     assert len(api._structure_tracker.tables) == 1
 
     # Operations should still validate correctly
@@ -2574,7 +3142,11 @@ def test_multiple_structural_elements_in_document() -> None:
     requests = [{"deleteContentRange": {"range": {"startIndex": 9, "endIndex": 15}}}]
 
     with pytest.raises(ValidationError) as exc_info:
-        api.batch_update(requests)
+        api.batch_update(
+            BatchUpdateDocumentRequest(
+                requests=[Request.model_validate(r) for r in requests]
+            )
+        )
 
     assert "table" in str(exc_info.value).lower()
 
@@ -2582,14 +3154,18 @@ def test_multiple_structural_elements_in_document() -> None:
 def test_insert_text_at_table_boundary_fails() -> None:
     """Test that inserting text at table start boundary fails."""
     doc = create_document_with_table()
-    api = MockGoogleDocsAPI(doc)
+    api = MockGoogleDocsAPI(Document.model_validate(doc))
 
     # Table starts at index 8
     # Try to insert text right at the table boundary
     requests = [{"insertText": {"location": {"index": 8}, "text": "Bad"}}]
 
     with pytest.raises(ValidationError) as exc_info:
-        api.batch_update(requests)
+        api.batch_update(
+            BatchUpdateDocumentRequest(
+                requests=[Request.model_validate(r) for r in requests]
+            )
+        )
 
     assert "table" in str(exc_info.value).lower()
 
@@ -2598,14 +3174,18 @@ def test_delete_content_with_emoji_and_table_succeeds() -> None:
     """Test complex deletion with both emoji and table structures."""
     # This is a regression test ensuring multiple validation layers work together
     doc = create_document_with_table()
-    api = MockGoogleDocsAPI(doc)
+    api = MockGoogleDocsAPI(Document.model_validate(doc))
 
     # Delete text before the table (indices 1-7, "Before\n")
     requests = [{"deleteContentRange": {"range": {"startIndex": 1, "endIndex": 7}}}]
 
-    response = api.batch_update(requests)
-    assert len(response["replies"]) == 1
-    assert response["replies"][0] == {}
+    response = api.batch_update(
+        BatchUpdateDocumentRequest(
+            requests=[Request.model_validate(r) for r in requests]
+        )
+    )
+    assert len(response.replies or []) == 1
+    assert response.replies[0].model_dump(by_alias=True, exclude_none=True) == {}
 
 
 # ========================================================================
@@ -2621,16 +3201,26 @@ def test_delete_content_with_emoji_and_table_succeeds() -> None:
 def test_create_duplicate_header_fails() -> None:
     """Test that creating a header of type that already exists fails."""
     doc = create_minimal_document()
-    api = MockGoogleDocsAPI(doc)
+    api = MockGoogleDocsAPI(Document.model_validate(doc))
 
     # Create first header
     requests = [{"createHeader": {"type": "DEFAULT"}}]
-    response = api.batch_update(requests)
-    assert "createHeader" in response["replies"][0]
+    response = api.batch_update(
+        BatchUpdateDocumentRequest(
+            requests=[Request.model_validate(r) for r in requests]
+        )
+    )
+    assert "createHeader" in response.replies[0].model_dump(
+        by_alias=True, exclude_none=True
+    )
 
     # Try to create another DEFAULT header (should fail)
     with pytest.raises(ValidationError) as exc_info:
-        api.batch_update(requests)
+        api.batch_update(
+            BatchUpdateDocumentRequest(
+                requests=[Request.model_validate(r) for r in requests]
+            )
+        )
 
     assert "header" in str(exc_info.value).lower()
     assert "already exists" in str(exc_info.value).lower()
@@ -2639,16 +3229,26 @@ def test_create_duplicate_header_fails() -> None:
 def test_create_duplicate_footer_fails() -> None:
     """Test that creating a footer of type that already exists fails."""
     doc = create_minimal_document()
-    api = MockGoogleDocsAPI(doc)
+    api = MockGoogleDocsAPI(Document.model_validate(doc))
 
     # Create first footer
     requests = [{"createFooter": {"type": "DEFAULT"}}]
-    response = api.batch_update(requests)
-    assert "createFooter" in response["replies"][0]
+    response = api.batch_update(
+        BatchUpdateDocumentRequest(
+            requests=[Request.model_validate(r) for r in requests]
+        )
+    )
+    assert "createFooter" in response.replies[0].model_dump(
+        by_alias=True, exclude_none=True
+    )
 
     # Try to create another DEFAULT footer (should fail)
     with pytest.raises(ValidationError) as exc_info:
-        api.batch_update(requests)
+        api.batch_update(
+            BatchUpdateDocumentRequest(
+                requests=[Request.model_validate(r) for r in requests]
+            )
+        )
 
     assert "footer" in str(exc_info.value).lower()
     assert "already exists" in str(exc_info.value).lower()
@@ -2657,17 +3257,30 @@ def test_create_duplicate_footer_fails() -> None:
 def test_create_different_header_types_succeeds() -> None:
     """Test that creating headers of different types succeeds."""
     doc = create_minimal_document()
-    api = MockGoogleDocsAPI(doc)
+    api = MockGoogleDocsAPI(Document.model_validate(doc))
 
     # Create DEFAULT header
     requests = [{"createHeader": {"type": "DEFAULT"}}]
-    response = api.batch_update(requests)
-    assert "createHeader" in response["replies"][0]
+    response = api.batch_update(
+        BatchUpdateDocumentRequest(
+            requests=[Request.model_validate(r) for r in requests]
+        )
+    )
+    assert "createHeader" in response.replies[0].model_dump(
+        by_alias=True, exclude_none=True
+    )
 
     # Create FIRST_PAGE header (different type, should succeed)
-    requests = [{"createHeader": {"type": "FIRST_PAGE"}}]
-    response = api.batch_update(requests)
-    assert "createHeader" in response["replies"][0]
+    # Use model_construct to bypass enum validation since FIRST_PAGE is not in the generated enum
+    first_page_request = Request.model_construct(
+        create_header=CreateHeaderRequest.model_construct(type="FIRST_PAGE")
+    )
+    response = api.batch_update(
+        BatchUpdateDocumentRequest(requests=[first_page_request])
+    )
+    assert "createHeader" in response.replies[0].model_dump(
+        by_alias=True, exclude_none=True
+    )
 
 
 # ------------------------------------------------------------------------
@@ -2717,13 +3330,17 @@ def test_delete_multiple_emojis_split_fails() -> None:
         ],
     }
 
-    api = MockGoogleDocsAPI(doc)
+    api = MockGoogleDocsAPI(Document.model_validate(doc))
 
     # Try to delete "i😀" but only partially (2-4, cuts first emoji)
     requests = [{"deleteContentRange": {"range": {"startIndex": 2, "endIndex": 4}}}]
 
     with pytest.raises(ValidationError) as exc_info:
-        api.batch_update(requests)
+        api.batch_update(
+            BatchUpdateDocumentRequest(
+                requests=[Request.model_validate(r) for r in requests]
+            )
+        )
 
     assert "surrogate pair" in str(exc_info.value).lower()
 
@@ -2769,13 +3386,17 @@ def test_delete_multiple_complete_emojis_succeeds() -> None:
         ],
     }
 
-    api = MockGoogleDocsAPI(doc)
+    api = MockGoogleDocsAPI(Document.model_validate(doc))
 
     # Delete both emojis completely (3-7)
     requests = [{"deleteContentRange": {"range": {"startIndex": 3, "endIndex": 7}}}]
 
-    response = api.batch_update(requests)
-    assert len(response["replies"]) == 1
+    response = api.batch_update(
+        BatchUpdateDocumentRequest(
+            requests=[Request.model_validate(r) for r in requests]
+        )
+    )
+    assert len(response.replies or []) == 1
 
 
 # ------------------------------------------------------------------------
@@ -2786,12 +3407,18 @@ def test_delete_multiple_complete_emojis_succeeds() -> None:
 def test_insert_page_break_in_footnote_fails() -> None:
     """Test that inserting page break in footnote fails."""
     doc = create_minimal_document()
-    api = MockGoogleDocsAPI(doc)
+    api = MockGoogleDocsAPI(Document.model_validate(doc))
 
     # Create a footnote first
     create_requests = [{"createFootnote": {"location": {"index": 1}}}]
-    create_response = api.batch_update(create_requests)
-    footnote_id = create_response["replies"][0]["createFootnote"]["footnoteId"]
+    create_response = api.batch_update(
+        BatchUpdateDocumentRequest(
+            requests=[Request.model_validate(r) for r in create_requests]
+        )
+    )
+    footnote_id = create_response.replies[0].model_dump(
+        by_alias=True, exclude_none=True
+    )["createFootnote"]["footnoteId"]
 
     # Try to insert page break in footnote
     requests = [
@@ -2799,7 +3426,11 @@ def test_insert_page_break_in_footnote_fails() -> None:
     ]
 
     with pytest.raises(ValidationError) as exc_info:
-        api.batch_update(requests)
+        api.batch_update(
+            BatchUpdateDocumentRequest(
+                requests=[Request.model_validate(r) for r in requests]
+            )
+        )
 
     assert "page break" in str(exc_info.value).lower()
     assert "footnote" in str(exc_info.value).lower()
@@ -2808,12 +3439,18 @@ def test_insert_page_break_in_footnote_fails() -> None:
 def test_insert_section_break_in_header_fails() -> None:
     """Test that inserting section break in header fails."""
     doc = create_minimal_document()
-    api = MockGoogleDocsAPI(doc)
+    api = MockGoogleDocsAPI(Document.model_validate(doc))
 
     # Create a header first
     create_requests = [{"createHeader": {"type": "DEFAULT"}}]
-    create_response = api.batch_update(create_requests)
-    header_id = create_response["replies"][0]["createHeader"]["headerId"]
+    create_response = api.batch_update(
+        BatchUpdateDocumentRequest(
+            requests=[Request.model_validate(r) for r in create_requests]
+        )
+    )
+    header_id = create_response.replies[0].model_dump(by_alias=True, exclude_none=True)[
+        "createHeader"
+    ]["headerId"]
 
     # Try to insert section break in header
     requests = [
@@ -2826,7 +3463,11 @@ def test_insert_section_break_in_header_fails() -> None:
     ]
 
     with pytest.raises(ValidationError) as exc_info:
-        api.batch_update(requests)
+        api.batch_update(
+            BatchUpdateDocumentRequest(
+                requests=[Request.model_validate(r) for r in requests]
+            )
+        )
 
     assert "section break" in str(exc_info.value).lower()
     assert "header" in str(exc_info.value).lower()
@@ -2835,12 +3476,18 @@ def test_insert_section_break_in_header_fails() -> None:
 def test_insert_table_in_footnote_fails() -> None:
     """Test that inserting table in footnote fails."""
     doc = create_minimal_document()
-    api = MockGoogleDocsAPI(doc)
+    api = MockGoogleDocsAPI(Document.model_validate(doc))
 
     # Create a footnote first
     create_requests = [{"createFootnote": {"location": {"index": 1}}}]
-    create_response = api.batch_update(create_requests)
-    footnote_id = create_response["replies"][0]["createFootnote"]["footnoteId"]
+    create_response = api.batch_update(
+        BatchUpdateDocumentRequest(
+            requests=[Request.model_validate(r) for r in create_requests]
+        )
+    )
+    footnote_id = create_response.replies[0].model_dump(
+        by_alias=True, exclude_none=True
+    )["createFootnote"]["footnoteId"]
 
     # Try to insert table in footnote
     requests = [
@@ -2854,7 +3501,11 @@ def test_insert_table_in_footnote_fails() -> None:
     ]
 
     with pytest.raises(ValidationError) as exc_info:
-        api.batch_update(requests)
+        api.batch_update(
+            BatchUpdateDocumentRequest(
+                requests=[Request.model_validate(r) for r in requests]
+            )
+        )
 
     assert "table" in str(exc_info.value).lower()
     assert "footnote" in str(exc_info.value).lower()
@@ -2868,12 +3519,18 @@ def test_insert_table_in_footnote_fails() -> None:
 def test_create_footnote_in_footnote_fails() -> None:
     """Test that creating a footnote inside another footnote fails."""
     doc = create_minimal_document()
-    api = MockGoogleDocsAPI(doc)
+    api = MockGoogleDocsAPI(Document.model_validate(doc))
 
     # Create outer footnote
     create_requests = [{"createFootnote": {"location": {"index": 1}}}]
-    create_response = api.batch_update(create_requests)
-    footnote_id = create_response["replies"][0]["createFootnote"]["footnoteId"]
+    create_response = api.batch_update(
+        BatchUpdateDocumentRequest(
+            requests=[Request.model_validate(r) for r in create_requests]
+        )
+    )
+    footnote_id = create_response.replies[0].model_dump(
+        by_alias=True, exclude_none=True
+    )["createFootnote"]["footnoteId"]
 
     # Try to create nested footnote
     requests = [
@@ -2881,7 +3538,11 @@ def test_create_footnote_in_footnote_fails() -> None:
     ]
 
     with pytest.raises(ValidationError) as exc_info:
-        api.batch_update(requests)
+        api.batch_update(
+            BatchUpdateDocumentRequest(
+                requests=[Request.model_validate(r) for r in requests]
+            )
+        )
 
     assert "footnote" in str(exc_info.value).lower()
 
@@ -2894,13 +3555,17 @@ def test_create_footnote_in_footnote_fails() -> None:
 def test_delete_nonexistent_named_range_fails() -> None:
     """Test that deleting non-existent named range fails."""
     doc = create_minimal_document()
-    api = MockGoogleDocsAPI(doc)
+    api = MockGoogleDocsAPI(Document.model_validate(doc))
 
     # Try to delete named range that doesn't exist
     requests = [{"deleteNamedRange": {"namedRangeId": "nonexistent_id_12345"}}]
 
     with pytest.raises(ValidationError) as exc_info:
-        api.batch_update(requests)
+        api.batch_update(
+            BatchUpdateDocumentRequest(
+                requests=[Request.model_validate(r) for r in requests]
+            )
+        )
 
     assert "named range not found" in str(exc_info.value).lower()
 
@@ -2951,13 +3616,17 @@ def test_delete_from_empty_segment_fails() -> None:
         ],
     }
 
-    api = MockGoogleDocsAPI(doc)
+    api = MockGoogleDocsAPI(Document.model_validate(doc))
 
     # Try to delete the only newline (should fail - can't delete segment final newline)
     requests = [{"deleteContentRange": {"range": {"startIndex": 1, "endIndex": 2}}}]
 
     with pytest.raises(ValidationError) as exc_info:
-        api.batch_update(requests)
+        api.batch_update(
+            BatchUpdateDocumentRequest(
+                requests=[Request.model_validate(r) for r in requests]
+            )
+        )
 
     assert "final newline" in str(exc_info.value).lower()
 
@@ -2970,13 +3639,17 @@ def test_delete_from_empty_segment_fails() -> None:
 def test_insert_at_index_zero_fails() -> None:
     """Test that inserting at index 0 fails."""
     doc = create_minimal_document()
-    api = MockGoogleDocsAPI(doc)
+    api = MockGoogleDocsAPI(Document.model_validate(doc))
 
     # Try to insert at index 0 (invalid, must be >= 1)
     requests = [{"insertText": {"location": {"index": 0}, "text": "Bad"}}]
 
     with pytest.raises(ValidationError) as exc_info:
-        api.batch_update(requests)
+        api.batch_update(
+            BatchUpdateDocumentRequest(
+                requests=[Request.model_validate(r) for r in requests]
+            )
+        )
 
     assert "at least 1" in str(exc_info.value).lower()
 
@@ -2984,13 +3657,17 @@ def test_insert_at_index_zero_fails() -> None:
 def test_delete_with_start_index_zero_fails() -> None:
     """Test that deletion with startIndex 0 fails."""
     doc = create_minimal_document()
-    api = MockGoogleDocsAPI(doc)
+    api = MockGoogleDocsAPI(Document.model_validate(doc))
 
     # Try to delete starting from index 0
     requests = [{"deleteContentRange": {"range": {"startIndex": 0, "endIndex": 3}}}]
 
     with pytest.raises(ValidationError) as exc_info:
-        api.batch_update(requests)
+        api.batch_update(
+            BatchUpdateDocumentRequest(
+                requests=[Request.model_validate(r) for r in requests]
+            )
+        )
 
     assert "at least 1" in str(exc_info.value).lower()
 
@@ -2998,13 +3675,17 @@ def test_delete_with_start_index_zero_fails() -> None:
 def test_delete_with_end_before_start_fails() -> None:
     """Test that deletion with endIndex <= startIndex fails."""
     doc = create_minimal_document()
-    api = MockGoogleDocsAPI(doc)
+    api = MockGoogleDocsAPI(Document.model_validate(doc))
 
     # endIndex equals startIndex
     requests = [{"deleteContentRange": {"range": {"startIndex": 5, "endIndex": 5}}}]
 
     with pytest.raises(ValidationError) as exc_info:
-        api.batch_update(requests)
+        api.batch_update(
+            BatchUpdateDocumentRequest(
+                requests=[Request.model_validate(r) for r in requests]
+            )
+        )
 
     assert "greater than" in str(exc_info.value).lower()
 
@@ -3012,7 +3693,11 @@ def test_delete_with_end_before_start_fails() -> None:
     requests = [{"deleteContentRange": {"range": {"startIndex": 10, "endIndex": 5}}}]
 
     with pytest.raises(ValidationError) as exc_info:
-        api.batch_update(requests)
+        api.batch_update(
+            BatchUpdateDocumentRequest(
+                requests=[Request.model_validate(r) for r in requests]
+            )
+        )
 
     assert "greater than" in str(exc_info.value).lower()
 
@@ -3025,14 +3710,18 @@ def test_delete_with_end_before_start_fails() -> None:
 def test_delete_across_paragraph_and_table_boundary_fails() -> None:
     """Test that deletion from paragraph into table structure fails."""
     doc = create_document_with_table()
-    api = MockGoogleDocsAPI(doc)
+    api = MockGoogleDocsAPI(Document.model_validate(doc))
 
     # Try to delete from before table through part of table (6-15)
     # This crosses from paragraph into table structure
     requests = [{"deleteContentRange": {"range": {"startIndex": 6, "endIndex": 15}}}]
 
     with pytest.raises(ValidationError) as exc_info:
-        api.batch_update(requests)
+        api.batch_update(
+            BatchUpdateDocumentRequest(
+                requests=[Request.model_validate(r) for r in requests]
+            )
+        )
 
     # Should fail due to partial table deletion or newline before table
     assert "table" in str(exc_info.value).lower()
@@ -3041,14 +3730,18 @@ def test_delete_across_paragraph_and_table_boundary_fails() -> None:
 def test_delete_empty_table_cell_content_succeeds() -> None:
     """Test that deleting all content from a table cell (except final newline) succeeds."""
     doc = create_document_with_table()
-    api = MockGoogleDocsAPI(doc)
+    api = MockGoogleDocsAPI(Document.model_validate(doc))
 
     # Cell 1 has "A\n" at indices 9-11
     # Delete just "A" leaving the newline
     requests = [{"deleteContentRange": {"range": {"startIndex": 9, "endIndex": 10}}}]
 
-    response = api.batch_update(requests)
-    assert len(response["replies"]) == 1
+    response = api.batch_update(
+        BatchUpdateDocumentRequest(
+            requests=[Request.model_validate(r) for r in requests]
+        )
+    )
+    assert len(response.replies or []) == 1
 
 
 # ------------------------------------------------------------------------
@@ -3097,13 +3790,17 @@ def test_emoji_at_document_start() -> None:
         ],
     }
 
-    api = MockGoogleDocsAPI(doc)
+    api = MockGoogleDocsAPI(Document.model_validate(doc))
 
     # Try to delete just high surrogate of emoji at start (1-2)
     requests = [{"deleteContentRange": {"range": {"startIndex": 1, "endIndex": 2}}}]
 
     with pytest.raises(ValidationError) as exc_info:
-        api.batch_update(requests)
+        api.batch_update(
+            BatchUpdateDocumentRequest(
+                requests=[Request.model_validate(r) for r in requests]
+            )
+        )
 
     assert "surrogate pair" in str(exc_info.value).lower()
 
@@ -3149,22 +3846,30 @@ def test_emoji_at_segment_end() -> None:
         ],
     }
 
-    api = MockGoogleDocsAPI(doc)
+    api = MockGoogleDocsAPI(Document.model_validate(doc))
 
     # Delete the complete emoji before final newline (6-8)
     requests = [{"deleteContentRange": {"range": {"startIndex": 6, "endIndex": 8}}}]
 
-    response = api.batch_update(requests)
-    assert len(response["replies"]) == 1
+    response = api.batch_update(
+        BatchUpdateDocumentRequest(
+            requests=[Request.model_validate(r) for r in requests]
+        )
+    )
+    assert len(response.replies or []) == 1
 
     # Create a fresh API instance with the original document for the partial delete test
-    api2 = MockGoogleDocsAPI(doc)
+    api2 = MockGoogleDocsAPI(Document.model_validate(doc))
 
     # But trying to delete partial emoji (6-7) should fail
     requests = [{"deleteContentRange": {"range": {"startIndex": 6, "endIndex": 7}}}]
 
     with pytest.raises(ValidationError) as exc_info:
-        api2.batch_update(requests)
+        api2.batch_update(
+            BatchUpdateDocumentRequest(
+                requests=[Request.model_validate(r) for r in requests]
+            )
+        )
 
     assert "surrogate pair" in str(exc_info.value).lower()
 
@@ -3177,18 +3882,26 @@ def test_emoji_at_segment_end() -> None:
 def test_delete_across_multiple_table_cells_respecting_final_newlines() -> None:
     """Test that deletion across cells respects individual cell final newlines."""
     doc = create_document_with_table()
-    api = MockGoogleDocsAPI(doc)
+    api = MockGoogleDocsAPI(Document.model_validate(doc))
 
     # Delete "A" from cell [0][0] (content at 9-11, "A\n")
     requests = [{"deleteContentRange": {"range": {"startIndex": 9, "endIndex": 10}}}]
-    response = api.batch_update(requests)
-    assert len(response["replies"]) == 1
+    response = api.batch_update(
+        BatchUpdateDocumentRequest(
+            requests=[Request.model_validate(r) for r in requests]
+        )
+    )
+    assert len(response.replies or []) == 1
 
     # After deleting "A", cell content shifts (table switches to Full Structure).
     # Cell [0][1] "B\n" is now at 13-15. Delete "B" (index 13-14).
     requests = [{"deleteContentRange": {"range": {"startIndex": 13, "endIndex": 14}}}]
-    response = api.batch_update(requests)
-    assert len(response["replies"]) == 1
+    response = api.batch_update(
+        BatchUpdateDocumentRequest(
+            requests=[Request.model_validate(r) for r in requests]
+        )
+    )
+    assert len(response.replies or []) == 1
 
 
 # ------------------------------------------------------------------------
@@ -3199,12 +3912,16 @@ def test_delete_across_multiple_table_cells_respecting_final_newlines() -> None:
 def test_write_control_with_very_old_revision_fails() -> None:
     """Test that using very old revision ID fails."""
     doc = create_minimal_document()
-    api = MockGoogleDocsAPI(doc)
+    api = MockGoogleDocsAPI(Document.model_validate(doc))
 
     # Make several updates to advance revision
     for i in range(5):
         requests = [{"insertText": {"location": {"index": 1}, "text": f"Update{i}"}}]
-        api.batch_update(requests)
+        api.batch_update(
+            BatchUpdateDocumentRequest(
+                requests=[Request.model_validate(r) for r in requests]
+            )
+        )
 
     # Try to use the original revision ID
     old_revision = "initial_revision"
@@ -3212,7 +3929,12 @@ def test_write_control_with_very_old_revision_fails() -> None:
     requests = [{"insertText": {"location": {"index": 1}, "text": "Should fail"}}]
 
     with pytest.raises(ValidationError) as exc_info:
-        api.batch_update(requests, write_control)
+        api.batch_update(
+            BatchUpdateDocumentRequest(
+                requests=[Request.model_validate(r) for r in requests],
+                write_control=WriteControl.model_validate(write_control),
+            )
+        )
 
     assert (
         "modified" in str(exc_info.value).lower()
