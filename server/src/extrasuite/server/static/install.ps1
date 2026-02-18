@@ -13,11 +13,12 @@ $configDir = "$env:USERPROFILE\.config\extrasuite"
 New-Item -ItemType Directory -Force -Path $configDir | Out-Null
 '{"EXTRASUITE_SERVER_URL": "__SERVER_URL__"}' | Out-File -FilePath "$configDir\gateway.json" -Encoding UTF8
 Remove-Item -Path $tmp -Recurse -Force
-# Cleanup old skill names (gsheets -> gsheetx -> extrasheet)
+# Cleanup old skill names (gsheets -> gsheetx -> extrasheet -> extrasuite)
+$oldSkillNames = @("gsheets", "gsheetx", "extrasheet", "extraslide", "extradoc", "extraform")
 foreach ($dir in $dirs) {
-    $oldSkill = Join-Path $dir "gsheets"
-    if (Test-Path $oldSkill) { Remove-Item -Path $oldSkill -Recurse -Force -ErrorAction SilentlyContinue }
-    $oldSkill2 = Join-Path $dir "gsheetx"
-    if (Test-Path $oldSkill2) { Remove-Item -Path $oldSkill2 -Recurse -Force -ErrorAction SilentlyContinue }
+    foreach ($name in $oldSkillNames) {
+        $oldSkill = Join-Path $dir $name
+        if (Test-Path $oldSkill) { Remove-Item -Path $oldSkill -Recurse -Force -ErrorAction SilentlyContinue }
+    }
 }
 Write-Host "Done!"
