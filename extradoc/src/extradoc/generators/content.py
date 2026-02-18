@@ -764,7 +764,12 @@ class ContentGenerator:
             class_name = para_elem.get("class")
             if class_name and self._style_defs and class_name in self._style_defs:
                 class_props = self._style_defs[class_name]
-                style_to_para_mapping = {"alignment": "align"}
+                # Map style class property names to XML attribute names.
+                # Most match directly; only a few differ.
+                style_to_para_mapping: dict[str, str] = {
+                    "alignment": "align",
+                    "indentFirstLine": "indentFirst",
+                }
                 text_style_props = {
                     "bg",
                     "color",
@@ -774,6 +779,10 @@ class ContentGenerator:
                     "italic",
                     "underline",
                     "strikethrough",
+                    "smallcaps",
+                    "superscript",
+                    "subscript",
+                    "link",
                 }
                 para_class_styles: dict[str, str] = {}
                 text_class_styles: dict[str, str] = {}
