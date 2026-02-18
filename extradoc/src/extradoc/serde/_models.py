@@ -240,6 +240,13 @@ class ColumnBreakNode:
     pass
 
 
+@dataclass
+class SoftBreakNode:
+    """<br/> — a soft line break (\\x0b / Shift+Enter in Google Docs)."""
+
+    pass
+
+
 InlineNode = (
     TNode
     | LinkNode
@@ -251,6 +258,7 @@ InlineNode = (
     | AutoTextNode
     | EquationNode
     | ColumnBreakNode
+    | SoftBreakNode
 )
 
 
@@ -545,6 +553,8 @@ def _inline_to_element(node: InlineNode, parent: Element) -> None:
         SubElement(parent, "equation")
     elif isinstance(node, ColumnBreakNode):
         SubElement(parent, "columnbreak")
+    elif isinstance(node, SoftBreakNode):
+        SubElement(parent, "br")
 
 
 def _block_to_element(block: BlockNode, parent: Element) -> None:
@@ -679,6 +689,8 @@ def _inlines_from_element(parent: Element) -> list[InlineNode]:
                     text = sub.text or ""
                     break
             inlines.append(TNode(text=text, class_name=class_name, sugar_tag=sugar_tag))
+        elif tag == "br":
+            inlines.append(SoftBreakNode())
         elif tag == "a":
             t_nodes = [TNode(text=t.text or "") for t in child.findall("t")]
             inlines.append(
