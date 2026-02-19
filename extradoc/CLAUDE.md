@@ -93,6 +93,26 @@ The following files belong to the **legacy pipeline** (pre-serde/reconcile). The
 - **Pristine state:** After push, always re-pull before making additional changes.
 - **Consistency not accuracy:** The `XML → Document` path doesn't need to perfectly reproduce the API's Document — both base and desired go through the same path, so any systematic bias cancels out in the diff.
 
+## Authoring New Tabs
+
+When creating a new tab folder from scratch (not pulled from the API), three things are required:
+
+**`styles.xml` is mandatory.** The deserializer unconditionally reads it — no existence check. A minimal valid file:
+```xml
+<?xml version="1.0" encoding="UTF-8"?>
+<styles>
+  <para class="_default" direction="LEFT_TO_RIGHT" />
+  <listlevel class="_default" indentFirst="18.0pt" indentLeft="36.0pt" />
+</styles>
+```
+
+**`<sectionbreak>` must be the first element of `<body>`.** The reconciler's `_create_initial_body_segment()` models a freshly-created tab as already containing a section break. If your desired XML omits it, the reconciler sees a deletion and raises `ReconcileError: Section break deletion is not supported`. Use:
+```xml
+<sectionbreak sectionType="CONTINUOUS" contentDirection="LEFT_TO_RIGHT" columnSeparatorStyle="NONE" />
+```
+
+**Use `type=` syntax for list items in new tabs.** Pulled documents use `parent="kix..."` referencing a `<lists>` section, but new tabs have no existing list IDs. Use `type="bullet"` or `type="decimal"` with `level="0"` — the serde deserializer accepts both forms.
+
 ## Development
 
 ```bash

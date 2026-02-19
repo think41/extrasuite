@@ -537,21 +537,26 @@ def cmd_doc_diff(args: Any) -> None:
     from extradoc import DocsClient
 
     client = DocsClient.__new__(DocsClient)
-    _document_id, requests, _change_tree, comment_ops = client.diff(args.folder)
-    has_changes = bool(requests) or comment_ops.has_operations
+    result = client.diff(args.folder)
+    has_changes = bool(result.batches) or result.comment_ops.has_operations
     if not has_changes:
         print("No changes detected.")
     else:
-        if requests:
-            print(json.dumps(requests, indent=2))
-        if comment_ops.has_operations:
+        if result.batches:
+            batches_json = [
+                b.model_dump(exclude_none=True, by_alias=True) for b in result.batches
+            ]
+            print(json.dumps(batches_json, indent=2))
+        if result.comment_ops.has_operations:
             parts: list[str] = []
-            if comment_ops.new_comments:
-                parts.append(f"{len(comment_ops.new_comments)} new comment(s)")
-            if comment_ops.new_replies:
-                parts.append(f"{len(comment_ops.new_replies)} new reply/replies")
-            if comment_ops.resolves:
-                parts.append(f"{len(comment_ops.resolves)} comment(s) to resolve")
+            if result.comment_ops.new_comments:
+                parts.append(f"{len(result.comment_ops.new_comments)} new comment(s)")
+            if result.comment_ops.new_replies:
+                parts.append(f"{len(result.comment_ops.new_replies)} new reply/replies")
+            if result.comment_ops.resolves:
+                parts.append(
+                    f"{len(result.comment_ops.resolves)} comment(s) to resolve"
+                )
             print("Comment operations: " + ", ".join(parts))
 
 

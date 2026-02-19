@@ -86,8 +86,6 @@ python -m extrasheet batchUpdate <spreadsheet_url_or_id> <requests.json>
 #   -v, --verbose  Print API response
 ```
 
-Also works via `uvx extrasheet pull/diff/push/batchUpdate`.
-
 ## Folder Structure
 
 After `pull`, the folder contains:

@@ -45,8 +45,6 @@ python -m extraslide push <folder>
 # Output: Success message with change count
 ```
 
-Also works via `uvx extraslide pull/diff/push`.
-
 ## Folder Structure
 
 After `pull`:
