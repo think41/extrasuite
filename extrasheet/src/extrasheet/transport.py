@@ -209,15 +209,19 @@ class GoogleSheetsTransport(Transport):
 
         for sheet in metadata.sheets:
             escaped_title = _escape_sheet_title(sheet.title)
-            rows_to_fetch = min(max_rows, sheet.row_count)
-            last_col = _column_index_to_letter(sheet.column_count - 1)
-            ranges.append(f"{escaped_title}!A1:{last_col}{rows_to_fetch}")
+            if max_rows == 0:
+                # No row limit - use just the sheet name to fetch the entire sheet
+                ranges.append(escaped_title)
+            else:
+                rows_to_fetch = min(max_rows, sheet.row_count)
+                last_col = _column_index_to_letter(sheet.column_count - 1)
+                ranges.append(f"{escaped_title}!A1:{last_col}{rows_to_fetch}")
 
-            if sheet.row_count > max_rows:
-                truncation_info[sheet.sheet_id] = TruncationInfo(
-                    total_rows=sheet.row_count,
-                    fetched_rows=max_rows,
-                )
+                if sheet.row_count > max_rows:
+                    truncation_info[sheet.sheet_id] = TruncationInfo(
+                        total_rows=sheet.row_count,
+                        fetched_rows=max_rows,
+                    )
 
         # Build URL with ranges
         url = f"{API_BASE}/{spreadsheet_id}?includeGridData=true"

@@ -363,6 +363,11 @@ class SpreadsheetTransformer:
                 dimensions = self._extract_dimensions(grid_data_list, sheet)
                 if self._has_dimension_content(dimensions):
                     result["dimension.json"] = dimensions
+            else:
+                # Empty sheet - create stub files so the folder exists and
+                # the agent knows the sheet is there and can add data/formulas
+                result["data.tsv"] = ""
+                result["formula.json"] = {}
 
         # Features (charts, pivots, etc.) - applies to all sheet types
         # Output as separate files instead of single feature.json
