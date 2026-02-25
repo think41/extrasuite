@@ -650,8 +650,12 @@ def cmd_form_create(args: Any) -> None:
 
 def _parse_email_file_args(
     file_path: Path,
-) -> tuple[list[str], str, str, list[str] | None, list[str] | None]:
-    """Read and parse an email markdown file. Returns (to, subject, body, cc, bcc)."""
+    cli_attachments: list[str] | None = None,
+) -> tuple[list[str], str, str, list[str] | None, list[str] | None, list[Path] | None]:
+    """Read and parse an email markdown file.
+
+    Returns (to, subject, body, cc, bcc, attachments).
+    """
     from extrasuite.client.google_api import parse_email_file
 
     if not file_path.exists():
@@ -680,14 +684,28 @@ def _parse_email_file_args(
         if metadata.get("bcc")
         else None
     )
-    return to, subject, body, cc, bcc
+
+    attachments: list[Path] | None = None
+    if cli_attachments:
+        attachments = []
+        for a in cli_attachments:
+            p = Path(a)
+            if not p.exists():
+                print(f"Error: Attachment not found: {p}", file=sys.stderr)
+                sys.exit(1)
+            attachments.append(p)
+
+    return to, subject, body, cc, bcc, attachments
 
 
 def cmd_gmail_compose(args: Any) -> None:
     """Save an email draft from a markdown file with front matter."""
     from extrasuite.client.google_api import create_gmail_draft
 
-    to, subject, body, cc, bcc = _parse_email_file_args(Path(args.file))
+    attach = getattr(args, "attach", None)
+    to, subject, body, cc, bcc, attachments = _parse_email_file_args(
+        Path(args.file), cli_attachments=attach
+    )
 
     access_token = _get_oauth_token(
         args,
@@ -696,7 +714,13 @@ def cmd_gmail_compose(args: Any) -> None:
     )
 
     result = create_gmail_draft(
-        access_token, to=to, subject=subject, body=body, cc=cc, bcc=bcc
+        access_token,
+        to=to,
+        subject=subject,
+        body=body,
+        cc=cc,
+        bcc=bcc,
+        attachments=attachments,
     )
     draft_id = result.get("id", "")
     print(f"Draft saved (id: {draft_id})")
@@ -706,7 +730,10 @@ def cmd_gmail_edit_draft(args: Any) -> None:
     """Update an existing Gmail draft from a markdown file with front matter."""
     from extrasuite.client.google_api import update_gmail_draft
 
-    to, subject, body, cc, bcc = _parse_email_file_args(Path(args.file))
+    attach = getattr(args, "attach", None)
+    to, subject, body, cc, bcc, attachments = _parse_email_file_args(
+        Path(args.file), cli_attachments=attach
+    )
 
     access_token = _get_oauth_token(
         args,
@@ -722,6 +749,7 @@ def cmd_gmail_edit_draft(args: Any) -> None:
         body=body,
         cc=cc,
         bcc=bcc,
+        attachments=attachments,
     )
     print(f"Draft updated (id: {args.draft_id})")
 
@@ -1162,6 +1190,12 @@ def build_parser() -> Any:
         formatter_class=argparse.RawDescriptionHelpFormatter,
     )
     sp.add_argument("file", help="Markdown file with front matter")
+    sp.add_argument(
+        "--attach",
+        action="append",
+        metavar="FILE",
+        help="Attach a file (can be repeated for multiple attachments)",
+    )
 
     sp = gmail_sub.add_parser(
         "edit-draft",
@@ -1172,6 +1206,12 @@ def build_parser() -> Any:
     )
     sp.add_argument("draft_id", help="Draft ID to update (from compose output)")
     sp.add_argument("file", help="Markdown file with front matter")
+    sp.add_argument(
+        "--attach",
+        action="append",
+        metavar="FILE",
+        help="Attach a file (can be repeated for multiple attachments)",
+    )
 
     sp = gmail_sub.add_parser(
         "help",

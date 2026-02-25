@@ -6,14 +6,25 @@ Gmail - compose and edit email drafts from local markdown files.
   extrasuite contacts search "Alice Example" "Bob Corp"
 
   # 2. Write your email as a markdown file with front matter
-  # 3. Save the draft to Gmail
-  extrasuite gmail compose <file>
+  # 3. Save the draft to Gmail (optionally attach files)
+  extrasuite gmail compose <file> [--attach report.pdf]
 
   # To update an existing draft (draft_id is printed by compose)
-  extrasuite gmail edit-draft <draft_id> <file>
+  extrasuite gmail edit-draft <draft_id> <file> [--attach slides.pdf]
 
 The draft is saved to Gmail. Open Gmail to review and send it.
-Markdown in the body is rendered as HTML in the draft.
+
+## Formatting
+
+Write your email body conversationally, the way you'd write a normal email.
+Basic formatting is supported: **bold**, *italic*, lists, and
+[links](https://example.com). The body is converted to HTML in the draft.
+
+## Attachments
+
+Add --attach to include files with the draft. Repeat for multiple files:
+
+  extrasuite gmail compose email.md --attach report.pdf --attach data.csv
 
 ## Commands
 
