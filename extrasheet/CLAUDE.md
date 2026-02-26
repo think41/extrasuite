@@ -64,7 +64,7 @@ See `docs/on-disk-format.md` for complete file format specification.
 
 ```bash
 # Download a spreadsheet to local folder
-python -m extrasheet pull <spreadsheet_url_or_id> [output_dir]
+./extrasuite sheet pull <spreadsheet_url_or_id> [output_dir]
 # Output: ./<spreadsheet_id>/ or specified output_dir
 
 # Options:
@@ -73,20 +73,18 @@ python -m extrasheet pull <spreadsheet_url_or_id> [output_dir]
 #   --no-raw       Don't save raw API responses to .raw/ folder
 
 # Preview changes (dry run)
-python -m extrasheet diff <folder>
+./extrasuite sheet diff <folder>
 # Output: batchUpdate JSON to stdout
 
 # Apply changes to Google Sheets
-python -m extrasheet push <folder>
+./extrasuite sheet push <folder>
 # Output: Success message with number of changes applied
 
 # Execute batchUpdate requests directly (for structural changes)
-python -m extrasheet batchUpdate <spreadsheet_url_or_id> <requests.json>
+./extrasuite sheet batchUpdate <spreadsheet_url_or_id> <requests.json>
 # Options:
 #   -v, --verbose  Print API response
 ```
-
-Also works via `uvx extrasheet pull/diff/push/batchUpdate`.
 
 ## Folder Structure
 
@@ -172,7 +170,7 @@ async def test_pull(client, tmp_path):
 ### Creating New Golden Files
 
 1. Create a Google Sheets file with the features to test
-2. Pull it: `python -m extrasheet pull <url>` (raw files saved by default)
+2. Pull it: `./extrasuite sheet pull <url>` (raw files saved by default)
 3. Copy `.raw/metadata.json` and `.raw/data.json` to `tests/golden/<name>/`
 4. Verify the output looks correct
 5. Commit the golden files

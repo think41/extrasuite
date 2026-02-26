@@ -1,0 +1,6 @@
+#!/usr/bin/env bash
+# Local development wrapper for extrasuite CLI.
+# Uses the locally installed version (client/ package) instead of the PyPI release.
+# Run this from the repo root: ./extrasuite sheet pull <url> ...
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+exec uv run --directory "$SCRIPT_DIR/client" extrasuite "$@"

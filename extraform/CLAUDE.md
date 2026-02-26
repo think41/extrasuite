@@ -21,14 +21,14 @@ Instead of working with complex API responses, agents interact with a single fil
 
 ```bash
 # Pull a form
-python -m extraform pull <form_url_or_id> [output_dir]
+./extrasuite form pull <form_url_or_id> [output_dir]
 
 # Preview changes (dry run)
-python -m extraform diff <folder>
+./extrasuite form diff <folder>
 # Output: batchUpdate JSON to stdout
 
 # Apply changes
-python -m extraform push <folder>
+./extrasuite form push <folder>
 ```
 
 ## Folder Structure

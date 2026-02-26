@@ -1,48 +1,24 @@
 ## Project Overview
 
-ExtraSuite is an open source umbrella project (https://github.com/think41/extrasuite) that enables AI agents (Claude Code, Codex, etc.) to read or edit Google Drive files (Sheets, Slides, Docs) in a token-efficient, secure, and auditable way.
+ExtraSuite is an open source project (https://github.com/think41/extrasuite) that provides a CLI tool meant for AI agents (Claude Code, Codex, etc.) to perform read/write operations on google workspace files (sheets/docs/slides/forms), create email drafts and manage calendar in a secure, auditable and token efficient manner.
 
-**Security model:** Each end user gets a dedicated service account. The agent can only access files explicitly shared with that service account. All edits appear in Google Drive version history as "John Doe's agent added this section/modified that diagram/so on"
+Key innovations:
+- A consistent git-like pull, diff and push workflow across all google drive file types. `pull` downloads and converts the google drive file into a folder of files in a format the LLM natively understands. `diff` figures out what changed, and `push` pushes the changes to the google drive file. The LLM only needs to edit files locally to make any change to the google drive file. 
+- A unique identity for every employee's agent via a 1:1 service account. Agent only has minimal temporary access, and any changes made by the agent reflect in google drive version history.
+- For certain modules (gmail, calendar) - we use domain wide delegation with minimal scope to grant a short lived token to the agent. The agent never sees the tokens. 
 
-**Token efficiency:** Google's native file representations are verbose. This project converts Google files into compact, LLM-friendly folder structures that allow agents to understand the big picture and make targeted edits.
+There are several modules in this project: 
+- `client` (pypi extrasuite) - is the main entrypoint CLI program. In this repository, run `./extrasuite --help` to learn the commands. End users invoke it as `uvx extrasuite --help`. It uses the extra* modules for file specific logic, and the server url as the gateway to get shortlived tokens.
+- `extradoc/extrasheet/extraslide/extraform` - are standalond python libraries that implements the pull/push workflow. These are used by client. These packages are also published to pypi and can be used independently.
+- `server` - is a gateway to grant short lived tokens. It manages 1:1 service accounts per employee and domain-wide delegation. 
+- `website` - is the mkdocs based public documentation that gets deployed to https://extrasuite.think41.com 
 
-## Architecture
-
-```
-┌─────────────────┐     ┌──────────────────┐     ┌─────────────────┐
-│ server/         │     │ extrasheet/      │     │ Google APIs     │
-│ (auth tokens)   │────▶│ extraslide       │────▶│ (Sheets/Slides) │
-│                 │     │ (pull/diff/push) │     │                 │
-└─────────────────┘     └──────────────────┘     └─────────────────┘
-        │                        │
-        ▼                        ▼
-┌─────────────────┐     ┌──────────────────┐
-│ client/         │     │ Local folder     │
-│ (CLI auth)      │     │ (agent edits)    │
-└─────────────────┘     └──────────────────┘
-```
-
-## Public CLI Interface
+## CLI Interface
 
 The unified CLI supports all file types via subcommands:
 
 ```bash
-# Sheets
-extrasuite sheet pull <url> [output_dir]
-extrasuite sheet diff <folder>
-extrasuite sheet push <folder>
-
-# Slides, Forms, Docs, Scripts
-extrasuite slide pull <url> [output_dir]
-extrasuite form pull <url> [output_dir]
-extrasuite doc pull <url> [output_dir]
-extrasuite script pull <url> [output_dir]
-
-# Authentication flags (on pull/push/create commands)
-extrasuite sheet pull --gateway /path/to/gateway.json <url>
-extrasuite sheet pull --service-account /path/to/sa.json <url>
-
-# Default: uses EXTRASUITE_SERVER_URL env var or ~/.config/extrasuite/gateway.json
+./extrasuite --help
 ```
 
 ## Pull-Edit-Diff-Push Workflow
@@ -50,46 +26,20 @@ extrasuite sheet pull --service-account /path/to/sa.json <url>
 The core workflow for editing Google files:
 
 1. **pull** - Fetches the Google file via API, converts it into a local folder structure. The folder contains:
-   - Human/LLM-readable files (TSV for sheets, SML/XML for slides)
+   - Human/LLM-readable files (TSV for sheets, SML/XML for slides, XML for docs etc.)
    - A `.pristine/` directory containing the original state as a zip file
-   - See `extrasheet/docs/on-disk-format.md` or `extraslide/docs/markup-syntax-design.md` for format specs
 
-2. **edit** - Agent modifies files in place according to user instructions and SKILL.md guidance
+2. **edit** - Agent modifies files in place according to user instructions and inline help documentation via --help flag.
 
 3. **diff** - Compares current files against `.pristine/` and generates the `batchUpdate` request JSON. This is essentially `push --dry-run`. Does not call any APIs.
 
 4. **push** - Same as diff, but actually invokes the Google API to apply changes
-
-## Packages
-
-| Package | Purpose |
-|---------|---------|
-| **server/** | FastAPI server providing per-user service accounts and short-lived tokens. Deployed to Cloud Run. Also distributes agent skills. Uses `extrasuite.server` namespace. |
-| **client/** | Unified CLI (`extrasuite sheet/slide/form/doc/script pull/diff/push`) and credentials management. Manages token caching. Published to PyPI as `extrasuite`. Uses `extrasuite.client` namespace. |
-| **extrasheet/** | Converts Google Sheets to/from folder with TSV + JSON files. Implements pull/diff/push. |
-| **extraslide/** | Converts Google Slides to/from SML (Slide Markup Language) XML. Implements pull/diff/push. Alpha quality. |
-| **website/** | MkDocs documentation at https://extrasuite.think41.com |
-
-## User Flow
-
-1. **One-time setup:** User logs into server, gets a dedicated service account created
-2. **Install skills:** User runs `curl <url> | sh` to install SKILL.md into their agent
-3. **Share file:** User shares Google file with their service account email
-4. **Agent workflow:** Agent runs `pull` → edits files → `diff` (preview) → `push`
 
 Token caching: Short-lived tokens are cached in `~/.config/extrasuite/`. When expired, browser opens for re-auth (SSO may skip login).
 
 ## Development Setup
 
 Each module uses `uv` for dependencies, `ruff` for linting/formatting, `mypy` for type checking, `pytest` for tests.
-
-```bash
-cd <module>
-uv sync
-uv run pytest tests/ -v
-uv run ruff check . && uv run ruff format .
-uv run mypy src/<module>
-```
 See `.pre-commit-config.yaml` as well to see the pre-commit checks that our run. See `.github/workflows` for the actions that run on github.
 
 For server development, deploy to Cloud Run and configure `~/.config/extrasuite/gateway.json`:
@@ -99,7 +49,7 @@ For server development, deploy to Cloud Run and configure `~/.config/extrasuite/
 
 ## Testing Strategy
 
-Tests verify the public API: `login`, `logout`, `pull`, `diff`, `push`.
+Tests verify the public API: `pull`, `diff`, `push`.
 
 **Golden file testing for pull:**
 - Store raw Google API responses in `tests/golden/<file_id>/` folders

@@ -30,22 +30,20 @@ Python library that converts Google Slides to/from SML (Slide Markup Language), 
 
 ```bash
 # Download a presentation to local folder
-python -m extraslide pull <presentation_url_or_id> [output_dir]
+./extrasuite slide pull <presentation_url_or_id> [output_dir]
 # Output: ./<presentation_id>/ or specified output_dir
 
 # Options:
 #   --no-raw    Don't save raw API response to .raw/ folder
 
 # Preview changes (dry run)
-python -m extraslide diff <folder>
+./extrasuite slide diff <folder>
 # Output: batchUpdate JSON to stdout
 
 # Apply changes to Google Slides
-python -m extraslide push <folder>
+./extrasuite slide push <folder>
 # Output: Success message with change count
 ```
-
-Also works via `uvx extraslide pull/diff/push`.
 
 ## Folder Structure
 
@@ -115,7 +113,7 @@ async def test_pull(client, tmp_path):
 ### Creating New Golden Files
 
 1. Create a Google Slides file with the features to test
-2. Pull it: `python -m extraslide pull <url>` (raw files saved by default)
+2. Pull it: `./extrasuite slide pull <url>` (raw files saved by default)
 3. Copy `.raw/presentation.json` to `tests/golden/<name>/presentation.json`
 4. Verify the output looks correct
 5. Commit the golden files
