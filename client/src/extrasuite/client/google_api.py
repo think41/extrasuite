@@ -278,6 +278,167 @@ def update_gmail_draft(
     )
 
 
+def fetch_thread_reply_context(token: str, thread_id: str) -> dict[str, Any]:
+    """Fetch reply context from the latest message in a thread.
+
+    Fetches the thread metadata, picks the last message, and returns the
+    same dict shape as fetch_message_reply_context so the draft builder
+    can use either.
+    """
+    url = (
+        "https://gmail.googleapis.com/gmail/v1/users/me/threads/"
+        + thread_id
+        + "?"
+        + urllib.parse.urlencode(
+            [
+                ("format", "metadata"),
+                ("metadataHeaders", "From"),
+                ("metadataHeaders", "To"),
+                ("metadataHeaders", "Cc"),
+                ("metadataHeaders", "Subject"),
+                ("metadataHeaders", "Message-ID"),
+                ("metadataHeaders", "References"),
+            ]
+        )
+    )
+    req = urllib.request.Request(url, headers={"Authorization": f"Bearer {token}"})
+    with urllib.request.urlopen(req, timeout=30, context=_SSL_CONTEXT) as resp:
+        data = json.loads(resp.read().decode("utf-8"))
+
+    messages = data.get("messages", [])
+    if not messages:
+        raise ValueError(f"Thread {thread_id} has no messages")
+
+    latest = messages[-1]
+
+    def _hdr(name: str) -> str:
+        for h in latest.get("payload", {}).get("headers", []):
+            if h.get("name", "").lower() == name.lower():
+                return h.get("value", "")
+        return ""
+
+    # Subject from first message (clean thread subject)
+    def _first_hdr(name: str) -> str:
+        for h in messages[0].get("payload", {}).get("headers", []):
+            if h.get("name", "").lower() == name.lower():
+                return h.get("value", "")
+        return ""
+
+    message_id_hdr = _hdr("Message-ID")
+    original_refs = _hdr("References")
+    references = (
+        f"{original_refs} {message_id_hdr}".strip() if original_refs else message_id_hdr
+    )
+
+    subject = _first_hdr("Subject")
+    if not subject.lower().startswith("re:"):
+        subject = f"Re: {subject}"
+
+    return {
+        "thread_id": thread_id,
+        "message_id_hdr": message_id_hdr,
+        "references": references,
+        "from_": _hdr("From"),
+        "to": _hdr("To"),
+        "cc": _hdr("Cc"),
+        "subject": subject,
+    }
+
+
+def fetch_message_reply_context(token: str, message_id: str) -> dict[str, Any]:
+    """Fetch the headers needed to construct a proper reply to a Gmail message.
+
+    Returns a dict with:
+        thread_id       - Gmail thread ID (for threadId on the draft)
+        message_id_hdr  - RFC 2822 Message-ID header value (for In-Reply-To)
+        references      - References header value (for chaining)
+        from_           - Original sender (becomes reply To)
+        to              - Original To addresses
+        cc              - Original Cc addresses
+        subject         - Original subject (with Re: prefix added if needed)
+    """
+    url = (
+        "https://gmail.googleapis.com/gmail/v1/users/me/messages/"
+        + message_id
+        + "?"
+        + urllib.parse.urlencode(
+            [
+                ("format", "metadata"),
+                ("metadataHeaders", "From"),
+                ("metadataHeaders", "To"),
+                ("metadataHeaders", "Cc"),
+                ("metadataHeaders", "Subject"),
+                ("metadataHeaders", "Message-ID"),
+                ("metadataHeaders", "References"),
+            ]
+        )
+    )
+    req = urllib.request.Request(url, headers={"Authorization": f"Bearer {token}"})
+    with urllib.request.urlopen(req, timeout=30, context=_SSL_CONTEXT) as resp:
+        data = json.loads(resp.read().decode("utf-8"))
+
+    def _hdr(name: str) -> str:
+        for h in data.get("payload", {}).get("headers", []):
+            if h.get("name", "").lower() == name.lower():
+                return h.get("value", "")
+        return ""
+
+    thread_id = data.get("threadId", "")
+    message_id_hdr = _hdr("Message-ID")
+    original_refs = _hdr("References")
+    # Build References: append Message-ID to existing chain
+    if original_refs:
+        references = f"{original_refs} {message_id_hdr}".strip()
+    else:
+        references = message_id_hdr
+
+    subject = _hdr("Subject")
+    if not subject.lower().startswith("re:"):
+        subject = f"Re: {subject}"
+
+    return {
+        "thread_id": thread_id,
+        "message_id_hdr": message_id_hdr,
+        "references": references,
+        "from_": _hdr("From"),
+        "to": _hdr("To"),
+        "cc": _hdr("Cc"),
+        "subject": subject,
+    }
+
+
+def create_gmail_reply_draft(
+    token: str,
+    reply_context: dict[str, Any],
+    to: list[str],
+    body: str,
+    cc: list[str] | None = None,
+    attachments: list[Path] | None = None,
+) -> dict[str, Any]:
+    """Create a Gmail draft that is a proper reply in an existing thread.
+
+    reply_context must come from fetch_message_reply_context().
+    Sets In-Reply-To, References, and threadId so Gmail threads it correctly.
+    """
+    msg = _build_email_message(
+        to, reply_context["subject"], body, cc, attachments=attachments
+    )
+    msg["In-Reply-To"] = reply_context["message_id_hdr"]
+    msg["References"] = reply_context["references"]
+    raw = base64.urlsafe_b64encode(msg.as_bytes()).decode("ascii")
+    return _api_request(
+        "https://gmail.googleapis.com/gmail/v1/users/me/drafts",
+        token,
+        method="POST",
+        body={
+            "message": {
+                "raw": raw,
+                "threadId": reply_context["thread_id"],
+            }
+        },
+    )
+
+
 # ---------------------------------------------------------------------------
 # Calendar
 # ---------------------------------------------------------------------------
