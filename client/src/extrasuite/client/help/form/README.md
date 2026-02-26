@@ -7,7 +7,7 @@ Google Forms - create and edit surveys and quizzes via a single JSON file.
   extrasuite form push <folder>             Apply changes to Google Forms
   extrasuite form create <title>            Create a new form
 
-After push, always re-pull before making more changes.
+After push, form.json is updated with API-assigned IDs. You can edit again immediately without re-pulling.
 
 ## Directory Structure
 
@@ -76,3 +76,4 @@ Remove the item from the items array.
 
   extrasuite form help                       List available reference topics
   extrasuite form help question-types        All question types, quiz mode, email collection
+  extrasuite form help branching             Conditional section branching (goToSectionId)

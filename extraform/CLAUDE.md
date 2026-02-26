@@ -53,7 +53,28 @@ After `pull`, the folder contains:
 
 **Read-only fields:** `itemId` and `questionId` are assigned by the API. Don't include them when creating new items.
 
-**Pristine state:** Not updated after push. Always re-pull before making additional changes.
+**Post-push sync:** After a successful push, `client.py` rewrites `form.json` from the API response (`include_form_in_response=True`) via `FormTransformer` and updates `.pristine/`. This ensures API-assigned IDs are reflected immediately — no re-pull needed.
+
+**updateItem index:** When an item has both a content change and a position change in the same push, `updateItem` must reference the item's position *after deletes and creates but before moves*. Use `_update_item_index()` in `request_generator.py` to compute this. Using `new_index` (final desired position) would target the wrong item.
+
+## Multi-Phase Push (Conditional Branching)
+
+When a push includes new sections (`pageBreakItem`) referenced by `goToSectionId` in the same push, the API cannot resolve those IDs in a single call. `generate_batched_requests()` in `request_generator.py` splits the work into ordered batches:
+
+**Batch 0** (sent first):
+- Form info / settings updates
+- `deleteItem` requests
+- `createItem` for new sections (pageBreakItems) and other items with no cross-dependencies
+- Indices in batch-0 creates are adjusted: `adj_idx = new_idx - count(batch-1 creates at positions ≤ new_idx)`
+
+**Batch 1** (sent after batch 0 replies arrive):
+- `createItem` for items whose `goToSectionId` references a new section from batch 0
+- `updateItem` requests (using `_update_item_index()` for correct pre-move positions)
+- `moveItem` requests
+
+**DeferredItemID** — when a batch-1 create has a `goToSectionId` pointing to a new section, the value is set to a `DeferredItemID(placeholder, batch_index=0, request_index=N)` object rather than a real ID. After batch 0 completes, `resolve_deferred_ids()` walks the batch-1 requests and replaces each `DeferredItemID` with the actual itemId from `prior_responses[0]["replies"][N]["createItem"]["itemId"]`.
+
+If there are no cross-dependencies, `generate_batched_requests()` returns a single batch and push makes one API call.
 
 ## Editing form.json
 

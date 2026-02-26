@@ -102,7 +102,7 @@ class GoogleFormsTransport(FormTransport):
             NotFoundError: On 404 responses.
             APIError: On other error responses.
         """
-        if response.status_code == 200:
+        if response.status_code < 300:
             return
 
         if response.status_code in (401, 403):
@@ -206,8 +206,22 @@ class LocalFileTransport(FormTransport):
         requests: list[dict[str, Any]],
         include_form_in_response: bool = False,  # noqa: ARG002
     ) -> dict[str, Any]:
-        """Return mock response for testing."""
-        return {"replies": [{} for _ in requests]}
+        """Return mock response for testing.
+
+        For createItem requests, returns a fake itemId so that 2-phase push
+        logic (placeholder ID resolution for goToSectionId) can be tested.
+        """
+        replies: list[dict[str, Any]] = []
+        for i, req in enumerate(requests):
+            if "createItem" in req:
+                item = req["createItem"].get("item", {})
+                # Generate a deterministic fake itemId based on position and title
+                title_hash = abs(hash(item.get("title", ""))) % 0x10000
+                fake_id = f"mock{i:02d}{title_hash:04x}"
+                replies.append({"createItem": {"itemId": fake_id}})
+            else:
+                replies.append({})
+        return {"replies": replies}
 
     async def close(self) -> None:
         """No cleanup needed for local file transport."""

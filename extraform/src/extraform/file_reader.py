@@ -31,14 +31,14 @@ def read_current_files(folder: Path) -> dict[str, Any]:
         raise InvalidFileError(str(form_path), "form.json not found")
 
     try:
-        files["form.json"] = json.loads(form_path.read_text())
+        files["form.json"] = json.loads(form_path.read_text(encoding="utf-8"))
     except json.JSONDecodeError as e:
         raise InvalidFileError(str(form_path), f"Invalid JSON: {e}") from e
 
     # Read responses.tsv (optional)
     responses_path = folder / "responses.tsv"
     if responses_path.exists():
-        files["responses.tsv"] = responses_path.read_text()
+        files["responses.tsv"] = responses_path.read_text(encoding="utf-8")
 
     return files
 
@@ -60,6 +60,6 @@ def read_form_json(folder: Path) -> dict[str, Any]:
         raise InvalidFileError(str(form_path), "form.json not found")
 
     try:
-        return json.loads(form_path.read_text())  # type: ignore[no-any-return]
+        return json.loads(form_path.read_text(encoding="utf-8"))  # type: ignore[no-any-return]
     except json.JSONDecodeError as e:
         raise InvalidFileError(str(form_path), f"Invalid JSON: {e}") from e

@@ -56,6 +56,9 @@ class DiffResult:
     old_item_order: list[str] = field(default_factory=list)
     # Item IDs in current order (for move simulation)
     new_item_order: list[str] = field(default_factory=list)
+    # Full item lists (for placeholder ID detection in 2-phase push)
+    pristine_items: list[dict[str, Any]] = field(default_factory=list)
+    current_items: list[dict[str, Any]] = field(default_factory=list)
 
     @property
     def has_changes(self) -> bool:
@@ -101,6 +104,8 @@ def diff_forms(pristine: dict[str, Any], current: dict[str, Any]) -> DiffResult:
         item_changes=item_changes,
         old_item_order=old_item_order,
         new_item_order=new_item_order,
+        pristine_items=pristine_items,
+        current_items=current_items,
     )
 
 
@@ -141,7 +146,7 @@ def _diff_settings(
     # Check quiz settings
     old_quiz = old_settings.get("quizSettings", {})
     new_quiz = new_settings.get("quizSettings", {})
-    if old_quiz != new_quiz and old_quiz.get("isQuiz") != new_quiz.get("isQuiz"):
+    if old_quiz.get("isQuiz") != new_quiz.get("isQuiz"):
         changed_fields.append("quizSettings.isQuiz")
 
     # Check email collection

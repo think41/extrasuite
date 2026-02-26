@@ -3,6 +3,7 @@
 from extraform.client import FormsClient, PullResult, PushResult
 from extraform.diff import DiffResult, ItemChange, diff_forms
 from extraform.exceptions import (
+    APIError,
     AuthenticationError,
     DiffError,
     ExtraFormError,
@@ -45,6 +46,7 @@ __all__ = [
     # Exceptions
     "ExtraFormError",
     "TransportError",
+    "APIError",
     "AuthenticationError",
     "NotFoundError",
     "DiffError",

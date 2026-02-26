@@ -218,4 +218,5 @@ RESPONDER_INPUT (asks responder to type their email)
   Newlines in title             Not allowed - use description for multi-line content
   Adding questions              Omit itemId and questionId (API assigns them)
   File upload questions         Read-only - cannot create via API
-  Branching/logic               Not supported by the Google Forms API
+
+See also: extrasuite form help branching

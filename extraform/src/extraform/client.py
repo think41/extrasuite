@@ -9,7 +9,11 @@ from typing import Any
 from extraform.diff import DiffResult, diff_forms
 from extraform.file_reader import read_current_files, read_form_json
 from extraform.pristine import create_pristine, get_pristine_form, update_pristine
-from extraform.request_generator import generate_requests
+from extraform.request_generator import (
+    generate_batched_requests,
+    generate_requests,
+    resolve_deferred_ids,
+)
 from extraform.transformer import FormTransformer
 from extraform.transport import FormTransport
 from extraform.writer import FileWriter
@@ -137,9 +141,9 @@ class FormsClient:
             PushResult with details of the operation.
         """
         # 1. Run diff
-        diff_result, requests = self.diff(folder)
+        diff_result, _ = self.diff(folder)
 
-        if not requests:
+        if not diff_result.has_changes:
             return PushResult(
                 success=True,
                 changes_applied=0,
@@ -147,21 +151,47 @@ class FormsClient:
                 form_id=diff_result.form_id,
             )
 
-        # 2. Execute batchUpdate
-        response = await self._transport.batch_update(
-            diff_result.form_id,
-            requests,
-            include_form_in_response=True,
-        )
+        # 2. Generate batched requests (handles multi-phase for conditional branching)
+        batches = generate_batched_requests(diff_result)
 
-        # 3. Update pristine copy to match current state
-        current_files = read_current_files(folder)
-        update_pristine(folder, current_files)
+        total_changes = 0
+        prior_responses: list[dict[str, Any]] = []
+        last_response: dict[str, Any] = {}
 
+        for i, batch in enumerate(batches):
+            resolved = resolve_deferred_ids(prior_responses, batch) if i > 0 else batch
+            is_last = i == len(batches) - 1
+            response = await self._transport.batch_update(
+                diff_result.form_id,
+                resolved,
+                include_form_in_response=is_last,
+            )
+            prior_responses.append(response)
+            total_changes += len(resolved)
+            last_response = response
+
+        # 3. Update form.json and pristine from the API response.
+        #    The API assigns itemIds and questionIds to newly created items.
+        #    Writing those back to form.json (via FormTransformer) ensures that
+        #    subsequent diffs correctly compare by ID rather than treating every
+        #    ID-less item as a new addition.
+        api_form = last_response.get("form")
+        if api_form:
+            transformer = FormTransformer(api_form)
+            api_files = transformer.transform()
+            writer = FileWriter(folder)
+            writer.write_all(api_files)
+            update_pristine(folder, api_files)
+        else:
+            current_files = read_current_files(folder)
+            update_pristine(folder, current_files)
+
+        n = len(batches)
+        phases = f"{n} phase{'s' if n > 1 else ''}"
         return PushResult(
             success=True,
-            changes_applied=len(requests),
-            message=f"Applied {len(requests)} change(s)",
+            changes_applied=total_changes,
+            message=f"Applied {total_changes} change(s) in {phases}",
             form_id=diff_result.form_id,
-            response=response,
+            response=last_response,
         )

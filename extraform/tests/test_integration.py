@@ -178,6 +178,198 @@ class TestGoldenFileEdit:
         assert update_requests[0]["updateItem"]["item"]["title"] == "Updated Question Title"
 
 
+class TestConditionalBranching:
+    """Tests for conditional section branching via goToSectionId."""
+
+    @pytest.mark.asyncio
+    async def test_pull_conditional_form_preserves_goto(self, tmp_path: Path) -> None:
+        """Pulling a form with goToSectionId preserves the branching fields."""
+        transport = LocalFileTransport(GOLDEN_DIR)
+        client = FormsClient(transport)
+
+        await client.pull("conditional_form", tmp_path, save_raw=False)
+
+        form_path = tmp_path / "conditional_form" / "form.json"
+        form = json.loads(form_path.read_text())
+
+        # The branching question is first
+        question = form["items"][0]["questionItem"]["question"]
+        options = question["choiceQuestion"]["options"]
+        assert options[0]["value"] == "Yes"
+        assert options[0]["goToSectionId"] == "section-existing"
+        assert options[1]["value"] == "No"
+        assert options[1]["goToSectionId"] == "section-new"
+
+    @pytest.mark.asyncio
+    async def test_existing_goto_no_two_phase(self, tmp_path: Path) -> None:
+        """Modifying goToSectionId that references existing sections uses one batch."""
+        transport = LocalFileTransport(GOLDEN_DIR)
+        client = FormsClient(transport)
+
+        await client.pull("conditional_form", tmp_path, save_raw=False)
+
+        # Swap which section each answer goes to
+        form_path = tmp_path / "conditional_form" / "form.json"
+        form = json.loads(form_path.read_text())
+        options = form["items"][0]["questionItem"]["question"]["choiceQuestion"]["options"]
+        options[0]["goToSectionId"] = "section-new"
+        options[1]["goToSectionId"] = "section-existing"
+        form_path.write_text(json.dumps(form, indent=2))
+
+        from extraform.request_generator import generate_batched_requests
+
+        diff_result, _ = client.diff(tmp_path / "conditional_form")
+        batches = generate_batched_requests(diff_result)
+
+        # Existing sections → no placeholder IDs → single batch
+        assert len(batches) == 1
+        assert len(batches[0]) == 1  # one updateItem
+        assert "updateItem" in batches[0][0]
+
+    @pytest.mark.asyncio
+    async def test_new_section_with_goto_triggers_two_phase(self, tmp_path: Path) -> None:
+        """Adding a new section referenced by goToSectionId triggers a 2-batch push.
+
+        The new branching question (which references "feedback-section") goes into
+        Batch 1 because it depends on the section's API-assigned ID.
+        Batch 0 contains the placeholder section and other non-dependent creates.
+        """
+        transport = LocalFileTransport(GOLDEN_DIR)
+        client = FormsClient(transport)
+
+        await client.pull("simple_form", tmp_path, save_raw=False)
+
+        # Add a branching question and two new sections with agent-chosen IDs
+        form_path = tmp_path / "simple_form" / "form.json"
+        form = json.loads(form_path.read_text())
+        form["items"].extend([
+            {
+                "title": "Would you like to give feedback?",
+                "questionItem": {
+                    "question": {
+                        "required": True,
+                        "choiceQuestion": {
+                            "type": "RADIO",
+                            "options": [
+                                {"value": "Yes", "goToSectionId": "feedback-section"},
+                                {"value": "No", "goToAction": "SUBMIT_FORM"},
+                            ],
+                        },
+                    }
+                },
+            },
+            {
+                "itemId": "feedback-section",
+                "title": "Feedback",
+                "pageBreakItem": {},
+            },
+            {
+                "title": "Please share your feedback",
+                "questionItem": {
+                    "question": {"textQuestion": {"paragraph": True}}
+                },
+            },
+        ])
+        form_path.write_text(json.dumps(form, indent=2))
+
+        from extraform.request_generator import DeferredItemID, generate_batched_requests
+
+        diff_result, _ = client.diff(tmp_path / "simple_form")
+        batches = generate_batched_requests(diff_result)
+
+        # "feedback-section" is a placeholder → 2 batches required
+        assert len(batches) == 2
+
+        # Batch 0: non-dependent creates only (section + text question, NOT the branching Q)
+        batch0_creates = [r for r in batches[0] if "createItem" in r]
+        assert len(batch0_creates) == 2
+        assert any("pageBreakItem" in r["createItem"]["item"] for r in batch0_creates)
+
+        # Batch 1: the branching question (createItem with DeferredItemID in goToSectionId)
+        assert len(batches[1]) == 1
+        assert "createItem" in batches[1][0]
+        branch_item = batches[1][0]["createItem"]["item"]
+        options = branch_item["questionItem"]["question"]["choiceQuestion"]["options"]
+        yes_option = next(o for o in options if o.get("value") == "Yes")
+        assert isinstance(yes_option["goToSectionId"], DeferredItemID)
+        assert yes_option["goToSectionId"].placeholder == "feedback-section"
+
+    @pytest.mark.asyncio
+    async def test_two_phase_push_resolves_ids(self, tmp_path: Path) -> None:
+        """2-phase push resolves placeholder IDs with real API-assigned IDs."""
+        transport = LocalFileTransport(GOLDEN_DIR)
+        client = FormsClient(transport)
+
+        await client.pull("simple_form", tmp_path, save_raw=False)
+
+        form_path = tmp_path / "simple_form" / "form.json"
+        form = json.loads(form_path.read_text())
+        form["items"].extend([
+            {
+                "title": "Continue?",
+                "questionItem": {
+                    "question": {
+                        "choiceQuestion": {
+                            "type": "RADIO",
+                            "options": [
+                                {"value": "Yes", "goToSectionId": "extra-section"},
+                                {"value": "No", "goToAction": "SUBMIT_FORM"},
+                            ],
+                        }
+                    }
+                },
+            },
+            {
+                "itemId": "extra-section",
+                "title": "Extra Questions",
+                "pageBreakItem": {},
+            },
+        ])
+        form_path.write_text(json.dumps(form, indent=2))
+
+        # Execute the full push - LocalFileTransport returns fake itemIds
+        result = await client.push(tmp_path / "simple_form")
+
+        assert result.success
+        assert result.changes_applied > 0
+        assert "2 phases" in result.message
+
+    @pytest.mark.asyncio
+    async def test_goToAction_no_two_phase(self, tmp_path: Path) -> None:
+        """goToAction (not goToSectionId) never requires a 2-batch push."""
+        transport = LocalFileTransport(GOLDEN_DIR)
+        client = FormsClient(transport)
+
+        await client.pull("simple_form", tmp_path, save_raw=False)
+
+        form_path = tmp_path / "simple_form" / "form.json"
+        form = json.loads(form_path.read_text())
+        # Add a question using goToAction (no section ID needed)
+        form["items"].append({
+            "title": "Submit or continue?",
+            "questionItem": {
+                "question": {
+                    "choiceQuestion": {
+                        "type": "RADIO",
+                        "options": [
+                            {"value": "Submit now", "goToAction": "SUBMIT_FORM"},
+                            {"value": "Continue", "goToAction": "NEXT_SECTION"},
+                        ],
+                    }
+                }
+            },
+        })
+        form_path.write_text(json.dumps(form, indent=2))
+
+        from extraform.request_generator import generate_batched_requests
+
+        diff_result, _ = client.diff(tmp_path / "simple_form")
+        batches = generate_batched_requests(diff_result)
+
+        # goToAction has no section ID dependency → single batch
+        assert len(batches) == 1
+
+
 class TestTransformerWithGolden:
     """Tests for FormTransformer using golden files."""
 

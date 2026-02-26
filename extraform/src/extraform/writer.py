@@ -53,7 +53,7 @@ class FileWriter:
             path: The file path.
             content: The JSON-serializable content.
         """
-        path.write_text(json.dumps(content, indent=2, ensure_ascii=False) + "\n")
+        path.write_text(json.dumps(content, indent=2, ensure_ascii=False) + "\n", encoding="utf-8")
 
     def _write_text(self, path: Path, content: str) -> None:
         """Write text content to a file.
@@ -62,7 +62,7 @@ class FileWriter:
             path: The file path.
             content: The text content.
         """
-        path.write_text(content)
+        path.write_text(content, encoding="utf-8")
 
     def write_raw(self, filename: str, content: dict[str, Any]) -> Path:
         """Write a raw API response to the .raw directory.

@@ -1,0 +1,87 @@
+{
+  "formId": "1FAIpQLSdConditional",
+  "revisionId": "00000001",
+  "responderUri": "https://docs.google.com/forms/d/e/1FAIpQLSdConditional/viewform",
+  "info": {
+    "title": "Conditional Branching Test Form",
+    "documentTitle": "Conditional Branching Test Form",
+    "description": "A form to test conditional section branching"
+  },
+  "settings": {
+    "quizSettings": {
+      "isQuiz": false
+    }
+  },
+  "items": [
+    {
+      "itemId": "item001",
+      "title": "Are you a current customer?",
+      "questionItem": {
+        "question": {
+          "questionId": "q001",
+          "required": true,
+          "choiceQuestion": {
+            "type": "RADIO",
+            "options": [
+              {
+                "value": "Yes",
+                "goToSectionId": "section-existing"
+              },
+              {
+                "value": "No",
+                "goToSectionId": "section-new"
+              }
+            ]
+          }
+        }
+      }
+    },
+    {
+      "itemId": "section-existing",
+      "title": "Existing Customer",
+      "description": "Questions for existing customers",
+      "pageBreakItem": {}
+    },
+    {
+      "itemId": "item002",
+      "title": "How long have you been a customer?",
+      "questionItem": {
+        "question": {
+          "questionId": "q002",
+          "choiceQuestion": {
+            "type": "RADIO",
+            "options": [
+              {"value": "Less than 1 year"},
+              {"value": "1-3 years"},
+              {"value": "More than 3 years"}
+            ]
+          }
+        }
+      }
+    },
+    {
+      "itemId": "section-new",
+      "title": "New Customer",
+      "description": "Questions for new customers",
+      "pageBreakItem": {}
+    },
+    {
+      "itemId": "item003",
+      "title": "How did you hear about us?",
+      "questionItem": {
+        "question": {
+          "questionId": "q003",
+          "choiceQuestion": {
+            "type": "RADIO",
+            "options": [
+              {"value": "Web search"},
+              {"value": "Social media"},
+              {"value": "Friend referral"},
+              {"isOther": true}
+            ]
+          }
+        }
+      }
+    }
+  ]
+}
