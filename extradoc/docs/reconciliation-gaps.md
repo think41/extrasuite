@@ -10,15 +10,19 @@ Code review findings for `extradoc/src/extradoc/reconcile/`. Issues are grouped 
 
 ## Design Issues
 
-### 8. Bullet preset is hardcoded
+*(None open.)*
 
-**File:** `_generators.py:1698`
+---
 
-```python
-_make_create_paragraph_bullets(para_start, para_end, "BULLET_DISC_CIRCLE_SQUARE", ...)
-```
+## Fixed Issues
 
-When adding a bullet to a paragraph, the preset is always `BULLET_DISC_CIRCLE_SQUARE` regardless of what the desired document uses. Ordered lists and custom nesting styles will be applied incorrectly. The desired `Bullet.list_id` combined with the document's `lists` dict should drive the preset choice.
+### 8. Bullet preset was hardcoded — FIXED (Phase 6)
+
+The reconciler now calls `_infer_bullet_preset(desired_se, desired_lists)` which reads the desired document's `lists` dict to determine the correct `bulletPreset`. `type="bullet"` maps to `BULLET_DISC_CIRCLE_SQUARE`, `type="decimal"` to `NUMBERED_DECIMAL_NESTED`, etc.
+
+### ADDED paragraphs were missing style requests — FIXED
+
+Style requests (`updateParagraphStyle`, `updateTextStyle`, `createParagraphBullets`) were only generated for MATCHED paragraphs. Paragraphs in the ADDED group (trailing gap or inner gap) received `insertText` only with no styles applied. Fixed by adding `_generate_style_for_added_paragraph()` and `_style_reqs_for_added_paras()` in `_generators.py`.
 
 ---
 
