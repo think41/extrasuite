@@ -247,10 +247,231 @@ def _normalize_elements(obj: Any) -> Any:
     return obj
 
 
+def _build_list_indents(
+    lists_raw: dict[str, Any],
+) -> dict[tuple[str, int], tuple[str | None, str | None]]:
+    """Build (list_id, level) → (indentFirst_xml, indentLeft_xml) from raw lists dict.
+
+    Mirrors _build_list_level_indents in _to_xml.py.
+    """
+    result: dict[tuple[str, int], tuple[str | None, str | None]] = {}
+    for list_id, doc_list in lists_raw.items():
+        lp = doc_list.get("listProperties", {})
+        nesting_levels = lp.get("nestingLevels", [])
+        for idx, nl in enumerate(nesting_levels):
+            ifl = nl.get("indentFirstLine") or {}
+            ist = nl.get("indentStart") or {}
+            mag_first = ifl.get("magnitude")
+            mag_left = ist.get("magnitude")
+            indent_first = f"{mag_first}pt" if mag_first is not None else None
+            indent_left = f"{mag_left}pt" if mag_left is not None else None
+            result[(list_id, idx)] = (indent_first, indent_left)
+    return result
+
+
+def _strip_para_style_dict(
+    ps_dict: dict[str, Any],
+    para_defs: dict[str, str],
+) -> dict[str, Any]:
+    """Strip named-style defaults from a paragraphStyle dict.
+
+    Validates through ParagraphStyle, applies extract_para_style with defaults,
+    then rebuilds via resolve_para_style — the same path serde uses.
+    """
+    from extradoc.api_types._generated import (
+        ParagraphStyle,
+        ParagraphStyleNamedStyleType,
+    )
+    from extradoc.serde._styles import extract_para_style, resolve_para_style
+
+    nst_val = ps_dict.get("namedStyleType")
+    heading_id = ps_dict.get("headingId")
+
+    ps = ParagraphStyle.model_validate(ps_dict)
+    clean_attrs = extract_para_style(ps, defaults=para_defs)
+
+    nst = ParagraphStyleNamedStyleType(nst_val) if nst_val else None
+    clean_ps = resolve_para_style(clean_attrs, named_style_type=nst)
+    result = clean_ps.model_dump(by_alias=True, exclude_none=True)
+
+    if heading_id:
+        result["headingId"] = heading_id
+    return result
+
+
+def _strip_text_style_dict(
+    ts_dict: dict[str, Any],
+    text_defs: dict[str, str],
+) -> dict[str, Any]:
+    """Strip named-style defaults from a textStyle dict."""
+    from extradoc.api_types._generated import TextStyle
+    from extradoc.serde._styles import extract_text_style, resolve_text_style
+
+    ts = TextStyle.model_validate(ts_dict)
+    clean_attrs = extract_text_style(ts, defaults=text_defs)
+    clean_ts = resolve_text_style(clean_attrs)
+    return clean_ts.model_dump(by_alias=True, exclude_none=True)
+
+
+def _strip_ns_from_content(
+    content: list[Any],
+    ns_defaults: Any,
+    list_indents: dict[tuple[str, int], tuple[str | None, str | None]],
+) -> list[Any]:
+    """Recursively strip named-style defaults from content elements."""
+    result = []
+    for item in content:
+        if not isinstance(item, dict):
+            result.append(item)
+            continue
+
+        if "paragraph" in item:
+            item = dict(item)
+            para = dict(item["paragraph"])
+            ps_dict = para.get("paragraphStyle") or {}
+            nst = (
+                ps_dict.get("namedStyleType", "NORMAL_TEXT")
+                if ps_dict
+                else "NORMAL_TEXT"
+            )
+
+            para_defs = dict(ns_defaults.para_defaults(nst))
+            text_defs = ns_defaults.text_defaults(nst)
+
+            # For list items, augment para_defs with listlevel indents
+            bullet = para.get("bullet") or {}
+            if bullet:
+                list_id = bullet.get("listId")
+                level = bullet.get("nestingLevel", 0)
+                if list_id is not None:
+                    ll_first, ll_left = list_indents.get((list_id, level), (None, None))
+                    if ll_first is not None:
+                        para_defs["indentFirst"] = ll_first
+                    if ll_left is not None:
+                        para_defs["indentLeft"] = ll_left
+
+            if ps_dict:
+                para["paragraphStyle"] = _strip_para_style_dict(ps_dict, para_defs)
+
+            # Strip text defaults from textRun elements
+            elements = para.get("elements") or []
+            new_elements = []
+            for elem in elements:
+                elem = dict(elem)
+                if "textRun" in elem:
+                    tr = dict(elem["textRun"])
+                    ts_dict = tr.get("textStyle") or {}
+                    if ts_dict and text_defs:
+                        cleaned = _strip_text_style_dict(ts_dict, text_defs)
+                        tr["textStyle"] = cleaned
+                        elem["textRun"] = tr
+                new_elements.append(elem)
+            para["elements"] = new_elements
+            item["paragraph"] = para
+
+        elif "table" in item:
+            item = dict(item)
+            table = dict(item["table"])
+
+            # Recurse into table cells
+            rows = table.get("tableRows") or []
+            new_rows = []
+            for row in rows:
+                row = dict(row)
+                cells = row.get("tableCells") or []
+                new_cells = []
+                for cell in cells:
+                    cell = dict(cell)
+                    cell["content"] = _strip_ns_from_content(
+                        cell.get("content") or [], ns_defaults, list_indents
+                    )
+                    new_cells.append(cell)
+                row["tableCells"] = new_cells
+                new_rows.append(row)
+            table["tableRows"] = new_rows
+
+            # Strip widthType=FIXED_WIDTH from column properties
+            table_style = table.get("tableStyle") or {}
+            col_props = table_style.get("tableColumnProperties") or []
+            if col_props:
+                new_cols = []
+                for col in col_props:
+                    col = dict(col)
+                    if col.get("widthType") == "FIXED_WIDTH":
+                        del col["widthType"]
+                    new_cols.append(col)
+                table["tableStyle"] = dict(table_style)
+                table["tableStyle"]["tableColumnProperties"] = new_cols
+
+            item["table"] = table
+
+        result.append(item)
+    return result
+
+
+def _strip_ns_defaults_from_doc(d: dict[str, Any]) -> dict[str, Any]:
+    """Strip named-style defaults from a document dict (after model_dump).
+
+    Mirrors what serde does: suppresses para/text style fields that match
+    the named-style default for that paragraph's named style type, augments
+    para defaults with listlevel indents for list items, and strips
+    widthType=FIXED_WIDTH from column properties.
+
+    Both sides of the comparison go through this step so any systematic
+    bias cancels out.
+    """
+    from extradoc.api_types._generated import NamedStyles
+    from extradoc.serde._styles import NamedStyleDefaults
+
+    d = dict(d)
+    new_tabs = []
+    for tab in d.get("tabs") or []:
+        tab = dict(tab)
+        doc_tab = dict(tab.get("documentTab") or {})
+
+        # Build named-style defaults for this tab
+        named_styles_raw = doc_tab.get("namedStyles")
+        ns_obj = (
+            NamedStyles.model_validate(named_styles_raw) if named_styles_raw else None
+        )
+        ns_defaults = NamedStyleDefaults(ns_obj)
+
+        # Build listlevel indents for this tab
+        list_indents = _build_list_indents(doc_tab.get("lists") or {})
+
+        # Strip from body, headers, footers, footnotes
+        for section_key in ("body",):
+            section = doc_tab.get(section_key)
+            if section:
+                section = dict(section)
+                section["content"] = _strip_ns_from_content(
+                    section.get("content") or [], ns_defaults, list_indents
+                )
+                doc_tab[section_key] = section
+
+        for container_key in ("headers", "footers", "footnotes"):
+            container = doc_tab.get(container_key) or {}
+            if container:
+                new_container = {}
+                for k, v in container.items():
+                    v = dict(v)
+                    v["content"] = _strip_ns_from_content(
+                        v.get("content") or [], ns_defaults, list_indents
+                    )
+                    new_container[k] = v
+                doc_tab[container_key] = new_container
+
+        tab["documentTab"] = doc_tab
+        new_tabs.append(tab)
+    d["tabs"] = new_tabs
+    return d
+
+
 def _normalize_doc(doc: Document) -> dict[str, Any]:
     """Convert Document to a normalized dict for comparison."""
     d = doc.model_dump(by_alias=True, exclude_none=True)
     d.pop("suggestionsViewMode", None)
+    d = _strip_ns_defaults_from_doc(d)
     d = _normalize(d)
     d = _normalize_elements(d)
     d = _strip_non_roundtripped(d)

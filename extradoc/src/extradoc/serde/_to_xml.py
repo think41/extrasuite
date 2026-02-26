@@ -38,6 +38,7 @@ from ._models import (
     TocXml,
 )
 from ._styles import (
+    NamedStyleDefaults,
     StyleCollector,
     determine_link_href,
     determine_sugar_tag,
@@ -122,7 +123,8 @@ def _convert_tabs_recursive(
         doc_tab = tab.document_tab
         if doc_tab:
             collector = StyleCollector()
-            tab_xml = _convert_tab(tab_id, tab_title, doc_tab, collector)
+            ns_defaults = NamedStyleDefaults(doc_tab.named_styles)
+            tab_xml = _convert_tab(tab_id, tab_title, doc_tab, collector, ns_defaults)
             tab_xml.index = tab_index
             defaults = collector.promote_defaults()
             styles_xml = collector.build()
@@ -140,14 +142,41 @@ def _convert_tabs_recursive(
             _convert_tabs_recursive(tab.child_tabs, result)
 
 
+def _build_list_level_indents(
+    doc_tab: DocumentTab,
+) -> dict[tuple[str, int], tuple[str | None, str | None]]:
+    """Build a lookup of (list_id, level_index) → (indentFirst, indentLeft).
+
+    Used to suppress paragraph-style indent attributes that merely duplicate what
+    the list-level definition already provides.
+    """
+    from ._utils import dim_to_str
+
+    result: dict[tuple[str, int], tuple[str | None, str | None]] = {}
+    if not doc_tab.lists:
+        return result
+    for list_id, doc_list in doc_tab.lists.items():
+        if not doc_list.list_properties or not doc_list.list_properties.nesting_levels:
+            continue
+        for idx, nl in enumerate(doc_list.list_properties.nesting_levels):
+            indent_first = dim_to_str(nl.indent_first_line)
+            indent_left = dim_to_str(nl.indent_start)
+            result[(list_id, idx)] = (indent_first, indent_left)
+    return result
+
+
 def _convert_tab(
     tab_id: str,
     tab_title: str,
     doc_tab: DocumentTab,
     collector: StyleCollector,
+    ns_defaults: NamedStyleDefaults,
 ) -> TabXml:
     """Convert a single DocumentTab to TabXml."""
     tab_xml = TabXml(id=tab_id, title=tab_title)
+
+    # Build a lookup of list-level indents for suppressing redundant para indents
+    list_level_indents = _build_list_level_indents(doc_tab)
 
     # Convert list definitions
     if doc_tab.lists:
@@ -156,13 +185,17 @@ def _convert_tab(
 
     # Convert body
     if doc_tab.body and doc_tab.body.content:
-        tab_xml.body = _convert_content(doc_tab.body.content, collector)
+        tab_xml.body = _convert_content(
+            doc_tab.body.content, collector, ns_defaults, list_level_indents
+        )
 
     # Convert headers
     if doc_tab.headers:
         for header_id, header in doc_tab.headers.items():
             if header.content:
-                blocks = _convert_content(header.content, collector)
+                blocks = _convert_content(
+                    header.content, collector, ns_defaults, list_level_indents
+                )
                 tab_xml.headers.append(
                     SegmentXml(id=header_id, segment_type="header", blocks=blocks)
                 )
@@ -171,7 +204,9 @@ def _convert_tab(
     if doc_tab.footers:
         for footer_id, footer in doc_tab.footers.items():
             if footer.content:
-                blocks = _convert_content(footer.content, collector)
+                blocks = _convert_content(
+                    footer.content, collector, ns_defaults, list_level_indents
+                )
                 tab_xml.footers.append(
                     SegmentXml(id=footer_id, segment_type="footer", blocks=blocks)
                 )
@@ -180,7 +215,9 @@ def _convert_tab(
     if doc_tab.footnotes:
         for fn_id, footnote in doc_tab.footnotes.items():
             if footnote.content:
-                blocks = _convert_content(footnote.content, collector)
+                blocks = _convert_content(
+                    footnote.content, collector, ns_defaults, list_level_indents
+                )
                 tab_xml.footnotes.append(
                     SegmentXml(id=fn_id, segment_type="footnote", blocks=blocks)
                 )
@@ -218,6 +255,8 @@ def _convert_list_def(
 def _convert_content(
     content: list[StructuralElement],
     collector: StyleCollector,
+    ns_defaults: NamedStyleDefaults,
+    list_level_indents: dict[tuple[str, int], tuple[str | None, str | None]],
 ) -> list[BlockNode]:
     """Convert a list of StructuralElements to BlockNodes."""
     blocks: list[BlockNode] = []
@@ -225,15 +264,24 @@ def _convert_content(
         if se.section_break:
             blocks.append(_convert_section_break(se.section_break))
         elif se.paragraph:
-            block = _convert_paragraph(se.paragraph, collector)
+            block = _convert_paragraph(
+                se.paragraph, collector, ns_defaults, list_level_indents
+            )
             if block is not None:
                 blocks.append(block)
         elif se.table:
-            blocks.append(_convert_table(se.table, collector))
+            blocks.append(
+                _convert_table(se.table, collector, ns_defaults, list_level_indents)
+            )
         elif se.table_of_contents:
             toc_blocks: list[BlockNode] = []
             if se.table_of_contents.content:
-                toc_blocks = _convert_content(se.table_of_contents.content, collector)
+                toc_blocks = _convert_content(
+                    se.table_of_contents.content,
+                    collector,
+                    ns_defaults,
+                    list_level_indents,
+                )
             blocks.append(TocXml(blocks=toc_blocks))
     return _strip_trailing_empty_para(blocks)
 
@@ -307,6 +355,8 @@ def _convert_section_break(sb: SectionBreak) -> SectionBreakXml:
 def _convert_paragraph(
     para: Paragraph,
     collector: StyleCollector,
+    ns_defaults: NamedStyleDefaults,
+    list_level_indents: dict[tuple[str, int], tuple[str | None, str | None]],
 ) -> BlockNode | None:
     """Convert a Paragraph to a BlockNode.
 
@@ -323,22 +373,40 @@ def _convert_paragraph(
     # Determine tag from named style
     ps = para.paragraph_style
     tag = "p"
-    named_style = None
+    named_style_key = "NORMAL_TEXT"
     if ps and ps.named_style_type:
-        named_style = ps.named_style_type
-        tag = _NAMED_STYLE_TO_TAG.get(named_style.value, "p")
+        named_style_key = ps.named_style_type.value
+        tag = _NAMED_STYLE_TO_TAG.get(named_style_key, "p")
 
     # If paragraph has a bullet, use <li>
     bullet = para.bullet
     if bullet:
         tag = "li"
 
+    # Compute defaults for this paragraph's named style type
+    para_defaults = ns_defaults.para_defaults(named_style_key)
+    text_defaults = ns_defaults.text_defaults(named_style_key)
+
+    # For list items: further suppress indent attrs that duplicate the listlevel
+    if bullet and bullet.list_id is not None:
+        level = bullet.nesting_level or 0
+        ll_key = (bullet.list_id, level)
+        ll_indent_first, ll_indent_left = list_level_indents.get(ll_key, (None, None))
+        # Build augmented defaults that include the listlevel indents so they
+        # are suppressed from the paragraph style (they're already on <level>)
+        if ll_indent_first is not None or ll_indent_left is not None:
+            para_defaults = dict(para_defaults)
+            if ll_indent_first is not None:
+                para_defaults["indentFirst"] = ll_indent_first
+            if ll_indent_left is not None:
+                para_defaults["indentLeft"] = ll_indent_left
+
     # Extract paragraph style (excluding named style type and heading ID)
-    para_attrs = extract_para_style(ps)
+    para_attrs = extract_para_style(ps, defaults=para_defaults)
     para_class = collector.add_para_style(para_attrs)
 
     # Convert inline elements
-    inlines = _convert_elements(elements, collector)
+    inlines = _convert_elements(elements, collector, text_defaults)
 
     para_xml = ParagraphXml(
         tag=tag,
@@ -375,6 +443,7 @@ def _convert_paragraph(
 def _convert_elements(
     elements: list[ParagraphElement],
     collector: StyleCollector,
+    text_defaults: dict[str, str] | None = None,
 ) -> list[InlineNode]:
     """Convert paragraph elements to inline nodes."""
     inlines: list[InlineNode] = []
@@ -385,7 +454,9 @@ def _convert_elements(
             text = text.rstrip("\n")
             if not text:
                 continue
-            nodes = _split_soft_breaks(text, pe.text_run.text_style, collector)
+            nodes = _split_soft_breaks(
+                text, pe.text_run.text_style, collector, text_defaults
+            )
             inlines.extend(nodes)
         elif pe.inline_object_element:
             obj_id = pe.inline_object_element.inline_object_id or ""
@@ -443,9 +514,10 @@ def _convert_text_run(
     text: str,
     text_style: TextStyle | None,
     collector: StyleCollector,
+    text_defaults: dict[str, str] | None = None,
 ) -> InlineNode:
     """Convert a text run to an inline node with appropriate sugar tag."""
-    all_attrs = extract_text_style(text_style)
+    all_attrs = extract_text_style(text_style, defaults=text_defaults)
 
     if not all_attrs:
         return TNode(text=text)
@@ -476,18 +548,19 @@ def _split_soft_breaks(
     text: str,
     text_style: TextStyle | None,
     collector: StyleCollector,
+    text_defaults: dict[str, str] | None = None,
 ) -> list[InlineNode]:
     """Split text at \\x0b (soft line break) into TNode + SoftBreakNode sequences.
 
     \\x0b is invalid in XML 1.0, so we represent it as a <br/> element instead.
     """
     if "\x0b" not in text:
-        return [_convert_text_run(text, text_style, collector)]
+        return [_convert_text_run(text, text_style, collector, text_defaults)]
     parts = text.split("\x0b")
     result: list[InlineNode] = []
     for i, part in enumerate(parts):
         if part:
-            result.append(_convert_text_run(part, text_style, collector))
+            result.append(_convert_text_run(part, text_style, collector, text_defaults))
         if i < len(parts) - 1:
             result.append(SoftBreakNode())
     return result
@@ -496,6 +569,8 @@ def _split_soft_breaks(
 def _convert_table(
     table: Table,
     collector: StyleCollector,
+    ns_defaults: NamedStyleDefaults,
+    list_level_indents: dict[tuple[str, int], tuple[str | None, str | None]],
 ) -> TableXml:
     """Convert a Table to TableXml."""
     table_xml = TableXml()
@@ -518,7 +593,9 @@ def _convert_table(
             cell_class = collector.add_cell_style(cell_attrs)
             cell_blocks: list[BlockNode] = []
             if tc.content:
-                cell_blocks = _convert_content(tc.content, collector)
+                cell_blocks = _convert_content(
+                    tc.content, collector, ns_defaults, list_level_indents
+                )
             cell_xml = CellXml(
                 blocks=cell_blocks,
                 class_name=cell_class,
