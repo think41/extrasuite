@@ -299,6 +299,14 @@ def _table_structural_size(table: Table) -> int:
 # Style comparison utilities
 # ---------------------------------------------------------------------------
 
+# ParagraphStyle fields that are server-managed and cannot be set via the API.
+# Attempting to include them in updateParagraphStyle fields causes a 400 error.
+_PARA_STYLE_READONLY_FIELDS: frozenset[str] = frozenset(
+    {
+        "headingId",  # assigned by server when namedStyleType=HEADING_*
+    }
+)
+
 
 def _compute_style_diff(
     base_style: TextStyle | ParagraphStyle | None,
@@ -325,6 +333,11 @@ def _compute_style_diff(
     for field_name, field_info in style_type.model_fields.items():
         api_name = field_info.alias or field_name
         all_api_names.add(api_name)
+
+    # Skip read-only ParagraphStyle fields — they are server-managed and
+    # the API returns 400 if they appear in the updateParagraphStyle field mask.
+    if style_type is ParagraphStyle:
+        all_api_names -= _PARA_STYLE_READONLY_FIELDS
 
     changed_fields: list[str] = []
     result_style: dict[str, Any] = {}
@@ -838,7 +851,12 @@ def _process_trailing_gap(
                 _first_para_start = _insert_idx
             requests.extend(
                 _style_reqs_for_added_paras(
-                    real_adds, _first_para_start, segment_id, tab_id, desired_lists
+                    real_adds,
+                    _first_para_start,
+                    segment_id,
+                    tab_id,
+                    desired_lists,
+                    table_size_extra=0,
                 )
             )
         else:
@@ -858,6 +876,7 @@ def _style_reqs_for_added_paras(
     segment_id: SegmentID,
     tab_id: TabID,
     desired_lists: dict[str, List] | None,
+    table_size_extra: int = 1,
 ) -> list[dict[str, Any]]:
     """Generate style requests for ADDED paragraphs using actual positions.
 
@@ -883,8 +902,12 @@ def _style_reqs_for_added_paras(
         el = add.desired_element
         if not el or not _is_paragraph(el):
             if el and _is_table(el) and el.table:
-                # Advance offset by table footprint + 1 (auto-trailing paragraph)
-                offset += _table_structural_size(el.table) + 1
+                # Advance offset by table footprint + extra (auto-trailing paragraph).
+                # Inner gap (_insert_adds_individually): table_size_extra=1 because
+                # insertTable's separator \n stays as a separate character.
+                # Trailing gap (_process_trailing_adds_with_tables): table_size_extra=0
+                # because the separator \n is absorbed into the preceding run's text.
+                offset += _table_structural_size(el.table) + table_size_extra
             had_non_para = True
             continue
         para_text = _para_text(el)
@@ -1030,6 +1053,22 @@ def _process_trailing_adds_with_tables(
 
     Tables in trailing position need special handling because
     insertTable automatically creates a trailing paragraph.
+
+    Consecutive paragraphs (including empty ones) are collected into runs and
+    inserted as a single combined insertText — identical to how
+    _process_trailing_paragraph_adds works.  This ensures:
+    - \\n separators between consecutive paragraphs are preserved
+    - empty paragraphs are NOT silently dropped
+    - _style_reqs_for_added_paras position tracking remains consistent
+
+    For a sectionbreak left_anchor:
+      - the first run in document order (last processed in reversed order)
+        is inserted WITHOUT a leading \\n (it lands directly at insert_idx)
+      - every subsequent run (after a table) is inserted WITH a leading \\n so
+        that the table's auto-\\n separator is correctly consumed by the run
+
+    For a non-sectionbreak left_anchor:
+      - every run is inserted WITH a leading \\n (same as before)
     """
     first_del_el = real_deletes[0].base_element if real_deletes else None
 
@@ -1046,40 +1085,66 @@ def _process_trailing_adds_with_tables(
         else:
             insert_idx = _el_end(gap.left_anchor) if gap.left_anchor else 1
 
-    # Filter out trailing empty paragraphs that insertTable creates implicitly
+    # Filter out empty paragraphs that insertTable creates implicitly
     filtered_adds = _filter_trailing_empty_paras(real_adds)
 
-    # Process each add in reverse at insert_idx
-    requests: list[dict[str, Any]] = []
-    for add in reversed(filtered_adds):
+    # Group filtered_adds into alternating paragraph-runs and tables.
+    # A "run" is a maximal contiguous sequence of non-table elements.
+    groups: list[tuple[str, list[AlignedElement] | AlignedElement]] = []
+    current_run: list[AlignedElement] = []
+    for add in filtered_adds:
         el = add.desired_element
-        assert el is not None
-        if _is_table(el):
-            assert el.table is not None
+        if el and _is_table(el):
+            if current_run:
+                groups.append(("paras", current_run))
+                current_run = []
+            groups.append(("table", add))
+        else:
+            current_run.append(add)
+    if current_run:
+        groups.append(("paras", current_run))
+
+    non_sectionbreak = gap.left_anchor and not _is_section_break(gap.left_anchor)
+
+    # Process groups in REVERSE document order (all inserts land at insert_idx).
+    requests: list[dict[str, Any]] = []
+    groups_reversed = list(reversed(groups))
+    for idx, (group_type, group) in enumerate(groups_reversed):
+        # idx==0 is the LAST group in document order (we iterate reversed).
+        # is_first_in_document_order is True for the group that appears FIRST
+        # in the document — the LAST item when iterating groups_reversed.
+        is_first_in_document_order = idx == len(groups_reversed) - 1
+
+        if group_type == "table":
+            assert isinstance(group, AlignedElement)
+            el = group.desired_element
+            assert el is not None and el.table is not None
             table_reqs = _generate_insert_table_with_content(
                 el.table, insert_idx, segment_id, tab_id
             )
             requests.extend(table_reqs)
-        elif _is_paragraph(el):
-            text = _para_text(el)
-            if text and text != "\n":
-                # For trailing gap with left anchor paragraph, prepend \n
-                if gap.left_anchor and not _is_section_break(gap.left_anchor):
-                    text_stripped = text.rstrip("\n")
-                    if text_stripped:
-                        requests.append(
-                            _make_insert_text(
-                                "\n" + text_stripped, insert_idx, segment_id, tab_id
-                            )
-                        )
+        else:
+            assert isinstance(group, list)
+            combined = _collect_add_text(group)
+            if not combined:
+                continue
+            if non_sectionbreak:
+                # Always prepend \n to separate from the left anchor (or from
+                # the table that precedes this run in document order).
+                insert_text = "\n" + combined.rstrip("\n")
+            else:
+                # Sectionbreak: the first run in document order needs NO leading
+                # \n — it inserts directly at insert_idx into the existing
+                # trailing paragraph.  Every other run (after a table) needs a
+                # leading \n so the table's auto-\n is used as its terminator.
+                if is_first_in_document_order:
+                    insert_text = combined.rstrip("\n")
                 else:
-                    text_stripped = text.rstrip("\n")
-                    if text_stripped:
-                        requests.append(
-                            _make_insert_text(
-                                text_stripped, insert_idx, segment_id, tab_id
-                            )
-                        )
+                    insert_text = "\n" + combined.rstrip("\n")
+            if insert_text:
+                requests.append(
+                    _make_insert_text(insert_text, insert_idx, segment_id, tab_id)
+                )
 
     return requests
 
@@ -1401,18 +1466,18 @@ def _make_delete_table_column(
     }
 
 
-def _make_create_header(header_type: str, tab_id: TabID) -> dict[str, Any]:
+def _make_create_header(header_type: str) -> dict[str, Any]:
     """Create a header request.
 
     Args:
         header_type: "DEFAULT" or other header type
-        tab_id: Tab ID if creating in a specific tab (may be DeferredID)
+
+    Note:
+        sectionBreakLocation is intentionally omitted. Specifying it (even with
+        a valid index) causes a Google Docs API 500 error. Omitting it creates
+        the default header, which is correct for "_base" segments.
     """
-    req: dict[str, Any] = {"createHeader": {"type": header_type}}
-    # Note: sectionBreakLocation is None, so header applies to DocumentStyle
-    if tab_id:
-        req["createHeader"]["tabId"] = tab_id
-    return req
+    return {"createHeader": {"type": header_type}}
 
 
 def _make_delete_header(header_id: str, tab_id: TabID) -> dict[str, Any]:
@@ -1423,18 +1488,18 @@ def _make_delete_header(header_id: str, tab_id: TabID) -> dict[str, Any]:
     return req
 
 
-def _make_create_footer(footer_type: str, tab_id: TabID) -> dict[str, Any]:
+def _make_create_footer(footer_type: str) -> dict[str, Any]:
     """Create a footer request.
 
     Args:
         footer_type: "DEFAULT" or other footer type
-        tab_id: Tab ID if creating in a specific tab (may be DeferredID)
+
+    Note:
+        sectionBreakLocation is intentionally omitted. Specifying it (even with
+        a valid index) causes a Google Docs API 500 error. Omitting it creates
+        the default footer, which is correct for "_base" segments.
     """
-    req: dict[str, Any] = {"createFooter": {"type": footer_type}}
-    # Note: sectionBreakLocation is None, so footer applies to DocumentStyle
-    if tab_id:
-        req["createFooter"]["tabId"] = tab_id
-    return req
+    return {"createFooter": {"type": footer_type}}
 
 
 def _make_delete_footer(footer_id: str, tab_id: TabID) -> dict[str, Any]:
