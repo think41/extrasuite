@@ -1,5 +1,7 @@
 # Authentication API Specification
 
+> **Deprecated (v1.x):** The protocol described in the main body of this document (session-cookie + per-command browser flow) is superseded by the **v2 session-token protocol** documented in the [Auth Spec v2](#v2-session-token-protocol) section below. The v1 endpoints remain functional but will be removed in a future release.
+
 This document defines the protocol for authenticating AI agents and issuing short-lived service account tokens. It is designed to be **implementation-agnostic** — organizations can implement this specification using their own authentication systems, access policies, and infrastructure.
 
 ## Overview
@@ -698,5 +700,181 @@ Additionally:
 
 | Version | Date | Changes |
 |---------|------|---------|
+| 2.0 | 2026-02-26 | Add v2 session-token protocol (30-day session, headless Phase 2) |
 | 1.1 | 2026-02-10 | Add delegation protocol specification |
 | 1.0 | 2026-01-23 | Initial specification |
+
+---
+
+## v2 Session Token Protocol
+
+The v2 protocol eliminates recurring browser interruptions by splitting authentication into two phases:
+
+- **Phase 1 (once per ~30 days):** Browser-based OAuth flow → 30-day session token stored locally
+- **Phase 2 (every command, headless):** Session token exchanged for a short-lived access token, no browser required
+
+### Overview
+
+```
+Phase 1 — Session Establishment (once per 30 days):
+
+┌──────────────┐                      ┌──────────────────┐
+│  AI Agent    │                      │  Auth Server     │
+│  (CLI)       │                      │                  │
+│  1. Start    │─────────────────────▶│  2. Authenticate │
+│     local    │  GET /api/token/auth │     user via     │
+│     server   │  ?port=N             │     Google OAuth │
+│              │◀─────────────────────│                  │
+│  3. Receive  │  localhost:N?code=X  │                  │
+│     code     │                      │                  │
+│  4. Exchange │─────────────────────▶│  5. Validate     │
+│     for      │  POST /api/auth/     │     code, issue  │
+│     session  │  session/exchange    │     30-day token │
+│  6. Store    │◀─────────────────────│                  │
+│     session  │  {session_token,     │                  │
+│     locally  │   email, expires_at} │                  │
+└──────────────┘                      └──────────────────┘
+
+Phase 2 — Access Token Exchange (every command, headless):
+
+┌──────────────┐                      ┌──────────────────┐
+│  AI Agent    │                      │  Auth Server     │
+│  (CLI)       │                      │                  │
+│  1. Load     │─────────────────────▶│  2. Validate     │
+│     session  │  POST /api/auth/     │     session,     │
+│     token    │  token               │     generate     │
+│              │  {session_token,     │     access token │
+│              │   pseudo_scope,      │                  │
+│              │   reason}            │                  │
+│  3. Use      │◀─────────────────────│                  │
+│     token    │  {access_token,      │                  │
+│              │   expires_at}        │                  │
+└──────────────┘                      └──────────────────┘
+```
+
+### New Endpoints
+
+#### POST /api/auth/session/exchange
+
+Exchange a short-lived auth code (from Phase 1 browser flow) for a 30-day session token.
+
+**Request:**
+```json
+{
+  "code": "auth_code_from_redirect",
+  "device_mac": "0x1a2b3c4d5e6f",
+  "device_hostname": "my-laptop.local",
+  "device_os": "Darwin",
+  "device_platform": "macOS-14.0-arm64-arm-64bit"
+}
+```
+
+**Response:**
+```json
+{
+  "session_token": "raw_session_token_string",
+  "expires_at": "2026-03-28T10:00:00+00:00",
+  "email": "user@example.com"
+}
+```
+
+The session token is stored locally at `~/.config/extrasuite/session.json` (permissions 0600).
+
+#### POST /api/auth/token
+
+Exchange a session token for a short-lived access token. No browser required.
+
+**Request:**
+```json
+{
+  "session_token": "raw_session_token",
+  "pseudo_scope": "sheet.pull",
+  "reason": "Pulling Google Sheet for data analysis",
+  "file_hint": "https://docs.google.com/spreadsheets/d/..."
+}
+```
+
+**Response:**
+```json
+{
+  "access_token": "ya29.xxx",
+  "expires_at": "2026-02-26T11:00:00+00:00",
+  "token_type": "Bearer"
+}
+```
+
+### Pseudo-Scope Table
+
+Pseudo-scopes are short names that map to credential type and Google OAuth scope:
+
+| Pseudo-scope | Credential type | Description |
+|---|---|---|
+| `sheet.pull` | SA | Read Google Sheets |
+| `sheet.push` | SA | Write Google Sheets |
+| `doc.pull` | SA | Read Google Docs |
+| `doc.push` | SA | Write Google Docs |
+| `slide.pull` | SA | Read Google Slides |
+| `slide.push` | SA | Write Google Slides |
+| `form.pull` | SA | Read Google Forms |
+| `form.push` | SA | Write Google Forms |
+| `drive.file` | SA | Drive file access |
+| `calendar` | DWD | Google Calendar |
+| `gmail.compose` | DWD | Gmail compose/drafts |
+| `gmail.send` | DWD | Gmail send |
+| `gmail.readonly` | DWD | Gmail read |
+| `script.projects` | DWD | Google Apps Script |
+| `drive` | DWD | Full Drive access |
+
+SA = Service Account impersonation, DWD = Domain-Wide Delegation
+
+### Admin Session Management Endpoints
+
+These endpoints use Bearer session token authentication (`Authorization: Bearer <session_token>`).
+
+| Endpoint | Description | Auth |
+|---|---|---|
+| `GET /api/admin/sessions?email=<email>` | List sessions | Self or admin |
+| `DELETE /api/admin/sessions/<hash>` | Revoke session | Own session or admin |
+| `POST /api/admin/sessions/revoke-all?email=<email>` | Revoke all sessions | Self or admin |
+
+Admin emails are configured via `ADMIN_EMAILS` env var (CSV).
+
+### Session Token Storage
+
+Client stores session token at `~/.config/extrasuite/session.json` with format:
+```json
+{
+  "raw_token": "session_token_string",
+  "email": "user@example.com",
+  "expires_at": 1743163200.0
+}
+```
+
+File permissions: directory 0700, file 0600.
+
+### Access Log Format
+
+Every call to `POST /api/auth/token` is logged in Firestore `access_logs` collection:
+
+| Field | Description |
+|---|---|
+| `email` | User's email |
+| `session_hash_prefix` | First 16 chars of SHA-256(session_token) |
+| `pseudo_scope` | Requested pseudo-scope |
+| `credential_type` | `"sa"` or `"dwd"` |
+| `reason` | Caller-provided reason string |
+| `ip` | Client IP address |
+| `file_hint` | Optional Drive URL/ID |
+| `timestamp` | Request time |
+| `expires_at` | 30-day TTL for auto-cleanup |
+
+### Device Fingerprint Fields
+
+Collected at Phase 1 session issuance and stored server-side for audit:
+
+| Field | Source |
+|---|---|
+| `device_mac` | `uuid.getnode()` as hex |
+| `device_hostname` | `socket.gethostname()` |
+| `device_os` | `platform.system()` |
+| `device_platform` | `platform.platform()` |

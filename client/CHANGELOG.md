@@ -2,6 +2,28 @@
 
 All notable changes to the extrasuite client library will be documented in this file.
 
+## [0.8.0] - 2026-02-26
+
+### Added
+
+- **Session-token auth (v2 protocol):** One browser login per 30 days, then fully headless. The CLI no longer opens the browser mid-task.
+- **`extrasuite auth login [--headless]`** — explicitly log in and obtain a 30-day session token. `--headless` prints the URL and prompts for a code on stdin instead of opening a browser.
+- **`extrasuite auth logout`** — revokes session server-side and clears all cached credential files.
+- **`extrasuite auth status`** — shows session validity, access token cache status, and OAuth token cache status.
+- **`SessionToken` dataclass** — long-lived token stored at `~/.config/extrasuite/session.json`.
+- **Device fingerprint collection** — MAC address, hostname, OS, and platform captured at session issuance for server-side audit.
+
+### Changed
+
+- **`get_token()` now requires `reason` keyword argument** — breaking change. All callers must pass `reason="..."`. Also accepts optional `pseudo_scope` (defaults to `"drive.file"`).
+- **DWD token cache reduced to 10 minutes** — `get_oauth_token()` caps cached token lifetime at `DWD_TOKEN_CACHE_SECONDS = 600`.
+- All `extrasuite <module> pull/push` commands now use the v2 headless flow when a server URL is configured.
+- `get_oauth_token()` accepts a new optional `file_hint` keyword argument.
+
+### Deprecated
+
+- Old per-command browser flow (via legacy `/api/token/auth` + `/api/token/exchange` endpoints) still works but is deprecated. Use `extrasuite auth login` to migrate to the v2 protocol.
+
 ## [0.7.0] - 2026-02-18
 
 ### Added

@@ -1,7 +1,8 @@
 """Credentials management for Google API access.
 
 Supports two authentication modes:
-1. ExtraSuite server - short-lived tokens via OAuth flow
+1. ExtraSuite server - short-lived tokens via OAuth flow (v1 legacy)
+   and session-token protocol (v2: one browser login per 30 days, then headless)
 2. Service account file - direct credentials from JSON key file
 """
 
@@ -10,6 +11,7 @@ from __future__ import annotations
 import http.server
 import json
 import os
+import platform
 import select
 import socket
 import ssl
@@ -20,6 +22,7 @@ import time
 import urllib.error
 import urllib.parse
 import urllib.request
+import uuid
 from dataclasses import dataclass
 from datetime import datetime
 from pathlib import Path
@@ -75,6 +78,10 @@ class Token:
         )
 
 
+# Token cache TTL constants
+SA_TOKEN_CACHE_SECONDS = 3600  # 60 min for service account tokens
+DWD_TOKEN_CACHE_SECONDS = 600  # 10 min for domain-wide delegation tokens
+
 _GOOGLE_SCOPE_PREFIX = "https://www.googleapis.com/auth/"
 
 
@@ -119,6 +126,45 @@ class OAuthToken:
         )
 
 
+@dataclass
+class SessionToken:
+    """Long-lived (30-day) session token for headless agent access.
+
+    Obtained once via browser OAuth flow; used to exchange for short-lived
+    access tokens without further browser interaction (Phase 2).
+
+    Attributes:
+        raw_token: The raw session token string.
+        email: User's email address.
+        expires_at: Unix timestamp when the session expires.
+    """
+
+    raw_token: str
+    email: str
+    expires_at: float
+
+    def is_valid(self, buffer_seconds: int = 300) -> bool:
+        """Check if session token is still valid with a 5-minute buffer."""
+        return time.time() < self.expires_at - buffer_seconds
+
+    def to_dict(self) -> dict[str, Any]:
+        """Convert to dictionary for serialization."""
+        return {
+            "raw_token": self.raw_token,
+            "email": self.email,
+            "expires_at": self.expires_at,
+        }
+
+    @classmethod
+    def from_dict(cls, data: dict[str, Any]) -> SessionToken:
+        """Create SessionToken from dictionary."""
+        return cls(
+            raw_token=data["raw_token"],
+            email=data["email"],
+            expires_at=data["expires_at"],
+        )
+
+
 class CredentialsManager:
     """Manages credentials for Google API access.
 
@@ -145,6 +191,7 @@ class CredentialsManager:
 
     DEFAULT_CACHE_PATH = Path.home() / ".config" / "extrasuite" / "token.json"
     GATEWAY_CONFIG_PATH = Path.home() / ".config" / "extrasuite" / "gateway.json"
+    SESSION_CACHE_PATH = Path.home() / ".config" / "extrasuite" / "session.json"
     DEFAULT_CALLBACK_TIMEOUT = 300  # 5 minutes for headless mode
 
     def __init__(
@@ -156,11 +203,19 @@ class CredentialsManager:
         service_account_path: str | Path | None = None,
         token_cache_path: str | Path | None = None,
         gateway_config_path: str | Path | None = None,
+        headless: bool | None = None,
     ) -> None:
         # Store explicit gateway path (used by _load_gateway_config)
         self._gateway_config_path = (
             Path(gateway_config_path) if gateway_config_path else None
         )
+
+        # Headless mode: no browser, print URL and prompt for code on stderr
+        # Precedence: constructor param > EXTRASUITE_HEADLESS env var
+        if headless is not None:
+            self._headless = headless
+        else:
+            self._headless = os.environ.get("EXTRASUITE_HEADLESS", "").strip() == "1"
 
         # Resolve configuration with precedence: constructor > env var > gateway.json
         self._auth_url = auth_url or os.environ.get("EXTRASUITE_AUTH_URL")
@@ -172,10 +227,14 @@ class CredentialsManager:
             "EXTRASUITE_DELEGATION_EXCHANGE_URL"
         )
 
+        # Derived server base URL for new v2 endpoints (session exchange, access token)
+        self._server_base_url: str | None = None
+
         # Check EXTRASUITE_SERVER_URL env var (derives all 4 URLs)
         server_url_env = os.environ.get("EXTRASUITE_SERVER_URL")
         if server_url_env:
             server_url_env = server_url_env.rstrip("/")
+            self._server_base_url = server_url_env
             if not self._auth_url:
                 self._auth_url = f"{server_url_env}/api/token/auth"
             if not self._exchange_url:
@@ -207,6 +266,8 @@ class CredentialsManager:
                     self._delegation_exchange_url
                     or gateway_urls.get("delegation_exchange_url")
                 )
+                if not self._server_base_url and gateway_urls.get("server_base_url"):
+                    self._server_base_url = gateway_urls.get("server_base_url")
 
         sa_path = service_account_path or os.environ.get("SERVICE_ACCOUNT_PATH")
         self._sa_path = Path(sa_path) if sa_path else None
@@ -248,13 +309,22 @@ class CredentialsManager:
         """Return the path where tokens are cached."""
         return self._token_cache_path
 
-    def get_token(self, force_refresh: bool = False) -> Token:
+    def get_token(
+        self,
+        *,
+        reason: str,
+        pseudo_scope: str = "drive.file",
+        force_refresh: bool = False,
+    ) -> Token:
         """Get a valid access token, authenticating if necessary.
 
-        For ExtraSuite mode: checks cache first, then initiates OAuth flow.
+        For ExtraSuite mode: checks cache first. If v2 session available, exchanges
+        headlessly. If no session, initiates OAuth flow to obtain a session token first.
         For service account mode: generates token from credentials file.
 
         Args:
+            reason: Mandatory reason string logged server-side for auditing.
+            pseudo_scope: Pseudo-scope for the token (e.g., "sheet.pull"). Defaults to "drive.file".
             force_refresh: If True, ignore cached token and re-authenticate.
 
         Returns:
@@ -264,17 +334,43 @@ class CredentialsManager:
             Exception: If authentication fails.
         """
         if self._use_extrasuite:
-            return self._get_extrasuite_token(force_refresh)
+            return self._get_extrasuite_token(
+                reason=reason, pseudo_scope=pseudo_scope, force_refresh=force_refresh
+            )
         else:
             return self._get_service_account_token(force_refresh)
 
-    def _get_extrasuite_token(self, force_refresh: bool) -> Token:
-        """Get token via ExtraSuite server."""
+    def _get_extrasuite_token(
+        self, *, reason: str, pseudo_scope: str, force_refresh: bool
+    ) -> Token:
+        """Get token via ExtraSuite server.
+
+        Tries v2 session-token flow first; falls back to legacy flow if no server_base_url.
+        """
         if not force_refresh:
             cached = self._load_cached_token()
             if cached and cached.is_valid():
                 return cached
 
+        # v2: use session token for headless exchange
+        if self._server_base_url:
+            session = self._get_or_create_session_token()
+            result = self._exchange_session_for_access_token(
+                session, pseudo_scope=pseudo_scope, reason=reason
+            )
+            # Parse response into Token
+            expires_at_dt = datetime.fromisoformat(
+                result["expires_at"].replace("Z", "+00:00")
+            )
+            token = Token(
+                access_token=result["access_token"],
+                service_account_email="",
+                expires_at=expires_at_dt.timestamp(),
+            )
+            self._save_token(token)
+            return token
+
+        # Legacy v1 flow (no server_base_url configured)
         token = self._authenticate_extrasuite()
         self._save_token(token)
         return token
@@ -385,6 +481,7 @@ class CredentialsManager:
             server_url = data.get("EXTRASUITE_SERVER_URL")
             if server_url:
                 server_url = server_url.rstrip("/")
+                result["server_base_url"] = server_url
                 result["auth_url"] = f"{server_url}/api/token/auth"
                 result["exchange_url"] = f"{server_url}/api/token/exchange"
                 result["delegation_auth_url"] = f"{server_url}/api/delegation/auth"
@@ -411,7 +508,11 @@ class CredentialsManager:
     OAUTH_CACHE_PATH = Path.home() / ".config" / "extrasuite" / "oauth_token.json"
 
     def get_oauth_token(
-        self, scopes: list[str], reason: str = "", force_refresh: bool = False
+        self,
+        scopes: list[str],
+        reason: str = "",
+        file_hint: str = "",
+        force_refresh: bool = False,
     ) -> OAuthToken:
         """Get a delegated OAuth token for user-level API access.
 
@@ -421,6 +522,7 @@ class CredentialsManager:
         Args:
             scopes: List of scope aliases or full URLs (e.g., ["gmail.send"])
             reason: Optional reason for requesting access (logged server-side)
+            file_hint: Optional Drive URL or file ID hint
             force_refresh: If True, ignore cached token
 
         Returns:
@@ -433,6 +535,32 @@ class CredentialsManager:
             if cached and cached.is_valid():
                 return cached
 
+        # v2: use session token for headless exchange
+        if self._server_base_url:
+            session = self._get_or_create_session_token()
+            # Use first scope as pseudo-scope (strip prefix)
+            pseudo_scope = (
+                scopes[0].removeprefix(_GOOGLE_SCOPE_PREFIX) if scopes else "drive"
+            )
+            result = self._exchange_session_for_access_token(
+                session, pseudo_scope=pseudo_scope, reason=reason, file_hint=file_hint
+            )
+            expires_at_dt = datetime.fromisoformat(
+                result["expires_at"].replace("Z", "+00:00")
+            )
+            # Cap DWD token cache at DWD_TOKEN_CACHE_SECONDS
+            expires_at = min(
+                expires_at_dt.timestamp(), time.time() + DWD_TOKEN_CACHE_SECONDS
+            )
+            token = OAuthToken(
+                access_token=result["access_token"],
+                scopes=resolved,
+                expires_at=expires_at,
+            )
+            self._save_oauth_token(token)
+            return token
+
+        # Legacy v1 flow
         token = self._authenticate_delegation(resolved, reason)
         self._save_oauth_token(token)
         return token
@@ -468,6 +596,236 @@ class CredentialsManager:
         temp_path.write_text(json.dumps(token.to_dict(), indent=2))
         temp_path.chmod(stat.S_IRUSR | stat.S_IWUSR)  # 0600
         temp_path.rename(self.OAUTH_CACHE_PATH)
+
+    # =========================================================================
+    # Session Token Methods (v2 Protocol)
+    # =========================================================================
+
+    @staticmethod
+    def _collect_device_info() -> dict[str, str]:
+        """Collect device fingerprint for session token issuance."""
+        return {
+            "device_mac": hex(uuid.getnode()),
+            "device_hostname": socket.gethostname(),
+            "device_os": platform.system(),
+            "device_platform": platform.platform(),
+        }
+
+    def _load_session_token(self) -> SessionToken | None:
+        """Load cached session token if it exists and is still valid."""
+        if not self.SESSION_CACHE_PATH.exists():
+            return None
+        try:
+            data = json.loads(self.SESSION_CACHE_PATH.read_text())
+            token = SessionToken.from_dict(data)
+            if token.is_valid():
+                return token
+            return None
+        except (json.JSONDecodeError, KeyError):
+            return None
+
+    def _save_session_token(self, token: SessionToken) -> None:
+        """Save session token to cache file with secure permissions."""
+        self.SESSION_CACHE_PATH.parent.mkdir(parents=True, exist_ok=True)
+        self.SESSION_CACHE_PATH.parent.chmod(stat.S_IRWXU)
+
+        temp_path = self.SESSION_CACHE_PATH.with_suffix(".tmp")
+        temp_path.write_text(json.dumps(token.to_dict(), indent=2))
+        temp_path.chmod(stat.S_IRUSR | stat.S_IWUSR)  # 0600
+        temp_path.rename(self.SESSION_CACHE_PATH)
+
+    def _get_or_create_session_token(self, force: bool = False) -> SessionToken:
+        """Get an existing valid session token or create a new one.
+
+        If a valid session exists in the cache, returns it immediately (headless).
+        Otherwise initiates Phase 1: browser/headless OAuth flow to get an auth code,
+        then exchanges it for a 30-day session token.
+
+        Args:
+            force: If True, always create a new session (for `auth login` command).
+        """
+        if not force:
+            cached = self._load_session_token()
+            if cached:
+                return cached
+
+        # Run browser/headless flow to get auth code
+        auth_code = self._run_browser_flow_for_session()
+
+        # Exchange auth code for session token
+        assert self._server_base_url is not None
+        session_exchange_url = f"{self._server_base_url}/api/auth/session/exchange"
+        device_info = self._collect_device_info()
+        body = json.dumps({"code": auth_code, **device_info}).encode("utf-8")
+
+        req = urllib.request.Request(
+            session_exchange_url,
+            data=body,
+            headers={"Content-Type": "application/json"},
+            method="POST",
+        )
+
+        try:
+            with urllib.request.urlopen(
+                req, timeout=30, context=SSL_CONTEXT
+            ) as response:
+                result = json.loads(response.read().decode("utf-8"))
+        except urllib.error.HTTPError as e:
+            error_body = e.read().decode("utf-8") if e.fp else str(e)
+            raise Exception(f"Session token exchange failed: {error_body}") from e
+        except urllib.error.URLError as e:
+            raise Exception(f"Failed to connect to server: {e}") from e
+
+        expires_at_dt = datetime.fromisoformat(
+            result["expires_at"].replace("Z", "+00:00")
+        )
+        session = SessionToken(
+            raw_token=result["session_token"],
+            email=result["email"],
+            expires_at=expires_at_dt.timestamp(),
+        )
+        self._save_session_token(session)
+        return session
+
+    def _run_browser_flow_for_session(self) -> str:
+        """Run OAuth browser flow and return the auth code.
+
+        In headless mode: prints URL to stderr and prompts for code on stdin.
+        Otherwise: opens browser and starts local HTTP callback server.
+        """
+        port = self._find_free_port()
+        auth_url = f"{self._auth_url}?port={port}"
+
+        result_holder: dict[str, Any] = {"code": None, "error": None, "done": False}
+        result_lock = threading.Lock()
+
+        if self._headless:
+            print(
+                f"\nOpen this URL to authenticate:\n\n  {auth_url}\n", file=sys.stderr
+            )
+            print("Paste the auth code here: ", end="", flush=True, file=sys.stderr)
+            code = sys.stdin.readline().strip()
+            if not code:
+                raise Exception("No auth code provided.")
+            return code
+
+        # Start HTTP callback server
+        handler_class = self._create_handler_class(result_holder, result_lock)
+        server = http.server.HTTPServer(("127.0.0.1", port), handler_class)
+        server.timeout = 1
+
+        def serve_loop() -> None:
+            start_time = time.time()
+            while time.time() - start_time < self.DEFAULT_CALLBACK_TIMEOUT:
+                with result_lock:
+                    if result_holder["done"]:
+                        break
+                server.handle_request()
+            server.server_close()
+
+        server_thread = threading.Thread(target=serve_loop, daemon=True)
+        server_thread.start()
+
+        print(f"Open this URL to authenticate:\n\n  {auth_url}\n")
+        try:
+            import webbrowser
+
+            webbrowser.open(auth_url)
+        except Exception:
+            pass
+        print("Waiting for authentication...")
+
+        # Also accept code from stdin
+        def read_stdin() -> None:
+            try:
+                if not sys.stdin.isatty():
+                    return
+                while True:
+                    with result_lock:
+                        if result_holder["done"]:
+                            return
+                    if sys.platform != "win32":
+                        ready, _, _ = select.select([sys.stdin], [], [], 1.0)
+                        if not ready:
+                            continue
+                    line = sys.stdin.readline().strip()
+                    if line:
+                        with result_lock:
+                            if not result_holder["done"]:
+                                result_holder["code"] = line
+                                result_holder["done"] = True
+                        return
+            except Exception:
+                pass
+
+        stdin_thread = threading.Thread(target=read_stdin, daemon=True)
+        stdin_thread.start()
+
+        start_time = time.time()
+        while time.time() - start_time < self.DEFAULT_CALLBACK_TIMEOUT:
+            with result_lock:
+                if result_holder["done"]:
+                    break
+            time.sleep(0.5)
+
+        with result_lock:
+            result_holder["done"] = True
+
+        if result_holder.get("error"):
+            raise Exception(f"Authentication failed: {result_holder['error']}")
+        if not result_holder.get("code"):
+            raise Exception("Authentication timed out. Please try again.")
+
+        return result_holder["code"]  # type: ignore[return-value]
+
+    def _exchange_session_for_access_token(
+        self,
+        session: SessionToken,
+        *,
+        pseudo_scope: str,
+        reason: str,
+        file_hint: str = "",
+    ) -> dict[str, Any]:
+        """Exchange a session token for a short-lived access token (Phase 2).
+
+        Returns raw response dict with access_token, expires_at, token_type.
+        """
+        assert self._server_base_url is not None
+        access_token_url = f"{self._server_base_url}/api/auth/token"
+        body = json.dumps(
+            {
+                "session_token": session.raw_token,
+                "pseudo_scope": pseudo_scope,
+                "reason": reason,
+                "file_hint": file_hint,
+            }
+        ).encode("utf-8")
+
+        req = urllib.request.Request(
+            access_token_url,
+            data=body,
+            headers={"Content-Type": "application/json"},
+            method="POST",
+        )
+
+        try:
+            with urllib.request.urlopen(
+                req, timeout=30, context=SSL_CONTEXT
+            ) as response:
+                return json.loads(response.read().decode("utf-8"))  # type: ignore[return-value]
+        except urllib.error.HTTPError as e:
+            error_body = e.read().decode("utf-8") if e.fp else str(e)
+            if e.code == 401:
+                raise Exception(
+                    "Session expired or revoked. Run: extrasuite auth login"
+                ) from e
+            raise Exception(f"Access token exchange failed: {error_body}") from e
+        except urllib.error.URLError as e:
+            raise Exception(f"Failed to connect to server: {e}") from e
+
+    # =========================================================================
+    # Legacy v1 Auth Methods
+    # =========================================================================
 
     def _authenticate_delegation(self, scopes: list[str], reason: str) -> OAuthToken:
         """Run the delegation authentication flow.

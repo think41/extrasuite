@@ -24,20 +24,59 @@ FastAPI server that authenticates users in a Google Workspace domain and issues 
 
 See [`auth-spec.md`](../website/docs/api/auth-spec.md) for the full protocol. The server-side implementation maps as follows:
 
-**Service account flow** (`get_token` in the client):
+### v2 Session Token Protocol (current)
 
-- `GET /api/token/auth` → `_generate_token_and_redirect()` (api.py): ensures SA exists, generates single-use auth code, redirects to `localhost:{port}/on-authentication?code=X`
-- `GET /api/auth/callback` (api.py): handles Google OAuth callback, validates ID token + email domain, sets session cookie, then calls `_generate_token_and_redirect()`
-- `POST /api/token/exchange` (api.py): validates auth code (single-use, 2-min TTL via Firestore), calls `TokenGenerator.generate_token_for_service_account()`
-- `TokenGenerator.ensure_service_account(user_email)` (token_generator.py): looks up or creates per-user SA in IAM; `_do_impersonation()` uses `google.auth.impersonated_credentials` to produce a 1-hour token
+**Phase 1 — Session establishment** (once per 30 days, browser required):
 
-**Delegation flow** (`get_oauth_token` in the client, for Gmail/Calendar/Apps Script):
+- `GET /api/token/auth?port=N` — existing endpoint, reused as Phase 1 start. Redirects to Google OAuth. On success redirects to `localhost:{port}/on-authentication?code=X`.
+- `POST /api/auth/session/exchange` — exchange auth code for 30-day session token. Stores device fingerprint in Firestore `session_tokens` collection.
 
-- `GET /api/delegation/auth` (api.py): validates scopes against server allowlist, then same redirect pattern as above
-- `POST /api/delegation/exchange` (api.py): validates code, calls `TokenGenerator.generate_delegated_token()`
-- `TokenGenerator.generate_delegated_token(user_email, scopes)` (token_generator.py): builds a JWT (`iss`=server SA, `sub`=user email), signs via IAM `signBlob`, exchanges for access token at Google's token endpoint. All delegation requests are logged (user, scopes, reason, timestamp).
+**Phase 2 — Headless access token exchange** (every command, no browser):
+
+- `POST /api/auth/token` — validate session token, log request to `access_logs`, dispatch to `TokenGenerator.generate_token()` (SA) or `TokenGenerator.generate_delegated_token()` (DWD) based on pseudo-scope.
+
+**Admin session management:**
+
+- `GET /api/admin/sessions?email=<email>` — list active sessions
+- `DELETE /api/admin/sessions/<hash>` — revoke a session
+- `POST /api/admin/sessions/revoke-all?email=<email>` — revoke all sessions
+
+All admin endpoints use `Authorization: Bearer <session_token>`. Self-service (own sessions) or admin (`ADMIN_EMAILS` env var).
+
+### v1 Legacy Flows [Deprecated]
+
+These endpoints still work but return `Deprecation: true` and `Sunset: 2026-12-31` headers.
+
+**[Deprecated] Service account flow** (`get_token` in client, legacy):
+
+- `GET /api/token/auth` → `_generate_token_and_redirect()` (api.py)
+- `GET /api/auth/callback` (api.py): handles Google OAuth callback
+- `POST /api/token/exchange` (api.py): validates auth code, generates SA token
+
+**[Deprecated] Delegation flow** (`get_oauth_token` in client, legacy):
+
+- `GET /api/delegation/auth` (api.py): validates scopes, starts OAuth
+- `POST /api/delegation/exchange` (api.py): validates code, generates DWD token
 
 Allowed delegation scopes: `gmail.compose`, `calendar`, `script.projects`, `drive.file`.
+
+### Firestore Collections
+
+| Collection | Document ID | TTL field | Purpose |
+|---|---|---|---|
+| `users` | email (encoded) | none | user → service account mapping |
+| `oauth_states` | state token | `expires_at` (10 min) | CSRF protection |
+| `auth_codes` | auth code | `expires_at` (120 sec) | single-use auth delivery |
+| `delegation_logs` | auto | `expires_at` (30 days) | legacy DWD audit trail |
+| `session_tokens` | SHA-256(raw_token) | `expires_at` (60 days) | 30-day session tokens + 30-day audit |
+| `access_logs` | auto | `expires_at` (30 days) | per-request access audit |
+
+### New Environment Variables
+
+| Variable | Default | Description |
+|---|---|---|
+| `SESSION_TOKEN_EXPIRY_DAYS` | 30 | Session token lifetime in days |
+| `ADMIN_EMAILS` | (empty) | CSV of admin email addresses |
 
 ## Exception Handling
 

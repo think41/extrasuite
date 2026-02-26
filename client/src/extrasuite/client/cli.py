@@ -123,21 +123,23 @@ def _auth_kwargs(args: Any) -> dict[str, Any]:
     return kwargs
 
 
-def _get_token(args: Any) -> str:
+def _get_token(args: Any, *, reason: str, pseudo_scope: str = "drive.file") -> str:
     """Get a service account token via CredentialsManager."""
     from extrasuite.client import CredentialsManager
 
     manager = CredentialsManager(**_auth_kwargs(args))
-    token = manager.get_token()
+    token = manager.get_token(reason=reason, pseudo_scope=pseudo_scope)
     return token.access_token
 
 
-def _get_oauth_token(args: Any, scopes: list[str], reason: str = "") -> str:
+def _get_oauth_token(
+    args: Any, scopes: list[str], reason: str = "", file_hint: str = ""
+) -> str:
     """Get an OAuth token via CredentialsManager."""
     from extrasuite.client import CredentialsManager
 
     manager = CredentialsManager(**_auth_kwargs(args))
-    token = manager.get_oauth_token(scopes=scopes, reason=reason)
+    token = manager.get_oauth_token(scopes=scopes, reason=reason, file_hint=file_hint)
     return token.access_token
 
 
@@ -150,7 +152,9 @@ def cmd_sheet_pull(args: Any) -> None:
 
     spreadsheet_id = _parse_spreadsheet_id(args.url)
     output_dir = Path(args.output_dir) if args.output_dir else Path()
-    access_token = _get_token(args)
+    access_token = _get_token(
+        args, reason="Pulling Google Sheet", pseudo_scope="sheet.pull"
+    )
     max_rows = 0 if args.no_limit else args.max_rows
 
     async def _run() -> None:
@@ -215,7 +219,9 @@ def cmd_sheet_push(args: Any) -> None:
     """Push changes to a Google Sheet."""
     from extrasheet import GoogleSheetsTransport, SheetsClient
 
-    access_token = _get_token(args)
+    access_token = _get_token(
+        args, reason="Pushing changes to Google Sheet", pseudo_scope="sheet.push"
+    )
 
     async def _run() -> None:
         transport = GoogleSheetsTransport(access_token)
@@ -254,7 +260,9 @@ def cmd_sheet_batchupdate(args: Any) -> None:
         )
         sys.exit(1)
 
-    access_token = _get_token(args)
+    access_token = _get_token(
+        args, reason="Executing batchUpdate on Google Sheet", pseudo_scope="sheet.push"
+    )
 
     async def _run() -> None:
         transport = GoogleSheetsTransport(access_token)
@@ -278,7 +286,9 @@ def cmd_slide_pull(args: Any) -> None:
 
     presentation_id = _parse_presentation_id(args.url)
     output_dir = Path(args.output_dir) if args.output_dir else Path()
-    access_token = _get_token(args)
+    access_token = _get_token(
+        args, reason="Pulling Google Slides", pseudo_scope="slide.pull"
+    )
 
     async def _run() -> None:
         transport = GoogleSlidesTransport(access_token)
@@ -318,7 +328,9 @@ def cmd_slide_push(args: Any) -> None:
     """Push changes to a Google Slides presentation."""
     from extraslide import GoogleSlidesTransport, SlidesClient
 
-    access_token = _get_token(args)
+    access_token = _get_token(
+        args, reason="Pushing changes to Google Slides", pseudo_scope="slide.push"
+    )
 
     async def _run() -> None:
         transport = GoogleSlidesTransport(access_token)
@@ -342,7 +354,9 @@ def cmd_form_pull(args: Any) -> None:
 
     form_id = _parse_form_id(args.url)
     output_dir = Path(args.output_dir) if args.output_dir else Path()
-    access_token = _get_token(args)
+    access_token = _get_token(
+        args, reason="Pulling Google Form", pseudo_scope="form.pull"
+    )
 
     async def _run() -> None:
         transport = GoogleFormsTransport(access_token)
@@ -378,7 +392,9 @@ def cmd_form_push(args: Any) -> None:
     """Push changes to a Google Form."""
     from extraform import FormsClient, GoogleFormsTransport
 
-    access_token = _get_token(args)
+    access_token = _get_token(
+        args, reason="Pushing changes to Google Form", pseudo_scope="form.push"
+    )
 
     async def _run() -> None:
         transport = GoogleFormsTransport(access_token)
@@ -532,7 +548,9 @@ def cmd_doc_pull(args: Any) -> None:
 
     document_id = _parse_document_id(args.url)
     output_dir = Path(args.output_dir) if args.output_dir else Path()
-    access_token = _get_token(args)
+    access_token = _get_token(
+        args, reason="Pulling Google Doc", pseudo_scope="doc.pull"
+    )
 
     async def _run() -> None:
         transport = GoogleDocsTransport(access_token)
@@ -577,7 +595,9 @@ def cmd_doc_push(args: Any) -> None:
     """Push changes to a Google Doc."""
     from extradoc import DocsClient, GoogleDocsTransport
 
-    access_token = _get_token(args)
+    access_token = _get_token(
+        args, reason="Pushing changes to Google Doc", pseudo_scope="doc.push"
+    )
 
     async def _run() -> None:
         transport = GoogleDocsTransport(access_token)
@@ -618,7 +638,9 @@ def _cmd_create(file_type: str, args: Any) -> None:
     manager = CredentialsManager(**_auth_kwargs(args))
 
     # Get service account email
-    sa_token = manager.get_token()
+    sa_token = manager.get_token(
+        reason=f"Create {file_type}", pseudo_scope="drive.file"
+    )
     sa_email = sa_token.service_account_email
 
     # Get OAuth token with drive.file scope (only allowed drive scope)
@@ -769,6 +791,116 @@ def cmd_gmail_edit_draft(args: Any) -> None:
         attachments=attachments,
     )
     print(f"Draft updated (id: {args.draft_id})")
+
+
+def cmd_gmail_list(args: Any) -> None:
+    """Search and list Gmail messages (metadata only)."""
+    import json as _json
+
+    from extrasuite.client.gmail_reader import (
+        _NO_WHITELIST_NOTICE,
+        _WHITELIST_PATH,
+        format_message_list,
+        get_user_email,
+        list_messages,
+        load_whitelist,
+    )
+
+    access_token = _get_oauth_token(
+        args,
+        scopes=["gmail.readonly"],
+        reason="List Gmail messages",
+    )
+
+    whitelist = load_whitelist()
+    whitelist_exists = _WHITELIST_PATH.exists()
+    user_email = get_user_email(access_token)
+    if "@" in user_email:
+        whitelist.user_domain = user_email.split("@", 1)[1].lower()
+
+    query = getattr(args, "query", "") or ""
+    max_results = getattr(args, "max", 20)
+    page_token = getattr(args, "page", "") or ""
+
+    summaries, next_page_token = list_messages(
+        access_token,
+        query=query,
+        max_results=max_results,
+        page_token=page_token,
+        whitelist=whitelist,
+    )
+
+    if getattr(args, "json", False):
+        output = {
+            "messages": [
+                {
+                    "message_id": s.message_id,
+                    "thread_id": s.thread_id,
+                    "date": s.date,
+                    "from": s.from_,
+                    "subject": s.subject,
+                    "labels": s.labels,
+                    "trusted": s.trusted,
+                    "snippet": s.snippet,
+                }
+                for s in summaries
+            ],
+            "next_page_token": next_page_token,
+        }
+        print(_json.dumps(output, indent=2))
+        if not whitelist_exists:
+            import sys
+
+            print(_NO_WHITELIST_NOTICE, file=sys.stderr)
+    else:
+        print(format_message_list(summaries, next_page_token, whitelist_exists))
+
+
+def cmd_gmail_read(args: Any) -> None:
+    """Read a single Gmail message, redacting body for non-whitelisted senders."""
+    import json as _json
+
+    from extrasuite.client.gmail_reader import (
+        format_message_detail,
+        get_message,
+        get_user_email,
+        load_whitelist,
+    )
+
+    access_token = _get_oauth_token(
+        args,
+        scopes=["gmail.readonly"],
+        reason="Read Gmail message",
+    )
+
+    whitelist = load_whitelist()
+    user_email = get_user_email(access_token)
+    if "@" in user_email:
+        whitelist.user_domain = user_email.split("@", 1)[1].lower()
+    detail = get_message(access_token, args.message_id, whitelist=whitelist)
+
+    if getattr(args, "json", False):
+        output: dict[str, Any] = {
+            "message_id": detail.message_id,
+            "thread_id": detail.thread_id,
+            "date": detail.date,
+            "from": detail.from_,
+            "to": detail.to,
+            "cc": detail.cc,
+            "subject": detail.subject,
+            "labels": detail.labels,
+            "trusted": detail.trusted,
+        }
+        if detail.trusted:
+            output["body"] = detail.body
+            output["attachments"] = detail.attachments
+        else:
+            output["body"] = None
+            output["attachments"] = None
+            output["redacted"] = True
+        print(_json.dumps(output, indent=2))
+    else:
+        print(format_message_detail(detail))
 
 
 # --- Contacts commands ---
@@ -1054,6 +1186,130 @@ def cmd_calendar_rsvp(args: Any) -> None:
     print(f"Response: {label.get(api_response, api_response)}")
     if args.comment:
         print(f'Comment: "{args.comment}"')
+
+
+# --- Auth commands ---
+
+
+def cmd_auth_login(args: Any) -> None:
+    """Login and obtain a 30-day session token."""
+    from extrasuite.client import CredentialsManager
+
+    headless = getattr(args, "headless", False)
+    manager = CredentialsManager(**_auth_kwargs(args), headless=headless)
+    session = manager._get_or_create_session_token(force=True)
+    from datetime import datetime
+
+    expires_dt = datetime.fromtimestamp(session.expires_at)
+    print(f"Logged in as {session.email}.")
+    print(f"Session valid until {expires_dt.strftime('%Y-%m-%d %H:%M:%S')}.")
+
+
+def cmd_auth_logout(args: Any) -> None:
+    """Revoke session token and clear cached credentials."""
+    import hashlib
+    import urllib.error
+    import urllib.request
+
+    from extrasuite.client import CredentialsManager
+
+    manager = CredentialsManager(**_auth_kwargs(args))
+    session_path = manager.SESSION_CACHE_PATH
+    token_path = manager.DEFAULT_CACHE_PATH
+    oauth_path = manager.OAUTH_CACHE_PATH
+
+    # Try to revoke server-side (best effort)
+    if session_path.exists() and manager._server_base_url:
+        try:
+            import json as _json
+
+            data = _json.loads(session_path.read_text())
+            raw_token = data.get("raw_token", "")
+            if raw_token:
+                token_hash = hashlib.sha256(raw_token.encode()).hexdigest()
+                revoke_url = (
+                    f"{manager._server_base_url}/api/admin/sessions/{token_hash}"
+                )
+                req = urllib.request.Request(
+                    revoke_url,
+                    headers={"Authorization": f"Bearer {raw_token}"},
+                    method="DELETE",
+                )
+                import contextlib
+
+                from extrasuite.client.credentials import SSL_CONTEXT
+
+                with contextlib.suppress(Exception):
+                    urllib.request.urlopen(req, timeout=10, context=SSL_CONTEXT)
+        except Exception:
+            pass
+
+    # Delete local cache files
+    import contextlib
+
+    for path in (session_path, token_path, oauth_path):
+        with contextlib.suppress(Exception):
+            path.unlink(missing_ok=True)
+
+    print("Logged out.")
+
+
+def cmd_auth_status(args: Any) -> None:
+    """Show current auth status."""
+    import time
+
+    from extrasuite.client import CredentialsManager
+
+    manager = CredentialsManager(**_auth_kwargs(args))
+
+    # Session token status
+    session = manager._load_session_token()
+    if session:
+        from datetime import datetime
+
+        expires_dt = datetime.fromtimestamp(session.expires_at)
+        remaining = int(session.expires_at - time.time())
+        days = remaining // 86400
+        print(
+            f"Session: active (email={session.email}, expires={expires_dt.strftime('%Y-%m-%d')}, {days}d remaining)"
+        )
+    else:
+        print("Session: not found or expired. Run: extrasuite auth login")
+
+    # Access token status
+    cached_token = manager._load_cached_token()
+    if cached_token and cached_token.is_valid():
+        from datetime import datetime
+
+        expires_dt = datetime.fromtimestamp(cached_token.expires_at)
+        print(
+            f"Access token: cached (expires={expires_dt.strftime('%Y-%m-%d %H:%M:%S')})"
+        )
+    else:
+        print("Access token: not cached")
+
+    # OAuth token status
+    if manager.OAUTH_CACHE_PATH.exists():
+        try:
+            import json as _json
+
+            from extrasuite.client.credentials import OAuthToken
+
+            data = _json.loads(manager.OAUTH_CACHE_PATH.read_text())
+            oauth = OAuthToken.from_dict(data)
+            if oauth.is_valid():
+                from datetime import datetime
+
+                expires_dt = datetime.fromtimestamp(oauth.expires_at)
+                print(
+                    f"OAuth token: cached (expires={expires_dt.strftime('%Y-%m-%d %H:%M:%S')})"
+                )
+            else:
+                print("OAuth token: expired")
+        except Exception:
+            print("OAuth token: invalid cache")
+    else:
+        print("OAuth token: not cached")
 
 
 # --- Argument Parser ---
@@ -1431,6 +1687,52 @@ def build_parser() -> Any:
     )
 
     sp = gmail_sub.add_parser(
+        "list",
+        help="Search and list Gmail messages (metadata only)",
+        parents=[auth_parent],
+        description=_load_help("gmail", "list"),
+        formatter_class=argparse.RawDescriptionHelpFormatter,
+    )
+    sp.add_argument(
+        "query",
+        nargs="?",
+        default="",
+        help="Gmail search query (e.g. 'is:unread from:alice@example.com'). Omit to list recent messages.",
+    )
+    sp.add_argument(
+        "--max",
+        type=int,
+        default=20,
+        metavar="N",
+        help="Maximum number of messages to return (default: 20, max: 100)",
+    )
+    sp.add_argument(
+        "--page",
+        default="",
+        metavar="TOKEN",
+        help="Page token for pagination (from previous output)",
+    )
+    sp.add_argument(
+        "--json",
+        action="store_true",
+        help="Output as JSON",
+    )
+
+    sp = gmail_sub.add_parser(
+        "read",
+        help="Read a Gmail message (body redacted for non-whitelisted senders)",
+        parents=[auth_parent],
+        description=_load_help("gmail", "read"),
+        formatter_class=argparse.RawDescriptionHelpFormatter,
+    )
+    sp.add_argument("message_id", help="Message ID (from 'gmail list' output)")
+    sp.add_argument(
+        "--json",
+        action="store_true",
+        help="Output as JSON",
+    )
+
+    sp = gmail_sub.add_parser(
         "help",
         help="Show reference documentation",
         formatter_class=argparse.RawDescriptionHelpFormatter,
@@ -1639,6 +1941,40 @@ def build_parser() -> Any:
         help="Email addresses to mark as contacted",
     )
 
+    # --- auth ---
+    auth_parser = subparsers.add_parser(
+        "auth",
+        help="Authentication management",
+        formatter_class=argparse.RawDescriptionHelpFormatter,
+    )
+    auth_sub = auth_parser.add_subparsers(dest="subcommand")
+
+    sp = auth_sub.add_parser(
+        "login",
+        help="Log in and obtain a 30-day session token",
+        parents=[auth_parent],
+        formatter_class=argparse.RawDescriptionHelpFormatter,
+    )
+    sp.add_argument(
+        "--headless",
+        action="store_true",
+        help="Headless mode: print URL and prompt for code instead of opening browser",
+    )
+
+    auth_sub.add_parser(
+        "logout",
+        help="Revoke session token and clear cached credentials",
+        parents=[auth_parent],
+        formatter_class=argparse.RawDescriptionHelpFormatter,
+    )
+
+    auth_sub.add_parser(
+        "status",
+        help="Show current auth status",
+        parents=[auth_parent],
+        formatter_class=argparse.RawDescriptionHelpFormatter,
+    )
+
     return parser
 
 
@@ -1668,6 +2004,8 @@ _COMMANDS: dict[tuple[str, str | None], Any] = {
     ("doc", "create"): cmd_doc_create,
     ("gmail", "compose"): cmd_gmail_compose,
     ("gmail", "edit-draft"): cmd_gmail_edit_draft,
+    ("gmail", "list"): cmd_gmail_list,
+    ("gmail", "read"): cmd_gmail_read,
     ("calendar", "view"): cmd_calendar_view,
     ("calendar", "list"): cmd_calendar_list,
     ("calendar", "search"): cmd_calendar_search,
@@ -1686,6 +2024,9 @@ _COMMANDS: dict[tuple[str, str | None], Any] = {
     ("doc", "help"): cmd_module_help,
     ("gmail", "help"): cmd_module_help,
     ("calendar", "help"): cmd_module_help,
+    ("auth", "login"): cmd_auth_login,
+    ("auth", "logout"): cmd_auth_logout,
+    ("auth", "status"): cmd_auth_status,
 }
 
 

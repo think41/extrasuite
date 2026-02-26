@@ -4,6 +4,8 @@ Stores three types of data:
 1. Users: email -> service account mapping
 2. OAuth States: state_token -> redirect_url (for OAuth flow)
 3. Auth Codes: auth_code -> service_account_email (for secure token delivery)
+4. Session Tokens: long-lived (30-day) tokens for headless agent access
+5. Access Logs: audit trail for access token requests
 
 Collections structure:
 - users: Document ID = email (with "/" replaced by "__")
@@ -19,6 +21,17 @@ Collections structure:
   - service_account_email: Associated service account
   - expires_at: Firestore TTL field (AUTH_CODE_TTL after creation)
 
+- session_tokens: Document ID = SHA-256(raw_token) as 64-char hex
+  - email: User's email
+  - created_at: When the session was created
+  - expires_at: Firestore TTL field (SESSION_TOKEN_TTL after creation)
+  - revoked_at: When the session was revoked (null if active)
+  - device_ip, device_mac, device_hostname, device_os, device_platform
+
+- access_logs: Auto-generated doc ID
+  - email, session_hash_prefix, pseudo_scope, credential_type, reason, ip, file_hint
+  - timestamp, expires_at (30-day TTL)
+
 Note: Sessions are handled via starlette's signed cookies (stateless).
 The cookie stores the user email, which is validated against the users collection.
 
@@ -27,7 +40,8 @@ the auth code is exchanged. We only store the service account email needed to
 generate the token.
 
 TTL cleanup: Configure Firestore TTL policies on the `expires_at` field for
-`oauth_states` and `auth_codes` collections to automatically delete expired documents.
+`oauth_states`, `auth_codes`, `session_tokens`, and `access_logs` collections
+to automatically delete expired documents.
 """
 
 import asyncio
@@ -42,6 +56,9 @@ OAUTH_STATE_TTL = timedelta(minutes=10)
 
 # Auth code TTL (120 seconds for security)
 AUTH_CODE_TTL = timedelta(seconds=120)
+
+# Session token TTL: keep 30 days after expiry for audit trail (30 + 30 = 60 days total)
+SESSION_TOKEN_TTL = timedelta(days=60)
 
 # Default timeout for database operations (seconds)
 DEFAULT_TIMEOUT = 10.0
@@ -392,6 +409,197 @@ class Database:
                     "email": email,
                     "scopes": scopes,
                     "reason": reason,
+                    "timestamp": now,
+                    "expires_at": expires_at,
+                }
+            )
+
+        await asyncio.wait_for(_create(), timeout=self._timeout)
+
+    # =========================================================================
+    # Session Tokens (30-day long-lived tokens for headless agent access)
+    # =========================================================================
+
+    async def save_session_token(
+        self,
+        token_hash: str,
+        email: str,
+        device_ip: str,
+        device_mac: str,
+        device_hostname: str,
+        device_os: str,
+        device_platform: str,
+        expiry_days: int = 30,
+    ) -> None:
+        """Save a session token with device fingerprint.
+
+        Document ID = SHA-256(raw_token) as 64-char hex string.
+        Includes expires_at for Firestore TTL auto-cleanup (60 days = 30d active + 30d audit).
+        """
+        now = datetime.now(UTC)
+        active_expires_at = now + timedelta(days=expiry_days)
+        ttl_expires_at = now + SESSION_TOKEN_TTL
+        doc_ref = self._client.collection("session_tokens").document(token_hash)
+
+        async def _create() -> None:
+            await doc_ref.set(
+                {
+                    "email": email,
+                    "created_at": now,
+                    "revoked_at": None,
+                    "active_expires_at": active_expires_at,
+                    "expires_at": ttl_expires_at,
+                    "device_ip": device_ip,
+                    "device_mac": device_mac,
+                    "device_hostname": device_hostname,
+                    "device_os": device_os,
+                    "device_platform": device_platform,
+                }
+            )
+
+        await asyncio.wait_for(_create(), timeout=self._timeout)
+
+    async def validate_session_token(self, token_hash: str) -> dict | None:
+        """Validate a session token.
+
+        Returns {email, created_at} if token is active and not expired.
+        Returns None if missing, revoked, or expired.
+        """
+        doc_ref = self._client.collection("session_tokens").document(token_hash)
+        doc = await asyncio.wait_for(doc_ref.get(), timeout=self._timeout)
+
+        if not doc.exists:
+            return None
+
+        data = doc.to_dict()
+        if data is None:
+            return None
+
+        # Check if revoked
+        if data.get("revoked_at") is not None:
+            return None
+
+        # Check if active_expires_at has passed
+        active_expires_at = data.get("active_expires_at")
+        if active_expires_at is None or datetime.now(UTC) > active_expires_at:
+            return None
+
+        return {
+            "email": data.get("email", ""),
+            "created_at": data.get("created_at"),
+        }
+
+    async def revoke_session_token(self, token_hash: str) -> bool:
+        """Revoke a session token. Returns True if found, False if not found."""
+        doc_ref = self._client.collection("session_tokens").document(token_hash)
+        doc = await asyncio.wait_for(doc_ref.get(), timeout=self._timeout)
+
+        if not doc.exists:
+            return False
+
+        now = datetime.now(UTC)
+
+        async def _update() -> None:
+            await doc_ref.update({"revoked_at": now})
+
+        await asyncio.wait_for(_update(), timeout=self._timeout)
+        return True
+
+    async def list_session_tokens(self, email: str) -> list[dict]:
+        """List all active sessions for email (for admin/self-service use).
+
+        Returns list of session info dicts (without the full token hash).
+        """
+        now = datetime.now(UTC)
+        query = (
+            self._client.collection("session_tokens")
+            .where("email", "==", email)
+            .where("active_expires_at", ">", now)
+        )
+
+        async def _query() -> list:
+            return await query.get()
+
+        docs = await asyncio.wait_for(_query(), timeout=self._timeout)
+
+        result = []
+        for doc in docs:
+            data = doc.to_dict()
+            if data is None:
+                continue
+            if data.get("revoked_at") is not None:
+                continue
+            result.append(
+                {
+                    "session_hash": doc.id,
+                    "session_hash_prefix": doc.id[:16],
+                    "created_at": data.get("created_at"),
+                    "active_expires_at": data.get("active_expires_at"),
+                    "device_hostname": data.get("device_hostname", ""),
+                    "device_os": data.get("device_os", ""),
+                    "device_ip": data.get("device_ip", ""),
+                    "is_active": True,
+                }
+            )
+
+        return result
+
+    async def revoke_all_session_tokens(self, email: str) -> int:
+        """Revoke all active sessions for email. Returns count revoked."""
+        now = datetime.now(UTC)
+        query = (
+            self._client.collection("session_tokens")
+            .where("email", "==", email)
+            .where("active_expires_at", ">", now)
+        )
+
+        async def _query() -> list:
+            return await query.get()
+
+        docs = await asyncio.wait_for(_query(), timeout=self._timeout)
+
+        count = 0
+        for doc in docs:
+            data = doc.to_dict()
+            if data is None or data.get("revoked_at") is not None:
+                continue
+            await asyncio.wait_for(doc.reference.update({"revoked_at": now}), timeout=self._timeout)
+            count += 1
+
+        return count
+
+    # =========================================================================
+    # Access Logs (audit trail for access token requests)
+    # =========================================================================
+
+    async def log_access_token_request(
+        self,
+        email: str,
+        session_hash_prefix: str,
+        pseudo_scope: str,
+        credential_type: str,
+        reason: str,
+        ip: str,
+        file_hint: str = "",
+    ) -> None:
+        """Log an access token request for audit purposes.
+
+        Stored in access_logs collection with 30-day TTL for auto-cleanup.
+        """
+        now = datetime.now(UTC)
+        expires_at = now + timedelta(days=30)
+        doc_ref = self._client.collection("access_logs").document()
+
+        async def _create() -> None:
+            await doc_ref.set(
+                {
+                    "email": email,
+                    "session_hash_prefix": session_hash_prefix,
+                    "pseudo_scope": pseudo_scope,
+                    "credential_type": credential_type,
+                    "reason": reason,
+                    "ip": ip,
+                    "file_hint": file_hint,
                     "timestamp": now,
                     "expires_at": expires_at,
                 }
