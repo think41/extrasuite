@@ -29,7 +29,7 @@ Optional files (`docstyle.xml`, `namedstyles.xml`, `objects.xml`, `positionedObj
 
 | File | Editable | Notes |
 |------|----------|-------|
-| `index.xml` | No | Regenerated from Document on each pull. Do not edit. |
+| `index.xml` | Conditionally | Regenerated from Document on each pull. Do not edit existing entries. **Add entries only when creating new tabs from scratch** (see [Authoring New Tabs](#authoring-new-tabs)). |
 | `<tab>/document.xml` | **Yes** | Primary editing surface. See grammar below. |
 | `<tab>/styles.xml` | **Yes** | Add or modify style classes referenced in document.xml. |
 | `<tab>/docstyle.xml` | No | Page layout is not diffed by reconcile. |
@@ -104,6 +104,7 @@ The primary editing surface. Contains the full content of one tab: body paragrap
 - `<header>`, `<footer>`, `<footnote>` are present only when the tab has those segments.
 - Trailing empty paragraphs at the end of each segment are suppressed on output and restored on input.
 - The trailing `\n` of each paragraph is suppressed on output and restored on input.
+- **`<li>` has two forms:** Pulled documents use `parent="<listId>"` referencing an entry in `<lists>`. New tabs (written from scratch) use `type="bullet"` or `type="decimal"` with `level="0"` — no `<lists>` section is needed. Consecutive `<li>` elements with the same `type` are automatically grouped into one sequential list by the reconciler.
 
 ### Block nodes
 
@@ -127,7 +128,10 @@ BlockNode ::= ParagraphNode | TableNode | <hr/> | <pagebreak/> | <sectionbreak .
 <title ...>                    <!-- document title paragraph -->
 <subtitle ...>                 <!-- document subtitle paragraph -->
 
-<li parent="<listId>" level="<int>"? class="<styleClass>"?>  <!-- list item -->
+<li parent="<listId>" level="<int>"? class="<styleClass>"?>  <!-- list item (pulled docs) -->
+  <InlineNode>*
+</li>
+<li type="bullet|decimal" level="<int>"? class="<styleClass>"?>  <!-- list item (new tabs) -->
   <InlineNode>*
 </li>
 ```
@@ -252,5 +256,63 @@ These files store their data as JSON wrapped in a single XML element. They are *
 4. **Heading IDs** (`headingId` on `<h1>`-`<h6>`) are assigned by Google Docs. Do not change them; they may be referenced by internal links.
 5. **TOC content** is read-only. The reconciler ignores changes inside `<toc>` elements.
 6. **Inline images** (`<image objectId="..."/>`) are read-only. The reconciler cannot create or reorder images.
-7. **List IDs** referenced by `<li parent="...">` must match an entry in `<lists>`. Do not change list IDs; you may add new list definitions.
+7. **List IDs** referenced by `<li parent="...">` must match an entry in `<lists>`. Do not change list IDs; you may add new list definitions. For new tabs, use `type="bullet"` or `type="decimal"` instead of `parent=` — no `<lists>` section is required, and the reconciler groups consecutive same-type `<li>` items into one sequential list automatically.
 8. After push, always re-pull before making further edits — the pristine snapshot must match the live document.
+
+---
+
+## Authoring New Tabs
+
+When writing a new tab folder from scratch (not pulled from the API), all three of the following are required:
+
+### 1. Register the tab in `index.xml`
+
+Add a `<tab>` entry with `id="NEW"` and a unique folder name:
+
+```xml
+<doc id="<documentId>" title="..." revision="...">
+  <!-- existing tabs ... -->
+  <tab id="NEW" title="My New Tab" folder="My_Tab" />
+</doc>
+```
+
+`deserialize()` discovers tab folders by reading `index.xml`, not by scanning the filesystem. A folder without an `index.xml` entry is silently ignored.
+
+### 2. Create a valid `styles.xml`
+
+The deserializer always reads `styles.xml` — it does not check for its existence first. A minimal valid file:
+
+```xml
+<?xml version="1.0" encoding="UTF-8"?>
+<styles>
+  <para class="_default" />
+  <listlevel class="_default" indentFirst="18.0pt" indentLeft="36.0pt" />
+</styles>
+```
+
+### 3. Start `<body>` with a `<sectionbreak>`
+
+The reconciler models a freshly created tab as already containing one section break. If your XML omits it, the reconciler sees a deletion and raises `ReconcileError: Section break deletion is not supported`:
+
+```xml
+<body>
+  <sectionbreak sectionType="CONTINUOUS" contentDirection="LEFT_TO_RIGHT" columnSeparatorStyle="NONE" />
+  <!-- your content here -->
+</body>
+```
+
+### List items in new tabs
+
+Use `type=` instead of `parent=` since there are no existing list IDs:
+
+```xml
+<li type="bullet" level="0">First item</li>
+<li type="bullet" level="0">Second item</li>
+<li type="decimal" level="0">First numbered item</li>
+<li type="decimal" level="0">Second numbered item</li>
+<li type="decimal" level="0">Top-level item</li>
+<li type="decimal" level="1">Sub-item (nested one level)</li>
+<li type="decimal" level="0">Back to top level</li>
+```
+
+Consecutive `<li>` elements with the same `type` (uninterrupted by other block elements) are grouped into one sequential list by the reconciler. The result shows 1, 2, 3, 4 — not 1, 1, 1, 1.
