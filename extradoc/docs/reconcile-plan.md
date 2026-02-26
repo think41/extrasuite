@@ -335,7 +335,7 @@ All 5 files created, 23 tests passing, lint/mypy/format clean. See `tests/test_r
 
 ### Phase 6: Paragraph styles + text styles — DONE
 
-73 tests passing (62 Phase 1-5 + 11 Phase 6). Full paragraph and text style diffing for MATCHED paragraphs.
+73 tests passing (62 Phase 1-5 + 11 Phase 6). Full paragraph and text style diffing for MATCHED paragraphs. 651 total tests pass across the full extradoc test suite.
 
 **Implementation:**
 
@@ -361,6 +361,9 @@ Integration in `generate_requests()`:
 - `TestReconcileTextStyles` (5 tests): make bold, remove bold, multiple fields, font size, identity no-op
 - `TestReconcileCombinedStyles` (3 tests): text+paragraph combined, heading+bold, multi-paragraph
 
+**Post-implementation bug fix:**
+ADDED paragraphs (new paragraphs inserted by the reconciler) were receiving `insertText` but no style requests. Headings, bold, italic, alignment were not applied to newly added paragraphs. Fixed by adding `_generate_style_for_added_paragraph()` and `_style_reqs_for_added_paras()`. Actual positions computed from `insert_idx + cumulative UTF-16 offsets` (not desired-doc indices, which are invalid in multi-gap scenarios).
+
 **Known limitations (deferred to Phase 7):**
 - Bullet nesting level changes not supported (only add/remove)
 - `bullet.textStyle` changes not supported
@@ -369,13 +372,29 @@ Integration in `generate_requests()`:
 - Mid-run styling (assumes whole runs are styled)
 
 ### Phase 7: Edge cases + coverage (FUTURE)
-- tableOfContents validation (raise `ReconcileError` if changed)
+
+**Reconciler gaps (from `reconciliation-gaps.md`):**
+- Silent `return []` on text mismatch in style diff (#12) — should be `ReconcileError`
+- `_strip_cell_para_styles` too aggressive — masks real table cell style failures (#13)
+- `documents_match` should not be public API (#14)
+- Multi-paragraph table cells lose structure (concatenated into single paragraph) (#15)
+- Nested tables are invisible to reconciler (#16)
+- `tableCellStyle` / `tableRowStyle` / `tableStyle` changes silently ignored (#17)
+- Section-specific headers/footers not supported (#18)
+
+**Unimplemented features:**
+- Bullet nesting level changes (only add/remove supported)
+- `bullet.textStyle` changes
+- Link style addition/removal
 - Section breaks (`insertSectionBreak`, `deleteContentRange`)
 - Special paragraph elements: inline objects, page breaks, footnote references, horizontal rules
 - Footnotes: `createFootnote` element-level diffing
 - UTF-16 correctness (emoji)
 - Named ranges
 - Full code coverage audit
+
+**Serde pending:**
+- Style factorization: too many paragraphs with redundant class attributes (see section below). Needs named-style-aware diff to only emit genuinely non-default properties.
 
 ## Verification: `verify()` Implementation
 
@@ -432,6 +451,26 @@ The comparator strips many server-generated keys (`revisionId`, `documentId`, `h
 ### Test helper `_make_doc()`
 
 The `_make_doc(*paragraphs)` helper creates a Document with a section break + N paragraphs, auto-appends `\n`, and calls `reindex_document()`. This makes tests extremely concise — a single line per document.
+
+---
+
+## Serde Bug Fixes (found during Phase 6 live testing)
+
+Two serde deserialization bugs were identified and fixed during end-to-end testing of Phase 6:
+
+### 1. `type="bullet"/"decimal"` on `<li>` not supported for new tabs
+
+New tab XML files have no existing list IDs (pulled documents use `parent="kix..."` referencing a `<lists>` section). The `type="bullet"` shorthand on `<li>` was silently ignored. Fixed by:
+- Adding `list_type: str | None` field to `ParagraphXml`
+- `_assign_synthetic_list_ids()` in `_from_xml.py` groups consecutive same-type `<li>` blocks into shared synthetic list IDs and creates entries in the document's `lists` dict
+
+### 2. Bare `<b>/<i>/<span>` directly inside `<p>` not supported
+
+The XML format documents that `<b>bold</b>` works inline inside `<p>`, but the parser required a `<t>` wrapper (`<t><b>bold</b></t>`). Also, plain text directly in `<p>` (element.text / child.tail) was ignored. Fixed in `_inlines_from_element()` in `_models.py`:
+- `element.text` (bare text before first child) is now captured
+- `<b>`, `<i>`, `<u>`, `<span>` directly inside `<p>` are now treated as sugar for `<t><b>...</b></t>`
+- `child.tail` (text after a child element) is now captured
+- Whitespace-only strings from XML indentation are filtered
 
 ---
 
