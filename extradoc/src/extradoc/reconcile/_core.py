@@ -346,12 +346,12 @@ class _Reconciler:
         segment_type: type[Header] | type[Footer] | None = None
 
         if isinstance(source, Header):
-            create_req = _make_create_header("DEFAULT", tab_id)
+            create_req = _make_create_header("DEFAULT")
             response_path = "createHeader.headerId"
             placeholder_prefix = "header"
             segment_type = Header
         elif isinstance(source, Footer):
-            create_req = _make_create_footer("DEFAULT", tab_id)
+            create_req = _make_create_footer("DEFAULT")
             response_path = "createFooter.footerId"
             placeholder_prefix = "footer"
             segment_type = Footer
