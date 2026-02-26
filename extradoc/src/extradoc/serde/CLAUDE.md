@@ -46,3 +46,7 @@ Fields where accuracy DOES matter: anything the agent is expected to change in t
 **Trailing empty paragraphs:** Every segment must end with a paragraph in the API. Synthetic empty trailing paragraphs are stripped on serialize and auto-added on deserialize.
 
 **Table cell defaults:** The API returns `columnSpan: 1`, `rowSpan: 1`, `backgroundColor: {}` on every cell. These are omitted from XML and restored on deserialize.
+
+**Named style defaults suppression (`NamedStyleDefaults`):** When serializing, text-style attributes that are already implied by the paragraph's named style (e.g. `HEADING_1` is bold by default) are suppressed from the XML output. This keeps the XML minimal — agents only see and write the attributes that override the named style. `NamedStyleDefaults` in `_styles.py` builds a per-named-style lookup of default text-style attrs from the document's `namedStyles` section.
+
+**List-level indent suppression:** Paragraph `indentFirst` / `indentLeft` attributes that merely duplicate the list-level's own indent definition are omitted. This prevents agents from seeing redundant indent noise on every list item.

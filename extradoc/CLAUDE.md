@@ -101,7 +101,7 @@ When creating a new tab folder from scratch (not pulled from the API), three thi
 ```xml
 <?xml version="1.0" encoding="UTF-8"?>
 <styles>
-  <para class="_default" direction="LEFT_TO_RIGHT" />
+  <para class="_default" />
   <listlevel class="_default" indentFirst="18.0pt" indentLeft="36.0pt" />
 </styles>
 ```

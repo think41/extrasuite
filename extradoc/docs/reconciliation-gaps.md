@@ -24,6 +24,17 @@ The reconciler now calls `_infer_bullet_preset(desired_se, desired_lists)` which
 
 Style requests (`updateParagraphStyle`, `updateTextStyle`, `createParagraphBullets`) were only generated for MATCHED paragraphs. Paragraphs in the ADDED group (trailing gap or inner gap) received `insertText` only with no styles applied. Fixed by adding `_generate_style_for_added_paragraph()` and `_style_reqs_for_added_paras()` in `_generators.py`.
 
+### Style requests dropped when added content contains tables — FIXED
+
+When a gap's added elements included both paragraphs and tables, the `has_tables=True` code path in `_process_inner_gap` and `_process_trailing_gap` called `_insert_adds_individually` / `_process_trailing_adds_with_tables` to handle inserts but never called `_style_reqs_for_added_paras`. All headings, inline styles, and bullets following or mixed with tables were silently dropped.
+
+Additionally, `_style_reqs_for_added_paras` did `continue` for non-paragraph elements without advancing the UTF-16 offset, so any paragraphs after a table would receive wrong index positions.
+
+Fixed by:
+1. Adding `_table_structural_size(table)` — computes `2 + R + R×C + Σcell_content` (the table's index footprint).
+2. In `_style_reqs_for_added_paras`: advancing `offset` by `_table_structural_size(table) + 1` when a table is encountered (the `+1` accounts for the auto-trailing `\n` paragraph that `insertTable` creates).
+3. Calling `_style_reqs_for_added_paras` after the insert phase in both `has_tables=True` branches, with the correct `first_para_start` value.
+
 ---
 
 ## Code Quality Issues

@@ -12,6 +12,7 @@ from typing import Any
 from xml.etree.ElementTree import Element, SubElement, fromstring
 
 from extradoc.api_types._generated import (
+    NamedStyles,
     NestingLevel,
     ParagraphStyle,
     ParagraphStyleNamedStyleType,
@@ -129,8 +130,15 @@ def _style_def_to_element(sd: StyleDef, tag: str, parent: Element) -> None:
 # ---------------------------------------------------------------------------
 
 
-def extract_text_style(ts: TextStyle | None) -> dict[str, str]:
-    """Extract XML style attributes from a TextStyle."""
+def extract_text_style(
+    ts: TextStyle | None, defaults: dict[str, str] | None = None
+) -> dict[str, str]:
+    """Extract XML style attributes from a TextStyle.
+
+    If ``defaults`` is provided (a dict of named-style default attrs), any
+    attribute whose value matches the default is omitted — it adds no information
+    on top of what the named style already provides.
+    """
     if not ts:
         return {}
     attrs: dict[str, str] = {}
@@ -172,14 +180,22 @@ def extract_text_style(ts: TextStyle | None) -> dict[str, str]:
         # tab_id can appear alongside bookmarkId/headingId or standalone
         if ts.link.tab_id:
             attrs["linkTab"] = ts.link.tab_id
+    if defaults:
+        attrs = {k: v for k, v in attrs.items() if defaults.get(k) != v}
     return attrs
 
 
-def extract_para_style(ps: ParagraphStyle | None) -> dict[str, str]:
+def extract_para_style(
+    ps: ParagraphStyle | None, defaults: dict[str, str] | None = None
+) -> dict[str, str]:
     """Extract XML style attributes from a ParagraphStyle.
 
     Note: namedStyleType is NOT included — it's represented by the element tag.
     headingId is also excluded — it's on the element directly.
+
+    If ``defaults`` is provided (a dict of named-style default attrs), any
+    attribute whose value matches the default is omitted — it adds no information
+    on top of what the named style already provides.
     """
     if not ps:
         return {}
@@ -240,6 +256,8 @@ def extract_para_style(ps: ParagraphStyle | None) -> dict[str, str]:
             tab_stops_list.append(ts_d)
         if tab_stops_list:
             attrs["tabStops"] = json.dumps(tab_stops_list, separators=(",", ":"))
+    if defaults:
+        attrs = {k: v for k, v in attrs.items() if defaults.get(k) != v}
     return attrs
 
 
@@ -272,14 +290,18 @@ def extract_nesting_level(nl: NestingLevel | None) -> dict[str, str]:
 
 
 def extract_col_style(tcp: TableColumnProperties | None) -> dict[str, str]:
-    """Extract XML style attributes from TableColumnProperties."""
+    """Extract XML style attributes from TableColumnProperties.
+
+    widthType="FIXED_WIDTH" is the overwhelming default and is omitted — the
+    deserializer defaults to FIXED_WIDTH when the attribute is absent.
+    """
     if not tcp:
         return {}
     attrs: dict[str, str] = {}
     s = dim_to_str(tcp.width)
     if s:
         attrs["width"] = s
-    if tcp.width_type:
+    if tcp.width_type and tcp.width_type.value != "FIXED_WIDTH":
         attrs["widthType"] = tcp.width_type.value
     return attrs
 
@@ -489,13 +511,16 @@ def resolve_nesting_level(
 
 
 def resolve_col_style(attrs: dict[str, str]) -> TableColumnProperties:
-    """Build TableColumnProperties from XML style attributes."""
+    """Build TableColumnProperties from XML style attributes.
+
+    widthType defaults to FIXED_WIDTH when absent (matching extract_col_style
+    which suppresses the attribute for the default value).
+    """
     d: dict[str, Any] = {}
     if "width" in attrs:
         num = attrs["width"].rstrip("pt")
         d["width"] = {"magnitude": float(num), "unit": "PT"}
-    if "widthType" in attrs:
-        d["widthType"] = attrs["widthType"]
+    d["widthType"] = attrs.get("widthType", "FIXED_WIDTH")
     return TableColumnProperties.model_validate(d)
 
 
@@ -597,6 +622,69 @@ def determine_link_href(
         remaining = {k: v for k, v in attrs.items() if k != "linkTab"}
         return href, remaining, "linkTab"
     return None, attrs, None
+
+
+# ---------------------------------------------------------------------------
+# Named style defaults (for suppressing redundant inherited attributes)
+# ---------------------------------------------------------------------------
+
+
+class NamedStyleDefaults:
+    """Computes per-named-style-type effective defaults for style diffing.
+
+    The Google Docs API returns paragraph and text styles that include many
+    fields inherited from the document's named style system.  These look like
+    explicit overrides but are just the inherited defaults (e.g. alignment=START,
+    direction=LEFT_TO_RIGHT on every NORMAL_TEXT paragraph).
+
+    This class computes the *effective* defaults for each named style type by
+    merging the NORMAL_TEXT base with per-type overrides.  The result is passed
+    to ``extract_para_style``/``extract_text_style`` so they can suppress any
+    attribute whose value equals the named-style default — keeping styles.xml
+    clean and free of redundant noise.
+    """
+
+    def __init__(self, named_styles: NamedStyles | None) -> None:
+        self._para: dict[str, dict[str, str]] = {}
+        self._text: dict[str, dict[str, str]] = {}
+
+        if not named_styles or not named_styles.styles:
+            return
+
+        # First pass: get NORMAL_TEXT as the base defaults
+        normal_para: dict[str, str] = {}
+        normal_text: dict[str, str] = {}
+        for ns in named_styles.styles:
+            if ns.named_style_type and ns.named_style_type.value == "NORMAL_TEXT":
+                normal_para = extract_para_style(ns.paragraph_style)
+                normal_text = extract_text_style(ns.text_style)
+                break
+
+        # Second pass: build effective defaults for every named style type.
+        # Each type's effective defaults = NORMAL_TEXT base + type-specific overrides.
+        for ns in named_styles.styles:
+            if not ns.named_style_type:
+                continue
+            key = ns.named_style_type.value
+            if key == "NORMAL_TEXT":
+                self._para[key] = normal_para
+                self._text[key] = normal_text
+            else:
+                para = dict(normal_para)
+                para.update(extract_para_style(ns.paragraph_style))
+                self._para[key] = para
+
+                text = dict(normal_text)
+                text.update(extract_text_style(ns.text_style))
+                self._text[key] = text
+
+    def para_defaults(self, named_style_type: str) -> dict[str, str]:
+        """Return effective paragraph style defaults for the given named style type."""
+        return self._para.get(named_style_type, {})
+
+    def text_defaults(self, named_style_type: str) -> dict[str, str]:
+        """Return effective text style defaults for the given named style type."""
+        return self._text.get(named_style_type, {})
 
 
 # ---------------------------------------------------------------------------

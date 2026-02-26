@@ -277,6 +277,24 @@ def _cell_text(cell: TableCell) -> str:
     return "".join(parts)
 
 
+def _table_structural_size(table: Table) -> int:
+    """Compute the index footprint (endIndex - startIndex) of a table element.
+
+    = 2 (table start/end markers)
+      + R (one row-start marker per row)
+      + R*C (one cell-start marker per cell)
+      + sum of cell content sizes (at least 1 per cell for the trailing \\n)
+    """
+    total = 2  # table start + end markers
+    for row in table.table_rows or []:
+        total += 1  # row marker
+        for cell in row.table_cells or []:
+            total += 1  # cell marker
+            ct = _cell_text(cell)
+            total += utf16_len(ct) if ct else 1
+    return total
+
+
 # ---------------------------------------------------------------------------
 # Style comparison utilities
 # ---------------------------------------------------------------------------
@@ -706,6 +724,12 @@ def _process_inner_gap(
             requests.extend(
                 _insert_adds_individually(real_adds, insert_idx, segment_id, tab_id)
             )
+            # Generate style requests for added paragraphs; first para starts at insert_idx
+            requests.extend(
+                _style_reqs_for_added_paras(
+                    real_adds, insert_idx, segment_id, tab_id, desired_lists
+                )
+            )
         else:
             # Pure paragraph adds — concatenate text (original Phase 1 logic)
             combined_text = _collect_add_text(real_adds)
@@ -793,6 +817,30 @@ def _process_trailing_gap(
                     gap, real_deletes, real_adds, segment_id, tab_id
                 )
             )
+            # Compute insert_idx (mirrors _process_trailing_adds_with_tables logic)
+            first_del_el = real_deletes[0].base_element if real_deletes else None
+            if real_deletes:
+                if gap.left_anchor and not _is_section_break(gap.left_anchor):
+                    _insert_idx = _el_end(gap.left_anchor) - 1
+                else:
+                    assert first_del_el is not None
+                    _insert_idx = _el_start(first_del_el)
+            else:
+                if gap.left_anchor and not _is_section_break(gap.left_anchor):
+                    _insert_idx = _el_end(gap.left_anchor) - 1
+                else:
+                    _insert_idx = _el_end(gap.left_anchor) if gap.left_anchor else 1
+            # If left_anchor is a non-sectionbreak paragraph, paragraphs are inserted
+            # with a leading \n, so the first para's actual start is insert_idx + 1
+            if gap.left_anchor and not _is_section_break(gap.left_anchor):
+                _first_para_start = _insert_idx + 1
+            else:
+                _first_para_start = _insert_idx
+            requests.extend(
+                _style_reqs_for_added_paras(
+                    real_adds, _first_para_start, segment_id, tab_id, desired_lists
+                )
+            )
         else:
             # Pure paragraph adds (original Phase 1 logic)
             requests.extend(
@@ -823,6 +871,9 @@ def _style_reqs_for_added_paras(
     for add in real_adds:
         el = add.desired_element
         if not el or not _is_paragraph(el):
+            if el and _is_table(el) and el.table:
+                # Advance offset by table footprint + 1 (auto-trailing paragraph)
+                offset += _table_structural_size(el.table) + 1
             continue
         para_text = _para_text(el)
         para_len = utf16_len(para_text)
