@@ -273,19 +273,10 @@ class CredentialsManager:
         if not force_refresh:
             cached = self._load_cached_token()
             if cached and cached.is_valid():
-                print(
-                    f"Using cached token (expires in {cached.expires_in_seconds()} seconds)"
-                )
                 return cached
 
-        print("Starting authentication flow...")
         token = self._authenticate_extrasuite()
         self._save_token(token)
-
-        print("\nAuthentication successful!")
-        print(f"Service account: {token.service_account_email}")
-        print(f"Token expires in: {token.expires_in_seconds()} seconds")
-
         return token
 
     def _get_service_account_token(self, force_refresh: bool) -> Token:
@@ -295,9 +286,6 @@ class CredentialsManager:
         if not force_refresh:
             cached = self._load_cached_token()
             if cached and cached.is_valid():
-                print(
-                    f"Using cached token (expires in {cached.expires_in_seconds()} seconds)"
-                )
                 return cached
 
         # Only import google-auth when we actually need to refresh
@@ -316,8 +304,6 @@ class CredentialsManager:
 
         if not self._sa_path or not self._sa_path.exists():
             raise FileNotFoundError(f"Service account file not found: {self._sa_path}")
-
-        print(f"Loading credentials from {self._sa_path}...")
 
         # Load service account credentials
         credentials = service_account.Credentials.from_service_account_file(
@@ -340,10 +326,6 @@ class CredentialsManager:
 
         # Cache for future use
         self._save_token(token)
-
-        print(f"Service account: {token.service_account_email}")
-        print(f"Token expires in: {token.expires_in_seconds()} seconds")
-
         return token
 
     def _load_cached_token(self) -> Token | None:
@@ -357,10 +339,8 @@ class CredentialsManager:
             if token.is_valid():
                 return token
             else:
-                print("Cached token expired, need to re-authenticate")
                 return None
-        except (json.JSONDecodeError, KeyError) as e:
-            print(f"Invalid cached token: {e}")
+        except (json.JSONDecodeError, KeyError):
             return None
 
     def _save_token(self, token: Token) -> None:
@@ -374,7 +354,6 @@ class CredentialsManager:
         temp_path.write_text(json.dumps(token.to_dict(), indent=2))
         temp_path.chmod(stat.S_IRUSR | stat.S_IWUSR)  # 0600
         temp_path.rename(self._token_cache_path)
-        print(f"Token saved to {self._token_cache_path}")
 
     def _load_gateway_config(self) -> dict[str, str] | None:
         """Load endpoint URLs from gateway.json if it exists.
@@ -452,19 +431,10 @@ class CredentialsManager:
         if not force_refresh:
             cached = self._load_cached_oauth_token(resolved)
             if cached and cached.is_valid():
-                print(
-                    f"Using cached OAuth token (expires in {cached.expires_in_seconds()} seconds)"
-                )
                 return cached
 
-        print("Starting delegation authentication flow...")
         token = self._authenticate_delegation(resolved, reason)
         self._save_oauth_token(token)
-
-        print("\nDelegation authentication successful!")
-        print(f"Scopes: {', '.join(token.scopes)}")
-        print(f"Token expires in: {token.expires_in_seconds()} seconds")
-
         return token
 
     @staticmethod
@@ -498,7 +468,6 @@ class CredentialsManager:
         temp_path.write_text(json.dumps(token.to_dict(), indent=2))
         temp_path.chmod(stat.S_IRUSR | stat.S_IWUSR)  # 0600
         temp_path.rename(self.OAUTH_CACHE_PATH)
-        print(f"OAuth token saved to {self.OAUTH_CACHE_PATH}")
 
     def _authenticate_delegation(self, scopes: list[str], reason: str) -> OAuthToken:
         """Run the delegation authentication flow.
@@ -552,24 +521,14 @@ class CredentialsManager:
         server_thread = threading.Thread(target=serve_loop, daemon=True)
         server_thread.start()
 
-        print("\n" + "=" * 60)
-        print("DELEGATION AUTHORIZATION REQUIRED")
-        print("=" * 60)
-        print(f"\nRequested scopes: {scope_params}")
-        if reason:
-            print(f"Reason: {reason}")
-        print(f"\nOpen this URL in your browser:\n\n  {auth_url}\n")
-
+        print(f"Open this URL to authorize ({scope_params}):\n\n  {auth_url}\n")
         try:
             import webbrowser
 
-            if webbrowser.open(auth_url):
-                print("(Browser opened automatically)")
+            webbrowser.open(auth_url)
         except Exception:
             pass
-
-        print("\nWaiting for authorization...")
-        print("-" * 60)
+        print("Waiting for authorization...")
 
         # Wait for callback
         start_time = time.time()
@@ -591,7 +550,6 @@ class CredentialsManager:
             raise Exception("Delegation authorization timed out. Please try again.")
 
         # Exchange auth code for delegated token
-        print("\nExchanging auth code for delegated token...")
         return self._exchange_delegation_code(
             result_holder["code"], delegation_exchange_url
         )
@@ -663,24 +621,15 @@ class CredentialsManager:
         server_thread = threading.Thread(target=serve_loop, daemon=True)
         server_thread.start()
 
-        # Print auth URL prominently
-        print("\n" + "=" * 60)
-        print("AUTHENTICATION REQUIRED")
-        print("=" * 60)
-        print(f"\nOpen this URL in your browser:\n\n  {auth_url}\n")
-
-        # Try to open browser (may fail in headless environments)
+        # Print auth URL and open browser
+        print(f"Open this URL to authenticate:\n\n  {auth_url}\n")
         try:
             import webbrowser
 
-            if webbrowser.open(auth_url):
-                print("(Browser opened automatically)")
+            webbrowser.open(auth_url)
         except Exception:
             pass  # Browser open failed, user will use URL manually
-
-        print("\nWaiting for authentication...")
-        print("(Or paste the auth code here if redirect doesn't work)")
-        print("-" * 60)
+        print("Waiting for authentication... (or paste the auth code here)")
 
         # Start stdin reader thread for headless mode
         def read_stdin() -> None:
@@ -734,7 +683,6 @@ class CredentialsManager:
             raise Exception("Authentication timed out. Please try again.")
 
         # Exchange auth code for token
-        print("\nExchanging auth code for token...")
         return self._exchange_auth_code(result_holder["code"])
 
     def _exchange_auth_code(self, auth_code: str) -> Token:

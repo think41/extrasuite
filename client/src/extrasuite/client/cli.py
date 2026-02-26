@@ -163,7 +163,10 @@ def cmd_sheet_pull(args: Any) -> None:
                 max_rows=max_rows,
                 save_raw=not args.no_raw,
             )
-            print(f"\nPulled {len(files)} files to {output_dir / spreadsheet_id}/")
+            sheet_count = sum(1 for f in files if f.name == "data.tsv")
+            print(
+                f"Pulled {sheet_count} sheet{'s' if sheet_count != 1 else ''} to {output_dir / spreadsheet_id}/"
+            )
         finally:
             await transport.close()
 
@@ -273,7 +276,10 @@ def cmd_slide_pull(args: Any) -> None:
                 output_dir,
                 save_raw=not args.no_raw,
             )
-            print(f"\nPulled {len(files)} files to {output_dir / presentation_id}/")
+            slide_count = sum(1 for f in files if f.name == "content.sml")
+            print(
+                f"Pulled {slide_count} slide{'s' if slide_count != 1 else ''} to {output_dir / presentation_id}/"
+            )
         finally:
             await transport.close()
 
@@ -329,16 +335,14 @@ def cmd_form_pull(args: Any) -> None:
         transport = GoogleFormsTransport(access_token)
         client = FormsClient(transport)
         try:
-            result = await client.pull(
+            await client.pull(
                 form_id,
                 output_dir,
                 include_responses=args.responses,
                 max_responses=args.max_responses,
                 save_raw=not args.no_raw,
             )
-            print(
-                f"\nPulled {len(result.files_written)} files to {output_dir / form_id}/"
-            )
+            print(f"Pulled form to {output_dir / form_id}/")
         finally:
             await transport.close()
 
@@ -397,12 +401,12 @@ def cmd_script_pull(args: Any) -> None:
         transport = GoogleAppsScriptTransport(access_token)
         client = ScriptClient(transport)
         try:
-            files = await client.pull(
+            await client.pull(
                 script_id,
                 output_dir,
                 save_raw=not args.no_raw,
             )
-            print(f"\nPulled {len(files)} files to {output_dir / script_id}/")
+            print(f"Pulled script to {output_dir / script_id}/")
         finally:
             await transport.close()
 
@@ -521,12 +525,12 @@ def cmd_doc_pull(args: Any) -> None:
         transport = GoogleDocsTransport(access_token)
         client = DocsClient(transport)
         try:
-            files = await client.pull(
+            await client.pull(
                 document_id,
                 output_dir,
                 save_raw=not args.no_raw,
             )
-            print(f"\nPulled {len(files)} files to {output_dir / document_id}/")
+            print(f"Pulled document to {output_dir / document_id}/")
         finally:
             await transport.close()
 
