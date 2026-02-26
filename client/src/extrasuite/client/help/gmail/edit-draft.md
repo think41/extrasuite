@@ -2,29 +2,16 @@ Update an existing Gmail draft from a markdown file with front matter.
 
 ## Usage
 
-  extrasuite gmail edit-draft <draft_id> <file>
+  extrasuite gmail edit-draft <draft_id> <file> [--attach FILE ...]
 
-## Arguments
-
-  draft_id    Draft ID to update (printed by `extrasuite gmail compose`)
-  file        Markdown file with YAML front matter
+`draft_id` is printed by `extrasuite gmail compose`.
 
 ## File Format
 
-Same format as `extrasuite gmail compose`:
+Same as `extrasuite gmail compose`. See `compose --help`.
 
-```
----
-subject: Updated subject
-to: alice@example.com
----
+## Attachments
 
-Updated body in **markdown**.
-```
+  extrasuite gmail edit-draft abc123 email.md --attach slides.pdf --attach data.csv
 
-## Notes
-
-- Replaces the entire draft content (subject, recipients, body)
-- The draft ID is printed by `extrasuite gmail compose` on success
-- Markdown is converted to HTML; a plain-text fallback is also included
-- Open Gmail to review, edit, and send the draft
+Replaces the entire draft (subject, recipients, body, and attachments).

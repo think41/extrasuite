@@ -2,11 +2,7 @@ Save an email as a Gmail draft from a markdown file with front matter.
 
 ## Usage
 
-  extrasuite gmail compose <file>
-
-## Arguments
-
-  file    Path to the markdown file with YAML front matter
+  extrasuite gmail compose <file> [--attach FILE ...]
 
 ## File Format
 
@@ -18,30 +14,26 @@ cc: charlie@example.com
 bcc: dave@example.com
 ---
 
-# Heading
+Hi team,
 
-Email body in **markdown**. Supports:
+Here are the notes from today's meeting:
 
-- Bold, italic, lists
-- Tables
-- Headings
+- **Launch date** moved to March 15
+- Next sync Friday at 2pm
 
-Multiple paragraphs are preserved.
+Best, Alice
 ```
 
-Required front matter fields: subject, to
-Optional front matter fields: cc, bcc
+Required: `subject`, `to`. Optional: `cc`, `bcc`. Multiple recipients: comma-separated.
 
-Multiple recipients: comma-separated in a single field value.
+Write the body conversationally. **bold**, *italic*, lists, and [links](https://example.com) are supported.
+
+## Attachments
+
+  extrasuite gmail compose email.md --attach report.pdf --attach data.csv
+
+Repeat `--attach` for multiple files. MIME type is detected from the extension.
 
 ## Output
 
-Prints the draft ID on success. Save it to update the draft later with edit-draft.
-
-## Notes
-
-- The draft is saved to the authenticated user's Gmail account
-- Markdown in the body is converted to HTML - the draft will be formatted
-- A plain-text fallback is also included for email clients that don't render HTML
-- Open Gmail to review, edit, and send the draft
-- Use `extrasuite gmail edit-draft <draft_id> <file>` to update the draft
+Prints the draft ID on success. Pass it to `edit-draft` to update the draft later.

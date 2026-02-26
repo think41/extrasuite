@@ -8,14 +8,20 @@ from __future__ import annotations
 
 import base64
 import json
+import mimetypes
 import ssl
 import urllib.error
 import urllib.parse
 import urllib.request
 from datetime import datetime, timedelta
+from email import encoders
+from email.mime.base import MIMEBase
 from email.mime.multipart import MIMEMultipart
 from email.mime.text import MIMEText
-from typing import Any
+from typing import TYPE_CHECKING, Any
+
+if TYPE_CHECKING:
+    from pathlib import Path
 
 import markdown as _markdown
 
@@ -198,17 +204,35 @@ def _build_email_message(
     body: str,
     cc: list[str] | None = None,
     bcc: list[str] | None = None,
+    attachments: list[Path] | None = None,
 ) -> MIMEMultipart:
-    """Build a multipart (plain + HTML) MIME message from a markdown body."""
-    msg = MIMEMultipart("alternative")
+    """Build a multipart MIME message from a markdown body with optional attachments."""
+    if attachments:
+        msg = MIMEMultipart("mixed")
+        body_part = MIMEMultipart("alternative")
+        body_part.attach(MIMEText(body, "plain"))
+        body_part.attach(MIMEText(markdown_to_html(body), "html"))
+        msg.attach(body_part)
+        for filepath in attachments:
+            mime_type, _ = mimetypes.guess_type(str(filepath))
+            if mime_type is None:
+                mime_type = "application/octet-stream"
+            main_type, sub_type = mime_type.split("/", 1)
+            part = MIMEBase(main_type, sub_type)
+            part.set_payload(filepath.read_bytes())
+            encoders.encode_base64(part)
+            part.add_header("Content-Disposition", "attachment", filename=filepath.name)
+            msg.attach(part)
+    else:
+        msg = MIMEMultipart("alternative")
+        msg.attach(MIMEText(body, "plain"))
+        msg.attach(MIMEText(markdown_to_html(body), "html"))
     msg["To"] = ", ".join(to)
     msg["Subject"] = subject
     if cc:
         msg["Cc"] = ", ".join(cc)
     if bcc:
         msg["Bcc"] = ", ".join(bcc)
-    msg.attach(MIMEText(body, "plain"))
-    msg.attach(MIMEText(markdown_to_html(body), "html"))
     return msg
 
 
@@ -219,9 +243,10 @@ def create_gmail_draft(
     body: str,
     cc: list[str] | None = None,
     bcc: list[str] | None = None,
+    attachments: list[Path] | None = None,
 ) -> dict[str, Any]:
     """Create a Gmail draft. Body is markdown and rendered as HTML in the draft."""
-    msg = _build_email_message(to, subject, body, cc, bcc)
+    msg = _build_email_message(to, subject, body, cc, bcc, attachments=attachments)
     raw = base64.urlsafe_b64encode(msg.as_bytes()).decode("ascii")
     return _api_request(
         "https://gmail.googleapis.com/gmail/v1/users/me/drafts",
@@ -239,9 +264,10 @@ def update_gmail_draft(
     body: str,
     cc: list[str] | None = None,
     bcc: list[str] | None = None,
+    attachments: list[Path] | None = None,
 ) -> dict[str, Any]:
     """Update an existing Gmail draft. Body is markdown and rendered as HTML."""
-    msg = _build_email_message(to, subject, body, cc, bcc)
+    msg = _build_email_message(to, subject, body, cc, bcc, attachments=attachments)
     raw = base64.urlsafe_b64encode(msg.as_bytes()).decode("ascii")
     return _api_request(
         f"https://gmail.googleapis.com/gmail/v1/users/me/drafts/{draft_id}",
