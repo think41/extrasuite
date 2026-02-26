@@ -31,8 +31,18 @@ Push validates changes before sending them. Blocked operations will print
 an error and exit. Warnings can be bypassed with --force if you're certain
 the change is correct.
 
+## Comments
+
+Push also applies changes to `comments.json` via the Drive API:
+- Add a reply: add an entry to `replies` without an `id` field
+- Resolve a comment: set `"resolved": true`
+- Creating new top-level comments is not supported
+
+See `extrasuite sheet help comments-reference` for format details and examples.
+
 ## Notes
 
 - All edits to data.tsv, formula.json, format.json, etc. are applied in one push
 - Adding/deleting sheets and changing cell values all happen in one operation
+- Comment operations are applied after sheet data changes
 - If push fails partway through, re-pull to see the current state

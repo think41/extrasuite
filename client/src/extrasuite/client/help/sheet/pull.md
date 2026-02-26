@@ -29,6 +29,7 @@ Creates <output_dir>/<spreadsheet_id>/ with:
     data-validation.json  Dropdowns, checkboxes (if present)
     filters.json          Filter views (if present)
     pivot-tables.json     Pivot tables (if present)
+    comments.json         Cell comments (only present if comments exist)
   .pristine/              Snapshot for diff/push comparison - do not edit
   .raw/                   Raw API responses for debugging - do not edit
 

@@ -178,7 +178,7 @@ def cmd_sheet_diff(args: Any) -> None:
     from extrasheet import SheetsClient
 
     client = SheetsClient.__new__(SheetsClient)
-    _diff_result, requests, validation = client.diff(args.folder)
+    _diff_result, requests, validation, per_sheet_comment_ops = client.diff(args.folder)
 
     if validation.blocks:
         print("BLOCKED:", file=sys.stderr)
@@ -192,10 +192,23 @@ def cmd_sheet_diff(args: Any) -> None:
             print(f"  - {msg}", file=sys.stderr)
         print("Use --force to push anyway.", file=sys.stderr)
 
-    if not requests:
+    has_comment_ops = any(ops.has_operations for ops in per_sheet_comment_ops.values())
+    has_changes = bool(requests) or has_comment_ops
+
+    if not has_changes:
         print("No changes detected.")
     else:
-        print(json.dumps(requests, indent=2))
+        if requests:
+            print(json.dumps(requests, indent=2))
+        for sheet_folder, ops in per_sheet_comment_ops.items():
+            if not ops.has_operations:
+                continue
+            parts: list[str] = []
+            if ops.new_replies:
+                parts.append(f"{len(ops.new_replies)} new reply/replies")
+            if ops.resolves:
+                parts.append(f"{len(ops.resolves)} resolve(s)")
+            print(f"# {sheet_folder} comments: {', '.join(parts)}", file=sys.stderr)
 
 
 def cmd_sheet_push(args: Any) -> None:

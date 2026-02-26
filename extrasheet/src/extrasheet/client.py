@@ -6,12 +6,19 @@ Provides the `pull`, `diff`, and `push` methods for the pull-edit-diff-push work
 from __future__ import annotations
 
 import json
+import logging
 import zipfile
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
 
+from extrasheet.comments import (
+    CommentOperations,
+    diff_comments,
+    group_comments_by_sheet,
+)
 from extrasheet.diff import DiffResult, diff
+from extrasheet.pristine import extract_pristine, get_pristine_file
 from extrasheet.request_generator import generate_requests
 from extrasheet.structural_validation import (
     ValidationResult,
@@ -28,6 +35,8 @@ from extrasheet.transport import (
     TransportError,
 )
 from extrasheet.writer import FileWriter
+
+logger = logging.getLogger(__name__)
 
 # Re-export exceptions for backwards compatibility
 __all__ = [
@@ -134,7 +143,13 @@ class SheetsClient:
             )
             written.extend(raw_files)
 
-        # Step 6: Create pristine copy for diff/push workflow
+        # Step 6: Fetch and write per-sheet comments (via Drive API)
+        comment_files = await self._fetch_and_write_comments(
+            writer, spreadsheet_id, files
+        )
+        written.extend(comment_files)
+
+        # Step 7: Create pristine copy for diff/push workflow
         pristine_path = self._create_pristine_copy(output_path, spreadsheet_id, written)
         written.append(pristine_path)
 
@@ -163,6 +178,63 @@ class SheetsClient:
         raw_paths.append(data_path)
 
         return raw_paths
+
+    async def _fetch_and_write_comments(
+        self,
+        writer: FileWriter,
+        spreadsheet_id: str,
+        files: dict[str, Any],
+    ) -> list[Path]:
+        """Fetch comments from Drive API and write per-sheet comments.json files.
+
+        Groups comments by sheet using the anchor's sheet ID, then writes
+        a comments.json file for each sheet that has at least one comment.
+        Sheets without comments get no file (not even an empty one).
+
+        Args:
+            writer: FileWriter for writing files to disk
+            spreadsheet_id: The spreadsheet identifier
+            files: Transformed files dict (contains spreadsheet.json for sheet mapping)
+            output_path: Base output path
+
+        Returns:
+            List of paths to written comments.json files
+        """
+        try:
+            comments_raw = await self._transport.list_comments(spreadsheet_id)
+        except Exception as e:
+            logger.warning("Failed to fetch comments: %s", e)
+            return []
+
+        if not comments_raw:
+            return []
+
+        # Build sheet_id → folder mapping from spreadsheet.json
+        spreadsheet_json = files.get(f"{spreadsheet_id}/spreadsheet.json", {})
+        if not isinstance(spreadsheet_json, dict):
+            return []
+
+        sheet_id_to_folder: dict[int, str] = {
+            s["sheetId"]: s["folder"]
+            for s in spreadsheet_json.get("sheets", [])
+            if "sheetId" in s and "folder" in s
+        }
+
+        if not sheet_id_to_folder:
+            return []
+
+        # Group comments by sheet and convert to comments.json format
+        per_sheet = group_comments_by_sheet(
+            comments_raw, spreadsheet_id, sheet_id_to_folder
+        )
+
+        written: list[Path] = []
+        for sheet_folder, comments_data in per_sheet.items():
+            rel_path = f"{spreadsheet_id}/{sheet_folder}/comments.json"
+            path = writer.write_json(rel_path, comments_data)
+            written.append(path)
+
+        return written
 
     def _create_pristine_copy(
         self,
@@ -196,7 +268,7 @@ class SheetsClient:
 
     def diff(
         self, folder: str | Path
-    ) -> tuple[DiffResult, list[dict[str, Any]], ValidationResult]:
+    ) -> tuple[DiffResult, list[dict[str, Any]], ValidationResult, dict[str, CommentOperations]]:
         """Compare current files against pristine and generate batchUpdate requests.
 
         This is a dry-run operation that doesn't make any API calls.
@@ -205,18 +277,22 @@ class SheetsClient:
             folder: Path to the spreadsheet folder (containing spreadsheet.json)
 
         Returns:
-            Tuple of (DiffResult, list of batchUpdate requests, ValidationResult)
-            The ValidationResult contains blocks (hard errors) and warnings.
+            Tuple of:
+            - DiffResult: Detected changes by sheet
+            - list[dict]: batchUpdate requests for sheet data changes
+            - ValidationResult: Blocks (hard errors) and warnings
+            - dict[str, CommentOperations]: Per-sheet comment operations
+              (keyed by sheet folder name)
 
         Raises:
             MissingPristineError: If .pristine/spreadsheet.zip doesn't exist
             InvalidFileError: If files are corrupted
 
         Example:
-            >>> diff_result, requests, validation = client.diff("./my_spreadsheet_id")
+            >>> diff_result, requests, validation, comment_ops = client.diff("./id")
             >>> if not validation.can_push:
             ...     print("Blocked:", validation.blocks)
-            >>> print(f"Found {len(requests)} changes")
+            >>> print(f"Found {len(requests)} data changes")
         """
         folder = Path(folder)
 
@@ -227,7 +303,10 @@ class SheetsClient:
         diff_result = diff(folder)
         requests = generate_requests(diff_result)
 
-        return diff_result, requests, validation
+        # Compute per-sheet comment operations
+        per_sheet_comment_ops = _diff_all_comments(folder)
+
+        return diff_result, requests, validation, per_sheet_comment_ops
 
     async def push(self, folder: str | Path, *, force: bool = False) -> PushResult:
         """Apply changes to Google Sheets.
@@ -260,7 +339,7 @@ class SheetsClient:
         folder = Path(folder)
 
         # Generate diff, requests, and validation
-        diff_result, requests, validation = self.diff(folder)
+        diff_result, requests, validation, per_sheet_comment_ops = self.diff(folder)
 
         # Check for blocking errors
         if not validation.can_push:
@@ -282,7 +361,11 @@ class SheetsClient:
                 spreadsheet_id=diff_result.spreadsheet_id,
             )
 
-        if not requests:
+        has_comment_ops = any(
+            ops.has_operations for ops in per_sheet_comment_ops.values()
+        )
+
+        if not requests and not has_comment_ops:
             return PushResult(
                 success=True,
                 changes_applied=0,
@@ -324,13 +407,109 @@ class SheetsClient:
             total_applied += len(content_requests)
             final_response = response
 
+        # Phase 3: Execute comment operations via Drive API
+        replies_created = 0
+        comments_resolved = 0
+
+        for sheet_folder, ops in per_sheet_comment_ops.items():  # noqa: B007
+            if not ops.has_operations:
+                continue
+
+            for new_reply in ops.new_replies:
+                await self._transport.create_reply(
+                    diff_result.spreadsheet_id,
+                    new_reply.comment_id,
+                    new_reply.content,
+                )
+                replies_created += 1
+
+            for resolve in ops.resolves:
+                await self._transport.create_reply(
+                    diff_result.spreadsheet_id,
+                    resolve.comment_id,
+                    "",
+                    action="resolve",
+                )
+                comments_resolved += 1
+
+        comment_summary_parts: list[str] = []
+        if replies_created:
+            comment_summary_parts.append(f"{replies_created} reply/replies created")
+        if comments_resolved:
+            comment_summary_parts.append(f"{comments_resolved} comment(s) resolved")
+
+        parts: list[str] = []
+        if total_applied:
+            parts.append(f"Applied {total_applied} changes")
+        if comment_summary_parts:
+            parts.extend(comment_summary_parts)
+
+        message = ", ".join(parts) if parts else "No changes to apply"
+
         return PushResult(
             success=True,
             changes_applied=total_applied,
-            message=f"Applied {total_applied} changes",
+            message=message,
             spreadsheet_id=diff_result.spreadsheet_id,
             response=final_response,
         )
+
+
+def _diff_all_comments(folder: Path) -> dict[str, CommentOperations]:
+    """Compute per-sheet comment operations by comparing pristine vs current comments.json.
+
+    Args:
+        folder: Path to the spreadsheet folder
+
+    Returns:
+        Dict mapping sheet_folder -> CommentOperations.
+        Only includes sheets where changes were detected.
+    """
+    # Load spreadsheet.json to get sheet info (id → folder mapping)
+    spreadsheet_json_path = folder / "spreadsheet.json"
+    if not spreadsheet_json_path.exists():
+        return {}
+
+    with spreadsheet_json_path.open() as f:
+        spreadsheet_data = json.load(f)
+
+    folder_to_sheet_id: dict[str, int] = {}
+    for sheet in spreadsheet_data.get("sheets", []):
+        sheet_folder = sheet.get("folder", "")
+        sheet_id = sheet.get("sheetId")
+        if sheet_folder and sheet_id is not None:
+            folder_to_sheet_id[sheet_folder] = sheet_id
+
+    if not folder_to_sheet_id:
+        return {}
+
+    # Extract pristine files to compare against
+    try:
+        pristine_files = extract_pristine(folder)
+    except Exception:
+        return {}
+
+    result: dict[str, CommentOperations] = {}
+
+    for sheet_folder in folder_to_sheet_id:
+        current_path = folder / sheet_folder / "comments.json"
+        pristine_key = f"{sheet_folder}/comments.json"
+
+        current_json: str | None = None
+        if current_path.exists():
+            current_json = current_path.read_text(encoding="utf-8")
+
+        pristine_json = get_pristine_file(pristine_files, pristine_key)
+
+        if pristine_json is None and current_json is None:
+            continue
+
+        if current_json is not None:
+            ops = diff_comments(pristine_json, current_json)
+            if ops.has_operations:
+                result[sheet_folder] = ops
+
+    return result
 
 
 def _truncation_info_to_dict(

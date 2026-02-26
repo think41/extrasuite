@@ -31,7 +31,8 @@ After push, always re-pull before making more changes.
 
 Optional files (only created when content exists):
   charts.json, data-validation.json, filters.json, pivot-tables.json,
-  banded-ranges.json, tables.json, slicers.json, named_ranges.json
+  banded-ranges.json, tables.json, slicers.json, named_ranges.json,
+  comments.json
 
 ## Key Rules
 
@@ -52,3 +53,4 @@ Optional files (only created when content exists):
   extrasuite sheet help                    List available reference topics
   extrasuite sheet help format-reference   Colors, borders, conditional formats, merges, rich text
   extrasuite sheet help features-reference Charts, data validation, pivot tables, named ranges
+  extrasuite sheet help comments-reference Comments: add replies, resolve
