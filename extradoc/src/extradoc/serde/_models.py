@@ -278,6 +278,9 @@ class ParagraphXml:
     # For <li> elements:
     parent: str | None = None
     level: int | None = None
+    # Set when <li type="bullet|decimal|..."> is used (no parent= attr).
+    # _from_xml.py will synthesize a listId and set parent from this.
+    list_type: str | None = None
 
 
 @dataclass
@@ -674,8 +677,26 @@ def _segment_to_element(seg: SegmentXml, parent: Element) -> None:
 
 
 def _inlines_from_element(parent: Element) -> list[InlineNode]:
-    """Parse inline nodes from a paragraph-like element's children."""
+    """Parse inline nodes from a paragraph-like element's children.
+
+    Supports two inline syntaxes:
+    - Explicit: <t>text</t>, <t><b>bold</b></t>, <t class="s">styled</t>
+    - Shorthand: <b>bold</b>, <i>italic</i>, <span class="s">styled</span>
+      (bare text or bare sugar tags directly inside <p>/<h1>/etc.)
+
+    Bare text (element.text / child.tail) is also parsed as TNode runs so
+    that mixed-content markup like <p>Hello <b>world</b>!</p> works.
+    """
     inlines: list[InlineNode] = []
+
+    def _add_text(text: str | None) -> None:
+        # Skip None and whitespace-only strings (XML indentation from pretty-printing)
+        if text and text.strip():
+            inlines.append(TNode(text=text))
+
+    # Text node before the first child element
+    _add_text(parent.text)
+
     for child in parent:
         tag = child.tag
         if tag == "t":
@@ -689,6 +710,12 @@ def _inlines_from_element(parent: Element) -> list[InlineNode]:
                     text = sub.text or ""
                     break
             inlines.append(TNode(text=text, class_name=class_name, sugar_tag=sugar_tag))
+        elif tag in _SUGAR_TAGS:
+            # Shorthand: <b>bold</b> directly inside <p> — equivalent to <t><b>bold</b></t>
+            inlines.append(TNode(text=child.text or "", sugar_tag=tag))
+        elif tag == "span":
+            # Shorthand: <span class="s">text</span> — equivalent to <t class="s">text</t>
+            inlines.append(TNode(text=child.text or "", class_name=child.get("class")))
         elif tag == "br":
             inlines.append(SoftBreakNode())
         elif tag == "a":
@@ -739,6 +766,8 @@ def _inlines_from_element(parent: Element) -> list[InlineNode]:
             inlines.append(EquationNode())
         elif tag == "columnbreak":
             inlines.append(ColumnBreakNode())
+        # Text after a child element (XML tail) — e.g. the " text." in <b>bold</b> text.
+        _add_text(child.tail)
     return inlines
 
 
@@ -756,6 +785,8 @@ def _blocks_from_element(parent: Element) -> list[BlockNode]:
                 para.parent = child.get("parent")
                 level_str = child.get("level")
                 para.level = int(level_str) if level_str is not None else None
+                if para.parent is None:
+                    para.list_type = child.get("type")
             blocks.append(para)
         elif tag == "table":
             table = TableXml()
