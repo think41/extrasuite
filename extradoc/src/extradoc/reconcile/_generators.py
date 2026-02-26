@@ -864,28 +864,102 @@ def _style_reqs_for_added_paras(
     first_para_actual_start is the actual position of the first added paragraph
     in the modified base doc after the gap's insertText has been applied.
     Subsequent paragraph positions are computed by accumulating UTF-16 lengths.
+
+    Consecutive list items with the same list_id (and no intervening non-paragraph
+    elements) are batched into a single createParagraphBullets call covering their
+    full range.  This ensures they form one list with sequential numbering (1, 2,
+    3 …) rather than separate 1-item lists all showing "1.".
+
     Results are sorted right-to-left so they are safe to interleave with gap ops.
     """
-    style_ops: list[tuple[int, list[dict[str, Any]]]] = []
+    # --- Phase 1: compute actual positions and record inter-element gaps ---
+    # Each entry: (actual_start, actual_end, element, gap_before)
+    # gap_before=True means a non-paragraph element (table, etc.) appeared
+    # between this paragraph and the previous one in real_adds.
+    para_records: list[tuple[int, int, StructuralElement, bool]] = []
     offset = first_para_actual_start
+    had_non_para = False
     for add in real_adds:
         el = add.desired_element
         if not el or not _is_paragraph(el):
             if el and _is_table(el) and el.table:
                 # Advance offset by table footprint + 1 (auto-trailing paragraph)
                 offset += _table_structural_size(el.table) + 1
+            had_non_para = True
             continue
         para_text = _para_text(el)
         para_len = utf16_len(para_text)
         actual_start = offset
         actual_end = offset + para_len
         offset = actual_end
+        para_records.append((actual_start, actual_end, el, had_non_para))
+        had_non_para = False
 
-        reqs = _generate_style_for_added_paragraph(
-            el, actual_start, actual_end, segment_id, tab_id, desired_lists
-        )
-        if reqs:
-            style_ops.append((actual_start, reqs))
+    # --- Phase 2: group bullet items, emit batched + individual style requests ---
+    style_ops: list[tuple[int, list[dict[str, Any]]]] = []
+    i = 0
+    while i < len(para_records):
+        actual_start, actual_end, el, _gap = para_records[i]
+        assert el.paragraph is not None
+        bullet = el.paragraph.bullet
+
+        if bullet is not None:
+            # Collect a run of consecutive list items sharing the same list_id.
+            list_id = bullet.list_id
+            preset = _infer_bullet_preset(list_id, desired_lists)
+            group: list[tuple[int, int, StructuralElement]] = [
+                (actual_start, actual_end, el)
+            ]
+            j = i + 1
+            while j < len(para_records):
+                n_start, n_end, n_el, n_gap = para_records[j]
+                assert n_el.paragraph is not None
+                n_bullet = n_el.paragraph.bullet
+                if n_bullet is not None and n_bullet.list_id == list_id and not n_gap:
+                    group.append((n_start, n_end, n_el))
+                    j += 1
+                else:
+                    break
+
+            # One createParagraphBullets spanning the whole group, followed by
+            # per-item updateParagraphStyle / updateTextStyle (right-to-left within
+            # the group so that index stability is preserved).
+            # All of this is bundled into a SINGLE style_ops entry at g_start so
+            # that createParagraphBullets is guaranteed to come before any of the
+            # per-item style overrides — even after the outer right-to-left sort.
+            g_start = group[0][0]
+            g_end = group[-1][1]
+
+            # Collect non-bullet reqs per item, then sort them right-to-left.
+            group_item_ops: list[tuple[int, list[dict[str, Any]]]] = []
+            for g_start_i, g_end_i, g_el in group:
+                reqs = _generate_style_for_added_paragraph(
+                    g_el, g_start_i, g_end_i, segment_id, tab_id, desired_lists
+                )
+                non_bullet = [r for r in reqs if "createParagraphBullets" not in r]
+                if non_bullet:
+                    group_item_ops.append((g_start_i, non_bullet))
+            group_item_ops.sort(key=lambda x: x[0], reverse=True)
+
+            group_reqs: list[dict[str, Any]] = [
+                _make_create_paragraph_bullets(
+                    g_start, g_end, preset, segment_id, tab_id
+                )
+            ]
+            for _, item_reqs in group_item_ops:
+                group_reqs.extend(item_reqs)
+
+            style_ops.append((g_start, group_reqs))
+
+            i = j
+        else:
+            # Non-list paragraph: generate all style reqs normally
+            reqs = _generate_style_for_added_paragraph(
+                el, actual_start, actual_end, segment_id, tab_id, desired_lists
+            )
+            if reqs:
+                style_ops.append((actual_start, reqs))
+            i += 1
 
     style_ops.sort(key=lambda x: x[0], reverse=True)
     result: list[dict[str, Any]] = []

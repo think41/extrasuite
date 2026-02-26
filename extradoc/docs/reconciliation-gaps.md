@@ -24,6 +24,14 @@ The reconciler now calls `_infer_bullet_preset(desired_se, desired_lists)` which
 
 Style requests (`updateParagraphStyle`, `updateTextStyle`, `createParagraphBullets`) were only generated for MATCHED paragraphs. Paragraphs in the ADDED group (trailing gap or inner gap) received `insertText` only with no styles applied. Fixed by adding `_generate_style_for_added_paragraph()` and `_style_reqs_for_added_paras()` in `_generators.py`.
 
+### Consecutive added list items each created their own list — FIXED
+
+When multiple `<li>` items were added to a document, each one received its own `createParagraphBullets` call covering only its own range. The Google Docs API creates a new list per call, so every item showed "1." instead of "1., 2., 3. …".
+
+The serde layer already groups consecutive same-type `<li>` items into the same synthetic `list_id` via `_assign_synthetic_list_ids`. The reconciler now detects this: consecutive ADDED list items sharing the same `list_id` (with no intervening non-paragraph elements) are batched into a single `createParagraphBullets` call spanning their full range. The Google Docs API auto-join behaviour then extends this to the "add items to an existing list" case — if the paragraph immediately before the batch is already in a matching-preset list, the new items join that list automatically.
+
+Per-item `updateParagraphStyle` / `updateTextStyle` requests are still generated individually for indent overrides (nesting levels) and text styles, ordered right-to-left after the `createParagraphBullets` within the same `style_ops` entry.
+
 ### Style requests dropped when added content contains tables — FIXED
 
 When a gap's added elements included both paragraphs and tables, the `has_tables=True` code path in `_process_inner_gap` and `_process_trailing_gap` called `_insert_adds_individually` / `_process_trailing_adds_with_tables` to handle inserts but never called `_style_reqs_for_added_paras`. All headings, inline styles, and bullets following or mixed with tables were silently dropped.

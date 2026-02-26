@@ -3399,3 +3399,314 @@ class TestReconcileBulletPreset:
         result = reconcile(base, desired)
         preset = _get_bullet_preset_from_result(result)
         assert preset == "BULLET_DISC_CIRCLE_SQUARE"
+
+
+# ---------------------------------------------------------------------------
+# List grouping: consecutive added items → one createParagraphBullets
+# ---------------------------------------------------------------------------
+
+
+def _make_doc_with_list_items(
+    items: list[tuple[str, int]],
+    preset: str = "BULLET_DISC_CIRCLE_SQUARE",
+    list_id: str = "list1",
+    tab_id: str = "t.0",
+) -> Document:
+    """Build a Document with multiple list items sharing the same list_id.
+
+    items: list of (text, nesting_level) pairs.
+    """
+    nesting_levels = _make_nesting_levels_for_preset(preset)
+    content: list[dict[str, Any]] = [{"sectionBreak": {}}]
+    for text, level in items:
+        if not text.endswith("\n"):
+            text = text + "\n"
+        bullet: dict[str, Any] = {"listId": list_id}
+        if level > 0:
+            bullet["nestingLevel"] = level
+        content.append(
+            {
+                "paragraph": {
+                    "elements": [{"textRun": {"content": text}}],
+                    "bullet": bullet,
+                    "paragraphStyle": {
+                        "indentFirstLine": {
+                            "magnitude": 18 + level * 36,
+                            "unit": "PT",
+                        },
+                        "indentStart": {
+                            "magnitude": 36 + level * 36,
+                            "unit": "PT",
+                        },
+                    },
+                }
+            }
+        )
+    return reindex_document(
+        Document.model_validate(
+            {
+                "documentId": "test",
+                "tabs": [
+                    {
+                        "tabProperties": {"tabId": tab_id},
+                        "documentTab": {
+                            "body": {"content": content},
+                            "lists": {
+                                list_id: {
+                                    "listProperties": {"nestingLevels": nesting_levels}
+                                }
+                            },
+                        },
+                    }
+                ],
+            }
+        )
+    )
+
+
+def _count_create_bullet_reqs(result: Any) -> int:
+    """Count the total number of createParagraphBullets requests in the result."""
+    count = 0
+    for batch in result:
+        for req in batch.requests or []:
+            d = req.model_dump(by_alias=True, exclude_none=True)
+            if "createParagraphBullets" in d:
+                count += 1
+    return count
+
+
+def _get_all_bullet_ranges(result: Any) -> list[tuple[int, int]]:
+    """Return (startIndex, endIndex) for every createParagraphBullets request."""
+    ranges = []
+    for batch in result:
+        for req in batch.requests or []:
+            d = req.model_dump(by_alias=True, exclude_none=True)
+            if "createParagraphBullets" in d:
+                r = d["createParagraphBullets"]["range"]
+                ranges.append((r["startIndex"], r["endIndex"]))
+    return ranges
+
+
+class TestListGrouping:
+    """Consecutive ADDED list items are batched into one createParagraphBullets."""
+
+    def test_single_bullet_item_unchanged(self):
+        """Single bullet item still produces exactly one createParagraphBullets."""
+        base = _make_doc("Placeholder")
+        desired = _make_doc_with_list_items([("Only item", 0)])
+        result = reconcile(base, desired)
+        assert _count_create_bullet_reqs(result) == 1
+        ok, diffs = verify(base, result, desired)
+        assert ok, f"Diffs: {diffs}"
+
+    def test_consecutive_bullets_produce_one_request(self):
+        """Three consecutive bullet items → one createParagraphBullets covering all."""
+        base = _make_doc("")
+        desired = _make_doc_with_list_items([("First", 0), ("Second", 0), ("Third", 0)])
+        result = reconcile(base, desired)
+        assert _count_create_bullet_reqs(result) == 1
+        ok, diffs = verify(base, result, desired)
+        assert ok, f"Diffs: {diffs}"
+
+    def test_consecutive_bullets_range_spans_all_items(self):
+        """The single createParagraphBullets range starts at item 1 and ends at item N."""
+        base = _make_doc("")
+        desired = _make_doc_with_list_items([("Alpha", 0), ("Beta", 0), ("Gamma", 0)])
+        result = reconcile(base, desired)
+        ranges = _get_all_bullet_ranges(result)
+        assert len(ranges) == 1, f"Expected 1 range, got {ranges}"
+        # The range must span from the first item's start to the last item's end.
+        # We don't assert exact indices (they depend on insert order), but start < end.
+        start, end = ranges[0]
+        assert start < end
+
+    def test_nested_levels_in_same_group(self):
+        """Items at different nesting levels but same list_id → one createParagraphBullets."""
+        base = _make_doc("")
+        desired = _make_doc_with_list_items(
+            [("Top", 0), ("Nested", 1), ("Deep", 2), ("Top again", 0)]
+        )
+        result = reconcile(base, desired)
+        assert _count_create_bullet_reqs(result) == 1
+        ok, diffs = verify(base, result, desired)
+        assert ok, f"Diffs: {diffs}"
+
+    def test_paragraph_break_splits_groups(self):
+        """A plain paragraph between list items produces two createParagraphBullets."""
+        base = _make_doc("")
+        # Build desired manually: list item, plain para, list item (different list_id)
+        nesting_levels = _make_nesting_levels_for_preset("BULLET_DISC_CIRCLE_SQUARE")
+        desired = reindex_document(
+            Document.model_validate(
+                {
+                    "documentId": "test",
+                    "tabs": [
+                        {
+                            "tabProperties": {"tabId": "t.0"},
+                            "documentTab": {
+                                "body": {
+                                    "content": [
+                                        {"sectionBreak": {}},
+                                        {
+                                            "paragraph": {
+                                                "elements": [
+                                                    {"textRun": {"content": "Item A\n"}}
+                                                ],
+                                                "bullet": {"listId": "list1"},
+                                                "paragraphStyle": {
+                                                    "indentFirstLine": {
+                                                        "magnitude": 18,
+                                                        "unit": "PT",
+                                                    },
+                                                    "indentStart": {
+                                                        "magnitude": 36,
+                                                        "unit": "PT",
+                                                    },
+                                                },
+                                            }
+                                        },
+                                        {
+                                            "paragraph": {
+                                                "elements": [
+                                                    {
+                                                        "textRun": {
+                                                            "content": "Break para\n"
+                                                        }
+                                                    }
+                                                ]
+                                            }
+                                        },
+                                        {
+                                            "paragraph": {
+                                                "elements": [
+                                                    {"textRun": {"content": "Item B\n"}}
+                                                ],
+                                                "bullet": {"listId": "list2"},
+                                                "paragraphStyle": {
+                                                    "indentFirstLine": {
+                                                        "magnitude": 18,
+                                                        "unit": "PT",
+                                                    },
+                                                    "indentStart": {
+                                                        "magnitude": 36,
+                                                        "unit": "PT",
+                                                    },
+                                                },
+                                            }
+                                        },
+                                    ]
+                                },
+                                "lists": {
+                                    "list1": {
+                                        "listProperties": {
+                                            "nestingLevels": nesting_levels
+                                        }
+                                    },
+                                    "list2": {
+                                        "listProperties": {
+                                            "nestingLevels": nesting_levels
+                                        }
+                                    },
+                                },
+                            },
+                        }
+                    ],
+                }
+            )
+        )
+        result = reconcile(base, desired)
+        assert _count_create_bullet_reqs(result) == 2
+
+    def test_different_presets_produce_separate_requests(self):
+        """Bullet then decimal (different list_id) → two createParagraphBullets calls."""
+        nesting_bullet = _make_nesting_levels_for_preset("BULLET_DISC_CIRCLE_SQUARE")
+        nesting_decimal = _make_nesting_levels_for_preset("NUMBERED_DECIMAL_NESTED")
+        base = _make_doc("")
+        desired = reindex_document(
+            Document.model_validate(
+                {
+                    "documentId": "test",
+                    "tabs": [
+                        {
+                            "tabProperties": {"tabId": "t.0"},
+                            "documentTab": {
+                                "body": {
+                                    "content": [
+                                        {"sectionBreak": {}},
+                                        {
+                                            "paragraph": {
+                                                "elements": [
+                                                    {
+                                                        "textRun": {
+                                                            "content": "Bullet item\n"
+                                                        }
+                                                    }
+                                                ],
+                                                "bullet": {"listId": "blist"},
+                                                "paragraphStyle": {
+                                                    "indentFirstLine": {
+                                                        "magnitude": 18,
+                                                        "unit": "PT",
+                                                    },
+                                                    "indentStart": {
+                                                        "magnitude": 36,
+                                                        "unit": "PT",
+                                                    },
+                                                },
+                                            }
+                                        },
+                                        {
+                                            "paragraph": {
+                                                "elements": [
+                                                    {
+                                                        "textRun": {
+                                                            "content": "Numbered item\n"
+                                                        }
+                                                    }
+                                                ],
+                                                "bullet": {"listId": "nlist"},
+                                                "paragraphStyle": {
+                                                    "indentFirstLine": {
+                                                        "magnitude": 18,
+                                                        "unit": "PT",
+                                                    },
+                                                    "indentStart": {
+                                                        "magnitude": 36,
+                                                        "unit": "PT",
+                                                    },
+                                                },
+                                            }
+                                        },
+                                    ]
+                                },
+                                "lists": {
+                                    "blist": {
+                                        "listProperties": {
+                                            "nestingLevels": nesting_bullet
+                                        }
+                                    },
+                                    "nlist": {
+                                        "listProperties": {
+                                            "nestingLevels": nesting_decimal
+                                        }
+                                    },
+                                },
+                            },
+                        }
+                    ],
+                }
+            )
+        )
+        result = reconcile(base, desired)
+        assert _count_create_bullet_reqs(result) == 2
+
+    def test_consecutive_numbered_items_verify(self):
+        """Three decimal items reconcile and verify correctly."""
+        base = _make_doc("")
+        desired = _make_doc_with_list_items(
+            [("First", 0), ("Second", 0), ("Third", 0)],
+            preset="NUMBERED_DECIMAL_NESTED",
+        )
+        result = reconcile(base, desired)
+        assert _count_create_bullet_reqs(result) == 1
+        # verify() skipped — mock simplifies numbered glyph types
