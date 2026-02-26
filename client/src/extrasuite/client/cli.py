@@ -839,6 +839,206 @@ def cmd_calendar_view(args: Any) -> None:
     print(format_events_markdown(events))
 
 
+def cmd_calendar_list(args: Any) -> None:
+    """List all calendars the user has access to."""
+    from extrasuite.client.google_api import format_calendars_markdown, list_calendars
+
+    access_token = _get_oauth_token(
+        args,
+        scopes=["calendar"],
+        reason="List calendars",
+    )
+    calendars = list_calendars(access_token)
+    print(format_calendars_markdown(calendars))
+
+
+def cmd_calendar_search(args: Any) -> None:
+    """Search calendar events by title or attendee."""
+    from extrasuite.client.google_api import (
+        format_events_markdown,
+        parse_time_value,
+        search_calendar_events,
+    )
+
+    if not args.query and not args.attendee:
+        print("Error: provide --query or --attendee (or both).", file=sys.stderr)
+        sys.exit(1)
+
+    from_val = args.fr or "today"
+    to_val = args.to
+
+    time_min, _ = parse_time_value(from_val)
+    if to_val:
+        _, time_max = parse_time_value(to_val)
+    else:
+        from datetime import timedelta
+
+        time_max = time_min + timedelta(days=30)
+
+    access_token = _get_oauth_token(
+        args,
+        scopes=["calendar"],
+        reason="Search calendar events",
+    )
+
+    events = search_calendar_events(
+        access_token,
+        query=args.query,
+        attendee=args.attendee,
+        calendar_id=args.calendar,
+        time_min=time_min,
+        time_max=time_max,
+    )
+
+    print(format_events_markdown(events))
+
+
+def cmd_calendar_freebusy(args: Any) -> None:
+    """Check free/busy for a set of attendees."""
+    from extrasuite.client.google_api import (
+        format_freebusy_markdown,
+        get_freebusy,
+        parse_time_value,
+    )
+
+    attendees: list[str] = args.attendees
+    if not attendees:
+        print("Error: provide at least one --attendees email.", file=sys.stderr)
+        sys.exit(1)
+
+    time_min, time_max = parse_time_value(args.when)
+    access_token = _get_oauth_token(
+        args,
+        scopes=["calendar"],
+        reason="Check free/busy",
+    )
+
+    result = get_freebusy(access_token, attendees, time_min, time_max)
+    print(format_freebusy_markdown(result, attendees, time_min, time_max))
+
+
+def cmd_calendar_create(args: Any) -> None:
+    """Create a calendar event from a JSON file."""
+    import json as _json
+
+    from extrasuite.client.google_api import (
+        create_calendar_event,
+        format_created_event_markdown,
+    )
+
+    json_path = args.json
+    if json_path == "-":
+        event_json = _json.load(sys.stdin)
+    else:
+        event_json = _json.loads(Path(json_path).read_text())
+
+    calendar_id = event_json.pop("calendar", None) or args.calendar
+    send_notifications = event_json.pop("send_notifications", True)
+
+    access_token = _get_oauth_token(
+        args,
+        scopes=["calendar"],
+        reason="Create calendar event",
+    )
+
+    event = create_calendar_event(
+        access_token,
+        event_json,
+        calendar_id=calendar_id,
+        send_notifications=send_notifications,
+    )
+    print(format_created_event_markdown(event))
+
+
+def cmd_calendar_update(args: Any) -> None:
+    """Update an existing calendar event from a JSON patch file."""
+    import json as _json
+
+    from extrasuite.client.google_api import (
+        format_updated_event_markdown,
+        update_calendar_event,
+    )
+
+    json_path = args.json
+    if json_path == "-":
+        patch_json = _json.load(sys.stdin)
+    else:
+        patch_json = _json.loads(Path(json_path).read_text())
+
+    calendar_id = patch_json.pop("calendar", None) or args.calendar
+    send_notifications = not args.no_notify
+
+    access_token = _get_oauth_token(
+        args,
+        scopes=["calendar"],
+        reason="Update calendar event",
+    )
+
+    event = update_calendar_event(
+        access_token,
+        args.event_id,
+        patch_json,
+        calendar_id=calendar_id,
+        send_notifications=send_notifications,
+    )
+    print(format_updated_event_markdown(event))
+
+
+def cmd_calendar_delete(args: Any) -> None:
+    """Delete (cancel) a calendar event."""
+    from extrasuite.client.google_api import delete_calendar_event
+
+    access_token = _get_oauth_token(
+        args,
+        scopes=["calendar"],
+        reason="Delete calendar event",
+    )
+
+    delete_calendar_event(
+        access_token,
+        args.event_id,
+        calendar_id=args.calendar,
+        send_notifications=not args.no_notify,
+        this_and_following=args.this_and_following,
+    )
+    print(f"Event {args.event_id} cancelled.")
+    if not args.no_notify:
+        print("Cancellation notifications sent to attendees.")
+
+
+def cmd_calendar_rsvp(args: Any) -> None:
+    """Accept, decline, or mark tentative for an event."""
+    from extrasuite.client.google_api import rsvp_calendar_event
+
+    access_token = _get_oauth_token(
+        args,
+        scopes=["calendar"],
+        reason="RSVP to calendar event",
+    )
+
+    # Normalize short forms to API values
+    response_map = {
+        "accept": "accepted",
+        "decline": "declined",
+        "tentative": "tentative",
+    }
+    api_response = response_map.get(args.response, args.response)
+
+    event = rsvp_calendar_event(
+        access_token,
+        args.event_id,
+        response=api_response,
+        comment=args.comment,
+        calendar_id=args.calendar,
+    )
+    summary = event.get("summary", args.event_id)
+    label = {"accepted": "Accepted", "declined": "Declined", "tentative": "Tentative"}
+    print(f"RSVP updated: {summary}")
+    print(f"Response: {label.get(api_response, api_response)}")
+    if args.comment:
+        print(f'Comment: "{args.comment}"')
+
+
 # --- Argument Parser ---
 
 
@@ -1247,6 +1447,134 @@ def build_parser() -> Any:
         help="Time range: today, tomorrow, yesterday, this-week, next-week, or YYYY-MM-DD (default: today)",
     )
 
+    calendar_sub.add_parser(
+        "list",
+        help="List all calendars",
+        parents=[auth_parent],
+        description=_load_help("calendar", "list"),
+        formatter_class=argparse.RawDescriptionHelpFormatter,
+    )
+
+    sp = calendar_sub.add_parser(
+        "search",
+        help="Search calendar events by title or attendee",
+        parents=[auth_parent],
+        description=_load_help("calendar", "search"),
+        formatter_class=argparse.RawDescriptionHelpFormatter,
+    )
+    sp.add_argument("--query", help="Search text (title and description)")
+    sp.add_argument("--attendee", help="Filter by attendee email")
+    sp.add_argument(
+        "--from", dest="fr", metavar="DATE", help="Start date (default: today)"
+    )
+    sp.add_argument(
+        "--to", metavar="DATE", help="End date (default: 30 days from --from)"
+    )
+    sp.add_argument(
+        "--calendar", default="primary", help="Calendar ID (default: primary)"
+    )
+
+    sp = calendar_sub.add_parser(
+        "freebusy",
+        help="Check free/busy for a list of people",
+        parents=[auth_parent],
+        description=_load_help("calendar", "freebusy"),
+        formatter_class=argparse.RawDescriptionHelpFormatter,
+    )
+    sp.add_argument(
+        "--attendees",
+        nargs="+",
+        metavar="EMAIL",
+        required=True,
+        help="One or more email addresses to check",
+    )
+    sp.add_argument(
+        "--when",
+        default="next-week",
+        help="Time range: today, tomorrow, this-week, next-week, or YYYY-MM-DD (default: next-week)",
+    )
+
+    sp = calendar_sub.add_parser(
+        "create",
+        help="Create a calendar event from a JSON file",
+        parents=[auth_parent],
+        description=_load_help("calendar", "create"),
+        formatter_class=argparse.RawDescriptionHelpFormatter,
+    )
+    sp.add_argument(
+        "--json",
+        required=True,
+        metavar="PATH",
+        help="Path to event JSON file, or - to read from stdin",
+    )
+    sp.add_argument(
+        "--calendar", default="primary", help="Calendar ID (default: primary)"
+    )
+
+    sp = calendar_sub.add_parser(
+        "update",
+        help="Update an existing calendar event",
+        parents=[auth_parent],
+        description=_load_help("calendar", "update"),
+        formatter_class=argparse.RawDescriptionHelpFormatter,
+    )
+    sp.add_argument("event_id", help="Event ID to update (from view/search output)")
+    sp.add_argument(
+        "--json",
+        required=True,
+        metavar="PATH",
+        help="Path to patch JSON file, or - to read from stdin",
+    )
+    sp.add_argument(
+        "--calendar", default="primary", help="Calendar ID (default: primary)"
+    )
+    sp.add_argument(
+        "--no-notify",
+        action="store_true",
+        help="Suppress update notifications to attendees",
+    )
+
+    sp = calendar_sub.add_parser(
+        "delete",
+        help="Cancel/delete a calendar event",
+        parents=[auth_parent],
+        description=_load_help("calendar", "delete"),
+        formatter_class=argparse.RawDescriptionHelpFormatter,
+    )
+    sp.add_argument("event_id", help="Event ID to delete (from view/search output)")
+    sp.add_argument(
+        "--calendar", default="primary", help="Calendar ID (default: primary)"
+    )
+    sp.add_argument(
+        "--no-notify",
+        action="store_true",
+        help="Suppress cancellation notifications to attendees",
+    )
+    sp.add_argument(
+        "--this-and-following",
+        action="store_true",
+        help="For recurring events: cancel this occurrence and all following",
+    )
+
+    sp = calendar_sub.add_parser(
+        "rsvp",
+        help="Accept, decline, or mark tentative for an event",
+        parents=[auth_parent],
+        description=_load_help("calendar", "rsvp"),
+        formatter_class=argparse.RawDescriptionHelpFormatter,
+    )
+    sp.add_argument("event_id", help="Event ID (from view/search output)")
+    sp.add_argument(
+        "--response",
+        required=True,
+        choices=["accept", "decline", "tentative"],
+        help="Your RSVP response",
+    )
+    sp.add_argument("--comment", help="Optional message to include with your response")
+    sp.add_argument(
+        "--calendar", default="primary", help="Calendar ID (default: primary)"
+    )
+
     sp = calendar_sub.add_parser(
         "help",
         help="Show reference documentation",
@@ -1324,6 +1652,13 @@ _COMMANDS: dict[tuple[str, str | None], Any] = {
     ("gmail", "compose"): cmd_gmail_compose,
     ("gmail", "edit-draft"): cmd_gmail_edit_draft,
     ("calendar", "view"): cmd_calendar_view,
+    ("calendar", "list"): cmd_calendar_list,
+    ("calendar", "search"): cmd_calendar_search,
+    ("calendar", "freebusy"): cmd_calendar_freebusy,
+    ("calendar", "create"): cmd_calendar_create,
+    ("calendar", "update"): cmd_calendar_update,
+    ("calendar", "delete"): cmd_calendar_delete,
+    ("calendar", "rsvp"): cmd_calendar_rsvp,
     ("contacts", "sync"): cmd_contacts_sync,
     ("contacts", "search"): cmd_contacts_search,
     ("contacts", "touch"): cmd_contacts_touch,

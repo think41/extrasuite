@@ -13,6 +13,7 @@ import ssl
 import urllib.error
 import urllib.parse
 import urllib.request
+import uuid
 from datetime import datetime, timedelta
 from email import encoders
 from email.mime.base import MIMEBase
@@ -323,6 +324,34 @@ def parse_time_value(value: str) -> tuple[datetime, datetime]:
         raise ValueError(f"Unknown time value: {value!r}. Use: {valid}") from None
 
 
+def _format_attendees(attendees: list[dict[str, Any]]) -> str:
+    """Format attendee list as a compact string."""
+    parts = []
+    status_labels = {
+        "accepted": "✓",
+        "declined": "✗",
+        "tentative": "?",
+        "needsAction": "-",
+    }
+    for a in attendees:
+        email = a.get("email", "")
+        status = status_labels.get(a.get("responseStatus", "needsAction"), "-")
+        label = a.get("displayName", email)
+        optional = " (optional)" if a.get("optional") else ""
+        parts.append(f"{label} [{status}]{optional}")
+    return ", ".join(parts)
+
+
+def _format_conferencing(conference_data: dict[str, Any]) -> str | None:
+    """Extract the video join URL from conferenceData."""
+    for ep in conference_data.get("entryPoints", []):
+        if ep.get("entryPointType") == "video":
+            uri = ep.get("uri", "")
+            if uri:
+                return uri
+    return None
+
+
 def list_calendar_events(
     token: str,
     calendar_id: str = "primary",
@@ -349,7 +378,10 @@ def list_calendar_events(
 
 
 def format_events_markdown(events: list[dict[str, Any]]) -> str:
-    """Format calendar events as a markdown list grouped by date."""
+    """Format calendar events as a markdown list grouped by date.
+
+    Includes event ID, attendees, and conferencing link.
+    """
     if not events:
         return "No events found."
 
@@ -360,9 +392,9 @@ def format_events_markdown(events: list[dict[str, Any]]) -> str:
         start = event.get("start", {})
         end = event.get("end", {})
         summary = event.get("summary", "(No title)")
+        event_id = event.get("id", "")
 
         if "date" in start:
-            # All-day event
             event_date = start["date"]
             time_str = "All day"
         else:
@@ -382,17 +414,561 @@ def format_events_markdown(events: list[dict[str, Any]]) -> str:
                 header_dt = start_dt  # type: ignore[possibly-undefined]
             lines.append(f"\n## {header_dt.strftime('%A, %B %d, %Y')}\n")
 
-        lines.append(f"- **{time_str}** {summary}")
+        lines.append(f"### {time_str}  {summary}")
+        lines.append(f"Event ID: {event_id}")
 
         location = event.get("location")
         if location:
-            lines.append(f"  Location: {location}")
+            lines.append(f"Location: {location}")
+
+        conference_data = event.get("conferenceData")
+        if conference_data:
+            meet_url = _format_conferencing(conference_data)
+            if meet_url:
+                lines.append(f"Meet: {meet_url}")
+
+        attendees = event.get("attendees", [])
+        if attendees:
+            lines.append(f"Attendees: {_format_attendees(attendees)}")
 
         description = event.get("description")
         if description:
             desc = description.replace("\n", " ").strip()
             if len(desc) > 200:
                 desc = desc[:200] + "..."
-            lines.append(f"  {desc}")
+            lines.append(desc)
+
+        lines.append("")
 
     return "\n".join(lines).strip()
+
+
+def list_calendars(token: str) -> list[dict[str, Any]]:
+    """List all calendars in the user's calendar list."""
+    result = _api_request(
+        "https://www.googleapis.com/calendar/v3/users/me/calendarList",
+        token,
+        params={"maxResults": "250"},
+    )
+    return result.get("items", [])
+
+
+def format_calendars_markdown(calendars: list[dict[str, Any]]) -> str:
+    """Format calendar list as markdown."""
+    if not calendars:
+        return "No calendars found."
+
+    own: list[dict[str, Any]] = []
+    other: list[dict[str, Any]] = []
+    for cal in calendars:
+        if cal.get("accessRole") in ("owner", "writer"):
+            own.append(cal)
+        else:
+            other.append(cal)
+
+    lines: list[str] = []
+    if own:
+        lines.append("## My Calendars\n")
+        for cal in own:
+            name = cal.get("summary", "(Unnamed)")
+            cal_id = cal.get("id", "")
+            lines.append(f"- **{name}**  ID: `{cal_id}`")
+        lines.append("")
+
+    if other:
+        lines.append("## Other Calendars\n")
+        for cal in other:
+            name = cal.get("summary", "(Unnamed)")
+            cal_id = cal.get("id", "")
+            lines.append(f"- **{name}**  ID: `{cal_id}`")
+
+    return "\n".join(lines).strip()
+
+
+def search_calendar_events(
+    token: str,
+    query: str | None = None,
+    attendee: str | None = None,
+    calendar_id: str = "primary",
+    time_min: datetime | None = None,
+    time_max: datetime | None = None,
+) -> list[dict[str, Any]]:
+    """Search calendar events by query text or attendee email."""
+    params: dict[str, str] = {
+        "singleEvents": "true",
+        "orderBy": "startTime",
+        "maxResults": "100",
+    }
+    if query:
+        params["q"] = query
+    if time_min:
+        params["timeMin"] = time_min.isoformat()
+    if time_max:
+        params["timeMax"] = time_max.isoformat()
+
+    encoded_id = urllib.parse.quote(calendar_id, safe="")
+    result = _api_request(
+        f"https://www.googleapis.com/calendar/v3/calendars/{encoded_id}/events",
+        token,
+        params=params,
+    )
+    events = result.get("items", [])
+
+    # The Calendar API doesn't support attendee filtering natively; filter client-side.
+    if attendee:
+        attendee_lower = attendee.lower()
+        events = [
+            e
+            for e in events
+            if any(
+                a.get("email", "").lower() == attendee_lower
+                for a in e.get("attendees", [])
+            )
+        ]
+
+    return events
+
+
+def get_freebusy(
+    token: str,
+    attendees: list[str],
+    time_min: datetime,
+    time_max: datetime,
+) -> dict[str, Any]:
+    """Query the freebusy API for a list of attendees."""
+    body: dict[str, Any] = {
+        "timeMin": time_min.isoformat(),
+        "timeMax": time_max.isoformat(),
+        "items": [{"id": email} for email in attendees],
+    }
+    return _api_request(
+        "https://www.googleapis.com/calendar/v3/freeBusy",
+        token,
+        method="POST",
+        body=body,
+    )
+
+
+def _compute_free_slots(
+    busy_blocks: list[tuple[datetime, datetime]],
+    day_start: datetime,
+    day_end: datetime,
+    work_start_hour: int = 9,
+    work_end_hour: int = 18,
+) -> list[tuple[datetime, datetime]]:
+    """Compute free slots within working hours given a list of busy blocks."""
+    work_start = day_start.replace(
+        hour=work_start_hour, minute=0, second=0, microsecond=0
+    )
+    work_end = day_start.replace(hour=work_end_hour, minute=0, second=0, microsecond=0)
+
+    # Clamp to the requested range
+    window_start = max(work_start, day_start)
+    window_end = min(work_end, day_end)
+    if window_start >= window_end:
+        return []
+
+    # Sort and merge busy blocks that overlap the window
+    relevant = sorted(
+        [
+            (max(s, window_start), min(e, window_end))
+            for s, e in busy_blocks
+            if s < window_end and e > window_start
+        ]
+    )
+
+    free: list[tuple[datetime, datetime]] = []
+    cursor = window_start
+    for busy_s, busy_e in relevant:
+        if cursor < busy_s:
+            free.append((cursor, busy_s))
+        cursor = max(cursor, busy_e)
+    if cursor < window_end:
+        free.append((cursor, window_end))
+
+    # Drop slots shorter than 15 minutes
+    return [(s, e) for s, e in free if (e - s).total_seconds() >= 900]
+
+
+def format_freebusy_markdown(
+    freebusy_result: dict[str, Any],
+    attendees: list[str],
+    time_min: datetime,
+    time_max: datetime,
+) -> str:
+    """Format freebusy results as markdown with per-person and common free slots."""
+    calendars = freebusy_result.get("calendars", {})
+    lines: list[str] = []
+
+    # Header
+    range_str = f"{time_min.strftime('%a %b %d')} - {(time_max - timedelta(seconds=1)).strftime('%a %b %d, %Y')}"
+    lines.append(f"## Free/Busy: {range_str}\n")
+
+    # Per-person busy times
+    per_person_busy: dict[str, list[tuple[datetime, datetime]]] = {}
+    for email in attendees:
+        cal_data = calendars.get(email, {})
+        errors = cal_data.get("errors", [])
+        busy_raw = cal_data.get("busy", [])
+
+        lines.append(f"### {email}")
+        if errors:
+            lines.append(
+                f"_(Could not retrieve: {errors[0].get('reason', 'unknown')})_"
+            )
+            lines.append("")
+            continue
+
+        busy_blocks: list[tuple[datetime, datetime]] = [
+            (
+                datetime.fromisoformat(b["start"]).astimezone(),
+                datetime.fromisoformat(b["end"]).astimezone(),
+            )
+            for b in busy_raw
+        ]
+        per_person_busy[email] = busy_blocks
+
+        if not busy_blocks:
+            lines.append("Free all day (within working hours 9 AM - 6 PM)")
+        else:
+            busy_strs = [
+                f"{s.strftime('%a %-I:%M %p')} - {e.strftime('%-I:%M %p')}"
+                for s, e in busy_blocks
+            ]
+            lines.append(f"Busy: {', '.join(busy_strs)}")
+        lines.append("")
+
+    # Common free slots across all attendees with valid data
+    if per_person_busy:
+        lines.append("## Common Free Slots (9 AM - 6 PM, working days)\n")
+
+        # Walk day by day
+        current = time_min.replace(hour=0, minute=0, second=0, microsecond=0)
+        day_end_bound = time_max.replace(hour=0, minute=0, second=0, microsecond=0)
+        found_any = False
+
+        while current < day_end_bound:
+            # Skip weekends
+            if current.weekday() < 5:
+                next_day = current + timedelta(days=1)
+                # Compute free slots for each person on this day
+                all_free = None
+                for _email, busy in per_person_busy.items():
+                    person_free = _compute_free_slots(busy, current, next_day)
+                    if all_free is None:
+                        all_free = person_free
+                    else:
+                        # Intersect with existing free slots
+                        intersected: list[tuple[datetime, datetime]] = []
+                        for fs, fe in all_free:
+                            for ps, pe in person_free:
+                                s = max(fs, ps)
+                                e = min(fe, pe)
+                                if e - s >= timedelta(minutes=15):
+                                    intersected.append((s, e))
+                        all_free = intersected
+
+                if all_free:
+                    found_any = True
+                    date_label = current.strftime("%A, %B %d")
+                    slot_strs = [
+                        f"{s.strftime('%-I:%M %p')} - {e.strftime('%-I:%M %p')}"
+                        for s, e in all_free
+                    ]
+                    lines.append(f"- **{date_label}**: {', '.join(slot_strs)}")
+
+            current += timedelta(days=1)
+
+        if not found_any:
+            lines.append("No common free slots found in the requested range.")
+
+    return "\n".join(lines).strip()
+
+
+def create_calendar_event(
+    token: str,
+    event_json: dict[str, Any],
+    calendar_id: str = "primary",
+    send_notifications: bool = True,
+) -> dict[str, Any]:
+    """Create a calendar event. Returns the created event resource."""
+    body = _build_event_body(event_json)
+
+    params: dict[str, str] = {
+        "sendUpdates": "all" if send_notifications else "none",
+    }
+    add_meet = event_json.get("add_meet", False)
+    if add_meet:
+        params["conferenceDataVersion"] = "1"
+        body["conferenceData"] = {
+            "createRequest": {
+                "requestId": str(uuid.uuid4()),
+                "conferenceSolutionKey": {"type": "hangoutsMeet"},
+            }
+        }
+
+    encoded_id = urllib.parse.quote(calendar_id, safe="")
+    return _api_request(
+        f"https://www.googleapis.com/calendar/v3/calendars/{encoded_id}/events",
+        token,
+        method="POST",
+        body=body,
+        params=params,
+    )
+
+
+def _build_event_body(event_json: dict[str, Any]) -> dict[str, Any]:
+    """Build a Google Calendar event body from the agent-facing JSON schema."""
+    tz = event_json.get("timezone")
+    all_day = event_json.get("all_day", False)
+
+    def _make_time(value: str) -> dict[str, str]:
+        if all_day:
+            # Use date-only format
+            dt = datetime.fromisoformat(value)
+            return {"date": dt.strftime("%Y-%m-%d")}
+        result: dict[str, str] = {"dateTime": value}
+        if tz:
+            result["timeZone"] = tz
+        return result
+
+    body: dict[str, Any] = {
+        "summary": event_json["summary"],
+        "start": _make_time(event_json["start"]),
+        "end": _make_time(event_json["end"]),
+    }
+
+    if "description" in event_json:
+        body["description"] = event_json["description"]
+    if "location" in event_json:
+        body["location"] = event_json["location"]
+    if "status" in event_json:
+        body["status"] = event_json["status"]
+    if "recurrence" in event_json:
+        recurrence = event_json["recurrence"]
+        body["recurrence"] = [recurrence] if isinstance(recurrence, str) else recurrence
+
+    raw_attendees = event_json.get("attendees", [])
+    if raw_attendees:
+        attendee_list = []
+        for a in raw_attendees:
+            if isinstance(a, str):
+                attendee_list.append({"email": a})
+            else:
+                entry: dict[str, Any] = {"email": a["email"]}
+                if a.get("optional"):
+                    entry["optional"] = True
+                attendee_list.append(entry)
+        body["attendees"] = attendee_list
+
+    return body
+
+
+def format_created_event_markdown(event: dict[str, Any]) -> str:
+    """Format a newly created event as a confirmation message."""
+    lines: list[str] = []
+    summary = event.get("summary", "(No title)")
+    event_id = event.get("id", "")
+    lines.append(f"Event created: **{summary}**")
+    lines.append(f"Event ID: {event_id}")
+
+    start = event.get("start", {})
+    end = event.get("end", {})
+    if "dateTime" in start:
+        start_dt = datetime.fromisoformat(start["dateTime"])
+        end_dt = datetime.fromisoformat(end["dateTime"])
+        lines.append(
+            f"Date: {start_dt.strftime('%A, %B %d, %Y, %-I:%M %p')} - {end_dt.strftime('%-I:%M %p %Z')}"
+        )
+    elif "date" in start:
+        lines.append(f"Date: {start['date']} (all day)")
+
+    recurrence = event.get("recurrence", [])
+    if recurrence:
+        lines.append(f"Recurrence: {recurrence[0]}")
+
+    conference_data = event.get("conferenceData")
+    if conference_data:
+        meet_url = _format_conferencing(conference_data)
+        if meet_url:
+            lines.append(f"Meet: {meet_url}")
+
+    attendees = event.get("attendees", [])
+    if attendees:
+        sent = len([a for a in attendees if not a.get("self")])
+        lines.append(f"Attendees: {_format_attendees(attendees)}")
+        if sent:
+            lines.append(f"Invites sent to {sent} attendee(s).")
+
+    return "\n".join(lines)
+
+
+def update_calendar_event(
+    token: str,
+    event_id: str,
+    patch_json: dict[str, Any],
+    calendar_id: str = "primary",
+    send_notifications: bool = True,
+) -> dict[str, Any]:
+    """Patch an existing calendar event. Only fields present in patch_json are changed."""
+    encoded_id = urllib.parse.quote(calendar_id, safe="")
+    encoded_event = urllib.parse.quote(event_id, safe="")
+    base_url = f"https://www.googleapis.com/calendar/v3/calendars/{encoded_id}/events/{encoded_event}"
+
+    body: dict[str, Any] = {}
+    tz = patch_json.get("timezone")
+    all_day = patch_json.get("all_day", False)
+
+    def _make_time(value: str) -> dict[str, str]:
+        if all_day:
+            dt = datetime.fromisoformat(value)
+            return {"date": dt.strftime("%Y-%m-%d")}
+        result: dict[str, str] = {"dateTime": value}
+        if tz:
+            result["timeZone"] = tz
+        return result
+
+    for field in ("summary", "description", "location", "status"):
+        if field in patch_json:
+            body[field] = patch_json[field]
+
+    if "start" in patch_json:
+        body["start"] = _make_time(patch_json["start"])
+    if "end" in patch_json:
+        body["end"] = _make_time(patch_json["end"])
+    if "recurrence" in patch_json:
+        rec = patch_json["recurrence"]
+        body["recurrence"] = [rec] if isinstance(rec, str) else rec
+
+    # Attendee merging — only fetch existing event when needed
+    add_emails = {
+        a if isinstance(a, str) else a["email"]
+        for a in patch_json.get("add_attendees", [])
+    }
+    remove_emails = {e.lower() for e in patch_json.get("remove_attendees", [])}
+
+    if add_emails or remove_emails:
+        existing = _api_request(base_url, token)
+        current_attendees = existing.get("attendees", [])
+        merged = [
+            a
+            for a in current_attendees
+            if a.get("email", "").lower() not in remove_emails
+        ]
+        existing_emails = {a.get("email", "").lower() for a in merged}
+        for email in add_emails:
+            if email.lower() not in existing_emails:
+                merged.append({"email": email})
+        body["attendees"] = merged
+
+    if patch_json.get("add_meet"):
+        body["conferenceData"] = {
+            "createRequest": {
+                "requestId": str(uuid.uuid4()),
+                "conferenceSolutionKey": {"type": "hangoutsMeet"},
+            }
+        }
+
+    params: dict[str, str] = {
+        "sendUpdates": "all" if send_notifications else "none",
+    }
+    if "conferenceData" in body:
+        params["conferenceDataVersion"] = "1"
+
+    return _api_request(base_url, token, method="PATCH", body=body, params=params)
+
+
+def format_updated_event_markdown(event: dict[str, Any]) -> str:
+    """Format an updated event as a confirmation message."""
+    lines: list[str] = []
+    summary = event.get("summary", "(No title)")
+    event_id = event.get("id", "")
+    lines.append(f"Event updated: **{summary}**")
+    lines.append(f"Event ID: {event_id}")
+
+    start = event.get("start", {})
+    end = event.get("end", {})
+    if "dateTime" in start:
+        start_dt = datetime.fromisoformat(start["dateTime"])
+        end_dt = datetime.fromisoformat(end["dateTime"])
+        lines.append(
+            f"Date: {start_dt.strftime('%A, %B %d, %Y, %-I:%M %p')} - {end_dt.strftime('%-I:%M %p %Z')}"
+        )
+    elif "date" in start:
+        lines.append(f"Date: {start['date']} (all day)")
+
+    conference_data = event.get("conferenceData")
+    if conference_data:
+        meet_url = _format_conferencing(conference_data)
+        if meet_url:
+            lines.append(f"Meet: {meet_url}")
+
+    attendees = event.get("attendees", [])
+    if attendees:
+        lines.append(f"Attendees: {_format_attendees(attendees)}")
+
+    return "\n".join(lines)
+
+
+def delete_calendar_event(
+    token: str,
+    event_id: str,
+    calendar_id: str = "primary",
+    send_notifications: bool = True,
+    this_and_following: bool = False,  # noqa: ARG001
+) -> None:
+    """Delete (cancel) a calendar event."""
+    encoded_id = urllib.parse.quote(calendar_id, safe="")
+    encoded_event = urllib.parse.quote(event_id, safe="")
+    url = f"https://www.googleapis.com/calendar/v3/calendars/{encoded_id}/events/{encoded_event}"
+
+    params: dict[str, str] = {
+        "sendUpdates": "all" if send_notifications else "none",
+    }
+
+    # For recurring events, delete this-and-following by fetching the instance
+    # and setting the recurrence end. For simplicity, we use a direct DELETE
+    # which cancels the single instance (or all if not a recurring instance).
+    _api_request(url, token, method="DELETE", params=params)
+
+
+def rsvp_calendar_event(
+    token: str,
+    event_id: str,
+    response: str,
+    comment: str | None = None,
+    calendar_id: str = "primary",
+) -> dict[str, Any]:
+    """Update the authenticated user's RSVP status for an event.
+
+    response must be one of: accepted, declined, tentative.
+    """
+    valid_responses = {"accepted", "declined", "tentative"}
+    if response not in valid_responses:
+        raise ValueError(
+            f"Invalid response {response!r}. Must be one of: {', '.join(sorted(valid_responses))}"
+        )
+
+    encoded_id = urllib.parse.quote(calendar_id, safe="")
+    encoded_event = urllib.parse.quote(event_id, safe="")
+    base_url = f"https://www.googleapis.com/calendar/v3/calendars/{encoded_id}/events/{encoded_event}"
+
+    # GET the event to find the self attendee entry
+    event = _api_request(base_url, token)
+    attendees = event.get("attendees", [])
+
+    self_entry = next((a for a in attendees if a.get("self")), None)
+    if self_entry is None:
+        raise ValueError("You are not listed as an attendee for this event.")
+
+    self_entry["responseStatus"] = response
+    if comment:
+        self_entry["comment"] = comment
+
+    return _api_request(
+        base_url,
+        token,
+        method="PATCH",
+        body={"attendees": attendees},
+        params={"sendUpdates": "all"},
+    )

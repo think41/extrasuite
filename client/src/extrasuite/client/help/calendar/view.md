@@ -20,8 +20,13 @@ View Google Calendar events for a time range.
 
 ## Output
 
-Events formatted as markdown, grouped by date. Each event shows:
-title, time, location (if any), and description (if any).
+Events grouped by date. Each event shows:
+- Event ID (use this with update, delete, rsvp)
+- Title and time
+- Location (if any)
+- Meet/conferencing link (if any)
+- Attendees with RSVP status: ✓ accepted, ✗ declined, ? tentative, – pending
+- Description (if any, truncated to 200 chars)
 
 ## Examples
 
