@@ -381,7 +381,7 @@ def generate_requests(
     for gap in gaps:
         pos = _gap_position(gap)
         if gap.is_trailing:
-            reqs = _process_trailing_gap(gap, segment_id, tab_id)
+            reqs = _process_trailing_gap(gap, segment_id, tab_id, desired_lists)
         else:
             reqs = _process_inner_gap(gap, segment_id, tab_id, desired_lists)
         if reqs:
@@ -717,6 +717,13 @@ def _process_inner_gap(
                 requests.append(
                     _make_insert_text(combined_text, insert_idx, segment_id, tab_id)
                 )
+                # Inner gap inserts at insert_idx with no leading \n prefix,
+                # so the first added paragraph starts at insert_idx.
+                requests.extend(
+                    _style_reqs_for_added_paras(
+                        real_adds, insert_idx, segment_id, tab_id, desired_lists
+                    )
+                )
 
     return requests
 
@@ -727,7 +734,10 @@ def _process_inner_gap(
 
 
 def _process_trailing_gap(
-    gap: _Gap, segment_id: SegmentID, tab_id: TabID
+    gap: _Gap,
+    segment_id: SegmentID,
+    tab_id: TabID,
+    desired_lists: dict[str, List] | None = None,
 ) -> list[dict[str, Any]]:
     """Process a trailing gap (no right anchor). Must protect segment-final \\n."""
     requests: list[dict[str, Any]] = []
@@ -787,11 +797,50 @@ def _process_trailing_gap(
             # Pure paragraph adds (original Phase 1 logic)
             requests.extend(
                 _process_trailing_paragraph_adds(
-                    gap, real_deletes, real_adds, segment_id, tab_id
+                    gap, real_deletes, real_adds, segment_id, tab_id, desired_lists
                 )
             )
 
     return requests
+
+
+def _style_reqs_for_added_paras(
+    real_adds: list[AlignedElement],
+    first_para_actual_start: int,
+    segment_id: SegmentID,
+    tab_id: TabID,
+    desired_lists: dict[str, List] | None,
+) -> list[dict[str, Any]]:
+    """Generate style requests for ADDED paragraphs using actual positions.
+
+    first_para_actual_start is the actual position of the first added paragraph
+    in the modified base doc after the gap's insertText has been applied.
+    Subsequent paragraph positions are computed by accumulating UTF-16 lengths.
+    Results are sorted right-to-left so they are safe to interleave with gap ops.
+    """
+    style_ops: list[tuple[int, list[dict[str, Any]]]] = []
+    offset = first_para_actual_start
+    for add in real_adds:
+        el = add.desired_element
+        if not el or not _is_paragraph(el):
+            continue
+        para_text = _para_text(el)
+        para_len = utf16_len(para_text)
+        actual_start = offset
+        actual_end = offset + para_len
+        offset = actual_end
+
+        reqs = _generate_style_for_added_paragraph(
+            el, actual_start, actual_end, segment_id, tab_id, desired_lists
+        )
+        if reqs:
+            style_ops.append((actual_start, reqs))
+
+    style_ops.sort(key=lambda x: x[0], reverse=True)
+    result: list[dict[str, Any]] = []
+    for _, reqs in style_ops:
+        result.extend(reqs)
+    return result
 
 
 def _process_trailing_paragraph_adds(
@@ -800,6 +849,7 @@ def _process_trailing_paragraph_adds(
     real_adds: list[AlignedElement],
     segment_id: SegmentID,
     tab_id: TabID,
+    desired_lists: dict[str, List] | None = None,
 ) -> list[dict[str, Any]]:
     """Handle pure paragraph adds in a trailing gap (Phase 1 logic)."""
     first_del_el = real_deletes[0].base_element if real_deletes else None
@@ -826,9 +876,22 @@ def _process_trailing_paragraph_adds(
     else:
         insert_text = combined_text.rstrip("\n")
 
-    if insert_text:
-        return [_make_insert_text(insert_text, insert_idx, segment_id, tab_id)]
-    return []
+    if not insert_text:
+        return []
+
+    requests: list[dict[str, Any]] = [
+        _make_insert_text(insert_text, insert_idx, segment_id, tab_id)
+    ]
+    # The first added paragraph starts at insert_idx, unless insert_text begins
+    # with a "\n" (which is the left anchor's moved \n, not part of the first para).
+    has_leading_newline = insert_text.startswith("\n")
+    first_para_start = insert_idx + (1 if has_leading_newline else 0)
+    requests.extend(
+        _style_reqs_for_added_paras(
+            real_adds, first_para_start, segment_id, tab_id, desired_lists
+        )
+    )
+    return requests
 
 
 def _process_trailing_adds_with_tables(
@@ -1888,6 +1951,99 @@ def _collect_add_text(real_adds: list[AlignedElement]) -> str:
 # ---------------------------------------------------------------------------
 # Paragraph and text style diffing
 # ---------------------------------------------------------------------------
+
+
+def _generate_style_for_added_paragraph(
+    desired_se: StructuralElement,
+    para_start: int,
+    para_end: int,
+    segment_id: SegmentID,
+    tab_id: TabID,
+    desired_lists: dict[str, List] | None = None,
+) -> list[dict[str, Any]]:
+    """Generate style requests for a freshly-inserted (ADDED) paragraph.
+
+    Treats the base as having no styles (NORMAL_TEXT, no text formatting).
+    para_start and para_end are the ACTUAL positions in the modified base doc
+    (after the gap's insertText has been applied), computed by the caller using
+    insert_idx + cumulative UTF-16 offsets.
+
+    Returns requests in order:
+    1. createParagraphBullets (if paragraph has a bullet)
+    2. updateParagraphStyle (if style differs from defaults)
+    3. updateTextStyle ranges (right-to-left)
+    """
+    assert desired_se.paragraph is not None
+    desired_para = desired_se.paragraph
+
+    requests: list[dict[str, Any]] = []
+    desired_bullet = desired_para.bullet
+
+    # 1. Bullet first (so updateParagraphStyle can override indentation)
+    if desired_bullet is not None:
+        preset = _infer_bullet_preset(desired_bullet.list_id, desired_lists)
+        requests.append(
+            _make_create_paragraph_bullets(
+                para_start, para_end, preset, segment_id, tab_id
+            )
+        )
+
+    # 2. Paragraph style (diff against None — emits all non-default fields)
+    if desired_para.paragraph_style is not None:
+        style_dict, fields = _compute_style_diff(
+            None, desired_para.paragraph_style, ParagraphStyle
+        )
+        if fields:
+            requests.append(
+                _make_update_paragraph_style(
+                    para_start, para_end, style_dict, fields, segment_id, tab_id
+                )
+            )
+
+    # 3. Text run styles — compute run positions from para_start using UTF-16 lengths
+    #    (cannot use desired element indices, which are in a different index space)
+    desired_runs = [el for el in (desired_para.elements or []) if el.text_run]
+    ranges: list[tuple[int, int, dict[str, Any], list[str]]] = []
+    current_range: tuple[int, int, dict[str, Any], list[str]] | None = None
+    run_offset = para_start
+
+    for el in desired_runs:
+        run = el.text_run
+        assert run is not None
+        run_len = utf16_len(run.content or "")
+        run_start = run_offset
+        run_end = run_offset + run_len
+        run_offset = run_end
+
+        style_dict, fields = _compute_style_diff(None, run.text_style, TextStyle)
+
+        if not fields:
+            if current_range:
+                ranges.append(current_range)
+                current_range = None
+            continue
+
+        if (
+            current_range is not None
+            and current_range[1] == run_start
+            and current_range[2] == style_dict
+            and current_range[3] == fields
+        ):
+            current_range = (current_range[0], run_end, style_dict, fields)
+        else:
+            if current_range:
+                ranges.append(current_range)
+            current_range = (run_start, run_end, style_dict, fields)
+
+    if current_range:
+        ranges.append(current_range)
+
+    for start, end, style_dict, fields in reversed(ranges):
+        requests.append(
+            _make_update_text_style(start, end, style_dict, fields, segment_id, tab_id)
+        )
+
+    return requests
 
 
 def _generate_paragraph_style_diff(
