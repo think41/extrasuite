@@ -94,17 +94,87 @@ def tabs_to_document(
     return doc
 
 
+# Maps <li type="..."> to the minimal list properties dict that _infer_bullet_preset
+# will interpret correctly (glyphSymbol for unordered, glyphType for numbered).
+_SYNTH_LIST_PROPS: dict[str, dict[str, Any]] = {
+    "bullet": {"listProperties": {"nestingLevels": [{"glyphSymbol": "●"}]}},
+    "decimal": {"listProperties": {"nestingLevels": [{"glyphType": "DECIMAL"}]}},
+    "alpha": {"listProperties": {"nestingLevels": [{"glyphType": "ALPHA"}]}},
+    "roman": {"listProperties": {"nestingLevels": [{"glyphType": "ROMAN"}]}},
+}
+
+
+def _assign_synthetic_list_ids(
+    blocks: list[BlockNode],
+    lists_d: dict[str, Any],
+    id_prefix: str = "_synth_",
+) -> None:
+    """Assign synthetic list IDs to <li type="..."> blocks that have no parent= attr.
+
+    Consecutive <li> blocks with the same type share a list ID, matching how
+    createParagraphBullets groups items. Creates the corresponding list entry in
+    lists_d so that _infer_bullet_preset can determine the correct preset.
+    """
+    counter = len(lists_d)  # avoid collisions with existing list IDs
+    current_type: str | None = None
+    current_id: str | None = None
+
+    for block in blocks:
+        if (
+            not isinstance(block, ParagraphXml)
+            or block.tag != "li"
+            or block.parent is not None
+        ):
+            # Non-list block or already has explicit parent= → break the run
+            current_type = None
+            current_id = None
+            continue
+
+        if block.list_type is None:
+            # <li> without parent= and without type= — skip
+            current_type = None
+            current_id = None
+            continue
+
+        list_type = block.list_type
+        if list_type != current_type:
+            # New type or first item — start a fresh list
+            current_type = list_type
+            current_id = f"{id_prefix}{counter}"
+            counter += 1
+            props = _SYNTH_LIST_PROPS.get(list_type, _SYNTH_LIST_PROPS["bullet"])
+            lists_d[current_id] = props
+
+        block.parent = current_id
+
+
 def _convert_tab(tab_files: TabFiles) -> Tab:
     """Convert a TabFiles to a Tab."""
     tab_xml = tab_files.tab
     styles = tab_files.styles
     doc_tab_d: dict[str, Any] = {}
 
-    # Lists
+    # Lists — build from explicit <lists> entries, then add synthetic ones for
+    # <li type="bullet|decimal|..."> blocks that use the shorthand type= syntax.
+    lists_d: dict[str, Any] = {}
     if tab_xml.lists:
-        lists_d: dict[str, Any] = {}
         for list_def in tab_xml.lists:
             lists_d[list_def.id] = _convert_list_def_d(list_def, styles)
+
+    # Synthesize list IDs for any <li type="..."> blocks (body + segments)
+    all_block_lists: list[list[BlockNode]] = []
+    if tab_xml.body:
+        all_block_lists.append(tab_xml.body)  # tab_xml.body is list[BlockNode]
+    for seg in tab_xml.headers:
+        all_block_lists.append(seg.blocks)
+    for seg in tab_xml.footers:
+        all_block_lists.append(seg.blocks)
+    for seg in tab_xml.footnotes:
+        all_block_lists.append(seg.blocks)
+    for block_list in all_block_lists:
+        _assign_synthetic_list_ids(block_list, lists_d)
+
+    if lists_d:
         doc_tab_d["lists"] = lists_d
 
     # Body
