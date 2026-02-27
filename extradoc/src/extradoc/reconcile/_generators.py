@@ -1,18 +1,19 @@
 """Generate batchUpdate request dicts from aligned StructuralElements.
 
-Uses a gap-based approach:
-1. Identify MATCHED elements as anchors
-2. Group consecutive non-MATCHED elements into "gaps"
-3. Process each gap: delete old content, insert new content
-4. Process gaps right-to-left so indices remain valid
+Processes the alignment in a single right-to-left pass:
+- MATCHED elements: generate in-place update requests (paragraph style,
+  table structural diff with recursive cell descent)
+- Consecutive DELETE/ADD slots: delete the old content, insert the new
+  content at the right anchor's position
 
-Additionally, MATCHED table pairs are diffed at the cell level
-and interleaved with gap operations by position (right-to-left).
+All operations are collected with their base-document positions, then
+sorted right-to-left before flattening, so that later operations in the
+request list always target lower indices and never invalidate earlier ones.
 """
 
 from __future__ import annotations
 
-from dataclasses import dataclass, field
+from dataclasses import dataclass
 from typing import TYPE_CHECKING, Any
 
 if TYPE_CHECKING:
@@ -118,17 +119,6 @@ def _infer_bullet_preset(
         return _GLYPH_SYMBOL_TO_PRESET.get(glyph_symbol, _DEFAULT_BULLET_PRESET)
 
     return _DEFAULT_BULLET_PRESET
-
-
-@dataclass
-class _Gap:
-    """A gap between MATCHED elements containing DELETEs and ADDs."""
-
-    deletes: list[AlignedElement] = field(default_factory=list)
-    adds: list[AlignedElement] = field(default_factory=list)
-    left_anchor: StructuralElement | None = None  # MATCHED element to the left
-    right_anchor: StructuralElement | None = None  # MATCHED element to the right
-    is_trailing: bool = False  # True if this is the last gap (no right anchor)
 
 
 # ---------------------------------------------------------------------------
@@ -386,18 +376,15 @@ def generate_requests(
 ) -> list[dict[str, Any]]:
     """Generate batchUpdate requests from an alignment.
 
-    Args:
-        alignment: List of aligned StructuralElements
-        segment_id: Segment ID context (may be DeferredID for new segments)
-        tab_id: Tab ID context (may be DeferredID for new tabs)
-        desired_lists: The desired document's lists dict (used to infer bullet preset)
+    Processes the alignment in a single right-to-left pass:
+    - MATCHED elements: generate in-place update requests (paragraph style,
+      table structural diff with recursive cell descent)
+    - Consecutive DELETE/ADD slots: delete the old content, insert the new
+      content at the right anchor's position
 
-    Returns:
-        List of request dicts (may contain DeferredID objects in location fields)
-
-    Handles both gap-based operations (add/delete structural elements)
-    and matched table diffs (cell content changes).
-    All operations are processed right-to-left by base index position.
+    All operations are collected with their base-document positions, then
+    sorted right-to-left before flattening, so that later operations in the
+    request list always target lower indices and never invalidate earlier ones.
     """
     # Check for unsupported TOC changes upfront
     for aligned in alignment:
@@ -407,62 +394,108 @@ def generate_requests(
                 raise ReconcileError(
                     "tableOfContents is read-only and cannot be added or removed"
                 )
-            # MATCHED TOC: skip (no changes possible)
             continue
 
-    # Collect gap operations with their positions
     operations: list[tuple[int, list[dict[str, Any]]]] = []
+    left_anchor: StructuralElement | None = None
+    i = 0
 
-    gaps = _identify_gaps(alignment)
-    for gap in gaps:
-        pos = _gap_position(gap)
-        if gap.is_trailing:
-            reqs = _process_trailing_gap(gap, segment_id, tab_id, desired_lists)
+    while i < len(alignment):
+        ae = alignment[i]
+
+        if ae.op == AlignmentOp.MATCHED:
+            base_el = ae.base_element
+            desired_el = ae.desired_element
+            if base_el and desired_el:
+                if _is_table(base_el) and _is_table(desired_el):
+                    reqs = _generate_table_diff(
+                        base_el, desired_el, segment_id, tab_id, desired_lists
+                    )
+                    if reqs:
+                        operations.append((_el_end(base_el) - 1, reqs))
+                elif _is_paragraph(base_el) and _is_paragraph(desired_el):
+                    reqs = _generate_paragraph_style_diff(
+                        base_el, desired_el, segment_id, tab_id, desired_lists
+                    )
+                    if reqs:
+                        operations.append((_el_start(base_el), reqs))
+            left_anchor = base_el
+            i += 1
+
         else:
-            reqs = _process_inner_gap(gap, segment_id, tab_id, desired_lists)
-        if reqs:
-            operations.append((pos, reqs))
+            # Collect the full slot: all consecutive DELETED/ADDED elements
+            deletes: list[AlignedElement] = []
+            adds: list[AlignedElement] = []
+            while i < len(alignment) and alignment[i].op in (
+                AlignmentOp.DELETED,
+                AlignmentOp.ADDED,
+            ):
+                if alignment[i].op == AlignmentOp.DELETED:
+                    deletes.append(alignment[i])
+                else:
+                    adds.append(alignment[i])
+                i += 1
 
-    # Collect matched table diff operations
-    for aligned in alignment:
-        if aligned.op != AlignmentOp.MATCHED:
-            continue
-        base_el = aligned.base_element
-        desired_el = aligned.desired_element
-        if not base_el or not desired_el:
-            continue
-        if not _is_table(base_el) or not _is_table(desired_el):
-            continue
-        assert base_el.table is not None
-        assert desired_el.table is not None
+            # Right anchor = next MATCH element (None if trailing)
+            right_anchor: StructuralElement | None = None
+            if i < len(alignment) and alignment[i].op == AlignmentOp.MATCHED:
+                right_anchor = alignment[i].base_element
 
-        reqs = _generate_table_diff(
-            base_el, desired_el, segment_id, tab_id, desired_lists
-        )
-        if reqs:
-            operations.append((_el_end(base_el) - 1, reqs))
+            # Determine sort position for this slot
+            if deletes and deletes[0].base_element:
+                pos = _el_start(deletes[0].base_element)
+            elif right_anchor:
+                pos = _el_start(right_anchor)
+            elif left_anchor and not _is_section_break(left_anchor):
+                pos = _el_end(left_anchor) - 1
+            else:
+                pos = 1
 
-    # Collect matched paragraph style diff operations
-    for aligned in alignment:
-        if aligned.op != AlignmentOp.MATCHED:
-            continue
-        base_el = aligned.base_element
-        desired_el = aligned.desired_element
-        if not base_el or not desired_el:
-            continue
-        if not _is_paragraph(base_el) or not _is_paragraph(desired_el):
-            continue
+            if right_anchor is not None:
+                # Special case: single table DELETE + single table ADD in an inner slot.
+                # Route to in-place table diff instead of insertTable, which would create
+                # a spurious \n before the new table that cannot be deleted (API constraint).
+                if (
+                    len(deletes) == 1
+                    and len(adds) == 1
+                    and deletes[0].base_element is not None
+                    and adds[0].desired_element is not None
+                    and _is_table(deletes[0].base_element)
+                    and _is_table(adds[0].desired_element)
+                ):
+                    reqs = _generate_table_diff(
+                        deletes[0].base_element,
+                        adds[0].desired_element,
+                        segment_id,
+                        tab_id,
+                        desired_lists,
+                    )
+                    # Use the same pos convention as MATCH-table operations
+                    pos = _el_end(deletes[0].base_element) - 1
+                else:
+                    reqs = _process_slot_inner(
+                        left_anchor,
+                        deletes,
+                        adds,
+                        right_anchor,
+                        segment_id,
+                        tab_id,
+                        desired_lists,
+                    )
+            else:
+                reqs = _process_slot_trailing(
+                    left_anchor,
+                    deletes,
+                    adds,
+                    segment_id,
+                    tab_id,
+                    desired_lists,
+                )
+            if reqs:
+                operations.append((pos, reqs))
 
-        reqs = _generate_paragraph_style_diff(
-            base_el, desired_el, segment_id, tab_id, desired_lists
-        )
-        if reqs:
-            operations.append((_el_start(base_el), reqs))
-
-    # Sort by position descending (right-to-left processing)
+    # Sort right-to-left, then flatten
     operations.sort(key=lambda x: x[0], reverse=True)
-
-    # Flatten
     result: list[dict[str, Any]] = []
     for _, reqs in operations:
         result.extend(reqs)
@@ -470,337 +503,240 @@ def generate_requests(
 
 
 # ---------------------------------------------------------------------------
-# Gap identification
+# Slot processing — inner slot
 # ---------------------------------------------------------------------------
 
 
-def _gap_position(gap: _Gap) -> int:
-    """Return the base index position of a gap for sorting."""
-    if gap.right_anchor:
-        return _el_start(gap.right_anchor)
-    # Trailing gap: use first deleted element or left anchor
-    if gap.deletes and gap.deletes[0].base_element:
-        return _el_start(gap.deletes[0].base_element)
-    if gap.left_anchor:
-        return _el_end(gap.left_anchor)
-    return 0
-
-
-def _identify_gaps(alignment: list[AlignedElement]) -> list[_Gap]:
-    """Split alignment into gaps between MATCHED elements."""
-    gaps: list[_Gap] = []
-    current_gap = _Gap()
-    last_matched: StructuralElement | None = None
-
-    for aligned in alignment:
-        if aligned.op == AlignmentOp.MATCHED:
-            # Close current gap if it has content
-            if current_gap.deletes or current_gap.adds:
-                current_gap.left_anchor = last_matched
-                current_gap.right_anchor = aligned.base_element
-                gaps.append(current_gap)
-                current_gap = _Gap()
-            last_matched = aligned.base_element
-        elif aligned.op == AlignmentOp.DELETED:
-            current_gap.deletes.append(aligned)
-        elif aligned.op == AlignmentOp.ADDED:
-            current_gap.adds.append(aligned)
-
-    # Trailing gap
-    if current_gap.deletes or current_gap.adds:
-        current_gap.left_anchor = last_matched
-        current_gap.right_anchor = None
-        current_gap.is_trailing = True
-        gaps.append(current_gap)
-
-    return gaps
-
-
-def _validate_no_section_breaks(gap: _Gap) -> None:
-    """Raise ReconcileError if the gap contains any section break deletes or adds."""
-    for a in gap.deletes:
-        if a.base_element and _is_section_break(a.base_element):
-            raise ReconcileError(
-                "Section break deletion is not supported by reconcile()"
-            )
-    for a in gap.adds:
-        if a.desired_element and _is_section_break(a.desired_element):
-            raise ReconcileError(
-                "Section break insertion is not supported by reconcile()"
-            )
-
-
-# ---------------------------------------------------------------------------
-# Gap processing — inner gap
-# ---------------------------------------------------------------------------
-
-
-def _process_inner_gap(
-    gap: _Gap,
+def _process_slot_inner(
+    left_anchor: StructuralElement | None,
+    deletes: list[AlignedElement],
+    adds: list[AlignedElement],
+    right_anchor: StructuralElement,
     segment_id: SegmentID,
     tab_id: TabID,
     desired_lists: dict[str, List] | None = None,
 ) -> list[dict[str, Any]]:
-    """Process a non-trailing gap (has a right anchor)."""
-    requests: list[dict[str, Any]] = []
-    _validate_no_section_breaks(gap)
-    real_deletes = gap.deletes
-    real_adds = gap.adds
+    """Process a slot between two MATCH anchors (inner gap).
 
-    for a in real_adds:
-        if a.desired_element and _has_non_text_elements(a.desired_element):
+    DELETE: merge all deleted elements into a single deleteContentRange.
+    INSERT: insert each add in reversed document order at right_anchor's start.
+
+    Table handling — spurious \\n fix:
+      insertTable(idx) always inserts \\n at idx, placing the table after it.
+      When idx is a paragraph start the \\n lands BEFORE the table and cannot
+      be deleted (API forbids deleting the \\n immediately before a table).
+      Instead, the paragraph inserted BEFORE the table in document order
+      (processed AFTER the table in the reversed loop) omits its trailing \\n;
+      the spurious \\n from insertTable becomes that paragraph's trailing \\n.
+
+      spurious_pending tracks whether a table was the last element processed
+      in the reversed loop.  When True, the next paragraph strips its \\n.
+    """
+    # --- Validate ---
+    for ae in deletes:
+        el = ae.base_element
+        if el and _is_section_break(el):
+            raise ReconcileError("Section break deletion is not supported")
+    for ae in adds:
+        el = ae.desired_element
+        if el and _is_section_break(el):
+            raise ReconcileError(
+                "Section break insertion is not supported by reconcile()"
+            )
+        if el and _is_paragraph(el) and _has_non_text_elements(el):
             raise ReconcileError(
                 "Cannot insert paragraph containing non-text elements "
                 "(pageBreak, horizontalRule, inlineObject, footnoteReference). "
                 "Use the appropriate API requests directly."
             )
 
-    if not real_deletes and not real_adds:
-        return []
+    # --- INSERT must come before DELETE ---
+    # delete_end == _el_start(right_anchor) == insert_idx (they are adjacent in
+    # the base document), so the ranges do not overlap.  Inserting first at
+    # insert_idx leaves the delete range [del_start, insert_idx) intact; then
+    # deleting that range does not affect the already-inserted content (which
+    # sits at or after insert_idx in the modified document).
+    insert_reqs: list[dict[str, Any]] = []
 
-    first_del_el = real_deletes[0].base_element if real_deletes else None
-    last_del_el = real_deletes[-1].base_element if real_deletes else None
+    # --- INSERT ---
+    filtered = _filter_trailing_empty_paras(adds) if adds else []
+    if filtered:
+        # Insertion point: right anchor's start (or its end for sectionbreaks,
+        # since index 0 is invalid — insertText requires index >= 1).
+        if _is_section_break(right_anchor):
+            insert_idx = _el_end(right_anchor)  # = 1
+        else:
+            insert_idx = _el_start(right_anchor)
 
-    # When the right anchor is a table, we cannot delete up to the table
-    # start (the API forbids deleting the \n before a table without also
-    # deleting the table).  Trim the delete to preserve the \n.
-    right_is_table = gap.right_anchor is not None and _is_table(gap.right_anchor)
-
-    # Special case: exactly one table is being replaced with another table,
-    # possibly alongside paragraph changes.
-    # insertTable always creates a trailing paragraph by splitting at the
-    # insertion index.  When a trailing P("\n") already exists (as the right
-    # anchor or the body's final element), this creates an unwanted extra
-    # paragraph.  Instead, diff the tables IN PLACE using _generate_table_diff,
-    # which only emits row/column/cell operations without any insertTable call.
-    # We also handle any surrounding paragraph deletes/inserts in the same gap.
-    table_del_list = [
-        (i, a)
-        for i, a in enumerate(real_deletes)
-        if a.base_element and _is_table(a.base_element)
-    ]
-    table_add_list = [
-        (i, a)
-        for i, a in enumerate(real_adds)
-        if a.desired_element and _is_table(a.desired_element)
-    ]
-    if len(table_del_list) == 1 and len(table_add_list) == 1:
-        table_del_pos, table_del_aligned = table_del_list[0]
-        table_add_pos, table_add_aligned = table_add_list[0]
-        base_table_el = table_del_aligned.base_element
-        desired_table_el = table_add_aligned.desired_element
-        assert base_table_el is not None
-        assert desired_table_el is not None
-
-        # Split non-table elements by position relative to the table
-        # (using index within real_deletes/real_adds to preserve order)
-        before_dels = real_deletes[:table_del_pos]
-        after_dels = real_deletes[table_del_pos + 1 :]
-        before_adds = real_adds[:table_add_pos]
-        after_adds = real_adds[table_add_pos + 1 :]
-
-        # Modify table in-place (avoids insertTable trailing-para issue)
-        table_reqs = _generate_table_diff(
-            base_table_el, desired_table_el, segment_id, tab_id, desired_lists
+        # Special case: no deletes, first doc-order add is a table, and
+        # left_anchor is a real paragraph (not a sectionbreak).
+        #
+        # insertTable(insert_idx) places a spurious \n at insert_idx BEFORE the
+        # table, and the API forbids deleting \n immediately before a table.
+        # Fix: insert at _el_end(left_anchor) - 1 (left_anchor's own trailing \n)
+        # so that the spurious \n ends up AFTER the table, where it CAN be deleted.
+        first_add_is_table = (
+            _is_table(filtered[0].desired_element)
+            if filtered[0].desired_element
+            else False
         )
+        if (
+            first_add_is_table
+            and not deletes
+            and left_anchor is not None
+            and not _is_section_break(left_anchor)
+        ):
+            first_table_el = filtered[0].desired_element
+            assert first_table_el is not None and first_table_el.table is not None
+            remaining_adds = filtered[1:]
 
-        combined: list[dict[str, Any]] = []
-
-        # "After table" changes first (right-to-left, higher index)
-        if after_dels or after_adds:
-            if after_dels:
-                first_after_el = after_dels[0].base_element
-                last_after_el = after_dels[-1].base_element
-                assert first_after_el is not None
-                assert last_after_el is not None
-                a_del_start = _el_start(first_after_el)
-                a_del_end = _el_end(last_after_el)
-                if right_is_table:
-                    a_del_end = a_del_end - 1
-                if a_del_start < a_del_end:
-                    combined.append(
-                        _make_delete_range(a_del_start, a_del_end, segment_id, tab_id)
-                    )
-                after_text = _collect_add_text(after_adds)
-                if after_text:
-                    if right_is_table:
-                        after_text = after_text.rstrip("\n")
-                    if after_text:
-                        combined.append(
-                            _make_insert_text(
-                                after_text, a_del_start, segment_id, tab_id
-                            )
-                        )
-            else:
-                # Only after-adds, no after-deletes: insert after the table
-                after_text = _collect_add_text(after_adds)
-                if after_text:
-                    if right_is_table:
-                        after_text = after_text.rstrip("\n")
-                    if after_text:
-                        combined.append(
-                            _make_insert_text(
-                                after_text, _el_end(base_table_el), segment_id, tab_id
-                            )
-                        )
-
-        # Table operations (in-place, using original base indices)
-        combined.extend(table_reqs)
-
-        # "Before table" changes last (right-to-left, lower index)
-        if before_dels or before_adds:
-            if before_dels:
-                first_before_el = before_dels[0].base_element
-                last_before_el = before_dels[-1].base_element
-                assert first_before_el is not None
-                assert last_before_el is not None
-                b_del_start = _el_start(first_before_el)
-                b_del_end = _el_end(last_before_el)
-                # The API forbids deleting the \n immediately before a table.
-                # When the last paragraph ends exactly at the table's start,
-                # protect its trailing \n by shrinking the delete range by 1.
-                protect_newline = _el_end(last_before_el) == _el_start(base_table_el)
-                if protect_newline:
-                    b_del_end -= 1
-                if b_del_start < b_del_end:
-                    combined.append(
-                        _make_delete_range(b_del_start, b_del_end, segment_id, tab_id)
-                    )
-                before_text = _collect_add_text(before_adds)
-                if before_text:
-                    # The protected \n remains in the doc, so strip the trailing \n
-                    # from the inserted text to avoid creating an extra empty paragraph.
-                    if protect_newline:
-                        before_text = before_text.rstrip("\n")
-                    if before_text:
-                        combined.append(
-                            _make_insert_text(
-                                before_text, b_del_start, segment_id, tab_id
-                            )
-                        )
-            else:
-                # Only before-adds, no before-deletes: insert before the table
-                before_text = _collect_add_text(before_adds)
-                if before_text:
-                    combined.append(
-                        _make_insert_text(
-                            before_text, _el_start(base_table_el), segment_id, tab_id
+            # Process remaining elements (doc order [1:]) in reversed order at insert_idx.
+            spurious_pending = False
+            for ae in reversed(remaining_adds):
+                el = ae.desired_element
+                assert el is not None
+                if _is_table(el):
+                    assert el.table is not None
+                    insert_reqs.extend(
+                        _generate_insert_table_with_content(
+                            el.table, insert_idx, segment_id, tab_id, desired_lists
                         )
                     )
+                    spurious_pending = True
+                elif _is_paragraph(el):
+                    text = _para_text(el)
+                    if not text:
+                        continue
+                    if spurious_pending:
+                        text = text.rstrip("\n")
+                        spurious_pending = False
+                    if text:
+                        insert_reqs.append(
+                            _make_insert_text(text, insert_idx, segment_id, tab_id)
+                        )
 
-        return combined
-
-    # When replacing paragraphs (both deletes and adds present, no table
-    # boundary special-casing), protect the trailing \n of the last deleted
-    # paragraph.  Deleting a paragraph's \n merges it with the next element,
-    # destroying its paragraph style (e.g. HEADING_1 → NORMAL_TEXT).  By
-    # keeping the \n in place we preserve the paragraph structure and style of
-    # the last replaced paragraph.  The matching trailing \n is then stripped
-    # from the inserted text so no extra empty paragraph is created.
-    protect_para_newline = (
-        bool(real_adds)
-        and not right_is_table
-        and last_del_el is not None
-        and _is_paragraph(last_del_el)
-    )
-
-    # --- DELETE phase ---
-    if real_deletes:
-        assert first_del_el is not None
-        assert last_del_el is not None
-        delete_start = _el_start(first_del_el)
-        delete_end = _el_end(last_del_el)
-        if right_is_table:
-            delete_end = delete_end - 1  # protect \n before table
-        elif protect_para_newline:
-            delete_end = delete_end - 1  # protect paragraph's own \n
-        if delete_start < delete_end:
-            requests.append(
-                _make_delete_range(delete_start, delete_end, segment_id, tab_id)
+            # Insert the first table at left_anchor's \n position.
+            table_insert_idx = _el_end(left_anchor) - 1
+            insert_reqs.extend(
+                _generate_insert_table_with_content(
+                    first_table_el.table,
+                    table_insert_idx,
+                    segment_id,
+                    tab_id,
+                    desired_lists,
+                )
             )
 
-    # --- INSERT phase ---
-    if real_adds:
-        has_tables = any(
-            a.desired_element and _is_table(a.desired_element) for a in real_adds
-        )
+            # Delete the spurious \n that ends up after the first table.
+            T_size = _table_structural_size(first_table_el.table)
+            spurious_pos = (
+                table_insert_idx + 1 + T_size
+            )  # = _el_end(left_anchor) + T_size
+            insert_reqs.append(
+                _make_delete_range(spurious_pos, spurious_pos + 1, segment_id, tab_id)
+            )
 
-        if real_deletes:
-            assert first_del_el is not None
-            insert_idx = _el_start(first_del_el)
-        elif has_tables and gap.left_anchor and not _is_section_break(gap.left_anchor):
-            # For table inserts, use left anchor's \n to avoid creating
-            # an extra empty paragraph (insertTable splits at the index)
-            insert_idx = _el_end(gap.left_anchor) - 1
-        elif gap.right_anchor:
-            # Sectionbreaks start at index 0 (the body's opening structural
-            # marker) which is not a valid insertText target.  Use the end
-            # instead (= 1, the first actual paragraph position).
-            if _is_section_break(gap.right_anchor):
-                insert_idx = _el_end(gap.right_anchor)
-            else:
-                insert_idx = _el_start(gap.right_anchor)
+            # Style requests: first table starts at table_insert_idx + 1 = _el_end(left_anchor).
+            insert_reqs.extend(
+                _style_reqs_for_added_paras(
+                    filtered,
+                    table_insert_idx + 1,
+                    segment_id,
+                    tab_id,
+                    desired_lists,
+                    table_size_extra=0,
+                )
+            )
         else:
-            insert_idx = 1
+            # Normal case: reversed insertion with spurious_pending for tables.
+            spurious_pending = False
+            for ae in reversed(filtered):
+                el = ae.desired_element
+                assert el is not None
+                if _is_table(el):
+                    assert el.table is not None
+                    insert_reqs.extend(
+                        _generate_insert_table_with_content(
+                            el.table, insert_idx, segment_id, tab_id, desired_lists
+                        )
+                    )
+                    spurious_pending = True
+                elif _is_paragraph(el):
+                    text = _para_text(el)
+                    if not text:
+                        continue
+                    if spurious_pending:
+                        # The spurious \n from the preceding insertTable call becomes
+                        # this paragraph's trailing \n — strip it from the insert text.
+                        text = text.rstrip("\n")
+                        spurious_pending = False
+                    if text:
+                        insert_reqs.append(
+                            _make_insert_text(text, insert_idx, segment_id, tab_id)
+                        )
 
-        if has_tables:
-            # Process each add individually in reverse order at insert_idx.
-            # Pass right_anchor so _insert_adds_individually can apply the B4 fix
-            # (delete spurious \n created by insertTable + restore paragraph style).
-            requests.extend(
-                _insert_adds_individually(
-                    real_adds,
+            # Style requests for added paragraphs.
+            # table_size_extra=0: the spurious \n is absorbed by the preceding
+            # paragraph, so the table's position immediately follows that paragraph.
+            insert_reqs.extend(
+                _style_reqs_for_added_paras(
+                    filtered,
                     insert_idx,
                     segment_id,
                     tab_id,
                     desired_lists,
-                    right_anchor=gap.right_anchor,
+                    table_size_extra=0,
                 )
             )
-            # Generate style requests for added paragraphs; first para starts at insert_idx
-            requests.extend(
-                _style_reqs_for_added_paras(
-                    real_adds, insert_idx, segment_id, tab_id, desired_lists
-                )
-            )
-        else:
-            # Pure paragraph adds — concatenate text (original Phase 1 logic)
-            combined_text = _collect_add_text(real_adds)
-            if right_is_table or protect_para_newline:
-                # The \n is preserved in the doc; strip it from the insert to
-                # avoid creating an unwanted extra empty paragraph.
-                combined_text = combined_text.rstrip("\n")
-            if combined_text:
-                requests.append(
-                    _make_insert_text(combined_text, insert_idx, segment_id, tab_id)
-                )
-                # Inner gap inserts at insert_idx with no leading \n prefix,
-                # so the first added paragraph starts at insert_idx.
-                requests.extend(
-                    _style_reqs_for_added_paras(
-                        real_adds, insert_idx, segment_id, tab_id, desired_lists
-                    )
-                )
 
-    return requests
+    # --- DELETE ---
+    delete_reqs: list[dict[str, Any]] = []
+    if deletes:
+        first_del_el = deletes[0].base_element
+        last_del_el = deletes[-1].base_element
+        assert first_del_el is not None and last_del_el is not None
+        delete_start = _el_start(first_del_el)
+        delete_end = _el_end(last_del_el)
+        # Cannot delete the \n immediately before a table (API constraint)
+        if _is_table(right_anchor):
+            delete_end -= 1
+        if delete_start < delete_end:
+            delete_reqs.append(
+                _make_delete_range(delete_start, delete_end, segment_id, tab_id)
+            )
+
+    return insert_reqs + delete_reqs
 
 
 # ---------------------------------------------------------------------------
-# Gap processing — trailing gap
+# Slot processing — trailing slot
 # ---------------------------------------------------------------------------
 
 
-def _process_trailing_gap(
-    gap: _Gap,
+def _process_slot_trailing(
+    left_anchor: StructuralElement | None,
+    deletes: list[AlignedElement],
+    adds: list[AlignedElement],
     segment_id: SegmentID,
     tab_id: TabID,
     desired_lists: dict[str, List] | None = None,
 ) -> list[dict[str, Any]]:
-    """Process a trailing gap (no right anchor). Must protect segment-final \\n."""
+    """Process a trailing slot (no right anchor). Must protect segment-final \\n."""
     requests: list[dict[str, Any]] = []
-    _validate_no_section_breaks(gap)
-    real_deletes = gap.deletes
-    real_adds = gap.adds
+    real_deletes = deletes
+    real_adds = adds
+
+    # Validate: no section break deletes or adds
+    for ae in real_deletes:
+        if ae.base_element and _is_section_break(ae.base_element):
+            raise ReconcileError(
+                "Section break deletion is not supported by reconcile()"
+            )
+    for ae in real_adds:
+        if ae.desired_element and _is_section_break(ae.desired_element):
+            raise ReconcileError(
+                "Section break insertion is not supported by reconcile()"
+            )
 
     for a in real_adds:
         if a.desired_element and _has_non_text_elements(a.desired_element):
@@ -823,8 +759,8 @@ def _process_trailing_gap(
         delete_start = _el_start(first_del_el)
         delete_end = _el_end(last_del_el)
 
-        if gap.left_anchor and not _is_section_break(gap.left_anchor):
-            left_end = _el_end(gap.left_anchor)
+        if left_anchor and not _is_section_break(left_anchor):
+            left_end = _el_end(left_anchor)
             del_start = left_end - 1  # eat into preceding \n
             del_end = delete_end - 1  # protect segment-final \n
             if del_start < del_end:
@@ -847,25 +783,30 @@ def _process_trailing_gap(
         if has_tables:
             requests.extend(
                 _process_trailing_adds_with_tables(
-                    gap, real_deletes, real_adds, segment_id, tab_id, desired_lists
+                    left_anchor,
+                    real_deletes,
+                    real_adds,
+                    segment_id,
+                    tab_id,
+                    desired_lists,
                 )
             )
             # Compute insert_idx (mirrors _process_trailing_adds_with_tables logic)
             first_del_el = real_deletes[0].base_element if real_deletes else None
             if real_deletes:
-                if gap.left_anchor and not _is_section_break(gap.left_anchor):
-                    _insert_idx = _el_end(gap.left_anchor) - 1
+                if left_anchor and not _is_section_break(left_anchor):
+                    _insert_idx = _el_end(left_anchor) - 1
                 else:
                     assert first_del_el is not None
                     _insert_idx = _el_start(first_del_el)
             else:
-                if gap.left_anchor and not _is_section_break(gap.left_anchor):
-                    _insert_idx = _el_end(gap.left_anchor) - 1
+                if left_anchor and not _is_section_break(left_anchor):
+                    _insert_idx = _el_end(left_anchor) - 1
                 else:
-                    _insert_idx = _el_end(gap.left_anchor) if gap.left_anchor else 1
+                    _insert_idx = _el_end(left_anchor) if left_anchor else 1
             # If left_anchor is a non-sectionbreak paragraph, paragraphs are inserted
             # with a leading \n, so the first para's actual start is insert_idx + 1
-            if gap.left_anchor and not _is_section_break(gap.left_anchor):
+            if left_anchor and not _is_section_break(left_anchor):
                 _first_para_start = _insert_idx + 1
             else:
                 _first_para_start = _insert_idx
@@ -883,7 +824,12 @@ def _process_trailing_gap(
             # Pure paragraph adds (original Phase 1 logic)
             requests.extend(
                 _process_trailing_paragraph_adds(
-                    gap, real_deletes, real_adds, segment_id, tab_id, desired_lists
+                    left_anchor,
+                    real_deletes,
+                    real_adds,
+                    segment_id,
+                    tab_id,
+                    desired_lists,
                 )
             )
 
@@ -1012,7 +958,7 @@ def _style_reqs_for_added_paras(
 
 
 def _process_trailing_paragraph_adds(
-    gap: _Gap,
+    left_anchor: StructuralElement | None,
     real_deletes: list[AlignedElement],
     real_adds: list[AlignedElement],
     segment_id: SegmentID,
@@ -1027,18 +973,18 @@ def _process_trailing_paragraph_adds(
         return []
 
     if real_deletes:
-        if gap.left_anchor and not _is_section_break(gap.left_anchor):
-            insert_idx = _el_end(gap.left_anchor) - 1
+        if left_anchor and not _is_section_break(left_anchor):
+            insert_idx = _el_end(left_anchor) - 1
         else:
             assert first_del_el is not None
             insert_idx = _el_start(first_del_el)
     else:
-        if gap.left_anchor and not _is_section_break(gap.left_anchor):
-            insert_idx = _el_end(gap.left_anchor) - 1
+        if left_anchor and not _is_section_break(left_anchor):
+            insert_idx = _el_end(left_anchor) - 1
         else:
-            insert_idx = _el_end(gap.left_anchor) if gap.left_anchor else 1
+            insert_idx = _el_end(left_anchor) if left_anchor else 1
 
-    if gap.left_anchor and not _is_section_break(gap.left_anchor):
+    if left_anchor and not _is_section_break(left_anchor):
         text_stripped = combined_text.rstrip("\n")
         insert_text = "\n" + text_stripped
     else:
@@ -1063,7 +1009,7 @@ def _process_trailing_paragraph_adds(
 
 
 def _process_trailing_adds_with_tables(
-    gap: _Gap,
+    left_anchor: StructuralElement | None,
     real_deletes: list[AlignedElement],
     real_adds: list[AlignedElement],
     segment_id: SegmentID,
@@ -1095,16 +1041,16 @@ def _process_trailing_adds_with_tables(
 
     # Determine insert position
     if real_deletes:
-        if gap.left_anchor and not _is_section_break(gap.left_anchor):
-            insert_idx = _el_end(gap.left_anchor) - 1
+        if left_anchor and not _is_section_break(left_anchor):
+            insert_idx = _el_end(left_anchor) - 1
         else:
             assert first_del_el is not None
             insert_idx = _el_start(first_del_el)
     else:
-        if gap.left_anchor and not _is_section_break(gap.left_anchor):
-            insert_idx = _el_end(gap.left_anchor) - 1
+        if left_anchor and not _is_section_break(left_anchor):
+            insert_idx = _el_end(left_anchor) - 1
         else:
-            insert_idx = _el_end(gap.left_anchor) if gap.left_anchor else 1
+            insert_idx = _el_end(left_anchor) if left_anchor else 1
 
     # Filter out empty paragraphs that insertTable creates implicitly
     filtered_adds = _filter_trailing_empty_paras(real_adds)
@@ -1125,7 +1071,7 @@ def _process_trailing_adds_with_tables(
     if current_run:
         groups.append(("paras", current_run))
 
-    non_sectionbreak = gap.left_anchor and not _is_section_break(gap.left_anchor)
+    non_sectionbreak = left_anchor and not _is_section_break(left_anchor)
 
     # Process groups in REVERSE document order (all inserts land at insert_idx).
     requests: list[dict[str, Any]] = []
@@ -1203,79 +1149,6 @@ def _filter_trailing_empty_paras(
                     continue
         result.append(add)
     return result
-
-
-# ---------------------------------------------------------------------------
-# Individual add processing (for gaps containing tables)
-# ---------------------------------------------------------------------------
-
-
-def _insert_adds_individually(
-    real_adds: list[AlignedElement],
-    insert_idx: int,
-    segment_id: SegmentID,
-    tab_id: TabID,
-    desired_lists: dict[str, List] | None = None,
-    right_anchor: StructuralElement | None = None,
-) -> list[dict[str, Any]]:
-    """Process adds individually in reverse order at insert_idx.
-
-    Used when the gap contains tables mixed with paragraphs.
-    Each insert happens at the same position; reverse order ensures
-    correct final ordering (first inserted item ends up last).
-
-    B4 fix: insertTable always creates a spurious \\n by splitting the
-    paragraph at insert_idx.  For inner gaps (right_anchor provided), we
-    delete that spurious \\n immediately after each table insertion.  The
-    delete runs BEFORE any subsequent insertText calls, so the position
-    insert_idx + 1 + table_size is correct at that point in the request
-    stream.  After the delete the right_anchor paragraph (now at table_end)
-    inherits left_anchor's paragraph style; we restore the correct style via
-    updateParagraphStyle.
-    """
-    requests: list[dict[str, Any]] = []
-
-    # Filter trailing empty paras that follow tables
-    filtered_adds = _filter_trailing_empty_paras(real_adds)
-
-    for add in reversed(filtered_adds):
-        el = add.desired_element
-        assert el is not None
-        if _is_table(el):
-            assert el.table is not None
-            table_reqs = _generate_insert_table_with_content(
-                el.table, insert_idx, segment_id, tab_id, desired_lists
-            )
-            requests.extend(table_reqs)
-            if right_anchor is not None:
-                # B4 fix: delete the spurious \n created by insertTable's split,
-                # then restore the right_anchor's paragraph style.
-                table_end = insert_idx + 1 + _table_structural_size(el.table)
-                requests.append(
-                    _make_delete_range(table_end, table_end + 1, segment_id, tab_id)
-                )
-                right_para = right_anchor.paragraph
-                if right_para is not None and right_para.paragraph_style is not None:
-                    style_dict, fields = _compute_style_diff(
-                        None, right_para.paragraph_style, ParagraphStyle
-                    )
-                    if fields:
-                        requests.append(
-                            _make_update_paragraph_style(
-                                table_end,
-                                table_end + 1,
-                                style_dict,
-                                fields,
-                                segment_id,
-                                tab_id,
-                            )
-                        )
-        elif _is_paragraph(el):
-            text = _para_text(el)
-            if text:
-                requests.append(_make_insert_text(text, insert_idx, segment_id, tab_id))
-
-    return requests
 
 
 # ---------------------------------------------------------------------------
@@ -1366,6 +1239,17 @@ def _generate_table_diff(
         # Same dimensions and same text in each cell position — style changes only
         return _diff_table_cell_styles_only(
             base_se.table, desired_se.table, segment_id, tab_id, desired_lists
+        )
+
+    # Same shape (rows x cols) but different cell text — positional cell diff.
+    # Avoids DELETE+ADD rows that would leave the table momentarily empty.
+    base_rows_n = base_se.table.rows or 0
+    base_cols_n = base_se.table.columns or 0
+    desired_rows_n = desired_se.table.rows or 0
+    desired_cols_n = desired_se.table.columns or 0
+    if base_rows_n == desired_rows_n and base_cols_n == desired_cols_n:
+        return _diff_table_same_shape(
+            base_se, desired_se, segment_id, tab_id, desired_lists
         )
 
     return _diff_table_structural(
@@ -1787,6 +1671,68 @@ def _compute_adjusted_row_length(
         elif op == AlignmentOp.ADDED:
             length += 1 + 1  # cell marker + \n (empty cell)
     return length
+
+
+def _diff_table_same_shape(
+    base_se: StructuralElement,
+    desired_se: StructuralElement,
+    segment_id: SegmentID,
+    tab_id: TabID,
+    desired_lists: dict[str, List] | None = None,
+) -> list[dict[str, Any]]:
+    """Diff tables with identical dimensions by positional cell matching.
+
+    Called when base and desired have the same rows x cols but different text.
+    Matches rows and columns positionally and calls _diff_row_cells for each row,
+    which in turn calls _diff_single_cell_at → _reconcile_cell_content for each cell.
+    This handles text and style changes in place without any row/column structural ops.
+
+    Processes rows bottom-to-top for right-to-left index stability.
+    """
+    table_start = _el_start(base_se)
+    base_table = base_se.table
+    desired_table = desired_se.table
+    assert base_table is not None
+    assert desired_table is not None
+
+    base_rows = base_table.table_rows or []
+    desired_rows = desired_table.table_rows or []
+    col_count = base_table.columns or 0
+
+    # All columns match positionally (no inserts/deletes needed)
+    col_alignment: list[tuple[AlignmentOp, int | None, int | None]] = [
+        (AlignmentOp.MATCHED, c, c) for c in range(col_count)
+    ]
+
+    # Build row table for position tracking
+    row_entries: list[_RowEntry] = []
+    for r_idx, row in enumerate(base_rows):
+        adj_len = _compute_adjusted_row_length(row, col_alignment)
+        row_entries.append(_RowEntry(id=f"base_{r_idx}", length=adj_len))
+    row_table = _RowTable(row_entries, table_start)
+
+    requests: list[dict[str, Any]] = []
+
+    # Process rows bottom-to-top so that earlier index positions are not
+    # invalidated by operations on rows with higher indices.
+    for r in range(len(base_rows) - 1, -1, -1):
+        if r >= len(desired_rows):
+            continue
+        entry_idx = row_table.find(f"base_{r}")
+        rs = row_table.row_start(entry_idx)
+        cell_reqs, new_length = _diff_row_cells(
+            base_rows[r],
+            desired_rows[r],
+            rs,
+            col_alignment,
+            segment_id,
+            tab_id,
+            desired_lists,
+        )
+        requests.extend(cell_reqs)
+        row_table.entries[entry_idx].length = new_length
+
+    return requests
 
 
 def _diff_table_structural(

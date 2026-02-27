@@ -278,7 +278,7 @@ class GoogleDocsTransport(Transport):
         self, file_id: str, comment_id: str, content: str
     ) -> dict[str, Any]:
         """Edit a comment via Drive API v3 PATCH."""
-        url = f"{DRIVE_API_BASE}/{file_id}/comments/{comment_id}" f"?fields=id,content"
+        url = f"{DRIVE_API_BASE}/{file_id}/comments/{comment_id}?fields=id,content"
         body: dict[str, Any] = {"content": content}
         return await self._patch_request(url, body)
 

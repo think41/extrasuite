@@ -13,6 +13,7 @@ _IGNORE_KEYS = frozenset(
         "suggestionsViewMode",
         "headingId",
         "listId",  # bullet list ID is server-generated (random kix.xxx string)
+        "nestingLevel",  # bullet nesting level — mock omits it; serde emits 0
         "documentStyle",
         "namedStyles",
         "suggestedDocumentStyleChanges",
@@ -22,6 +23,13 @@ _IGNORE_KEYS = frozenset(
         "lists",
     }
 )
+
+# Paragraph style fields managed by the bullet list level.
+# createParagraphBullets always sets these to match the level-0 defaults.
+# The serde suppresses them (they duplicate the list-level definition), so
+# they appear in actual but not in desired.  Strip them when comparing
+# bullet paragraphs so they don't produce spurious diffs.
+_BULLET_PARA_STYLE_STRIP = frozenset({"indentFirstLine", "indentStart"})
 
 # Keys within textStyle/paragraphStyle that are commonly server-defaulted
 _STYLE_IGNORE_KEYS = frozenset(
@@ -224,6 +232,43 @@ def _strip_cell_para_styles(content: Any) -> Any:
     return result
 
 
+def _strip_bullet_para_indent(obj: Any) -> Any:
+    """Strip list-managed indent fields from bullet paragraph styles.
+
+    The serde suppresses indentFirstLine/indentStart on bullet paragraphs
+    because they duplicate the list level's own definition.  The mock's
+    createParagraphBullets always adds them back.  Strip them from both
+    sides so verify() doesn't report spurious diffs for bullet items.
+    """
+    if isinstance(obj, dict):
+        result: dict[str, Any] = {}
+        for k, v in obj.items():
+            if k == "paragraph":
+                para = dict(v) if isinstance(v, dict) else v
+                if (
+                    isinstance(para, dict)
+                    and "bullet" in para
+                    and "paragraphStyle" in para
+                ):
+                    ps = {
+                        pk: pv
+                        for pk, pv in para["paragraphStyle"].items()
+                        if pk not in _BULLET_PARA_STYLE_STRIP
+                    }
+                    para = dict(para)
+                    if ps:
+                        para["paragraphStyle"] = ps
+                    else:
+                        del para["paragraphStyle"]
+                result[k] = _strip_bullet_para_indent(para)
+            else:
+                result[k] = _strip_bullet_para_indent(v)
+        return result
+    if isinstance(obj, list):
+        return [_strip_bullet_para_indent(item) for item in obj]
+    return obj
+
+
 def normalize_document(doc_dict: dict[str, Any]) -> dict[str, Any]:
     """Normalize a document dict for comparison.
 
@@ -233,6 +278,7 @@ def normalize_document(doc_dict: dict[str, Any]) -> dict[str, Any]:
     result = _strip_keys(result, _IGNORE_KEYS | _STYLE_IGNORE_KEYS)
     result = _normalize_text_styles(result)
     result = _strip_table_metadata(result)
+    result = _strip_bullet_para_indent(result)
     return result
 
 
