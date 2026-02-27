@@ -115,59 +115,63 @@ The CLI is self-documenting. Every command has a `--help` flag that serves as th
 
 ### Modules
 
+Each module has a `--help` page with workflow overview, directory structure, and key rules. The source for all help text lives in [`client/src/extrasuite/client/help/`](client/src/extrasuite/client/help/).
+
 | Module | Description |
 |--------|-------------|
-| `sheet` | Google Sheets — pull/edit/push spreadsheets via TSV and JSON |
-| `doc` | Google Docs — pull/edit/push documents via semantic XML |
-| `slide` | Google Slides — pull/edit/push presentations via SML markup |
-| `form` | Google Forms — pull/edit/push surveys and quizzes via JSON |
-| `script` | Google Apps Script — pull/edit/push standalone and bound scripts |
-| `gmail` | Gmail — compose drafts from markdown files |
-| `calendar` | Google Calendar — view, create, update, delete events |
-| `drive` | Google Drive — list and search files visible to your service account |
+| [`sheet`](client/src/extrasuite/client/help/sheet/README.md) | Google Sheets — pull/edit/push spreadsheets via TSV and JSON |
+| [`doc`](client/src/extrasuite/client/help/doc/README.md) | Google Docs — pull/edit/push documents via semantic XML |
+| [`slide`](client/src/extrasuite/client/help/slide/README.md) | Google Slides — pull/edit/push presentations via SML markup |
+| [`form`](client/src/extrasuite/client/help/form/README.md) | Google Forms — pull/edit/push surveys and quizzes via JSON |
+| [`script`](client/src/extrasuite/client/help/script/README.md) | Google Apps Script — pull/edit/push standalone and bound scripts |
+| [`gmail`](client/src/extrasuite/client/help/gmail/README.md) | Gmail — compose drafts from markdown files |
+| [`calendar`](client/src/extrasuite/client/help/calendar/README.md) | Google Calendar — view, create, update, delete events |
+| [`drive`](client/src/extrasuite/client/help/drive/README.md) | Google Drive — list and search files visible to your service account |
 | `contacts` | Google Contacts — sync, search, and manage contacts |
 | `auth` | Authentication management |
 
 ### Core Commands (sheet / doc / slide / form / script)
 
-| Command | Description |
-|---------|-------------|
-| `pull <url>` | Download the file to a local folder |
-| `diff <folder>` | Preview pending changes as a batchUpdate request (offline, no API calls) |
-| `push <folder>` | Apply changes to Google |
-| `create <title>` | Create a new file |
-| `share <folder>` | Share the file with trusted contacts |
-| `help [topic]` | Show reference documentation for the module |
+Each of these commands exists on all five modules. The links below go to the `sheet` reference; the other modules follow the same structure.
+
+| Command | Description | Reference |
+|---------|-------------|-----------|
+| `pull <url>` | Download the file to a local folder | [sheet](client/src/extrasuite/client/help/sheet/pull.md) · [doc](client/src/extrasuite/client/help/doc/pull.md) · [slide](client/src/extrasuite/client/help/slide/pull.md) · [form](client/src/extrasuite/client/help/form/pull.md) · [script](client/src/extrasuite/client/help/script/pull.md) |
+| `diff <folder>` | Preview pending changes as a batchUpdate request (offline, no API calls) | [sheet](client/src/extrasuite/client/help/sheet/diff.md) · [doc](client/src/extrasuite/client/help/doc/diff.md) · [slide](client/src/extrasuite/client/help/slide/diff.md) · [form](client/src/extrasuite/client/help/form/diff.md) · [script](client/src/extrasuite/client/help/script/diff.md) |
+| `push <folder>` | Apply changes to Google | [sheet](client/src/extrasuite/client/help/sheet/push.md) · [doc](client/src/extrasuite/client/help/doc/push.md) · [slide](client/src/extrasuite/client/help/slide/push.md) · [form](client/src/extrasuite/client/help/form/push.md) · [script](client/src/extrasuite/client/help/script/push.md) |
+| `create <title>` | Create a new file | [sheet](client/src/extrasuite/client/help/sheet/create.md) · [doc](client/src/extrasuite/client/help/doc/create.md) · [slide](client/src/extrasuite/client/help/slide/create.md) · [form](client/src/extrasuite/client/help/form/create.md) · [script](client/src/extrasuite/client/help/script/create.md) |
+| `share <folder>` | Share the file with trusted contacts | [sheet](client/src/extrasuite/client/help/sheet/share.md) |
+| `help [topic]` | Show reference documentation for the module | [sheet topics](client/src/extrasuite/client/help/sheet/README.md) · [doc topics](client/src/extrasuite/client/help/doc/README.md) |
 
 ### Gmail Commands
 
 | Command | Description |
 |---------|-------------|
-| `compose <file>` | Save an email draft from a markdown file |
-| `edit-draft <id> <file>` | Update an existing Gmail draft |
-| `reply <thread_id> <file>` | Create a reply draft in an existing thread |
-| `list` | Search and list Gmail messages |
-| `read <id>` | Read a Gmail message |
+| [`compose <file>`](client/src/extrasuite/client/help/gmail/compose.md) | Save an email draft from a markdown file |
+| [`edit-draft <id> <file>`](client/src/extrasuite/client/help/gmail/edit-draft.md) | Update an existing Gmail draft |
+| [`reply <thread_id> <file>`](client/src/extrasuite/client/help/gmail/reply.md) | Create a reply draft in an existing thread |
+| [`list`](client/src/extrasuite/client/help/gmail/list.md) | Search and list Gmail messages |
+| [`read <id>`](client/src/extrasuite/client/help/gmail/read.md) | Read a Gmail message |
 
 ### Calendar Commands
 
 | Command | Description |
 |---------|-------------|
-| `view` | View events for a time range |
-| `list` | List all calendars |
-| `search` | Search events by title or attendee |
-| `freebusy` | Check when a group of people are free |
-| `create <file>` | Create an event from a JSON file |
-| `update <id>` | Update an existing event |
-| `delete <id>` | Cancel or delete an event |
-| `rsvp <id>` | Accept, decline, or mark tentative |
+| [`view`](client/src/extrasuite/client/help/calendar/view.md) | View events for a time range |
+| [`list`](client/src/extrasuite/client/help/calendar/list.md) | List all calendars |
+| [`search`](client/src/extrasuite/client/help/calendar/search.md) | Search events by title or attendee |
+| [`freebusy`](client/src/extrasuite/client/help/calendar/freebusy.md) | Check when a group of people are free |
+| [`create <file>`](client/src/extrasuite/client/help/calendar/create.md) | Create an event from a JSON file |
+| [`update <id>`](client/src/extrasuite/client/help/calendar/update.md) | Update an existing event |
+| [`delete <id>`](client/src/extrasuite/client/help/calendar/delete.md) | Cancel or delete an event |
+| [`rsvp <id>`](client/src/extrasuite/client/help/calendar/rsvp.md) | Accept, decline, or mark tentative |
 
 ### Drive Commands
 
 | Command | Description |
 |---------|-------------|
-| `ls` | List files shared with your service account |
-| `search <query>` | Search files using a Drive query string |
+| [`ls`](client/src/extrasuite/client/help/drive/ls.md) | List files shared with your service account |
+| [`search <query>`](client/src/extrasuite/client/help/drive/search.md) | Search files using a Drive query string |
 
 ---
 
