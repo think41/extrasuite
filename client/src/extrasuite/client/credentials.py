@@ -374,7 +374,7 @@ class CredentialsManager:
             )
             token = Token(
                 access_token=result["access_token"],
-                service_account_email="",
+                service_account_email=result["service_account_email"],
                 expires_at=expires_at_dt.timestamp(),
             )
             self._save_token(token)
@@ -776,7 +776,7 @@ class CredentialsManager:
         Otherwise: delegates to _run_browser_flow (HTTP callback + optional stdin).
         """
         port = self._find_free_port()
-        auth_url = f"{self._auth_url}?port={port}"
+        auth_url = f"{self._auth_url}?port={port}&v=2"
 
         if self._headless:
             print(

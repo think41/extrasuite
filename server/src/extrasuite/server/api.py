@@ -162,11 +162,13 @@ async def exchange_auth_code(
     The service account MUST already exist - this endpoint does not create SAs.
     """
     logger.warning("Deprecated endpoint called: POST /api/token/exchange")
-    service_account_email = await db.retrieve_auth_code(body.code)
+    auth_code_data = await db.retrieve_auth_code(body.code)
 
-    if not service_account_email:
+    if not auth_code_data:
         logger.warning("Invalid or expired auth code", extra={"code_prefix": body.code[:8]})
         raise HTTPException(status_code=400, detail="Invalid or expired auth code")
+
+    service_account_email = auth_code_data["service_account_email"]
 
     # Generate token via impersonation - SA must exist, errors propagate to global handler
     token_generator = TokenGenerator(database=db, settings=settings)
@@ -194,23 +196,28 @@ async def exchange_auth_code(
 async def start_token_auth(
     request: Request,
     port: int = Query(..., description="CLI localhost callback port", ge=MIN_PORT, le=MAX_PORT),
+    v: int = Query(
+        1, description="Protocol version (2 = v2 session Phase 1, suppresses deprecation warning)"
+    ),
     settings: Settings = Depends(get_settings),
     db: Database = Depends(get_database),
 ) -> RedirectResponse | HTMLResponse:
     """Start OAuth flow for CLI token exchange.
 
-    **Deprecated**: Use GET /api/token/auth for Phase 1 session establishment only.
+    **Deprecated for v1**: Still used as Phase 1 of the v2 session protocol (pass v=2).
     After obtaining a session token via POST /api/auth/session/exchange,
     use POST /api/auth/token for all subsequent token requests.
 
     The CLI should call this with a port parameter for its localhost server.
-    Example: /api/token/auth?port=8085
+    Example: /api/token/auth?port=8085&v=2  (v2 session Phase 1)
+             /api/token/auth?port=8085      (legacy v1, deprecated)
 
     Flow:
     1. If user has valid session → generate token and redirect to CLI
     2. Otherwise → redirect to Google OAuth (callback handles token generation)
     """
-    logger.warning("Deprecated endpoint called: GET /api/token/auth")
+    if v < 2:
+        logger.warning("Deprecated endpoint called: GET /api/token/auth")
     cli_redirect = _build_cli_redirect_url(port)
 
     # If user has a valid session, generate token directly
@@ -553,6 +560,7 @@ class AccessTokenResponse(BaseModel):
     access_token: str
     expires_at: str  # ISO 8601
     token_type: str = "Bearer"
+    service_account_email: str
 
 
 def _get_client_ip(request: Request) -> str:
@@ -597,14 +605,18 @@ async def exchange_auth_code_for_session(
     to obtain short-lived access tokens without browser interaction.
     """
     # Validate auth code - try both SA and delegation code flows
-    service_account_email = await db.retrieve_auth_code(body.code)
-    if service_account_email:
-        # SA flow: retrieve_auth_code returns SA email; look up which user owns this SA
-        users = await db.list_users_with_service_accounts()
-        email = next(
-            (u["email"] for u in users if u["service_account_email"] == service_account_email),
-            None,
-        )
+    auth_code_data = await db.retrieve_auth_code(body.code)
+    if auth_code_data:
+        # SA flow: user_email is stored directly in the auth code document
+        email = auth_code_data["user_email"]
+        if not email:
+            # Fallback for auth codes issued before user_email was stored (pre-deploy transition)
+            service_account_email = auth_code_data["service_account_email"]
+            users = await db.list_users_with_service_accounts()
+            email = next(
+                (u["email"] for u in users if u["service_account_email"] == service_account_email),
+                None,
+            )
         if not email:
             raise HTTPException(
                 status_code=400, detail="Could not resolve user email from auth code"
@@ -707,9 +719,16 @@ async def exchange_session_for_access_token(
         extra={"email": email, "pseudo_scope": body.pseudo_scope},
     )
 
+    if not result.service_account_email:
+        raise HTTPException(
+            status_code=500,
+            detail="Token generation succeeded but returned no service account email",
+        )
+
     return AccessTokenResponse(
         access_token=result.token,
         expires_at=result.expires_at.isoformat(),
+        service_account_email=result.service_account_email,
     )
 
 
@@ -878,9 +897,9 @@ async def _generate_token_and_redirect(
         extra={"email": email, "service_account": service_account_email},
     )
 
-    # Generate auth code and store SA email for later token generation
+    # Generate auth code and store SA + user email for later token generation
     auth_code = secrets.token_urlsafe(32)
-    await db.save_auth_code(auth_code, service_account_email)
+    await db.save_auth_code(auth_code, service_account_email, email)
 
     # Redirect with auth code only
     params = {"code": auth_code}

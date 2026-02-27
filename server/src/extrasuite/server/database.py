@@ -198,8 +198,10 @@ class Database:
     # Auth Code Exchange (for secure token delivery)
     # =========================================================================
 
-    async def save_auth_code(self, auth_code: str, service_account_email: str) -> None:
-        """Save auth code with associated service account email.
+    async def save_auth_code(
+        self, auth_code: str, service_account_email: str, user_email: str
+    ) -> None:
+        """Save auth code with associated service account and user email.
 
         Auth codes are single-use and expire after AUTH_CODE_TTL.
         Tokens are NOT stored - they are generated on-demand when the auth code is exchanged.
@@ -212,21 +214,22 @@ class Database:
             await doc_ref.set(
                 {
                     "service_account_email": service_account_email,
+                    "user_email": user_email,
                     "expires_at": expires_at,
                 }
             )
 
         await asyncio.wait_for(_create(), timeout=self._timeout)
 
-    async def retrieve_auth_code(self, auth_code: str) -> str | None:
-        """Retrieve AND delete auth code. Returns service_account_email or None if not found/expired.
+    async def retrieve_auth_code(self, auth_code: str) -> dict[str, str] | None:
+        """Retrieve AND delete auth code. Returns {service_account_email, user_email} or None if not found/expired.
 
         Uses a Firestore transaction for atomic get-and-delete to prevent race conditions.
         """
         doc_ref = self._client.collection("auth_codes").document(auth_code)
 
         @async_transactional
-        async def _atomic_retrieve(transaction) -> str | None:
+        async def _atomic_retrieve(transaction) -> dict[str, str] | None:
             doc = await doc_ref.get(transaction=transaction)
 
             if not doc.exists:
@@ -250,7 +253,10 @@ class Database:
 
             # Delete the auth code (one-time use)
             transaction.delete(doc_ref)
-            return service_account_email
+            return {
+                "service_account_email": service_account_email,
+                "user_email": data.get("user_email", ""),
+            }
 
         transaction = self._client.transaction()
         return await asyncio.wait_for(_atomic_retrieve(transaction), timeout=self._timeout)
