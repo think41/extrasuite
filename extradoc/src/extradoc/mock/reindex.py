@@ -152,37 +152,23 @@ def _reindex_table(table: dict[str, Any], table_start: int) -> int:
             row["endIndex"] = current_idx
     else:
         # Cells don't have explicit startIndex (e.g. serde-deserialized tables).
-        # Always use 1 as the table-start-marker overhead.  The stale absolute
-        # startIndex values that _reindex_cell_content writes into cell content
-        # on a previous pass must NOT be used here: after the table moves in the
-        # body (e.g. due to a prior deleteContentRange), those stored values no
-        # longer reflect the table's new position, causing the overhead to be
-        # computed as (stale_absolute - new_table_start) which is always wrong.
-        current_idx = table_start + 1  # one position for the table start marker
+        # The Google Docs API always uses Full Structure: one row marker per row,
+        # one cell marker per cell.  Use the same Full Structure layout here so
+        # that computed indices match what the real API expects.
+        current_idx = table_start + 1  # table start marker
 
-        # Detect inter-cell gap from adjacent cell content positions.
-        # This reflects the structural marker count between cells (typically 1).
-        # It is safe to read from stale values because the GAP (difference) is
-        # position-independent: it captures how many body-index positions separate
-        # consecutive cell contents, which is a table-structure constant.
-        cell_gap = 1  # default
-        if len(first_cells) >= 2:
-            c1_content = first_cells[0].get("content", [])
-            c2_content = first_cells[1].get("content", [])
-            if c1_content and c2_content:
-                c1_end = c1_content[-1].get("endIndex", 0)
-                c2_start = c2_content[0].get("startIndex", 0)
-                if c2_start > c1_end:
-                    cell_gap = c2_start - c1_end
-
-        is_first_cell = True
         for row in rows:
+            row["startIndex"] = current_idx
+            current_idx += 1  # row marker
+
             for cell in row.get("tableCells", []):
-                if is_first_cell:
-                    is_first_cell = False
-                else:
-                    current_idx += cell_gap  # inter-cell gap
+                cell["startIndex"] = current_idx
+                current_idx += 1  # cell marker
+
                 current_idx = _reindex_cell_content(cell, current_idx)
+                cell["endIndex"] = current_idx
+
+            row["endIndex"] = current_idx
 
     return current_idx
 

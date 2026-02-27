@@ -3085,14 +3085,10 @@ def _make_multi_para_cell_table(
 
 
 class TestIssue15MultiParagraphCells:
-    """Issue 15: Multi-paragraph cells with non-default styles raise ReconcileError."""
+    """Issue 15: Multi-paragraph cells with styles now fully supported via recursive reconciliation."""
 
     def test_plain_two_para_cell_populate_works(self):
-        """Populating a cell with two plain-text paragraphs preserves structure.
-
-        insertText with embedded \\n correctly creates paragraph breaks.
-        No ReconcileError should be raised for plain-text multi-paragraph cells.
-        """
+        """Populating a cell with two plain-text paragraphs preserves structure."""
         base = _make_doc_with_content("Intro", _make_table([["Old"]]))
         desired_table = _make_multi_para_cell_table(
             [
@@ -3105,11 +3101,11 @@ class TestIssue15MultiParagraphCells:
         ok, diffs = verify(base, result, desired)
         assert ok, f"Plain multi-paragraph cell should be reconciled correctly: {diffs}"
 
-    def test_multi_para_cell_with_heading_style_raises_error(self):
-        """A desired cell with multiple paragraphs and a heading style raises ReconcileError.
+    def test_multi_para_cell_with_heading_style_works(self):
+        """A desired cell with multiple paragraphs and a heading style is fully reconciled.
 
-        The reconciler inserts combined text via insertText, which loses per-paragraph
-        styles. This must raise an error instead of silently producing wrong output.
+        Recursive cell reconciliation handles paragraph styles, text styles,
+        and multi-paragraph layouts without raising an error.
         """
         base = _make_doc_with_content("Intro", _make_table([["Old"]]))
         desired_table = _make_multi_para_cell_table(
@@ -3124,18 +3120,15 @@ class TestIssue15MultiParagraphCells:
             ]
         )
         desired = _make_doc_with_content("Intro", desired_table)
+        result = reconcile(base, desired)
+        ok, diffs = verify(base, result, desired)
+        assert (
+            ok
+        ), f"Multi-paragraph cell with heading style should be reconciled: {diffs}"
 
-        with pytest.raises(ReconcileError, match="[Mm]ulti-paragraph"):
-            reconcile(base, desired)
-
-    def test_diff_cell_with_heading_style_in_second_para_raises_error(self):
-        """Diffing a matched cell where desired has two paras and a heading raises error."""
-        # Build a 1x2 table: base col 0 and desired col 0 have same column fingerprint
-        # (same per-column text when stripped), but desired cell has non-default para style.
-        # The easiest way to trigger _diff_single_cell_at with multi-para desired is
-        # to have the tables differ structurally but ensure _populate_cell_at is invoked.
+    def test_diff_cell_with_heading_style_in_second_para_works(self):
+        """Diffing a cell where desired has multiple paragraphs with styles succeeds."""
         base_table = _make_table([["A", "B"]])
-        # desired: same col 1 ("B") but col 0 has two paragraphs with heading style
         desired_table = _make_multi_para_cell_table(
             [
                 {
@@ -3147,12 +3140,13 @@ class TestIssue15MultiParagraphCells:
                 {"paragraph": {"elements": [{"textRun": {"content": "Extra\n"}}]}},
             ]
         )
-        # Use single-column desired so we stay in the 1-col path
         base = _make_doc_with_content("Start", base_table)
         desired = _make_doc_with_content("Start", desired_table)
-
-        with pytest.raises(ReconcileError, match="[Mm]ulti-paragraph"):
-            reconcile(base, desired)
+        result = reconcile(base, desired)
+        ok, diffs = verify(base, result, desired)
+        assert (
+            ok
+        ), f"Cell with heading style in second para should be reconciled: {diffs}"
 
 
 # ---------------------------------------------------------------------------
