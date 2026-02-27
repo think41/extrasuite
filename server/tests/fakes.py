@@ -82,16 +82,19 @@ class FakeDatabase:
         if auth_code not in self.auth_codes:
             return None
 
-        data = self.auth_codes.pop(auth_code)
-        expires_at = data.get("expires_at")
+        data = self.auth_codes[auth_code]
 
-        if not expires_at or datetime.now(UTC) > expires_at:
-            return None
-
-        # Delegation codes must not be returned here
+        # Delegation codes must not be returned here; consume and discard
         if data.get("flow_type") == "delegation":
+            self.auth_codes.pop(auth_code)
             return None
 
+        expires_at = data.get("expires_at")
+        if not expires_at or datetime.now(UTC) > expires_at:
+            self.auth_codes.pop(auth_code)
+            return None
+
+        self.auth_codes.pop(auth_code)
         return {
             "service_account_email": data.get("service_account_email", ""),
             "user_email": data.get("user_email", ""),
@@ -175,10 +178,14 @@ class FakeDatabase:
             return None
         return {"email": data["email"], "created_at": data["created_at"]}
 
-    async def revoke_session_token(self, token_hash: str) -> bool:
-        """Revoke a session token."""
+    async def revoke_session_token(self, token_hash: str, expected_email: str = "") -> bool:
+        """Revoke a session token. Returns False if not found or email mismatch."""
         if token_hash not in self.session_tokens:
             return False
+        if expected_email:
+            stored_email = self.session_tokens[token_hash].get("email", "")
+            if stored_email.lower() != expected_email.lower():
+                return False
         self.session_tokens[token_hash]["revoked_at"] = datetime.now(UTC)
         return True
 

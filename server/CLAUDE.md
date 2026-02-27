@@ -33,7 +33,7 @@ See [`auth-spec.md`](../website/docs/api/auth-spec.md) for the full protocol. Th
 
 **Phase 2 — Headless access token exchange** (every command, no browser):
 
-- `POST /api/auth/token` — validate session token, log request to `access_logs`, dispatch to `TokenGenerator.generate_token()` (SA) or `TokenGenerator.generate_delegated_token()` (DWD) based on pseudo-scope.
+- `POST /api/auth/token` — session token passed in `Authorization: Bearer` header (not body, to avoid proxy log exposure). Validates session, logs request to `access_logs`, dispatches to `TokenGenerator.generate_token()` (SA) or `TokenGenerator.generate_delegated_token()` (DWD) based on scope.
 
 **Admin session management:**
 
@@ -77,6 +77,16 @@ Allowed delegation scopes: `gmail.compose`, `calendar`, `script.projects`, `driv
 |---|---|---|
 | `SESSION_TOKEN_EXPIRY_DAYS` | 30 | Session token lifetime in days |
 | `ADMIN_EMAILS` | (empty) | CSV of admin email addresses |
+
+## Type Safety and None Discipline
+
+Write code where types are as narrow as possible. `None` is not a valid sentinel for "this should have been initialised earlier" — enforce the invariant at the right boundary instead.
+
+- If a field is always present after a lifecycle stage (e.g. service account after session establishment), enforce that stage and use a non-optional type. Do not sprinkle `or ""` fallbacks throughout downstream code.
+- `Optional[str]` on a field that is logically always non-empty after initialisation is a code smell. Fix the initialisation, not the type.
+- Prefer raising with a clear invariant-violation message over silently returning a default. Loud failures surface bugs early; silent defaults hide them.
+
+**Concrete rule for this codebase:** `get_service_account_email()` returning `None` after a session token has been issued is always a bug, not a valid state. `generate_delegated_token()` must raise `DelegationError` if the lookup returns `None`, not coerce to `""`.
 
 ## Exception Handling
 

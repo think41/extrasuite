@@ -552,9 +552,12 @@ class SessionExchangeResponse(BaseModel):
 
 
 class AccessTokenRequest(BaseModel):
-    """Request body for access token exchange (Phase 2)."""
+    """Request body for access token exchange (Phase 2).
 
-    session_token: str = Field(..., min_length=1, description="Session token from Phase 1")
+    The session token is passed in the Authorization: Bearer header, not in the body,
+    to avoid it appearing in server access logs.
+    """
+
     scope: str = Field(..., min_length=1, description="Scope (e.g., sheet.pull, gmail.compose)")
     reason: str = Field(..., min_length=1, description="Reason for requesting this token")
     file_hint: str = Field("", description="Optional Drive file URL or ID")
@@ -570,10 +573,15 @@ class AccessTokenResponse(BaseModel):
 
 
 def _get_client_ip(request: Request) -> str:
-    """Extract client IP from request headers or connection."""
+    """Extract client IP from request headers or connection.
+
+    Uses the rightmost (last) IP in X-Forwarded-For because Cloud Run
+    appends the real client IP at the end of the chain, and earlier entries
+    can be spoofed by the caller. Falls back to the direct connection IP.
+    """
     forwarded_for = request.headers.get("X-Forwarded-For")
     if forwarded_for:
-        return forwarded_for.split(",")[0].strip()
+        return forwarded_for.split(",")[-1].strip()
     return request.client.host if request.client else ""
 
 
@@ -623,6 +631,19 @@ async def exchange_auth_code_for_session(
     if not settings.is_email_domain_allowed(email):
         raise HTTPException(status_code=403, detail="Email domain not allowed")
 
+    # Ensure service account exists before issuing session — this is the provisioning boundary.
+    # After this point, get_service_account_email() for this user will always return a value,
+    # so downstream code (generate_delegated_token etc.) never receives None.
+    token_generator = TokenGenerator(database=db, settings=settings)
+    try:
+        await token_generator.ensure_service_account(email)
+    except Exception as e:
+        logger.exception(
+            "Service account setup failed during session exchange",
+            extra={"email": email, "error": str(e)},
+        )
+        raise HTTPException(status_code=500, detail="Failed to provision service account") from e
+
     # Generate session token
     raw_token = secrets.token_urlsafe(32)
     token_hash = hashlib.sha256(raw_token.encode()).hexdigest()
@@ -661,19 +682,14 @@ async def exchange_session_for_access_token(
 ) -> AccessTokenResponse:
     """Exchange a session token for a short-lived access token (Phase 2).
 
-    This is the headless path: no browser required. The session token
-    (obtained once via Phase 1) is exchanged for a short-lived token
-    scoped to the requested scope.
+    This is the headless path: no browser required. The session token is passed
+    in the Authorization: Bearer header (not the body) to prevent it from being
+    recorded in server access logs.
     """
-    # Validate session token
-    token_hash = hashlib.sha256(body.session_token.encode()).hexdigest()
-    session_data = await db.validate_session_token(token_hash)
-    if not session_data:
-        raise HTTPException(
-            status_code=401,
-            detail="Session expired or revoked. Run: extrasuite auth login",
-        )
-    email = str(session_data["email"])
+    # Validate session token from Authorization: Bearer header
+    caller = await _validate_bearer_session(request, db)
+    email = caller["email"]
+    token_hash = caller["token_hash"]
 
     # Validate scope
     if body.scope not in _ALL_SCOPES:
@@ -723,12 +739,6 @@ async def exchange_session_for_access_token(
         extra={"email": email, "scope": body.scope},
     )
 
-    if not result.service_account_email:
-        raise HTTPException(
-            status_code=500,
-            detail="Token generation succeeded but returned no service account email",
-        )
-
     return AccessTokenResponse(
         access_token=result.token,
         expires_at=result.expires_at.isoformat(),
@@ -773,6 +783,15 @@ async def list_sessions(
     _assert_session_authorized(caller_email, email, settings, "view sessions for this email")
 
     sessions = await db.list_session_tokens(email)
+
+    # Redact full session_hash when an admin is listing another user's sessions.
+    # The full hash is the revocation key; self-service callers need it to build
+    # DELETE URLs for their own sessions. Admins listing other users get only the
+    # prefix (sufficient for audit display) and should use revoke-all if needed.
+    if caller_email.lower() != email.lower():
+        for s in sessions:
+            s.pop("session_hash", None)
+
     return sessions
 
 
@@ -793,16 +812,16 @@ async def revoke_session(
     caller_email = caller["email"]
     is_admin = caller_email.lower() in settings.get_admin_emails()
 
-    if not is_admin:
-        # Verify caller owns this session
-        sessions = await db.list_session_tokens(caller_email)
-        owns = any(s["session_hash"] == session_hash for s in sessions)
-        if not owns:
-            raise HTTPException(status_code=403, detail="Not authorized to revoke this session")
-
-    found = await db.revoke_session_token(session_hash)
+    # Pass expected_email to make ownership validation atomic in the DB layer.
+    # Admins pass "" to skip the email check (they can revoke any session).
+    # Non-admins pass their own email; the DB will reject a hash that belongs to
+    # a different user, eliminating the TOCTOU window of the list+check approach.
+    expected_email = "" if is_admin else caller_email
+    found = await db.revoke_session_token(session_hash, expected_email=expected_email)
     if not found:
-        raise HTTPException(status_code=404, detail="Session not found")
+        status = 404 if is_admin else 403
+        detail = "Session not found" if is_admin else "Not authorized to revoke this session"
+        raise HTTPException(status_code=status, detail=detail)
 
     logger.info(
         "Session revoked", extra={"session_hash_prefix": session_hash[:16], "by": caller_email}

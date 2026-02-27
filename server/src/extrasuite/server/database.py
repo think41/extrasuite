@@ -29,7 +29,7 @@ Collections structure:
   - device_ip, device_mac, device_hostname, device_os, device_platform
 
 - access_logs: Auto-generated doc ID
-  - email, session_hash_prefix, pseudo_scope, credential_type, reason, ip, file_hint
+  - email, session_hash_prefix, scope, credential_type, reason, ip, file_hint
   - timestamp, expires_at (30-day TTL)
 
 Note: Sessions are handled via starlette's signed cookies (stateless).
@@ -466,13 +466,27 @@ class Database:
             "created_at": data.get("created_at"),
         }
 
-    async def revoke_session_token(self, token_hash: str) -> bool:
-        """Revoke a session token. Returns True if found, False if not found."""
+    async def revoke_session_token(self, token_hash: str, expected_email: str = "") -> bool:
+        """Revoke a session token. Returns True if found and owned, False if not found.
+
+        Args:
+            token_hash: SHA-256 hex digest of the raw session token.
+            expected_email: If non-empty, the session is only revoked when its email
+                matches this value (ownership check). Admins pass "" to skip the check.
+
+        Returns:
+            True if the session was found and revoked, False if not found or email mismatch.
+        """
         doc_ref = self._client.collection("session_tokens").document(token_hash)
         doc = await asyncio.wait_for(doc_ref.get(), timeout=self._timeout)
 
         if not doc.exists:
             return False
+
+        if expected_email:
+            data = doc.to_dict()
+            if data is None or data.get("email", "").lower() != expected_email.lower():
+                return False
 
         now = datetime.now(UTC)
 
@@ -485,7 +499,9 @@ class Database:
     async def list_session_tokens(self, email: str) -> list[dict]:
         """List all active sessions for email (for admin/self-service use).
 
-        Returns list of session info dicts (without the full token hash).
+        Returns list of session info dicts including the full session_hash.
+        Callers are responsible for redacting session_hash when returning to
+        non-owning admins (see api.py list_sessions).
         """
         now = datetime.now(UTC)
         query = (

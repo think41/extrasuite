@@ -104,6 +104,14 @@ The server only allows a specific set of OAuth delegation scopes. When calling `
 - `script.projects` - Google Apps Script
 - `drive.file` - Access Drive files created by the app
 
+## Code Style: Type Safety and None Discipline
+
+Write code where types are as narrow as possible. `None` is not a valid sentinel for "this should have been set up earlier" — enforce that invariant explicitly at the right boundary instead.
+
+- If a value is always present after a certain lifecycle stage, enforce that stage and reflect it in a non-optional type. Do not propagate `Optional[str]` through the call stack and add `or ""` fallbacks everywhere downstream.
+- Prefer raising with a clear invariant-violation message over silently coercing to a default. Loud failures surface bugs early; silent defaults hide them until production.
+- `get_oauth_token(scopes)` in v2 mode only supports a single scope per call. Passing multiple scopes raises `ValueError` — do not silently drop extras.
+
 ## Skills
 
 Agent skills are markdown files (SKILL.md) that teach agents how to use extrasuite. Skills are distributed by the server from the `server/skills/` directory. See https://agentskills.io/home for the agent skills standard.

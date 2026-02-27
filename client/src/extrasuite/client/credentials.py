@@ -237,6 +237,12 @@ class CredentialsManager:
         # may still fill in missing delegation URLs but must NOT activate v2 session
         # flow (server_base_url).  This prevents a developer's personal gateway.json
         # from silently enabling v2 in tests or scripts that pass explicit auth_url.
+        #
+        # Known limitation: if EXTRASUITE_AUTH_URL is set to a v2-capable server AND
+        # a gateway.json with EXTRASUITE_SERVER_URL is also present, the v2 session
+        # flow will NOT be activated (server_base_url stays None).  The caller must
+        # set EXTRASUITE_SERVER_URL (or gateway.json) without also setting the
+        # individual EXTRASUITE_AUTH_URL override to get v2 behaviour.
         _explicit_auth_urls = bool(self._auth_url)
 
         # Derived server base URL for new v2 endpoints (session exchange, access token)
@@ -374,14 +380,18 @@ class CredentialsManager:
             result = self._exchange_session_for_access_token(
                 session, scope=scope, reason=reason
             )
-            # Parse response into Token
+            # Parse response into Token; cap expiry at SA_TOKEN_CACHE_SECONDS so the
+            # client-side cache lifetime is bounded regardless of what the server returns.
             expires_at_dt = datetime.fromisoformat(
                 result["expires_at"].replace("Z", "+00:00")
+            )
+            expires_at = min(
+                expires_at_dt.timestamp(), time.time() + SA_TOKEN_CACHE_SECONDS
             )
             token = Token(
                 access_token=result["access_token"],
                 service_account_email=result["service_account_email"],
-                expires_at=expires_at_dt.timestamp(),
+                expires_at=expires_at,
             )
             self._save_token(token)
             return token
@@ -560,6 +570,11 @@ class CredentialsManager:
         if self._server_base_url:
             if not scopes:
                 raise ValueError("scopes must not be empty")
+            if len(scopes) > 1:
+                raise ValueError(
+                    f"v2 session flow only supports a single scope per request, got {scopes}. "
+                    "Call get_oauth_token() once per scope."
+                )
             session = self._get_or_create_session_token()
             scope = scopes[0].removeprefix(_GOOGLE_SCOPE_PREFIX)
             result = self._exchange_session_for_access_token(
@@ -774,14 +789,16 @@ class CredentialsManager:
             if cached:
                 return cached
 
-        # Run browser/headless flow to get auth code
-        auth_code = self._run_browser_flow_for_session()
-
-        # Exchange auth code for session token
+        # Fail fast before opening a browser: if server_base_url isn't set we cannot
+        # complete the session exchange even if the user authenticates successfully.
         if self._server_base_url is None:
             raise RuntimeError(
-                "server_base_url is not configured; cannot use v2 session flow"
+                "server_base_url is not configured; cannot use v2 session flow. "
+                "Set EXTRASUITE_SERVER_URL or add it to gateway.json."
             )
+
+        # Run browser/headless flow to get auth code
+        auth_code = self._run_browser_flow_for_session()
         session_exchange_url = f"{self._server_base_url}/api/auth/session/exchange"
         device_info = self._collect_device_info()
         body = json.dumps({"code": auth_code, **device_info}).encode("utf-8")
@@ -946,7 +963,6 @@ class CredentialsManager:
         access_token_url = f"{self._server_base_url}/api/auth/token"
         body = json.dumps(
             {
-                "session_token": session.raw_token,
                 "scope": scope,
                 "reason": reason,
                 "file_hint": file_hint,
@@ -956,7 +972,12 @@ class CredentialsManager:
         req = urllib.request.Request(
             access_token_url,
             data=body,
-            headers={"Content-Type": "application/json"},
+            headers={
+                "Content-Type": "application/json",
+                # Session token goes in Authorization header (not body) to avoid
+                # it being recorded in server/proxy access logs.
+                "Authorization": f"Bearer {session.raw_token}",
+            },
             method="POST",
         )
 
