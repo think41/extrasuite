@@ -323,7 +323,8 @@ def _make_doc_with_content(
     A section break is prepended automatically.
     """
     content: list[dict[str, Any]] = [{"sectionBreak": {}}]
-    for elem in elements:
+    elements_list = list(elements)
+    for i, elem in enumerate(elements_list):
         if isinstance(elem, str):
             text = elem if elem.endswith("\n") else elem + "\n"
             content.append(
@@ -331,13 +332,16 @@ def _make_doc_with_content(
             )
         elif isinstance(elem, dict):
             content.append(elem)
-            # insertTable always creates a trailing empty paragraph by
-            # splitting the paragraph at the insertion point.  Our desired
-            # state must include it so the comparison matches.
+            # insertTable creates a trailing empty paragraph for TRAILING gaps
+            # (table at end of content).  For INNER gaps (table followed by more
+            # content), the B4 fix deletes the spurious \n, so the desired state
+            # should NOT include it.
             if "table" in elem:
-                content.append(
-                    {"paragraph": {"elements": [{"textRun": {"content": "\n"}}]}}
-                )
+                is_last = i == len(elements_list) - 1
+                if is_last:
+                    content.append(
+                        {"paragraph": {"elements": [{"textRun": {"content": "\n"}}]}}
+                    )
 
     doc = Document.model_validate(
         {
