@@ -198,6 +198,19 @@ class _Reconciler:
         self._batches: dict[int, list[dict[str, Any]]] = defaultdict(list)
         # Counters for generating unique placeholder IDs ("header_1", "tab_2", …)
         self._id_counter: dict[str, int] = {}
+        # The document-level DEFAULT header/footer segment from the base document,
+        # plus the tab_id of the tab it was found on.
+        # None if the base had no DEFAULT header/footer.
+        # Only one DEFAULT of each type can exist per document. When any tab wants a
+        # header/footer that doesn't yet have a base match, we diff it against this
+        # existing segment (content update) rather than calling createHeader/createFooter
+        # again (which would fail with "Default header already exists").
+        # We must use the owning tab's tab_id in content requests, because the Google
+        # Docs API requires tabId to route to the correct tab's segment namespace.
+        self._base_default_header_seg: Segment | None = None
+        self._base_default_header_tab_id: TabID = None
+        self._base_default_footer_seg: Segment | None = None
+        self._base_default_footer_tab_id: TabID = None
 
     # ------------------------------------------------------------------
     # Public entry point
@@ -209,6 +222,29 @@ class _Reconciler:
         """Execute the reconcile traversal and return ordered batches."""
         base_tabs = base.tabs or []
         desired_tabs = desired.tabs or []
+
+        # Pre-scan base document to find the existing DEFAULT header/footer segments.
+        # createHeader/createFooter are document-level (no tabId); only one DEFAULT
+        # of each type is allowed per document. By capturing the existing segments here,
+        # we can diff against them (content updates) instead of emitting createHeader/
+        # createFooter when another tab also wants a header/footer.
+        for base_tab in base_tabs:
+            base_tab_id = (
+                base_tab.tab_properties.tab_id if base_tab.tab_properties else None
+            )
+            for _seg_id, seg in extract_segments(base_tab).items():
+                if (
+                    isinstance(seg.source, Header)
+                    and self._base_default_header_seg is None
+                ):
+                    self._base_default_header_seg = seg
+                    self._base_default_header_tab_id = base_tab_id
+                elif (
+                    isinstance(seg.source, Footer)
+                    and self._base_default_footer_seg is None
+                ):
+                    self._base_default_footer_seg = seg
+                    self._base_default_footer_tab_id = base_tab_id
 
         tab_align = align_tabs(base_tabs, desired_tabs)
 
@@ -283,15 +319,15 @@ class _Reconciler:
                     desired_lists,
                 )
             elif desired_seg and not base_seg:
-                # Added segment: create it (current batch), populate (next batch)
-                # Reject new header/footer creation for multi-section tabs:
-                # createHeader/createFooter always omits sectionBreakLocation, so the
-                # header/footer would be applied to the document style (all sections).
-                # In a multi-section document this is almost certainly wrong.
+                # Added segment: create it (current batch), populate (next batch).
                 source = desired_seg.source
                 if isinstance(source, Header | Footer) and _tab_has_multiple_sections(
                     base_tab
                 ):
+                    # Reject new header/footer creation for multi-section tabs:
+                    # createHeader/createFooter always omits sectionBreakLocation, so the
+                    # header/footer would be applied to the document style (all sections).
+                    # In a multi-section document this is almost certainly wrong.
                     raise ReconcileError(
                         "Cannot create a new header or footer in a multi-section tab. "
                         "The createHeader/createFooter API always omits "
@@ -299,9 +335,38 @@ class _Reconciler:
                         "sections. Use the Google Docs API directly to create "
                         "section-specific headers or footers."
                     )
-                self._reconcile_new_segment(
-                    desired_seg, current_batch, tab_id, desired_lists
-                )
+                if (
+                    isinstance(source, Header)
+                    and self._base_default_header_seg is not None
+                ):
+                    # A DEFAULT header already exists in the document. Since DEFAULT
+                    # headers are document-level (shared across all tabs), diff the
+                    # desired content against the existing segment. Use the owning
+                    # tab's tab_id: the API routes segment content by (tabId, segmentId).
+                    self._reconcile_segment(
+                        self._base_default_header_seg,
+                        desired_seg,
+                        current_batch,
+                        self._base_default_header_seg.segment_id,
+                        self._base_default_header_tab_id,
+                        desired_lists,
+                    )
+                elif (
+                    isinstance(source, Footer)
+                    and self._base_default_footer_seg is not None
+                ):
+                    self._reconcile_segment(
+                        self._base_default_footer_seg,
+                        desired_seg,
+                        current_batch,
+                        self._base_default_footer_seg.segment_id,
+                        self._base_default_footer_tab_id,
+                        desired_lists,
+                    )
+                else:
+                    self._reconcile_new_segment(
+                        desired_seg, current_batch, tab_id, desired_lists
+                    )
             elif base_seg and not desired_seg:
                 # Deleted segment: delete it (current batch)
                 delete_req = _delete_segment_request(base_seg, tab_id)
@@ -324,7 +389,8 @@ class _Reconciler:
         requests = generate_requests(
             alignment, actual_segment_id, tab_id, desired_lists
         )
-        self._batches[current_batch].extend(requests)
+        if requests:
+            self._batches[current_batch].extend(requests)
 
     def _reconcile_new_segment(
         self,
@@ -429,6 +495,41 @@ class _Reconciler:
                     tab_id,
                     desired_lists,
                 )
+            elif isinstance(desired_seg.source, Header | Footer):
+                # DEFAULT headers/footers are document-level (no tabId). If the base
+                # document already has one, diff the desired content against it
+                # (content update in next batch). If not, create it in the next batch
+                # and populate in the batch after that.
+                source = desired_seg.source
+                if (
+                    isinstance(source, Header)
+                    and self._base_default_header_seg is not None
+                ):
+                    self._reconcile_segment(
+                        self._base_default_header_seg,
+                        desired_seg,
+                        current_batch + 1,
+                        self._base_default_header_seg.segment_id,
+                        self._base_default_header_tab_id,
+                        desired_lists,
+                    )
+                elif (
+                    isinstance(source, Footer)
+                    and self._base_default_footer_seg is not None
+                ):
+                    self._reconcile_segment(
+                        self._base_default_footer_seg,
+                        desired_seg,
+                        current_batch + 1,
+                        self._base_default_footer_seg.segment_id,
+                        self._base_default_footer_tab_id,
+                        desired_lists,
+                    )
+                else:
+                    # No existing DEFAULT: create it in current_batch+1, populate in +2
+                    self._reconcile_new_segment(
+                        desired_seg, current_batch + 1, tab_id, desired_lists
+                    )
             else:
                 self._reconcile_new_segment(
                     desired_seg, current_batch + 1, tab_id, desired_lists
