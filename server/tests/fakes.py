@@ -28,6 +28,8 @@ class FakeDatabase:
         self.oauth_states: dict[str, dict[str, Any]] = {}
         self.auth_codes: dict[str, dict[str, Any]] = {}
         self.delegation_logs: list[dict[str, Any]] = []
+        self.session_tokens: dict[str, dict[str, Any]] = {}
+        self.access_logs: list[dict[str, Any]] = []
         self._should_fail_get_sa: bool = False
         self._should_fail_set_sa: bool = False
 
@@ -65,15 +67,18 @@ class FakeDatabase:
         """Retrieve AND delete OAuth state."""
         return self.oauth_states.pop(state, None)
 
-    async def save_auth_code(self, auth_code: str, service_account_email: str) -> None:
-        """Save auth code with associated service account email."""
+    async def save_auth_code(
+        self, auth_code: str, service_account_email: str, user_email: str = ""
+    ) -> None:
+        """Save auth code with associated service account and user email."""
         self.auth_codes[auth_code] = {
             "service_account_email": service_account_email,
+            "user_email": user_email,
             "expires_at": datetime.now(UTC) + AUTH_CODE_TTL,
         }
 
-    async def retrieve_auth_code(self, auth_code: str) -> str | None:
-        """Retrieve AND delete auth code. Returns service_account_email or None if not found/expired."""
+    async def retrieve_auth_code(self, auth_code: str) -> dict[str, str] | None:
+        """Retrieve AND delete auth code. Returns {service_account_email, user_email} or None."""
         if auth_code not in self.auth_codes:
             return None
 
@@ -83,7 +88,22 @@ class FakeDatabase:
         if not expires_at or datetime.now(UTC) > expires_at:
             return None
 
-        return data.get("service_account_email")
+        # Delegation codes must not be returned here
+        if data.get("flow_type") == "delegation":
+            return None
+
+        return {
+            "service_account_email": data.get("service_account_email", ""),
+            "user_email": data.get("user_email", ""),
+        }
+
+    async def list_users_with_service_accounts(self) -> list[dict]:
+        """List all users with service accounts."""
+        return [
+            {"email": email, "service_account_email": sa_email}
+            for email, sa_email in self.users.items()
+            if sa_email
+        ]
 
     async def save_delegation_auth_code(
         self, auth_code: str, email: str, scopes: list[str], reason: str
@@ -123,6 +143,102 @@ class FakeDatabase:
                 "email": email,
                 "scopes": scopes,
                 "reason": reason,
+                "timestamp": datetime.now(UTC),
+            }
+        )
+
+    async def save_session_token(
+        self,
+        token_hash: str,
+        email: str,
+        device_ip: str = "",
+        device_mac: str = "",
+        device_hostname: str = "",
+        device_os: str = "",
+        device_platform: str = "",
+        expiry_days: int = 30,
+    ) -> None:
+        """Save a session token."""
+        now = datetime.now(UTC)
+        self.session_tokens[token_hash] = {
+            "email": email,
+            "created_at": now,
+            "revoked_at": None,
+            "active_expires_at": now + timedelta(days=expiry_days),
+            "device_ip": device_ip,
+            "device_mac": device_mac,
+            "device_hostname": device_hostname,
+            "device_os": device_os,
+            "device_platform": device_platform,
+        }
+
+    async def validate_session_token(self, token_hash: str) -> dict | None:
+        """Validate a session token."""
+        data = self.session_tokens.get(token_hash)
+        if not data:
+            return None
+        if data.get("revoked_at") is not None:
+            return None
+        if datetime.now(UTC) > data["active_expires_at"]:
+            return None
+        return {"email": data["email"], "created_at": data["created_at"]}
+
+    async def revoke_session_token(self, token_hash: str) -> bool:
+        """Revoke a session token."""
+        if token_hash not in self.session_tokens:
+            return False
+        self.session_tokens[token_hash]["revoked_at"] = datetime.now(UTC)
+        return True
+
+    async def revoke_all_session_tokens(self, email: str) -> int:
+        """Revoke all sessions for email."""
+        count = 0
+        now = datetime.now(UTC)
+        for data in self.session_tokens.values():
+            if (
+                data["email"] == email
+                and data["revoked_at"] is None
+                and data["active_expires_at"] > now
+            ):
+                data["revoked_at"] = now
+                count += 1
+        return count
+
+    async def list_session_tokens(self, email: str) -> list[dict]:
+        """List active sessions for email."""
+        now = datetime.now(UTC)
+        return [
+            {
+                "session_hash": h,
+                "created_at": d["created_at"],
+                "active_expires_at": d["active_expires_at"],
+                "device_hostname": d.get("device_hostname", ""),
+                "is_active": True,
+            }
+            for h, d in self.session_tokens.items()
+            if d["email"] == email and d["revoked_at"] is None and d["active_expires_at"] > now
+        ]
+
+    async def log_access_token_request(
+        self,
+        email: str,
+        session_hash_prefix: str,
+        pseudo_scope: str,
+        credential_type: str,
+        reason: str,
+        ip: str,
+        file_hint: str = "",
+    ) -> None:
+        """Log an access token request."""
+        self.access_logs.append(
+            {
+                "email": email,
+                "session_hash_prefix": session_hash_prefix,
+                "pseudo_scope": pseudo_scope,
+                "credential_type": credential_type,
+                "reason": reason,
+                "ip": ip,
+                "file_hint": file_hint,
                 "timestamp": datetime.now(UTC),
             }
         )

@@ -1193,13 +1193,17 @@ def cmd_calendar_rsvp(args: Any) -> None:
 
 def cmd_auth_login(args: Any) -> None:
     """Login and obtain a 30-day session token."""
+    from datetime import datetime
+
     from extrasuite.client import CredentialsManager
 
     headless = getattr(args, "headless", False)
     manager = CredentialsManager(**_auth_kwargs(args), headless=headless)
-    session = manager._get_or_create_session_token(force=True)
-    from datetime import datetime
-
+    print(
+        "Note: device fingerprint (MAC address, hostname, OS) will be sent to the server for audit.",
+        file=sys.stderr,
+    )
+    session = manager.login(force=True)
     expires_dt = datetime.fromtimestamp(session.expires_at)
     print(f"Logged in as {session.email}.")
     print(f"Session valid until {expires_dt.strftime('%Y-%m-%d %H:%M:%S')}.")
@@ -1207,113 +1211,50 @@ def cmd_auth_login(args: Any) -> None:
 
 def cmd_auth_logout(args: Any) -> None:
     """Revoke session token and clear cached credentials."""
-    import hashlib
-    import urllib.error
-    import urllib.request
-
     from extrasuite.client import CredentialsManager
 
     manager = CredentialsManager(**_auth_kwargs(args))
-    session_path = manager.SESSION_CACHE_PATH
-    token_path = manager.DEFAULT_CACHE_PATH
-    oauth_path = manager.OAUTH_CACHE_PATH
-
-    # Try to revoke server-side (best effort)
-    if session_path.exists() and manager._server_base_url:
-        try:
-            import json as _json
-
-            data = _json.loads(session_path.read_text())
-            raw_token = data.get("raw_token", "")
-            if raw_token:
-                token_hash = hashlib.sha256(raw_token.encode()).hexdigest()
-                revoke_url = (
-                    f"{manager._server_base_url}/api/admin/sessions/{token_hash}"
-                )
-                req = urllib.request.Request(
-                    revoke_url,
-                    headers={"Authorization": f"Bearer {raw_token}"},
-                    method="DELETE",
-                )
-                from extrasuite.client.credentials import SSL_CONTEXT
-
-                try:
-                    urllib.request.urlopen(req, timeout=10, context=SSL_CONTEXT)
-                except Exception as e:
-                    import sys as _sys
-
-                    print(
-                        f"Warning: server-side session revocation failed ({e}).\n"
-                        "Local credentials cleared, but your session may still be active on the server.",
-                        file=_sys.stderr,
-                    )
-        except Exception:
-            pass
-
-    # Delete local cache files
-    import contextlib
-
-    for path in (session_path, token_path, oauth_path):
-        with contextlib.suppress(Exception):
-            path.unlink(missing_ok=True)
-
+    manager.logout()
     print("Logged out.")
 
 
 def cmd_auth_status(args: Any) -> None:
     """Show current auth status."""
-    import time
+    from datetime import datetime
 
     from extrasuite.client import CredentialsManager
 
     manager = CredentialsManager(**_auth_kwargs(args))
+    info = manager.status()
 
-    # Session token status
-    session = manager._load_session_token()
+    session = info["session"]
     if session:
-        from datetime import datetime
-
-        expires_dt = datetime.fromtimestamp(session.expires_at)
-        remaining = int(session.expires_at - time.time())
-        days = remaining // 86400
+        expires_dt = datetime.fromtimestamp(session["expires_at"])
         print(
-            f"Session: active (email={session.email}, expires={expires_dt.strftime('%Y-%m-%d')}, {days}d remaining)"
+            f"Session: active (email={session['email']}, expires={expires_dt.strftime('%Y-%m-%d')}, {session['days_remaining']}d remaining)"
         )
     else:
         print("Session: not found or expired. Run: extrasuite auth login")
 
-    # Access token status
-    cached_token = manager._load_cached_token()
-    if cached_token and cached_token.is_valid():
-        from datetime import datetime
-
-        expires_dt = datetime.fromtimestamp(cached_token.expires_at)
+    access_token = info["access_token"]
+    if access_token and access_token.get("cached"):
+        expires_dt = datetime.fromtimestamp(access_token["expires_at"])
         print(
             f"Access token: cached (expires={expires_dt.strftime('%Y-%m-%d %H:%M:%S')})"
         )
     else:
         print("Access token: not cached")
 
-    # OAuth token status
-    if manager.OAUTH_CACHE_PATH.exists():
-        try:
-            import json as _json
-
-            from extrasuite.client.credentials import OAuthToken
-
-            data = _json.loads(manager.OAUTH_CACHE_PATH.read_text())
-            oauth = OAuthToken.from_dict(data)
-            if oauth.is_valid():
-                from datetime import datetime
-
-                expires_dt = datetime.fromtimestamp(oauth.expires_at)
-                print(
-                    f"OAuth token: cached (expires={expires_dt.strftime('%Y-%m-%d %H:%M:%S')})"
-                )
-            else:
-                print("OAuth token: expired")
-        except Exception:
-            print("OAuth token: invalid cache")
+    oauth_token = info["oauth_token"]
+    if oauth_token and oauth_token.get("cached"):
+        expires_dt = datetime.fromtimestamp(oauth_token["expires_at"])
+        print(
+            f"OAuth token: cached (expires={expires_dt.strftime('%Y-%m-%d %H:%M:%S')})"
+        )
+    elif oauth_token and oauth_token.get("expired"):
+        print("OAuth token: expired")
+    elif oauth_token and oauth_token.get("invalid"):
+        print("OAuth token: invalid cache")
     else:
         print("OAuth token: not cached")
 

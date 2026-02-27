@@ -69,7 +69,7 @@ _SA_SCOPES: frozenset[str] = frozenset(
     }
 )
 _DWD_SCOPES: frozenset[str] = frozenset(
-    {"calendar", "gmail.compose", "gmail.send", "gmail.readonly", "script.projects", "drive"}
+    {"calendar", "gmail.compose", "script.projects", "drive.file"}
 )
 _ALL_SCOPES = _SA_SCOPES | _DWD_SCOPES
 
@@ -604,29 +604,24 @@ async def exchange_auth_code_for_session(
     On success, returns a session token that can be used with POST /api/auth/token
     to obtain short-lived access tokens without browser interaction.
     """
-    # Validate auth code - try both SA and delegation code flows
+    # Validate SA auth code only — delegation auth codes must not be exchangeable for sessions
     auth_code_data = await db.retrieve_auth_code(body.code)
-    if auth_code_data:
-        # SA flow: user_email is stored directly in the auth code document
-        email = auth_code_data["user_email"]
-        if not email:
-            # Fallback for auth codes issued before user_email was stored (pre-deploy transition)
-            service_account_email = auth_code_data["service_account_email"]
-            users = await db.list_users_with_service_accounts()
-            email = next(
-                (u["email"] for u in users if u["service_account_email"] == service_account_email),
-                None,
-            )
-        if not email:
-            raise HTTPException(
-                status_code=400, detail="Could not resolve user email from auth code"
-            )
-    else:
-        # Try delegation auth code
-        delegation_data = await db.retrieve_delegation_auth_code(body.code)
-        if not delegation_data:
-            raise HTTPException(status_code=400, detail="Invalid or expired auth code")
-        email = str(delegation_data["email"])
+    if not auth_code_data:
+        raise HTTPException(status_code=400, detail="Invalid or expired auth code")
+
+    # SA flow: user_email is stored directly in the auth code document
+    email = auth_code_data["user_email"]
+    if not email:
+        # Fallback for auth codes issued before user_email was stored (pre-deploy transition).
+        # TODO: Remove this fallback after 2026-06-01 once all deployed clients have user_email.
+        service_account_email = auth_code_data["service_account_email"]
+        users = await db.list_users_with_service_accounts()
+        email = next(
+            (u["email"] for u in users if u["service_account_email"] == service_account_email),
+            None,
+        )
+    if not email:
+        raise HTTPException(status_code=400, detail="Could not resolve user email from auth code")
 
     # Validate email domain
     if not settings.is_email_domain_allowed(email):
@@ -690,6 +685,19 @@ async def exchange_session_for_access_token(
             status_code=400,
             detail=f"Unknown pseudo-scope: {body.pseudo_scope}. Valid: {sorted(_ALL_SCOPES)}",
         )
+
+    # For DWD scopes, enforce the server's delegation scope allowlist (DELEGATION_SCOPES env var)
+    if body.pseudo_scope in _DWD_SCOPES:
+        scope_url = _resolve_scope(body.pseudo_scope)
+        if not settings.is_scope_allowed(scope_url):
+            logger.warning(
+                "Disallowed DWD scope requested via v2 session token",
+                extra={"email": email, "pseudo_scope": body.pseudo_scope},
+            )
+            raise HTTPException(
+                status_code=403,
+                detail=f"Scope '{body.pseudo_scope}' is not permitted by server configuration.",
+            )
 
     # Log access (best-effort)
     client_ip = _get_client_ip(request)

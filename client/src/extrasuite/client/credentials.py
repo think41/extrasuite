@@ -8,6 +8,8 @@ Supports two authentication modes:
 
 from __future__ import annotations
 
+import contextlib
+import hashlib
 import http.server
 import json
 import os
@@ -637,6 +639,122 @@ class CredentialsManager:
         """Save session token to cache file with secure permissions."""
         self._write_secure_json(self.SESSION_CACHE_PATH, token.to_dict())
 
+    def _revoke_and_clear_session(self) -> None:
+        """Revoke the current session server-side and clear the local session cache.
+
+        Best-effort: prints a warning to stderr if the server call fails, but always
+        removes the local cache file so the caller can proceed to issue a new session.
+        """
+        if not self.SESSION_CACHE_PATH.exists() or not self._server_base_url:
+            return
+        try:
+            data = json.loads(self.SESSION_CACHE_PATH.read_text())
+            raw_token = data.get("raw_token", "")
+            if raw_token:
+                token_hash = hashlib.sha256(raw_token.encode()).hexdigest()
+                revoke_url = f"{self._server_base_url}/api/admin/sessions/{token_hash}"
+                req = urllib.request.Request(
+                    revoke_url,
+                    headers={"Authorization": f"Bearer {raw_token}"},
+                    method="DELETE",
+                )
+                try:
+                    urllib.request.urlopen(req, timeout=10, context=SSL_CONTEXT)
+                except Exception as e:
+                    print(
+                        f"Warning: server-side session revocation failed ({e}).\n"
+                        "Local credentials cleared, but your session may still be active on the server.",
+                        file=sys.stderr,
+                    )
+        except Exception:
+            pass
+        with contextlib.suppress(Exception):
+            self.SESSION_CACHE_PATH.unlink(missing_ok=True)
+
+    def login(self, *, force: bool = False) -> SessionToken:
+        """Log in and obtain a 30-day session token.
+
+        If a valid session already exists and force=False, returns it immediately
+        (headless — no browser required).
+
+        If force=True, revokes any existing session server-side before issuing a new
+        one. This is the correct way to rotate credentials if a session may be
+        compromised.
+
+        Note: This call collects device fingerprint information (MAC address, hostname,
+        OS, platform) that is sent to the ExtraSuite server for audit purposes.
+
+        Args:
+            force: If True, always create a new session even if one exists.
+
+        Returns:
+            A valid SessionToken.
+        """
+        if force:
+            self._revoke_and_clear_session()
+        return self._get_or_create_session_token(force=force)
+
+    def logout(self) -> None:
+        """Revoke the session token server-side and clear all local credential caches.
+
+        Clears:
+        - Session token (~/config/extrasuite/session.json)
+        - Access token cache (~/config/extrasuite/token.json)
+        - OAuth token cache (~/config/extrasuite/oauth_token.json)
+        """
+        self._revoke_and_clear_session()
+        for path in (self._token_cache_path, self.OAUTH_CACHE_PATH):
+            with contextlib.suppress(Exception):
+                path.unlink(missing_ok=True)
+
+    def status(self) -> dict[str, Any]:
+        """Return current authentication status.
+
+        Returns:
+            Dict with keys:
+            - session: dict with {active, email, expires_at, days_remaining} or None
+            - access_token: dict with {cached, expires_at} or None
+            - oauth_token: dict with {cached, expires_at} or None
+        """
+        result: dict[str, Any] = {
+            "session": None,
+            "access_token": None,
+            "oauth_token": None,
+        }
+
+        session = self._load_session_token()
+        if session:
+            remaining = int(session.expires_at - time.time())
+            result["session"] = {
+                "active": True,
+                "email": session.email,
+                "expires_at": session.expires_at,
+                "days_remaining": remaining // 86400,
+            }
+
+        cached_token = self._load_cached_token()
+        if cached_token and cached_token.is_valid():
+            result["access_token"] = {
+                "cached": True,
+                "expires_at": cached_token.expires_at,
+            }
+
+        if self.OAUTH_CACHE_PATH.exists():
+            try:
+                data = json.loads(self.OAUTH_CACHE_PATH.read_text())
+                oauth = OAuthToken.from_dict(data)
+                if oauth.is_valid():
+                    result["oauth_token"] = {
+                        "cached": True,
+                        "expires_at": oauth.expires_at,
+                    }
+                else:
+                    result["oauth_token"] = {"cached": False, "expired": True}
+            except Exception:
+                result["oauth_token"] = {"cached": False, "invalid": True}
+
+        return result
+
     def _get_or_create_session_token(self, force: bool = False) -> SessionToken:
         """Get an existing valid session token or create a new one.
 
@@ -764,10 +882,10 @@ class CredentialsManager:
 
         if result_holder.get("error"):
             raise Exception(f"Authentication failed: {result_holder['error']}")
-        if not result_holder.get("code"):
+        code = result_holder.get("code")
+        if not code:
             raise Exception("Authentication timed out. Please try again.")
-
-        return result_holder["code"]  # type: ignore[return-value]
+        return code
 
     def _run_browser_flow_for_session(self) -> str:
         """Run OAuth browser flow and return the auth code.

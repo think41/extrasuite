@@ -564,15 +564,21 @@ class Database:
 
         docs = await asyncio.wait_for(_query(), timeout=self._timeout)
 
-        count = 0
-        for doc in docs:
-            data = doc.to_dict()
-            if data is None or data.get("revoked_at") is not None:
-                continue
-            await asyncio.wait_for(doc.reference.update({"revoked_at": now}), timeout=self._timeout)
-            count += 1
+        active_docs = [
+            doc
+            for doc in docs
+            if doc.to_dict() is not None and doc.to_dict().get("revoked_at") is None
+        ]
 
-        return count
+        if not active_docs:
+            return 0
+
+        batch = self._client.batch()
+        for doc in active_docs:
+            batch.update(doc.reference, {"revoked_at": now})
+
+        await asyncio.wait_for(batch.commit(), timeout=self._timeout)
+        return len(active_docs)
 
     # =========================================================================
     # Access Logs (audit trail for access token requests)
