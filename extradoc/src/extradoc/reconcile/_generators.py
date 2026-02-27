@@ -744,10 +744,17 @@ def _process_inner_gap(
             insert_idx = 1
 
         if has_tables:
-            # Process each add individually in reverse order at insert_idx
+            # Process each add individually in reverse order at insert_idx.
+            # Pass right_anchor so _insert_adds_individually can apply the B4 fix
+            # (delete spurious \n created by insertTable + restore paragraph style).
             requests.extend(
                 _insert_adds_individually(
-                    real_adds, insert_idx, segment_id, tab_id, desired_lists
+                    real_adds,
+                    insert_idx,
+                    segment_id,
+                    tab_id,
+                    desired_lists,
+                    right_anchor=gap.right_anchor,
                 )
             )
             # Generate style requests for added paragraphs; first para starts at insert_idx
@@ -1209,12 +1216,22 @@ def _insert_adds_individually(
     segment_id: SegmentID,
     tab_id: TabID,
     desired_lists: dict[str, List] | None = None,
+    right_anchor: StructuralElement | None = None,
 ) -> list[dict[str, Any]]:
     """Process adds individually in reverse order at insert_idx.
 
     Used when the gap contains tables mixed with paragraphs.
     Each insert happens at the same position; reverse order ensures
     correct final ordering (first inserted item ends up last).
+
+    B4 fix: insertTable always creates a spurious \\n by splitting the
+    paragraph at insert_idx.  For inner gaps (right_anchor provided), we
+    delete that spurious \\n immediately after each table insertion.  The
+    delete runs BEFORE any subsequent insertText calls, so the position
+    insert_idx + 1 + table_size is correct at that point in the request
+    stream.  After the delete the right_anchor paragraph (now at table_end)
+    inherits left_anchor's paragraph style; we restore the correct style via
+    updateParagraphStyle.
     """
     requests: list[dict[str, Any]] = []
 
@@ -1230,6 +1247,29 @@ def _insert_adds_individually(
                 el.table, insert_idx, segment_id, tab_id, desired_lists
             )
             requests.extend(table_reqs)
+            if right_anchor is not None:
+                # B4 fix: delete the spurious \n created by insertTable's split,
+                # then restore the right_anchor's paragraph style.
+                table_end = insert_idx + 1 + _table_structural_size(el.table)
+                requests.append(
+                    _make_delete_range(table_end, table_end + 1, segment_id, tab_id)
+                )
+                right_para = right_anchor.paragraph
+                if right_para is not None and right_para.paragraph_style is not None:
+                    style_dict, fields = _compute_style_diff(
+                        None, right_para.paragraph_style, ParagraphStyle
+                    )
+                    if fields:
+                        requests.append(
+                            _make_update_paragraph_style(
+                                table_end,
+                                table_end + 1,
+                                style_dict,
+                                fields,
+                                segment_id,
+                                tab_id,
+                            )
+                        )
         elif _is_paragraph(el):
             text = _para_text(el)
             if text:
