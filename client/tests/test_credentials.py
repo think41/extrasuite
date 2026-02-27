@@ -14,6 +14,7 @@ import pytest
 from extrasuite.client.credentials import (
     CredentialsManager,
     OAuthToken,
+    SessionToken,
     Token,
 )
 
@@ -99,13 +100,13 @@ class TestToken:
         assert token.expires_at == 1234567890.0
 
     def test_from_dict_missing_email(self) -> None:
-        """from_dict handles missing service_account_email."""
+        """from_dict raises KeyError when service_account_email is absent (invalid cache)."""
         data = {
             "access_token": "test-token",
             "expires_at": 1234567890.0,
         }
-        token = Token.from_dict(data)
-        assert token.service_account_email == ""
+        with pytest.raises(KeyError):
+            Token.from_dict(data)
 
     def test_roundtrip(self) -> None:
         """Token survives to_dict/from_dict roundtrip."""
@@ -484,7 +485,9 @@ class TestCredentialsManagerExtraSuite:
             exchange_url="https://auth.example.com/api/token/exchange",
             token_cache_path=token_path,
         )
-        token = manager.get_token()
+        token = manager.get_token(
+            reason="Test: verify cached token is returned", scope="sheet.pull"
+        )
         assert token.access_token == "cached-token"
 
     def test_get_token_force_refresh_ignores_cache(self, tmp_path: Path) -> None:
@@ -512,7 +515,11 @@ class TestCredentialsManagerExtraSuite:
         with mock.patch.object(
             manager, "_authenticate_extrasuite", return_value=new_token
         ):
-            token = manager.get_token(force_refresh=True)
+            token = manager.get_token(
+                reason="Test: force refresh to get new token",
+                scope="sheet.pull",
+                force_refresh=True,
+            )
             assert token.access_token == "new-token"
 
     def test_exchange_auth_code_success(self) -> None:
@@ -590,11 +597,15 @@ class TestCredentialsManagerServiceAccount:
 
         if google_auth_available:
             with pytest.raises(FileNotFoundError):
-                manager.get_token()
+                manager.get_token(
+                    reason="Test: access Google Sheets", scope="sheet.pull"
+                )
         else:
             # Without google-auth, we get ImportError first
             with pytest.raises(ImportError):
-                manager.get_token()
+                manager.get_token(
+                    reason="Test: access Google Sheets", scope="sheet.pull"
+                )
 
     def test_service_account_uses_cache(self, tmp_path: Path) -> None:
         """Service account mode also uses file cache."""
@@ -613,7 +624,9 @@ class TestCredentialsManagerServiceAccount:
                 service_account_path="/path/to/sa.json",
                 token_cache_path=token_path,
             )
-        token = manager.get_token()
+        token = manager.get_token(
+            reason="Test: verify service account uses cached token", scope="sheet.pull"
+        )
         assert token.access_token == "cached-sa-token"
 
     def test_service_account_missing_google_auth(self, tmp_path: Path) -> None:
@@ -635,7 +648,9 @@ class TestCredentialsManagerServiceAccount:
         except ImportError:
             # google-auth is not installed, this is the case we want to test
             with pytest.raises(ImportError) as exc_info:
-                manager.get_token()
+                manager.get_token(
+                    reason="Test: access Google Sheets", scope="sheet.pull"
+                )
             assert "google-auth" in str(exc_info.value)
 
 
@@ -708,7 +723,9 @@ class TestCredentialsManagerIntegration:
             token_cache_path=token_path,
         )
 
-        token = manager.get_token()
+        token = manager.get_token(
+            reason="Test: pulling spreadsheet data", scope="sheet.pull"
+        )
 
         assert token.access_token == "cached-access-token"
         assert token.service_account_email == "sa@project.iam.gserviceaccount.com"
@@ -740,7 +757,9 @@ class TestCredentialsManagerIntegration:
         with mock.patch.object(
             manager, "_authenticate_extrasuite", return_value=new_token
         ):
-            token = manager.get_token()
+            token = manager.get_token(
+                reason="Test: re-authenticate after token expiry", scope="sheet.pull"
+            )
 
         assert token.access_token == "fresh-token"
 
@@ -941,3 +960,437 @@ class TestDelegationFlow:
                     call_args[1].get("exchange_url", call_args[0][1])
                     == "https://deleg.example.com/api/delegation/exchange"
                 )
+
+
+class TestSessionToken:
+    """Tests for SessionToken dataclass."""
+
+    def test_is_valid_with_future_expiry(self) -> None:
+        """Session token with future expiry is valid."""
+        token = SessionToken(
+            raw_token="raw-token",
+            email="user@example.com",
+            expires_at=time.time() + 86400,  # 1 day from now
+        )
+        assert token.is_valid() is True
+
+    def test_is_valid_with_expired_token(self) -> None:
+        """Session token with past expiry is invalid."""
+        token = SessionToken(
+            raw_token="raw-token",
+            email="user@example.com",
+            expires_at=time.time() - 100,
+        )
+        assert token.is_valid() is False
+
+    def test_is_valid_respects_5min_buffer(self) -> None:
+        """Session token expiring within 5-minute buffer is invalid."""
+        token = SessionToken(
+            raw_token="raw-token",
+            email="user@example.com",
+            expires_at=time.time() + 200,  # 200 seconds from now
+        )
+        assert token.is_valid(buffer_seconds=300) is False
+        assert token.is_valid(buffer_seconds=100) is True
+
+    def test_to_dict_from_dict_roundtrip(self) -> None:
+        """SessionToken survives to_dict/from_dict roundtrip."""
+        original = SessionToken(
+            raw_token="raw-token-abc",
+            email="user@example.com",
+            expires_at=1234567890.0,
+        )
+        restored = SessionToken.from_dict(original.to_dict())
+        assert restored.raw_token == original.raw_token
+        assert restored.email == original.email
+        assert restored.expires_at == original.expires_at
+
+
+class TestSessionTokenCache:
+    """Tests for session token file caching."""
+
+    def _make_manager(self, tmp_path: Path) -> CredentialsManager:
+        env = {"EXTRASUITE_SERVER_URL": "https://myserver.example.com"}
+        with mock.patch.dict(os.environ, env, clear=True):
+            return CredentialsManager(
+                token_cache_path=tmp_path / "token.json",
+            )
+
+    def test_load_session_token_no_file(self, tmp_path: Path) -> None:
+        """Returns None when no session file exists."""
+        manager = self._make_manager(tmp_path)
+        with mock.patch.object(
+            CredentialsManager, "SESSION_CACHE_PATH", tmp_path / "session.json"
+        ):
+            assert manager._load_session_token() is None
+
+    def test_load_session_token_valid(self, tmp_path: Path) -> None:
+        """Returns SessionToken when file contains a valid token."""
+        session_path = tmp_path / "session.json"
+        session_data = {
+            "raw_token": "my-raw-token",
+            "email": "user@example.com",
+            "expires_at": time.time() + 86400,
+        }
+        session_path.write_text(json.dumps(session_data))
+
+        manager = self._make_manager(tmp_path)
+        with mock.patch.object(CredentialsManager, "SESSION_CACHE_PATH", session_path):
+            token = manager._load_session_token()
+        assert token is not None
+        assert token.raw_token == "my-raw-token"
+        assert token.email == "user@example.com"
+
+    def test_load_session_token_expired(self, tmp_path: Path) -> None:
+        """Returns None when session token is expired."""
+        session_path = tmp_path / "session.json"
+        session_data = {
+            "raw_token": "my-raw-token",
+            "email": "user@example.com",
+            "expires_at": time.time() - 100,
+        }
+        session_path.write_text(json.dumps(session_data))
+
+        manager = self._make_manager(tmp_path)
+        with mock.patch.object(CredentialsManager, "SESSION_CACHE_PATH", session_path):
+            assert manager._load_session_token() is None
+
+    def test_save_session_token(self, tmp_path: Path) -> None:
+        """Session token is saved with secure permissions."""
+        session_path = tmp_path / "session.json"
+        manager = self._make_manager(tmp_path)
+        token = SessionToken(
+            raw_token="my-raw-token",
+            email="user@example.com",
+            expires_at=time.time() + 86400,
+        )
+        with mock.patch.object(CredentialsManager, "SESSION_CACHE_PATH", session_path):
+            manager._save_session_token(token)
+
+        assert session_path.exists()
+        import stat as stat_module
+
+        mode = session_path.stat().st_mode
+        assert mode & 0o777 == stat_module.S_IRUSR | stat_module.S_IWUSR
+
+        stored = json.loads(session_path.read_text())
+        assert stored["raw_token"] == "my-raw-token"
+        assert stored["email"] == "user@example.com"
+
+
+class TestV2SessionFlow:
+    """Tests for v2 session-token auth protocol."""
+
+    def _make_v2_manager(self, tmp_path: Path) -> CredentialsManager:
+        env = {"EXTRASUITE_SERVER_URL": "https://myserver.example.com"}
+        with mock.patch.dict(os.environ, env, clear=True):
+            return CredentialsManager(
+                token_cache_path=tmp_path / "token.json",
+            )
+
+    def test_get_or_create_session_token_returns_cached(self, tmp_path: Path) -> None:
+        """_get_or_create_session_token returns cached session without browser flow."""
+        manager = self._make_v2_manager(tmp_path)
+        valid_session = SessionToken(
+            raw_token="cached-session-token",
+            email="user@example.com",
+            expires_at=time.time() + 86400,
+        )
+        with mock.patch.object(
+            manager, "_load_session_token", return_value=valid_session
+        ):
+            result = manager._get_or_create_session_token()
+        assert result.raw_token == "cached-session-token"
+
+    def test_get_or_create_session_token_creates_new_when_no_cache(
+        self, tmp_path: Path
+    ) -> None:
+        """_get_or_create_session_token runs browser flow when no cached session."""
+        manager = self._make_v2_manager(tmp_path)
+        session_path = tmp_path / "session.json"
+
+        mock_exchange_response = {
+            "session_token": "new-session-token",
+            "email": "user@example.com",
+            "expires_at": "2026-12-31T00:00:00+00:00",
+        }
+
+        with (
+            mock.patch.object(manager, "_load_session_token", return_value=None),
+            mock.patch.object(
+                manager, "_run_browser_flow_for_session", return_value="test-auth-code"
+            ),
+            mock.patch("urllib.request.urlopen") as mock_urlopen,
+            mock.patch.object(CredentialsManager, "SESSION_CACHE_PATH", session_path),
+        ):
+            mock_resp = mock.MagicMock()
+            mock_resp.read.return_value = json.dumps(mock_exchange_response).encode()
+            mock_resp.__enter__ = mock.MagicMock(return_value=mock_resp)
+            mock_resp.__exit__ = mock.MagicMock(return_value=False)
+            mock_urlopen.return_value = mock_resp
+
+            result = manager._get_or_create_session_token()
+
+        assert result.raw_token == "new-session-token"
+        assert result.email == "user@example.com"
+
+    def test_get_or_create_session_token_force_skips_cache(
+        self, tmp_path: Path
+    ) -> None:
+        """_get_or_create_session_token with force=True skips cached session."""
+        manager = self._make_v2_manager(tmp_path)
+        cached_session = SessionToken(
+            raw_token="old-token",
+            email="user@example.com",
+            expires_at=time.time() + 86400,
+        )
+        session_path = tmp_path / "session.json"
+        mock_exchange_response = {
+            "session_token": "new-token",
+            "email": "user@example.com",
+            "expires_at": "2026-12-31T00:00:00+00:00",
+        }
+
+        with (
+            mock.patch.object(
+                manager, "_load_session_token", return_value=cached_session
+            ),
+            mock.patch.object(
+                manager, "_run_browser_flow_for_session", return_value="fresh-auth-code"
+            ),
+            mock.patch("urllib.request.urlopen") as mock_urlopen,
+            mock.patch.object(CredentialsManager, "SESSION_CACHE_PATH", session_path),
+        ):
+            mock_resp = mock.MagicMock()
+            mock_resp.read.return_value = json.dumps(mock_exchange_response).encode()
+            mock_resp.__enter__ = mock.MagicMock(return_value=mock_resp)
+            mock_resp.__exit__ = mock.MagicMock(return_value=False)
+            mock_urlopen.return_value = mock_resp
+
+            result = manager._get_or_create_session_token(force=True)
+
+        assert result.raw_token == "new-token"
+
+    def test_exchange_session_for_access_token_success(self, tmp_path: Path) -> None:
+        """_exchange_session_for_access_token parses server response correctly."""
+        manager = self._make_v2_manager(tmp_path)
+        session = SessionToken(
+            raw_token="my-session-token",
+            email="user@example.com",
+            expires_at=time.time() + 86400,
+        )
+
+        mock_response = {
+            "access_token": "short-lived-token",
+            "expires_at": "2026-01-01T12:00:00+00:00",
+            "token_type": "Bearer",
+            "service_account_email": "sa@project.iam.gserviceaccount.com",
+        }
+
+        with mock.patch("urllib.request.urlopen") as mock_urlopen:
+            mock_resp = mock.MagicMock()
+            mock_resp.read.return_value = json.dumps(mock_response).encode()
+            mock_resp.__enter__ = mock.MagicMock(return_value=mock_resp)
+            mock_resp.__exit__ = mock.MagicMock(return_value=False)
+            mock_urlopen.return_value = mock_resp
+
+            result = manager._exchange_session_for_access_token(
+                session, scope="sheet.pull", reason="Test pull"
+            )
+
+        assert result["access_token"] == "short-lived-token"
+        assert result["service_account_email"] == "sa@project.iam.gserviceaccount.com"
+
+    def test_exchange_session_for_access_token_401_raises_helpful_error(
+        self, tmp_path: Path
+    ) -> None:
+        """_exchange_session_for_access_token raises actionable error on 401."""
+        manager = self._make_v2_manager(tmp_path)
+        session = SessionToken(
+            raw_token="expired-session",
+            email="user@example.com",
+            expires_at=time.time() + 86400,
+        )
+
+        with mock.patch("urllib.request.urlopen") as mock_urlopen:
+            error = urllib.error.HTTPError(
+                url="https://myserver.example.com/api/auth/token",
+                code=401,
+                msg="Unauthorized",
+                hdrs={},
+                fp=mock.MagicMock(read=lambda: b"Session expired"),
+            )
+            mock_urlopen.side_effect = error
+
+            with pytest.raises(Exception) as exc_info:
+                manager._exchange_session_for_access_token(
+                    session, scope="sheet.pull", reason="Test"
+                )
+        assert "extrasuite auth login" in str(exc_info.value)
+
+    def test_get_token_v2_uses_session_exchange(self, tmp_path: Path) -> None:
+        """get_token() uses session exchange (v2) when server_base_url is configured."""
+        manager = self._make_v2_manager(tmp_path)
+        valid_session = SessionToken(
+            raw_token="my-session",
+            email="user@example.com",
+            expires_at=time.time() + 86400,
+        )
+        mock_response = {
+            "access_token": "v2-access-token",
+            "expires_at": "2026-12-31T00:00:00+00:00",
+            "token_type": "Bearer",
+            "service_account_email": "sa@project.iam.gserviceaccount.com",
+        }
+
+        with (
+            mock.patch.object(
+                manager, "_get_or_create_session_token", return_value=valid_session
+            ),
+            mock.patch("urllib.request.urlopen") as mock_urlopen,
+        ):
+            mock_resp = mock.MagicMock()
+            mock_resp.read.return_value = json.dumps(mock_response).encode()
+            mock_resp.__enter__ = mock.MagicMock(return_value=mock_resp)
+            mock_resp.__exit__ = mock.MagicMock(return_value=False)
+            mock_urlopen.return_value = mock_resp
+
+            token = manager.get_token(reason="Test: pull sheet", scope="sheet.pull")
+
+        assert token.access_token == "v2-access-token"
+        assert token.service_account_email == "sa@project.iam.gserviceaccount.com"
+
+    def test_get_oauth_token_v2_uses_session_exchange(self, tmp_path: Path) -> None:
+        """get_oauth_token() uses session exchange (v2) when server_base_url is configured."""
+        manager = self._make_v2_manager(tmp_path)
+        valid_session = SessionToken(
+            raw_token="my-session",
+            email="user@example.com",
+            expires_at=time.time() + 86400,
+        )
+        mock_response = {
+            "access_token": "dwd-access-token",
+            "expires_at": "2026-12-31T00:00:00+00:00",
+            "token_type": "Bearer",
+            "service_account_email": "sa@project.iam.gserviceaccount.com",
+        }
+
+        with (
+            mock.patch.object(
+                manager, "_get_or_create_session_token", return_value=valid_session
+            ),
+            mock.patch("urllib.request.urlopen") as mock_urlopen,
+            mock.patch.object(
+                CredentialsManager, "OAUTH_CACHE_PATH", tmp_path / "oauth.json"
+            ),
+        ):
+            mock_resp = mock.MagicMock()
+            mock_resp.read.return_value = json.dumps(mock_response).encode()
+            mock_resp.__enter__ = mock.MagicMock(return_value=mock_resp)
+            mock_resp.__exit__ = mock.MagicMock(return_value=False)
+            mock_urlopen.return_value = mock_resp
+
+            token = manager.get_oauth_token(
+                ["gmail.compose"], reason="Test: send email"
+            )
+
+        assert token.access_token == "dwd-access-token"
+
+    def test_login_public_method_calls_get_or_create(self, tmp_path: Path) -> None:
+        """login() calls _get_or_create_session_token with force=True."""
+        manager = self._make_v2_manager(tmp_path)
+        valid_session = SessionToken(
+            raw_token="new-session",
+            email="user@example.com",
+            expires_at=time.time() + 86400,
+        )
+
+        with (
+            mock.patch.object(manager, "_revoke_and_clear_session") as mock_revoke,
+            mock.patch.object(
+                manager, "_get_or_create_session_token", return_value=valid_session
+            ) as mock_create,
+        ):
+            result = manager.login(force=True)
+
+        mock_revoke.assert_called_once()
+        mock_create.assert_called_once_with(force=True)
+        assert result.raw_token == "new-session"
+
+    def test_login_without_force_does_not_revoke(self, tmp_path: Path) -> None:
+        """login(force=False) does not revoke existing session."""
+        manager = self._make_v2_manager(tmp_path)
+        valid_session = SessionToken(
+            raw_token="existing-session",
+            email="user@example.com",
+            expires_at=time.time() + 86400,
+        )
+
+        with (
+            mock.patch.object(manager, "_revoke_and_clear_session") as mock_revoke,
+            mock.patch.object(
+                manager, "_get_or_create_session_token", return_value=valid_session
+            ),
+        ):
+            manager.login(force=False)
+
+        mock_revoke.assert_not_called()
+
+    def test_logout_clears_local_caches(self, tmp_path: Path) -> None:
+        """logout() removes all local cache files."""
+        session_path = tmp_path / "session.json"
+        token_path = tmp_path / "token.json"
+        oauth_path = tmp_path / "oauth.json"
+
+        session_path.write_text(
+            '{"raw_token":"t","email":"u@e.com","expires_at":9999999999}'
+        )
+        token_path.write_text('{"access_token":"t","expires_at":9999999999}')
+        oauth_path.write_text(
+            '{"access_token":"t","scopes":[],"expires_at":9999999999}'
+        )
+
+        manager = self._make_v2_manager(tmp_path)
+        manager._token_cache_path = token_path
+
+        with (
+            mock.patch.object(CredentialsManager, "SESSION_CACHE_PATH", session_path),
+            mock.patch.object(CredentialsManager, "OAUTH_CACHE_PATH", oauth_path),
+            mock.patch.object(manager, "_revoke_and_clear_session") as mock_revoke,
+        ):
+            manager.logout()
+
+        mock_revoke.assert_called_once()
+        assert not token_path.exists()
+        assert not oauth_path.exists()
+
+    def test_status_returns_active_session_info(self, tmp_path: Path) -> None:
+        """status() returns correct info when session is active."""
+        manager = self._make_v2_manager(tmp_path)
+        valid_session = SessionToken(
+            raw_token="my-token",
+            email="user@example.com",
+            expires_at=time.time() + 86400 * 5,
+        )
+
+        with mock.patch.object(
+            manager, "_load_session_token", return_value=valid_session
+        ):
+            info = manager.status()
+
+        assert info["session"] is not None
+        assert info["session"]["active"] is True
+        assert info["session"]["email"] == "user@example.com"
+        assert info["session"]["days_remaining"] in (
+            4,
+            5,
+        )  # integer division may give 4 or 5
+
+    def test_status_returns_none_when_no_session(self, tmp_path: Path) -> None:
+        """status() returns session=None when no active session."""
+        manager = self._make_v2_manager(tmp_path)
+
+        with mock.patch.object(manager, "_load_session_token", return_value=None):
+            info = manager.status()
+
+        assert info["session"] is None

@@ -46,21 +46,25 @@ manager = CredentialsManager(
 )
 ```
 
-### get_token() -> Token
+### get_token(*, reason, pseudo_scope="drive.file") -> Token
 
 Returns a **service account token** for accessing Google Workspace APIs (Sheets, Slides, Docs). The token acts as the user's dedicated service account - it can only access files explicitly shared with that service account.
 
+**`reason` is required** (keyword-only argument). Used for server-side audit logging.
+
 ```python
-token = manager.get_token()
+token = manager.get_token(reason="Pulling spreadsheet", pseudo_scope="sheet.pull")
 # token.access_token - Bearer token for Google APIs
 # token.service_account_email - e.g. "user-abc@project.iam.gserviceaccount.com"
 # token.expires_at - Unix timestamp
 # token.is_valid() - True if not expired (with 60s buffer)
 ```
 
-**How it works:** Opens a browser to the ExtraSuite server, user authenticates with Google, server impersonates the user's service account and returns a short-lived token. Tokens are cached in `~/.config/extrasuite/token.json`.
+**How it works (v2):** Loads cached session token from `~/.config/extrasuite/session.json`. If valid, POSTs to `/api/auth/token` for a headless exchange. If no session, initiates Phase 1 browser flow to get a 30-day session first. SA tokens cached for 60 min in `~/.config/extrasuite/token.json`.
 
-### get_oauth_token(scopes, reason) -> OAuthToken
+**Legacy (v1):** If no server_base_url configured, falls back to opening browser directly.
+
+### get_oauth_token(scopes, reason="", file_hint="") -> OAuthToken
 
 Returns a **user-level OAuth token** via domain-wide delegation, for APIs that require acting as the user (Gmail, Calendar, etc.). Requires the ExtraSuite server to have delegation enabled.
 
@@ -68,24 +72,59 @@ Returns a **user-level OAuth token** via domain-wide delegation, for APIs that r
 token = manager.get_oauth_token(
     scopes=["gmail.send", "calendar"],  # short names or full URLs
     reason="Send email on behalf of user",
+    file_hint="",  # optional Drive URL or ID
 )
 # token.access_token - Bearer token scoped to the user
 # token.scopes - List of granted scope URLs
-# token.expires_at - Unix timestamp
+# token.expires_at - Unix timestamp (capped at DWD_TOKEN_CACHE_SECONDS=600)
 # token.is_valid() - True if not expired (with 60s buffer)
 ```
 
-**How it works:** Same browser-based OAuth flow, but the server uses domain-wide delegation to generate a token that acts as the authenticated user (not as a service account). Cached separately in `~/.config/extrasuite/oauth_token.json` with scope-aware invalidation.
+**How it works (v2):** Same session-token flow, but dispatches to DWD. Token cache capped at 10 minutes. Cached in `~/.config/extrasuite/oauth_token.json`.
+
+### Dataclasses
+
+| Class | Description | Cache file |
+|---|---|---|
+| `Token` | SA token (1h lifetime) | `token.json` |
+| `OAuthToken` | DWD token (10min cache) | `oauth_token.json` |
+| `SessionToken` | 30-day session token | `session.json` |
+
+### Token Cache Lifetimes
+
+| Token type | Lifetime | Cache TTL |
+|---|---|---|
+| SA (service account) | 1 hour (server) | 60 min |
+| DWD (delegation) | 1 hour (server) | 10 min (client cap) |
+| Session | 30 days | 30 days |
+
+### headless parameter
+
+```python
+manager = CredentialsManager(headless=True)
+# Or: EXTRASUITE_HEADLESS=1
+```
+
+In headless mode, Phase 1 prints the URL to stderr and reads the auth code from stdin instead of opening a browser.
 
 ## CLI
 
-The unified CLI is stateless - auth parameters are passed on each command:
+### Auth commands (v2)
+
+```bash
+extrasuite auth login              # Browser flow → 30-day session token
+extrasuite auth login --headless   # Print URL, prompt for code on stdin
+extrasuite auth logout             # Revoke session server-side + clear cache
+extrasuite auth status             # Show session + token validity
+```
+
+### All other commands (use cached session silently)
 
 ```bash
 # Using gateway.json for authentication
 extrasuite sheet pull --gateway /path/to/gateway.json <url>
 
-# Using service account
+# Using service account (bypasses session flow entirely)
 extrasuite sheet pull --service-account /path/to/sa.json <url>
 
 # Default: uses env vars or ~/.config/extrasuite/gateway.json
@@ -95,6 +134,8 @@ extrasuite sheet pull <url>
 extrasuite sheet diff <folder>
 extrasuite script lint <folder>
 ```
+
+Note: `SERVICE_ACCOUNT_PATH` mode bypasses the session flow entirely and calls Google APIs directly.
 
 ## When to use which
 

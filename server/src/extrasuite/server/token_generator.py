@@ -304,6 +304,18 @@ class TokenGenerator:
             DelegationError: If token generation fails
         """
         try:
+            # Check SA exists first: ensure_service_account() is called during session
+            # establishment, so this should always succeed. A missing SA here indicates a
+            # logic error (e.g. session issued without going through Phase 1). Checking
+            # before the expensive delegation call avoids a wasted network round-trip.
+            sa_email = await self._db.get_service_account_email(user_email)
+            if not sa_email:
+                raise DelegationError(
+                    f"Service account not found for {user_email}. "
+                    "Session may have been issued before service account was provisioned.",
+                    user_email,
+                )
+
             token, expires_at = await asyncio.to_thread(self._do_delegation, user_email, scopes)
 
             logger.info(
@@ -314,8 +326,10 @@ class TokenGenerator:
             return GeneratedToken(
                 token=token,
                 expires_at=expires_at,
-                service_account_email=user_email,
+                service_account_email=sa_email,
             )
+        except DelegationError:
+            raise
         except Exception as e:
             raise DelegationError(f"Domain-wide delegation failed: {e}", user_email, e) from e
 

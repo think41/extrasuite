@@ -122,6 +122,14 @@ class Settings(BaseSettings):
         "https://github.com/think41/extrasuite/releases/latest/download/skills.zip"
     )
 
+    # Session token expiry in days (default 30 days)
+    # Env var: SESSION_TOKEN_EXPIRY_DAYS
+    session_token_expiry_days: int = 30
+
+    # Admin emails (CSV) for session revocation API
+    # Env var: ADMIN_EMAILS=admin@example.com,ops@example.com
+    admin_emails: str = ""
+
     def get_allowed_domains(self) -> list[str]:
         """Get list of allowed email domains.
 
@@ -184,6 +192,15 @@ class Settings(BaseSettings):
             return []
         scopes = [s.strip() for s in self.delegation_scopes.split(",") if s.strip()]
         return [f"{_GOOGLE_SCOPE_PREFIX}{s}" for s in scopes]
+
+    def get_admin_emails(self) -> list[str]:
+        """Get list of admin email addresses.
+
+        Returns empty list if no admins are configured.
+        """
+        if not self.admin_emails:
+            return []
+        return [e.strip().lower() for e in self.admin_emails.split(",") if e.strip()]
 
     def is_scope_allowed(self, scope_url: str) -> bool:
         """Check if a scope URL is allowed by the delegation allowlist.

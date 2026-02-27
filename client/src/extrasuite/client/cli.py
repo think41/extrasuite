@@ -123,21 +123,23 @@ def _auth_kwargs(args: Any) -> dict[str, Any]:
     return kwargs
 
 
-def _get_token(args: Any) -> str:
+def _get_token(args: Any, *, reason: str, scope: str) -> str:
     """Get a service account token via CredentialsManager."""
     from extrasuite.client import CredentialsManager
 
     manager = CredentialsManager(**_auth_kwargs(args))
-    token = manager.get_token()
+    token = manager.get_token(reason=reason, scope=scope)
     return token.access_token
 
 
-def _get_oauth_token(args: Any, scopes: list[str], reason: str = "") -> str:
+def _get_oauth_token(
+    args: Any, scopes: list[str], reason: str = "", file_hint: str = ""
+) -> str:
     """Get an OAuth token via CredentialsManager."""
     from extrasuite.client import CredentialsManager
 
     manager = CredentialsManager(**_auth_kwargs(args))
-    token = manager.get_oauth_token(scopes=scopes, reason=reason)
+    token = manager.get_oauth_token(scopes=scopes, reason=reason, file_hint=file_hint)
     return token.access_token
 
 
@@ -150,7 +152,7 @@ def cmd_sheet_pull(args: Any) -> None:
 
     spreadsheet_id = _parse_spreadsheet_id(args.url)
     output_dir = Path(args.output_dir) if args.output_dir else Path()
-    access_token = _get_token(args)
+    access_token = _get_token(args, reason="Pulling Google Sheet", scope="sheet.pull")
     max_rows = 0 if args.no_limit else args.max_rows
 
     async def _run() -> None:
@@ -215,7 +217,9 @@ def cmd_sheet_push(args: Any) -> None:
     """Push changes to a Google Sheet."""
     from extrasheet import GoogleSheetsTransport, SheetsClient
 
-    access_token = _get_token(args)
+    access_token = _get_token(
+        args, reason="Pushing changes to Google Sheet", scope="sheet.push"
+    )
 
     async def _run() -> None:
         transport = GoogleSheetsTransport(access_token)
@@ -254,7 +258,9 @@ def cmd_sheet_batchupdate(args: Any) -> None:
         )
         sys.exit(1)
 
-    access_token = _get_token(args)
+    access_token = _get_token(
+        args, reason="Executing batchUpdate on Google Sheet", scope="sheet.push"
+    )
 
     async def _run() -> None:
         transport = GoogleSheetsTransport(access_token)
@@ -278,7 +284,7 @@ def cmd_slide_pull(args: Any) -> None:
 
     presentation_id = _parse_presentation_id(args.url)
     output_dir = Path(args.output_dir) if args.output_dir else Path()
-    access_token = _get_token(args)
+    access_token = _get_token(args, reason="Pulling Google Slides", scope="slide.pull")
 
     async def _run() -> None:
         transport = GoogleSlidesTransport(access_token)
@@ -318,7 +324,9 @@ def cmd_slide_push(args: Any) -> None:
     """Push changes to a Google Slides presentation."""
     from extraslide import GoogleSlidesTransport, SlidesClient
 
-    access_token = _get_token(args)
+    access_token = _get_token(
+        args, reason="Pushing changes to Google Slides", scope="slide.push"
+    )
 
     async def _run() -> None:
         transport = GoogleSlidesTransport(access_token)
@@ -342,7 +350,7 @@ def cmd_form_pull(args: Any) -> None:
 
     form_id = _parse_form_id(args.url)
     output_dir = Path(args.output_dir) if args.output_dir else Path()
-    access_token = _get_token(args)
+    access_token = _get_token(args, reason="Pulling Google Form", scope="form.pull")
 
     async def _run() -> None:
         transport = GoogleFormsTransport(access_token)
@@ -378,7 +386,9 @@ def cmd_form_push(args: Any) -> None:
     """Push changes to a Google Form."""
     from extraform import FormsClient, GoogleFormsTransport
 
-    access_token = _get_token(args)
+    access_token = _get_token(
+        args, reason="Pushing changes to Google Form", scope="form.push"
+    )
 
     async def _run() -> None:
         transport = GoogleFormsTransport(access_token)
@@ -532,7 +542,7 @@ def cmd_doc_pull(args: Any) -> None:
 
     document_id = _parse_document_id(args.url)
     output_dir = Path(args.output_dir) if args.output_dir else Path()
-    access_token = _get_token(args)
+    access_token = _get_token(args, reason="Pulling Google Doc", scope="doc.pull")
 
     async def _run() -> None:
         transport = GoogleDocsTransport(access_token)
@@ -577,7 +587,9 @@ def cmd_doc_push(args: Any) -> None:
     """Push changes to a Google Doc."""
     from extradoc import DocsClient, GoogleDocsTransport
 
-    access_token = _get_token(args)
+    access_token = _get_token(
+        args, reason="Pushing changes to Google Doc", scope="doc.push"
+    )
 
     async def _run() -> None:
         transport = GoogleDocsTransport(access_token)
@@ -617,15 +629,27 @@ def _cmd_create(file_type: str, args: Any) -> None:
 
     manager = CredentialsManager(**_auth_kwargs(args))
 
-    # Get service account email
-    sa_token = manager.get_token()
-    sa_email = sa_token.service_account_email
-
-    # Get OAuth token with drive.file scope (only allowed drive scope)
+    # Get OAuth token with drive.file scope — v2 also returns the SA email in response
     oauth_token = manager.get_oauth_token(
         scopes=["drive.file"],
         reason=f"Create {file_type} and share with service account",
     )
+
+    # Determine the service account email to share with.
+    # v2: SA email is included in the access token response.
+    # v1 (legacy): it isn't, so we fall back to a separate get_token() call.
+    if oauth_token.service_account_email:
+        sa_email = oauth_token.service_account_email
+    else:
+        sa_token = manager.get_token(
+            reason=f"Get service account email for {file_type} create",
+            scope="drive.file",
+        )
+        sa_email = sa_token.service_account_email
+    if not sa_email:
+        raise RuntimeError(
+            "Could not determine service account email. Cannot share file."
+        )
 
     # Create the file via Drive API
     mime_type = _CREATE_MIME_TYPES[file_type]
@@ -1229,6 +1253,95 @@ def cmd_calendar_rsvp(args: Any) -> None:
     print(f"Response: {label.get(api_response, api_response)}")
     if args.comment:
         print(f'Comment: "{args.comment}"')
+
+
+# --- Auth commands ---
+
+
+def cmd_auth_login(args: Any) -> None:
+    """Login and obtain a 30-day session token."""
+    from datetime import datetime, timezone
+
+    from extrasuite.client import CredentialsManager
+
+    headless = getattr(args, "headless", False)
+    manager = CredentialsManager(**_auth_kwargs(args), headless=headless)
+
+    # If a valid session already exists, warn before revoking it.
+    info = manager.status()
+    if info.get("session") and info["session"].get("active"):
+        existing = info["session"]
+        expires_dt = datetime.fromtimestamp(existing["expires_at"], tz=timezone.utc)
+        print(
+            f"Active session found for {existing['email']} "
+            f"(expires {expires_dt.strftime('%Y-%m-%d')}, "
+            f"{existing['days_remaining']}d remaining).",
+            file=sys.stderr,
+        )
+        if sys.stdin.isatty():
+            response = input("Re-login and revoke current session? [y/N] ")
+            if response.strip().lower() not in ("y", "yes"):
+                print("Login cancelled.")
+                return
+
+    print(
+        "Note: device fingerprint (MAC address, hostname, OS) will be sent to the server for audit.",
+        file=sys.stderr,
+    )
+    session = manager.login(force=True)
+    expires_dt = datetime.fromtimestamp(session.expires_at, tz=timezone.utc)
+    print(f"Logged in as {session.email}.")
+    print(f"Session valid until {expires_dt.strftime('%Y-%m-%d %H:%M:%S')} UTC.")
+
+
+def cmd_auth_logout(args: Any) -> None:
+    """Revoke session token and clear cached credentials."""
+    from extrasuite.client import CredentialsManager
+
+    manager = CredentialsManager(**_auth_kwargs(args))
+    manager.logout()
+    print("Logged out.")
+
+
+def cmd_auth_status(args: Any) -> None:
+    """Show current auth status."""
+    from datetime import datetime, timezone
+
+    from extrasuite.client import CredentialsManager
+
+    manager = CredentialsManager(**_auth_kwargs(args))
+    info = manager.status()
+
+    session = info["session"]
+    if session:
+        expires_dt = datetime.fromtimestamp(session["expires_at"], tz=timezone.utc)
+        print(
+            f"Session: active (email={session['email']}, expires={expires_dt.strftime('%Y-%m-%d')} UTC, {session['days_remaining']}d remaining)"
+        )
+    else:
+        print("Session: not found or expired. Run: extrasuite auth login")
+
+    access_token = info["access_token"]
+    if access_token and access_token.get("cached"):
+        expires_dt = datetime.fromtimestamp(access_token["expires_at"], tz=timezone.utc)
+        print(
+            f"Access token: cached (expires={expires_dt.strftime('%Y-%m-%d %H:%M:%S')} UTC)"
+        )
+    else:
+        print("Access token: not cached")
+
+    oauth_token = info["oauth_token"]
+    if oauth_token and oauth_token.get("cached"):
+        expires_dt = datetime.fromtimestamp(oauth_token["expires_at"], tz=timezone.utc)
+        print(
+            f"OAuth token: cached (expires={expires_dt.strftime('%Y-%m-%d %H:%M:%S')} UTC)"
+        )
+    elif oauth_token and oauth_token.get("expired"):
+        print("OAuth token: expired")
+    elif oauth_token and oauth_token.get("invalid"):
+        print("OAuth token: invalid cache")
+    else:
+        print("OAuth token: not cached")
 
 
 # --- Argument Parser ---
@@ -1881,6 +1994,40 @@ def build_parser() -> Any:
         help="Email addresses to mark as contacted",
     )
 
+    # --- auth ---
+    auth_parser = subparsers.add_parser(
+        "auth",
+        help="Authentication management",
+        formatter_class=argparse.RawDescriptionHelpFormatter,
+    )
+    auth_sub = auth_parser.add_subparsers(dest="subcommand")
+
+    sp = auth_sub.add_parser(
+        "login",
+        help="Log in and obtain a 30-day session token",
+        parents=[auth_parent],
+        formatter_class=argparse.RawDescriptionHelpFormatter,
+    )
+    sp.add_argument(
+        "--headless",
+        action="store_true",
+        help="Headless mode: print URL and prompt for code instead of opening browser",
+    )
+
+    auth_sub.add_parser(
+        "logout",
+        help="Revoke session token and clear cached credentials",
+        parents=[auth_parent],
+        formatter_class=argparse.RawDescriptionHelpFormatter,
+    )
+
+    auth_sub.add_parser(
+        "status",
+        help="Show current auth status",
+        parents=[auth_parent],
+        formatter_class=argparse.RawDescriptionHelpFormatter,
+    )
+
     return parser
 
 
@@ -1931,6 +2078,9 @@ _COMMANDS: dict[tuple[str, str | None], Any] = {
     ("doc", "help"): cmd_module_help,
     ("gmail", "help"): cmd_module_help,
     ("calendar", "help"): cmd_module_help,
+    ("auth", "login"): cmd_auth_login,
+    ("auth", "logout"): cmd_auth_logout,
+    ("auth", "status"): cmd_auth_status,
 }
 
 

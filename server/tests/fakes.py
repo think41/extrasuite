@@ -28,6 +28,8 @@ class FakeDatabase:
         self.oauth_states: dict[str, dict[str, Any]] = {}
         self.auth_codes: dict[str, dict[str, Any]] = {}
         self.delegation_logs: list[dict[str, Any]] = []
+        self.session_tokens: dict[str, dict[str, Any]] = {}
+        self.access_logs: list[dict[str, Any]] = []
         self._should_fail_get_sa: bool = False
         self._should_fail_set_sa: bool = False
 
@@ -65,25 +67,38 @@ class FakeDatabase:
         """Retrieve AND delete OAuth state."""
         return self.oauth_states.pop(state, None)
 
-    async def save_auth_code(self, auth_code: str, service_account_email: str) -> None:
-        """Save auth code with associated service account email."""
+    async def save_auth_code(
+        self, auth_code: str, service_account_email: str, user_email: str = ""
+    ) -> None:
+        """Save auth code with associated service account and user email."""
         self.auth_codes[auth_code] = {
             "service_account_email": service_account_email,
+            "user_email": user_email,
             "expires_at": datetime.now(UTC) + AUTH_CODE_TTL,
         }
 
-    async def retrieve_auth_code(self, auth_code: str) -> str | None:
-        """Retrieve AND delete auth code. Returns service_account_email or None if not found/expired."""
+    async def retrieve_auth_code(self, auth_code: str) -> dict[str, str] | None:
+        """Retrieve AND delete auth code. Returns {service_account_email, user_email} or None."""
         if auth_code not in self.auth_codes:
             return None
 
-        data = self.auth_codes.pop(auth_code)
-        expires_at = data.get("expires_at")
+        data = self.auth_codes[auth_code]
 
-        if not expires_at or datetime.now(UTC) > expires_at:
+        # Delegation codes must not be returned here; consume and discard
+        if data.get("flow_type") == "delegation":
+            self.auth_codes.pop(auth_code)
             return None
 
-        return data.get("service_account_email")
+        expires_at = data.get("expires_at")
+        if not expires_at or datetime.now(UTC) > expires_at:
+            self.auth_codes.pop(auth_code)
+            return None
+
+        self.auth_codes.pop(auth_code)
+        return {
+            "service_account_email": data.get("service_account_email", ""),
+            "user_email": data.get("user_email", ""),
+        }
 
     async def save_delegation_auth_code(
         self, auth_code: str, email: str, scopes: list[str], reason: str
@@ -127,6 +142,109 @@ class FakeDatabase:
             }
         )
 
+    async def save_session_token(
+        self,
+        token_hash: str,
+        email: str,
+        device_ip: str = "",
+        device_mac: str = "",
+        device_hostname: str = "",
+        device_os: str = "",
+        device_platform: str = "",
+        expiry_days: int = 30,
+    ) -> None:
+        """Save a session token."""
+        now = datetime.now(UTC)
+        self.session_tokens[token_hash] = {
+            "email": email,
+            "created_at": now,
+            "revoked_at": None,
+            "active_expires_at": now + timedelta(days=expiry_days),
+            "device_ip": device_ip,
+            "device_mac": device_mac,
+            "device_hostname": device_hostname,
+            "device_os": device_os,
+            "device_platform": device_platform,
+        }
+
+    async def validate_session_token(self, token_hash: str) -> dict | None:
+        """Validate a session token."""
+        data = self.session_tokens.get(token_hash)
+        if not data:
+            return None
+        if data.get("revoked_at") is not None:
+            return None
+        if datetime.now(UTC) > data["active_expires_at"]:
+            return None
+        return {"email": data["email"], "created_at": data["created_at"]}
+
+    async def revoke_session_token(self, token_hash: str, expected_email: str = "") -> bool:
+        """Revoke a session token. Returns False if not found or email mismatch."""
+        if token_hash not in self.session_tokens:
+            return False
+        if expected_email:
+            stored_email = self.session_tokens[token_hash].get("email", "")
+            if stored_email.lower() != expected_email.lower():
+                return False
+        self.session_tokens[token_hash]["revoked_at"] = datetime.now(UTC)
+        return True
+
+    async def revoke_all_session_tokens(self, email: str) -> int:
+        """Revoke all sessions for email."""
+        count = 0
+        now = datetime.now(UTC)
+        for data in self.session_tokens.values():
+            if (
+                data["email"] == email
+                and data["revoked_at"] is None
+                and data["active_expires_at"] > now
+            ):
+                data["revoked_at"] = now
+                count += 1
+        return count
+
+    async def list_session_tokens(self, email: str) -> list[dict]:
+        """List active sessions for email."""
+        now = datetime.now(UTC)
+        return [
+            {
+                "session_hash": h,
+                "session_hash_prefix": h[:16],
+                "created_at": d["created_at"],
+                "active_expires_at": d["active_expires_at"],
+                "device_hostname": d.get("device_hostname", ""),
+                "device_os": d.get("device_os", ""),
+                "device_ip": d.get("device_ip", ""),
+                "is_active": True,
+            }
+            for h, d in self.session_tokens.items()
+            if d["email"] == email and d["revoked_at"] is None and d["active_expires_at"] > now
+        ]
+
+    async def log_access_token_request(
+        self,
+        email: str,
+        session_hash_prefix: str,
+        scope: str,
+        credential_type: str,
+        reason: str,
+        ip: str,
+        file_hint: str = "",
+    ) -> None:
+        """Log an access token request."""
+        self.access_logs.append(
+            {
+                "email": email,
+                "session_hash_prefix": session_hash_prefix,
+                "scope": scope,
+                "credential_type": credential_type,
+                "reason": reason,
+                "ip": ip,
+                "file_hint": file_hint,
+                "timestamp": datetime.now(UTC),
+            }
+        )
+
 
 class FakeSettings:
     """Fake settings for testing.
@@ -141,12 +259,18 @@ class FakeSettings:
         token_expiry_minutes: int = 60,
         delegation_enabled: bool = False,
         delegation_scopes: list[str] | None = None,
+        session_token_expiry_days: int = 30,
+        admin_emails: list[str] | None = None,
+        allowed_domains: list[str] | None = None,
     ) -> None:
         self.google_cloud_project = google_cloud_project
         self._domain_abbreviations = domain_abbreviations or {}
         self.token_expiry_minutes = token_expiry_minutes
         self._delegation_enabled = delegation_enabled
         self._delegation_scopes = delegation_scopes or []
+        self.session_token_expiry_days = session_token_expiry_days
+        self._admin_emails = [e.lower() for e in (admin_emails or [])]
+        self._allowed_domains = [d.lower() for d in (allowed_domains or [])]
 
     def get_domain_abbreviation(self, domain: str) -> str:
         """Get abbreviation for a domain."""
@@ -168,6 +292,23 @@ class FakeSettings:
         if not self._delegation_scopes:
             return True
         return scope_url in self._delegation_scopes
+
+    def is_email_domain_allowed(self, email: str) -> bool:
+        """Check if an email's domain is allowed.
+
+        Returns True if no domain restriction is configured, or if the email's
+        domain matches one of the allowed domains.
+        """
+        if not self._allowed_domains:
+            return True
+        if "@" not in email:
+            return False
+        domain = email.split("@")[-1].lower()
+        return domain in self._allowed_domains
+
+    def get_admin_emails(self) -> list[str]:
+        """Get list of admin email addresses."""
+        return list(self._admin_emails)
 
 
 class FakeImpersonatedCredentials:
