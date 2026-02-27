@@ -11,20 +11,32 @@ from extrasuite.client.cli._common import _get_oauth_token
 
 def cmd_contacts_sync(args: Any) -> None:
     """Sync Google Contacts to local DB."""
-    from extrasuite.client.contacts import _CONTACTS_SCOPES, sync
+    from extrasuite.client.contacts import _CONTACTS_OTHER_SCOPE, _CONTACTS_SCOPE, sync
 
-    access_token = _get_oauth_token(
+    token = _get_oauth_token(
         args,
-        scopes=_CONTACTS_SCOPES,
+        scopes=[_CONTACTS_SCOPE],
         reason="Sync Google Contacts",
     )
-    people_count, other_count = sync(access_token, verbose=True)
+    other_token = _get_oauth_token(
+        args,
+        scopes=[_CONTACTS_OTHER_SCOPE],
+        reason="Sync Gmail-suggested contacts",
+    )
+    people_count, other_count = sync(token, other_token=other_token, verbose=True)
     print(f"Synced {people_count} contacts and {other_count} other contacts.")
 
 
 def cmd_contacts_search(args: Any) -> None:
     """Search local contacts DB."""
-    from extrasuite.client.contacts import _DB_PATH, _is_stale, _open_db, search
+    from extrasuite.client.contacts import (
+        _CONTACTS_OTHER_SCOPE,
+        _CONTACTS_SCOPE,
+        _DB_PATH,
+        _is_stale,
+        _open_db,
+        search,
+    )
 
     queries: list[str] = args.queries
     if not queries:
@@ -37,16 +49,22 @@ def cmd_contacts_search(args: Any) -> None:
         needs_sync = _is_stale(_open_db())
 
     token = None
+    other_token = None
     if needs_sync:
-        from extrasuite.client.contacts import _CONTACTS_SCOPES
-
         token = _get_oauth_token(
             args,
-            scopes=_CONTACTS_SCOPES,
+            scopes=[_CONTACTS_SCOPE],
             reason="Sync Google Contacts",
         )
+        other_token = _get_oauth_token(
+            args,
+            scopes=[_CONTACTS_OTHER_SCOPE],
+            reason="Sync Gmail-suggested contacts",
+        )
 
-    results = search(queries, token=token, auto_sync=needs_sync)
+    results = search(
+        queries, token=token, other_token=other_token, auto_sync=needs_sync
+    )
     print(json.dumps(results, indent=2))
 
 

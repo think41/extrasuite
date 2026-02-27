@@ -35,10 +35,8 @@ except ImportError:
 _DB_PATH = Path.home() / ".config" / "extrasuite" / "contacts.db"
 _SYNC_STALE_DAYS = 4
 
-_CONTACTS_SCOPES = [
-    "https://www.googleapis.com/auth/contacts.readonly",
-    "https://www.googleapis.com/auth/contacts.other.readonly",
-]
+_CONTACTS_SCOPE = "https://www.googleapis.com/auth/contacts.readonly"
+_CONTACTS_OTHER_SCOPE = "https://www.googleapis.com/auth/contacts.other.readonly"
 
 _PEOPLE_FIELDS = "names,emailAddresses,organizations,metadata"
 _OTHER_FIELDS = "names,emailAddresses,metadata"
@@ -339,11 +337,18 @@ def _sync_source(
         raise
 
 
-def sync(token: str, verbose: bool = False) -> tuple[int, int]:
+def sync(
+    token: str,
+    other_token: str | None = None,
+    verbose: bool = False,
+) -> tuple[int, int]:
     """Sync contacts from Google. Returns (people_count, other_count).
 
-    otherContacts sync requires the contacts.other.readonly scope in addition
-    to contacts.readonly. If not authorized, it is skipped with a warning.
+    Args:
+        token:       OAuth token with contacts.readonly scope (for saved contacts).
+        other_token: OAuth token with contacts.other.readonly scope (for Gmail-suggested
+                     contacts). If None, the other contacts sync is skipped.
+        verbose:     Print progress messages.
     """
     con = _open_db()
 
@@ -369,31 +374,41 @@ def sync(token: str, verbose: bool = False) -> tuple[int, int]:
     )
 
     other_count = 0
-    try:
-        other_count = _sync_source(
-            con,
-            token,
-            api_url=_OTHER_API,
-            fields_param=_OTHER_FIELDS,
-            items_key="otherContacts",
-            extract_fn=_extract_other_contact,
-            upsert_fn=_upsert_other_contacts,
-            delete_fn=_del_other,
-            clear_table="other_contacts",
-            token_key="other_contacts_sync_token",
-            synced_at_key="other_contacts_last_synced_at",
-            verbose=verbose,
-        )
-    except Exception as e:
-        if "403" in str(e) or "insufficient authentication scopes" in str(e).lower():
-            if verbose:
-                print(
-                    "  Skipping other contacts: scope contacts.other.readonly not authorized.\n"
-                    "  Add it to workspace delegation to sync Gmail-suggested contacts.",
-                    flush=True,
-                )
-        else:
-            raise
+    if other_token is None:
+        if verbose:
+            print(
+                "  Skipping other contacts: no token provided for contacts.other.readonly.",
+                flush=True,
+            )
+    else:
+        try:
+            other_count = _sync_source(
+                con,
+                other_token,
+                api_url=_OTHER_API,
+                fields_param=_OTHER_FIELDS,
+                items_key="otherContacts",
+                extract_fn=_extract_other_contact,
+                upsert_fn=_upsert_other_contacts,
+                delete_fn=_del_other,
+                clear_table="other_contacts",
+                token_key="other_contacts_sync_token",
+                synced_at_key="other_contacts_last_synced_at",
+                verbose=verbose,
+            )
+        except Exception as e:
+            if (
+                "403" in str(e)
+                or "insufficient authentication scopes" in str(e).lower()
+            ):
+                if verbose:
+                    print(
+                        "  Skipping other contacts: scope contacts.other.readonly not authorized.\n"
+                        "  Add it to workspace delegation to sync Gmail-suggested contacts.",
+                        flush=True,
+                    )
+            else:
+                raise
 
     return people_count, other_count
 
@@ -572,14 +587,18 @@ def _load_interactions(
 def search(
     queries: list[str],
     token: str | None = None,
+    other_token: str | None = None,
     auto_sync: bool = True,
 ) -> list[dict[str, Any]]:
     """Search contacts for each query string.
 
     Args:
-        queries:    One or more search strings, each searched independently.
-        token:      OAuth access token (needed only when auto_sync may trigger).
-        auto_sync:  Sync automatically if DB is missing or stale (>4 days).
+        queries:     One or more search strings, each searched independently.
+        token:       OAuth token with contacts.readonly scope (needed only when
+                     auto_sync may trigger).
+        other_token: OAuth token with contacts.other.readonly scope (optional;
+                     enables syncing Gmail-suggested contacts on auto-sync).
+        auto_sync:   Sync automatically if DB is missing or stale (>4 days).
 
     Returns:
         List of {"query": str, "matches": [{"name", "email", "last_contacted"}]}
@@ -591,7 +610,7 @@ def search(
         if needs_sync:
             if token is None:
                 raise ValueError("OAuth token required for auto-sync")
-            sync(token, verbose=True)
+            sync(token, other_token=other_token, verbose=True)
 
     con = _open_db()
     recent_domains = _recent_domains(con)
