@@ -300,6 +300,7 @@ dependencies = [
     { name = "extrasheet" },
     { name = "extraslide" },
     { name = "markdown" },
+    { name = "tomli", marker = "python_full_version < '3.11'" },
 ]
 
 [package.optional-dependencies]
@@ -322,6 +323,7 @@ requires-dist = [
     { name = "extrasheet", editable = "../extrasheet" },
     { name = "extraslide", editable = "../extraslide" },
     { name = "markdown", specifier = ">=3.0" },
+    { name = "tomli", marker = "python_full_version < '3.11'", specifier = ">=2.0" },
 ]
 provides-extras = ["ssl"]
 

@@ -1,11 +1,12 @@
-"""Gmail read operations with sender whitelist enforcement.
+"""Gmail read operations with trusted-contacts enforcement.
 
-Security model: emails from senders not in the whitelist have their body
-and attachment content redacted. Only metadata (from, date, subject) is
-returned for non-whitelisted senders.
+Security model: emails from senders not in the trusted contacts list have
+their body and attachment content redacted. Only metadata (from, date,
+subject) is returned for untrusted senders.
 
-The whitelist is stored in ~/.config/extrasuite/gmail_whitelist.json and
-is managed by humans — no CLI command can modify it.
+Trusted contacts are configured in ~/.config/extrasuite/settings.toml under
+the [trusted_contacts] section and are managed by humans — no CLI command
+can modify them.
 
 Threading model: all public commands (list, read, reply) work with thread IDs,
 mirroring how Gmail's inbox works — one conversation per row.
@@ -14,15 +15,19 @@ mirroring how Gmail's inbox works — one conversation per row.
 from __future__ import annotations
 
 import base64
-import email.utils
 import html
 import json
 import re
 import urllib.parse
 import urllib.request
-from dataclasses import dataclass, field
-from pathlib import Path
+from dataclasses import dataclass
 from typing import Any
+
+from extrasuite.client.settings import (
+    _SETTINGS_PATH,
+    TrustedContacts,
+    load_trusted_contacts,
+)
 
 try:
     import ssl
@@ -34,61 +39,6 @@ except ImportError:
     import ssl
 
     _SSL_CONTEXT = ssl.create_default_context()
-
-_WHITELIST_PATH = Path.home() / ".config" / "extrasuite" / "gmail_whitelist.json"
-
-# ---------------------------------------------------------------------------
-# Whitelist
-# ---------------------------------------------------------------------------
-
-
-@dataclass
-class Whitelist:
-    domains: list[str] = field(default_factory=list)
-    emails: list[str] = field(default_factory=list)
-    # The authenticated user's own domain — always trusted, not persisted to file.
-    user_domain: str = ""
-
-    def is_trusted(self, sender_raw: str) -> bool:
-        """Return True if sender_raw matches a whitelisted domain or email.
-
-        sender_raw may be a bare address or RFC 5322 formatted
-        ("Display Name <addr@domain.com>"). The authenticated user's own domain
-        is always trusted regardless of the whitelist file contents.
-        """
-        _, addr = email.utils.parseaddr(sender_raw)
-        addr = addr.lower().strip()
-        if not addr:
-            return False
-
-        # Exact email match
-        if addr in (e.lower() for e in self.emails):
-            return True
-
-        # Domain match (exact — not subdomain)
-        if "@" in addr:
-            domain = addr.split("@", 1)[1]
-            all_domains = list(self.domains)
-            if self.user_domain:
-                all_domains.append(self.user_domain)
-            if domain in (d.lower() for d in all_domains):
-                return True
-
-        return False
-
-
-def load_whitelist(path: Path = _WHITELIST_PATH) -> Whitelist:
-    """Load the sender whitelist from disk. Returns an empty Whitelist if missing."""
-    if not path.exists():
-        return Whitelist()
-    try:
-        data = json.loads(path.read_text(encoding="utf-8"))
-        return Whitelist(
-            domains=[str(d) for d in data.get("domains", [])],
-            emails=[str(e) for e in data.get("emails", [])],
-        )
-    except (json.JSONDecodeError, OSError):
-        return Whitelist()
 
 
 # ---------------------------------------------------------------------------
@@ -268,17 +218,17 @@ def list_threads(
     query: str = "",
     max_results: int = 20,
     page_token: str = "",
-    whitelist: Whitelist | None = None,
+    whitelist: TrustedContacts | None = None,
     trusted_only: bool = True,
 ) -> tuple[list[ThreadSummary], str]:
     """List Gmail threads matching query (one row per conversation).
 
     Returns (threads, next_page_token).
     When trusted_only=True (default), only threads whose latest sender is
-    whitelisted are returned.
+    in the trusted contacts list are returned.
     """
     if whitelist is None:
-        whitelist = load_whitelist()
+        whitelist = load_trusted_contacts()
 
     params: dict[str, str] = {"maxResults": str(min(max_results, 100))}
     if query:
@@ -337,14 +287,14 @@ def list_threads(
 def get_thread(
     token: str,
     thread_id: str,
-    whitelist: Whitelist | None = None,
+    whitelist: TrustedContacts | None = None,
 ) -> ThreadDetail:
     """Fetch a full thread with all messages in chronological order.
 
     Each message's body/attachments are redacted if the sender is not trusted.
     """
     if whitelist is None:
-        whitelist = load_whitelist()
+        whitelist = load_trusted_contacts()
 
     data = _gmail_get(token, f"/threads/{thread_id}", {"format": "full"})
     raw_msgs = data.get("messages", [])
@@ -386,12 +336,17 @@ def get_thread(
 
 _REDACTION_NOTICE = "[REDACTED]"
 
-_NO_WHITELIST_NOTICE = (
-    "\nNote: No whitelist configured — all email bodies are redacted.\n"
-    f"Create {_WHITELIST_PATH} to allow reading email content.\n"
+_NO_TRUSTED_CONTACTS_NOTICE = (
+    "\nNote: No trusted contacts configured — all email bodies are redacted.\n"
+    f"Add a [trusted_contacts] section to {_SETTINGS_PATH} to allow reading email content.\n"
     "Example:\n"
-    '  {"domains": ["yourcompany.com"], "emails": []}\n'
+    "  [trusted_contacts]\n"
+    '  domains = ["yourcompany.com"]\n'
+    "  emails = []\n"
 )
+
+# Backward-compatible alias
+_NO_WHITELIST_NOTICE = _NO_TRUSTED_CONTACTS_NOTICE
 
 
 def format_thread_list(

@@ -1,19 +1,14 @@
-"""Tests for gmail_reader.py — whitelist, threading, redaction, and formatting."""
+"""Tests for gmail_reader.py — threading, redaction, and formatting."""
 
 from __future__ import annotations
 
-import json
-from typing import TYPE_CHECKING
+import base64
 from unittest import mock
-
-if TYPE_CHECKING:
-    from pathlib import Path
 
 from extrasuite.client.gmail_reader import (
     MessageDetail,
     ThreadDetail,
     ThreadSummary,
-    Whitelist,
     _extract_attachments,
     _extract_body,
     _strip_html,
@@ -21,106 +16,8 @@ from extrasuite.client.gmail_reader import (
     format_thread_list,
     get_thread,
     list_threads,
-    load_whitelist,
 )
-
-# ---------------------------------------------------------------------------
-# Whitelist.is_trusted
-# ---------------------------------------------------------------------------
-
-
-class TestWhitelistIsTrusted:
-    def test_domain_match(self) -> None:
-        wl = Whitelist(domains=["company.com"], emails=[])
-        assert wl.is_trusted("alice@company.com") is True
-
-    def test_domain_no_subdomain_bleed(self) -> None:
-        wl = Whitelist(domains=["company.com"], emails=[])
-        assert wl.is_trusted("alice@evil-company.com") is False
-
-    def test_subdomain_not_matched(self) -> None:
-        wl = Whitelist(domains=["company.com"], emails=[])
-        assert wl.is_trusted("alice@mail.company.com") is False
-
-    def test_email_exact_match(self) -> None:
-        wl = Whitelist(domains=[], emails=["personal@gmail.com"])
-        assert wl.is_trusted("personal@gmail.com") is True
-
-    def test_email_no_domain_spill(self) -> None:
-        wl = Whitelist(domains=[], emails=["personal@gmail.com"])
-        assert wl.is_trusted("other@gmail.com") is False
-
-    def test_case_insensitive_domain(self) -> None:
-        wl = Whitelist(domains=["Company.COM"], emails=[])
-        assert wl.is_trusted("Alice@company.com") is True
-
-    def test_case_insensitive_email(self) -> None:
-        wl = Whitelist(domains=[], emails=["Alice@Example.com"])
-        assert wl.is_trusted("alice@example.com") is True
-
-    def test_rfc5322_display_name(self) -> None:
-        wl = Whitelist(domains=["company.com"], emails=[])
-        assert wl.is_trusted("Alice Smith <alice@company.com>") is True
-
-    def test_empty_whitelist_not_trusted(self) -> None:
-        wl = Whitelist()
-        assert wl.is_trusted("alice@company.com") is False
-
-    def test_empty_sender_not_trusted(self) -> None:
-        wl = Whitelist(domains=["company.com"], emails=[])
-        assert wl.is_trusted("") is False
-
-    def test_bare_name_no_address(self) -> None:
-        wl = Whitelist(domains=["company.com"], emails=[])
-        assert wl.is_trusted("No Address Here") is False
-
-    def test_user_domain_always_trusted(self) -> None:
-        wl = Whitelist(domains=[], emails=[], user_domain="mycompany.com")
-        assert wl.is_trusted("colleague@mycompany.com") is True
-
-    def test_user_domain_does_not_trust_other_domains(self) -> None:
-        wl = Whitelist(domains=[], emails=[], user_domain="mycompany.com")
-        assert wl.is_trusted("spam@other.com") is False
-
-    def test_user_domain_case_insensitive(self) -> None:
-        wl = Whitelist(domains=[], emails=[], user_domain="MyCompany.COM")
-        assert wl.is_trusted("Alice@mycompany.com") is True
-
-
-# ---------------------------------------------------------------------------
-# load_whitelist
-# ---------------------------------------------------------------------------
-
-
-class TestLoadWhitelist:
-    def test_missing_file_returns_empty(self, tmp_path: Path) -> None:
-        wl = load_whitelist(tmp_path / "nonexistent.json")
-        assert wl.domains == []
-        assert wl.emails == []
-
-    def test_valid_file_loaded(self, tmp_path: Path) -> None:
-        path = tmp_path / "whitelist.json"
-        path.write_text(
-            json.dumps({"domains": ["a.com", "b.com"], "emails": ["c@d.com"]}),
-            encoding="utf-8",
-        )
-        wl = load_whitelist(path)
-        assert wl.domains == ["a.com", "b.com"]
-        assert wl.emails == ["c@d.com"]
-
-    def test_corrupt_json_returns_empty(self, tmp_path: Path) -> None:
-        path = tmp_path / "whitelist.json"
-        path.write_text("not valid json", encoding="utf-8")
-        wl = load_whitelist(path)
-        assert wl.domains == []
-
-    def test_missing_keys_default_to_empty(self, tmp_path: Path) -> None:
-        path = tmp_path / "whitelist.json"
-        path.write_text("{}", encoding="utf-8")
-        wl = load_whitelist(path)
-        assert wl.domains == []
-        assert wl.emails == []
-
+from extrasuite.client.settings import TrustedContacts
 
 # ---------------------------------------------------------------------------
 # HTML stripping
@@ -151,8 +48,6 @@ class TestStripHtml:
 
 class TestExtractBody:
     def _make_part(self, mime: str, text: str) -> dict:
-        import base64
-
         data = base64.urlsafe_b64encode(text.encode("utf-8")).decode("ascii")
         return {"mimeType": mime, "body": {"data": data, "size": len(text)}}
 
@@ -218,8 +113,6 @@ def _make_thread_response(thread_id: str, messages: list[dict]) -> dict:
 def _make_raw_message(
     msg_id: str, thread_id: str, from_addr: str, body_text: str = "Hello"
 ) -> dict:
-    import base64
-
     data = base64.urlsafe_b64encode(body_text.encode("utf-8")).decode("ascii")
     return {
         "id": msg_id,
@@ -241,7 +134,7 @@ def _make_raw_message(
 
 class TestGetThread:
     def test_trusted_messages_return_body(self) -> None:
-        wl = Whitelist(domains=["trusted.com"], emails=[])
+        wl = TrustedContacts(domains=["trusted.com"], emails=[])
         thread_id = "thread_001"
         raw = _make_thread_response(
             thread_id,
@@ -259,7 +152,7 @@ class TestGetThread:
         assert detail.messages[0].body == "Hello there"
 
     def test_untrusted_messages_redacted(self) -> None:
-        wl = Whitelist(domains=["trusted.com"], emails=[])
+        wl = TrustedContacts(domains=["trusted.com"], emails=[])
         thread_id = "thread_002"
         raw = _make_thread_response(
             thread_id,
@@ -276,7 +169,7 @@ class TestGetThread:
 
     def test_mixed_thread_per_message_trust(self) -> None:
         """Each message in a thread is individually trust-checked."""
-        wl = Whitelist(domains=["trusted.com"], emails=[])
+        wl = TrustedContacts(domains=["trusted.com"], emails=[])
         thread_id = "thread_003"
         raw = _make_thread_response(
             thread_id,
@@ -296,7 +189,7 @@ class TestGetThread:
         assert detail.messages[1].body == "I replied"
 
     def test_subject_from_first_message(self) -> None:
-        wl = Whitelist(domains=["trusted.com"], emails=[])
+        wl = TrustedContacts(domains=["trusted.com"], emails=[])
         thread_id = "thread_004"
         raw = _make_thread_response(
             thread_id,
@@ -311,7 +204,7 @@ class TestGetThread:
         assert detail.subject == "Test Subject"
 
     def test_latest_message_property(self) -> None:
-        wl = Whitelist(domains=["trusted.com"], emails=[])
+        wl = TrustedContacts(domains=["trusted.com"], emails=[])
         thread_id = "thread_005"
         raw = _make_thread_response(
             thread_id,
@@ -358,7 +251,7 @@ def _make_thread_metadata(thread_id: str, from_addr: str, subject: str) -> dict:
 
 class TestListThreads:
     def test_trusted_only_default_filters_untrusted(self) -> None:
-        wl = Whitelist(domains=["trusted.com"], emails=[])
+        wl = TrustedContacts(domains=["trusted.com"], emails=[])
         responses = [
             _make_thread_list_response(["t1", "t2"]),
             _make_thread_metadata("t1", "alice@trusted.com", "Hello"),
@@ -374,7 +267,7 @@ class TestListThreads:
         assert summaries[0].trusted is True
 
     def test_all_flag_shows_untrusted(self) -> None:
-        wl = Whitelist(domains=["trusted.com"], emails=[])
+        wl = TrustedContacts(domains=["trusted.com"], emails=[])
         responses = [
             _make_thread_list_response(["t1", "t2"]),
             _make_thread_metadata("t1", "alice@trusted.com", "Hello"),
@@ -389,7 +282,7 @@ class TestListThreads:
         assert summaries[1].trusted is False
 
     def test_message_count_correct(self) -> None:
-        wl = Whitelist(domains=["trusted.com"], emails=[])
+        wl = TrustedContacts(domains=["trusted.com"], emails=[])
         thread_with_3 = {
             "id": "t1",
             "messages": [
@@ -421,7 +314,9 @@ class TestListThreads:
             "extrasuite.client.gmail_reader._gmail_get",
             return_value={"threads": [], "nextPageToken": ""},
         ):
-            summaries, next_token = list_threads("fake-token", whitelist=Whitelist())
+            summaries, next_token = list_threads(
+                "fake-token", whitelist=TrustedContacts()
+            )
         assert summaries == []
         assert next_token == ""
 
@@ -435,7 +330,7 @@ class TestListThreads:
         ):
             _, next_token = list_threads(
                 "fake-token",
-                whitelist=Whitelist(domains=["trusted.com"]),
+                whitelist=TrustedContacts(domains=["trusted.com"]),
             )
         assert next_token == "tok123"
 
