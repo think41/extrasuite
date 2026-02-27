@@ -22,10 +22,16 @@ from extradoc.api_types._generated import (
     List,
     NestingLevelGlyphType,
     ParagraphStyle,
+    StructuralElement,
     TextStyle,
 )
 from extradoc.indexer import utf16_len
-from extradoc.reconcile._alignment import AlignedElement, AlignmentOp, align_sequences
+from extradoc.reconcile._alignment import (
+    AlignedElement,
+    AlignmentOp,
+    align_sequences,
+    align_structural_elements,
+)
 from extradoc.reconcile._exceptions import ReconcileError
 from extradoc.reconcile._extractors import (
     column_fingerprint,
@@ -36,7 +42,6 @@ from extradoc.reconcile._extractors import (
 if TYPE_CHECKING:
     from extradoc.api_types._generated import (
         Paragraph,
-        StructuralElement,
         Table,
         TableCell,
         TableRow,
@@ -728,14 +733,22 @@ def _process_inner_gap(
             # an extra empty paragraph (insertTable splits at the index)
             insert_idx = _el_end(gap.left_anchor) - 1
         elif gap.right_anchor:
-            insert_idx = _el_start(gap.right_anchor)
+            # Sectionbreaks start at index 0 (the body's opening structural
+            # marker) which is not a valid insertText target.  Use the end
+            # instead (= 1, the first actual paragraph position).
+            if _is_section_break(gap.right_anchor):
+                insert_idx = _el_end(gap.right_anchor)
+            else:
+                insert_idx = _el_start(gap.right_anchor)
         else:
             insert_idx = 1
 
         if has_tables:
             # Process each add individually in reverse order at insert_idx
             requests.extend(
-                _insert_adds_individually(real_adds, insert_idx, segment_id, tab_id)
+                _insert_adds_individually(
+                    real_adds, insert_idx, segment_id, tab_id, desired_lists
+                )
             )
             # Generate style requests for added paragraphs; first para starts at insert_idx
             requests.extend(
@@ -827,7 +840,7 @@ def _process_trailing_gap(
         if has_tables:
             requests.extend(
                 _process_trailing_adds_with_tables(
-                    gap, real_deletes, real_adds, segment_id, tab_id
+                    gap, real_deletes, real_adds, segment_id, tab_id, desired_lists
                 )
             )
             # Compute insert_idx (mirrors _process_trailing_adds_with_tables logic)
@@ -1048,6 +1061,7 @@ def _process_trailing_adds_with_tables(
     real_adds: list[AlignedElement],
     segment_id: SegmentID,
     tab_id: TabID,
+    desired_lists: dict[str, List] | None = None,
 ) -> list[dict[str, Any]]:
     """Handle adds containing tables in a trailing gap.
 
@@ -1120,9 +1134,20 @@ def _process_trailing_adds_with_tables(
             el = group.desired_element
             assert el is not None and el.table is not None
             table_reqs = _generate_insert_table_with_content(
-                el.table, insert_idx, segment_id, tab_id
+                el.table, insert_idx, segment_id, tab_id, desired_lists
             )
             requests.extend(table_reqs)
+            # insertTable always creates a spurious \n by splitting the paragraph
+            # at insert_idx. When there is after-table content (idx > 0, meaning
+            # groups at indices 0..idx-1 were already processed and appear after
+            # this table in document order), that spurious \n ends up between the
+            # table and the after-table content. Delete it.
+            # Position of spurious \n: insert_idx + 1 + table_structural_size
+            if idx > 0:
+                table_end = insert_idx + 1 + _table_structural_size(el.table)
+                requests.append(
+                    _make_delete_range(table_end, table_end + 1, segment_id, tab_id)
+                )
         else:
             assert isinstance(group, list)
             combined = _collect_add_text(group)
@@ -1183,6 +1208,7 @@ def _insert_adds_individually(
     insert_idx: int,
     segment_id: SegmentID,
     tab_id: TabID,
+    desired_lists: dict[str, List] | None = None,
 ) -> list[dict[str, Any]]:
     """Process adds individually in reverse order at insert_idx.
 
@@ -1201,7 +1227,7 @@ def _insert_adds_individually(
         if _is_table(el):
             assert el.table is not None
             table_reqs = _generate_insert_table_with_content(
-                el.table, insert_idx, segment_id, tab_id
+                el.table, insert_idx, segment_id, tab_id, desired_lists
             )
             requests.extend(table_reqs)
         elif _is_paragraph(el):
@@ -1222,6 +1248,7 @@ def _generate_insert_table_with_content(
     insert_idx: int,
     segment_id: SegmentID,
     tab_id: TabID,
+    desired_lists: dict[str, List] | None = None,
 ) -> list[dict[str, Any]]:
     """Generate insertTable + cell population requests.
 
@@ -1240,23 +1267,19 @@ def _generate_insert_table_with_content(
     # 1. Insert the table
     requests.append(_make_insert_table(rows, cols, insert_idx, segment_id, tab_id))
 
-    # 2. Populate cells in reverse order
+    # 2. Populate cells in reverse order via recursive cell reconciliation
     table_rows = table.table_rows or []
     for r in range(len(table_rows) - 1, -1, -1):
         row = table_rows[r]
         cells = row.table_cells or []
         for c in range(len(cells) - 1, -1, -1):
             cell = cells[c]
-            text = _cell_text(cell)
-            # Skip empty cells (just \n — the default after insertTable)
-            text_stripped = text.rstrip("\n")
-            if not text_stripped:
-                continue
             # Cell content start: I + 4 + r*(1 + 2C) + 2c
             cell_content_idx = insert_idx + 4 + r * (1 + 2 * cols) + 2 * c
-            requests.append(
-                _make_insert_text(text_stripped, cell_content_idx, segment_id, tab_id)
+            pop_reqs = _populate_cell_at(
+                cell, cell_content_idx, segment_id, tab_id, desired_lists
             )
+            requests.extend(pop_reqs)
 
     return requests
 
@@ -1305,7 +1328,9 @@ def _generate_table_diff(
             base_se.table, desired_se.table, segment_id, tab_id, desired_lists
         )
 
-    return _diff_table_structural(base_se, desired_se, segment_id, tab_id)
+    return _diff_table_structural(
+        base_se, desired_se, segment_id, tab_id, desired_lists
+    )
 
 
 def _table_cell_style_changed(base_cell: Any, desired_cell: Any) -> bool:
@@ -1729,6 +1754,7 @@ def _diff_table_structural(
     desired_se: StructuralElement,
     segment_id: SegmentID,
     tab_id: TabID,
+    desired_lists: dict[str, List] | None = None,
 ) -> list[dict[str, Any]]:
     """Structural table diff with proper row/column operations."""
     table_start = _el_start(base_se)
@@ -1866,6 +1892,7 @@ def _diff_table_structural(
                 col_alignment_list,
                 segment_id,
                 tab_id,
+                desired_lists,
             )
             requests.extend(cell_reqs)
             row_table.entries[entry_idx].length = new_length
@@ -1914,6 +1941,7 @@ def _diff_table_structural(
                 desired_cols_count,
                 segment_id,
                 tab_id,
+                desired_lists,
             )
             requests.extend(pop_reqs)
             row_table.entries[new_entry_idx].length = new_length
@@ -1933,6 +1961,7 @@ def _diff_row_cells(
     col_alignment: list[tuple[AlignmentOp, int | None, int | None]],
     segment_id: SegmentID,
     tab_id: TabID,
+    desired_lists: dict[str, List] | None = None,
 ) -> tuple[list[dict[str, Any]], int]:
     """Diff cells right-to-left for a MATCHED row.
 
@@ -1987,7 +2016,12 @@ def _diff_row_cells(
             )
             if base_cell and desired_cell:
                 cell_reqs = _diff_single_cell_at(
-                    base_cell, desired_cell, cell_start, segment_id, tab_id
+                    base_cell,
+                    desired_cell,
+                    cell_start,
+                    segment_id,
+                    tab_id,
+                    desired_lists,
                 )
                 requests.extend(cell_reqs)
         elif col_op == AlignmentOp.ADDED:
@@ -1995,7 +2029,7 @@ def _diff_row_cells(
             if desired_col_idx < len(desired_cells):
                 desired_cell = desired_cells[desired_col_idx]
                 pop_reqs = _populate_cell_at(
-                    desired_cell, cell_start, segment_id, tab_id
+                    desired_cell, cell_start, segment_id, tab_id, desired_lists
                 )
                 requests.extend(pop_reqs)
 
@@ -2017,6 +2051,7 @@ def _populate_new_row(
     desired_cols_count: int,
     segment_id: SegmentID,
     tab_id: TabID,
+    desired_lists: dict[str, List] | None = None,
 ) -> tuple[list[dict[str, Any]], int]:
     """Populate cells of a newly inserted row, right-to-left.
 
@@ -2033,7 +2068,7 @@ def _populate_new_row(
         cell_start = row_start + 2 + c + sum(content_lens[:c])
         if c < len(desired_cells):
             pop_reqs = _populate_cell_at(
-                desired_cells[c], cell_start, segment_id, tab_id
+                desired_cells[c], cell_start, segment_id, tab_id, desired_lists
             )
             requests.extend(pop_reqs)
 
@@ -2048,62 +2083,60 @@ def _populate_new_row(
     return requests, new_row_length
 
 
-def _check_multi_para_cell_styles(cell: TableCell) -> None:
-    """Raise ReconcileError if a cell has multiple paragraphs with non-default styles.
+def _fake_empty_para(cell_start: int) -> StructuralElement:
+    """Create a fake StructuralElement for an empty cell (just \\n at cell_start).
 
-    When a desired cell has multiple paragraphs, we use insertText which correctly
-    creates paragraph breaks via embedded \\n. However, per-paragraph styles (such as
-    namedStyleType=HEADING_1) cannot be applied through insertText alone — they would
-    be silently lost. Raise an error to surface this limitation.
+    Used as the base when a cell is newly inserted (no prior API content).
+    The trailing \\n is the cell-boundary marker that generate_requests must preserve.
     """
-    paras = [se for se in (cell.content or []) if se.paragraph]
-    if len(paras) <= 1:
-        return
-    for se in paras:
-        ps = se.paragraph and se.paragraph.paragraph_style
-        if ps is not None:
-            style_dict = ps.model_dump(by_alias=True, exclude_none=True)
-            if style_dict:
-                raise ReconcileError(
-                    "Multi-paragraph table cells with paragraph styles (e.g. "
-                    "namedStyleType=HEADING_1) are not supported by reconcile(). "
-                    "The per-paragraph styles would be silently lost. "
-                    "Use the Google Docs API directly to create such cells."
-                )
+    return StructuralElement.model_validate(
+        {
+            "paragraph": {"elements": [{"textRun": {"content": "\n"}}]},
+            "startIndex": cell_start,
+            "endIndex": cell_start + 1,
+        }
+    )
+
+
+def _reconcile_cell_content(
+    base_elements: list[StructuralElement],
+    desired_elements: list[StructuralElement],
+    segment_id: SegmentID,
+    tab_id: TabID,
+    desired_lists: dict[str, List] | None = None,
+) -> list[dict[str, Any]]:
+    """Reconcile table cell content via full recursion through generate_requests.
+
+    Cell paragraphs share the body index space (real startIndex/endIndex from
+    the API).  Calling generate_requests on the aligned cell content is identical
+    to reconciling any other segment — gaps, style diffs, and the protection of
+    the cell-final \\n all work through the same mechanism.
+    """
+    alignment = align_structural_elements(base_elements, desired_elements)
+    return generate_requests(alignment, segment_id, tab_id, desired_lists)
 
 
 def _diff_single_cell_at(
     base_cell: TableCell,
     desired_cell: TableCell,
-    cell_start: int,
+    cell_start: int,  # noqa: ARG001 — kept for call-site symmetry with _populate_cell_at
     segment_id: SegmentID,
     tab_id: TabID,
+    desired_lists: dict[str, List] | None = None,
 ) -> list[dict[str, Any]]:
-    """Diff a single cell using a computed cell_start index."""
-    _check_multi_para_cell_styles(desired_cell)
-    base_text = _cell_text(base_cell)
-    desired_text = _cell_text(desired_cell)
+    """Diff a single MATCHED cell using recursive cell reconciliation.
 
-    if base_text == desired_text:
-        return []
-
-    requests: list[dict[str, Any]] = []
-
-    # Delete old content (protect cell-ending \n)
-    old_text_stripped = base_text.rstrip("\n")
-    if old_text_stripped:
-        del_end = cell_start + utf16_len(old_text_stripped)
-        if cell_start < del_end:
-            requests.append(_make_delete_range(cell_start, del_end, segment_id, tab_id))
-
-    # Insert new content
-    new_text_stripped = desired_text.rstrip("\n")
-    if new_text_stripped:
-        requests.append(
-            _make_insert_text(new_text_stripped, cell_start, segment_id, tab_id)
-        )
-
-    return requests
+    The base cell's paragraphs carry real API startIndex/endIndex values, so
+    cell_start is not used for index computation here — it is kept for
+    call-site symmetry with _populate_cell_at.
+    """
+    return _reconcile_cell_content(
+        base_cell.content or [],
+        desired_cell.content or [],
+        segment_id,
+        tab_id,
+        desired_lists,
+    )
 
 
 def _populate_cell_at(
@@ -2111,14 +2144,16 @@ def _populate_cell_at(
     cell_start: int,
     segment_id: SegmentID,
     tab_id: TabID,
+    desired_lists: dict[str, List] | None = None,
 ) -> list[dict[str, Any]]:
-    """Populate an empty cell (just \\n) with desired content."""
-    _check_multi_para_cell_styles(desired_cell)
-    desired_text = _cell_text(desired_cell)
-    text_stripped = desired_text.rstrip("\n")
-    if not text_stripped:
-        return []
-    return [_make_insert_text(text_stripped, cell_start, segment_id, tab_id)]
+    """Populate a newly-inserted empty cell (just \\n at cell_start) with desired content."""
+    return _reconcile_cell_content(
+        [_fake_empty_para(cell_start)],
+        desired_cell.content or [],
+        segment_id,
+        tab_id,
+        desired_lists,
+    )
 
 
 # ---------------------------------------------------------------------------
