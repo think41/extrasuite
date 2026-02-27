@@ -100,13 +100,13 @@ class TestToken:
         assert token.expires_at == 1234567890.0
 
     def test_from_dict_missing_email(self) -> None:
-        """from_dict handles missing service_account_email."""
+        """from_dict raises KeyError when service_account_email is absent (invalid cache)."""
         data = {
             "access_token": "test-token",
             "expires_at": 1234567890.0,
         }
-        token = Token.from_dict(data)
-        assert token.service_account_email == ""
+        with pytest.raises(KeyError):
+            Token.from_dict(data)
 
     def test_roundtrip(self) -> None:
         """Token survives to_dict/from_dict roundtrip."""
@@ -485,7 +485,9 @@ class TestCredentialsManagerExtraSuite:
             exchange_url="https://auth.example.com/api/token/exchange",
             token_cache_path=token_path,
         )
-        token = manager.get_token(reason="Test: verify cached token is returned")
+        token = manager.get_token(
+            reason="Test: verify cached token is returned", scope="sheet.pull"
+        )
         assert token.access_token == "cached-token"
 
     def test_get_token_force_refresh_ignores_cache(self, tmp_path: Path) -> None:
@@ -514,7 +516,9 @@ class TestCredentialsManagerExtraSuite:
             manager, "_authenticate_extrasuite", return_value=new_token
         ):
             token = manager.get_token(
-                reason="Test: force refresh to get new token", force_refresh=True
+                reason="Test: force refresh to get new token",
+                scope="sheet.pull",
+                force_refresh=True,
             )
             assert token.access_token == "new-token"
 
@@ -593,11 +597,15 @@ class TestCredentialsManagerServiceAccount:
 
         if google_auth_available:
             with pytest.raises(FileNotFoundError):
-                manager.get_token(reason="Test: access Google Sheets")
+                manager.get_token(
+                    reason="Test: access Google Sheets", scope="sheet.pull"
+                )
         else:
             # Without google-auth, we get ImportError first
             with pytest.raises(ImportError):
-                manager.get_token(reason="Test: access Google Sheets")
+                manager.get_token(
+                    reason="Test: access Google Sheets", scope="sheet.pull"
+                )
 
     def test_service_account_uses_cache(self, tmp_path: Path) -> None:
         """Service account mode also uses file cache."""
@@ -617,7 +625,7 @@ class TestCredentialsManagerServiceAccount:
                 token_cache_path=token_path,
             )
         token = manager.get_token(
-            reason="Test: verify service account uses cached token"
+            reason="Test: verify service account uses cached token", scope="sheet.pull"
         )
         assert token.access_token == "cached-sa-token"
 
@@ -640,7 +648,9 @@ class TestCredentialsManagerServiceAccount:
         except ImportError:
             # google-auth is not installed, this is the case we want to test
             with pytest.raises(ImportError) as exc_info:
-                manager.get_token(reason="Test: access Google Sheets")
+                manager.get_token(
+                    reason="Test: access Google Sheets", scope="sheet.pull"
+                )
             assert "google-auth" in str(exc_info.value)
 
 
@@ -713,7 +723,9 @@ class TestCredentialsManagerIntegration:
             token_cache_path=token_path,
         )
 
-        token = manager.get_token(reason="Test: pulling spreadsheet data")
+        token = manager.get_token(
+            reason="Test: pulling spreadsheet data", scope="sheet.pull"
+        )
 
         assert token.access_token == "cached-access-token"
         assert token.service_account_email == "sa@project.iam.gserviceaccount.com"
@@ -745,7 +757,9 @@ class TestCredentialsManagerIntegration:
         with mock.patch.object(
             manager, "_authenticate_extrasuite", return_value=new_token
         ):
-            token = manager.get_token(reason="Test: re-authenticate after token expiry")
+            token = manager.get_token(
+                reason="Test: re-authenticate after token expiry", scope="sheet.pull"
+            )
 
         assert token.access_token == "fresh-token"
 
@@ -1181,7 +1195,7 @@ class TestV2SessionFlow:
             mock_urlopen.return_value = mock_resp
 
             result = manager._exchange_session_for_access_token(
-                session, pseudo_scope="sheet.pull", reason="Test pull"
+                session, scope="sheet.pull", reason="Test pull"
             )
 
         assert result["access_token"] == "short-lived-token"
@@ -1210,7 +1224,7 @@ class TestV2SessionFlow:
 
             with pytest.raises(Exception) as exc_info:
                 manager._exchange_session_for_access_token(
-                    session, pseudo_scope="sheet.pull", reason="Test"
+                    session, scope="sheet.pull", reason="Test"
                 )
         assert "extrasuite auth login" in str(exc_info.value)
 
@@ -1241,9 +1255,7 @@ class TestV2SessionFlow:
             mock_resp.__exit__ = mock.MagicMock(return_value=False)
             mock_urlopen.return_value = mock_resp
 
-            token = manager.get_token(
-                reason="Test: pull sheet", pseudo_scope="sheet.pull"
-            )
+            token = manager.get_token(reason="Test: pull sheet", scope="sheet.pull")
 
         assert token.access_token == "v2-access-token"
         assert token.service_account_email == "sa@project.iam.gserviceaccount.com"

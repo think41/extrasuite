@@ -54,7 +54,7 @@ MAX_PORT = 65535
 
 router = APIRouter()
 
-# Pseudo-scope → credential type mapping (server-authoritative)
+# Scope → credential type mapping (server-authoritative)
 _SA_SCOPES: frozenset[str] = frozenset(
     {
         "sheet.pull",
@@ -65,11 +65,19 @@ _SA_SCOPES: frozenset[str] = frozenset(
         "slide.push",
         "form.pull",
         "form.push",
-        "drive.file",
     }
 )
 _DWD_SCOPES: frozenset[str] = frozenset(
-    {"calendar", "gmail.compose", "script.projects", "drive.file"}
+    {
+        "calendar",
+        "gmail.compose",
+        "gmail.readonly",
+        "script.projects",
+        "script.deployments",
+        "contacts.readonly",
+        "contacts.other.readonly",
+        "drive.file",
+    }
 )
 _ALL_SCOPES = _SA_SCOPES | _DWD_SCOPES
 
@@ -547,9 +555,7 @@ class AccessTokenRequest(BaseModel):
     """Request body for access token exchange (Phase 2)."""
 
     session_token: str = Field(..., min_length=1, description="Session token from Phase 1")
-    pseudo_scope: str = Field(
-        ..., min_length=1, description="Pseudo-scope (e.g., sheet.pull, gmail.compose)"
-    )
+    scope: str = Field(..., min_length=1, description="Scope (e.g., sheet.pull, gmail.compose)")
     reason: str = Field(..., min_length=1, description="Reason for requesting this token")
     file_hint: str = Field("", description="Optional Drive file URL or ID")
 
@@ -609,19 +615,9 @@ async def exchange_auth_code_for_session(
     if not auth_code_data:
         raise HTTPException(status_code=400, detail="Invalid or expired auth code")
 
-    # SA flow: user_email is stored directly in the auth code document
     email = auth_code_data["user_email"]
     if not email:
-        # Fallback for auth codes issued before user_email was stored (pre-deploy transition).
-        # TODO: Remove this fallback after 2026-06-01 once all deployed clients have user_email.
-        service_account_email = auth_code_data["service_account_email"]
-        users = await db.list_users_with_service_accounts()
-        email = next(
-            (u["email"] for u in users if u["service_account_email"] == service_account_email),
-            None,
-        )
-    if not email:
-        raise HTTPException(status_code=400, detail="Could not resolve user email from auth code")
+        raise HTTPException(status_code=400, detail="Invalid auth code: missing user_email")
 
     # Validate email domain
     if not settings.is_email_domain_allowed(email):
@@ -667,7 +663,7 @@ async def exchange_session_for_access_token(
 
     This is the headless path: no browser required. The session token
     (obtained once via Phase 1) is exchanged for a short-lived token
-    scoped to the requested pseudo-scope.
+    scoped to the requested scope.
     """
     # Validate session token
     token_hash = hashlib.sha256(body.session_token.encode()).hexdigest()
@@ -679,24 +675,24 @@ async def exchange_session_for_access_token(
         )
     email = str(session_data["email"])
 
-    # Validate pseudo-scope
-    if body.pseudo_scope not in _ALL_SCOPES:
+    # Validate scope
+    if body.scope not in _ALL_SCOPES:
         raise HTTPException(
             status_code=400,
-            detail=f"Unknown pseudo-scope: {body.pseudo_scope}. Valid: {sorted(_ALL_SCOPES)}",
+            detail=f"Unknown scope: {body.scope}. Valid: {sorted(_ALL_SCOPES)}",
         )
 
     # For DWD scopes, enforce the server's delegation scope allowlist (DELEGATION_SCOPES env var)
-    if body.pseudo_scope in _DWD_SCOPES:
-        scope_url = _resolve_scope(body.pseudo_scope)
+    if body.scope in _DWD_SCOPES:
+        scope_url = _resolve_scope(body.scope)
         if not settings.is_scope_allowed(scope_url):
             logger.warning(
                 "Disallowed DWD scope requested via v2 session token",
-                extra={"email": email, "pseudo_scope": body.pseudo_scope},
+                extra={"email": email, "scope": body.scope},
             )
             raise HTTPException(
                 status_code=403,
-                detail=f"Scope '{body.pseudo_scope}' is not permitted by server configuration.",
+                detail=f"Scope '{body.scope}' is not permitted by server configuration.",
             )
 
     # Log access (best-effort)
@@ -705,8 +701,8 @@ async def exchange_session_for_access_token(
         await db.log_access_token_request(
             email=email,
             session_hash_prefix=token_hash[:16],
-            pseudo_scope=body.pseudo_scope,
-            credential_type="sa" if body.pseudo_scope in _SA_SCOPES else "dwd",
+            scope=body.scope,
+            credential_type="sa" if body.scope in _SA_SCOPES else "dwd",
             reason=body.reason,
             ip=client_ip,
             file_hint=body.file_hint,
@@ -716,15 +712,15 @@ async def exchange_session_for_access_token(
 
     # Generate token
     token_generator = TokenGenerator(database=db, settings=settings)
-    if body.pseudo_scope in _SA_SCOPES:
+    if body.scope in _SA_SCOPES:
         result = await token_generator.generate_token(email)
     else:
-        scope_url = _resolve_scope(body.pseudo_scope)
+        scope_url = _resolve_scope(body.scope)
         result = await token_generator.generate_delegated_token(email, [scope_url])
 
     logger.info(
         "Access token issued",
-        extra={"email": email, "pseudo_scope": body.pseudo_scope},
+        extra={"email": email, "scope": body.scope},
     )
 
     if not result.service_account_email:

@@ -97,14 +97,6 @@ class FakeDatabase:
             "user_email": data.get("user_email", ""),
         }
 
-    async def list_users_with_service_accounts(self) -> list[dict]:
-        """List all users with service accounts."""
-        return [
-            {"email": email, "service_account_email": sa_email}
-            for email, sa_email in self.users.items()
-            if sa_email
-        ]
-
     async def save_delegation_auth_code(
         self, auth_code: str, email: str, scopes: list[str], reason: str
     ) -> None:
@@ -223,7 +215,7 @@ class FakeDatabase:
         self,
         email: str,
         session_hash_prefix: str,
-        pseudo_scope: str,
+        scope: str,
         credential_type: str,
         reason: str,
         ip: str,
@@ -234,7 +226,7 @@ class FakeDatabase:
             {
                 "email": email,
                 "session_hash_prefix": session_hash_prefix,
-                "pseudo_scope": pseudo_scope,
+                "scope": scope,
                 "credential_type": credential_type,
                 "reason": reason,
                 "ip": ip,

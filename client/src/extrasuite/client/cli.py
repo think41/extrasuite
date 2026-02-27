@@ -123,12 +123,12 @@ def _auth_kwargs(args: Any) -> dict[str, Any]:
     return kwargs
 
 
-def _get_token(args: Any, *, reason: str, pseudo_scope: str = "drive.file") -> str:
+def _get_token(args: Any, *, reason: str, scope: str) -> str:
     """Get a service account token via CredentialsManager."""
     from extrasuite.client import CredentialsManager
 
     manager = CredentialsManager(**_auth_kwargs(args))
-    token = manager.get_token(reason=reason, pseudo_scope=pseudo_scope)
+    token = manager.get_token(reason=reason, scope=scope)
     return token.access_token
 
 
@@ -152,9 +152,7 @@ def cmd_sheet_pull(args: Any) -> None:
 
     spreadsheet_id = _parse_spreadsheet_id(args.url)
     output_dir = Path(args.output_dir) if args.output_dir else Path()
-    access_token = _get_token(
-        args, reason="Pulling Google Sheet", pseudo_scope="sheet.pull"
-    )
+    access_token = _get_token(args, reason="Pulling Google Sheet", scope="sheet.pull")
     max_rows = 0 if args.no_limit else args.max_rows
 
     async def _run() -> None:
@@ -220,7 +218,7 @@ def cmd_sheet_push(args: Any) -> None:
     from extrasheet import GoogleSheetsTransport, SheetsClient
 
     access_token = _get_token(
-        args, reason="Pushing changes to Google Sheet", pseudo_scope="sheet.push"
+        args, reason="Pushing changes to Google Sheet", scope="sheet.push"
     )
 
     async def _run() -> None:
@@ -261,7 +259,7 @@ def cmd_sheet_batchupdate(args: Any) -> None:
         sys.exit(1)
 
     access_token = _get_token(
-        args, reason="Executing batchUpdate on Google Sheet", pseudo_scope="sheet.push"
+        args, reason="Executing batchUpdate on Google Sheet", scope="sheet.push"
     )
 
     async def _run() -> None:
@@ -286,9 +284,7 @@ def cmd_slide_pull(args: Any) -> None:
 
     presentation_id = _parse_presentation_id(args.url)
     output_dir = Path(args.output_dir) if args.output_dir else Path()
-    access_token = _get_token(
-        args, reason="Pulling Google Slides", pseudo_scope="slide.pull"
-    )
+    access_token = _get_token(args, reason="Pulling Google Slides", scope="slide.pull")
 
     async def _run() -> None:
         transport = GoogleSlidesTransport(access_token)
@@ -329,7 +325,7 @@ def cmd_slide_push(args: Any) -> None:
     from extraslide import GoogleSlidesTransport, SlidesClient
 
     access_token = _get_token(
-        args, reason="Pushing changes to Google Slides", pseudo_scope="slide.push"
+        args, reason="Pushing changes to Google Slides", scope="slide.push"
     )
 
     async def _run() -> None:
@@ -354,9 +350,7 @@ def cmd_form_pull(args: Any) -> None:
 
     form_id = _parse_form_id(args.url)
     output_dir = Path(args.output_dir) if args.output_dir else Path()
-    access_token = _get_token(
-        args, reason="Pulling Google Form", pseudo_scope="form.pull"
-    )
+    access_token = _get_token(args, reason="Pulling Google Form", scope="form.pull")
 
     async def _run() -> None:
         transport = GoogleFormsTransport(access_token)
@@ -393,7 +387,7 @@ def cmd_form_push(args: Any) -> None:
     from extraform import FormsClient, GoogleFormsTransport
 
     access_token = _get_token(
-        args, reason="Pushing changes to Google Form", pseudo_scope="form.push"
+        args, reason="Pushing changes to Google Form", scope="form.push"
     )
 
     async def _run() -> None:
@@ -548,9 +542,7 @@ def cmd_doc_pull(args: Any) -> None:
 
     document_id = _parse_document_id(args.url)
     output_dir = Path(args.output_dir) if args.output_dir else Path()
-    access_token = _get_token(
-        args, reason="Pulling Google Doc", pseudo_scope="doc.pull"
-    )
+    access_token = _get_token(args, reason="Pulling Google Doc", scope="doc.pull")
 
     async def _run() -> None:
         transport = GoogleDocsTransport(access_token)
@@ -596,7 +588,7 @@ def cmd_doc_push(args: Any) -> None:
     from extradoc import DocsClient, GoogleDocsTransport
 
     access_token = _get_token(
-        args, reason="Pushing changes to Google Doc", pseudo_scope="doc.push"
+        args, reason="Pushing changes to Google Doc", scope="doc.push"
     )
 
     async def _run() -> None:
@@ -637,17 +629,15 @@ def _cmd_create(file_type: str, args: Any) -> None:
 
     manager = CredentialsManager(**_auth_kwargs(args))
 
-    # Get service account email
-    sa_token = manager.get_token(
-        reason=f"Create {file_type}", pseudo_scope="drive.file"
-    )
-    sa_email = sa_token.service_account_email
-
-    # Get OAuth token with drive.file scope (only allowed drive scope)
+    # Get OAuth token with drive.file scope — also carries the SA email for sharing
     oauth_token = manager.get_oauth_token(
         scopes=["drive.file"],
         reason=f"Create {file_type} and share with service account",
     )
+    if not oauth_token.service_account_email:
+        raise RuntimeError(
+            "Server did not return a service account email. Cannot share file."
+        )
 
     # Create the file via Drive API
     mime_type = _CREATE_MIME_TYPES[file_type]
@@ -655,12 +645,12 @@ def _cmd_create(file_type: str, args: Any) -> None:
     file_id = result["id"]
 
     # Share with service account
-    share_file(oauth_token.access_token, file_id, sa_email)
+    share_file(oauth_token.access_token, file_id, oauth_token.service_account_email)
 
     url = _FILE_URL_PATTERNS[file_type].format(id=file_id)
     print(f"\nCreated {file_type}: {args.title}")
     print(f"URL: {url}")
-    print(f"Shared with: {sa_email}")
+    print(f"Shared with: {oauth_token.service_account_email}")
     print(f"\nTo edit, run: extrasuite {file_type} pull {url}")
 
 

@@ -92,7 +92,7 @@ class TestFakeDatabaseSessionTokens:
         await db.log_access_token_request(
             email="user@example.com",
             session_hash_prefix="abc123",
-            pseudo_scope="sheet.pull",
+            scope="sheet.pull",
             credential_type="sa",
             reason="Pulling sheet data",
             ip="1.2.3.4",
@@ -100,7 +100,7 @@ class TestFakeDatabaseSessionTokens:
         assert len(db.access_logs) == 1
         log = db.access_logs[0]
         assert log["email"] == "user@example.com"
-        assert log["pseudo_scope"] == "sheet.pull"
+        assert log["scope"] == "sheet.pull"
         assert log["reason"] == "Pulling sheet data"
 
 
@@ -128,8 +128,18 @@ class TestScopeAllowlist:
 
     def test_dwd_scope_set_matches_claude_md(self) -> None:
         """Verify _DWD_SCOPES in api.py matches the documented allowed scopes in CLAUDE.md."""
-        # These are the ONLY scopes documented as allowed in CLAUDE.md
-        expected = frozenset({"calendar", "gmail.compose", "script.projects", "drive.file"})
+        expected = frozenset(
+            {
+                "calendar",
+                "gmail.compose",
+                "gmail.readonly",
+                "script.projects",
+                "script.deployments",
+                "contacts.readonly",
+                "contacts.other.readonly",
+                "drive.file",
+            }
+        )
         assert expected == _DWD_SCOPES, (
             f"_DWD_SCOPES {_DWD_SCOPES} does not match documented allowed scopes {expected}. "
             "Update either _DWD_SCOPES or CLAUDE.md."

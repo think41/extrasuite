@@ -380,6 +380,11 @@ class TestGenerateDelegatedToken:
         fake_iam = FakeIAMAsyncClient(project_id="test-project")
         FakeCreds = create_fake_impersonated_credentials_class()
 
+        # Seed the user's SA email so generate_delegated_token can return it
+        await fake_db.set_service_account_email(
+            "user@example.com", "user-sa@project.iam.gserviceaccount.com"
+        )
+
         generator = TokenGenerator(
             database=fake_db,
             settings=fake_settings,
@@ -401,7 +406,7 @@ class TestGenerateDelegatedToken:
 
         assert isinstance(result, GeneratedToken)
         assert result.token == mock_token
-        assert result.service_account_email == "user@example.com"
+        assert result.service_account_email == "user-sa@project.iam.gserviceaccount.com"
         assert result.expires_at == mock_expires
 
     @pytest.mark.asyncio

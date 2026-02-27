@@ -48,7 +48,7 @@ import asyncio
 from datetime import UTC, datetime, timedelta
 
 from fastapi import Request
-from google.cloud.firestore_v1 import AsyncClient, AsyncQuery, DocumentSnapshot
+from google.cloud.firestore_v1 import AsyncClient, AsyncQuery
 from google.cloud.firestore_v1.async_transaction import async_transactional
 
 # OAuth state TTL (10 minutes)
@@ -300,35 +300,6 @@ class Database:
             ),
             timeout=self._timeout,
         )
-
-    async def list_users_with_service_accounts(self) -> list[dict]:
-        """List all users who have service accounts.
-
-        Returns a list of dicts with email and service_account_email.
-        Only includes users who have a service account assigned.
-        """
-        users_ref = self._client.collection("users")
-
-        async def _query() -> list[DocumentSnapshot]:
-            query = users_ref.where("service_account_email", "!=", None)
-            return await query.get()
-
-        docs = await asyncio.wait_for(_query(), timeout=self._timeout)
-
-        result = []
-        for doc in docs:
-            data = doc.to_dict()
-            if data and data.get("service_account_email"):
-                result.append(
-                    {
-                        "email": data.get("email", ""),
-                        "service_account_email": data.get("service_account_email"),
-                    }
-                )
-
-        # Sort by email for consistent ordering
-        result.sort(key=lambda x: x["email"])
-        return result
 
     # =========================================================================
     # Delegation Auth Codes (for domain-wide delegation token delivery)
@@ -588,7 +559,7 @@ class Database:
         self,
         email: str,
         session_hash_prefix: str,
-        pseudo_scope: str,
+        scope: str,
         credential_type: str,
         reason: str,
         ip: str,
@@ -607,7 +578,7 @@ class Database:
                 {
                     "email": email,
                     "session_hash_prefix": session_hash_prefix,
-                    "pseudo_scope": pseudo_scope,
+                    "scope": scope,
                     "credential_type": credential_type,
                     "reason": reason,
                     "ip": ip,

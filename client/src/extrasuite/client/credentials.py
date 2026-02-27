@@ -75,7 +75,7 @@ class Token:
         """Create Token from dictionary."""
         return cls(
             access_token=data["access_token"],
-            service_account_email=data.get("service_account_email", ""),
+            service_account_email=data["service_account_email"],
             expires_at=data["expires_at"],
         )
 
@@ -95,11 +95,13 @@ class OAuthToken:
         access_token: The OAuth2 access token for API calls.
         scopes: List of granted scope URLs.
         expires_at: Unix timestamp when the token expires.
+        service_account_email: The agent's service account email (empty for legacy v1 tokens).
     """
 
     access_token: str
     scopes: list[str]
     expires_at: float
+    service_account_email: str = ""
 
     def is_valid(self, buffer_seconds: int = 60) -> bool:
         """Check if token is still valid with a safety buffer."""
@@ -116,6 +118,7 @@ class OAuthToken:
             "scopes": self.scopes,
             "expires_at": self.expires_at,
             "token_type": "Bearer",
+            "service_account_email": self.service_account_email,
         }
 
     @classmethod
@@ -123,8 +126,9 @@ class OAuthToken:
         """Create OAuthToken from dictionary."""
         return cls(
             access_token=data["access_token"],
-            scopes=data.get("scopes", []),
+            scopes=data["scopes"],
             expires_at=data["expires_at"],
+            service_account_email=data.get("service_account_email", ""),
         )
 
 
@@ -325,7 +329,7 @@ class CredentialsManager:
         self,
         *,
         reason: str,
-        pseudo_scope: str = "drive.file",
+        scope: str,
         force_refresh: bool = False,
     ) -> Token:
         """Get a valid access token, authenticating if necessary.
@@ -336,7 +340,7 @@ class CredentialsManager:
 
         Args:
             reason: Mandatory reason string logged server-side for auditing.
-            pseudo_scope: Pseudo-scope for the token (e.g., "sheet.pull"). Defaults to "drive.file".
+            scope: Scope for the token (e.g., "sheet.pull", "doc.push").
             force_refresh: If True, ignore cached token and re-authenticate.
 
         Returns:
@@ -347,13 +351,13 @@ class CredentialsManager:
         """
         if self._use_extrasuite:
             return self._get_extrasuite_token(
-                reason=reason, pseudo_scope=pseudo_scope, force_refresh=force_refresh
+                reason=reason, scope=scope, force_refresh=force_refresh
             )
         else:
             return self._get_service_account_token(force_refresh)
 
     def _get_extrasuite_token(
-        self, *, reason: str, pseudo_scope: str, force_refresh: bool
+        self, *, reason: str, scope: str, force_refresh: bool
     ) -> Token:
         """Get token via ExtraSuite server.
 
@@ -368,7 +372,7 @@ class CredentialsManager:
         if self._server_base_url:
             session = self._get_or_create_session_token()
             result = self._exchange_session_for_access_token(
-                session, pseudo_scope=pseudo_scope, reason=reason
+                session, scope=scope, reason=reason
             )
             # Parse response into Token
             expires_at_dt = datetime.fromisoformat(
@@ -554,13 +558,12 @@ class CredentialsManager:
 
         # v2: use session token for headless exchange
         if self._server_base_url:
+            if not scopes:
+                raise ValueError("scopes must not be empty")
             session = self._get_or_create_session_token()
-            # Use first scope as pseudo-scope (strip prefix)
-            pseudo_scope = (
-                scopes[0].removeprefix(_GOOGLE_SCOPE_PREFIX) if scopes else "drive"
-            )
+            scope = scopes[0].removeprefix(_GOOGLE_SCOPE_PREFIX)
             result = self._exchange_session_for_access_token(
-                session, pseudo_scope=pseudo_scope, reason=reason, file_hint=file_hint
+                session, scope=scope, reason=reason, file_hint=file_hint
             )
             expires_at_dt = datetime.fromisoformat(
                 result["expires_at"].replace("Z", "+00:00")
@@ -573,6 +576,7 @@ class CredentialsManager:
                 access_token=result["access_token"],
                 scopes=resolved,
                 expires_at=expires_at,
+                service_account_email=result["service_account_email"],
             )
             self._save_oauth_token(token)
             return token
@@ -927,13 +931,13 @@ class CredentialsManager:
         self,
         session: SessionToken,
         *,
-        pseudo_scope: str,
+        scope: str,
         reason: str,
         file_hint: str = "",
     ) -> dict[str, Any]:
         """Exchange a session token for a short-lived access token (Phase 2).
 
-        Returns raw response dict with access_token, expires_at, token_type.
+        Returns raw response dict with access_token, expires_at, token_type, service_account_email.
         """
         if self._server_base_url is None:
             raise RuntimeError(
@@ -943,7 +947,7 @@ class CredentialsManager:
         body = json.dumps(
             {
                 "session_token": session.raw_token,
-                "pseudo_scope": pseudo_scope,
+                "scope": scope,
                 "reason": reason,
                 "file_hint": file_hint,
             }

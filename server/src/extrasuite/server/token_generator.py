@@ -305,6 +305,7 @@ class TokenGenerator:
         """
         try:
             token, expires_at = await asyncio.to_thread(self._do_delegation, user_email, scopes)
+            sa_email = await self._db.get_service_account_email(user_email) or ""
 
             logger.info(
                 "Delegated token generated",
@@ -314,7 +315,7 @@ class TokenGenerator:
             return GeneratedToken(
                 token=token,
                 expires_at=expires_at,
-                service_account_email=user_email,
+                service_account_email=sa_email,
             )
         except Exception as e:
             raise DelegationError(f"Domain-wide delegation failed: {e}", user_email, e) from e
