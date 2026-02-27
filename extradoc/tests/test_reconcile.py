@@ -1217,6 +1217,466 @@ class TestReconcileMultiTab:
         )
         assert "Second tab content" in body_text
 
+    def test_create_new_tab_with_header(self):
+        """Adding a header to a new tab succeeds in a single push.
+
+        DEFAULT headers are document-level (no tabId). When the base has no
+        DEFAULT header, the reconciler creates it in batch 1 (after the tab
+        exists in batch 0) and populates it in batch 2 — no re-pull required.
+        """
+        base = _make_multi_tab_doc([("t.0", "Tab 1", ["Content"])])
+        desired = Document.model_validate(
+            {
+                "documentId": "test",
+                "tabs": [
+                    {
+                        "tabProperties": {"tabId": "t.0", "title": "Tab 1", "index": 0},
+                        "documentTab": {
+                            "body": {
+                                "content": [
+                                    {"sectionBreak": {}},
+                                    {
+                                        "paragraph": {
+                                            "elements": [
+                                                {"textRun": {"content": "Content\n"}}
+                                            ]
+                                        }
+                                    },
+                                ]
+                            }
+                        },
+                    },
+                    {
+                        "tabProperties": {"tabId": "t.1", "title": "Tab 2", "index": 1},
+                        "documentTab": {
+                            "body": {
+                                "content": [
+                                    {"sectionBreak": {}},
+                                    {
+                                        "paragraph": {
+                                            "elements": [
+                                                {"textRun": {"content": "Body\n"}}
+                                            ]
+                                        }
+                                    },
+                                ]
+                            },
+                            "headers": {
+                                "hdr1": {
+                                    "headerId": "hdr1",
+                                    "content": [
+                                        {
+                                            "paragraph": {
+                                                "elements": [
+                                                    {"textRun": {"content": "Header\n"}}
+                                                ]
+                                            }
+                                        }
+                                    ],
+                                }
+                            },
+                        },
+                    },
+                ],
+            }
+        )
+        desired = reindex_document(desired)
+        result = reconcile(base, desired)
+        # 3 batches: (0) addDocumentTab; (1) body content + createHeader; (2) header content
+        assert len(result) == 3
+        all_types = [
+            next(iter(r.model_dump(by_alias=True, exclude_none=True)))
+            for batch in result
+            if batch.requests
+            for r in batch.requests
+        ]
+        assert "addDocumentTab" in all_types
+        assert "createHeader" in all_types
+        # createHeader must be in batch 1 (after the tab exists)
+        batch1_types = [
+            next(iter(r.model_dump(by_alias=True, exclude_none=True)))
+            for r in (result[1].requests or [])
+        ]
+        assert "createHeader" in batch1_types
+
+    def test_create_new_tab_with_footer(self):
+        """Adding a footer to a new tab succeeds in a single push."""
+        base = _make_multi_tab_doc([("t.0", "Tab 1", ["Content"])])
+        desired = Document.model_validate(
+            {
+                "documentId": "test",
+                "tabs": [
+                    {
+                        "tabProperties": {"tabId": "t.0", "title": "Tab 1", "index": 0},
+                        "documentTab": {
+                            "body": {
+                                "content": [
+                                    {"sectionBreak": {}},
+                                    {
+                                        "paragraph": {
+                                            "elements": [
+                                                {"textRun": {"content": "Content\n"}}
+                                            ]
+                                        }
+                                    },
+                                ]
+                            }
+                        },
+                    },
+                    {
+                        "tabProperties": {"tabId": "t.1", "title": "Tab 2", "index": 1},
+                        "documentTab": {
+                            "body": {
+                                "content": [
+                                    {"sectionBreak": {}},
+                                    {
+                                        "paragraph": {
+                                            "elements": [
+                                                {"textRun": {"content": "Body\n"}}
+                                            ]
+                                        }
+                                    },
+                                ]
+                            },
+                            "footers": {
+                                "ftr1": {
+                                    "footerId": "ftr1",
+                                    "content": [
+                                        {
+                                            "paragraph": {
+                                                "elements": [
+                                                    {"textRun": {"content": "Footer\n"}}
+                                                ]
+                                            }
+                                        }
+                                    ],
+                                }
+                            },
+                        },
+                    },
+                ],
+            }
+        )
+        desired = reindex_document(desired)
+        result = reconcile(base, desired)
+        # 3 batches: (0) addDocumentTab; (1) body content + createFooter; (2) footer content
+        assert len(result) == 3
+        all_types = [
+            next(iter(r.model_dump(by_alias=True, exclude_none=True)))
+            for batch in result
+            if batch.requests
+            for r in batch.requests
+        ]
+        assert "addDocumentTab" in all_types
+        assert "createFooter" in all_types
+
+    def test_second_tab_header_reuses_existing_default(self):
+        """When a second existing tab gains a header and a DEFAULT already exists,
+        the reconciler diffs against the existing DEFAULT header (content update)
+        rather than calling createHeader again.
+
+        DEFAULT headers are document-level — one object serves all tabs. The
+        result is a single push with no createHeader request.
+        """
+        # Base: two existing tabs, Tab 1 has a DEFAULT header
+        base = Document.model_validate(
+            {
+                "documentId": "test",
+                "tabs": [
+                    {
+                        "tabProperties": {"tabId": "t.0", "title": "Tab 1", "index": 0},
+                        "documentTab": {
+                            "body": {
+                                "content": [
+                                    {"sectionBreak": {}},
+                                    {
+                                        "paragraph": {
+                                            "elements": [
+                                                {"textRun": {"content": "Content\n"}}
+                                            ]
+                                        }
+                                    },
+                                ]
+                            },
+                            "headers": {
+                                "hdr1": {
+                                    "headerId": "hdr1",
+                                    "content": [
+                                        {
+                                            "paragraph": {
+                                                "elements": [
+                                                    {
+                                                        "textRun": {
+                                                            "content": "Shared Header\n"
+                                                        }
+                                                    }
+                                                ]
+                                            }
+                                        }
+                                    ],
+                                }
+                            },
+                        },
+                    },
+                    {
+                        "tabProperties": {"tabId": "t.1", "title": "Tab 2", "index": 1},
+                        "documentTab": {
+                            "body": {
+                                "content": [
+                                    {"sectionBreak": {}},
+                                    {
+                                        "paragraph": {
+                                            "elements": [
+                                                {"textRun": {"content": "Tab 2\n"}}
+                                            ]
+                                        }
+                                    },
+                                ]
+                            }
+                        },
+                    },
+                ],
+            }
+        )
+        base = reindex_document(base)
+        # Desired: Tab 2 also shows the same DEFAULT header content
+        desired = Document.model_validate(
+            {
+                "documentId": "test",
+                "tabs": [
+                    {
+                        "tabProperties": {"tabId": "t.0", "title": "Tab 1", "index": 0},
+                        "documentTab": {
+                            "body": {
+                                "content": [
+                                    {"sectionBreak": {}},
+                                    {
+                                        "paragraph": {
+                                            "elements": [
+                                                {"textRun": {"content": "Content\n"}}
+                                            ]
+                                        }
+                                    },
+                                ]
+                            },
+                            "headers": {
+                                "hdr1": {
+                                    "headerId": "hdr1",
+                                    "content": [
+                                        {
+                                            "paragraph": {
+                                                "elements": [
+                                                    {
+                                                        "textRun": {
+                                                            "content": "Shared Header\n"
+                                                        }
+                                                    }
+                                                ]
+                                            }
+                                        }
+                                    ],
+                                }
+                            },
+                        },
+                    },
+                    {
+                        "tabProperties": {"tabId": "t.1", "title": "Tab 2", "index": 1},
+                        "documentTab": {
+                            "body": {
+                                "content": [
+                                    {"sectionBreak": {}},
+                                    {
+                                        "paragraph": {
+                                            "elements": [
+                                                {"textRun": {"content": "Tab 2\n"}}
+                                            ]
+                                        }
+                                    },
+                                ]
+                            },
+                            "headers": {
+                                "hdr1": {
+                                    "headerId": "hdr1",
+                                    "content": [
+                                        {
+                                            "paragraph": {
+                                                "elements": [
+                                                    {
+                                                        "textRun": {
+                                                            "content": "Shared Header\n"
+                                                        }
+                                                    }
+                                                ]
+                                            }
+                                        }
+                                    ],
+                                }
+                            },
+                        },
+                    },
+                ],
+            }
+        )
+        desired = reindex_document(desired)
+        result = reconcile(base, desired)
+        # Content is identical → no requests at all
+        assert result == []
+        # Specifically, no createHeader was emitted
+        all_types = [
+            next(iter(r.model_dump(by_alias=True, exclude_none=True)))
+            for batch in result
+            if batch.requests
+            for r in batch.requests
+        ]
+        assert "createHeader" not in all_types
+
+    def test_second_tab_footer_reuses_existing_default(self):
+        """When a second existing tab gains a footer and a DEFAULT already exists,
+        the reconciler diffs against the existing DEFAULT footer rather than
+        calling createFooter again.
+        """
+        base = Document.model_validate(
+            {
+                "documentId": "test",
+                "tabs": [
+                    {
+                        "tabProperties": {"tabId": "t.0", "title": "Tab 1", "index": 0},
+                        "documentTab": {
+                            "body": {
+                                "content": [
+                                    {"sectionBreak": {}},
+                                    {
+                                        "paragraph": {
+                                            "elements": [
+                                                {"textRun": {"content": "Content\n"}}
+                                            ]
+                                        }
+                                    },
+                                ]
+                            },
+                            "footers": {
+                                "ftr1": {
+                                    "footerId": "ftr1",
+                                    "content": [
+                                        {
+                                            "paragraph": {
+                                                "elements": [
+                                                    {
+                                                        "textRun": {
+                                                            "content": "Shared Footer\n"
+                                                        }
+                                                    }
+                                                ]
+                                            }
+                                        }
+                                    ],
+                                }
+                            },
+                        },
+                    },
+                    {
+                        "tabProperties": {"tabId": "t.1", "title": "Tab 2", "index": 1},
+                        "documentTab": {
+                            "body": {
+                                "content": [
+                                    {"sectionBreak": {}},
+                                    {
+                                        "paragraph": {
+                                            "elements": [
+                                                {"textRun": {"content": "Tab 2\n"}}
+                                            ]
+                                        }
+                                    },
+                                ]
+                            }
+                        },
+                    },
+                ],
+            }
+        )
+        base = reindex_document(base)
+        desired = Document.model_validate(
+            {
+                "documentId": "test",
+                "tabs": [
+                    {
+                        "tabProperties": {"tabId": "t.0", "title": "Tab 1", "index": 0},
+                        "documentTab": {
+                            "body": {
+                                "content": [
+                                    {"sectionBreak": {}},
+                                    {
+                                        "paragraph": {
+                                            "elements": [
+                                                {"textRun": {"content": "Content\n"}}
+                                            ]
+                                        }
+                                    },
+                                ]
+                            },
+                            "footers": {
+                                "ftr1": {
+                                    "footerId": "ftr1",
+                                    "content": [
+                                        {
+                                            "paragraph": {
+                                                "elements": [
+                                                    {
+                                                        "textRun": {
+                                                            "content": "Shared Footer\n"
+                                                        }
+                                                    }
+                                                ]
+                                            }
+                                        }
+                                    ],
+                                }
+                            },
+                        },
+                    },
+                    {
+                        "tabProperties": {"tabId": "t.1", "title": "Tab 2", "index": 1},
+                        "documentTab": {
+                            "body": {
+                                "content": [
+                                    {"sectionBreak": {}},
+                                    {
+                                        "paragraph": {
+                                            "elements": [
+                                                {"textRun": {"content": "Tab 2\n"}}
+                                            ]
+                                        }
+                                    },
+                                ]
+                            },
+                            "footers": {
+                                "ftr1": {
+                                    "footerId": "ftr1",
+                                    "content": [
+                                        {
+                                            "paragraph": {
+                                                "elements": [
+                                                    {
+                                                        "textRun": {
+                                                            "content": "Shared Footer\n"
+                                                        }
+                                                    }
+                                                ]
+                                            }
+                                        }
+                                    ],
+                                }
+                            },
+                        },
+                    },
+                ],
+            }
+        )
+        desired = reindex_document(desired)
+        result = reconcile(base, desired)
+        # Content is identical → no requests at all, and no createFooter
+        assert result == []
+
     def test_rename_tab(self):
         """Change the title of an existing tab."""
         base = _make_multi_tab_doc(

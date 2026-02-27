@@ -73,7 +73,20 @@ class MockGoogleDocsAPI:
                         }
 
     def _extract_header_footer_types(self) -> None:
-        pass
+        for tab in self._document.get("tabs", []):
+            doc_style = tab.get("documentTab", {}).get("documentStyle", {})
+            if doc_style.get("defaultHeaderId"):
+                self._header_types.add("DEFAULT")
+            if doc_style.get("defaultFooterId"):
+                self._footer_types.add("DEFAULT")
+            if doc_style.get("firstPageHeaderId"):
+                self._header_types.add("FIRST_PAGE")
+            if doc_style.get("firstPageFooterId"):
+                self._footer_types.add("FIRST_PAGE")
+            if doc_style.get("evenPageHeaderId"):
+                self._header_types.add("EVEN_PAGE")
+            if doc_style.get("evenPageFooterId"):
+                self._footer_types.add("EVEN_PAGE")
 
     def _get_raw(self) -> dict[str, Any]:
         """Return current document state as a raw dict (internal/transport use only)."""
