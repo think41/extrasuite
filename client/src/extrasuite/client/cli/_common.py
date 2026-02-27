@@ -4,7 +4,10 @@ from __future__ import annotations
 
 import sys
 from pathlib import Path
-from typing import Any
+from typing import TYPE_CHECKING, Any
+
+if TYPE_CHECKING:
+    from collections.abc import Callable
 
 _HELP_DIR = Path(__file__).parent.parent / "help"
 
@@ -111,6 +114,38 @@ def _parse_document_id(id_or_url: str) -> str:
     return match.group(1) if match else id_or_url
 
 
+def _parse_drive_file_id(id_or_url: str) -> str:
+    """Extract file ID from any Google Drive/Docs/Sheets/Slides/Forms URL.
+
+    Tries all known URL patterns. Falls back to returning the input as-is if
+    no pattern matches (assumes it is already a raw file ID).
+    """
+    import re
+
+    patterns = [
+        r"docs\.google\.com/spreadsheets/d/([a-zA-Z0-9_-]+)",
+        r"docs\.google\.com/presentation/d/([a-zA-Z0-9_-]+)",
+        r"docs\.google\.com/document/d/([a-zA-Z0-9_-]+)",
+        r"docs\.google\.com/forms/d/(?:e/)?([a-zA-Z0-9_-]+)",
+        r"drive\.google\.com/(?:file/d/|open\?id=)([a-zA-Z0-9_-]+)",
+        r"script\.google\.com/(?:d/)?([a-zA-Z0-9_-]+)",
+    ]
+    for pattern in patterns:
+        match = re.search(pattern, id_or_url)
+        if match:
+            return match.group(1)
+    return id_or_url
+
+
+_URL_PARSERS: dict[str, Callable[[str], str]] = {
+    "sheet": _parse_spreadsheet_id,
+    "slide": _parse_presentation_id,
+    "doc": _parse_document_id,
+    "form": _parse_form_id,
+    "script": _parse_drive_file_id,
+}
+
+
 # ---------------------------------------------------------------------------
 # Auth helpers
 # ---------------------------------------------------------------------------
@@ -156,6 +191,43 @@ def _trusted_contacts_setup(access_token: str) -> Any:
     if "@" in user_email:
         trusted.user_domain = user_email.split("@", 1)[1].lower()
     return trusted
+
+
+_SETTINGS_PATH = Path.home() / ".config" / "extrasuite" / "settings.toml"
+
+
+def _cmd_share(file_type: str, args: Any) -> None:
+    """Share a Google file with one or more trusted email addresses."""
+    from extrasuite.client.google_api import share_file
+    from extrasuite.client.settings import load_trusted_contacts
+
+    # 1. Load trusted contacts (no user_domain injection — settings.toml is explicit)
+    trusted = load_trusted_contacts()
+
+    # 2. Validate all emails before any API call
+    untrusted = [e for e in args.emails if not trusted.is_trusted(e)]
+    if untrusted:
+        for e in untrusted:
+            print(f"Error: {e} is not in your trusted contacts list.", file=sys.stderr)
+        print(
+            f"Edit {_SETTINGS_PATH} to add trusted domains or emails.",
+            file=sys.stderr,
+        )
+        sys.exit(1)
+
+    # 3. Parse file ID using type-specific URL parser
+    file_id = _URL_PARSERS[file_type](args.url)
+
+    # 4. Get DWD token
+    access_token = _get_oauth_token(
+        args, scopes=["drive.file"], reason=f"Share {file_type} with users"
+    )
+
+    # 5. Share with each email, collect results
+    role = args.role
+    for email in args.emails:
+        share_file(access_token, file_id, email, role=role)
+        print(f"Shared with {email} ({role})")
 
 
 # ---------------------------------------------------------------------------
@@ -206,9 +278,18 @@ def _cmd_create(file_type: str, args: Any) -> None:
             "Could not determine service account email. Cannot share file."
         )
 
-    # Create the file via Drive API
-    mime_type = _CREATE_MIME_TYPES[file_type]
-    result = create_file_via_drive(oauth_token.access_token, args.title, mime_type)
+    copy_from = getattr(args, "copy_from", None)
+
+    if copy_from:
+        from extrasuite.client.google_api import copy_drive_file
+
+        source_id = _parse_drive_file_id(copy_from)
+        result = copy_drive_file(oauth_token.access_token, source_id, title=args.title)
+    else:
+        # Create the file via Drive API
+        mime_type = _CREATE_MIME_TYPES[file_type]
+        result = create_file_via_drive(oauth_token.access_token, args.title, mime_type)
+
     file_id = result["id"]
 
     # Share with service account

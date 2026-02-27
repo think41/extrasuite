@@ -9,6 +9,7 @@ from typing import Any
 
 from extrasuite.client.cli._common import (
     _cmd_create,
+    _cmd_share,
     _get_token,
     _parse_presentation_id,
 )
@@ -80,3 +81,8 @@ def cmd_slide_push(args: Any) -> None:
 def cmd_slide_create(args: Any) -> None:
     """Create a new Google Slides presentation."""
     _cmd_create("slide", args)
+
+
+def cmd_slide_share(args: Any) -> None:
+    """Share a Google Slides presentation with trusted contacts."""
+    _cmd_share("slide", args)

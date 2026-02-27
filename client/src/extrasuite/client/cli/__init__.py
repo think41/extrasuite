@@ -1,11 +1,12 @@
 """Unified CLI for ExtraSuite.
 
 Usage:
-    extrasuite sheet    pull|diff|push|create|batchUpdate
-    extrasuite slide    pull|diff|push|create
-    extrasuite doc      pull|diff|push|create
-    extrasuite form     pull|diff|push|create
-    extrasuite script   pull|diff|push|create|lint
+    extrasuite drive    ls|search
+    extrasuite sheet    pull|diff|push|create|batchUpdate|share
+    extrasuite slide    pull|diff|push|create|share
+    extrasuite doc      pull|diff|push|create|share
+    extrasuite form     pull|diff|push|create|share
+    extrasuite script   pull|diff|push|create|lint|share
     extrasuite gmail    compose|edit-draft|reply|list|read
     extrasuite calendar view|list|search|freebusy|create|update|delete|rsvp
     extrasuite contacts sync|search|touch
@@ -46,12 +47,15 @@ from extrasuite.client.cli.doc import (
     cmd_doc_diff,
     cmd_doc_pull,
     cmd_doc_push,
+    cmd_doc_share,
 )
+from extrasuite.client.cli.drive import cmd_drive_ls, cmd_drive_search
 from extrasuite.client.cli.form import (
     cmd_form_create,
     cmd_form_diff,
     cmd_form_pull,
     cmd_form_push,
+    cmd_form_share,
 )
 from extrasuite.client.cli.gmail import (
     cmd_gmail_compose,
@@ -66,6 +70,7 @@ from extrasuite.client.cli.script import (
     cmd_script_lint,
     cmd_script_pull,
     cmd_script_push,
+    cmd_script_share,
 )
 from extrasuite.client.cli.sheet import (
     cmd_sheet_batchupdate,
@@ -73,38 +78,47 @@ from extrasuite.client.cli.sheet import (
     cmd_sheet_diff,
     cmd_sheet_pull,
     cmd_sheet_push,
+    cmd_sheet_share,
 )
 from extrasuite.client.cli.slide import (
     cmd_slide_create,
     cmd_slide_diff,
     cmd_slide_pull,
     cmd_slide_push,
+    cmd_slide_share,
 )
 
 # Command dispatch table
 _COMMANDS: dict[tuple[str, str | None], Callable[..., Any]] = {
+    ("drive", "ls"): cmd_drive_ls,
+    ("drive", "search"): cmd_drive_search,
     ("sheet", "pull"): cmd_sheet_pull,
     ("sheet", "diff"): cmd_sheet_diff,
     ("sheet", "push"): cmd_sheet_push,
     ("sheet", "create"): cmd_sheet_create,
     ("sheet", "batchUpdate"): cmd_sheet_batchupdate,
+    ("sheet", "share"): cmd_sheet_share,
     ("slide", "pull"): cmd_slide_pull,
     ("slide", "diff"): cmd_slide_diff,
     ("slide", "push"): cmd_slide_push,
     ("slide", "create"): cmd_slide_create,
+    ("slide", "share"): cmd_slide_share,
     ("form", "pull"): cmd_form_pull,
     ("form", "diff"): cmd_form_diff,
     ("form", "push"): cmd_form_push,
     ("form", "create"): cmd_form_create,
+    ("form", "share"): cmd_form_share,
     ("script", "pull"): cmd_script_pull,
     ("script", "diff"): cmd_script_diff,
     ("script", "push"): cmd_script_push,
     ("script", "create"): cmd_script_create,
     ("script", "lint"): cmd_script_lint,
+    ("script", "share"): cmd_script_share,
     ("doc", "pull"): cmd_doc_pull,
     ("doc", "diff"): cmd_doc_diff,
     ("doc", "push"): cmd_doc_push,
     ("doc", "create"): cmd_doc_create,
+    ("doc", "share"): cmd_doc_share,
     ("gmail", "compose"): cmd_gmail_compose,
     ("gmail", "edit-draft"): cmd_gmail_edit_draft,
     ("gmail", "reply"): cmd_gmail_reply,
@@ -154,6 +168,65 @@ def build_parser() -> Any:
         "--service-account",
         metavar="PATH",
         help="Path to service account JSON key file",
+    )
+
+    # --- drive ---
+    drive_parser = subparsers.add_parser(
+        "drive",
+        help="Google Drive operations (list, search)",
+        description=_load_help("drive"),
+        formatter_class=argparse.RawDescriptionHelpFormatter,
+    )
+    drive_sub = drive_parser.add_subparsers(dest="subcommand")
+
+    sp = drive_sub.add_parser(
+        "ls",
+        help="List files visible to the service account",
+        parents=[auth_parent],
+        description=_load_help("drive", "ls"),
+        formatter_class=argparse.RawDescriptionHelpFormatter,
+    )
+    sp.add_argument(
+        "--folder",
+        metavar="URL",
+        help="Limit listing to files inside a folder (URL or ID)",
+    )
+    sp.add_argument(
+        "--max",
+        type=int,
+        default=20,
+        metavar="N",
+        help="Maximum number of files to return (default: 20)",
+    )
+    sp.add_argument(
+        "--page",
+        default="",
+        metavar="TOKEN",
+        help="Page token for pagination (from previous output)",
+    )
+
+    sp = drive_sub.add_parser(
+        "search",
+        help="Search files visible to the service account",
+        parents=[auth_parent],
+        description=_load_help("drive", "search"),
+        formatter_class=argparse.RawDescriptionHelpFormatter,
+    )
+    sp.add_argument(
+        "query", help="Drive query string (e.g. \"name contains 'budget'\")"
+    )
+    sp.add_argument(
+        "--max",
+        type=int,
+        default=20,
+        metavar="N",
+        help="Maximum number of files to return (default: 20)",
+    )
+    sp.add_argument(
+        "--page",
+        default="",
+        metavar="TOKEN",
+        help="Page token for pagination (from previous output)",
     )
 
     # --- sheet ---
@@ -219,6 +292,29 @@ def build_parser() -> Any:
         formatter_class=argparse.RawDescriptionHelpFormatter,
     )
     sp.add_argument("title", help="Spreadsheet title")
+    sp.add_argument(
+        "--copy-from",
+        metavar="URL",
+        help="Copy an existing file instead of creating blank (must be a file extrasuite created)",
+    )
+
+    sp = sheet_sub.add_parser(
+        "share",
+        help="Share a spreadsheet with trusted contacts",
+        parents=[auth_parent],
+        description=_load_help("sheet", "share"),
+        formatter_class=argparse.RawDescriptionHelpFormatter,
+    )
+    sp.add_argument("url", help="Spreadsheet URL or ID")
+    sp.add_argument(
+        "emails", nargs="+", metavar="EMAIL", help="Recipient email addresses"
+    )
+    sp.add_argument(
+        "--role",
+        choices=["reader", "writer", "commenter"],
+        default="reader",
+        help="Permission role (default: reader)",
+    )
 
     sp = sheet_sub.add_parser(
         "help",
@@ -274,6 +370,29 @@ def build_parser() -> Any:
         formatter_class=argparse.RawDescriptionHelpFormatter,
     )
     sp.add_argument("title", help="Presentation title")
+    sp.add_argument(
+        "--copy-from",
+        metavar="URL",
+        help="Copy an existing file instead of creating blank (must be a file extrasuite created)",
+    )
+
+    sp = slide_sub.add_parser(
+        "share",
+        help="Share a presentation with trusted contacts",
+        parents=[auth_parent],
+        description=_load_help("sheet", "share"),
+        formatter_class=argparse.RawDescriptionHelpFormatter,
+    )
+    sp.add_argument("url", help="Presentation URL or ID")
+    sp.add_argument(
+        "emails", nargs="+", metavar="EMAIL", help="Recipient email addresses"
+    )
+    sp.add_argument(
+        "--role",
+        choices=["reader", "writer", "commenter"],
+        default="reader",
+        help="Permission role (default: reader)",
+    )
 
     sp = slide_sub.add_parser(
         "help",
@@ -334,6 +453,29 @@ def build_parser() -> Any:
         formatter_class=argparse.RawDescriptionHelpFormatter,
     )
     sp.add_argument("title", help="Form title")
+    sp.add_argument(
+        "--copy-from",
+        metavar="URL",
+        help="Copy an existing file instead of creating blank (must be a file extrasuite created)",
+    )
+
+    sp = form_sub.add_parser(
+        "share",
+        help="Share a form with trusted contacts",
+        parents=[auth_parent],
+        description=_load_help("sheet", "share"),
+        formatter_class=argparse.RawDescriptionHelpFormatter,
+    )
+    sp.add_argument("url", help="Form URL or ID")
+    sp.add_argument(
+        "emails", nargs="+", metavar="EMAIL", help="Recipient email addresses"
+    )
+    sp.add_argument(
+        "--role",
+        choices=["reader", "writer", "commenter"],
+        default="reader",
+        help="Permission role (default: reader)",
+    )
 
     sp = form_sub.add_parser(
         "help",
@@ -402,6 +544,24 @@ def build_parser() -> Any:
     sp.add_argument("folder", help="Script project folder path")
 
     sp = script_sub.add_parser(
+        "share",
+        help="Share a script project with trusted contacts",
+        parents=[auth_parent],
+        description=_load_help("sheet", "share"),
+        formatter_class=argparse.RawDescriptionHelpFormatter,
+    )
+    sp.add_argument("url", help="Script URL or ID")
+    sp.add_argument(
+        "emails", nargs="+", metavar="EMAIL", help="Recipient email addresses"
+    )
+    sp.add_argument(
+        "--role",
+        choices=["reader", "writer", "commenter"],
+        default="reader",
+        help="Permission role (default: reader)",
+    )
+
+    sp = script_sub.add_parser(
         "help",
         help="Show reference documentation",
         formatter_class=argparse.RawDescriptionHelpFormatter,
@@ -457,6 +617,29 @@ def build_parser() -> Any:
         formatter_class=argparse.RawDescriptionHelpFormatter,
     )
     sp.add_argument("title", help="Document title")
+    sp.add_argument(
+        "--copy-from",
+        metavar="URL",
+        help="Copy an existing file instead of creating blank (must be a file extrasuite created)",
+    )
+
+    sp = doc_sub.add_parser(
+        "share",
+        help="Share a document with trusted contacts",
+        parents=[auth_parent],
+        description=_load_help("sheet", "share"),
+        formatter_class=argparse.RawDescriptionHelpFormatter,
+    )
+    sp.add_argument("url", help="Document URL or ID")
+    sp.add_argument(
+        "emails", nargs="+", metavar="EMAIL", help="Recipient email addresses"
+    )
+    sp.add_argument(
+        "--role",
+        choices=["reader", "writer", "commenter"],
+        default="reader",
+        help="Permission role (default: reader)",
+    )
 
     sp = doc_sub.add_parser(
         "help",

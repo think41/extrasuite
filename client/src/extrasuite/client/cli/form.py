@@ -10,6 +10,7 @@ from typing import Any
 
 from extrasuite.client.cli._common import (
     _cmd_create,
+    _cmd_share,
     _get_token,
     _parse_form_id,
 )
@@ -78,3 +79,8 @@ def cmd_form_push(args: Any) -> None:
 def cmd_form_create(args: Any) -> None:
     """Create a new Google Form."""
     _cmd_create("form", args)
+
+
+def cmd_form_share(args: Any) -> None:
+    """Share a Google Form with trusted contacts."""
+    _cmd_share("form", args)

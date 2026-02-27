@@ -123,6 +123,119 @@ def create_form(token: str, title: str) -> dict[str, Any]:
 
 
 # ---------------------------------------------------------------------------
+# Drive listing / search / copy
+# ---------------------------------------------------------------------------
+
+_MIME_LABELS: dict[str, str] = {
+    "application/vnd.google-apps.spreadsheet": "Sheet",
+    "application/vnd.google-apps.presentation": "Slide",
+    "application/vnd.google-apps.document": "Doc",
+    "application/vnd.google-apps.form": "Form",
+    "application/vnd.google-apps.script": "Script",
+    "application/vnd.google-apps.folder": "Folder",
+}
+
+
+def list_drive_files(
+    token: str,
+    query: str = "",
+    page_size: int = 20,
+    page_token: str = "",
+) -> dict[str, Any]:
+    """List files accessible to the token holder via Drive API v3.
+
+    Returns {"files": [...], "nextPageToken": "..."}.
+    Each file has: id, name, mimeType, modifiedTime, webViewLink.
+    """
+    params: dict[str, str] = {
+        "orderBy": "modifiedTime desc",
+        "pageSize": str(page_size),
+        "fields": "nextPageToken,files(id,name,mimeType,modifiedTime,webViewLink)",
+    }
+    if query:
+        params["q"] = query
+    if page_token:
+        params["pageToken"] = page_token
+    return _api_request(
+        "https://www.googleapis.com/drive/v3/files",
+        token,
+        params=params,
+    )
+
+
+def copy_drive_file(
+    token: str,
+    file_id: str,
+    title: str | None = None,
+) -> dict[str, Any]:
+    """Copy a Drive file. Returns the new file resource (id, name, webViewLink).
+
+    title: new name for the copy. If None, Drive auto-names it "Copy of <original>".
+    """
+    body: dict[str, Any] = {}
+    if title is not None:
+        body["name"] = title
+    return _api_request(
+        f"https://www.googleapis.com/drive/v3/files/{file_id}/copy",
+        token,
+        method="POST",
+        body=body,
+    )
+
+
+def format_drive_files(files: list[dict[str, Any]], next_page_token: str = "") -> str:
+    """Format a list of Drive file resources as a plain-text table.
+
+    Columns: NAME, TYPE, MODIFIED, URL.
+    """
+    if not files:
+        return "No files found."
+
+    def _label(mime: str) -> str:
+        if mime in _MIME_LABELS:
+            return _MIME_LABELS[mime]
+        prefix = "application/vnd.google-apps."
+        if mime.startswith(prefix):
+            return mime[len(prefix) :].capitalize()
+        return mime
+
+    def _modified(ts: str) -> str:
+        try:
+            dt = datetime.fromisoformat(ts.replace("Z", "+00:00"))
+            return dt.strftime("%Y-%m-%d %H:%M")
+        except (ValueError, AttributeError):
+            return ts
+
+    rows = [
+        (
+            f.get("name", ""),
+            _label(f.get("mimeType", "")),
+            _modified(f.get("modifiedTime", "")),
+            f.get("webViewLink", ""),
+        )
+        for f in files
+    ]
+
+    col_widths = [
+        max(len(h), max(len(r[i]) for r in rows))
+        for i, h in enumerate(("NAME", "TYPE", "MODIFIED", "URL"))
+    ]
+    header = "  ".join(
+        h.ljust(col_widths[i])
+        for i, h in enumerate(("NAME", "TYPE", "MODIFIED", "URL"))
+    )
+    separator = "  ".join("-" * w for w in col_widths)
+    data_lines = [
+        "  ".join(cell.ljust(col_widths[i]) for i, cell in enumerate(row))
+        for row in rows
+    ]
+    lines = [header, separator, *data_lines]
+    if next_page_token:
+        lines.append(f"\nNext page token: {next_page_token}")
+    return "\n".join(lines)
+
+
+# ---------------------------------------------------------------------------
 # Drive sharing
 # ---------------------------------------------------------------------------
 

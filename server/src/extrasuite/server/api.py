@@ -65,6 +65,7 @@ _SA_SCOPES: frozenset[str] = frozenset(
         "slide.push",
         "form.pull",
         "form.push",
+        "drive.ls",
     }
 )
 _DWD_SCOPES: frozenset[str] = frozenset(

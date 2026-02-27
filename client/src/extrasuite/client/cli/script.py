@@ -7,7 +7,7 @@ import sys
 from pathlib import Path
 from typing import Any
 
-from extrasuite.client.cli._common import _get_oauth_token
+from extrasuite.client.cli._common import _cmd_share, _get_oauth_token
 
 
 def cmd_script_pull(args: Any) -> None:
@@ -134,3 +134,8 @@ def cmd_script_lint(args: Any) -> None:
             sys.exit(1)
     else:
         print("No lint issues found.")
+
+
+def cmd_script_share(args: Any) -> None:
+    """Share a Google Apps Script project with trusted contacts."""
+    _cmd_share("script", args)

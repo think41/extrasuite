@@ -10,6 +10,7 @@ from typing import Any
 
 from extrasuite.client.cli._common import (
     _cmd_create,
+    _cmd_share,
     _get_token,
     _parse_document_id,
 )
@@ -87,3 +88,8 @@ def cmd_doc_push(args: Any) -> None:
 def cmd_doc_create(args: Any) -> None:
     """Create a new Google Doc."""
     _cmd_create("doc", args)
+
+
+def cmd_doc_share(args: Any) -> None:
+    """Share a Google Doc with trusted contacts."""
+    _cmd_share("doc", args)

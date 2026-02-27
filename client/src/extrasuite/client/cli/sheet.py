@@ -9,6 +9,7 @@ from typing import Any
 
 from extrasuite.client.cli._common import (
     _cmd_create,
+    _cmd_share,
     _get_token,
     _parse_spreadsheet_id,
 )
@@ -152,3 +153,8 @@ def cmd_sheet_batchupdate(args: Any) -> None:
 def cmd_sheet_create(args: Any) -> None:
     """Create a new Google Sheet."""
     _cmd_create("sheet", args)
+
+
+def cmd_sheet_share(args: Any) -> None:
+    """Share a Google Sheet with trusted contacts."""
+    _cmd_share("sheet", args)
