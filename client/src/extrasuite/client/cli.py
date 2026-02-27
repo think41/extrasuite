@@ -795,55 +795,126 @@ def cmd_gmail_edit_draft(args: Any) -> None:
     print(f"Draft updated (id: {args.draft_id})")
 
 
+def _gmail_whitelist_setup(access_token: str) -> Any:
+    """Load whitelist and set user_domain from the authenticated user's email."""
+    from extrasuite.client.gmail_reader import get_user_email, load_whitelist
+
+    whitelist = load_whitelist()
+    user_email = get_user_email(access_token)
+    if "@" in user_email:
+        whitelist.user_domain = user_email.split("@", 1)[1].lower()
+    return whitelist
+
+
+def cmd_gmail_reply(args: Any) -> None:
+    """Create a reply draft threaded into an existing conversation."""
+    from extrasuite.client.google_api import (
+        create_gmail_reply_draft,
+        fetch_thread_reply_context,
+        parse_email_file,
+    )
+
+    file_path = Path(args.file)
+    if not file_path.exists():
+        print(f"Error: File not found: {file_path}", file=sys.stderr)
+        sys.exit(1)
+
+    metadata, body = parse_email_file(file_path.read_text())
+
+    attachments: list[Path] | None = None
+    cli_attachments = getattr(args, "attach", None)
+    if cli_attachments:
+        attachments = []
+        for a in cli_attachments:
+            p = Path(a)
+            if not p.exists():
+                print(f"Error: Attachment not found: {p}", file=sys.stderr)
+                sys.exit(1)
+            attachments.append(p)
+
+    access_token = _get_oauth_token(
+        args,
+        scopes=["gmail.readonly", "gmail.compose"],
+        reason="Save reply draft",
+    )
+
+    ctx = fetch_thread_reply_context(access_token, args.thread_id)
+
+    if "to" in metadata:
+        to = [addr.strip() for addr in metadata["to"].split(",") if addr.strip()]
+    else:
+        to = [addr.strip() for addr in ctx["from_"].split(",") if addr.strip()]
+
+    cc: list[str] | None
+    if "cc" in metadata:
+        cc = [addr.strip() for addr in metadata["cc"].split(",") if addr.strip()]
+    elif ctx["to"] or ctx["cc"]:
+        orig_addrs = []
+        for f in [ctx["to"], ctx["cc"]]:
+            if f:
+                orig_addrs.extend(addr.strip() for addr in f.split(",") if addr.strip())
+        cc = orig_addrs if orig_addrs else None
+    else:
+        cc = None
+
+    result = create_gmail_reply_draft(
+        access_token,
+        reply_context=ctx,
+        to=to,
+        body=body,
+        cc=cc,
+        attachments=attachments,
+    )
+    draft_id = result.get("id", "")
+    print(f"Reply draft saved (id: {draft_id})")
+    print(f"  Thread:  {ctx['thread_id']}")
+    print(f"  To:      {', '.join(to)}")
+    if cc:
+        print(f"  Cc:      {', '.join(cc)}")
+    print(f"  Subject: {ctx['subject']}")
+
+
 def cmd_gmail_list(args: Any) -> None:
-    """Search and list Gmail messages (metadata only)."""
+    """List Gmail threads (one row per conversation)."""
     import json as _json
 
     from extrasuite.client.gmail_reader import (
         _NO_WHITELIST_NOTICE,
         _WHITELIST_PATH,
-        format_message_list,
-        get_user_email,
-        list_messages,
-        load_whitelist,
+        format_thread_list,
+        list_threads,
     )
 
     access_token = _get_oauth_token(
         args,
         scopes=["gmail.readonly"],
-        reason="List Gmail messages",
+        reason="List Gmail threads",
     )
 
-    whitelist = load_whitelist()
+    whitelist = _gmail_whitelist_setup(access_token)
     whitelist_exists = _WHITELIST_PATH.exists()
-    user_email = get_user_email(access_token)
-    if "@" in user_email:
-        whitelist.user_domain = user_email.split("@", 1)[1].lower()
 
-    query = getattr(args, "query", "") or ""
-    max_results = getattr(args, "max", 20)
-    page_token = getattr(args, "page", "") or ""
-
-    summaries, next_page_token = list_messages(
+    summaries, next_page_token = list_threads(
         access_token,
-        query=query,
-        max_results=max_results,
-        page_token=page_token,
+        query=getattr(args, "query", "") or "",
+        max_results=getattr(args, "max", 20),
+        page_token=getattr(args, "page", "") or "",
         whitelist=whitelist,
+        trusted_only=not getattr(args, "all", False),
     )
 
     if getattr(args, "json", False):
         output = {
-            "messages": [
+            "threads": [
                 {
-                    "message_id": s.message_id,
                     "thread_id": s.thread_id,
                     "date": s.date,
                     "from": s.from_,
                     "subject": s.subject,
+                    "message_count": s.message_count,
                     "labels": s.labels,
                     "trusted": s.trusted,
-                    "snippet": s.snippet,
+                    "latest_message_id": s.latest_message_id,
                 }
                 for s in summaries
             ],
@@ -851,58 +922,52 @@ def cmd_gmail_list(args: Any) -> None:
         }
         print(_json.dumps(output, indent=2))
         if not whitelist_exists:
-            import sys
-
             print(_NO_WHITELIST_NOTICE, file=sys.stderr)
     else:
-        print(format_message_list(summaries, next_page_token, whitelist_exists))
+        print(format_thread_list(summaries, next_page_token, whitelist_exists))
 
 
 def cmd_gmail_read(args: Any) -> None:
-    """Read a single Gmail message, redacting body for non-whitelisted senders."""
+    """Read a full Gmail thread (all messages in order)."""
     import json as _json
 
     from extrasuite.client.gmail_reader import (
-        format_message_detail,
-        get_message,
-        get_user_email,
-        load_whitelist,
+        format_thread_detail,
+        get_thread,
     )
 
     access_token = _get_oauth_token(
         args,
         scopes=["gmail.readonly"],
-        reason="Read Gmail message",
+        reason="Read Gmail thread",
     )
 
-    whitelist = load_whitelist()
-    user_email = get_user_email(access_token)
-    if "@" in user_email:
-        whitelist.user_domain = user_email.split("@", 1)[1].lower()
-    detail = get_message(access_token, args.message_id, whitelist=whitelist)
+    whitelist = _gmail_whitelist_setup(access_token)
+    detail = get_thread(access_token, args.thread_id, whitelist=whitelist)
 
     if getattr(args, "json", False):
         output: dict[str, Any] = {
-            "message_id": detail.message_id,
             "thread_id": detail.thread_id,
-            "date": detail.date,
-            "from": detail.from_,
-            "to": detail.to,
-            "cc": detail.cc,
             "subject": detail.subject,
-            "labels": detail.labels,
-            "trusted": detail.trusted,
+            "messages": [
+                {
+                    "message_id": m.message_id,
+                    "date": m.date,
+                    "from": m.from_,
+                    "to": m.to,
+                    "cc": m.cc,
+                    "subject": m.subject,
+                    "labels": m.labels,
+                    "trusted": m.trusted,
+                    "body": m.body,
+                    "attachments": m.attachments,
+                }
+                for m in detail.messages
+            ],
         }
-        if detail.trusted:
-            output["body"] = detail.body
-            output["attachments"] = detail.attachments
-        else:
-            output["body"] = None
-            output["attachments"] = None
-            output["redacted"] = True
         print(_json.dumps(output, indent=2))
     else:
-        print(format_message_detail(detail))
+        print(format_thread_detail(detail))
 
 
 # --- Contacts commands ---
@@ -1654,6 +1719,22 @@ def build_parser() -> Any:
     )
 
     sp = gmail_sub.add_parser(
+        "reply",
+        help="Create a reply draft in an existing email thread",
+        parents=[auth_parent],
+        description=_load_help("gmail", "reply"),
+        formatter_class=argparse.RawDescriptionHelpFormatter,
+    )
+    sp.add_argument("thread_id", help="Thread ID to reply to (from 'gmail list')")
+    sp.add_argument("file", help="Markdown file with the reply body")
+    sp.add_argument(
+        "--attach",
+        action="append",
+        metavar="FILE",
+        help="Attach a file (can be repeated)",
+    )
+
+    sp = gmail_sub.add_parser(
         "list",
         help="Search and list Gmail messages (metadata only)",
         parents=[auth_parent],
@@ -1680,6 +1761,11 @@ def build_parser() -> Any:
         help="Page token for pagination (from previous output)",
     )
     sp.add_argument(
+        "--all",
+        action="store_true",
+        help="Show all senders including untrusted (default: trusted senders only)",
+    )
+    sp.add_argument(
         "--json",
         action="store_true",
         help="Output as JSON",
@@ -1692,7 +1778,7 @@ def build_parser() -> Any:
         description=_load_help("gmail", "read"),
         formatter_class=argparse.RawDescriptionHelpFormatter,
     )
-    sp.add_argument("message_id", help="Message ID (from 'gmail list' output)")
+    sp.add_argument("thread_id", help="Thread ID (from 'gmail list' output)")
     sp.add_argument(
         "--json",
         action="store_true",
@@ -1971,6 +2057,7 @@ _COMMANDS: dict[tuple[str, str | None], Any] = {
     ("doc", "create"): cmd_doc_create,
     ("gmail", "compose"): cmd_gmail_compose,
     ("gmail", "edit-draft"): cmd_gmail_edit_draft,
+    ("gmail", "reply"): cmd_gmail_reply,
     ("gmail", "list"): cmd_gmail_list,
     ("gmail", "read"): cmd_gmail_read,
     ("calendar", "view"): cmd_calendar_view,
