@@ -728,9 +728,9 @@ class CredentialsManager:
         """Revoke the session token server-side and clear all local credential caches.
 
         Clears:
-        - Session token (~/config/extrasuite/session.json)
-        - Access token cache (~/config/extrasuite/token.json)
-        - OAuth token cache (~/config/extrasuite/oauth_token.json)
+        - Session token (~/.config/extrasuite/session.json)
+        - Access token cache (~/.config/extrasuite/token.json)
+        - OAuth token cache (~/.config/extrasuite/oauth_token.json)
         """
         self._revoke_and_clear_session()
         for path in (self._token_cache_path, self.OAUTH_CACHE_PATH):

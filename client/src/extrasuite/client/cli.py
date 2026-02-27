@@ -629,14 +629,26 @@ def _cmd_create(file_type: str, args: Any) -> None:
 
     manager = CredentialsManager(**_auth_kwargs(args))
 
-    # Get OAuth token with drive.file scope — also carries the SA email for sharing
+    # Get OAuth token with drive.file scope — v2 also returns the SA email in response
     oauth_token = manager.get_oauth_token(
         scopes=["drive.file"],
         reason=f"Create {file_type} and share with service account",
     )
-    if not oauth_token.service_account_email:
+
+    # Determine the service account email to share with.
+    # v2: SA email is included in the access token response.
+    # v1 (legacy): it isn't, so we fall back to a separate get_token() call.
+    if oauth_token.service_account_email:
+        sa_email = oauth_token.service_account_email
+    else:
+        sa_token = manager.get_token(
+            reason=f"Get service account email for {file_type} create",
+            scope="drive.file",
+        )
+        sa_email = sa_token.service_account_email
+    if not sa_email:
         raise RuntimeError(
-            "Server did not return a service account email. Cannot share file."
+            "Could not determine service account email. Cannot share file."
         )
 
     # Create the file via Drive API
@@ -645,12 +657,12 @@ def _cmd_create(file_type: str, args: Any) -> None:
     file_id = result["id"]
 
     # Share with service account
-    share_file(oauth_token.access_token, file_id, oauth_token.service_account_email)
+    share_file(oauth_token.access_token, file_id, sa_email)
 
     url = _FILE_URL_PATTERNS[file_type].format(id=file_id)
     print(f"\nCreated {file_type}: {args.title}")
     print(f"URL: {url}")
-    print(f"Shared with: {oauth_token.service_account_email}")
+    print(f"Shared with: {sa_email}")
     print(f"\nTo edit, run: extrasuite {file_type} pull {url}")
 
 
