@@ -718,6 +718,20 @@ async def exchange_session_for_access_token(
 # =============================================================================
 
 
+def _assert_session_authorized(
+    caller_email: str, target_email: str, settings: Settings, action: str
+) -> None:
+    """Raise 403 if caller is neither the owner nor an admin."""
+    if (
+        caller_email.lower() != target_email.lower()
+        and caller_email.lower() not in settings.get_admin_emails()
+    ):
+        raise HTTPException(
+            status_code=403,
+            detail=f"Not authorized to {action}",
+        )
+
+
 @router.get("/admin/sessions")
 @limiter.limit("30/minute")
 async def list_sessions(
@@ -733,14 +747,7 @@ async def list_sessions(
     """
     caller = await _validate_bearer_session(request, db)
     caller_email = caller["email"]
-
-    if (
-        caller_email.lower() != email.lower()
-        and caller_email.lower() not in settings.get_admin_emails()
-    ):
-        raise HTTPException(
-            status_code=403, detail="Not authorized to view sessions for this email"
-        )
+    _assert_session_authorized(caller_email, email, settings, "view sessions for this email")
 
     sessions = await db.list_session_tokens(email)
     return sessions
@@ -795,14 +802,7 @@ async def revoke_all_sessions(
     """
     caller = await _validate_bearer_session(request, db)
     caller_email = caller["email"]
-
-    if (
-        caller_email.lower() != email.lower()
-        and caller_email.lower() not in settings.get_admin_emails()
-    ):
-        raise HTTPException(
-            status_code=403, detail="Not authorized to revoke sessions for this email"
-        )
+    _assert_session_authorized(caller_email, email, settings, "revoke sessions for this email")
 
     count = await db.revoke_all_session_tokens(email)
     logger.info("All sessions revoked", extra={"email": email, "count": count, "by": caller_email})

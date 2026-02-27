@@ -484,7 +484,7 @@ class TestCredentialsManagerExtraSuite:
             exchange_url="https://auth.example.com/api/token/exchange",
             token_cache_path=token_path,
         )
-        token = manager.get_token()
+        token = manager.get_token(reason="Test: verify cached token is returned")
         assert token.access_token == "cached-token"
 
     def test_get_token_force_refresh_ignores_cache(self, tmp_path: Path) -> None:
@@ -512,7 +512,9 @@ class TestCredentialsManagerExtraSuite:
         with mock.patch.object(
             manager, "_authenticate_extrasuite", return_value=new_token
         ):
-            token = manager.get_token(force_refresh=True)
+            token = manager.get_token(
+                reason="Test: force refresh to get new token", force_refresh=True
+            )
             assert token.access_token == "new-token"
 
     def test_exchange_auth_code_success(self) -> None:
@@ -590,11 +592,11 @@ class TestCredentialsManagerServiceAccount:
 
         if google_auth_available:
             with pytest.raises(FileNotFoundError):
-                manager.get_token()
+                manager.get_token(reason="Test: access Google Sheets")
         else:
             # Without google-auth, we get ImportError first
             with pytest.raises(ImportError):
-                manager.get_token()
+                manager.get_token(reason="Test: access Google Sheets")
 
     def test_service_account_uses_cache(self, tmp_path: Path) -> None:
         """Service account mode also uses file cache."""
@@ -613,7 +615,9 @@ class TestCredentialsManagerServiceAccount:
                 service_account_path="/path/to/sa.json",
                 token_cache_path=token_path,
             )
-        token = manager.get_token()
+        token = manager.get_token(
+            reason="Test: verify service account uses cached token"
+        )
         assert token.access_token == "cached-sa-token"
 
     def test_service_account_missing_google_auth(self, tmp_path: Path) -> None:
@@ -635,7 +639,7 @@ class TestCredentialsManagerServiceAccount:
         except ImportError:
             # google-auth is not installed, this is the case we want to test
             with pytest.raises(ImportError) as exc_info:
-                manager.get_token()
+                manager.get_token(reason="Test: access Google Sheets")
             assert "google-auth" in str(exc_info.value)
 
 
@@ -708,7 +712,7 @@ class TestCredentialsManagerIntegration:
             token_cache_path=token_path,
         )
 
-        token = manager.get_token()
+        token = manager.get_token(reason="Test: pulling spreadsheet data")
 
         assert token.access_token == "cached-access-token"
         assert token.service_account_email == "sa@project.iam.gserviceaccount.com"
@@ -740,7 +744,7 @@ class TestCredentialsManagerIntegration:
         with mock.patch.object(
             manager, "_authenticate_extrasuite", return_value=new_token
         ):
-            token = manager.get_token()
+            token = manager.get_token(reason="Test: re-authenticate after token expiry")
 
         assert token.access_token == "fresh-token"
 

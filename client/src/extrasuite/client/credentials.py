@@ -227,6 +227,12 @@ class CredentialsManager:
             "EXTRASUITE_DELEGATION_EXCHANGE_URL"
         )
 
+        # Track whether explicit auth URLs were provided.  When True, gateway.json
+        # may still fill in missing delegation URLs but must NOT activate v2 session
+        # flow (server_base_url).  This prevents a developer's personal gateway.json
+        # from silently enabling v2 in tests or scripts that pass explicit auth_url.
+        _explicit_auth_urls = bool(self._auth_url)
+
         # Derived server base URL for new v2 endpoints (session exchange, access token)
         self._server_base_url: str | None = None
 
@@ -266,7 +272,11 @@ class CredentialsManager:
                     self._delegation_exchange_url
                     or gateway_urls.get("delegation_exchange_url")
                 )
-                if not self._server_base_url and gateway_urls.get("server_base_url"):
+                if (
+                    not self._server_base_url
+                    and not _explicit_auth_urls
+                    and gateway_urls.get("server_base_url")
+                ):
                     self._server_base_url = gateway_urls.get("server_base_url")
 
         sa_path = service_account_path or os.environ.get("SERVICE_ACCOUNT_PATH")
@@ -439,17 +449,22 @@ class CredentialsManager:
         except (json.JSONDecodeError, KeyError):
             return None
 
+    def _write_secure_json(self, path: Path, data: dict[str, Any]) -> None:
+        """Write JSON atomically with 0600 permissions from the start (no chmod race)."""
+        path.parent.mkdir(parents=True, exist_ok=True)
+        path.parent.chmod(stat.S_IRWXU)
+        temp_path = path.with_suffix(".tmp")
+        content = json.dumps(data, indent=2).encode()
+        fd = os.open(str(temp_path), os.O_WRONLY | os.O_CREAT | os.O_TRUNC, 0o600)
+        try:
+            os.write(fd, content)
+        finally:
+            os.close(fd)
+        temp_path.rename(path)
+
     def _save_token(self, token: Token) -> None:
         """Save token to cache file with secure permissions."""
-        # Create parent directory with secure permissions (0700)
-        self._token_cache_path.parent.mkdir(parents=True, exist_ok=True)
-        self._token_cache_path.parent.chmod(stat.S_IRWXU)
-
-        # Write to temp file, set permissions, then rename atomically
-        temp_path = self._token_cache_path.with_suffix(".tmp")
-        temp_path.write_text(json.dumps(token.to_dict(), indent=2))
-        temp_path.chmod(stat.S_IRUSR | stat.S_IWUSR)  # 0600
-        temp_path.rename(self._token_cache_path)
+        self._write_secure_json(self._token_cache_path, token.to_dict())
 
     def _load_gateway_config(self) -> dict[str, str] | None:
         """Load endpoint URLs from gateway.json if it exists.
@@ -589,13 +604,7 @@ class CredentialsManager:
 
     def _save_oauth_token(self, token: OAuthToken) -> None:
         """Save OAuth token to cache file with secure permissions."""
-        self.OAUTH_CACHE_PATH.parent.mkdir(parents=True, exist_ok=True)
-        self.OAUTH_CACHE_PATH.parent.chmod(stat.S_IRWXU)
-
-        temp_path = self.OAUTH_CACHE_PATH.with_suffix(".tmp")
-        temp_path.write_text(json.dumps(token.to_dict(), indent=2))
-        temp_path.chmod(stat.S_IRUSR | stat.S_IWUSR)  # 0600
-        temp_path.rename(self.OAUTH_CACHE_PATH)
+        self._write_secure_json(self.OAUTH_CACHE_PATH, token.to_dict())
 
     # =========================================================================
     # Session Token Methods (v2 Protocol)
@@ -626,13 +635,7 @@ class CredentialsManager:
 
     def _save_session_token(self, token: SessionToken) -> None:
         """Save session token to cache file with secure permissions."""
-        self.SESSION_CACHE_PATH.parent.mkdir(parents=True, exist_ok=True)
-        self.SESSION_CACHE_PATH.parent.chmod(stat.S_IRWXU)
-
-        temp_path = self.SESSION_CACHE_PATH.with_suffix(".tmp")
-        temp_path.write_text(json.dumps(token.to_dict(), indent=2))
-        temp_path.chmod(stat.S_IRUSR | stat.S_IWUSR)  # 0600
-        temp_path.rename(self.SESSION_CACHE_PATH)
+        self._write_secure_json(self.SESSION_CACHE_PATH, token.to_dict())
 
     def _get_or_create_session_token(self, force: bool = False) -> SessionToken:
         """Get an existing valid session token or create a new one.
@@ -653,7 +656,10 @@ class CredentialsManager:
         auth_code = self._run_browser_flow_for_session()
 
         # Exchange auth code for session token
-        assert self._server_base_url is not None
+        if self._server_base_url is None:
+            raise RuntimeError(
+                "server_base_url is not configured; cannot use v2 session flow"
+            )
         session_exchange_url = f"{self._server_base_url}/api/auth/session/exchange"
         device_info = self._collect_device_info()
         body = json.dumps({"code": auth_code, **device_info}).encode("utf-8")
@@ -687,29 +693,15 @@ class CredentialsManager:
         self._save_session_token(session)
         return session
 
-    def _run_browser_flow_for_session(self) -> str:
-        """Run OAuth browser flow and return the auth code.
+    def _run_browser_flow(self, port: int, auth_url: str, display_msg: str) -> str:
+        """Run browser-based OAuth flow and return the auth code.
 
-        In headless mode: prints URL to stderr and prompts for code on stdin.
-        Otherwise: opens browser and starts local HTTP callback server.
+        Starts a local HTTP callback server, opens the browser, and also accepts
+        the code from stdin (interactive fallback). Raises on error or timeout.
         """
-        port = self._find_free_port()
-        auth_url = f"{self._auth_url}?port={port}"
-
         result_holder: dict[str, Any] = {"code": None, "error": None, "done": False}
         result_lock = threading.Lock()
 
-        if self._headless:
-            print(
-                f"\nOpen this URL to authenticate:\n\n  {auth_url}\n", file=sys.stderr
-            )
-            print("Paste the auth code here: ", end="", flush=True, file=sys.stderr)
-            code = sys.stdin.readline().strip()
-            if not code:
-                raise Exception("No auth code provided.")
-            return code
-
-        # Start HTTP callback server
         handler_class = self._create_handler_class(result_holder, result_lock)
         server = http.server.HTTPServer(("127.0.0.1", port), handler_class)
         server.timeout = 1
@@ -726,7 +718,7 @@ class CredentialsManager:
         server_thread = threading.Thread(target=serve_loop, daemon=True)
         server_thread.start()
 
-        print(f"Open this URL to authenticate:\n\n  {auth_url}\n")
+        print(f"{display_msg}\n\n  {auth_url}\n")
         try:
             import webbrowser
 
@@ -735,7 +727,6 @@ class CredentialsManager:
             pass
         print("Waiting for authentication...")
 
-        # Also accept code from stdin
         def read_stdin() -> None:
             try:
                 if not sys.stdin.isatty():
@@ -778,6 +769,42 @@ class CredentialsManager:
 
         return result_holder["code"]  # type: ignore[return-value]
 
+    def _run_browser_flow_for_session(self) -> str:
+        """Run OAuth browser flow and return the auth code.
+
+        In headless mode: prints URL to stderr and reads code from stdin with timeout.
+        Otherwise: delegates to _run_browser_flow (HTTP callback + optional stdin).
+        """
+        port = self._find_free_port()
+        auth_url = f"{self._auth_url}?port={port}"
+
+        if self._headless:
+            print(
+                f"\nOpen this URL to authenticate:\n\n  {auth_url}\n", file=sys.stderr
+            )
+            print("Paste the auth code here: ", end="", flush=True, file=sys.stderr)
+            code_holder: list[str] = []
+
+            def _read_code() -> None:
+                try:
+                    line = sys.stdin.readline().strip()
+                    if line:
+                        code_holder.append(line)
+                except Exception:
+                    pass
+
+            reader = threading.Thread(target=_read_code, daemon=True)
+            reader.start()
+            reader.join(timeout=self.DEFAULT_CALLBACK_TIMEOUT)
+
+            if not code_holder:
+                raise Exception(
+                    f"No auth code provided within {self.DEFAULT_CALLBACK_TIMEOUT}s. Please try again."
+                )
+            return code_holder[0]
+
+        return self._run_browser_flow(port, auth_url, "Open this URL to authenticate:")
+
     def _exchange_session_for_access_token(
         self,
         session: SessionToken,
@@ -790,7 +817,10 @@ class CredentialsManager:
 
         Returns raw response dict with access_token, expires_at, token_type.
         """
-        assert self._server_base_url is not None
+        if self._server_base_url is None:
+            raise RuntimeError(
+                "server_base_url is not configured; cannot use v2 session flow"
+            )
         access_token_url = f"{self._server_base_url}/api/auth/token"
         body = json.dumps(
             {
@@ -858,59 +888,10 @@ class CredentialsManager:
         if reason:
             auth_url += f"&reason={urllib.parse.quote(reason)}"
 
-        # Shared state for receiving auth code
-        result_holder: dict[str, Any] = {"code": None, "error": None, "done": False}
-        result_lock = threading.Lock()
-
-        # Start HTTP callback server
-        handler_class = self._create_handler_class(result_holder, result_lock)
-        server = http.server.HTTPServer(("127.0.0.1", port), handler_class)
-        server.timeout = 1
-
-        def serve_loop() -> None:
-            start_time = time.time()
-            while time.time() - start_time < self.DEFAULT_CALLBACK_TIMEOUT:
-                with result_lock:
-                    if result_holder["done"]:
-                        break
-                server.handle_request()
-            server.server_close()
-
-        server_thread = threading.Thread(target=serve_loop, daemon=True)
-        server_thread.start()
-
-        print(f"Open this URL to authorize ({scope_params}):\n\n  {auth_url}\n")
-        try:
-            import webbrowser
-
-            webbrowser.open(auth_url)
-        except Exception:
-            pass
-        print("Waiting for authorization...")
-
-        # Wait for callback
-        start_time = time.time()
-        while time.time() - start_time < self.DEFAULT_CALLBACK_TIMEOUT:
-            with result_lock:
-                if result_holder["done"]:
-                    break
-            time.sleep(0.5)
-
-        with result_lock:
-            result_holder["done"] = True
-
-        if result_holder.get("error"):
-            raise Exception(
-                f"Delegation authorization failed: {result_holder['error']}"
-            )
-
-        if not result_holder.get("code"):
-            raise Exception("Delegation authorization timed out. Please try again.")
-
-        # Exchange auth code for delegated token
-        return self._exchange_delegation_code(
-            result_holder["code"], delegation_exchange_url
+        auth_code = self._run_browser_flow(
+            port, auth_url, f"Open this URL to authorize ({scope_params}):"
         )
+        return self._exchange_delegation_code(auth_code, delegation_exchange_url)
 
     def _exchange_delegation_code(
         self, auth_code: str, exchange_url: str
@@ -947,105 +928,20 @@ class CredentialsManager:
         )
 
     def _authenticate_extrasuite(self) -> Token:
-        """Run the ExtraSuite authentication flow.
-
-        Supports both browser-based and headless modes:
-        - Attempts to open browser automatically
-        - Always prints URL for manual access
-        - Accepts auth code from either HTTP callback or stdin input
-        """
+        """Run the ExtraSuite authentication flow (legacy v1)."""
         port = self._find_free_port()
         auth_url = f"{self._auth_url}?port={port}"
-
-        # Shared state for receiving auth code
-        result_holder: dict[str, Any] = {"code": None, "error": None, "done": False}
-        result_lock = threading.Lock()
-
-        # Start HTTP callback server
-        handler_class = self._create_handler_class(result_holder, result_lock)
-        server = http.server.HTTPServer(("127.0.0.1", port), handler_class)
-        server.timeout = 1  # Short timeout for polling
-
-        def serve_loop() -> None:
-            """Serve HTTP requests until we get a result or timeout."""
-            start_time = time.time()
-            while time.time() - start_time < self.DEFAULT_CALLBACK_TIMEOUT:
-                with result_lock:
-                    if result_holder["done"]:
-                        break
-                server.handle_request()
-            server.server_close()
-
-        server_thread = threading.Thread(target=serve_loop, daemon=True)
-        server_thread.start()
-
-        # Print auth URL and open browser
-        print(f"Open this URL to authenticate:\n\n  {auth_url}\n")
-        try:
-            import webbrowser
-
-            webbrowser.open(auth_url)
-        except Exception:
-            pass  # Browser open failed, user will use URL manually
-        print("Waiting for authentication... (or paste the auth code here)")
-
-        # Start stdin reader thread for headless mode
-        def read_stdin() -> None:
-            """Read auth code from stdin."""
-            try:
-                # Check if stdin is available and interactive
-                if not sys.stdin.isatty():
-                    return
-
-                while True:
-                    with result_lock:
-                        if result_holder["done"]:
-                            return
-
-                    # Use select for non-blocking read on Unix
-                    if sys.platform != "win32":
-                        ready, _, _ = select.select([sys.stdin], [], [], 1.0)
-                        if not ready:
-                            continue
-
-                    line = sys.stdin.readline().strip()
-                    if line:
-                        with result_lock:
-                            if not result_holder["done"]:
-                                result_holder["code"] = line
-                                result_holder["done"] = True
-                        return
-            except Exception:
-                pass  # stdin read failed, rely on HTTP callback
-
-        stdin_thread = threading.Thread(target=read_stdin, daemon=True)
-        stdin_thread.start()
-
-        # Wait for either HTTP callback or stdin input
-        start_time = time.time()
-        while time.time() - start_time < self.DEFAULT_CALLBACK_TIMEOUT:
-            with result_lock:
-                if result_holder["done"]:
-                    break
-            time.sleep(0.5)
-
-        # Mark as done to stop threads
-        with result_lock:
-            result_holder["done"] = True
-
-        # Check result
-        if result_holder.get("error"):
-            raise Exception(f"Authentication failed: {result_holder['error']}")
-
-        if not result_holder.get("code"):
-            raise Exception("Authentication timed out. Please try again.")
-
-        # Exchange auth code for token
-        return self._exchange_auth_code(result_holder["code"])
+        auth_code = self._run_browser_flow(
+            port, auth_url, "Open this URL to authenticate:"
+        )
+        return self._exchange_auth_code(auth_code)
 
     def _exchange_auth_code(self, auth_code: str) -> Token:
         """Exchange auth code for token via POST request to server."""
-        assert self._exchange_url is not None  # Guaranteed when using ExtraSuite mode
+        if self._exchange_url is None:
+            raise RuntimeError(
+                "exchange_url is not configured; cannot exchange auth code"
+            )
         body = json.dumps({"code": auth_code}).encode("utf-8")
 
         req = urllib.request.Request(

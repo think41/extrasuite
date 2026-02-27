@@ -1235,12 +1235,18 @@ def cmd_auth_logout(args: Any) -> None:
                     headers={"Authorization": f"Bearer {raw_token}"},
                     method="DELETE",
                 )
-                import contextlib
-
                 from extrasuite.client.credentials import SSL_CONTEXT
 
-                with contextlib.suppress(Exception):
+                try:
                     urllib.request.urlopen(req, timeout=10, context=SSL_CONTEXT)
+                except Exception as e:
+                    import sys as _sys
+
+                    print(
+                        f"Warning: server-side session revocation failed ({e}).\n"
+                        "Local credentials cleared, but your session may still be active on the server.",
+                        file=_sys.stderr,
+                    )
         except Exception:
             pass
 
