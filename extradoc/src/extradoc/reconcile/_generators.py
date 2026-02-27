@@ -2398,9 +2398,13 @@ def _generate_text_style_updates_positional(
     to link addition splitting the trailing \\n into a separate run). Aligns
     runs by character position rather than by index.
 
-    For each desired run, finds the base style at that character offset and
-    computes the style diff. Merges contiguous desired runs with identical
-    changes into single updateTextStyle requests (right-to-left).
+    For each desired run, walks all overlapping base intervals and compares
+    each sub-range independently against the desired style. This correctly
+    handles cases like removing bold from a run that spans multiple base
+    intervals (e.g., base has [bold][plain], desired has one plain run).
+
+    Merges contiguous sub-ranges with identical changes into single
+    updateTextStyle requests (right-to-left).
     """
     base_elems = base_para.elements or []
     desired_elems = desired_para.elements or []
@@ -2415,13 +2419,19 @@ def _generate_text_style_updates_positional(
         base_intervals.append((offset, offset + run_len, el.text_run.text_style))
         offset += run_len
 
-    def _get_base_style_at(pos: int) -> TextStyle | None:
-        for start, end, style in base_intervals:
-            if start <= pos < end:
-                return style
-        return None
+    def _get_base_intervals_for_range(
+        run_start: int, run_end: int
+    ) -> list[tuple[int, int, TextStyle | None]]:
+        """Return sub-intervals of base that overlap [run_start, run_end)."""
+        result = []
+        for bstart, bend, bstyle in base_intervals:
+            if bstart < run_end and bend > run_start:
+                result.append((max(run_start, bstart), min(run_end, bend), bstyle))
+        if not result:
+            result.append((run_start, run_end, None))
+        return result
 
-    # Process desired runs and find style diffs
+    # Process desired runs: for each, walk all overlapping base sub-intervals
     ranges: list[tuple[int, int, dict[str, Any], list[str]]] = []
     current_range: tuple[int, int, dict[str, Any], list[str]] | None = None
 
@@ -2432,30 +2442,30 @@ def _generate_text_style_updates_positional(
         run = el.text_run
         run_len = utf16_len(run.content or "")
         run_end = offset + run_len
-
-        base_style = _get_base_style_at(offset)
         desired_style = run.text_style
 
-        style_dict, fields = _compute_style_diff(base_style, desired_style, TextStyle)
-
-        if not fields:
-            if current_range:
-                ranges.append(current_range)
-                current_range = None
-            offset = run_end
-            continue
-
-        if (
-            current_range is not None
-            and current_range[1] == offset
-            and current_range[2] == style_dict
-            and current_range[3] == fields
+        for sub_start, sub_end, base_style in _get_base_intervals_for_range(
+            offset, run_end
         ):
-            current_range = (current_range[0], run_end, style_dict, fields)
-        else:
-            if current_range:
-                ranges.append(current_range)
-            current_range = (offset, run_end, style_dict, fields)
+            style_dict, fields = _compute_style_diff(
+                base_style, desired_style, TextStyle
+            )
+
+            if not fields:
+                if current_range:
+                    ranges.append(current_range)
+                    current_range = None
+            elif (
+                current_range is not None
+                and current_range[1] == sub_start
+                and current_range[2] == style_dict
+                and current_range[3] == fields
+            ):
+                current_range = (current_range[0], sub_end, style_dict, fields)
+            else:
+                if current_range:
+                    ranges.append(current_range)
+                current_range = (sub_start, sub_end, style_dict, fields)
 
         offset = run_end
 

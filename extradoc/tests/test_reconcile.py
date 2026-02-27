@@ -25,6 +25,7 @@ from extradoc.reconcile._comparators import documents_match
 from extradoc.reconcile._core import resolve_deferred_ids
 from extradoc.reconcile._generators import (
     _generate_text_style_updates,
+    _generate_text_style_updates_positional,
     _infer_bullet_preset,
 )
 
@@ -2886,6 +2887,142 @@ class TestTextRunMismatchRaisesError:
         reqs = _generate_text_style_updates(base, desired, 1, None, None)
         assert len(reqs) == 1
         assert "updateTextStyle" in reqs[0]
+
+
+# ---------------------------------------------------------------------------
+# B2: _generate_text_style_updates_positional misses interior style changes
+# ---------------------------------------------------------------------------
+
+
+def _make_para_from_runs(*runs: tuple[str, dict[str, Any] | None]) -> Paragraph:
+    """Build a Paragraph model with multiple text runs.
+
+    Each run is (text, style_dict_or_None).
+    """
+    elements = []
+    for text, style in runs:
+        tr: dict[str, Any] = {"content": text}
+        if style:
+            tr["textStyle"] = style
+        elements.append({"textRun": tr})
+    return Paragraph.model_validate({"elements": elements})
+
+
+class TestPositionalStyleInterior:
+    """B2: positional fallback must check ALL base intervals a desired run spans.
+
+    When a desired run merges N base runs with different styles, only checking
+    the style at run_start misses interior diffs. The fix walks all overlapping
+    base intervals and compares each sub-range independently.
+
+    Tests call _generate_text_style_updates_positional directly so they are
+    independent of the mock's run-consolidation behaviour.
+    """
+
+    def test_clear_bold_from_first_half(self):
+        """Base [bold 'Hello '][plain 'world\\n'] → desired [plain 'Hello world\\n'].
+
+        The bold on 'Hello ' must be cleared.  para_start=1 → 'Hello ' at [1,7).
+        """
+        base = _make_para_from_runs(
+            ("Hello ", {"bold": True}),
+            ("world\n", None),
+        )
+        desired = _make_para_from_runs(("Hello world\n", None))
+
+        reqs = _generate_text_style_updates_positional(base, desired, 1, None, None)
+        assert len(reqs) == 1
+        req = reqs[0]["updateTextStyle"]
+        assert req["range"]["startIndex"] == 1
+        assert req["range"]["endIndex"] == 7  # len("Hello ") = 6
+
+    def test_clear_bold_from_second_half(self):
+        """Base [plain 'Hello '][bold 'world\\n'] → desired [plain 'Hello world\\n'].
+
+        The bold on 'world\\n' must be cleared. para_start=1 → 'world\\n' at [7,13).
+        """
+        base = _make_para_from_runs(
+            ("Hello ", None),
+            ("world\n", {"bold": True}),
+        )
+        desired = _make_para_from_runs(("Hello world\n", None))
+
+        reqs = _generate_text_style_updates_positional(base, desired, 1, None, None)
+        assert len(reqs) == 1
+        req = reqs[0]["updateTextStyle"]
+        assert req["range"]["startIndex"] == 7  # "Hello " = 6 chars
+        assert req["range"]["endIndex"] == 13  # + "world\n" = 6 more
+
+    def test_clear_bold_from_middle_of_three(self):
+        """Base [plain 'A'][bold 'B'][plain 'C\\n'] → desired [plain 'ABC\\n'].
+
+        Only the middle sub-range [2,3) needs a clear-bold update.
+        """
+        base = _make_para_from_runs(
+            ("A", None),
+            ("B", {"bold": True}),
+            ("C\n", None),
+        )
+        desired = _make_para_from_runs(("ABC\n", None))
+
+        reqs = _generate_text_style_updates_positional(base, desired, 1, None, None)
+        assert len(reqs) == 1
+        req = reqs[0]["updateTextStyle"]
+        assert req["range"]["startIndex"] == 2  # 'A' occupies [1,2)
+        assert req["range"]["endIndex"] == 3  # 'B' occupies [2,3)
+
+    def test_no_spurious_update_when_styles_match(self):
+        """Base [plain 'Hello '][plain 'world\\n'] → desired [plain 'Hello world\\n'].
+
+        No updateTextStyle should be emitted when all sub-ranges already match.
+        """
+        base = _make_para_from_runs(
+            ("Hello ", None),
+            ("world\n", None),
+        )
+        desired = _make_para_from_runs(("Hello world\n", None))
+
+        reqs = _generate_text_style_updates_positional(base, desired, 1, None, None)
+        assert reqs == []
+
+    def test_multiple_diffs_in_one_desired_run(self):
+        """Base [bold 'A'][italic 'B\\n'] → desired [plain 'AB\\n'].
+
+        Two different diffs within one desired run → two separate requests.
+        """
+        base = _make_para_from_runs(
+            ("A", {"bold": True}),
+            ("B\n", {"italic": True}),
+        )
+        desired = _make_para_from_runs(("AB\n", None))
+
+        reqs = _generate_text_style_updates_positional(base, desired, 1, None, None)
+        # Two sub-ranges: [1,2) clear bold, [2,4) clear italic
+        assert len(reqs) == 2
+        r0 = reqs[0]["updateTextStyle"]["range"]
+        r1 = reqs[1]["updateTextStyle"]["range"]
+        # Emitted right-to-left, so r0 is [2,4), r1 is [1,2)
+        assert r0["startIndex"] == 2
+        assert r0["endIndex"] == 4
+        assert r1["startIndex"] == 1
+        assert r1["endIndex"] == 2
+
+    def test_merge_contiguous_same_diff_subranges(self):
+        """Base [bold 'A'][bold 'B\\n'] → desired [plain 'AB\\n'].
+
+        Two sub-ranges with identical diff should be merged into one request.
+        """
+        base = _make_para_from_runs(
+            ("A", {"bold": True}),
+            ("B\n", {"bold": True}),
+        )
+        desired = _make_para_from_runs(("AB\n", None))
+
+        reqs = _generate_text_style_updates_positional(base, desired, 1, None, None)
+        assert len(reqs) == 1
+        req = reqs[0]["updateTextStyle"]
+        assert req["range"]["startIndex"] == 1
+        assert req["range"]["endIndex"] == 4
 
 
 # ---------------------------------------------------------------------------
