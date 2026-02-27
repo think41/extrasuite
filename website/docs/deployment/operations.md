@@ -38,6 +38,84 @@ Expected response:
 {"status":"healthy","service":"extrasuite-server"}
 ```
 
+### Firestore TTL Policies
+
+ExtraSuite stores time-limited data in Firestore that must be auto-cleaned via TTL policies. Without these, the collections grow unbounded and expired/revoked data is never deleted.
+
+**Required TTL policies** (configure once after Firestore is created):
+
+| Collection | TTL field | Retention |
+|---|---|---|
+| `oauth_states` | `expires_at` | 10 minutes (auto) |
+| `auth_codes` | `expires_at` | 120 seconds (auto) |
+| `session_tokens` | `expires_at` | 60 days (30 active + 30 audit) |
+| `access_logs` | `expires_at` | 30 days |
+| `delegation_logs` | `expires_at` | 30 days |
+
+#### Using gcloud CLI
+
+```bash
+# session_tokens
+gcloud firestore fields ttls update expires_at \
+  --collection-group=session_tokens \
+  --enable-ttl \
+  --project=$PROJECT_ID
+
+# access_logs
+gcloud firestore fields ttls update expires_at \
+  --collection-group=access_logs \
+  --enable-ttl \
+  --project=$PROJECT_ID
+
+# delegation_logs
+gcloud firestore fields ttls update expires_at \
+  --collection-group=delegation_logs \
+  --enable-ttl \
+  --project=$PROJECT_ID
+
+# oauth_states
+gcloud firestore fields ttls update expires_at \
+  --collection-group=oauth_states \
+  --enable-ttl \
+  --project=$PROJECT_ID
+
+# auth_codes
+gcloud firestore fields ttls update expires_at \
+  --collection-group=auth_codes \
+  --enable-ttl \
+  --project=$PROJECT_ID
+```
+
+#### Using Google Cloud Console
+
+1. Go to **Firestore > Data** in the Cloud Console
+2. For each collection, click the collection name → **Fields** → **TTL policies**
+3. Add a TTL policy on the `expires_at` field
+
+> **Note:** TTL deletion is eventually consistent and may lag by up to 24 hours, which is fine for all ExtraSuite collections.
+
+---
+
+### Firestore Composite Indexes
+
+Required for the v2 session-token protocol. Without these, `list_session_tokens` and `revoke_all_session_tokens` queries will fail.
+
+```bash
+# Create via Firebase CLI — add to firestore.indexes.json:
+# {
+#   "collectionGroup": "session_tokens",
+#   "queryScope": "COLLECTION",
+#   "fields": [
+#     {"fieldPath": "email", "order": "ASCENDING"},
+#     {"fieldPath": "active_expires_at", "order": "ASCENDING"}
+#   ]
+# }
+```
+
+Or create manually in **Firestore > Indexes > Composite** with the fields above.
+
+---
+
 ### List User Service Accounts
 
 See how many users have been onboarded:

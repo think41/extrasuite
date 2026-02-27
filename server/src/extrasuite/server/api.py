@@ -731,8 +731,7 @@ async def exchange_session_for_access_token(
     if body.scope in _SA_SCOPES:
         result = await token_generator.generate_token(email)
     else:
-        scope_url = _resolve_scope(body.scope)
-        result = await token_generator.generate_delegated_token(email, [scope_url])
+        result = await token_generator.generate_delegated_token(email, [_resolve_scope(body.scope)])
 
     logger.info(
         "Access token issued",

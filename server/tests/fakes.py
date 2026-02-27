@@ -209,9 +209,12 @@ class FakeDatabase:
         return [
             {
                 "session_hash": h,
+                "session_hash_prefix": h[:16],
                 "created_at": d["created_at"],
                 "active_expires_at": d["active_expires_at"],
                 "device_hostname": d.get("device_hostname", ""),
+                "device_os": d.get("device_os", ""),
+                "device_ip": d.get("device_ip", ""),
                 "is_active": True,
             }
             for h, d in self.session_tokens.items()

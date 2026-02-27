@@ -483,10 +483,17 @@ class Database:
         if not doc.exists:
             return False
 
-        if expected_email:
-            data = doc.to_dict()
-            if data is None or data.get("email", "").lower() != expected_email.lower():
-                return False
+        data = doc.to_dict()
+        if data is None:
+            return False
+
+        if expected_email and data.get("email", "").lower() != expected_email.lower():
+            return False
+
+        # Already revoked — return True (idempotent) but skip the update to preserve
+        # the original revocation timestamp in the audit record.
+        if data.get("revoked_at") is not None:
+            return True
 
         now = datetime.now(UTC)
 
