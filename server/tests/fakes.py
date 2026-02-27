@@ -256,12 +256,18 @@ class FakeSettings:
         token_expiry_minutes: int = 60,
         delegation_enabled: bool = False,
         delegation_scopes: list[str] | None = None,
+        session_token_expiry_days: int = 30,
+        admin_emails: list[str] | None = None,
+        allowed_domains: list[str] | None = None,
     ) -> None:
         self.google_cloud_project = google_cloud_project
         self._domain_abbreviations = domain_abbreviations or {}
         self.token_expiry_minutes = token_expiry_minutes
         self._delegation_enabled = delegation_enabled
         self._delegation_scopes = delegation_scopes or []
+        self.session_token_expiry_days = session_token_expiry_days
+        self._admin_emails = [e.lower() for e in (admin_emails or [])]
+        self._allowed_domains = [d.lower() for d in (allowed_domains or [])]
 
     def get_domain_abbreviation(self, domain: str) -> str:
         """Get abbreviation for a domain."""
@@ -283,6 +289,23 @@ class FakeSettings:
         if not self._delegation_scopes:
             return True
         return scope_url in self._delegation_scopes
+
+    def is_email_domain_allowed(self, email: str) -> bool:
+        """Check if an email's domain is allowed.
+
+        Returns True if no domain restriction is configured, or if the email's
+        domain matches one of the allowed domains.
+        """
+        if not self._allowed_domains:
+            return True
+        if "@" not in email:
+            return False
+        domain = email.split("@")[-1].lower()
+        return domain in self._allowed_domains
+
+    def get_admin_emails(self) -> list[str]:
+        """Get list of admin email addresses."""
+        return list(self._admin_emails)
 
 
 class FakeImpersonatedCredentials:

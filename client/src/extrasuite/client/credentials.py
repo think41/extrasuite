@@ -561,12 +561,8 @@ class CredentialsManager:
         """
         resolved = self._resolve_scopes(scopes)
 
-        if not force_refresh:
-            cached = self._load_cached_oauth_token(resolved)
-            if cached and cached.is_valid():
-                return cached
-
-        # v2: use session token for headless exchange
+        # v2 scope constraints: validate before hitting the cache so the error
+        # is deterministic and not dependent on whether a cached token exists.
         if self._server_base_url:
             if not scopes:
                 raise ValueError("scopes must not be empty")
@@ -575,6 +571,14 @@ class CredentialsManager:
                     f"v2 session flow only supports a single scope per request, got {scopes}. "
                     "Call get_oauth_token() once per scope."
                 )
+
+        if not force_refresh:
+            cached = self._load_cached_oauth_token(resolved)
+            if cached and cached.is_valid():
+                return cached
+
+        # v2: use session token for headless exchange
+        if self._server_base_url:
             session = self._get_or_create_session_token()
             scope = scopes[0].removeprefix(_GOOGLE_SCOPE_PREFIX)
             result = self._exchange_session_for_access_token(
@@ -711,6 +715,13 @@ class CredentialsManager:
         """
         if force:
             self._revoke_and_clear_session()
+            # Also clear short-lived token caches so the new session starts fully
+            # fresh: old access tokens tied to the previous session are no longer
+            # meaningful (they remain valid server-side for their remaining lifetime,
+            # but the local association is stale and could be confusing).
+            for path in (self._token_cache_path, self.OAUTH_CACHE_PATH):
+                with contextlib.suppress(Exception):
+                    path.unlink(missing_ok=True)
         return self._get_or_create_session_token(force=force)
 
     def logout(self) -> None:

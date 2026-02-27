@@ -411,8 +411,13 @@ class TestGenerateDelegatedToken:
 
     @pytest.mark.asyncio
     async def test_generate_delegated_token_raises_delegation_error(self) -> None:
-        """generate_delegated_token should wrap errors in DelegationError."""
+        """generate_delegated_token should wrap _do_delegation errors in DelegationError."""
         fake_db = FakeDatabase()
+        # Pre-populate the SA mapping so the SA-existence check passes and we reach
+        # _do_delegation (which we patch to fail) before any DelegationError is raised.
+        await fake_db.set_service_account_email(
+            "user@example.com", "user-abc@test-project.iam.gserviceaccount.com"
+        )
         fake_settings = FakeSettings(
             delegation_enabled=True,
         )
