@@ -441,13 +441,18 @@ def generate_requests(
             if i < len(alignment) and alignment[i].op == AlignmentOp.MATCHED:
                 right_anchor = alignment[i].base_element
 
-            # Determine sort position for this slot
+            # Determine sort position for this slot.
+            # Trailing slots (no right_anchor, no deletes) with a non-sectionbreak
+            # left_anchor use _el_end(left_anchor) so they sort ABOVE any adjacent
+            # inner slot at _el_start(right_anchor) = _el_end(left_anchor) - 1.
+            # Right-to-left ordering then runs the trailing slot first, preventing
+            # the inner slot from displacing the trailing slot's insert position.
             if deletes and deletes[0].base_element:
                 pos = _el_start(deletes[0].base_element)
             elif right_anchor:
                 pos = _el_start(right_anchor)
             elif left_anchor and not _is_section_break(left_anchor):
-                pos = _el_end(left_anchor) - 1
+                pos = _el_end(left_anchor)
             else:
                 pos = 1
 
@@ -568,13 +573,14 @@ def _process_slot_inner(
         else:
             insert_idx = _el_start(right_anchor)
 
-        # Special case: no deletes, first doc-order add is a table, and
-        # left_anchor is a real paragraph (not a sectionbreak).
+        # Special case: first doc-order add is a table, and left_anchor is a
+        # real paragraph (not a sectionbreak).
         #
         # insertTable(insert_idx) places a spurious \n at insert_idx BEFORE the
         # table, and the API forbids deleting \n immediately before a table.
         # Fix: insert at _el_end(left_anchor) - 1 (left_anchor's own trailing \n)
-        # so that the spurious \n ends up AFTER the table, where it CAN be deleted.
+        # so that the displaced \n ends up AFTER the table — that IS the required
+        # post-table <p/>, so we no longer need to delete it.
         first_add_is_table = (
             _is_table(filtered[0].desired_element)
             if filtered[0].desired_element
@@ -582,7 +588,6 @@ def _process_slot_inner(
         )
         if (
             first_add_is_table
-            and not deletes
             and left_anchor is not None
             and not _is_section_break(left_anchor)
         ):
@@ -590,16 +595,34 @@ def _process_slot_inner(
             assert first_table_el is not None and first_table_el.table is not None
             remaining_adds = filtered[1:]
 
-            # Process remaining elements (doc order [1:]) in reversed order at insert_idx.
+            # Insert the first table at left_anchor's \n position.
+            table_insert_idx = _el_end(left_anchor) - 1
+
+            # Process remaining elements (doc order [1:]) in reversed order.
+            # Pure-table sequences: all remaining tables go at table_insert_idx
+            # (left_anchor's \n), just like the first table.  This ensures
+            # consecutive tables produce exactly one empty paragraph between
+            # them (instead of two).
+            # Mixed sequences (tables + paragraphs): tables fall back to
+            # insert_idx so that paragraphs can be inserted at insert_idx
+            # without hitting a table's start index.
+            remaining_only_tables = all(
+                _is_table(ae.desired_element)
+                for ae in remaining_adds
+                if ae.desired_element is not None
+            )
             spurious_pending = False
             for ae in reversed(remaining_adds):
                 el = ae.desired_element
                 assert el is not None
                 if _is_table(el):
                     assert el.table is not None
+                    table_pos = (
+                        table_insert_idx if remaining_only_tables else insert_idx
+                    )
                     insert_reqs.extend(
                         _generate_insert_table_with_content(
-                            el.table, insert_idx, segment_id, tab_id, desired_lists
+                            el.table, table_pos, segment_id, tab_id, desired_lists
                         )
                     )
                     spurious_pending = True
@@ -614,9 +637,6 @@ def _process_slot_inner(
                         insert_reqs.append(
                             _make_insert_text(text, insert_idx, segment_id, tab_id)
                         )
-
-            # Insert the first table at left_anchor's \n position.
-            table_insert_idx = _el_end(left_anchor) - 1
             insert_reqs.extend(
                 _generate_insert_table_with_content(
                     first_table_el.table,
@@ -627,16 +647,9 @@ def _process_slot_inner(
                 )
             )
 
-            # Delete the spurious \n that ends up after the first table.
-            T_size = _table_structural_size(first_table_el.table)
-            spurious_pos = (
-                table_insert_idx + 1 + T_size
-            )  # = _el_end(left_anchor) + T_size
-            insert_reqs.append(
-                _make_delete_range(spurious_pos, spurious_pos + 1, segment_id, tab_id)
-            )
-
-            # Style requests: first table starts at table_insert_idx + 1 = _el_end(left_anchor).
+            # The displaced \n is the required post-table <p/> — do NOT delete it.
+            # table_size_extra=1: the displaced \n occupies 1 char that must be
+            # accounted for in style request position arithmetic.
             insert_reqs.extend(
                 _style_reqs_for_added_paras(
                     filtered,
@@ -644,10 +657,95 @@ def _process_slot_inner(
                     segment_id,
                     tab_id,
                     desired_lists,
-                    table_size_extra=0,
+                    table_size_extra=1,
                 )
             )
+
+            # When there are deletes, they must run BEFORE insertTable.
+            # insertTable targets table_insert_idx (< delete range), so if insert
+            # ran first the delete would target table cells instead of old content.
+            delete_reqs_inner: list[dict[str, Any]] = []
+            if deletes:
+                first_del_el = deletes[0].base_element
+                last_del_el = deletes[-1].base_element
+                assert first_del_el is not None and last_del_el is not None
+                delete_start = _el_start(first_del_el)
+                delete_end = _el_end(last_del_el)
+                if _is_table(right_anchor):
+                    delete_end -= 1
+                if delete_start < delete_end:
+                    delete_reqs_inner.append(
+                        _make_delete_range(delete_start, delete_end, segment_id, tab_id)
+                    )
+            return delete_reqs_inner + insert_reqs
         else:
+            # Sub-case: right_anchor is a table and there are deletes.
+            # insertText at _el_start(right_anchor) is invalid (table start is not
+            # inside any paragraph). Fix: delete first (protecting the \n immediately
+            # before the table), then insert at the protected \n's new position.
+            if _is_table(right_anchor) and deletes:
+                first_del_el = deletes[0].base_element
+                last_del_el = deletes[-1].base_element
+                assert first_del_el is not None and last_del_el is not None
+                del_start = _el_start(first_del_el)
+                del_end = (
+                    _el_end(last_del_el) - 1
+                )  # protect \n immediately before table
+                del_reqs_inner: list[dict[str, Any]] = []
+                if del_start < del_end:
+                    del_reqs_inner.append(
+                        _make_delete_range(del_start, del_end, segment_id, tab_id)
+                    )
+                # After delete, protected \n is at del_start (the new insert point).
+                tbl_insert_idx = del_start
+                spurious_pending = False
+                first_in_reversed = True
+                for ae in reversed(filtered):
+                    el = ae.desired_element
+                    assert el is not None
+                    if _is_table(el):
+                        assert el.table is not None
+                        insert_reqs.extend(
+                            _generate_insert_table_with_content(
+                                el.table,
+                                tbl_insert_idx,
+                                segment_id,
+                                tab_id,
+                                desired_lists,
+                            )
+                        )
+                        spurious_pending = True
+                        first_in_reversed = False
+                    elif _is_paragraph(el):
+                        text = _para_text(el)
+                        if not text:
+                            continue
+                        if spurious_pending:
+                            text = text.rstrip("\n")
+                            spurious_pending = False
+                        elif first_in_reversed:
+                            # Last para in doc order: the protected \n acts as its
+                            # trailing \n, so strip the explicit trailing \n.
+                            text = text.rstrip("\n")
+                            first_in_reversed = False
+                        if text:
+                            insert_reqs.append(
+                                _make_insert_text(
+                                    text, tbl_insert_idx, segment_id, tab_id
+                                )
+                            )
+                insert_reqs.extend(
+                    _style_reqs_for_added_paras(
+                        filtered,
+                        tbl_insert_idx,
+                        segment_id,
+                        tab_id,
+                        desired_lists,
+                        table_size_extra=1,
+                    )
+                )
+                return del_reqs_inner + insert_reqs
+
             # Normal case: reversed insertion with spurious_pending for tables.
             spurious_pending = False
             for ae in reversed(filtered):
@@ -1090,17 +1188,11 @@ def _process_trailing_adds_with_tables(
                 el.table, insert_idx, segment_id, tab_id, desired_lists
             )
             requests.extend(table_reqs)
-            # insertTable always creates a spurious \n by splitting the paragraph
-            # at insert_idx. When there is after-table content (idx > 0, meaning
-            # groups at indices 0..idx-1 were already processed and appear after
-            # this table in document order), that spurious \n ends up between the
-            # table and the after-table content. Delete it.
-            # Position of spurious \n: insert_idx + 1 + table_structural_size
-            if idx > 0:
-                table_end = insert_idx + 1 + _table_structural_size(el.table)
-                requests.append(
-                    _make_delete_range(table_end, table_end + 1, segment_id, tab_id)
-                )
+            # The \n created by insertTable becomes an empty paragraph between
+            # this table and the next element in document order.  We do NOT
+            # delete it: the API forbids removing the \n immediately before a
+            # table, and consistent with the inner-slot behaviour we accept one
+            # empty paragraph between consecutive tables.
         else:
             assert isinstance(group, list)
             combined = _collect_add_text(group)

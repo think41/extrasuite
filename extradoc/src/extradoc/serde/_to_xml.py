@@ -310,7 +310,7 @@ def _strip_trailing_empty_para(blocks: list[BlockNode]) -> list[BlockNode]:
 
     # Empty paragraph following a non-paragraph element → strip it
     second_last = blocks[-2]
-    if isinstance(second_last, TableXml | TocXml | SectionBreakXml):
+    if isinstance(second_last, TocXml | SectionBreakXml):
         return blocks[:-1]
 
     return blocks
