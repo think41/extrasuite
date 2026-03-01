@@ -322,6 +322,28 @@ def _convert_blocks(
                 )
             )
         elif isinstance(block, TableXml):
+            # If the preceding element is a section break, insert an empty
+            # paragraph before the table.  The Google Docs API always inserts
+            # a \n at the target index when calling insertTable, and that \n
+            # cannot be deleted if it lands immediately before a table.  By
+            # modelling the empty paragraph explicitly here, the reconciler
+            # can produce the correct document without an extra spurious para.
+            if elements and elements[-1].section_break is not None:
+                elements.append(
+                    StructuralElement.model_validate(
+                        {
+                            "paragraph": {
+                                "paragraphStyle": {
+                                    "namedStyleType": "NORMAL_TEXT",
+                                    "direction": "LEFT_TO_RIGHT",
+                                },
+                                "elements": [
+                                    {"textRun": {"content": "\n", "textStyle": {}}}
+                                ],
+                            }
+                        }
+                    )
+                )
             table = _convert_table(block, styles)
             elements.append(
                 StructuralElement.model_validate(
