@@ -7,7 +7,7 @@ import sys
 from pathlib import Path
 from typing import Any
 
-from extrasuite.client.cli._common import _cmd_share, _get_oauth_token
+from extrasuite.client.cli._common import _cmd_share, _get_credential, _get_reason
 
 
 def cmd_script_pull(args: Any) -> None:
@@ -17,14 +17,15 @@ def cmd_script_pull(args: Any) -> None:
 
     script_id = parse_script_id(args.url)
     output_dir = Path(args.output_dir) if args.output_dir else Path()
-    access_token = _get_oauth_token(
+    reason = _get_reason(args, default="Pull Apps Script project")
+    cred = _get_credential(
         args,
-        scopes=["script.projects"],
-        reason="Pull Apps Script project",
+        command={"type": "script.pull", "file_url": args.url, "file_name": ""},
+        reason=reason,
     )
 
     async def _run() -> None:
-        transport = GoogleAppsScriptTransport(access_token)
+        transport = GoogleAppsScriptTransport(cred.token)
         client = ScriptClient(transport)
         try:
             await client.pull(
@@ -60,14 +61,15 @@ def cmd_script_push(args: Any) -> None:
     """Push changes to a Google Apps Script project."""
     from extrascript import GoogleAppsScriptTransport, ScriptClient
 
-    access_token = _get_oauth_token(
+    reason = _get_reason(args, default="Push Apps Script project")
+    cred = _get_credential(
         args,
-        scopes=["script.projects"],
-        reason="Push Apps Script project",
+        command={"type": "script.push", "file_url": "", "file_name": ""},
+        reason=reason,
     )
 
     async def _run() -> None:
-        transport = GoogleAppsScriptTransport(access_token)
+        transport = GoogleAppsScriptTransport(cred.token)
         client = ScriptClient(transport)
         try:
             if not args.skip_lint:
@@ -97,16 +99,18 @@ def cmd_script_create(args: Any) -> None:
     from extrascript import GoogleAppsScriptTransport, ScriptClient
     from extrascript.client import parse_file_id
 
-    access_token = _get_oauth_token(
+    reason = _get_reason(args, default="Create Apps Script project")
+    bind_to = args.bind_to or ""
+    cred = _get_credential(
         args,
-        scopes=["script.projects"],
-        reason="Create Apps Script project",
+        command={"type": "script.create", "title": args.title, "bind_to": bind_to},
+        reason=reason,
     )
-    parent_id = parse_file_id(args.bind_to) if args.bind_to else None
+    parent_id = parse_file_id(bind_to) if bind_to else None
     output_dir = Path(args.output_dir) if args.output_dir else Path()
 
     async def _run() -> None:
-        transport = GoogleAppsScriptTransport(access_token)
+        transport = GoogleAppsScriptTransport(cred.token)
         client = ScriptClient(transport)
         try:
             files = await client.create(

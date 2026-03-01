@@ -6,32 +6,33 @@ import json
 import sys
 from typing import Any
 
-from extrasuite.client.cli._common import _get_oauth_token
+from extrasuite.client.cli._common import _get_credential, _get_reason
 
 
 def cmd_contacts_sync(args: Any) -> None:
     """Sync Google Contacts to local DB."""
-    from extrasuite.client.contacts import _CONTACTS_OTHER_SCOPE, _CONTACTS_SCOPE, sync
+    from extrasuite.client.contacts import sync
 
-    token = _get_oauth_token(
+    reason = _get_reason(args, default="Sync Google Contacts")
+    token = _get_credential(
         args,
-        scopes=[_CONTACTS_SCOPE],
-        reason="Sync Google Contacts",
+        command={"type": "contacts.read", "query": ""},
+        reason=reason,
     )
-    other_token = _get_oauth_token(
+    other_token = _get_credential(
         args,
-        scopes=[_CONTACTS_OTHER_SCOPE],
-        reason="Sync Gmail-suggested contacts",
+        command={"type": "contacts.other", "query": ""},
+        reason=_get_reason(args, default="Sync Gmail-suggested contacts"),
     )
-    people_count, other_count = sync(token, other_token=other_token, verbose=True)
+    people_count, other_count = sync(
+        token.token, other_token=other_token.token, verbose=True
+    )
     print(f"Synced {people_count} contacts and {other_count} other contacts.")
 
 
 def cmd_contacts_search(args: Any) -> None:
     """Search local contacts DB."""
     from extrasuite.client.contacts import (
-        _CONTACTS_OTHER_SCOPE,
-        _CONTACTS_SCOPE,
         _DB_PATH,
         _is_stale,
         _open_db,
@@ -48,22 +49,26 @@ def cmd_contacts_search(args: Any) -> None:
     if not needs_sync:
         needs_sync = _is_stale(_open_db())
 
-    token = None
-    other_token = None
+    token_str = None
+    other_token_str = None
     if needs_sync:
-        token = _get_oauth_token(
+        query_str = " ".join(queries)
+        reason = _get_reason(args, default="Sync Google Contacts")
+        cred = _get_credential(
             args,
-            scopes=[_CONTACTS_SCOPE],
-            reason="Sync Google Contacts",
+            command={"type": "contacts.read", "query": query_str},
+            reason=reason,
         )
-        other_token = _get_oauth_token(
+        other_cred = _get_credential(
             args,
-            scopes=[_CONTACTS_OTHER_SCOPE],
-            reason="Sync Gmail-suggested contacts",
+            command={"type": "contacts.other", "query": query_str},
+            reason=_get_reason(args, default="Sync Gmail-suggested contacts"),
         )
+        token_str = cred.token
+        other_token_str = other_cred.token
 
     results = search(
-        queries, token=token, other_token=other_token, auto_sync=needs_sync
+        queries, token=token_str, other_token=other_token_str, auto_sync=needs_sync
     )
     print(json.dumps(results, indent=2))
 

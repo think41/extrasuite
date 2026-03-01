@@ -169,6 +169,17 @@ def build_parser() -> Any:
         metavar="PATH",
         help="Path to service account JSON key file",
     )
+    auth_parent.add_argument(
+        "--reason",
+        "-r",
+        metavar="TEXT",
+        default=None,
+        help=(
+            "Why this operation is being performed. "
+            "Pass the user's actual intent for audit trails. "
+            "Can also be set via the EXTRASUITE_REASON environment variable."
+        ),
+    )
 
     # --- drive ---
     drive_parser = subparsers.add_parser(

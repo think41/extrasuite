@@ -225,22 +225,20 @@ class FakeDatabase:
         self,
         email: str,
         session_hash_prefix: str,
-        scope: str,
-        credential_type: str,
+        command_type: str,
+        command_context: dict,
         reason: str,
         ip: str,
-        file_hint: str = "",
     ) -> None:
         """Log an access token request."""
         self.access_logs.append(
             {
                 "email": email,
                 "session_hash_prefix": session_hash_prefix,
-                "scope": scope,
-                "credential_type": credential_type,
+                "command_type": command_type,
+                "command_context": command_context,
                 "reason": reason,
                 "ip": ip,
-                "file_hint": file_hint,
                 "timestamp": datetime.now(UTC),
             }
         )

@@ -9,6 +9,8 @@ from typing import TYPE_CHECKING, Any
 if TYPE_CHECKING:
     from collections.abc import Callable
 
+    from extrasuite.client.credentials import Credential
+
 _HELP_DIR = Path(__file__).parent.parent / "help"
 
 # Files served by --help; everything else in the module dir is a reference doc.
@@ -161,24 +163,26 @@ def _auth_kwargs(args: Any) -> dict[str, Any]:
     return kwargs
 
 
-def _get_token(args: Any, *, reason: str, scope: str) -> str:
-    """Get a service account token via CredentialsManager."""
+def _get_reason(args: Any, *, default: str) -> str:
+    """Resolve the reason string for a token request.
+
+    Precedence: --reason CLI flag > EXTRASUITE_REASON env var > hardcoded default.
+    """
+    import os
+
+    return (
+        getattr(args, "reason", None)
+        or os.environ.get("EXTRASUITE_REASON", "")
+        or default
+    )
+
+
+def _get_credential(args: Any, *, command: dict[str, Any], reason: str) -> Credential:
+    """Obtain a credential for the given typed command via CredentialsManager."""
     from extrasuite.client import CredentialsManager
 
     manager = CredentialsManager(**_auth_kwargs(args))
-    token = manager.get_token(reason=reason, scope=scope)
-    return token.access_token
-
-
-def _get_oauth_token(
-    args: Any, scopes: list[str], reason: str = "", file_hint: str = ""
-) -> str:
-    """Get an OAuth token via CredentialsManager."""
-    from extrasuite.client import CredentialsManager
-
-    manager = CredentialsManager(**_auth_kwargs(args))
-    token = manager.get_oauth_token(scopes=scopes, reason=reason, file_hint=file_hint)
-    return token.access_token
+    return manager.get_credential(command=command, reason=reason)
 
 
 def _trusted_contacts_setup(access_token: str) -> Any:
@@ -218,10 +222,19 @@ def _cmd_share(file_type: str, args: Any) -> None:
     # 3. Parse file ID using type-specific URL parser
     file_id = _URL_PARSERS[file_type](args.url)
 
-    # 4. Get DWD token
-    access_token = _get_oauth_token(
-        args, scopes=["drive.file"], reason=f"Share {file_type} with users"
+    # 4. Get DWD credential for drive.file.share
+    reason = _get_reason(args, default=f"Share {file_type} with users")
+    cred = _get_credential(
+        args,
+        command={
+            "type": "drive.file.share",
+            "file_url": args.url,
+            "file_name": "",
+            "share_with": args.emails,
+        },
+        reason=reason,
     )
+    access_token = cred.token
 
     # 5. Share with each email, collect results
     role = args.role
@@ -256,23 +269,20 @@ def _cmd_create(file_type: str, args: Any) -> None:
 
     manager = CredentialsManager(**_auth_kwargs(args))
 
-    # Get OAuth token with drive.file scope — v2 also returns the SA email in response
-    oauth_token = manager.get_oauth_token(
-        scopes=["drive.file"],
-        reason=f"Create {file_type} and share with service account",
+    # Get credential for drive.file.create — SA email is always in metadata
+    reason = _get_reason(
+        args, default=f"Create {file_type} and share with service account"
     )
-
-    # Determine the service account email to share with.
-    # v2: SA email is included in the access token response.
-    # v1 (legacy): it isn't, so we fall back to a separate get_token() call.
-    if oauth_token.service_account_email:
-        sa_email = oauth_token.service_account_email
-    else:
-        sa_token = manager.get_token(
-            reason=f"Get service account email for {file_type} create",
-            scope="drive.file",
-        )
-        sa_email = sa_token.service_account_email
+    cred = manager.get_credential(
+        command={
+            "type": "drive.file.create",
+            "file_name": args.title,
+            "file_type": file_type,
+        },
+        reason=reason,
+    )
+    oauth_token_access = cred.token
+    sa_email = cred.service_account_email
     if not sa_email:
         raise RuntimeError(
             "Could not determine service account email. Cannot share file."
@@ -284,16 +294,16 @@ def _cmd_create(file_type: str, args: Any) -> None:
         from extrasuite.client.google_api import copy_drive_file
 
         source_id = _parse_drive_file_id(copy_from)
-        result = copy_drive_file(oauth_token.access_token, source_id, title=args.title)
+        result = copy_drive_file(oauth_token_access, source_id, title=args.title)
     else:
         # Create the file via Drive API
         mime_type = _CREATE_MIME_TYPES[file_type]
-        result = create_file_via_drive(oauth_token.access_token, args.title, mime_type)
+        result = create_file_via_drive(oauth_token_access, args.title, mime_type)
 
     file_id = result["id"]
 
     # Share with service account
-    share_file(oauth_token.access_token, file_id, sa_email)
+    share_file(oauth_token_access, file_id, sa_email)
 
     url = _FILE_URL_PATTERNS[file_type].format(id=file_id)
     print(f"\nCreated {file_type}: {args.title}")

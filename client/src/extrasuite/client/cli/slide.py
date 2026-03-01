@@ -10,7 +10,8 @@ from typing import Any
 from extrasuite.client.cli._common import (
     _cmd_create,
     _cmd_share,
-    _get_token,
+    _get_credential,
+    _get_reason,
     _parse_presentation_id,
 )
 
@@ -21,10 +22,15 @@ def cmd_slide_pull(args: Any) -> None:
 
     presentation_id = _parse_presentation_id(args.url)
     output_dir = Path(args.output_dir) if args.output_dir else Path()
-    access_token = _get_token(args, reason="Pulling Google Slides", scope="slide.pull")
+    reason = _get_reason(args, default="Pulling Google Slides")
+    cred = _get_credential(
+        args,
+        command={"type": "slide.pull", "file_url": args.url, "file_name": ""},
+        reason=reason,
+    )
 
     async def _run() -> None:
-        transport = GoogleSlidesTransport(access_token)
+        transport = GoogleSlidesTransport(cred.token)
         client = SlidesClient(transport)
         try:
             files = await client.pull(
@@ -61,12 +67,15 @@ def cmd_slide_push(args: Any) -> None:
     """Push changes to a Google Slides presentation."""
     from extraslide import GoogleSlidesTransport, SlidesClient
 
-    access_token = _get_token(
-        args, reason="Pushing changes to Google Slides", scope="slide.push"
+    reason = _get_reason(args, default="Pushing changes to Google Slides")
+    cred = _get_credential(
+        args,
+        command={"type": "slide.push", "file_url": "", "file_name": ""},
+        reason=reason,
     )
 
     async def _run() -> None:
-        transport = GoogleSlidesTransport(access_token)
+        transport = GoogleSlidesTransport(cred.token)
         client = SlidesClient(transport)
         try:
             response = await client.push(args.folder)

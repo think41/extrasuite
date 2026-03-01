@@ -40,43 +40,57 @@ except ImportError:
 
 
 @dataclass
-class Token:
-    """Unified token structure for Google API access.
+class Credential:
+    """A single credential issued for a specific provider and operation.
 
-    Attributes:
-        access_token: The OAuth2 access token for API calls.
-        service_account_email: Email of the service account.
-        expires_at: Unix timestamp when the token expires.
+    Mirrors the server-side ``Credential`` Pydantic model.  The ``kind`` field
+    distinguishes SA tokens (``bearer_sa``) from DWD tokens (``bearer_dwd``).
+    Provider-specific extras (e.g. ``service_account_email``) live in
+    ``metadata`` so this class remains extensible to non-Google providers.
     """
 
-    access_token: str
-    service_account_email: str
-    expires_at: float
+    provider: str  # "google", "slack", …
+    kind: str  # "bearer_sa" | "bearer_dwd" | "api_key" | …
+    token: str
+    expires_at: float  # Unix timestamp; 0 if non-expiring
+    scopes: list[str]  # granted OAuth scope URLs (empty for SA tokens)
+    metadata: dict[str, str]  # provider-specific extras
+
+    @property
+    def service_account_email(self) -> str:
+        return self.metadata.get("service_account_email", "")
 
     def is_valid(self, buffer_seconds: int = 60) -> bool:
-        """Check if token is still valid with a safety buffer."""
+        """Check if credential is still valid with a safety buffer."""
+        if self.expires_at == 0:
+            return True
         return time.time() < self.expires_at - buffer_seconds
 
     def expires_in_seconds(self) -> int:
-        """Return seconds until token expires."""
+        """Return seconds until credential expires (0 if non-expiring)."""
+        if self.expires_at == 0:
+            return 0
         return max(0, int(self.expires_at - time.time()))
 
     def to_dict(self) -> dict[str, Any]:
-        """Convert to dictionary for serialization."""
         return {
-            "access_token": self.access_token,
-            "service_account_email": self.service_account_email,
+            "provider": self.provider,
+            "kind": self.kind,
+            "token": self.token,
             "expires_at": self.expires_at,
-            "token_type": "Bearer",
+            "scopes": self.scopes,
+            "metadata": self.metadata,
         }
 
     @classmethod
-    def from_dict(cls, data: dict[str, Any]) -> Token:
-        """Create Token from dictionary."""
+    def from_dict(cls, data: dict[str, Any]) -> Credential:
         return cls(
-            access_token=data["access_token"],
-            service_account_email=data["service_account_email"],
+            provider=data["provider"],
+            kind=data["kind"],
+            token=data["token"],
             expires_at=data["expires_at"],
+            scopes=data.get("scopes", []),
+            metadata=data.get("metadata", {}),
         )
 
 
@@ -87,49 +101,46 @@ DWD_TOKEN_CACHE_SECONDS = 600  # 10 min for domain-wide delegation tokens
 _GOOGLE_SCOPE_PREFIX = "https://www.googleapis.com/auth/"
 
 
-@dataclass
-class OAuthToken:
-    """Token for user-level API access via domain-wide delegation.
+def _parse_first_google_credential(
+    response: dict[str, Any], cmd_type: str
+) -> Credential:
+    """Extract and normalise the first Google credential from a TokenResponse dict.
 
-    Attributes:
-        access_token: The OAuth2 access token for API calls.
-        scopes: List of granted scope URLs.
-        expires_at: Unix timestamp when the token expires.
-        service_account_email: The agent's service account email (empty for legacy v1 tokens).
+    Caps expiry at the appropriate client-side TTL so the cache lifetime is
+    bounded regardless of what the server returns.
     """
-
-    access_token: str
-    scopes: list[str]
-    expires_at: float
-    service_account_email: str = ""
-
-    def is_valid(self, buffer_seconds: int = 60) -> bool:
-        """Check if token is still valid with a safety buffer."""
-        return time.time() < self.expires_at - buffer_seconds
-
-    def expires_in_seconds(self) -> int:
-        """Return seconds until token expires."""
-        return max(0, int(self.expires_at - time.time()))
-
-    def to_dict(self) -> dict[str, Any]:
-        """Convert to dictionary for serialization."""
-        return {
-            "access_token": self.access_token,
-            "scopes": self.scopes,
-            "expires_at": self.expires_at,
-            "token_type": "Bearer",
-            "service_account_email": self.service_account_email,
-        }
-
-    @classmethod
-    def from_dict(cls, data: dict[str, Any]) -> OAuthToken:
-        """Create OAuthToken from dictionary."""
-        return cls(
-            access_token=data["access_token"],
-            scopes=data["scopes"],
-            expires_at=data["expires_at"],
-            service_account_email=data.get("service_account_email", ""),
+    raw_creds: list[dict[str, Any]] = response.get("credentials", [])
+    if not raw_creds:
+        raise ValueError(
+            f"Server returned no credentials for command type {cmd_type!r}"
         )
+
+    # Pick the first Google credential (today there is always exactly one)
+    raw = next(
+        (c for c in raw_creds if c.get("provider", "google") == "google"), raw_creds[0]
+    )
+
+    expires_at_str: str = raw.get("expires_at", "")
+    if expires_at_str:
+        expires_at_dt = datetime.fromisoformat(expires_at_str.replace("Z", "+00:00"))
+        raw_expires = expires_at_dt.timestamp()
+    else:
+        raw_expires = 0.0
+
+    kind = raw.get("kind", "bearer_sa")
+    cache_cap = (
+        DWD_TOKEN_CACHE_SECONDS if kind == "bearer_dwd" else SA_TOKEN_CACHE_SECONDS
+    )
+    expires_at = min(raw_expires, time.time() + cache_cap) if raw_expires else 0.0
+
+    return Credential(
+        provider=raw.get("provider", "google"),
+        kind=kind,
+        token=raw["token"],
+        expires_at=expires_at,
+        scopes=raw.get("scopes", []),
+        metadata=raw.get("metadata", {}),
+    )
 
 
 @dataclass
@@ -195,7 +206,7 @@ class CredentialsManager:
             If explicitly set and file doesn't exist, raises FileNotFoundError.
     """
 
-    DEFAULT_CACHE_PATH = Path.home() / ".config" / "extrasuite" / "token.json"
+    CREDENTIALS_CACHE_DIR = Path.home() / ".config" / "extrasuite" / "credentials"
     GATEWAY_CONFIG_PATH = Path.home() / ".config" / "extrasuite" / "gateway.json"
     SESSION_CACHE_PATH = Path.home() / ".config" / "extrasuite" / "session.json"
     DEFAULT_CALLBACK_TIMEOUT = 300  # 5 minutes for headless mode
@@ -207,7 +218,6 @@ class CredentialsManager:
         delegation_auth_url: str | None = None,
         delegation_exchange_url: str | None = None,
         service_account_path: str | Path | None = None,
-        token_cache_path: str | Path | None = None,
         gateway_config_path: str | Path | None = None,
         headless: bool | None = None,
     ) -> None:
@@ -317,100 +327,102 @@ class CredentialsManager:
         # ExtraSuite protocol takes precedence if both are configured
         self._use_extrasuite = has_extrasuite
 
-        self._token_cache_path = (
-            Path(token_cache_path) if token_cache_path else self.DEFAULT_CACHE_PATH
-        )
-
     @property
     def auth_mode(self) -> str:
         """Return the active authentication mode."""
         return "extrasuite" if self._use_extrasuite else "service_account"
 
-    @property
-    def token_cache_path(self) -> Path:
-        """Return the path where tokens are cached."""
-        return self._token_cache_path
-
-    def get_token(
+    def get_credential(
         self,
         *,
+        command: dict[str, Any],
         reason: str,
-        scope: str,
         force_refresh: bool = False,
-    ) -> Token:
-        """Get a valid access token, authenticating if necessary.
+    ) -> Credential:
+        """Exchange a session token for the credential(s) required by *command*.
 
-        For ExtraSuite mode: checks cache first. If v2 session available, exchanges
-        headlessly. If no session, initiates OAuth flow to obtain a session token first.
-        For service account mode: generates token from credentials file.
+        ``command`` must be a dict that matches one of the typed Command models
+        on the server, e.g.::
+
+            {"type": "sheet.pull", "file_url": "https://docs.google.com/..."}
+            {"type": "gmail.compose", "subject": "Hello", "recipients": ["a@b.com"]}
+
+        ``reason`` is agent-supplied user intent logged server-side for auditing.
+
+        For ExtraSuite v2 mode: validates the session, POSTs to /api/auth/token,
+        caches the first Google credential by command type.
+
+        For service account file mode: generates a token directly from the SA key.
+        Only meaningful for SA-backed command types; DWD is not supported in this mode.
 
         Args:
-            reason: Mandatory reason string logged server-side for auditing.
-            scope: Scope for the token (e.g., "sheet.pull", "doc.push").
-            force_refresh: If True, ignore cached token and re-authenticate.
+            command: Dict representation of a typed Command (must include ``type``).
+            reason: Agent-supplied user intent (logged for auditing).
+            force_refresh: If True, bypass the cache and re-exchange.
 
         Returns:
-            A valid Token object.
-
-        Raises:
-            Exception: If authentication fails.
+            A Credential object with ``token``, ``kind``, ``service_account_email``, etc.
         """
+        cmd_type = command.get("type", "")
+
         if self._use_extrasuite:
-            return self._get_extrasuite_token(
-                reason=reason, scope=scope, force_refresh=force_refresh
+            return self._get_extrasuite_credential(
+                command=command,
+                cmd_type=cmd_type,
+                reason=reason,
+                force_refresh=force_refresh,
             )
         else:
-            return self._get_service_account_token(force_refresh)
+            return self._get_service_account_credential(
+                cmd_type=cmd_type, force_refresh=force_refresh
+            )
 
-    def _get_extrasuite_token(
-        self, *, reason: str, scope: str, force_refresh: bool
-    ) -> Token:
-        """Get token via ExtraSuite server.
+    def _credential_cache_path(self, cmd_type: str) -> Path:
+        """Return the cache file path for a given command type."""
+        # Sanitise cmd_type so it's safe as a filename (dots are fine, slashes aren't)
+        safe = cmd_type.replace("/", "_")
+        return self.CREDENTIALS_CACHE_DIR / f"{safe}.json"
 
-        Tries v2 session-token flow first; falls back to legacy flow if no server_base_url.
-        """
+    def _get_extrasuite_credential(
+        self,
+        *,
+        command: dict[str, Any],
+        cmd_type: str,
+        reason: str,
+        force_refresh: bool,
+    ) -> Credential:
+        """Get credential via ExtraSuite server (v2 session flow)."""
+        cache_path = self._credential_cache_path(cmd_type)
         if not force_refresh:
-            cached = self._load_cached_token()
+            cached = self._load_cached_credential(cache_path)
             if cached and cached.is_valid():
                 return cached
 
-        # v2: use session token for headless exchange
         if self._server_base_url:
             session = self._get_or_create_session_token()
-            result = self._exchange_session_for_access_token(
-                session, scope=scope, reason=reason
+            result = self._exchange_session_for_credential(
+                session, command=command, reason=reason
             )
-            # Parse response into Token; cap expiry at SA_TOKEN_CACHE_SECONDS so the
-            # client-side cache lifetime is bounded regardless of what the server returns.
-            expires_at_dt = datetime.fromisoformat(
-                result["expires_at"].replace("Z", "+00:00")
-            )
-            expires_at = min(
-                expires_at_dt.timestamp(), time.time() + SA_TOKEN_CACHE_SECONDS
-            )
-            token = Token(
-                access_token=result["access_token"],
-                service_account_email=result["service_account_email"],
-                expires_at=expires_at,
-            )
-            self._save_token(token)
-            return token
+            # result["credentials"] is a list; pick the first Google credential
+            cred = _parse_first_google_credential(result, cmd_type)
+            self._save_credential(cache_path, cred)
+            return cred
 
-        # Legacy v1 flow (no server_base_url configured)
-        token = self._authenticate_extrasuite()
-        self._save_token(token)
-        return token
+        # Legacy v1 flow — only SA commands are supported here
+        cred = self._authenticate_extrasuite()
+        self._save_credential(cache_path, cred)
+        return cred
 
-    def _get_service_account_token(self, force_refresh: bool) -> Token:
-        """Get token from service account file."""
-        # Check cache first (service account tokens also benefit from caching)
-        # This avoids requiring google-auth if we have a valid cached token
+    def _get_service_account_credential(
+        self, *, cmd_type: str, force_refresh: bool
+    ) -> Credential:
+        """Get credential from a service account JSON key file."""
+        cache_path = self._credential_cache_path(cmd_type)
         if not force_refresh:
-            cached = self._load_cached_token()
+            cached = self._load_cached_credential(cache_path)
             if cached and cached.is_valid():
                 return cached
 
-        # Only import google-auth when we actually need to refresh
         try:
             from google.auth.transport.requests import (  # type: ignore[import-not-found]
                 Request,
@@ -427,7 +439,6 @@ class CredentialsManager:
         if not self._sa_path or not self._sa_path.exists():
             raise FileNotFoundError(f"Service account file not found: {self._sa_path}")
 
-        # Load service account credentials
         credentials = service_account.Credentials.from_service_account_file(
             str(self._sa_path),
             scopes=[
@@ -435,33 +446,26 @@ class CredentialsManager:
                 "https://www.googleapis.com/auth/presentations",
             ],
         )
-
-        # Refresh to get access token
         credentials.refresh(Request())
 
-        # Build token
-        token = Token(
-            access_token=credentials.token,
-            service_account_email=credentials.service_account_email,
+        cred = Credential(
+            provider="google",
+            kind="bearer_sa",
+            token=credentials.token,
             expires_at=credentials.expiry.timestamp() if credentials.expiry else 0,
+            scopes=[],
+            metadata={"service_account_email": credentials.service_account_email},
         )
+        self._save_credential(cache_path, cred)
+        return cred
 
-        # Cache for future use
-        self._save_token(token)
-        return token
-
-    def _load_cached_token(self) -> Token | None:
-        """Load cached token if it exists and is still valid."""
-        if not self._token_cache_path.exists():
+    def _load_cached_credential(self, cache_path: Path) -> Credential | None:
+        """Load a cached credential if it exists."""
+        if not cache_path.exists():
             return None
-
         try:
-            data = json.loads(self._token_cache_path.read_text())
-            token = Token.from_dict(data)
-            if token.is_valid():
-                return token
-            else:
-                return None
+            data = json.loads(cache_path.read_text())
+            return Credential.from_dict(data)
         except (json.JSONDecodeError, KeyError):
             return None
 
@@ -478,9 +482,9 @@ class CredentialsManager:
             os.close(fd)
         temp_path.rename(path)
 
-    def _save_token(self, token: Token) -> None:
-        """Save token to cache file with secure permissions."""
-        self._write_secure_json(self._token_cache_path, token.to_dict())
+    def _save_credential(self, cache_path: Path, cred: Credential) -> None:
+        """Save credential to cache file with secure permissions."""
+        self._write_secure_json(cache_path, cred.to_dict())
 
     def _load_gateway_config(self) -> dict[str, str] | None:
         """Load endpoint URLs from gateway.json if it exists.
@@ -535,101 +539,6 @@ class CredentialsManager:
             return result if result else None
         except (json.JSONDecodeError, OSError):
             return None
-
-    OAUTH_CACHE_PATH = Path.home() / ".config" / "extrasuite" / "oauth_token.json"
-
-    def get_oauth_token(
-        self,
-        scopes: list[str],
-        reason: str = "",
-        file_hint: str = "",
-        force_refresh: bool = False,
-    ) -> OAuthToken:
-        """Get a delegated OAuth token for user-level API access.
-
-        Uses server-side domain-wide delegation to obtain a token
-        that acts as the user for the requested scopes.
-
-        Args:
-            scopes: List of scope aliases or full URLs (e.g., ["gmail.send"])
-            reason: Optional reason for requesting access (logged server-side)
-            file_hint: Optional Drive URL or file ID hint
-            force_refresh: If True, ignore cached token
-
-        Returns:
-            An OAuthToken with access_token, scopes, and expires_at.
-        """
-        resolved = self._resolve_scopes(scopes)
-
-        # v2 scope constraints: validate before hitting the cache so the error
-        # is deterministic and not dependent on whether a cached token exists.
-        if self._server_base_url:
-            if not scopes:
-                raise ValueError("scopes must not be empty")
-            if len(scopes) > 1:
-                raise ValueError(
-                    f"v2 session flow only supports a single scope per request, got {scopes}. "
-                    "Call get_oauth_token() once per scope."
-                )
-
-        if not force_refresh:
-            cached = self._load_cached_oauth_token(resolved)
-            if cached and cached.is_valid():
-                return cached
-
-        # v2: use session token for headless exchange
-        if self._server_base_url:
-            session = self._get_or_create_session_token()
-            scope = scopes[0].removeprefix(_GOOGLE_SCOPE_PREFIX)
-            result = self._exchange_session_for_access_token(
-                session, scope=scope, reason=reason, file_hint=file_hint
-            )
-            expires_at_dt = datetime.fromisoformat(
-                result["expires_at"].replace("Z", "+00:00")
-            )
-            # Cap DWD token cache at DWD_TOKEN_CACHE_SECONDS
-            expires_at = min(
-                expires_at_dt.timestamp(), time.time() + DWD_TOKEN_CACHE_SECONDS
-            )
-            token = OAuthToken(
-                access_token=result["access_token"],
-                scopes=resolved,
-                expires_at=expires_at,
-                service_account_email=result["service_account_email"],
-            )
-            self._save_oauth_token(token)
-            return token
-
-        # Legacy v1 flow
-        token = self._authenticate_delegation(resolved, reason)
-        self._save_oauth_token(token)
-        return token
-
-    @staticmethod
-    def _resolve_scopes(scopes: list[str]) -> list[str]:
-        """Resolve short scope names to full Google API scope URLs."""
-        return [
-            s if s.startswith("https://") else f"{_GOOGLE_SCOPE_PREFIX}{s}"
-            for s in scopes
-        ]
-
-    def _load_cached_oauth_token(self, scopes: list[str]) -> OAuthToken | None:
-        """Load cached OAuth token if it exists, is valid, and covers requested scopes."""
-        if not self.OAUTH_CACHE_PATH.exists():
-            return None
-
-        try:
-            data = json.loads(self.OAUTH_CACHE_PATH.read_text())
-            token = OAuthToken.from_dict(data)
-            if token.is_valid() and set(scopes).issubset(set(token.scopes)):
-                return token
-            return None
-        except (json.JSONDecodeError, KeyError):
-            return None
-
-    def _save_oauth_token(self, token: OAuthToken) -> None:
-        """Save OAuth token to cache file with secure permissions."""
-        self._write_secure_json(self.OAUTH_CACHE_PATH, token.to_dict())
 
     # =========================================================================
     # Session Token Methods (v2 Protocol)
@@ -715,13 +624,12 @@ class CredentialsManager:
         """
         if force:
             self._revoke_and_clear_session()
-            # Also clear short-lived token caches so the new session starts fully
-            # fresh: old access tokens tied to the previous session are no longer
-            # meaningful (they remain valid server-side for their remaining lifetime,
-            # but the local association is stale and could be confusing).
-            for path in (self._token_cache_path, self.OAUTH_CACHE_PATH):
-                with contextlib.suppress(Exception):
-                    path.unlink(missing_ok=True)
+            # Clear short-lived credential caches so the new session starts fully fresh.
+            cred_dir = self.CREDENTIALS_CACHE_DIR
+            if cred_dir.exists():
+                for path in cred_dir.glob("*.json"):
+                    with contextlib.suppress(Exception):
+                        path.unlink(missing_ok=True)
         return self._get_or_create_session_token(force=force)
 
     def logout(self) -> None:
@@ -729,13 +637,14 @@ class CredentialsManager:
 
         Clears:
         - Session token (~/.config/extrasuite/session.json)
-        - Access token cache (~/.config/extrasuite/token.json)
-        - OAuth token cache (~/.config/extrasuite/oauth_token.json)
+        - All cached credentials (~/.config/extrasuite/credentials/*.json)
         """
         self._revoke_and_clear_session()
-        for path in (self._token_cache_path, self.OAUTH_CACHE_PATH):
-            with contextlib.suppress(Exception):
-                path.unlink(missing_ok=True)
+        cred_dir = self.CREDENTIALS_CACHE_DIR
+        if cred_dir.exists():
+            for path in cred_dir.glob("*.json"):
+                with contextlib.suppress(Exception):
+                    path.unlink(missing_ok=True)
 
     def status(self) -> dict[str, Any]:
         """Return current authentication status.
@@ -743,13 +652,11 @@ class CredentialsManager:
         Returns:
             Dict with keys:
             - session: dict with {active, email, expires_at, days_remaining} or None
-            - access_token: dict with {cached, expires_at} or None
-            - oauth_token: dict with {cached, expires_at} or None
+            - credentials: dict mapping command_type → {cached, expires_at, kind}
         """
         result: dict[str, Any] = {
             "session": None,
-            "access_token": None,
-            "oauth_token": None,
+            "credentials": {},
         }
 
         session = self._load_session_token()
@@ -762,26 +669,20 @@ class CredentialsManager:
                 "days_remaining": remaining // 86400,
             }
 
-        cached_token = self._load_cached_token()
-        if cached_token and cached_token.is_valid():
-            result["access_token"] = {
-                "cached": True,
-                "expires_at": cached_token.expires_at,
-            }
-
-        if self.OAUTH_CACHE_PATH.exists():
-            try:
-                data = json.loads(self.OAUTH_CACHE_PATH.read_text())
-                oauth = OAuthToken.from_dict(data)
-                if oauth.is_valid():
-                    result["oauth_token"] = {
-                        "cached": True,
-                        "expires_at": oauth.expires_at,
+        cred_dir = self.CREDENTIALS_CACHE_DIR
+        if cred_dir.exists():
+            for cache_file in sorted(cred_dir.glob("*.json")):
+                cmd_type = cache_file.stem.replace("_", ".", 1)  # restore first dot
+                try:
+                    data = json.loads(cache_file.read_text())
+                    cred = Credential.from_dict(data)
+                    result["credentials"][cmd_type] = {
+                        "cached": cred.is_valid(),
+                        "expires_at": cred.expires_at,
+                        "kind": cred.kind,
                     }
-                else:
-                    result["oauth_token"] = {"cached": False, "expired": True}
-            except Exception:
-                result["oauth_token"] = {"cached": False, "invalid": True}
+                except Exception:
+                    result["credentials"][cmd_type] = {"cached": False, "invalid": True}
 
         return result
 
@@ -955,30 +856,24 @@ class CredentialsManager:
 
         return self._run_browser_flow(port, auth_url, "Open this URL to authenticate:")
 
-    def _exchange_session_for_access_token(
+    def _exchange_session_for_credential(
         self,
         session: SessionToken,
         *,
-        scope: str,
+        command: dict[str, Any],
         reason: str,
-        file_hint: str = "",
     ) -> dict[str, Any]:
-        """Exchange a session token for a short-lived access token (Phase 2).
+        """Exchange a session token for credential(s) via a typed Command (Phase 2).
 
-        Returns raw response dict with access_token, expires_at, token_type, service_account_email.
+        Returns the raw response dict:
+        ``{"credentials": [...], "command_type": "..."}``
         """
         if self._server_base_url is None:
             raise RuntimeError(
                 "server_base_url is not configured; cannot use v2 session flow"
             )
         access_token_url = f"{self._server_base_url}/api/auth/token"
-        body = json.dumps(
-            {
-                "scope": scope,
-                "reason": reason,
-                "file_hint": file_hint,
-            }
-        ).encode("utf-8")
+        body = json.dumps({"command": command, "reason": reason}).encode("utf-8")
 
         req = urllib.request.Request(
             access_token_url,
@@ -1008,81 +903,11 @@ class CredentialsManager:
             raise Exception(f"Failed to connect to server: {e}") from e
 
     # =========================================================================
-    # Legacy v1 Auth Methods
+    # Legacy v1 Auth Methods (SA only — delegation removed)
     # =========================================================================
 
-    def _authenticate_delegation(self, scopes: list[str], reason: str) -> OAuthToken:
-        """Run the delegation authentication flow.
-
-        Opens browser to server's /api/delegation/auth endpoint,
-        receives auth code, exchanges it for a delegated token.
-        """
-        if not self._auth_url:
-            raise ValueError("ExtraSuite server not configured")
-
-        # Use explicit delegation URLs if set, otherwise derive from auth URL base
-        if self._delegation_auth_url:
-            delegation_auth_url = self._delegation_auth_url
-        else:
-            base_url = self._auth_url.rsplit("/api/", 1)[0]
-            delegation_auth_url = f"{base_url}/api/delegation/auth"
-
-        if self._delegation_exchange_url:
-            delegation_exchange_url = self._delegation_exchange_url
-        else:
-            base_url = self._auth_url.rsplit("/api/", 1)[0]
-            delegation_exchange_url = f"{base_url}/api/delegation/exchange"
-
-        port = self._find_free_port()
-
-        # Send short scope names to server
-        scope_params = ",".join(s.removeprefix(_GOOGLE_SCOPE_PREFIX) for s in scopes)
-
-        auth_url = f"{delegation_auth_url}?port={port}&scopes={urllib.parse.quote(scope_params)}"
-        if reason:
-            auth_url += f"&reason={urllib.parse.quote(reason)}"
-
-        auth_code = self._run_browser_flow(
-            port, auth_url, f"Open this URL to authorize ({scope_params}):"
-        )
-        return self._exchange_delegation_code(auth_code, delegation_exchange_url)
-
-    def _exchange_delegation_code(
-        self, auth_code: str, exchange_url: str
-    ) -> OAuthToken:
-        """Exchange delegation auth code for a delegated token."""
-        body = json.dumps({"code": auth_code}).encode("utf-8")
-
-        req = urllib.request.Request(
-            exchange_url,
-            data=body,
-            headers={"Content-Type": "application/json"},
-            method="POST",
-        )
-
-        try:
-            with urllib.request.urlopen(
-                req, timeout=30, context=SSL_CONTEXT
-            ) as response:
-                result = json.loads(response.read().decode("utf-8"))
-        except urllib.error.HTTPError as e:
-            error_body = e.read().decode("utf-8") if e.fp else str(e)
-            raise Exception(f"Delegation token exchange failed: {error_body}") from e
-        except urllib.error.URLError as e:
-            raise Exception(f"Failed to connect to server: {e}") from e
-
-        # Parse expires_at from ISO 8601 format to Unix timestamp
-        expires_at_str = result["expires_at"]
-        expires_at_dt = datetime.fromisoformat(expires_at_str.replace("Z", "+00:00"))
-
-        return OAuthToken(
-            access_token=result["access_token"],
-            scopes=result.get("scopes", []),
-            expires_at=expires_at_dt.timestamp(),
-        )
-
-    def _authenticate_extrasuite(self) -> Token:
-        """Run the ExtraSuite authentication flow (legacy v1)."""
+    def _authenticate_extrasuite(self) -> Credential:
+        """Run the ExtraSuite authentication flow (legacy v1 SA path)."""
         port = self._find_free_port()
         auth_url = f"{self._auth_url}?port={port}"
         auth_code = self._run_browser_flow(
@@ -1090,8 +915,8 @@ class CredentialsManager:
         )
         return self._exchange_auth_code(auth_code)
 
-    def _exchange_auth_code(self, auth_code: str) -> Token:
-        """Exchange auth code for token via POST request to server."""
+    def _exchange_auth_code(self, auth_code: str) -> Credential:
+        """Exchange auth code for credential via POST request to server (legacy v1)."""
         if self._exchange_url is None:
             raise RuntimeError(
                 "exchange_url is not configured; cannot exchange auth code"
@@ -1116,14 +941,19 @@ class CredentialsManager:
         except urllib.error.URLError as e:
             raise Exception(f"Failed to connect to server: {e}") from e
 
-        # Parse expires_at from ISO 8601 format to Unix timestamp
         expires_at_str = result["expires_at"]
         expires_at_dt = datetime.fromisoformat(expires_at_str.replace("Z", "+00:00"))
+        expires_at = min(
+            expires_at_dt.timestamp(), time.time() + SA_TOKEN_CACHE_SECONDS
+        )
 
-        return Token(
-            access_token=result["token"],
-            service_account_email=result.get("service_account", ""),
-            expires_at=expires_at_dt.timestamp(),
+        return Credential(
+            provider="google",
+            kind="bearer_sa",
+            token=result["token"],
+            expires_at=expires_at,
+            scopes=[],
+            metadata={"service_account_email": result.get("service_account", "")},
         )
 
     @staticmethod

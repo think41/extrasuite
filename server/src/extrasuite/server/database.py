@@ -29,7 +29,7 @@ Collections structure:
   - device_ip, device_mac, device_hostname, device_os, device_platform
 
 - access_logs: Auto-generated doc ID
-  - email, session_hash_prefix, scope, credential_type, reason, ip, file_hint
+  - email, session_hash_prefix, command_type, command_context (nested dict), reason, ip
   - timestamp, expires_at (30-day TTL)
 
 Note: Sessions are handled via starlette's signed cookies (stateless).
@@ -582,13 +582,16 @@ class Database:
         self,
         email: str,
         session_hash_prefix: str,
-        scope: str,
-        credential_type: str,
+        command_type: str,
+        command_context: dict,
         reason: str,
         ip: str,
-        file_hint: str = "",
     ) -> None:
-        """Log an access token request for audit purposes.
+        """Log an access token request for audit and risk-modelling purposes.
+
+        ``command_context`` is the serialised command fields (excluding ``type``),
+        e.g. ``{"file_url": "...", "file_name": "..."}`` for a sheet.pull command
+        or ``{"subject": "...", "recipients": [...]}`` for a gmail.compose command.
 
         Stored in access_logs collection with 30-day TTL for auto-cleanup.
         """
@@ -601,11 +604,10 @@ class Database:
                 {
                     "email": email,
                     "session_hash_prefix": session_hash_prefix,
-                    "scope": scope,
-                    "credential_type": credential_type,
+                    "command_type": command_type,
+                    "command_context": command_context,
                     "reason": reason,
                     "ip": ip,
-                    "file_hint": file_hint,
                     "timestamp": now,
                     "expires_at": expires_at,
                 }

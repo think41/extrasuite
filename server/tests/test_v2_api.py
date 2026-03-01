@@ -209,41 +209,58 @@ class TestAccessToken:
             self._mock_tg = mock_tg
             yield
 
-    async def test_sa_scope_returns_access_token(
+    async def test_sa_command_returns_credentials(
         self, client: httpx.AsyncClient, fake_db: FakeDatabase
     ) -> None:
-        """Valid session + SA scope → 200 with access_token and service_account_email."""
+        """Valid session + SA command → 200 with credentials list."""
         raw = await _make_session(fake_db)
         fake_db.users[_USER_EMAIL] = _SA_EMAIL
 
         resp = await client.post(
             "/api/auth/token",
-            json={"scope": "sheet.pull", "reason": "pulling a sheet"},
+            json={
+                "command": {"type": "sheet.pull", "file_url": "https://docs.google.com/s/1"},
+                "reason": "pulling a sheet",
+            },
             headers=_bearer(raw),
         )
 
         assert resp.status_code == 200
         data = resp.json()
-        assert data["access_token"] == _FAKE_TOKEN
-        assert data["service_account_email"] == _SA_EMAIL
-        assert data["token_type"] == "Bearer"
-        assert "expires_at" in data
+        assert data["command_type"] == "sheet.pull"
+        assert len(data["credentials"]) == 1
+        cred = data["credentials"][0]
+        assert cred["token"] == _FAKE_TOKEN
+        assert cred["kind"] == "bearer_sa"
+        assert cred["metadata"]["service_account_email"] == _SA_EMAIL
         self._mock_tg.generate_token.assert_awaited_once_with(_USER_EMAIL)
 
-    async def test_dwd_scope_returns_access_token(
+    async def test_dwd_command_returns_credentials(
         self, client: httpx.AsyncClient, fake_db: FakeDatabase
     ) -> None:
-        """Valid session + DWD scope → 200; generate_delegated_token called."""
+        """Valid session + DWD command → 200; generate_delegated_token called."""
         raw = await _make_session(fake_db)
         fake_db.users[_USER_EMAIL] = _SA_EMAIL
 
         resp = await client.post(
             "/api/auth/token",
-            json={"scope": "gmail.compose", "reason": "sending an email"},
+            json={
+                "command": {
+                    "type": "gmail.compose",
+                    "subject": "Hello",
+                    "recipients": [],
+                    "cc": [],
+                },
+                "reason": "sending an email",
+            },
             headers=_bearer(raw),
         )
 
         assert resp.status_code == 200
+        data = resp.json()
+        assert data["command_type"] == "gmail.compose"
+        cred = data["credentials"][0]
+        assert cred["kind"] == "bearer_dwd"
         self._mock_tg.generate_delegated_token.assert_awaited_once()
         call_args = self._mock_tg.generate_delegated_token.call_args
         assert call_args.args[0] == _USER_EMAIL
@@ -257,28 +274,37 @@ class TestAccessToken:
 
         await client.post(
             "/api/auth/token",
-            json={"scope": "sheet.pull", "reason": "audit test", "file_hint": "sheet123"},
+            json={
+                "command": {
+                    "type": "sheet.pull",
+                    "file_url": "https://docs.google.com/s/1",
+                    "file_name": "Budget",
+                },
+                "reason": "audit test",
+            },
             headers=_bearer(raw),
         )
 
         assert len(fake_db.access_logs) == 1
         log = fake_db.access_logs[0]
         assert log["email"] == _USER_EMAIL
-        assert log["scope"] == "sheet.pull"
+        assert log["command_type"] == "sheet.pull"
+        assert log["command_context"]["file_url"] == "https://docs.google.com/s/1"
         assert log["reason"] == "audit test"
-        assert log["file_hint"] == "sheet123"
-        assert log["credential_type"] == "sa"
 
     async def test_missing_authorization_header_returns_401(
         self, client: httpx.AsyncClient
     ) -> None:
-        resp = await client.post("/api/auth/token", json={"scope": "sheet.pull", "reason": "test"})
+        resp = await client.post(
+            "/api/auth/token",
+            json={"command": {"type": "sheet.pull"}, "reason": "test"},
+        )
         assert resp.status_code == 401
 
     async def test_non_bearer_auth_header_returns_401(self, client: httpx.AsyncClient) -> None:
         resp = await client.post(
             "/api/auth/token",
-            json={"scope": "sheet.pull", "reason": "test"},
+            json={"command": {"type": "sheet.pull"}, "reason": "test"},
             headers={"Authorization": "Basic dXNlcjpwYXNz"},
         )
         assert resp.status_code == 401
@@ -286,7 +312,7 @@ class TestAccessToken:
     async def test_invalid_session_token_returns_401(self, client: httpx.AsyncClient) -> None:
         resp = await client.post(
             "/api/auth/token",
-            json={"scope": "sheet.pull", "reason": "test"},
+            json={"command": {"type": "sheet.pull"}, "reason": "test"},
             headers=_bearer("not-a-real-token"),
         )
         assert resp.status_code == 401
@@ -301,26 +327,28 @@ class TestAccessToken:
 
         resp = await client.post(
             "/api/auth/token",
-            json={"scope": "sheet.pull", "reason": "test"},
+            json={"command": {"type": "sheet.pull"}, "reason": "test"},
             headers=_bearer(raw),
         )
         assert resp.status_code == 401
 
-    async def test_unknown_scope_returns_400(
+    async def test_unknown_command_type_returns_400(
         self, client: httpx.AsyncClient, fake_db: FakeDatabase
     ) -> None:
         raw = await _make_session(fake_db)
 
+        # Pydantic discriminated union validation: unknown type → 422 (unprocessable entity)
         resp = await client.post(
             "/api/auth/token",
-            json={"scope": "not.a.real.scope", "reason": "test"},
+            json={"command": {"type": "not.a.real.command"}, "reason": "test"},
             headers=_bearer(raw),
         )
-        assert resp.status_code == 400
-        assert "Unknown scope" in resp.json()["detail"]
+        assert resp.status_code == 422
 
-    async def test_dwd_scope_blocked_by_allowlist_returns_403(self, fake_db: FakeDatabase) -> None:
-        """DWD scope not in DELEGATION_SCOPES allowlist → 403."""
+    async def test_dwd_command_blocked_by_allowlist_returns_403(
+        self, fake_db: FakeDatabase
+    ) -> None:
+        """DWD command whose required scope is not in DELEGATION_SCOPES allowlist → 403."""
         restricted_settings = FakeSettings(
             admin_emails=[_ADMIN_EMAIL],
             # Only allow calendar; gmail.compose is blocked
@@ -339,57 +367,66 @@ class TestAccessToken:
             ) as restricted_client:
                 resp = await restricted_client.post(
                     "/api/auth/token",
-                    json={"scope": "gmail.compose", "reason": "test"},
+                    json={
+                        "command": {
+                            "type": "gmail.compose",
+                            "subject": "",
+                            "recipients": [],
+                            "cc": [],
+                        },
+                        "reason": "test",
+                    },
                     headers=_bearer(raw),
                 )
         assert resp.status_code == 403
         assert "gmail.compose" in resp.json()["detail"]
 
-    async def test_all_sa_scopes_accepted(
+    async def test_all_sa_commands_accepted(
         self, client: httpx.AsyncClient, fake_db: FakeDatabase
     ) -> None:
-        """All documented SA scopes are accepted."""
-        sa_scopes = [
-            "sheet.pull",
-            "sheet.push",
-            "doc.pull",
-            "doc.push",
-            "slide.pull",
-            "slide.push",
-            "form.pull",
-            "form.push",
+        """All SA-backed command types are accepted."""
+        sa_commands = [
+            {"type": "sheet.pull", "file_url": "", "file_name": ""},
+            {"type": "sheet.push", "file_url": "", "file_name": ""},
+            {"type": "doc.pull", "file_url": "", "file_name": ""},
+            {"type": "doc.push", "file_url": "", "file_name": ""},
+            {"type": "slide.pull", "file_url": "", "file_name": ""},
+            {"type": "slide.push", "file_url": "", "file_name": ""},
+            {"type": "form.pull", "file_url": "", "file_name": ""},
+            {"type": "form.push", "file_url": "", "file_name": ""},
         ]
         raw = await _make_session(fake_db)
-        for scope in sa_scopes:
+        for cmd in sa_commands:
             resp = await client.post(
                 "/api/auth/token",
-                json={"scope": scope, "reason": "scope coverage test"},
+                json={"command": cmd, "reason": "coverage test"},
                 headers=_bearer(raw),
             )
-            assert resp.status_code == 200, f"SA scope {scope!r} unexpectedly rejected"
+            assert resp.status_code == 200, f"SA command {cmd['type']!r} unexpectedly rejected"
 
-    async def test_all_dwd_scopes_accepted(
+    async def test_all_dwd_commands_accepted(
         self, client: httpx.AsyncClient, fake_db: FakeDatabase
     ) -> None:
-        """All documented DWD scopes are accepted (no server-side allowlist configured)."""
-        dwd_scopes = [
-            "calendar",
-            "gmail.compose",
-            "gmail.readonly",
-            "script.projects",
-            "script.deployments",
-            "contacts.readonly",
-            "contacts.other.readonly",
-            "drive.file",
+        """All DWD-backed command types are accepted (no server-side allowlist configured)."""
+        dwd_commands = [
+            {"type": "gmail.compose", "subject": "", "recipients": [], "cc": []},
+            {"type": "gmail.list", "query": "", "max_results": 0},
+            {"type": "gmail.read", "thread_id": ""},
+            {"type": "calendar.view", "when": "today", "calendar_id": ""},
+            {"type": "calendar.list"},
+            {"type": "contacts.read", "query": ""},
+            {"type": "contacts.other", "query": ""},
+            {"type": "drive.file.create", "file_name": "", "file_type": ""},
+            {"type": "script.pull", "file_url": "", "file_name": ""},
         ]
         raw = await _make_session(fake_db)
-        for scope in dwd_scopes:
+        for cmd in dwd_commands:
             resp = await client.post(
                 "/api/auth/token",
-                json={"scope": scope, "reason": "scope coverage test"},
+                json={"command": cmd, "reason": "coverage test"},
                 headers=_bearer(raw),
             )
-            assert resp.status_code == 200, f"DWD scope {scope!r} unexpectedly rejected"
+            assert resp.status_code == 200, f"DWD command {cmd['type']!r} unexpectedly rejected"
 
 
 # ===========================================================================

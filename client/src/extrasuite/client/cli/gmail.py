@@ -6,7 +6,11 @@ import sys
 from pathlib import Path
 from typing import Any
 
-from extrasuite.client.cli._common import _get_oauth_token, _trusted_contacts_setup
+from extrasuite.client.cli._common import (
+    _get_credential,
+    _get_reason,
+    _trusted_contacts_setup,
+)
 from extrasuite.client.settings import _SETTINGS_PATH
 
 
@@ -69,14 +73,20 @@ def cmd_gmail_compose(args: Any) -> None:
         Path(args.file), cli_attachments=attach
     )
 
-    access_token = _get_oauth_token(
+    reason = _get_reason(args, default="Save email draft")
+    cred = _get_credential(
         args,
-        scopes=["gmail.compose"],
-        reason="Save email draft",
+        command={
+            "type": "gmail.compose",
+            "subject": subject,
+            "recipients": to,
+            "cc": cc or [],
+        },
+        reason=reason,
     )
 
     result = create_gmail_draft(
-        access_token,
+        cred.token,
         to=to,
         subject=subject,
         body=body,
@@ -97,14 +107,21 @@ def cmd_gmail_edit_draft(args: Any) -> None:
         Path(args.file), cli_attachments=attach
     )
 
-    access_token = _get_oauth_token(
+    reason = _get_reason(args, default="Edit email draft")
+    cred = _get_credential(
         args,
-        scopes=["gmail.compose"],
-        reason="Edit email draft",
+        command={
+            "type": "gmail.edit_draft",
+            "draft_id": args.draft_id,
+            "subject": subject,
+            "recipients": to,
+            "cc": cc or [],
+        },
+        reason=reason,
     )
 
     update_gmail_draft(
-        access_token,
+        cred.token,
         draft_id=args.draft_id,
         to=to,
         subject=subject,
@@ -142,13 +159,30 @@ def cmd_gmail_reply(args: Any) -> None:
                 sys.exit(1)
             attachments.append(p)
 
-    access_token = _get_oauth_token(
+    # gmail.reply maps to [gmail.readonly + gmail.compose] on the server —
+    # a single request returns a token valid for both scopes.
+    reason = _get_reason(args, default="Save reply draft")
+    cred = _get_credential(
         args,
-        scopes=["gmail.readonly", "gmail.compose"],
-        reason="Save reply draft",
+        command={
+            "type": "gmail.reply",
+            "thread_id": args.thread_id,
+            "thread_subject": "",
+            "recipients": [
+                addr.strip()
+                for addr in metadata.get("to", "").split(",")
+                if addr.strip()
+            ],
+            "cc": [
+                addr.strip()
+                for addr in metadata.get("cc", "").split(",")
+                if addr.strip()
+            ],
+        },
+        reason=reason,
     )
 
-    ctx = fetch_thread_reply_context(access_token, args.thread_id)
+    ctx = fetch_thread_reply_context(cred.token, args.thread_id)
 
     if "to" in metadata:
         to = [addr.strip() for addr in metadata["to"].split(",") if addr.strip()]
@@ -168,7 +202,7 @@ def cmd_gmail_reply(args: Any) -> None:
         cc = None
 
     result = create_gmail_reply_draft(
-        access_token,
+        cred.token,
         reply_context=ctx,
         to=to,
         body=body,
@@ -194,18 +228,24 @@ def cmd_gmail_list(args: Any) -> None:
         list_threads,
     )
 
-    access_token = _get_oauth_token(
+    query = getattr(args, "query", "") or ""
+    reason = _get_reason(args, default="List Gmail threads")
+    cred = _get_credential(
         args,
-        scopes=["gmail.readonly"],
-        reason="List Gmail threads",
+        command={
+            "type": "gmail.list",
+            "query": query,
+            "max_results": getattr(args, "max", 0),
+        },
+        reason=reason,
     )
 
-    trusted = _trusted_contacts_setup(access_token)
+    trusted = _trusted_contacts_setup(cred.token)
     settings_exists = _SETTINGS_PATH.exists()
 
     summaries, next_page_token = list_threads(
-        access_token,
-        query=getattr(args, "query", "") or "",
+        cred.token,
+        query=query,
         max_results=getattr(args, "max", 20),
         page_token=getattr(args, "page", "") or "",
         whitelist=trusted,
@@ -246,14 +286,15 @@ def cmd_gmail_read(args: Any) -> None:
         get_thread,
     )
 
-    access_token = _get_oauth_token(
+    reason = _get_reason(args, default="Read Gmail thread")
+    cred = _get_credential(
         args,
-        scopes=["gmail.readonly"],
-        reason="Read Gmail thread",
+        command={"type": "gmail.read", "thread_id": args.thread_id},
+        reason=reason,
     )
 
-    trusted = _trusted_contacts_setup(access_token)
-    detail = get_thread(access_token, args.thread_id, whitelist=trusted)
+    trusted = _trusted_contacts_setup(cred.token)
+    detail = get_thread(cred.token, args.thread_id, whitelist=trusted)
 
     if getattr(args, "json", False):
         output: dict[str, _Any] = {

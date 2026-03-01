@@ -11,7 +11,8 @@ from typing import Any
 from extrasuite.client.cli._common import (
     _cmd_create,
     _cmd_share,
-    _get_token,
+    _get_credential,
+    _get_reason,
     _parse_document_id,
 )
 
@@ -22,10 +23,15 @@ def cmd_doc_pull(args: Any) -> None:
 
     document_id = _parse_document_id(args.url)
     output_dir = Path(args.output_dir) if args.output_dir else Path()
-    access_token = _get_token(args, reason="Pulling Google Doc", scope="doc.pull")
+    reason = _get_reason(args, default="Pulling Google Doc")
+    cred = _get_credential(
+        args,
+        command={"type": "doc.pull", "file_url": args.url, "file_name": ""},
+        reason=reason,
+    )
 
     async def _run() -> None:
-        transport = GoogleDocsTransport(access_token)
+        transport = GoogleDocsTransport(cred.token)
         client = DocsClient(transport)
         try:
             await client.pull(
@@ -67,12 +73,15 @@ def cmd_doc_push(args: Any) -> None:
     """Push changes to a Google Doc."""
     from extradoc import DocsClient, GoogleDocsTransport
 
-    access_token = _get_token(
-        args, reason="Pushing changes to Google Doc", scope="doc.push"
+    reason = _get_reason(args, default="Pushing changes to Google Doc")
+    cred = _get_credential(
+        args,
+        command={"type": "doc.push", "file_url": "", "file_name": ""},
+        reason=reason,
     )
 
     async def _run() -> None:
-        transport = GoogleDocsTransport(access_token)
+        transport = GoogleDocsTransport(cred.token)
         client = DocsClient(transport)
         try:
             result = await client.push(args.folder, force=args.force)

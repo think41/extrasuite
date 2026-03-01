@@ -11,7 +11,8 @@ from typing import Any
 from extrasuite.client.cli._common import (
     _cmd_create,
     _cmd_share,
-    _get_token,
+    _get_credential,
+    _get_reason,
     _parse_form_id,
 )
 
@@ -22,10 +23,15 @@ def cmd_form_pull(args: Any) -> None:
 
     form_id = _parse_form_id(args.url)
     output_dir = Path(args.output_dir) if args.output_dir else Path()
-    access_token = _get_token(args, reason="Pulling Google Form", scope="form.pull")
+    reason = _get_reason(args, default="Pulling Google Form")
+    cred = _get_credential(
+        args,
+        command={"type": "form.pull", "file_url": args.url, "file_name": ""},
+        reason=reason,
+    )
 
     async def _run() -> None:
-        transport = GoogleFormsTransport(access_token)
+        transport = GoogleFormsTransport(cred.token)
         client = FormsClient(transport)
         try:
             await client.pull(
@@ -58,12 +64,15 @@ def cmd_form_push(args: Any) -> None:
     """Push changes to a Google Form."""
     from extraform import FormsClient, GoogleFormsTransport
 
-    access_token = _get_token(
-        args, reason="Pushing changes to Google Form", scope="form.push"
+    reason = _get_reason(args, default="Pushing changes to Google Form")
+    cred = _get_credential(
+        args,
+        command={"type": "form.push", "file_url": "", "file_name": ""},
+        reason=reason,
     )
 
     async def _run() -> None:
-        transport = GoogleFormsTransport(access_token)
+        transport = GoogleFormsTransport(cred.token)
         client = FormsClient(transport)
         try:
             result = await client.push(Path(args.folder), force=args.force)
