@@ -34,8 +34,8 @@ from pydantic import BaseModel, Field
 from slowapi import Limiter
 from slowapi.util import get_remote_address
 
-from extrasuite.server.command_registry import Credential, resolve_credentials
-from extrasuite.server.commands import _ALL_COMMAND_TYPES, Command
+from extrasuite.server.command_registry import _ALL_COMMAND_TYPES, Credential, resolve_credentials
+from extrasuite.server.commands import Command
 from extrasuite.server.config import Settings, get_settings
 from extrasuite.server.database import Database, get_database
 from extrasuite.server.token_generator import DelegationError, TokenGenerator
@@ -631,16 +631,25 @@ async def exchange_auth_code_for_session(
     client_ip = _get_client_ip(request)
     expires_at = datetime.now(UTC) + timedelta(days=settings.session_token_expiry_days)
 
-    await db.save_session_token(
-        token_hash=token_hash,
-        email=email,
-        device_ip=client_ip,
-        device_mac=body.device_mac,
-        device_hostname=body.device_hostname,
-        device_os=body.device_os,
-        device_platform=body.device_platform,
-        expiry_days=settings.session_token_expiry_days,
-    )
+    try:
+        await db.save_session_token(
+            token_hash=token_hash,
+            email=email,
+            device_ip=client_ip,
+            device_mac=body.device_mac,
+            device_hostname=body.device_hostname,
+            device_os=body.device_os,
+            device_platform=body.device_platform,
+            expiry_days=settings.session_token_expiry_days,
+        )
+    except Exception as e:
+        logger.exception(
+            "Failed to persist session token",
+            extra={"email": email, "error": str(e)},
+        )
+        raise HTTPException(
+            status_code=500, detail="Failed to provision session — please retry"
+        ) from e
 
     logger.info(
         "Session token issued", extra={"email": email, "device_hostname": body.device_hostname}

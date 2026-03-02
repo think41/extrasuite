@@ -68,7 +68,7 @@ class FakeDatabase:
         return self.oauth_states.pop(state, None)
 
     async def save_auth_code(
-        self, auth_code: str, service_account_email: str, user_email: str = ""
+        self, auth_code: str, service_account_email: str, user_email: str
     ) -> None:
         """Save auth code with associated service account and user email."""
         self.auth_codes[auth_code] = {

@@ -17,6 +17,7 @@ from unittest.mock import AsyncMock, MagicMock, patch
 import httpx
 import pytest
 
+from extrasuite.server.command_registry import _DWD_COMMAND_SCOPES, _SA_COMMAND_TYPES
 from extrasuite.server.token_generator import GeneratedToken
 from tests.conftest import make_test_app
 from tests.fakes import FakeDatabase, FakeSettings
@@ -384,49 +385,73 @@ class TestAccessToken:
     async def test_all_sa_commands_accepted(
         self, client: httpx.AsyncClient, fake_db: FakeDatabase
     ) -> None:
-        """All SA-backed command types are accepted."""
-        sa_commands = [
-            {"type": "sheet.pull", "file_url": "", "file_name": ""},
-            {"type": "sheet.push", "file_url": "", "file_name": ""},
-            {"type": "doc.pull", "file_url": "", "file_name": ""},
-            {"type": "doc.push", "file_url": "", "file_name": ""},
-            {"type": "slide.pull", "file_url": "", "file_name": ""},
-            {"type": "slide.push", "file_url": "", "file_name": ""},
-            {"type": "form.pull", "file_url": "", "file_name": ""},
-            {"type": "form.push", "file_url": "", "file_name": ""},
-        ]
+        """Every SA command type registered in command_registry is accepted.
+
+        Driven from _SA_COMMAND_TYPES so new commands automatically get coverage.
+        All Command fields have defaults, so {"type": cmd_type} is a valid payload.
+        """
         raw = await _make_session(fake_db)
-        for cmd in sa_commands:
+        for cmd_type in sorted(_SA_COMMAND_TYPES):
             resp = await client.post(
                 "/api/auth/token",
-                json={"command": cmd, "reason": "coverage test"},
+                json={"command": {"type": cmd_type}, "reason": "coverage test"},
                 headers=_bearer(raw),
             )
-            assert resp.status_code == 200, f"SA command {cmd['type']!r} unexpectedly rejected"
+            assert resp.status_code == 200, f"SA command {cmd_type!r} unexpectedly rejected"
 
     async def test_all_dwd_commands_accepted(
         self, client: httpx.AsyncClient, fake_db: FakeDatabase
     ) -> None:
-        """All DWD-backed command types are accepted (no server-side allowlist configured)."""
-        dwd_commands = [
-            {"type": "gmail.compose", "subject": "", "recipients": [], "cc": []},
-            {"type": "gmail.list", "query": "", "max_results": 0},
-            {"type": "gmail.read", "thread_id": ""},
-            {"type": "calendar.view", "when": "today", "calendar_id": ""},
-            {"type": "calendar.list"},
-            {"type": "contacts.read", "query": ""},
-            {"type": "contacts.other", "query": ""},
-            {"type": "drive.file.create", "file_name": "", "file_type": ""},
-            {"type": "script.pull", "file_url": "", "file_name": ""},
-        ]
+        """Every DWD command type registered in command_registry is accepted.
+
+        Driven from _DWD_COMMAND_SCOPES so new commands automatically get coverage.
+        All Command fields have defaults, so {"type": cmd_type} is a valid payload.
+        """
         raw = await _make_session(fake_db)
-        for cmd in dwd_commands:
+        for cmd_type in sorted(_DWD_COMMAND_SCOPES):
             resp = await client.post(
                 "/api/auth/token",
-                json={"command": cmd, "reason": "coverage test"},
+                json={"command": {"type": cmd_type}, "reason": "coverage test"},
                 headers=_bearer(raw),
             )
-            assert resp.status_code == 200, f"DWD command {cmd['type']!r} unexpectedly rejected"
+            assert resp.status_code == 200, f"DWD command {cmd_type!r} unexpectedly rejected"
+
+    async def test_multi_scope_dwd_command_passes_all_scopes(
+        self, client: httpx.AsyncClient, fake_db: FakeDatabase
+    ) -> None:
+        """gmail.reply requires two scopes; both must be passed to generate_delegated_token."""
+        raw = await _make_session(fake_db)
+        fake_db.users[_USER_EMAIL] = _SA_EMAIL
+
+        resp = await client.post(
+            "/api/auth/token",
+            json={
+                "command": {
+                    "type": "gmail.reply",
+                    "thread_id": "t123",
+                    "thread_subject": "Re: Hello",
+                    "recipients": ["alice@example.com"],
+                    "cc": [],
+                },
+                "reason": "replying to a thread",
+            },
+            headers=_bearer(raw),
+        )
+
+        assert resp.status_code == 200
+        cred = resp.json()["credentials"][0]
+        assert cred["kind"] == "bearer_dwd"
+        # Both scopes required for gmail.reply must be granted
+        assert set(cred["scopes"]) == {
+            "https://www.googleapis.com/auth/gmail.readonly",
+            "https://www.googleapis.com/auth/gmail.compose",
+        }
+        call_args = self._mock_tg.generate_delegated_token.call_args
+        passed_scopes = set(call_args.args[1])
+        assert passed_scopes == {
+            "https://www.googleapis.com/auth/gmail.readonly",
+            "https://www.googleapis.com/auth/gmail.compose",
+        }
 
 
 # ===========================================================================

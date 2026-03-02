@@ -1,10 +1,12 @@
 """Tests for v2 session-token auth protocol — database and scope-allowlist logic."""
 
 import hashlib
+import typing
 
 import pytest
 
-from extrasuite.server.command_registry import _DWD_COMMAND_SCOPES
+from extrasuite.server.command_registry import _ALL_COMMAND_TYPES, _DWD_COMMAND_SCOPES
+from extrasuite.server.commands import Command
 from tests.fakes import FakeDatabase, FakeSettings
 
 
@@ -180,9 +182,36 @@ class TestSAAuthCodeRetrieve:
     async def test_retrieve_auth_code_is_single_use(self, db: FakeDatabase) -> None:
         """Auth code is consumed on first retrieval."""
         await db.save_auth_code(
-            "one-time-code", service_account_email="sa@proj.iam.gserviceaccount.com"
+            "one-time-code",
+            service_account_email="sa@proj.iam.gserviceaccount.com",
+            user_email="user@example.com",
         )
         first = await db.retrieve_auth_code("one-time-code")
         assert first is not None
         second = await db.retrieve_auth_code("one-time-code")
         assert second is None
+
+
+class TestCommandRegistrySync:
+    """Ensures the Command union and command_registry stay in sync."""
+
+    def test_command_union_matches_registry(self) -> None:
+        """Every type literal in the Command union must appear in command_registry,
+        and every registry entry must have a corresponding Command class.
+
+        This test prevents the common mistake of adding a new Command class to
+        commands.py but forgetting to register it in command_registry.py (or
+        vice versa).
+        """
+        # Extract the type literals from the discriminated union via Pydantic metadata.
+        union_args = typing.get_args(typing.get_args(Command)[0])
+        union_types: set[str] = set()
+        for cls in union_args:
+            (literal_type,) = typing.get_args(cls.model_fields["type"].annotation)
+            union_types.add(literal_type)
+
+        assert union_types == _ALL_COMMAND_TYPES, (
+            f"Mismatch between Command union and command_registry._ALL_COMMAND_TYPES.\n"
+            f"  In union but not registry: {union_types - _ALL_COMMAND_TYPES}\n"
+            f"  In registry but not union: {_ALL_COMMAND_TYPES - union_types}"
+        )
