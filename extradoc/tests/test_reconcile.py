@@ -654,6 +654,38 @@ class TestReconcileTableColumns:
         ok, diffs = verify(base, result, desired)
         assert ok, f"Diffs: {diffs}"
 
+    def test_delete_column_with_content_changes(self):
+        """Delete a column from a multi-row table while also changing cell content.
+
+        Regression test: deleteTableColumn must not run before cell content updates
+        in matched rows, because deleteTableColumn shifts the original startIndex
+        values used by _diff_single_cell_at.
+        """
+        base_table = _make_table(
+            [
+                ["Project", "Description", "Tech", "Role"],
+                ["P1", "Old desc", "Python", "Engineer"],
+                ["P2", "Old desc2", "Java", "Lead"],
+                ["P3", "Old desc3", "Go", "Architect"],
+                ["P4", "Old desc4", "Rust", "Staff"],
+            ]
+        )
+        desired_table = _make_table(
+            [
+                ["Project", "Description", "Tech"],
+                ["P1", "New desc", "Python, GCP"],
+                ["P2", "New desc2", "Java, K8s"],
+                ["P3", "New desc3", "Go, gRPC"],
+                ["P4", "New desc4", "Rust, WASM"],
+            ]
+        )
+        base = _make_doc_with_content("Resume", base_table)
+        desired = _make_doc_with_content("Resume", desired_table)
+        result = reconcile(base, desired)
+        assert len(result) == 1 and result[0].requests is not None
+        ok, diffs = verify(base, result, desired)
+        assert ok, f"Diffs: {diffs}"
+
 
 class TestReconcileTableMixed:
     def test_table_and_paragraph_changes(self):

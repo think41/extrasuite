@@ -1812,7 +1812,7 @@ def _diff_table_same_shape(
             continue
         entry_idx = row_table.find(f"base_{r}")
         rs = row_table.row_start(entry_idx)
-        cell_reqs, new_length = _diff_row_cells(
+        content_reqs, add_col_reqs, new_length = _diff_row_cells(
             base_rows[r],
             desired_rows[r],
             rs,
@@ -1821,7 +1821,10 @@ def _diff_table_same_shape(
             tab_id,
             desired_lists,
         )
-        requests.extend(cell_reqs)
+        # Same-shape tables have no structural column ops, so content and
+        # add-column requests can be combined in the normal right-to-left order.
+        requests.extend(content_reqs)
+        requests.extend(add_col_reqs)
         row_table.entries[entry_idx].length = new_length
 
     return requests
@@ -1857,9 +1860,101 @@ def _diff_table_structural(
     ]
     col_alignment = align_sequences(base_col_fps, desired_col_fps)
 
-    requests: list[dict[str, Any]] = []
+    col_alignment_list = [(e.op, e.base_idx, e.desired_idx) for e in col_alignment]
 
-    # 2. Column deletes (right to left, pristine indices)
+    # Initialize RowTable with post-column-ops base row lengths.
+    # _compute_adjusted_row_length skips DELETED cols and adds 1+1 for ADDED cols,
+    # so row_table already reflects the state after column structural ops.
+    row_entries: list[_RowEntry] = []
+    for r_idx, row in enumerate(base_rows):
+        adj_len = _compute_adjusted_row_length(row, col_alignment_list)
+        row_entries.append(_RowEntry(id=f"base_{r_idx}", length=adj_len))
+    row_table = _RowTable(row_entries, table_start)
+
+    # Number of columns in desired table (post-ops column count)
+    desired_cols_count = desired_col_count
+
+    # -----------------------------------------------------------------------
+    # Phase 1: Collect MATCHED row content updates (must run BEFORE column ops)
+    #
+    # _diff_single_cell_at uses original base startIndex/endIndex values, which
+    # are only valid before deleteTableColumn shifts positions.  Emit these first.
+    # Process bottom-to-top (highest base_idx first) so that editing higher-
+    # position rows doesn't shift the original positions used by lower rows.
+    # Also update row_table with new_row_length (desired sizes) so that
+    # Phase 5 row_start() calls reflect the final row widths.
+    # -----------------------------------------------------------------------
+    matched_content_reqs: list[dict[str, Any]] = []
+    matched_desired_idxs: dict[int, int] = {}  # base_row_idx -> desired_row_idx
+    matched_final_lengths: dict[int, int] = {}  # base_row_idx -> final row length
+
+    matched_entries_sorted = sorted(
+        [e for e in row_alignment if e.op == AlignmentOp.MATCHED],
+        key=lambda e: e.base_idx if e.base_idx is not None else 0,
+        reverse=True,  # bottom-to-top: highest base_idx first
+    )
+    for entry in matched_entries_sorted:
+        assert entry.base_idx is not None and entry.desired_idx is not None
+        entry_idx = row_table.find(f"base_{entry.base_idx}")
+        rs = row_table.row_start(entry_idx)
+        content_reqs, _add_col_reqs, new_length = _diff_row_cells(
+            base_rows[entry.base_idx],
+            desired_rows[entry.desired_idx],
+            rs,
+            col_alignment_list,
+            segment_id,
+            tab_id,
+            desired_lists,
+        )
+        matched_content_reqs.extend(content_reqs)
+        matched_desired_idxs[entry.base_idx] = entry.desired_idx
+        matched_final_lengths[entry.base_idx] = new_length
+
+        # Update row_table with INTERMEDIATE length: MATCHED cols at desired sizes
+        # (content_reqs have run) but ADDED cols still empty (1 cell_marker + 1 \n = 2)
+        # since add_col populate (Phase 5) hasn't run yet.
+        # Phase 5 uses these lengths to compute row_start for add_col cell_start.
+        desired_cells_for_row = desired_rows[entry.desired_idx].table_cells or []
+        intermediate_length = 1  # row marker
+        for op, _b_idx, d_idx in col_alignment_list:
+            if op == AlignmentOp.DELETED:
+                continue
+            elif op == AlignmentOp.MATCHED:
+                if d_idx is not None and d_idx < len(desired_cells_for_row):
+                    intermediate_length += 1 + utf16_len(
+                        _cell_text(desired_cells_for_row[d_idx])
+                    )
+                else:
+                    intermediate_length += 2
+            elif op == AlignmentOp.ADDED:
+                intermediate_length += (
+                    2  # cell_marker + \n (empty after insertTableColumn)
+                )
+        row_table.entries[entry_idx].length = intermediate_length
+
+    # -----------------------------------------------------------------------
+    # Phase 2: Delete rows (bottom-to-top by base index)
+    # -----------------------------------------------------------------------
+    delete_row_reqs: list[dict[str, Any]] = []
+    deleted_base_rows = sorted(
+        [
+            e.base_idx
+            for e in row_alignment
+            if e.op == AlignmentOp.DELETED and e.base_idx is not None
+        ],
+        reverse=True,
+    )
+    for base_idx in deleted_base_rows:
+        entry_idx = row_table.find(f"base_{base_idx}")
+        delete_row_reqs.append(
+            _make_delete_table_row(table_start, entry_idx, segment_id, tab_id)
+        )
+        row_table.remove(entry_idx)
+
+    # -----------------------------------------------------------------------
+    # Phase 3: Column deletes (right to left, pristine indices)
+    # -----------------------------------------------------------------------
+    col_delete_reqs: list[dict[str, Any]] = []
     deleted_cols = sorted(
         [
             e.base_idx
@@ -1869,19 +1964,18 @@ def _diff_table_structural(
         reverse=True,
     )
     for col_idx in deleted_cols:
-        requests.append(
+        col_delete_reqs.append(
             _make_delete_table_column(table_start, col_idx, segment_id, tab_id)
         )
 
-    # 3. Column inserts (right to left, post-delete indices)
-    # Build the list of columns after deletes, tracking base indices
-    # For ADDED columns, find the nearest MATCHED column to the left as reference
+    # -----------------------------------------------------------------------
+    # Phase 4: Column inserts (right to left, post-delete indices)
+    # -----------------------------------------------------------------------
+    col_insert_reqs: list[dict[str, Any]] = []
     added_cols_with_refs: list[
         tuple[int, int, bool]
     ] = []  # (desired_col_idx, ref_current_idx, insert_right)
 
-    # Build post-delete column mapping: for each MATCHED column,
-    # compute its current index after deletes
     deleted_set = set(deleted_cols)
     for entry in col_alignment:
         if entry.op == AlignmentOp.ADDED:
@@ -1896,13 +1990,11 @@ def _diff_table_structural(
                 ):
                     ref_base_idx = prev.base_idx
             if ref_base_idx is not None:
-                # Compute current index: base_idx minus count of deleted cols below it
                 ref_current = ref_base_idx - sum(
                     1 for d in deleted_set if d < ref_base_idx
                 )
                 added_cols_with_refs.append((entry.desired_idx, ref_current, True))
             else:
-                # No matched column to the left — find first MATCHED column
                 for nxt in col_alignment:
                     if nxt.op == AlignmentOp.MATCHED and nxt.base_idx is not None:
                         ref_current = nxt.base_idx - sum(
@@ -1913,58 +2005,32 @@ def _diff_table_structural(
                         )
                         break
 
-    # Sort by desired_col_idx descending (right to left)
     added_cols_with_refs.sort(key=lambda x: x[0], reverse=True)
     for _desired_col_idx, ref_current_idx, insert_right in added_cols_with_refs:
-        requests.append(
+        col_insert_reqs.append(
             _make_insert_table_column(
                 table_start, ref_current_idx, insert_right, segment_id, tab_id
             )
         )
 
-    # 4. Initialize RowTable with post-column-ops base row lengths
-    col_alignment_list = [(e.op, e.base_idx, e.desired_idx) for e in col_alignment]
-    row_entries: list[_RowEntry] = []
-    for r_idx, row in enumerate(base_rows):
-        adj_len = _compute_adjusted_row_length(row, col_alignment_list)
-        row_entries.append(_RowEntry(id=f"base_{r_idx}", length=adj_len))
-
-    row_table = _RowTable(row_entries, table_start)
-
-    # 5. Build sorted operation list for the row pass
-    ops: list[tuple[int, AlignmentOp, int | None, int | None]] = []
-    for entry in row_alignment:
-        if entry.op == AlignmentOp.DELETED:
-            position = entry.base_idx if entry.base_idx is not None else 0
-        else:
-            position = entry.desired_idx if entry.desired_idx is not None else 0
-        ops.append((position, entry.op, entry.base_idx, entry.desired_idx))
-
-    # Sort descending by position; at same position, DELETED before ADDED/MATCHED
-    ops.sort(
-        key=lambda x: (x[0], 0 if x[1] == AlignmentOp.DELETED else 1), reverse=True
-    )
-
-    # Number of columns in desired table (post-ops column count)
-    desired_cols_count = desired_col_count
-
-    # 6. Process bottom-to-top
-    for _position, op, base_idx, desired_idx in ops:
-        if op == AlignmentOp.DELETED:
-            assert base_idx is not None
-            entry_idx = row_table.find(f"base_{base_idx}")
-            requests.append(
-                _make_delete_table_row(table_start, entry_idx, segment_id, tab_id)
-            )
-            row_table.remove(entry_idx)
-
-        elif op == AlignmentOp.MATCHED:
-            assert base_idx is not None
-            assert desired_idx is not None
-            entry_idx = row_table.find(f"base_{base_idx}")
+    # -----------------------------------------------------------------------
+    # Phase 5: Populate ADDED columns in MATCHED rows
+    #
+    # Must run after insertTableColumn (Phase 4) so the cells exist.
+    # row_table now has final lengths (from Phase 1) with deleted rows removed
+    # (from Phase 2), so row_start() is correct for the post-structural state.
+    # _diff_row_cells uses desired cell sizes in content_lens, so cell_start for
+    # ADDED cols is correct after content_reqs have already been applied.
+    # -----------------------------------------------------------------------
+    add_col_populate_reqs: list[dict[str, Any]] = []
+    for entry in matched_entries_sorted:  # bottom-to-top for position stability
+        assert entry.base_idx is not None
+        desired_idx = matched_desired_idxs[entry.base_idx]
+        entry_idx = row_table.find(f"base_{entry.base_idx}")
+        if entry_idx >= 0:
             rs = row_table.row_start(entry_idx)
-            cell_reqs, new_length = _diff_row_cells(
-                base_rows[base_idx],
+            _content_reqs, add_col_reqs, _new_len = _diff_row_cells(
+                base_rows[entry.base_idx],
                 desired_rows[desired_idx],
                 rs,
                 col_alignment_list,
@@ -1972,59 +2038,88 @@ def _diff_table_structural(
                 tab_id,
                 desired_lists,
             )
-            requests.extend(cell_reqs)
-            row_table.entries[entry_idx].length = new_length
+            add_col_populate_reqs.extend(add_col_reqs)
 
-        elif op == AlignmentOp.ADDED:
-            assert desired_idx is not None
-            # Find reference: nearest MATCHED row above in desired table
-            ref_entry_idx: int | None = None
-            for prev in row_alignment:
-                if (
-                    prev.op == AlignmentOp.MATCHED
-                    and prev.desired_idx is not None
-                    and prev.desired_idx < desired_idx
-                ):
-                    assert prev.base_idx is not None
-                    found = row_table.find(f"base_{prev.base_idx}")
-                    if found >= 0:
-                        ref_entry_idx = found
+    # Advance row_table to FINAL lengths before Phase 6.
+    # After Phase 5 runs (add_col populate), ADDED cols in MATCHED rows have
+    # their desired content — rows are now at their final sizes.  Phase 6 uses
+    # row_start() for ADDED row populate, so it needs final lengths.
+    for base_idx, final_len in matched_final_lengths.items():
+        entry_idx = row_table.find(f"base_{base_idx}")
+        if entry_idx >= 0:
+            row_table.entries[entry_idx].length = final_len
 
-            if ref_entry_idx is not None:
-                requests.append(
-                    _make_insert_table_row(
-                        table_start, ref_entry_idx, True, segment_id, tab_id
-                    )
+    # -----------------------------------------------------------------------
+    # Phase 6: Insert ADDED rows + populate (bottom-to-top by desired index)
+    # -----------------------------------------------------------------------
+    add_row_reqs: list[dict[str, Any]] = []
+    added_row_entries = sorted(
+        [e for e in row_alignment if e.op == AlignmentOp.ADDED],
+        key=lambda e: e.desired_idx if e.desired_idx is not None else 0,
+        reverse=True,
+    )
+    for entry in added_row_entries:
+        assert entry.desired_idx is not None
+        added_desired_idx: int = entry.desired_idx
+        # Find reference: nearest MATCHED row above in desired table
+        ref_entry_idx: int | None = None
+        for prev in row_alignment:
+            if (
+                prev.op == AlignmentOp.MATCHED
+                and prev.desired_idx is not None
+                and prev.desired_idx < added_desired_idx
+            ):
+                assert prev.base_idx is not None
+                found = row_table.find(f"base_{prev.base_idx}")
+                if found >= 0:
+                    ref_entry_idx = found
+
+        if ref_entry_idx is not None:
+            add_row_reqs.append(
+                _make_insert_table_row(
+                    table_start, ref_entry_idx, True, segment_id, tab_id
                 )
-                # Empty row length: 1 (row marker) + desired_cols * (1 cell marker + 1 \n)
-                new_row_len = 1 + desired_cols_count * 2
-                new_entry = _RowEntry(f"new_{desired_idx}", new_row_len)
-                row_table.insert_after(ref_entry_idx, new_entry)
-                new_entry_idx = ref_entry_idx + 1
-            else:
-                # No matched row above — insert before first row
-                requests.append(
-                    _make_insert_table_row(table_start, 0, False, segment_id, tab_id)
-                )
-                new_row_len = 1 + desired_cols_count * 2
-                new_entry = _RowEntry(f"new_{desired_idx}", new_row_len)
-                row_table.insert_before(0, new_entry)
-                new_entry_idx = 0
-
-            # Populate cells right-to-left
-            rs = row_table.row_start(new_entry_idx)
-            pop_reqs, new_length = _populate_new_row(
-                desired_rows[desired_idx],
-                rs,
-                desired_cols_count,
-                segment_id,
-                tab_id,
-                desired_lists,
             )
-            requests.extend(pop_reqs)
-            row_table.entries[new_entry_idx].length = new_length
+            new_row_len = 1 + desired_cols_count * 2
+            new_entry = _RowEntry(f"new_{added_desired_idx}", new_row_len)
+            row_table.insert_after(ref_entry_idx, new_entry)
+            new_entry_idx = ref_entry_idx + 1
+        else:
+            add_row_reqs.append(
+                _make_insert_table_row(table_start, 0, False, segment_id, tab_id)
+            )
+            new_row_len = 1 + desired_cols_count * 2
+            new_entry = _RowEntry(f"new_{added_desired_idx}", new_row_len)
+            row_table.insert_before(0, new_entry)
+            new_entry_idx = 0
 
-    return requests
+        rs = row_table.row_start(new_entry_idx)
+        pop_reqs, new_length = _populate_new_row(
+            desired_rows[added_desired_idx],
+            rs,
+            desired_cols_count,
+            segment_id,
+            tab_id,
+            desired_lists,
+        )
+        add_row_reqs.extend(pop_reqs)
+        row_table.entries[new_entry_idx].length = new_length
+
+    # Emit in dependency order:
+    # 1. Content updates first (use original positions, before any structural shifts)
+    # 2. Row deletes (structural, use row indices)
+    # 3. Column deletes (structural, use col indices; positions now irrelevant)
+    # 4. Column inserts (structural)
+    # 5. Populate added columns in matched rows (use computed positions, after inserts)
+    # 6. Row inserts + populate (use row indices, then computed positions)
+    return (
+        matched_content_reqs
+        + delete_row_reqs
+        + col_delete_reqs
+        + col_insert_reqs
+        + add_col_populate_reqs
+        + add_row_reqs
+    )
 
 
 # ---------------------------------------------------------------------------
@@ -2040,10 +2135,15 @@ def _diff_row_cells(
     segment_id: SegmentID,
     tab_id: TabID,
     desired_lists: dict[str, List] | None = None,
-) -> tuple[list[dict[str, Any]], int]:
+) -> tuple[list[dict[str, Any]], list[dict[str, Any]], int]:
     """Diff cells right-to-left for a MATCHED row.
 
-    Returns (requests, new_row_length).
+    Returns (content_reqs, add_col_reqs, new_row_length).
+
+    content_reqs: edits for MATCHED columns — use original base positions, must
+      run BEFORE any column structural ops that shift positions.
+    add_col_reqs: populate requests for ADDED columns — use computed cell_start
+      based on desired cell sizes, must run AFTER insertTableColumn.
     """
     base_cells = base_row.table_cells or []
     desired_cells = desired_row.table_cells or []
@@ -2055,23 +2155,26 @@ def _diff_row_cells(
         if op != AlignmentOp.DELETED
     ]
 
-    # Compute content lengths for each column (used for index computation)
-    # For LEFT-side columns not yet processed: use current (base or empty) lengths
+    # Use DESIRED cell sizes for content_lens so that cell_start for ADDED cols
+    # is correct after content_reqs have already been applied (changing MATCHED
+    # cell sizes).  cell_start for MATCHED cols is ignored by _diff_single_cell_at
+    # anyway, so this change is harmless for content_reqs.
     content_lens: list[int] = []
-    for op, base_col_idx, _desired_col_idx in desired_cols:
+    for op, _base_col_idx, desired_col_idx in desired_cols:
         if op == AlignmentOp.MATCHED:
-            assert base_col_idx is not None
-            if base_col_idx < len(base_cells):
-                text = _cell_text(base_cells[base_col_idx])
+            assert desired_col_idx is not None
+            if desired_col_idx < len(desired_cells):
+                text = _cell_text(desired_cells[desired_col_idx])
                 content_lens.append(utf16_len(text))
             else:
                 content_lens.append(1)
         elif op == AlignmentOp.ADDED:
-            content_lens.append(1)  # \n (empty cell)
+            content_lens.append(1)  # \n (empty cell after insertTableColumn)
         else:
             content_lens.append(1)
 
-    requests: list[dict[str, Any]] = []
+    content_reqs: list[dict[str, Any]] = []
+    add_col_reqs: list[dict[str, Any]] = []
     new_row_length = 1  # row marker
 
     # Process right-to-left
@@ -2101,7 +2204,7 @@ def _diff_row_cells(
                     tab_id,
                     desired_lists,
                 )
-                requests.extend(cell_reqs)
+                content_reqs.extend(cell_reqs)
         elif col_op == AlignmentOp.ADDED:
             assert desired_col_idx is not None
             if desired_col_idx < len(desired_cells):
@@ -2109,7 +2212,7 @@ def _diff_row_cells(
                 pop_reqs = _populate_cell_at(
                     desired_cell, cell_start, segment_id, tab_id, desired_lists
                 )
-                requests.extend(pop_reqs)
+                add_col_reqs.extend(pop_reqs)
 
     # Compute new row length from desired cells
     for c in range(len(desired_cols)):
@@ -2120,7 +2223,7 @@ def _diff_row_cells(
         else:
             new_row_length += 2  # cell marker + \n
 
-    return requests, new_row_length
+    return content_reqs, add_col_reqs, new_row_length
 
 
 def _populate_new_row(
