@@ -1,0 +1,186 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<tab id="t.tables" title="Tables" index="2">
+  <body>
+    <sectionbreak sectionType="CONTINUOUS" contentDirection="LEFT_TO_RIGHT" columnSeparatorStyle="NONE" />
+    <h1>Tables</h1>
+    <p>Tables are a first-class feature in extradoc. Every <b>&lt;td&gt;</b> must contain at least one <b>&lt;p&gt;</b>, even if empty. Cells support all the same inline formatting as regular paragraphs.</p>
+    <p></p>
+    <h2>Module Comparison</h2>
+    <p>ExtraSuite supports multiple Google Workspace file types. Here is a comparison of the available modules:</p>
+    <table>
+      <tr>
+        <td><p><b>Module</b></p></td>
+        <td><p><b>File Type</b></p></td>
+        <td><p><b>Local Format</b></p></td>
+        <td><p><b>Auth Required</b></p></td>
+      </tr>
+      <tr>
+        <td><p>extradoc</p></td>
+        <td><p>Google Docs</p></td>
+        <td><p>XML</p></td>
+        <td><p>Service Account</p></td>
+      </tr>
+      <tr>
+        <td><p>extrasheet</p></td>
+        <td><p>Google Sheets</p></td>
+        <td><p>TSV files</p></td>
+        <td><p>Service Account</p></td>
+      </tr>
+      <tr>
+        <td><p>extraslide</p></td>
+        <td><p>Google Slides</p></td>
+        <td><p>SML / XML</p></td>
+        <td><p>Service Account</p></td>
+      </tr>
+      <tr>
+        <td><p>extraform</p></td>
+        <td><p>Google Forms</p></td>
+        <td><p>XML</p></td>
+        <td><p>Service Account</p></td>
+      </tr>
+      <tr>
+        <td><p>Gmail</p></td>
+        <td><p>Email Drafts</p></td>
+        <td><p>Markdown</p></td>
+        <td><p>OAuth Delegation</p></td>
+      </tr>
+      <tr>
+        <td><p>Calendar</p></td>
+        <td><p>Events</p></td>
+        <td><p>YAML</p></td>
+        <td><p>OAuth Delegation</p></td>
+      </tr>
+    </table>
+    <p></p>
+    <h2>The extradoc Command Reference</h2>
+    <p>All commands follow a consistent pattern. The table below shows each command with its purpose and whether it makes network calls.</p>
+    <table>
+      <tr>
+        <td><p><b>Command</b></p></td>
+        <td><p><b>Description</b></p></td>
+        <td><p><b>Network?</b></p></td>
+        <td><p><b>Modifies Doc?</b></p></td>
+      </tr>
+      <tr>
+        <td><p><b>pull</b></p></td>
+        <td><p>Download and deserialize the Google Doc to a local folder</p></td>
+        <td><p>Yes</p></td>
+        <td><p>No</p></td>
+      </tr>
+      <tr>
+        <td><p><b>diff</b></p></td>
+        <td><p>Compute the batchUpdate JSON from local edits — dry run only</p></td>
+        <td><p>No</p></td>
+        <td><p>No</p></td>
+      </tr>
+      <tr>
+        <td><p><b>push</b></p></td>
+        <td><p>Apply local edits to the live Google Doc via the API</p></td>
+        <td><p>Yes</p></td>
+        <td><p><b>Yes</b></p></td>
+      </tr>
+      <tr>
+        <td><p><b>create</b></p></td>
+        <td><p>Create a new empty Google Doc and share it with the service account</p></td>
+        <td><p>Yes</p></td>
+        <td><p>N/A</p></td>
+      </tr>
+    </table>
+    <p></p>
+    <h2>Supported Block Elements in document.xml</h2>
+    <p>The table below summarizes every block-level element you can use when editing a document.</p>
+    <table>
+      <tr>
+        <td><p><b>Tag</b></p></td>
+        <td><p><b>Description</b></p></td>
+        <td><p><b>Key Attributes</b></p></td>
+      </tr>
+      <tr>
+        <td><p><b>&lt;p&gt;</b></p></td>
+        <td><p>Standard paragraph</p></td>
+        <td><p>class, align, lineSpacing, spaceAbove, spaceBelow</p></td>
+      </tr>
+      <tr>
+        <td><p><b>&lt;h1&gt; – &lt;h6&gt;</b></p></td>
+        <td><p>Heading levels 1 through 6</p></td>
+        <td><p>—</p></td>
+      </tr>
+      <tr>
+        <td><p><b>&lt;title&gt;</b></p></td>
+        <td><p>Document title style</p></td>
+        <td><p>—</p></td>
+      </tr>
+      <tr>
+        <td><p><b>&lt;subtitle&gt;</b></p></td>
+        <td><p>Document subtitle style</p></td>
+        <td><p>—</p></td>
+      </tr>
+      <tr>
+        <td><p><b>&lt;li&gt;</b></p></td>
+        <td><p>List item</p></td>
+        <td><p>type (bullet/decimal/alpha/roman/checkbox), level (0–8)</p></td>
+      </tr>
+      <tr>
+        <td><p><b>&lt;table&gt;</b></p></td>
+        <td><p>Table container</p></td>
+        <td><p>—</p></td>
+      </tr>
+      <tr>
+        <td><p><b>&lt;tr&gt;</b></p></td>
+        <td><p>Table row</p></td>
+        <td><p>—</p></td>
+      </tr>
+      <tr>
+        <td><p><b>&lt;td&gt;</b></p></td>
+        <td><p>Table cell — must contain at least one &lt;p&gt;</p></td>
+        <td><p>—</p></td>
+      </tr>
+      <tr>
+        <td><p><b>&lt;pagebreak/&gt;</b></p></td>
+        <td><p>Page break — can be added or removed</p></td>
+        <td><p>—</p></td>
+      </tr>
+      <tr>
+        <td><p><b>&lt;footnote&gt;</b></p></td>
+        <td><p>Footnote — inline at the marker position</p></td>
+        <td><p>—</p></td>
+      </tr>
+    </table>
+    <p></p>
+    <h2>Tables with Rich Cell Content</h2>
+    <p>Cells can contain lists and formatted text, not just plain paragraphs.</p>
+    <table>
+      <tr>
+        <td><p><b>Feature</b></p></td>
+        <td><p><b>Supported?</b></p></td>
+        <td><p><b>Notes</b></p></td>
+      </tr>
+      <tr>
+        <td><p>Bold and italic in cells</p></td>
+        <td><p><b>Yes</b></p></td>
+        <td><p>All inline tags work inside &lt;td&gt;</p></td>
+      </tr>
+      <tr>
+        <td><p>Multiple paragraphs per cell</p></td>
+        <td><p><b>Yes</b></p></td>
+        <td><p>Add multiple &lt;p&gt; tags inside one &lt;td&gt;</p></td>
+      </tr>
+      <tr>
+        <td><p>Lists inside cells</p></td>
+        <td><p><i>Limited</i></p></td>
+        <td><p>Supported by the API; use with care</p></td>
+      </tr>
+      <tr>
+        <td><p>Nested tables</p></td>
+        <td><p>No</p></td>
+        <td><p>Google Docs does not support nested tables</p></td>
+      </tr>
+      <tr>
+        <td><p>Images in cells</p></td>
+        <td><p>Read-only</p></td>
+        <td><p>Existing images render; cannot add new ones via API</p></td>
+      </tr>
+    </table>
+    <p></p>
+  </body>
+</tab>

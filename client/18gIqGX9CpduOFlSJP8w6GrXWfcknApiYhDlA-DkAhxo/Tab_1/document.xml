@@ -1,0 +1,705 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<tab id="t.0" title="Tab 1" index="0">
+  <lists>
+    <list id="kix.44ohxtf8trcq">
+      <level index="0" glyphFormat="%0" glyphSymbol="●" bulletAlignment="START" startNumber="1" />
+      <level index="1" glyphFormat="%1" glyphSymbol="○" bulletAlignment="START" startNumber="1" class="ls2" />
+      <level index="2" glyphFormat="%2" glyphSymbol="■" bulletAlignment="START" startNumber="1" class="ls3" />
+      <level index="3" glyphFormat="%3" glyphSymbol="●" bulletAlignment="START" startNumber="1" class="ls4" />
+      <level index="4" glyphFormat="%4" glyphSymbol="○" bulletAlignment="START" startNumber="1" class="ls5" />
+      <level index="5" glyphFormat="%5" glyphSymbol="■" bulletAlignment="START" startNumber="1" class="ls6" />
+      <level index="6" glyphFormat="%6" glyphSymbol="●" bulletAlignment="START" startNumber="1" class="ls7" />
+      <level index="7" glyphFormat="%7" glyphSymbol="○" bulletAlignment="START" startNumber="1" class="ls8" />
+      <level index="8" glyphFormat="%8" glyphSymbol="■" bulletAlignment="START" startNumber="1" class="ls9" />
+    </list>
+    <list id="kix.7nfar8qrdamx">
+      <level index="0" glyphFormat="%0" glyphSymbol="●" bulletAlignment="START" startNumber="1" />
+      <level index="1" glyphFormat="%1" glyphSymbol="○" bulletAlignment="START" startNumber="1" class="ls2" />
+      <level index="2" glyphFormat="%2" glyphSymbol="■" bulletAlignment="START" startNumber="1" class="ls3" />
+      <level index="3" glyphFormat="%3" glyphSymbol="●" bulletAlignment="START" startNumber="1" class="ls4" />
+      <level index="4" glyphFormat="%4" glyphSymbol="○" bulletAlignment="START" startNumber="1" class="ls5" />
+      <level index="5" glyphFormat="%5" glyphSymbol="■" bulletAlignment="START" startNumber="1" class="ls6" />
+      <level index="6" glyphFormat="%6" glyphSymbol="●" bulletAlignment="START" startNumber="1" class="ls7" />
+      <level index="7" glyphFormat="%7" glyphSymbol="○" bulletAlignment="START" startNumber="1" class="ls8" />
+      <level index="8" glyphFormat="%8" glyphSymbol="■" bulletAlignment="START" startNumber="1" class="ls9" />
+    </list>
+    <list id="kix.biwomvai5t4z">
+      <level index="0" glyphFormat="%0" glyphSymbol="●" bulletAlignment="START" startNumber="1" />
+      <level index="1" glyphFormat="%1" glyphSymbol="○" bulletAlignment="START" startNumber="1" class="ls2" />
+      <level index="2" glyphFormat="%2" glyphSymbol="■" bulletAlignment="START" startNumber="1" class="ls3" />
+      <level index="3" glyphFormat="%3" glyphSymbol="●" bulletAlignment="START" startNumber="1" class="ls4" />
+      <level index="4" glyphFormat="%4" glyphSymbol="○" bulletAlignment="START" startNumber="1" class="ls5" />
+      <level index="5" glyphFormat="%5" glyphSymbol="■" bulletAlignment="START" startNumber="1" class="ls6" />
+      <level index="6" glyphFormat="%6" glyphSymbol="●" bulletAlignment="START" startNumber="1" class="ls7" />
+      <level index="7" glyphFormat="%7" glyphSymbol="○" bulletAlignment="START" startNumber="1" class="ls8" />
+      <level index="8" glyphFormat="%8" glyphSymbol="■" bulletAlignment="START" startNumber="1" class="ls9" />
+    </list>
+    <list id="kix.f9gcdd6wccus">
+      <level index="0" glyphFormat="%0" glyphSymbol="●" bulletAlignment="START" startNumber="1" />
+      <level index="1" glyphFormat="%1" glyphSymbol="○" bulletAlignment="START" startNumber="1" class="ls2" />
+      <level index="2" glyphFormat="%2" glyphSymbol="■" bulletAlignment="START" startNumber="1" class="ls3" />
+      <level index="3" glyphFormat="%3" glyphSymbol="●" bulletAlignment="START" startNumber="1" class="ls4" />
+      <level index="4" glyphFormat="%4" glyphSymbol="○" bulletAlignment="START" startNumber="1" class="ls5" />
+      <level index="5" glyphFormat="%5" glyphSymbol="■" bulletAlignment="START" startNumber="1" class="ls6" />
+      <level index="6" glyphFormat="%6" glyphSymbol="●" bulletAlignment="START" startNumber="1" class="ls7" />
+      <level index="7" glyphFormat="%7" glyphSymbol="○" bulletAlignment="START" startNumber="1" class="ls8" />
+      <level index="8" glyphFormat="%8" glyphSymbol="■" bulletAlignment="START" startNumber="1" class="ls9" />
+    </list>
+    <list id="kix.hedn31pirzyp">
+      <level index="0" glyphFormat="%0" glyphSymbol="●" bulletAlignment="START" startNumber="1" />
+      <level index="1" glyphFormat="%1" glyphSymbol="○" bulletAlignment="START" startNumber="1" class="ls2" />
+      <level index="2" glyphFormat="%2" glyphSymbol="■" bulletAlignment="START" startNumber="1" class="ls3" />
+      <level index="3" glyphFormat="%3" glyphSymbol="●" bulletAlignment="START" startNumber="1" class="ls4" />
+      <level index="4" glyphFormat="%4" glyphSymbol="○" bulletAlignment="START" startNumber="1" class="ls5" />
+      <level index="5" glyphFormat="%5" glyphSymbol="■" bulletAlignment="START" startNumber="1" class="ls6" />
+      <level index="6" glyphFormat="%6" glyphSymbol="●" bulletAlignment="START" startNumber="1" class="ls7" />
+      <level index="7" glyphFormat="%7" glyphSymbol="○" bulletAlignment="START" startNumber="1" class="ls8" />
+      <level index="8" glyphFormat="%8" glyphSymbol="■" bulletAlignment="START" startNumber="1" class="ls9" />
+    </list>
+    <list id="kix.jr2redxw3mz4">
+      <level index="0" glyphFormat="%0" glyphSymbol="●" bulletAlignment="START" startNumber="1" />
+      <level index="1" glyphFormat="%1" glyphSymbol="○" bulletAlignment="START" startNumber="1" class="ls2" />
+      <level index="2" glyphFormat="%2" glyphSymbol="■" bulletAlignment="START" startNumber="1" class="ls3" />
+      <level index="3" glyphFormat="%3" glyphSymbol="●" bulletAlignment="START" startNumber="1" class="ls4" />
+      <level index="4" glyphFormat="%4" glyphSymbol="○" bulletAlignment="START" startNumber="1" class="ls5" />
+      <level index="5" glyphFormat="%5" glyphSymbol="■" bulletAlignment="START" startNumber="1" class="ls6" />
+      <level index="6" glyphFormat="%6" glyphSymbol="●" bulletAlignment="START" startNumber="1" class="ls7" />
+      <level index="7" glyphFormat="%7" glyphSymbol="○" bulletAlignment="START" startNumber="1" class="ls8" />
+      <level index="8" glyphFormat="%8" glyphSymbol="■" bulletAlignment="START" startNumber="1" class="ls9" />
+    </list>
+    <list id="kix.my12lbojswev">
+      <level index="0" glyphFormat="%0" glyphSymbol="●" bulletAlignment="START" startNumber="1" />
+      <level index="1" glyphFormat="%1" glyphSymbol="○" bulletAlignment="START" startNumber="1" class="ls2" />
+      <level index="2" glyphFormat="%2" glyphSymbol="■" bulletAlignment="START" startNumber="1" class="ls3" />
+      <level index="3" glyphFormat="%3" glyphSymbol="●" bulletAlignment="START" startNumber="1" class="ls4" />
+      <level index="4" glyphFormat="%4" glyphSymbol="○" bulletAlignment="START" startNumber="1" class="ls5" />
+      <level index="5" glyphFormat="%5" glyphSymbol="■" bulletAlignment="START" startNumber="1" class="ls6" />
+      <level index="6" glyphFormat="%6" glyphSymbol="●" bulletAlignment="START" startNumber="1" class="ls7" />
+      <level index="7" glyphFormat="%7" glyphSymbol="○" bulletAlignment="START" startNumber="1" class="ls8" />
+      <level index="8" glyphFormat="%8" glyphSymbol="■" bulletAlignment="START" startNumber="1" class="ls9" />
+    </list>
+    <list id="kix.o8ewzohhdgks">
+      <level index="0" glyphFormat="%0" glyphSymbol="●" bulletAlignment="START" startNumber="1" />
+      <level index="1" glyphFormat="%1" glyphSymbol="○" bulletAlignment="START" startNumber="1" class="ls2" />
+      <level index="2" glyphFormat="%2" glyphSymbol="■" bulletAlignment="START" startNumber="1" class="ls3" />
+      <level index="3" glyphFormat="%3" glyphSymbol="●" bulletAlignment="START" startNumber="1" class="ls4" />
+      <level index="4" glyphFormat="%4" glyphSymbol="○" bulletAlignment="START" startNumber="1" class="ls5" />
+      <level index="5" glyphFormat="%5" glyphSymbol="■" bulletAlignment="START" startNumber="1" class="ls6" />
+      <level index="6" glyphFormat="%6" glyphSymbol="●" bulletAlignment="START" startNumber="1" class="ls7" />
+      <level index="7" glyphFormat="%7" glyphSymbol="○" bulletAlignment="START" startNumber="1" class="ls8" />
+      <level index="8" glyphFormat="%8" glyphSymbol="■" bulletAlignment="START" startNumber="1" class="ls9" />
+    </list>
+    <list id="kix.xe4hjjqqqcb4">
+      <level index="0" glyphFormat="%0" glyphSymbol="●" bulletAlignment="START" startNumber="1" />
+      <level index="1" glyphFormat="%1" glyphSymbol="○" bulletAlignment="START" startNumber="1" class="ls2" />
+      <level index="2" glyphFormat="%2" glyphSymbol="■" bulletAlignment="START" startNumber="1" class="ls3" />
+      <level index="3" glyphFormat="%3" glyphSymbol="●" bulletAlignment="START" startNumber="1" class="ls4" />
+      <level index="4" glyphFormat="%4" glyphSymbol="○" bulletAlignment="START" startNumber="1" class="ls5" />
+      <level index="5" glyphFormat="%5" glyphSymbol="■" bulletAlignment="START" startNumber="1" class="ls6" />
+      <level index="6" glyphFormat="%6" glyphSymbol="●" bulletAlignment="START" startNumber="1" class="ls7" />
+      <level index="7" glyphFormat="%7" glyphSymbol="○" bulletAlignment="START" startNumber="1" class="ls8" />
+      <level index="8" glyphFormat="%8" glyphSymbol="■" bulletAlignment="START" startNumber="1" class="ls9" />
+    </list>
+  </lists>
+  <body>
+    <sectionbreak sectionType="CONTINUOUS" contentDirection="LEFT_TO_RIGHT" columnSeparatorStyle="NONE" />
+    <title headingId="h.cmt0vv5okkim">
+      <t>Arjun Mehta</t>
+    </title>
+    <subtitle headingId="h.hgze8li0eaqi">
+      <t>Senior Frontend Engineer · Design Systems · Web Performance</t>
+    </subtitle>
+    <p>
+      <t> · +91 90123 45678 ·  ·  · Mumbai, India</t>
+    </p>
+    <h2 headingId="h.glmd91p51ldn">
+      <t>Professional Summary</t>
+    </h2>
+    <p>
+      <t>Pragmatic </t>
+      <t>
+        <b>Senior Frontend Engineer</b>
+      </t>
+      <t> with 8+ years of experience building </t>
+      <t>
+        <b>scalable design systems</b>
+      </t>
+      <t>, </t>
+      <t>
+        <b>high-performance web applications</b>
+      </t>
+      <t>, and </t>
+      <t>
+        <b>cross-platform component libraries</b>
+      </t>
+      <t> used by millions of users. Core architect of Atlassian's internal design system (Forge UI), serving 4,000+ developers across 60 product squads. Deep expertise in React 18, TypeScript, and web performance engineering. Open-source contributor with 2.4k GitHub stars across maintained projects. Speaker at JSConf, ReactIndia, and Frontend United.</t>
+    </p>
+    <h2 headingId="h.crf0f6p8l9ej">
+      <t>Technical Skills</t>
+    </h2>
+    <table>
+      <col />
+      <col />
+      <col />
+      <tr>
+        <td>
+          <p>
+            <t>
+              <b>Category</b>
+            </t>
+          </p>
+        </td>
+        <td>
+          <p>
+            <t>
+              <b>Technologies &amp; Tools</b>
+            </t>
+          </p>
+        </td>
+        <td>
+          <p>
+            <t>
+              <b>Level</b>
+            </t>
+          </p>
+        </td>
+      </tr>
+      <tr>
+        <td>
+          <p>
+            <t>Core Languages</t>
+          </p>
+        </td>
+        <td>
+          <p>
+            <t>JavaScript (ES2023+), TypeScript, Python, Rust (WASM), CSS3, HTML5</t>
+          </p>
+        </td>
+        <td>
+          <p>
+            <t>Expert</t>
+          </p>
+        </td>
+      </tr>
+      <tr>
+        <td>
+          <p>
+            <t>Frontend Frameworks</t>
+          </p>
+        </td>
+        <td>
+          <p>
+            <t>React 18, Next.js 14, Vue 3, Svelte, React Native, Expo</t>
+          </p>
+        </td>
+        <td>
+          <p>
+            <t>Expert</t>
+          </p>
+        </td>
+      </tr>
+      <tr>
+        <td>
+          <p>
+            <t>State &amp; Data Fetching</t>
+          </p>
+        </td>
+        <td>
+          <p>
+            <t>Redux Toolkit, Zustand, TanStack Query, Apollo GraphQL, SWR, Jotai</t>
+          </p>
+        </td>
+        <td>
+          <p>
+            <t>Advanced</t>
+          </p>
+        </td>
+      </tr>
+      <tr>
+        <td>
+          <p>
+            <t>Build &amp; Bundlers</t>
+          </p>
+        </td>
+        <td>
+          <p>
+            <t>Vite, Webpack 5, Rollup, esbuild, Turbopack, Babel, SWC</t>
+          </p>
+        </td>
+        <td>
+          <p>
+            <t>Advanced</t>
+          </p>
+        </td>
+      </tr>
+      <tr>
+        <td>
+          <p>
+            <t>Testing</t>
+          </p>
+        </td>
+        <td>
+          <p>
+            <t>Vitest, Playwright, Cypress, Testing Library, Storybook, Chromatic, Percy</t>
+          </p>
+        </td>
+        <td>
+          <p>
+            <t>Advanced</t>
+          </p>
+        </td>
+      </tr>
+      <tr>
+        <td>
+          <p>
+            <t>Design &amp; UI Systems</t>
+          </p>
+        </td>
+        <td>
+          <p>
+            <t>Figma, Radix UI, Tailwind CSS, CSS Modules, Styled Components, Framer Motion, GSAP</t>
+          </p>
+        </td>
+        <td>
+          <p>
+            <t>Advanced</t>
+          </p>
+        </td>
+      </tr>
+      <tr>
+        <td>
+          <p>
+            <t>Backend &amp; APIs</t>
+          </p>
+        </td>
+        <td>
+          <p>
+            <t>Node.js, Express, FastAPI, GraphQL, tRPC, PostgreSQL, Redis, Prisma</t>
+          </p>
+        </td>
+        <td>
+          <p>
+            <t>Intermediate</t>
+          </p>
+        </td>
+      </tr>
+      <tr>
+        <td>
+          <p>
+            <t>DevOps &amp; Observability</t>
+          </p>
+        </td>
+        <td>
+          <p>
+            <t>GitHub Actions, Docker, Vercel, Cloudflare Workers, Sentry, DataDog, Lighthouse CI</t>
+          </p>
+        </td>
+        <td>
+          <p>
+            <t>Intermediate</t>
+          </p>
+        </td>
+      </tr>
+    </table>
+    <h2 headingId="h.205jhuye8ijh">
+      <t>Work Experience</t>
+    </h2>
+    <h3 headingId="h.hshqnpgpf3st">
+      <t>Atlassian · Senior Frontend Engineer, Design Systems</t>
+    </h3>
+    <p>
+      <t>
+        <i>Sydney (Remote from Mumbai) · March 2021 – Present</i>
+      </t>
+    </p>
+    <li parent="kix.hedn31pirzyp">
+      <t>Architected </t>
+      <t>
+        <b>Forge UI v3</b>
+      </t>
+      <t>, Atlassian's internal React component library powering Jira, Confluence, and Trello; adopted by 4,000+ developers across 60 squads, replacing 3 legacy systems.</t>
+    </li>
+    <li parent="kix.hedn31pirzyp">
+      <t>Reduced </t>
+      <t>
+        <b>First Contentful Paint by 41%</b>
+      </t>
+      <t> across Jira Cloud through code-splitting, lazy hydration, and React Server Components; improved Lighthouse score from 62 to 89 across 200+ page templates.</t>
+    </li>
+    <li parent="kix.hedn31pirzyp">
+      <t>Built a </t>
+      <t>
+        <b>visual regression testing pipeline</b>
+      </t>
+      <t> using Playwright and Chromatic that catches UI regressions automatically on every PR; reduced designer review time by 65% and eliminated 3 production colour/spacing incidents per quarter.</t>
+    </li>
+    <li parent="kix.hedn31pirzyp">
+      <t>Introduced </t>
+      <t>
+        <b>accessibility-first development</b>
+      </t>
+      <t> standards across the design system (WCAG 2.2 AA); automated axe-core checks in CI, lifting Atlassian's VPAT compliance score from 74% to 97%.</t>
+    </li>
+    <li parent="kix.hedn31pirzyp">
+      <t>Led adoption of </t>
+      <t>
+        <b>Module Federation</b>
+      </t>
+      <t> for Atlassian's micro-frontend architecture, enabling independent deployments of 15 shell apps without full-page refreshes between product boundaries.</t>
+    </li>
+    <p />
+    <h3 headingId="h.2ysirvbxw7ne">
+      <t>Uber · Software Engineer II, Web Platform</t>
+    </h3>
+    <p>
+      <t>
+        <i>Bangalore, India · July 2018 – February 2021</i>
+      </t>
+    </p>
+    <li parent="kix.biwomvai5t4z">
+      <t>Built and maintained </t>
+      <t>
+        <b>Uber's internal UI toolkit</b>
+      </t>
+      <t> (Base Web), a React component system with 80+ components used by all 600+ engineers across Uber's web products globally.</t>
+    </li>
+    <li parent="kix.biwomvai5t4z">
+      <t>Designed a </t>
+      <t>
+        <b>server-side rendering pipeline</b>
+      </t>
+      <t> for Uber Eats web using Next.js and Node.js microservices; reduced Time to Interactive by 2.3 seconds on 3G connections, boosting conversion rate 18% in India.</t>
+    </li>
+    <li parent="kix.biwomvai5t4z">
+      <t>Implemented </t>
+      <t>
+        <b>real-time order tracking UI</b>
+      </t>
+      <t> using WebSockets and React Suspense, handling 800k concurrent connections during peak hours with automatic reconnect and optimistic UI updates.</t>
+    </li>
+    <li parent="kix.biwomvai5t4z">
+      <t>Drove </t>
+      <t>
+        <b>TypeScript adoption</b>
+      </t>
+      <t> across 3 frontend teams (90k+ lines migrated); introduced strict null-checking and branded types that eliminated an entire class of runtime null-deref errors in production.</t>
+    </li>
+    <p />
+    <h3 headingId="h.7zudtqtoaizd">
+      <t>Myntra · Junior Software Engineer, Frontend</t>
+    </h3>
+    <p>
+      <t>
+        <i>Bangalore, India · August 2016 – June 2018</i>
+      </t>
+    </p>
+    <li parent="kix.o8ewzohhdgks">
+      <t>Rewrote Myntra's </t>
+      <t>
+        <b>product detail page</b>
+      </t>
+      <t> in React (migrating from Backbone.js); page load time dropped from 5.8s to 1.9s, directly attributed to a 12% increase in add-to-cart conversions.</t>
+    </li>
+    <li parent="kix.o8ewzohhdgks">
+      <t>Built the </t>
+      <t>
+        <b>image lazy-loading and virtualised grid</b>
+      </t>
+      <t> for Myntra's category listing pages, reducing initial DOM node count by 80% and enabling smooth scrolling on low-end Android devices.</t>
+    </li>
+    <li parent="kix.o8ewzohhdgks">
+      <t>Developed </t>
+      <t>
+        <b>Myntra Studio</b>
+      </t>
+      <t>, an in-browser outfit builder with drag-and-drop canvas (Fabric.js + Canvas API) that became the top-used engagement feature with 2.1M sessions in its first quarter.</t>
+    </li>
+    <li parent="kix.o8ewzohhdgks">
+      <t>Received </t>
+      <t>
+        <b>"Impact Award"</b>
+      </t>
+      <t> (Q1 2018) for shipping the Progressive Web App rewrite that improved offline browsing and home-screen installs by 340% in Tier-2 and Tier-3 cities.</t>
+    </li>
+    <li parent="kix.o8ewzohhdgks">
+      <t>Wrote and evangelised Myntra's </t>
+      <t>
+        <b>frontend coding standards guide</b>
+      </t>
+      <t> (adopted company-wide); mentored 4 junior engineers through structured code reviews and weekly frontend guild sessions.</t>
+    </li>
+    <p />
+    <h2 headingId="h.v44v0mhpzshf">
+      <t>Key Projects</t>
+    </h2>
+    <table>
+      <col />
+      <col />
+      <col />
+      <col />
+      <tr>
+        <td>
+          <p>
+            <t>
+              <b>Project</b>
+            </t>
+          </p>
+        </td>
+        <td>
+          <p>
+            <t>
+              <b>Role</b>
+            </t>
+          </p>
+        </td>
+        <td>
+          <p>
+            <t>
+              <b>Description &amp; Impact</b>
+            </t>
+          </p>
+        </td>
+        <td>
+          <p>
+            <t>
+              <b>Tech Stack</b>
+            </t>
+          </p>
+        </td>
+      </tr>
+      <tr>
+        <td>
+          <p>
+            <t>
+              <b>Forge UI Design System</b>
+            </t>
+          </p>
+        </td>
+        <td>
+          <p>
+            <t>Architect &amp; Lead</t>
+          </p>
+        </td>
+        <td>
+          <p>
+            <t>Atlassian's unified React component library. 80+ accessible components, full dark-mode support, and automated visual regression. Reduced new-feature UI development time by 50%.</t>
+          </p>
+        </td>
+        <td>
+          <p>
+            <t>React 18, TypeScript, Radix UI, Storybook, Chromatic, Playwright</t>
+          </p>
+        </td>
+      </tr>
+      <tr>
+        <td>
+          <p>
+            <t>
+              <b>Web Perf Dashboard</b>
+            </t>
+          </p>
+        </td>
+        <td>
+          <p>
+            <t>Creator</t>
+          </p>
+        </td>
+        <td>
+          <p>
+            <t>Real-time web performance monitoring tool that aggregates Lighthouse CI, Core Web Vitals, and RUM data across 200+ Atlassian pages. Proactively flags regressions before they reach production.</t>
+          </p>
+        </td>
+        <td>
+          <p>
+            <t>Next.js, tRPC, PostgreSQL, Grafana, Lighthouse CI, GitHub Actions</t>
+          </p>
+        </td>
+      </tr>
+      <tr>
+        <td>
+          <p>
+            <t>
+              <b>react-snap-scroll</b>
+            </t>
+          </p>
+        </td>
+        <td>
+          <p>
+            <t>Open-Source Author</t>
+          </p>
+        </td>
+        <td>
+          <p>
+            <t>Zero-dependency React hook library for performant snap-scroll carousels and virtualised lists. 2.4k GitHub stars, 180k weekly npm downloads, used in 12k+ projects.</t>
+          </p>
+        </td>
+        <td>
+          <p>
+            <t>TypeScript, React, Rollup, Vitest, GitHub Actions</t>
+          </p>
+        </td>
+      </tr>
+      <tr>
+        <td>
+          <p>
+            <t>
+              <b>Micro-Frontend Shell</b>
+            </t>
+          </p>
+        </td>
+        <td>
+          <p>
+            <t>Technical Lead</t>
+          </p>
+        </td>
+        <td>
+          <p>
+            <t>Webpack Module Federation orchestration layer for Atlassian's 15 independently-deployed web apps. Provides shared auth, routing, and analytics with zero cross-team coupling.</t>
+          </p>
+        </td>
+        <td>
+          <p>
+            <t>Webpack 5 Module Federation, React, TypeScript, single-spa, Sentry</t>
+          </p>
+        </td>
+      </tr>
+    </table>
+    <h2 headingId="h.lzj8tz5hxab1">
+      <t>Education</t>
+    </h2>
+    <p>
+      <t>
+        <b>Indian Institute of Technology Delhi</b>
+      </t>
+      <t> — </t>
+      <t>
+        <i>B.Tech, Computer Science &amp; Engineering</i>
+      </t>
+    </p>
+    <p>
+      <t>Graduated May 2016 · </t>
+      <t>
+        <b>GPA: 8.7 / 10</b>
+      </t>
+      <t> · Department Rank: 8 of 110</t>
+    </p>
+    <p>
+      <t>Thesis: </t>
+      <t>
+        <i>"Optimising JavaScript Bundle Size Through Static Dependency Analysis and Tree-Shaking"</i>
+      </t>
+      <t> — Advisor: Prof. Huzur Saran</t>
+    </p>
+    <p>
+      <t>Relevant Coursework: Algorithms, Operating Systems, Computer Networks, Database Systems, Human-Computer Interaction, Programming Languages, Compiler Design</t>
+    </p>
+    <h2 headingId="h.3o78hk3d0xdz">
+      <t>Certifications &amp; Awards</t>
+    </h2>
+    <li parent="kix.7nfar8qrdamx">
+      <t>
+        <b>Atlassian FY23 Values Award</b>
+      </t>
+      <t> — "Open Company, No Bullshit" category, for leading cross-team accessibility initiative that lifted VPAT compliance from 74% to 97%</t>
+    </li>
+    <li parent="kix.7nfar8qrdamx">
+      <t>
+        <b>Myntra Impact Award</b>
+      </t>
+      <t>, Q1 2018 — PWA rewrite delivering 340% increase in home-screen installs in Tier-2/3 cities</t>
+    </li>
+    <li parent="kix.7nfar8qrdamx">
+      <t>
+        <b>Meta Certified React Developer</b>
+      </t>
+      <t> (Certified 2023, credential ID: META-RD-9124)</t>
+    </li>
+    <li parent="kix.7nfar8qrdamx">
+      <t>
+        <b>Google Web Performance Certified</b>
+      </t>
+      <t> (via web.dev, 2022)</t>
+    </li>
+    <li parent="kix.7nfar8qrdamx">
+      <t>
+        <b>IIT Delhi Academic Excellence Award</b>
+      </t>
+      <t>, 2014–2016 — awarded for top-5 GPA in department across two consecutive years</t>
+    </li>
+    <p />
+    <h2 headingId="h.it14enkgrxz">
+      <t>Publications &amp; Conference Talks</t>
+    </h2>
+    <li parent="kix.44ohxtf8trcq">
+      <t>"Scaling Design Systems Across 4,000 Developers Without Losing Your Mind" — </t>
+      <t>
+        <i>JSConf India 2024</i>
+      </t>
+      <t>, Bangalore (800 attendees)</t>
+    </li>
+    <li parent="kix.44ohxtf8trcq">
+      <t>"Module Federation in the Real World: Lessons from 15 Micro-Frontends at Atlassian" — </t>
+      <t>
+        <i>ReactIndia 2023</i>
+      </t>
+      <t>, Goa (1,100 attendees)</t>
+    </li>
+    <li parent="kix.44ohxtf8trcq">
+      <t>"Core Web Vitals Are Not Enough: Building a Holistic Frontend Observability Stack" — </t>
+      <t>
+        <i>Frontend United 2023</i>
+      </t>
+      <t>, Amsterdam</t>
+    </li>
+    <li parent="kix.44ohxtf8trcq">
+      <t>"Zero-Overhead Virtualisation with React and the Intersection Observer API" — </t>
+      <t>
+        <i>JSFoo 2022</i>
+      </t>
+      <t>, Hasgeek conference, Bangalore</t>
+    </li>
+    <p />
+    <h2 headingId="h.qggcjfh6ipm4">
+      <t>Open Source &amp; Community</t>
+    </h2>
+    <li parent="kix.jr2redxw3mz4">
+      <t>
+        <b>react-snap-scroll</b>
+      </t>
+      <t> () — Creator; 2.4k stars, 180k weekly downloads, MIT license</t>
+    </li>
+    <li parent="kix.jr2redxw3mz4">
+      <t>
+        <b>React</b>
+      </t>
+      <t> — Contributor; 2 merged PRs improving concurrent mode scheduling docs and fixing edge case in useTransition with Suspense boundaries</t>
+    </li>
+    <li parent="kix.jr2redxw3mz4">
+      <t>
+        <b>Vite</b>
+      </t>
+      <t> — Contributor; optimised CSS module HMR invalidation that reduced hot-reload latency by ~200ms on large projects</t>
+    </li>
+    <li parent="kix.jr2redxw3mz4">
+      <t>Co-organiser of </t>
+      <t>
+        <b>Mumbai Frontend Meetup</b>
+      </t>
+      <t> (monthly, 200+ members); curated 18 speaker sessions on React, performance, and web standards since 2021</t>
+    </li>
+    <p />
+  </body>
+  <header id="kix.h52h1kgfexeu">
+    <p>
+      <t>
+        <b>Arjun Mehta</b>
+      </t>
+      <t> · Senior Frontend Engineer · arjun.mehta@gmail.com</t>
+    </p>
+  </header>
+  <footer id="kix.caflbe4dalyz">
+    <p>
+      <t>Confidential · Page  of  · Last updated March 2026</t>
+    </p>
+  </footer>
+</tab>

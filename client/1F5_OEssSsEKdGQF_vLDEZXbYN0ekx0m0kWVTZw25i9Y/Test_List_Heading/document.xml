@@ -1,0 +1,27 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<tab id="t.ye64w61wovv2" title="Test: List→Heading" index="5">
+  <body>
+    <sectionbreak sectionType="CONTINUOUS" contentDirection="LEFT_TO_RIGHT" columnSeparatorStyle="NONE" />
+    <p>
+      <t>Test: List followed by Heading</t>
+    </p>
+    <p>
+      <t>A bullet list, then immediately a heading (no separator).</t>
+    </p>
+    <p>
+      <t>First item</t>
+    </p>
+    <p>
+      <t>Second item</t>
+    </p>
+    <p>
+      <t>Third item</t>
+    </p>
+    <p>
+      <t>Next Section</t>
+    </p>
+    <p>
+      <t>Body text under the heading.</t>
+    </p>
+  </body>
+</tab>

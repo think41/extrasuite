@@ -1,0 +1,41 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<tab id="t.l0zze3y6ddst" title="Table between paragraphs" index="3">
+  <body>
+    <sectionbreak sectionType="CONTINUOUS" contentDirection="LEFT_TO_RIGHT" columnSeparatorStyle="NONE" />
+    <p>
+      <t>This is the first paragraph.</t>
+    </p>
+    <table>
+      <col />
+      <col />
+      <tr>
+        <td>
+          <p>
+            <t>1</t>
+          </p>
+        </td>
+        <td>
+          <p>
+            <t>2</t>
+          </p>
+        </td>
+      </tr>
+      <tr>
+        <td>
+          <p>
+            <t>3</t>
+          </p>
+        </td>
+        <td>
+          <p>
+            <t>4</t>
+          </p>
+        </td>
+      </tr>
+    </table>
+    <p />
+    <p>
+      <t>This is the last paragraph, no explicit newline.</t>
+    </p>
+  </body>
+</tab>

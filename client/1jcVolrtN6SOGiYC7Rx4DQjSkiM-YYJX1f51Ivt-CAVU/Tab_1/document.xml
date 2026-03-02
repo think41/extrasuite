@@ -1,0 +1,108 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<tab id="t.0" title="Resume" index="0">
+  <body>
+    <sectionbreak sectionType="CONTINUOUS" contentDirection="LEFT_TO_RIGHT" columnSeparatorStyle="NONE" />
+    <title align="CENTER">Alex Chen</title>
+    <subtitle align="CENTER">Senior Software Engineer · Open Source Developer · AI Tooling Specialist</subtitle>
+    <p align="CENTER"><a href="mailto:alex.chen@think41.com">alex.chen@think41.com</a> · <a href="https://github.com/alexchen">github.com/alexchen</a> · <a href="https://linkedin.com/in/alexchen">linkedin.com/in/alexchen</a> · Bangalore, India</p>
+    <h2>Professional Summary</h2>
+    <p>Passionate <span class="highlight">Senior Software Engineer</span> with 6+ years of experience building <b>developer tooling</b>, <b>cloud-native APIs</b>, and <b>AI-integrated systems</b>. Core maintainer of <span class="highlight">ExtraSuite</span>, an open-source CLI framework enabling AI agents to securely read and write Google Workspace files via a git-like pull/diff/push workflow. Deep expertise in <b>Python</b>, <b>Google Workspace APIs</b>, and <b>LLM agent design patterns</b>.</p>
+    <h2>Technical Skills</h2>
+    <table>
+      <tr>
+        <td class="cell-hdr"><p><b>Category</b></p></td>
+        <td class="cell-hdr"><p><b>Technologies &amp; Tools</b></p></td>
+      </tr>
+      <tr>
+        <td class="cell-cat"><p>Languages</p></td>
+        <td><p>Python, TypeScript, Go, SQL, Bash</p></td>
+      </tr>
+      <tr>
+        <td class="cell-cat"><p>Frameworks &amp; Libraries</p></td>
+        <td><p>FastAPI, Flask, React, Pydantic, uv, ruff, mypy, pytest</p></td>
+      </tr>
+      <tr>
+        <td class="cell-cat"><p>Google APIs</p></td>
+        <td><p>Docs API, Sheets API, Slides API, Drive API, Gmail API, Calendar API</p></td>
+      </tr>
+      <tr>
+        <td class="cell-cat"><p>Cloud &amp; Infrastructure</p></td>
+        <td><p>Google Cloud Run, GKE, Firebase, Docker, GitHub Actions, Terraform</p></td>
+      </tr>
+      <tr>
+        <td class="cell-cat"><p>AI / LLM Tooling</p></td>
+        <td><p>Claude API, OpenAI API, LangChain, Agent SDK, MCP (Model Context Protocol)</p></td>
+      </tr>
+      <tr>
+        <td class="cell-cat"><p>Databases</p></td>
+        <td><p>PostgreSQL, Cloud Firestore, Redis, BigQuery</p></td>
+      </tr>
+    </table>
+    <p></p>
+    <h2>Work Experience</h2>
+    <h3>Think41 — Senior Software Engineer</h3>
+    <p class="dim">Jan 2024 – Present · Bangalore, India</p>
+    <li type="bullet" level="0">Led design and development of <b>ExtraSuite</b>, an open-source CLI framework enabling AI agents (Claude Code, Codex) to securely operate on Google Workspace files</li>
+    <li type="bullet" level="0">Implemented a <b>pull/diff/push reconciliation engine</b> in Python that converts Google Docs API JSON into editable XML and back — handling rich formatting, tables, lists, headers, footers, footnotes, and nested styles</li>
+    <li type="bullet" level="0">Architected a <b>1:1 service account</b> identity model giving each employee's AI agent minimal-scope, short-lived tokens; all agent actions appear in Google Drive version history</li>
+    <li type="bullet" level="0">Designed and shipped <b>ExtraSheet</b>, <b>ExtraSlide</b>, and <b>ExtraForm</b> modules using the same workflow pattern — reducing agent code duplication by ~70%</li>
+    <li type="bullet" level="0">Built a <b>gateway server</b> on Google Cloud Run providing OIDC-based token issuance, domain-wide delegation, and audit logging — serving 500+ requests/day</li>
+    <li type="bullet" level="1">Implemented scope-limited OAuth delegation for Gmail and Calendar APIs</li>
+    <li type="bullet" level="1">Reduced token issuance latency from 1.2s to 180ms via response caching</li>
+    <li type="bullet" level="0">Published 3 independent packages to PyPI (<span class="code">extrasuite</span>, <span class="code">extrasheet</span>, <span class="code">extraslide</span>) with trusted publishing via GitHub Actions OIDC — zero manual secrets</li>
+    <p></p>
+    <h3>Fractal Analytics — Software Engineer II</h3>
+    <p class="dim">Jul 2021 – Dec 2023 · Bangalore, India</p>
+    <li type="bullet" level="0">Built a <b>multi-tenant data pipeline orchestration platform</b> on GCP handling 2 TB+/day using Cloud Composer (Airflow) and BigQuery</li>
+    <li type="bullet" level="0">Developed a <b>self-service analytics API</b> (FastAPI + PostgreSQL) used by 15+ business teams, cutting data request turnaround from 3 days to 4 hours</li>
+    <li type="bullet" level="0">Integrated <b>LLM-powered natural language to SQL</b> feature — allowed non-technical users to query data warehouses in plain English; achieved <span class="highlight">82% query accuracy</span></li>
+    <li type="bullet" level="0">Mentored 4 junior engineers; introduced <span class="highlight">test-driven development</span> practices that raised unit test coverage from 34% to 87%</li>
+    <p></p>
+    <h3>Infosys — Software Engineer</h3>
+    <p class="dim">Aug 2019 – Jun 2021 · Pune, India</p>
+    <li type="bullet" level="0">Developed RESTful APIs for a banking client using Python/Django, integrated with core banking systems via SOAP/XML</li>
+    <li type="bullet" level="0">Automated daily reconciliation workflows using Python scripts, saving ~20 hours/week of manual effort</li>
+    <li type="bullet" level="0">Contributed to CI/CD pipeline setup on Jenkins and GitLab; participated in Agile sprints with cross-functional teams</li>
+    <p></p>
+    <h2>Open Source &amp; Projects</h2>
+    <h3>ExtraSuite — Core Maintainer &amp; Lead Author</h3>
+    <p><a href="https://github.com/think41/extrasuite">github.com/think41/extrasuite</a> · <b>Stack:</b> Python · Google Workspace APIs · Cloud Run · GitHub Actions</p>
+    <li type="bullet" level="0">Novel <b>XML-based document editing format</b> allowing LLMs to reason about Google Doc structure without any Google API knowledge</li>
+    <li type="bullet" level="0">Complete serde pipeline: JSON → AST → XML (pull) and XML diff → <span class="code">batchUpdate</span> JSON (push)</li>
+    <li type="bullet" level="0">Handles complex document features: nested lists, multi-level cascading styles, cross-tab operations, footnotes, and inline objects</li>
+    <li type="bullet" level="0">Distributed as a skill via <b>AgentSkills.io</b> standard, enabling AI agents to discover and use ExtraSuite autonomously</li>
+    <p></p>
+    <h2>Education</h2>
+    <table>
+      <tr>
+        <td class="cell-edu-hdr"><p><b>Degree</b></p></td>
+        <td class="cell-edu-hdr"><p><b>Institution</b></p></td>
+        <td class="cell-edu-hdr"><p><b>Year</b></p></td>
+        <td class="cell-edu-hdr"><p><b>Grade</b></p></td>
+      </tr>
+      <tr>
+        <td><p>B.Tech, Computer Science &amp; Engineering</p></td>
+        <td><p><b>IIT Bombay</b></p></td>
+        <td><p>2019</p></td>
+        <td><p><b>8.7 / 10.0</b></p></td>
+      </tr>
+    </table>
+    <p></p>
+    <h2>Certifications &amp; Recognition</h2>
+    <li type="decimal" level="0">Google Cloud Professional Data Engineer (2023)</li>
+    <li type="decimal" level="0">Google Cloud Associate Cloud Engineer (2022)</li>
+    <li type="decimal" level="0">AWS Certified Solutions Architect – Associate (2021)</li>
+    <li type="decimal" level="0">Fractal Analytics — <b>"Innovator of the Quarter"</b> Award, Q3 2023</li>
+    <li type="decimal" level="0">Speaker, PyCon India 2023: <i>"Building Secure AI Agent Tooling with Google Workspace APIs"</i></li>
+    <p></p>
+    <h2>Languages &amp; Interests</h2>
+    <li type="bullet" level="0"><b>Languages:</b> English (Fluent), Hindi (Native), Kannada (Conversational)</li>
+    <li type="bullet" level="0"><b>Interests:</b> Open-source development, AI agent design patterns, developer tooling, technical writing, badminton</li>
+  </body>
+  <header id="h.resume_hdr" class="_base">
+    <p align="CENTER"><b>Alex Chen</b> · Senior Software Engineer · alex.chen@think41.com</p>
+  </header>
+  <footer id="f.resume_ftr" class="_base">
+    <p align="CENTER"><i>Confidential · Last Updated: February 2026</i></p>
+  </footer>
+</tab>

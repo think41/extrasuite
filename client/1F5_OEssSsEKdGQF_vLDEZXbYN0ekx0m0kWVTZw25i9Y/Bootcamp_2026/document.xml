@@ -1,0 +1,247 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<tab id="t.nhh19hx5t5u5" title="Bootcamp 2026" index="3">
+  <lists>
+    <list id="kix.ir2coed9ss5">
+      <level index="0" glyphType="DECIMAL" glyphFormat="%0." bulletAlignment="END" startNumber="1" />
+      <level index="1" glyphType="DECIMAL" glyphFormat="%0.%1." bulletAlignment="END" startNumber="1" class="ls2" />
+      <level index="2" glyphType="DECIMAL" glyphFormat="%0.%1.%2." bulletAlignment="END" startNumber="1" class="ls3" />
+      <level index="3" glyphType="DECIMAL" glyphFormat="%0.%1.%2.%3." bulletAlignment="END" startNumber="1" class="ls4" />
+      <level index="4" glyphType="DECIMAL" glyphFormat="%0.%1.%2.%3.%4." bulletAlignment="END" startNumber="1" class="ls5" />
+      <level index="5" glyphType="DECIMAL" glyphFormat="%0.%1.%2.%3.%4.%5." bulletAlignment="END" startNumber="1" class="ls6" />
+      <level index="6" glyphType="DECIMAL" glyphFormat="%0.%1.%2.%3.%4.%5.%6." bulletAlignment="END" startNumber="1" class="ls7" />
+      <level index="7" glyphType="DECIMAL" glyphFormat="%0.%1.%2.%3.%4.%5.%6.%7." bulletAlignment="END" startNumber="1" class="ls8" />
+      <level index="8" glyphType="DECIMAL" glyphFormat="%0.%1.%2.%3.%4.%5.%6.%7.%8." bulletAlignment="END" startNumber="1" class="ls9" />
+    </list>
+    <list id="kix.s01j59yr8bat">
+      <level index="0" glyphFormat="%0" glyphSymbol="●" bulletAlignment="START" startNumber="1" />
+      <level index="1" glyphFormat="%1" glyphSymbol="○" bulletAlignment="START" startNumber="1" class="ls2" />
+      <level index="2" glyphFormat="%2" glyphSymbol="■" bulletAlignment="START" startNumber="1" class="ls3" />
+      <level index="3" glyphFormat="%3" glyphSymbol="●" bulletAlignment="START" startNumber="1" class="ls4" />
+      <level index="4" glyphFormat="%4" glyphSymbol="○" bulletAlignment="START" startNumber="1" class="ls5" />
+      <level index="5" glyphFormat="%5" glyphSymbol="■" bulletAlignment="START" startNumber="1" class="ls6" />
+      <level index="6" glyphFormat="%6" glyphSymbol="●" bulletAlignment="START" startNumber="1" class="ls7" />
+      <level index="7" glyphFormat="%7" glyphSymbol="○" bulletAlignment="START" startNumber="1" class="ls8" />
+      <level index="8" glyphFormat="%8" glyphSymbol="■" bulletAlignment="START" startNumber="1" class="ls9" />
+    </list>
+  </lists>
+  <body>
+    <sectionbreak sectionType="CONTINUOUS" contentDirection="LEFT_TO_RIGHT" columnSeparatorStyle="NONE" />
+    <p />
+    <h1 headingId="h.dzcjtg8n4khe">
+      <t>Boot41 Backend Bootcamp — 2026 Edition</t>
+    </h1>
+    <p>
+      <t>
+        <b>Overview:</b>
+      </t>
+      <t> Evaluation framework, timeline, and project assignments for the 2026 cohort of Backend Engineering Interns.</t>
+    </p>
+    <p />
+    <h2 headingId="h.rpr08dey9k9q">
+      <t>Program Structure</t>
+    </h2>
+    <li parent="kix.s01j59yr8bat">
+      <t>Duration: 8 weeks</t>
+    </li>
+    <li parent="kix.s01j59yr8bat">
+      <t>Cohort size: 20 interns</t>
+    </li>
+    <li parent="kix.s01j59yr8bat">
+      <t>Tech stack: FastAPI, SQLAlchemy, Docker, Temporal, Google Cloud</t>
+    </li>
+    <li parent="kix.s01j59yr8bat" level="1">
+      <t>Cloud services: Cloud Run, Cloud Storage, Cloud SQL</t>
+    </li>
+    <li parent="kix.s01j59yr8bat" level="1">
+      <t>Observability: Cloud Logging, Cloud Trace</t>
+    </li>
+    <li parent="kix.s01j59yr8bat">
+      <t>Evaluation: Weekly demos + final presentation</t>
+    </li>
+    <p />
+    <h2 headingId="h.xsabmamnbexi">
+      <t>Evaluation Criteria</t>
+    </h2>
+    <li parent="kix.ir2coed9ss5">
+      <t>Correctness — does the system behave as specified?</t>
+    </li>
+    <li parent="kix.ir2coed9ss5">
+      <t>Edge case handling — are all constraints enforced?</t>
+    </li>
+    <li parent="kix.ir2coed9ss5">
+      <t>Code quality — clean, readable, well-structured code</t>
+    </li>
+    <li parent="kix.ir2coed9ss5">
+      <t>API design — RESTful, consistent, well-documented</t>
+    </li>
+    <li parent="kix.ir2coed9ss5">
+      <t>Testing — unit tests and integration tests</t>
+    </li>
+    <li parent="kix.ir2coed9ss5" />
+    <li parent="kix.ir2coed9ss5">
+      <t>Recommended Project Assignments — 2026 Cohort</t>
+    </li>
+    <p>
+      <t>Assign projects based on intern background and interest. Below is the recommended mapping for the 2026 cohort.</t>
+    </p>
+    <p />
+    <table>
+      <col class="tc1" />
+      <col class="tc2" />
+      <col class="tc3" />
+      <col class="tc4" />
+      <tr>
+        <td>
+          <p>
+            <t>
+              <b>Intern</b>
+            </t>
+          </p>
+        </td>
+        <td>
+          <p>
+            <t>
+              <b>Project</b>
+            </t>
+          </p>
+        </td>
+        <td>
+          <p>
+            <t>
+              <b>Difficulty</b>
+            </t>
+          </p>
+        </td>
+        <td>
+          <p>
+            <t>
+              <b>Mentor</b>
+            </t>
+          </p>
+        </td>
+      </tr>
+      <tr>
+        <td>
+          <p>
+            <t>Arjun Mehta</t>
+          </p>
+        </td>
+        <td>
+          <p>
+            <t>Cold-Chain Pharma Distribution Ledger</t>
+          </p>
+        </td>
+        <td>
+          <p>
+            <t class="s1">3.5x</t>
+          </p>
+        </td>
+        <td>
+          <p>
+            <t>Priya S.</t>
+          </p>
+        </td>
+      </tr>
+      <tr>
+        <td>
+          <p>
+            <t>Divya Rao</t>
+          </p>
+        </td>
+        <td>
+          <p>
+            <t>Geriatric Home-Care Managed Network</t>
+          </p>
+        </td>
+        <td>
+          <p>
+            <t class="s1">3.0x</t>
+          </p>
+        </td>
+        <td>
+          <p>
+            <t>Kiran M.</t>
+          </p>
+        </td>
+      </tr>
+      <tr>
+        <td>
+          <p>
+            <t>Rahul Singh</t>
+          </p>
+        </td>
+        <td>
+          <p>
+            <t>Fintech Transaction Dispute Manager</t>
+          </p>
+        </td>
+        <td>
+          <p>
+            <t class="s1">3.0x</t>
+          </p>
+        </td>
+        <td>
+          <p>
+            <t>Anita V.</t>
+          </p>
+        </td>
+      </tr>
+      <tr>
+        <td>
+          <p>
+            <t>Sneha Patel</t>
+          </p>
+        </td>
+        <td>
+          <p>
+            <t>B2B FMCG Hyperlocal Distributor Engine</t>
+          </p>
+        </td>
+        <td>
+          <p>
+            <t class="s1">4.0x</t>
+          </p>
+        </td>
+        <td>
+          <p>
+            <t>Priya S.</t>
+          </p>
+        </td>
+      </tr>
+      <tr>
+        <td>
+          <p>
+            <t>Rohan Joshi</t>
+          </p>
+        </td>
+        <td>
+          <p>
+            <t>EV Fleet Battery-Swapping Hub</t>
+          </p>
+        </td>
+        <td>
+          <p>
+            <t class="s1">2.8x</t>
+          </p>
+        </td>
+        <td>
+          <p>
+            <t>Kiran M.</t>
+          </p>
+        </td>
+      </tr>
+    </table>
+  </body>
+  <header id="kix.63ey3emd087d">
+    <p>
+      <t>
+        <b>Boot41 Project Ideas</b>
+      </t>
+    </p>
+  </header>
+  <footer id="kix.49lcl931tst">
+    <p>
+      <t>(c) 2026 Think41 Technologies Pvt. Ltd</t>
+    </p>
+  </footer>
+</tab>
