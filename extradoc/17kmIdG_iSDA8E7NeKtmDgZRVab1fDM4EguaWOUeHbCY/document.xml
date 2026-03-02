@@ -1,0 +1,56 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<doc id="17kmIdG_iSDA8E7NeKtmDgZRVab1fDM4EguaWOUeHbCY" revision="AIxLkStbeSME0jyXpPkxEVEztUtRCgeweDrTehxlS3IMmleIrxgr3AHhUGghrUDLl2El2LOzx0PkgQBTF1sroVtRFg">
+  <meta>
+    <title>Reconciler Bug Verification</title>
+  </meta>
+  <tab id="t.0" title="Tab 1" class="_base">
+    <body>
+      <h1>Reconciler Bug Verification</h1>
+      <p>This document verifies all four reconciler bug fixes.</p>
+
+      <h2>B1: Insert into Empty Document</h2>
+      <p>This content was successfully inserted into an initially empty document.</p>
+
+      <h2>B3a: Table With Formatted Cells</h2>
+      <p>The table below contains bold and italic text in its cells:</p>
+      <table>
+        <tr>
+          <td><p><b>Bug</b></p></td>
+          <td><p><b>Description</b></p></td>
+          <td><p><b>Status</b></p></td>
+        </tr>
+        <tr>
+          <td><p>B3a</p></td>
+          <td><p>Recursive cell reconciliation</p></td>
+          <td><p><i>Fixed</i></p></td>
+        </tr>
+        <tr>
+          <td><p>B4</p></td>
+          <td><p>No phantom paragraphs after table</p></td>
+          <td><p><i>Fixed</i></p></td>
+        </tr>
+      </table>
+
+      <h2>B4: Table Between Two Paragraphs</h2>
+      <p>Above the table — no phantom paragraph should appear between this and the table.</p>
+      <table>
+        <tr>
+          <td><p>Left cell</p></td>
+          <td><p>Right cell</p></td>
+        </tr>
+      </table>
+      <p>Below the table — no spurious empty paragraph above this.</p>
+
+      <h2>B2: Interior Style Changes</h2>
+      <p>The text below has mixed bold and italic formatting across multiple runs:</p>
+      <p><b>Bold section</b> normal middle <i>italic section</i></p>
+
+      <h2>Summary</h2>
+      <p>All four reconciler bugs are fixed and verified against the live API.</p>
+      <li type="bullet" level="0">B1: insertText at index 1 (empty doc with sectionbreak)</li>
+      <li type="bullet" level="0">B3a: recursive cell reconciliation via generate_requests</li>
+      <li type="bullet" level="0">B4: no phantom paragraph from insertTable in inner gap</li>
+      <li type="bullet" level="0">B2: interior style changes across multiple base runs</li>
+    </body>
+  </tab>
+</doc>

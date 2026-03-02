@@ -1,0 +1,17 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<styles>
+  <text class="s1" italic="true" />
+  <para class="_default" lineSpacing="100.0" />
+  <listlevel class="ls1" indentFirst="18.0pt" indentLeft="36.0pt" />
+  <listlevel class="ls2" indentFirst="54.0pt" indentLeft="72.0pt" />
+  <listlevel class="ls3" indentFirst="90.0pt" indentLeft="108.0pt" />
+  <listlevel class="ls4" indentFirst="126.0pt" indentLeft="144.0pt" />
+  <listlevel class="ls5" indentFirst="162.0pt" indentLeft="180.0pt" />
+  <listlevel class="ls6" indentFirst="198.0pt" indentLeft="216.0pt" />
+  <listlevel class="ls7" indentFirst="234.0pt" indentLeft="252.0pt" />
+  <listlevel class="ls8" indentFirst="270.0pt" indentLeft="288.0pt" />
+  <listlevel class="ls9" indentFirst="306.0pt" indentLeft="324.0pt" />
+  <col class="_default" width="175.0pt" />
+  <col class="tc2" width="250.0pt" />
+  <cell class="_default" paddingBottom="5.0pt" paddingLeft="5.0pt" paddingRight="5.0pt" paddingTop="5.0pt" valign="TOP" />
+</styles>

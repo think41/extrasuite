@@ -1,0 +1,176 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<tab id="t.0" title="Overview" index="0">
+  <lists>
+    <list id="kix.9bp6nf50qd7c">
+      <level index="0" glyphType="DECIMAL" glyphFormat="%0." bulletAlignment="END" startNumber="1" />
+      <level index="1" glyphType="DECIMAL" glyphFormat="%0.%1." bulletAlignment="END" startNumber="1" class="ls2" />
+      <level index="2" glyphType="DECIMAL" glyphFormat="%0.%1.%2." bulletAlignment="END" startNumber="1" class="ls3" />
+      <level index="3" glyphType="DECIMAL" glyphFormat="%0.%1.%2.%3." bulletAlignment="END" startNumber="1" class="ls4" />
+      <level index="4" glyphType="DECIMAL" glyphFormat="%0.%1.%2.%3.%4." bulletAlignment="END" startNumber="1" class="ls5" />
+      <level index="5" glyphType="DECIMAL" glyphFormat="%0.%1.%2.%3.%4.%5." bulletAlignment="END" startNumber="1" class="ls6" />
+      <level index="6" glyphType="DECIMAL" glyphFormat="%0.%1.%2.%3.%4.%5.%6." bulletAlignment="END" startNumber="1" class="ls7" />
+      <level index="7" glyphType="DECIMAL" glyphFormat="%0.%1.%2.%3.%4.%5.%6.%7." bulletAlignment="END" startNumber="1" class="ls8" />
+      <level index="8" glyphType="DECIMAL" glyphFormat="%0.%1.%2.%3.%4.%5.%6.%7.%8." bulletAlignment="END" startNumber="1" class="ls9" />
+    </list>
+    <list id="kix.vxusmbxxnxzu">
+      <level index="0" glyphFormat="%0" glyphSymbol="●" bulletAlignment="START" startNumber="1" />
+      <level index="1" glyphFormat="%1" glyphSymbol="○" bulletAlignment="START" startNumber="1" class="ls2" />
+      <level index="2" glyphFormat="%2" glyphSymbol="■" bulletAlignment="START" startNumber="1" class="ls3" />
+      <level index="3" glyphFormat="%3" glyphSymbol="●" bulletAlignment="START" startNumber="1" class="ls4" />
+      <level index="4" glyphFormat="%4" glyphSymbol="○" bulletAlignment="START" startNumber="1" class="ls5" />
+      <level index="5" glyphFormat="%5" glyphSymbol="■" bulletAlignment="START" startNumber="1" class="ls6" />
+      <level index="6" glyphFormat="%6" glyphSymbol="●" bulletAlignment="START" startNumber="1" class="ls7" />
+      <level index="7" glyphFormat="%7" glyphSymbol="○" bulletAlignment="START" startNumber="1" class="ls8" />
+      <level index="8" glyphFormat="%8" glyphSymbol="■" bulletAlignment="START" startNumber="1" class="ls9" />
+    </list>
+  </lists>
+  <body>
+    <sectionbreak sectionType="CONTINUOUS" contentDirection="LEFT_TO_RIGHT" columnSeparatorStyle="NONE" />
+    <title headingId="h.oxkdmw4vtq9p">
+      <t>ExtraSuite Docs</t>
+    </title>
+    <subtitle headingId="h.cfu8jobxi8qt">
+      <t>The AI-native workflow for Google Workspace</t>
+    </subtitle>
+    <p />
+    <h1 headingId="h.zbtwfdtrogis">
+      <t>What is ExtraSuite?</t>
+    </h1>
+    <p>
+      <t>
+        <b>ExtraSuite</b>
+      </t>
+      <t> is an open-source CLI tool built for AI agents. It provides a secure, token-efficient, and auditable way to read and write Google Workspace files — Docs, Sheets, Slides, and Forms — using a simple </t>
+      <t>
+        <b>pull / edit / push</b>
+      </t>
+      <t> workflow.</t>
+    </p>
+    <p>
+      <t>Instead of navigating the complex Google APIs directly, agents work with plain files on disk. ExtraSuite handles the translation between those files and the live Google document.</t>
+    </p>
+    <p />
+    <h1 headingId="h.l634pntrm77k">
+      <t>How It Works</t>
+    </h1>
+    <p>
+      <t>The core workflow has four steps:</t>
+    </p>
+    <li parent="kix.9bp6nf50qd7c">
+      <t>
+        <b>Pull</b>
+      </t>
+      <t> — Download the Google file and convert it into a local folder of readable files.</t>
+    </li>
+    <li parent="kix.9bp6nf50qd7c">
+      <t>
+        <b>Edit</b>
+      </t>
+      <t> — Modify the local files directly. No API knowledge required.</t>
+    </li>
+    <li parent="kix.9bp6nf50qd7c">
+      <t>
+        <b>Diff</b>
+      </t>
+      <t> — Preview what changes will be sent to Google. No network calls.</t>
+    </li>
+    <li parent="kix.9bp6nf50qd7c">
+      <t>
+        <b>Push</b>
+      </t>
+      <t> — Apply the changes to the live Google document via the API.</t>
+    </li>
+    <p />
+    <h1 headingId="h.et03zk8i68v1">
+      <t>Key Innovations</t>
+    </h1>
+    <p />
+    <h2 headingId="h.7quky6p4yop5">
+      <t>Git-like Workflow</t>
+    </h2>
+    <p>
+      <t>ExtraSuite brings a </t>
+      <t>
+        <b>git-inspired pull/diff/push</b>
+      </t>
+      <t> model to all Google Drive file types. Every pull captures a pristine snapshot so the diff engine knows exactly what changed.</t>
+    </p>
+    <h2 headingId="h.9n0p2kx5hiyp">
+      <t>Unique Agent Identity</t>
+    </h2>
+    <p>
+      <t>Each employee's agent gets a </t>
+      <t>
+        <b>dedicated 1:1 service account</b>
+      </t>
+      <t>. The agent only has access to files explicitly shared with it. All changes appear in Google Drive's version history under that identity.</t>
+    </p>
+    <h2 headingId="h.msjovhfwlkeo">
+      <t>Secure Token Handling</t>
+    </h2>
+    <p>
+      <t>Agents </t>
+      <t>
+        <i>never</i>
+      </t>
+      <t> see raw tokens. The ExtraSuite server issues short-lived credentials using OIDC and domain-wide delegation. Tokens are cached locally and refreshed automatically.</t>
+    </p>
+    <h2 headingId="h.c2eiv4ez7cjh">
+      <t>Token Efficient</t>
+    </h2>
+    <p>
+      <t>Files are serialized into compact, </t>
+      <t>
+        <b>LLM-readable formats</b>
+      </t>
+      <t> — XML for Docs, TSV for Sheets, SML for Slides — so agents consume fewer tokens than working with raw API JSON.</t>
+    </p>
+    <p />
+    <h1 headingId="h.erac3k7o5pvz">
+      <t>Supported Modules</t>
+    </h1>
+    <li parent="kix.vxusmbxxnxzu">
+      <t>
+        <b>extradoc</b>
+      </t>
+      <t> — Google Docs with full paragraph, table, and list support</t>
+    </li>
+    <li parent="kix.vxusmbxxnxzu">
+      <t>
+        <b>extrasheet</b>
+      </t>
+      <t> — Google Sheets with formula and formatting support</t>
+    </li>
+    <li parent="kix.vxusmbxxnxzu">
+      <t>
+        <b>extraslide</b>
+      </t>
+      <t> — Google Slides with shape and layout support</t>
+    </li>
+    <li parent="kix.vxusmbxxnxzu">
+      <t>
+        <b>extraform</b>
+      </t>
+      <t> — Google Forms for reading and editing form questions</t>
+    </li>
+    <li parent="kix.vxusmbxxnxzu">
+      <t>
+        <b>Gmail</b>
+      </t>
+      <t> — Draft creation via delegated OAuth</t>
+    </li>
+    <li parent="kix.vxusmbxxnxzu">
+      <t>
+        <b>Calendar</b>
+      </t>
+      <t> — Event management via delegated OAuth</t>
+    </li>
+    <p />
+  </body>
+  <header id="kix.rx2pmg9ehm2m" class="_base">
+    <p><b>ExtraSuite</b> — AI-Native Google Workspace Toolkit</p>
+  </header>
+  <footer id="kix.wsi3rhyr9nj1" class="_base">
+    <p>(c) 2026 Think41 — open source at github.com/think41/extrasuite</p>
+  </footer>
+</tab>

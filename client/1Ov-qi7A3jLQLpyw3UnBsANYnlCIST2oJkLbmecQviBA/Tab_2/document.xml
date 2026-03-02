@@ -1,0 +1,72 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<tab id="t.overview2" title="Text &amp; Lists" index="1">
+  <body>
+    <sectionbreak sectionType="CONTINUOUS" contentDirection="LEFT_TO_RIGHT" columnSeparatorStyle="NONE" />
+    <h1>Text Formatting</h1>
+    <p>ExtraSuite document.xml supports rich inline formatting using standard HTML-like tags. Here is a tour of what you can do with text.</p>
+    <p></p>
+    <h2>Inline Styles</h2>
+    <p>Use <b>bold</b> for emphasis, <i>italic</i> for titles and terms, and <b><i>bold italic</i></b> for strong emphasis. You can also use <u>underline</u> for links or warnings, and <s>strikethrough</s> to show removed content.</p>
+    <p></p>
+    <h2>Headings</h2>
+    <p>Documents support six heading levels, plus special title and subtitle styles.</p>
+    <h1>Heading 1 — Major Section</h1>
+    <h2>Heading 2 — Sub-section</h2>
+    <h3>Heading 3 — Topic</h3>
+    <h4>Heading 4 — Sub-topic</h4>
+    <h5>Heading 5 — Detail</h5>
+    <h6>Heading 6 — Fine Detail</h6>
+    <p></p>
+    <h1>Lists</h1>
+    <p></p>
+    <h2>Bullet Lists</h2>
+    <p>Use <b>type="bullet"</b> for unordered lists. Nesting is supported up to level 8.</p>
+    <li type="bullet" level="0">First-level item</li>
+    <li type="bullet" level="0">Another first-level item</li>
+    <li type="bullet" level="1">Nested item under the second</li>
+    <li type="bullet" level="1">Another nested item</li>
+    <li type="bullet" level="2">Deeply nested — level 2</li>
+    <li type="bullet" level="0">Back to first level</li>
+    <p></p>
+    <h2>Numbered Lists</h2>
+    <p>Use <b>type="decimal"</b> for ordered lists. Great for sequential steps.</p>
+    <li type="decimal" level="0">Install Python 3.11 or later</li>
+    <li type="decimal" level="0">Run <b>pip install extrasuite</b> or use <b>uvx extrasuite</b></li>
+    <li type="decimal" level="0">Authenticate with your Google account</li>
+    <li type="decimal" level="1">A browser window will open automatically</li>
+    <li type="decimal" level="1">Log in with your corporate account</li>
+    <li type="decimal" level="0">Pull your first document and start editing</li>
+    <p></p>
+    <h2>Alphabetical Lists</h2>
+    <p>Use <b>type="alpha"</b> for lettered lists — useful for options or alternatives.</p>
+    <li type="alpha" level="0">Service account token — for Docs, Sheets, Slides</li>
+    <li type="alpha" level="0">OAuth delegation token — for Gmail and Calendar</li>
+    <li type="alpha" level="0">Offline mode — for diff without any authentication</li>
+    <p></p>
+    <h2>Roman Numeral Lists</h2>
+    <p>Use <b>type="roman"</b> for formal or legal-style numbering.</p>
+    <li type="roman" level="0">Introduction and scope</li>
+    <li type="roman" level="0">Architecture and security model</li>
+    <li type="roman" level="0">API reference and examples</li>
+    <li type="roman" level="0">Changelog and versioning</li>
+    <p></p>
+    <h2>Checkbox Lists</h2>
+    <p>Use <b>type="checkbox"</b> for task lists and checklists.</p>
+    <li type="checkbox" level="0">Pull the document</li>
+    <li type="checkbox" level="0">Edit document.xml</li>
+    <li type="checkbox" level="0">Run diff to preview changes</li>
+    <li type="checkbox" level="0">Push changes to Google Docs</li>
+    <li type="checkbox" level="0">Re-pull to confirm the update</li>
+    <p></p>
+    <h2>Mixed Nesting</h2>
+    <p>Different list types can be nested inside each other for complex structures.</p>
+    <li type="bullet" level="0"><b>extradoc</b> commands</li>
+    <li type="decimal" level="1">pull — download and deserialize</li>
+    <li type="decimal" level="1">diff — compute batchUpdate JSON</li>
+    <li type="decimal" level="1">push — apply changes to live document</li>
+    <li type="bullet" level="0"><b>extrasheet</b> commands</li>
+    <li type="decimal" level="1">pull — download as TSV files</li>
+    <li type="decimal" level="1">push — apply cell updates</li>
+    <p></p>
+  </body>
+</tab>

@@ -1,0 +1,576 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<tab id="t.q5ol1vnmynzo" title="Version 3" index="2">
+  <body>
+    <sectionbreak sectionType="CONTINUOUS" contentDirection="LEFT_TO_RIGHT" columnSeparatorStyle="NONE" />
+    <p>
+      <t>Here are 10 new backend project ideas. These are designed to be more accessible for interns while maintaining enough "business density" and "rule-based constraints" to ensure they can't be solved by a single simple AI prompt.</t>
+    </p>
+    <p />
+    <p>
+      <t>I have focused on industries with well-documented API patterns (like Razorpay for payments, Twilio for SMS, or Google Maps for distance) which you can ask the interns to mock.</t>
+    </p>
+    <p />
+    <table>
+      <col />
+      <col />
+      <col />
+      <col />
+      <col />
+      <tr class="tr1">
+        <td>
+          <p>
+            <t>
+              <b>Original Title</b>
+            </t>
+          </p>
+        </td>
+        <td>
+          <p>
+            <t>
+              <b>New Title</b>
+            </t>
+          </p>
+        </td>
+        <td>
+          <p>
+            <t>
+              <b>Elevator Pitch</b>
+            </t>
+          </p>
+        </td>
+        <td>
+          <p>
+            <t>
+              <b>Requirements</b>
+            </t>
+          </p>
+        </td>
+        <td>
+          <p>
+            <t>
+              <b>Complexity</b>
+            </t>
+          </p>
+        </td>
+      </tr>
+      <tr>
+        <td>
+          <p>
+            <t>
+              <b>Real Estate Listing API</b>
+            </t>
+          </p>
+        </td>
+        <td>
+          <p>
+            <t>
+              <b>Student PG &amp; Co-Living Management System</b>
+            </t>
+          </p>
+        </td>
+        <td>
+          <p>
+            <t>A specialized rental engine for student housing in Indian education hubs like Kota or Pune, managing room allocations, roommates, and mess bills.</t>
+          </p>
+        </td>
+        <td>
+          <p>
+            <t>The system must manage "Bed-Level Inventory" rather than just rooms. Implement "Roommate Matching" logic based on shared preferences (e.g., Veg/Non-Veg, Year of Study). Temporal must handle the "Onboarding Workflow": Deposit Payment -&gt; Document Upload (Aadhaar/College ID to Cloud Storage) -&gt; Digital Agreement Signing. </t>
+            <t>
+              <b>Business Rules:</b>
+            </t>
+            <t> Implement "Prorated Rent" for mid-month move-ins and "Late Fee Accumulation" (₹100/day after the 5th). </t>
+            <t>
+              <b>Edge Cases:</b>
+            </t>
+            <t> Handle "Room Swaps" where balances must be transferred between room types. </t>
+            <t>
+              <b>Integration:</b>
+            </t>
+            <t> Mock a </t>
+            <t>
+              <b>Razorpay Payment Link API</b>
+            </t>
+            <t> for monthly rent collection and a </t>
+            <t>
+              <b>SendGrid API</b>
+            </t>
+            <t> for sending the rent receipt PDF.</t>
+          </p>
+        </td>
+        <td>
+          <p>
+            <t>
+              <b>2.5x</b>
+            </t>
+          </p>
+        </td>
+      </tr>
+      <tr>
+        <td>
+          <p>
+            <t>
+              <b>Healthcare Appointment Booking API</b>
+            </t>
+          </p>
+        </td>
+        <td>
+          <p>
+            <t>
+              <b>Urban Pet Grooming &amp; Vet-on-Call Scheduler</b>
+            </t>
+          </p>
+        </td>
+        <td>
+          <p>
+            <t>A service marketplace for pet parents in Tier-1 cities to book home-based grooming and veterinary consultations.</t>
+          </p>
+        </td>
+        <td>
+          <p>
+            <t>System must manage "Service Areas" via pin-codes; bookings are only allowed if a "Groomer" is active in that zone. Implement "Breed-Specific Duration" logic (e.g., a Golden Retriever grooming takes 120 mins, a Beagle takes 45 mins). Temporal must manage "Slot Expiry"—if a groomer doesn't "Accept" within 15 minutes, the booking must fail-over to the next closest pro. </t>
+            <t>
+              <b>Constraints:</b>
+            </t>
+            <t> Prevent back-to-back bookings without a 30-minute "Travel Buffer." </t>
+            <t>
+              <b>Edge Cases:</b>
+            </t>
+            <t> "Aggressive Pet" flags—if a pet is marked aggressive, the system must only assign "Senior Pros." </t>
+            <t>
+              <b>Integration:</b>
+            </t>
+            <t> Mock a </t>
+            <t>
+              <b>Google Maps Distance Matrix API</b>
+            </t>
+            <t> to calculate travel time between two home visits.</t>
+          </p>
+        </td>
+        <td>
+          <p>
+            <t>
+              <b>1.8x</b>
+            </t>
+          </p>
+        </td>
+      </tr>
+      <tr>
+        <td>
+          <p>
+            <t>
+              <b>Marketplace API</b>
+            </t>
+          </p>
+        </td>
+        <td>
+          <p>
+            <t>
+              <b>Handmade Artisan 'Bazaar' Platform</b>
+            </t>
+          </p>
+        </td>
+        <td>
+          <p>
+            <t>A specialized marketplace for Indian artisans to sell fragile, high-value crafts with milestone-based seller payouts.</t>
+          </p>
+        </td>
+        <td>
+          <p>
+            <t>Implement a "Dual-Approval" workflow for product listings—Artisan uploads photos to Cloud Storage, and a "Curator" must approve quality/pricing. Business logic must handle "Fragile Shipping Insurance" calculations based on item value. Temporal must manage the "Payout Escrow"—funds are held and only released to the artisan 7 days after the "Delivery Confirmed" webhook (mocked). </t>
+            <t>
+              <b>Constraints:</b>
+            </t>
+            <t> Artisans can set "Vacation Mode" which hides their shop but keeps existing orders active. </t>
+            <t>
+              <b>Edge Cases:</b>
+            </t>
+            <t> "Damaged on Arrival"—requires a photo upload within 2 hours of delivery for a refund trigger. </t>
+            <t>
+              <b>Integration:</b>
+            </t>
+            <t> Mock a </t>
+            <t>
+              <b>Shiprocket API</b>
+            </t>
+            <t> for generating tracking IDs and shipping labels.</t>
+          </p>
+        </td>
+        <td>
+          <p>
+            <t>
+              <b>2.0x</b>
+            </t>
+          </p>
+        </td>
+      </tr>
+      <tr>
+        <td>
+          <p>
+            <t>
+              <b>Vehicle Fleet Management API</b>
+            </t>
+          </p>
+        </td>
+        <td>
+          <p>
+            <t>
+              <b>Metro-Station EV Scooter Rental</b>
+            </t>
+          </p>
+        </td>
+        <td>
+          <p>
+            <t>A short-burst rental backend for electric scooters parked at metro stations for last-mile urban commuting.</t>
+          </p>
+        </td>
+        <td>
+          <p>
+            <t>System must handle "Ride Sessions" with per-minute billing. Implement "Geo-fencing"—if the scooter (mocked IoT data) leaves a 5km radius, the system must trigger a "Warning SMS" via Temporal. </t>
+            <t>
+              <b>Business Rules:</b>
+            </t>
+            <t> "Security Deposit" logic—₹500 is blocked on the wallet and released only if the scooter is returned to a designated "Metro Hub." </t>
+            <t>
+              <b>Constraints:</b>
+            </t>
+            <t> Scooter cannot be unlocked if the "Battery SoC" (mocked) is below 20%. </t>
+            <t>
+              <b>Edge Cases:</b>
+            </t>
+            <t> "Ride Pause"—users can pause a ride for 10 mins at a lower rate. </t>
+            <t>
+              <b>Integration:</b>
+            </t>
+            <t> Mock a </t>
+            <t>
+              <b>Firebase Cloud Messaging (FCM) API</b>
+            </t>
+            <t> to send "Low Battery" or "Out of Bounds" push notifications.</t>
+          </p>
+        </td>
+        <td>
+          <p>
+            <t>
+              <b>2.4x</b>
+            </t>
+          </p>
+        </td>
+      </tr>
+      <tr>
+        <td>
+          <p>
+            <t>
+              <b>Library Management API</b>
+            </t>
+          </p>
+        </td>
+        <td>
+          <p>
+            <t>
+              <b>Corporate E-Book &amp; Physical Asset Library</b>
+            </t>
+          </p>
+        </td>
+        <td>
+          <p>
+            <t>An internal resource manager for large companies to track physical laptops, books, and digital licenses across multiple offices.</t>
+          </p>
+        </td>
+        <td>
+          <p>
+            <t>System must manage "Asset State": Available, Checked-out, Under-Repair, or Retired. Implement "Auto-Recovery" logic—if a laptop isn't returned within 3 days of an employee's "Last Working Day" (fetched from mock HRMS), Temporal triggers an escalation to IT. </t>
+            <t>
+              <b>Requirements:</b>
+            </t>
+            <t> Support "Waitlist Reservations"—if a popular book is returned, the first person on the waitlist gets a 2-hour window to claim it. </t>
+            <t>
+              <b>Constraints:</b>
+            </t>
+            <t> Limit of 3 physical assets per employee. </t>
+            <t>
+              <b>Edge Cases:</b>
+            </t>
+            <t> "Asset Damage Report"—employees must upload a photo to Cloud Storage to initiate a repair workflow. </t>
+            <t>
+              <b>Integration:</b>
+            </t>
+            <t> Mock a </t>
+            <t>
+              <b>Slack Webhook API</b>
+            </t>
+            <t> to notify employees when their reserved asset is ready.</t>
+          </p>
+        </td>
+        <td>
+          <p>
+            <t>
+              <b>1.7x</b>
+            </t>
+          </p>
+        </td>
+      </tr>
+      <tr>
+        <td>
+          <p>
+            <t>
+              <b>Subscription Management API</b>
+            </t>
+          </p>
+        </td>
+        <td>
+          <p>
+            <t>
+              <b>Curated 'Healthy Snack' Box Subscription</b>
+            </t>
+          </p>
+        </td>
+        <td>
+          <p>
+            <t>A monthly subscription service delivering healthy, regional Indian snacks to office workers based on dietary profiles.</t>
+          </p>
+        </td>
+        <td>
+          <p>
+            <t>Implement "Subscription Tiers" (Weekly/Monthly) and "Dietary Filters" (Gluten-free, High-Protein, No-Sugar). Temporal must manage the "Renewal Cycle"—on the 25th of every month, charge the card (mocked) and create the "Packing List." </t>
+            <t>
+              <b>Business Rules:</b>
+            </t>
+            <t> Users can "Skip a Month" or "Swap a Box" if done before the 20th. </t>
+            <t>
+              <b>Validation:</b>
+            </t>
+            <t> Check inventory levels before confirming a "Custom Box" swap. </t>
+            <t>
+              <b>Edge Cases:</b>
+            </t>
+            <t> "Failed Payment Recovery"—Temporal should retry the payment 3 times over 3 days before marking the subscription "Paused." </t>
+            <t>
+              <b>Integration:</b>
+            </t>
+            <t> Mock a </t>
+            <t>
+              <b>Razorpay Subscriptions API</b>
+            </t>
+            <t> contract for mandate management.</t>
+          </p>
+        </td>
+        <td>
+          <p>
+            <t>
+              <b>2.1x</b>
+            </t>
+          </p>
+        </td>
+      </tr>
+      <tr>
+        <td>
+          <p>
+            <t>
+              <b>Food Delivery API</b>
+            </t>
+          </p>
+        </td>
+        <td>
+          <p>
+            <t>
+              <b>Corporate 'Dabba' &amp; Cafeteria Pre-Order</b>
+            </t>
+          </p>
+        </td>
+        <td>
+          <p>
+            <t>A lunch-subscription backend for office complexes allowing employees to pre-order meals from multiple in-house vendors.</t>
+          </p>
+        </td>
+        <td>
+          <p>
+            <t>System must handle "Pre-order Windows"—lunch must be ordered by 10:30 AM for 1:00 PM delivery. Implement "Payroll Integration"—meal costs are deducted from a "Monthly Credit" balance. Temporal must manage "Order Aggregation"—at 10:31 AM, send a "Bulk Prep List" to each vendor. </t>
+            <t>
+              <b>Constraints:</b>
+            </t>
+            <t> Vendors have a "Daily Capacity" (e.g., only 50 Biryanis); once hit, the item must auto-disable. </t>
+            <t>
+              <b>Edge Cases:</b>
+            </t>
+            <t> "Meeting Cancellations"—allow bulk cancellation of 10+ meals with a 1-hour notice. </t>
+            <t>
+              <b>Integration:</b>
+            </t>
+            <t> Mock a </t>
+            <t>
+              <b>Twilio WhatsApp API</b>
+            </t>
+            <t> to send a "Your Meal is Ready" QR code to the employee.</t>
+          </p>
+        </td>
+        <td>
+          <p>
+            <t>
+              <b>1.9x</b>
+            </t>
+          </p>
+        </td>
+      </tr>
+      <tr>
+        <td>
+          <p>
+            <t>
+              <b>Event Management API</b>
+            </t>
+          </p>
+        </td>
+        <td>
+          <p>
+            <t>
+              <b>Multiplex Cinema &amp; Concession Orchestrator</b>
+            </t>
+          </p>
+        </td>
+        <td>
+          <p>
+            <t>A movie ticketing backend that synchronizes seat bookings with "Pre-ordered Popcorn" combos and loyalty points.</t>
+          </p>
+        </td>
+        <td>
+          <p>
+            <t>System must manage "Real-time Seat Locking"—a seat is held for 5 minutes during the checkout process using a TTL cache. Implement "Combo-Deals"—buying 2 tickets triggers a 20% discount on "Large Popcorn." Temporal must manage the "Concession Timing"—a notification is sent to the kitchen 10 minutes before the "Interval" of the specific movie show. </t>
+            <t>
+              <b>Validations:</b>
+            </t>
+            <t> Prevent "Single Seat Gaps" in the seating layout (standard cinema rule). </t>
+            <t>
+              <b>Edge Cases:</b>
+            </t>
+            <t> "Show Cancellation"—auto-refund all 200+ tickets and notify via mock SMS. </t>
+            <t>
+              <b>Integration:</b>
+            </t>
+            <t> Mock a </t>
+            <t>
+              <b>SendGrid API</b>
+            </t>
+            <t> to email a PDF ticket with a QR code.</t>
+          </p>
+        </td>
+        <td>
+          <p>
+            <t>
+              <b>2.3x</b>
+            </t>
+          </p>
+        </td>
+      </tr>
+      <tr>
+        <td>
+          <p>
+            <t>
+              <b>Inventory Management API</b>
+            </t>
+          </p>
+        </td>
+        <td>
+          <p>
+            <t>
+              <b>Retail 'Dark Store' 10-Minute Delivery Node</b>
+            </t>
+          </p>
+        </td>
+        <td>
+          <p>
+            <t>A micro-warehouse inventory system for rapid-delivery apps, tracking shelf-life and picker efficiency.</t>
+          </p>
+        </td>
+        <td>
+          <p>
+            <t>System must manage "Shelf-Locations" (Aisle/Bin) to optimize "Picking Routes." Implement "Expiry-First" logic—items with the closest expiry date must be picked first. Temporal must track "Picker SLA"—if an order isn't "Packed" in 120 seconds, alert the hub manager. </t>
+            <t>
+              <b>Business Rules:</b>
+            </t>
+            <t> "Low Stock Trigger"—if "Milk" falls below 20 units, auto-create a "Restock Request" for the central warehouse. </t>
+            <t>
+              <b>Edge Cases:</b>
+            </t>
+            <t> "Damaged in Bin"—adjust inventory and trigger a "Cycle Count" for that SKU. </t>
+            <t>
+              <b>Integration:</b>
+            </t>
+            <t> Mock an </t>
+            <t>
+              <b>Internal Inventory Scanner API</b>
+            </t>
+            <t> that simulates barcode scans for picking/packing.</t>
+          </p>
+        </td>
+        <td>
+          <p>
+            <t>
+              <b>2.5x</b>
+            </t>
+          </p>
+        </td>
+      </tr>
+      <tr>
+        <td>
+          <p>
+            <t>
+              <b>Fitness Tracking API</b>
+            </t>
+          </p>
+        </td>
+        <td>
+          <p>
+            <t>
+              <b>Multi-Chain Gym &amp; PT Session Manager</b>
+            </t>
+          </p>
+        </td>
+        <td>
+          <p>
+            <t>A membership backend for a chain of fitness centers managing gym access, Personal Trainer (PT) slots, and class bookings.</t>
+          </p>
+        </td>
+        <td>
+          <p>
+            <t>System must manage "Membership Tiers"—Silver (1 branch), Gold (All branches). Implement "PT Slot Booking"—trainers set their availability, and clients book 1-hour slots. Temporal must manage "No-Show Penalties"—if a client doesn't "Check-in" (mocked IoT gate) within 15 mins of a PT slot, the session is marked "Consumed." </t>
+            <t>
+              <b>Constraints:</b>
+            </t>
+            <t> Max 20 people per "Yoga Class" slot. </t>
+            <t>
+              <b>Edge Cases:</b>
+            </t>
+            <t> "Trainer Sick Leave"—Temporal must notify all 10 booked clients and offer an "Auto-Reschedule" option. </t>
+            <t>
+              <b>Integration:</b>
+            </t>
+            <t> Mock a </t>
+            <t>
+              <b>Push Notification API</b>
+            </t>
+            <t> for workout reminders and membership expiry alerts.</t>
+          </p>
+        </td>
+        <td>
+          <p>
+            <t>
+              <b>1.6x</b>
+            </t>
+          </p>
+        </td>
+      </tr>
+    </table>
+  </body>
+  <header id="kix.qo8j7wgou2jq">
+    <p>
+      <t>
+        <b>Boot41 Project Ideas</b>
+      </t>
+    </p>
+  </header>
+  <footer id="kix.staxi9g4ufha">
+    <p>
+      <t>(c) 2026 Think41 Technologies Pvt. Ltd</t>
+    </p>
+  </footer>
+</tab>
