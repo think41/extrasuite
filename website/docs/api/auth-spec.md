@@ -700,6 +700,7 @@ Additionally:
 
 | Version | Date | Changes |
 |---------|------|---------|
+| 2.1 | 2026-03-02 | Replace pseudo_scope with typed Command object; response returns credentials array |
 | 2.0 | 2026-02-26 | Add v2 session-token protocol (30-day session, headless Phase 2) |
 | 1.1 | 2026-02-10 | Add delegation protocol specification |
 | 1.0 | 2026-01-23 | Initial specification |
@@ -711,7 +712,7 @@ Additionally:
 The v2 protocol eliminates recurring browser interruptions by splitting authentication into two phases:
 
 - **Phase 1 (once per ~30 days):** Browser-based OAuth flow → 30-day session token stored locally
-- **Phase 2 (every command, headless):** Session token exchanged for a short-lived access token, no browser required
+- **Phase 2 (every command, headless):** Session token exchanged for a short-lived credential, no browser required
 
 ### Overview
 
@@ -735,20 +736,20 @@ Phase 1 — Session Establishment (once per 30 days):
 │     locally  │   email, expires_at} │                  │
 └──────────────┘                      └──────────────────┘
 
-Phase 2 — Access Token Exchange (every command, headless):
+Phase 2 — Credential Exchange (every command, headless):
 
 ┌──────────────┐                      ┌──────────────────┐
 │  AI Agent    │                      │  Auth Server     │
 │  (CLI)       │                      │                  │
 │  1. Load     │─────────────────────▶│  2. Validate     │
 │     session  │  POST /api/auth/     │     session,     │
-│     token    │  token               │     generate     │
-│              │  {session_token,     │     access token │
-│              │   pseudo_scope,      │                  │
-│              │   reason}            │                  │
+│     token    │  token               │     resolve      │
+│              │  Authorization:      │     credentials  │
+│              │  Bearer <session>    │     for command  │
+│              │  {command, reason}   │                  │
 │  3. Use      │◀─────────────────────│                  │
-│     token    │  {access_token,      │                  │
-│              │   expires_at}        │                  │
+│     token    │  {credentials: [...],│                  │
+│              │   command_type}      │                  │
 └──────────────┘                      └──────────────────┘
 ```
 
@@ -782,50 +783,116 @@ The session token is stored locally at `~/.config/extrasuite/session.json` (perm
 
 #### POST /api/auth/token
 
-Exchange a session token for a short-lived access token. No browser required.
+Exchange a session token for a short-lived credential. No browser required.
 
-**Request:**
+The session token is passed in the `Authorization` header (not the body) to avoid proxy log exposure.
+
+**Request headers:**
+
+```
+Authorization: Bearer <session_token>
+Content-Type: application/json
+```
+
+**Request body:**
 ```json
 {
-  "session_token": "raw_session_token",
-  "pseudo_scope": "sheet.pull",
-  "reason": "Pulling Google Sheet for data analysis",
-  "file_hint": "https://docs.google.com/spreadsheets/d/..."
+  "command": {
+    "type": "sheet.pull",
+    "file_url": "https://docs.google.com/spreadsheets/d/...",
+    "file_name": "Q4 Budget"
+  },
+  "reason": "User wants to review the Q4 budget"
 }
 ```
+
+The `command` object is a discriminated union keyed on `type`. All fields beyond `type` are optional context used for audit logging — the server does not validate file URLs or other parameters.
 
 **Response:**
 ```json
 {
-  "access_token": "ya29.xxx",
-  "expires_at": "2026-02-26T11:00:00+00:00",
-  "token_type": "Bearer"
+  "credentials": [
+    {
+      "provider": "google",
+      "kind": "bearer_sa",
+      "token": "ya29.xxx",
+      "expires_at": "2026-03-02T11:00:00+00:00",
+      "scopes": [],
+      "metadata": {
+        "service_account_email": "user-abc@project.iam.gserviceaccount.com"
+      }
+    }
+  ],
+  "command_type": "sheet.pull"
 }
 ```
 
-### Pseudo-Scope Table
+| Field | Description |
+|---|---|
+| `credentials` | List of credentials (currently always one entry) |
+| `credentials[].provider` | Always `"google"` for now |
+| `credentials[].kind` | `"bearer_sa"` (service account) or `"bearer_dwd"` (domain-wide delegation) |
+| `credentials[].token` | Bearer token for Google API calls |
+| `credentials[].expires_at` | ISO 8601 expiry timestamp |
+| `credentials[].scopes` | Granted OAuth scopes (empty for SA tokens) |
+| `credentials[].metadata.service_account_email` | SA email (for Drive file sharing) |
+| `command_type` | Echo of the resolved command type |
 
-Pseudo-scopes are short names that map to credential type and Google OAuth scope:
+**Error responses:**
 
-| Pseudo-scope | Credential type | Description |
-|---|---|---|
-| `sheet.pull` | SA | Read Google Sheets |
-| `sheet.push` | SA | Write Google Sheets |
-| `doc.pull` | SA | Read Google Docs |
-| `doc.push` | SA | Write Google Docs |
-| `slide.pull` | SA | Read Google Slides |
-| `slide.push` | SA | Write Google Slides |
-| `form.pull` | SA | Read Google Forms |
-| `form.push` | SA | Write Google Forms |
-| `drive.file` | SA | Drive file access |
-| `calendar` | DWD | Google Calendar |
-| `gmail.compose` | DWD | Gmail compose/drafts |
-| `gmail.send` | DWD | Gmail send |
-| `gmail.readonly` | DWD | Gmail read |
-| `script.projects` | DWD | Google Apps Script |
-| `drive` | DWD | Full Drive access |
+| Status | Condition |
+|--------|-----------|
+| 401 | Missing, malformed, expired, or revoked session token |
+| 403 | Requested command requires a scope not in the server's `DELEGATION_SCOPES` allowlist |
+| 422 | Unknown command type (Pydantic validation failure) |
+| 500 | Service account provisioning or session persistence failure |
 
-SA = Service Account impersonation, DWD = Domain-Wide Delegation
+### Command Type Table
+
+Each command type maps to either a service account (SA) token or a domain-wide delegation (DWD) token. SA tokens access files shared with the user's dedicated service account. DWD tokens act as the user for user-scoped APIs.
+
+**SA commands** (credential kind: `bearer_sa`, scopes: `[]`):
+
+| Command type | Description |
+|---|---|
+| `sheet.pull` | Read Google Sheets |
+| `sheet.push` | Write Google Sheets |
+| `sheet.batchupdate` | Batch update Google Sheets |
+| `doc.pull` | Read Google Docs |
+| `doc.push` | Write Google Docs |
+| `slide.pull` | Read Google Slides |
+| `slide.push` | Write Google Slides |
+| `form.pull` | Read Google Forms |
+| `form.push` | Write Google Forms |
+| `drive.ls` | List a Drive folder |
+| `drive.search` | Search Drive |
+
+**DWD commands** (credential kind: `bearer_dwd`, scopes populated):
+
+| Command type | OAuth scope(s) granted |
+|---|---|
+| `gmail.compose` | `gmail.compose` |
+| `gmail.edit_draft` | `gmail.compose` |
+| `gmail.reply` | `gmail.readonly`, `gmail.compose` |
+| `gmail.list` | `gmail.readonly` |
+| `gmail.read` | `gmail.readonly` |
+| `calendar.view` | `calendar` |
+| `calendar.list` | `calendar` |
+| `calendar.search` | `calendar` |
+| `calendar.freebusy` | `calendar` |
+| `calendar.create` | `calendar` |
+| `calendar.update` | `calendar` |
+| `calendar.delete` | `calendar` |
+| `calendar.rsvp` | `calendar` |
+| `contacts.read` | `contacts.readonly` |
+| `contacts.other` | `contacts.other.readonly` |
+| `drive.file.create` | `drive.file` |
+| `drive.file.share` | `drive.file` |
+| `script.pull` | `script.projects` |
+| `script.push` | `script.projects` |
+| `script.create` | `script.projects` |
+
+Scope values are full URLs: prefix all entries with `https://www.googleapis.com/auth/`.
 
 ### Admin Session Management Endpoints
 
@@ -837,7 +904,7 @@ These endpoints use Bearer session token authentication (`Authorization: Bearer 
 | `DELETE /api/admin/sessions/<hash>` | Revoke session | Own session or admin |
 | `POST /api/admin/sessions/revoke-all?email=<email>` | Revoke all sessions | Self or admin |
 
-Admin emails are configured via `ADMIN_EMAILS` env var (CSV).
+Admin emails are configured via `ADMIN_EMAILS` env var (CSV). Matching is case-insensitive.
 
 ### Session Token Storage
 
@@ -860,11 +927,10 @@ Every call to `POST /api/auth/token` is logged in Firestore `access_logs` collec
 |---|---|
 | `email` | User's email |
 | `session_hash_prefix` | First 16 chars of SHA-256(session_token) |
-| `pseudo_scope` | Requested pseudo-scope |
-| `credential_type` | `"sa"` or `"dwd"` |
+| `command_type` | Resolved command type (e.g. `"sheet.pull"`) |
+| `command_context` | Full command object fields (audit context, not validated) |
 | `reason` | Caller-provided reason string |
 | `ip` | Client IP address |
-| `file_hint` | Optional Drive URL/ID |
 | `timestamp` | Request time |
 | `expires_at` | 30-day TTL for auto-cleanup |
 

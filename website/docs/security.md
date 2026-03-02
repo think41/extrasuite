@@ -103,10 +103,11 @@ ExtraSuite optionally supports **domain-wide delegation** for user-specific APIs
 **How it works:**
 
 - The server impersonates the user via Google's domain-wide delegation mechanism
+- The client sends a typed **command object** (e.g. `{"type": "gmail.compose", ...}`); the server's command registry maps this to the required OAuth scope(s)
 - **Two layers of scope enforcement:**
     1. **Server-side allowlist** (`DELEGATION_SCOPES`) — optional, rejects disallowed scopes before any Google API call
     2. **Google Workspace Admin Console** — authoritative enforcement; if a scope isn't authorized there, the delegation call fails and the server returns 403
-- All delegation requests are logged with user email, requested scopes, reason, and timestamp
+- All delegation requests are logged with user email, command type, full command context, reason, and timestamp
 
 **Security model comparison:**
 
@@ -150,12 +151,13 @@ ExtraSuite optionally supports **domain-wide delegation** for user-specific APIs
 
 - The server stores only the email-to-service-account mapping
 - No OAuth access tokens are stored server-side
-- Session cookies are signed and stateless
+- Session tokens are stored as SHA-256 hashes in Firestore (the raw token never touches the database)
 
 **Automatic expiration:**
 
 | Data Type | Lifetime |
 |-----------|----------|
+| Session tokens | 30 days active; Firestore document retained for 60 days for audit then auto-deleted |
 | Access tokens | 1 hour |
 | Auth codes | 2 minutes |
 | OAuth state tokens | 10 minutes |
@@ -166,17 +168,14 @@ ExtraSuite optionally supports **domain-wide delegation** for user-specific APIs
 
 The following security settings can be configured via environment variables:
 
-### Session Cookie Settings
+### Session Token Settings
 
 | Setting | Default | Description |
 |---------|---------|-------------|
-| `SESSION_COOKIE_NAME` | `session` | Name of the session cookie |
-| `SESSION_COOKIE_EXPIRY_MINUTES` | `1440` (24 hours) | Session cookie lifetime in minutes |
-| `SESSION_COOKIE_SAME_SITE` | `lax` | SameSite attribute (`lax`, `strict`, or `none`) |
-| `SESSION_COOKIE_HTTPS_ONLY` | `true` | Whether to set the Secure flag (HTTPS only) |
-| `SESSION_COOKIE_DOMAIN` | (derived from `BASE_DOMAIN`) | Cookie domain restriction |
+| `SESSION_TOKEN_EXPIRY_DAYS` | `30` | Session token lifetime in days |
+| `ADMIN_EMAILS` | (empty) | CSV of admin email addresses who can manage any user's sessions |
 
-### Token Settings
+### Access Token Settings
 
 | Setting | Default | Description |
 |---------|---------|-------------|
@@ -201,11 +200,12 @@ The following security settings can be configured via environment variables:
 
 | Constant | Value | Description |
 |----------|-------|-------------|
+| `SESSION_TOKEN_EXPIRY_DAYS` | 30 days (configurable) | Lifetime of 30-day session tokens |
 | `ACCESS_TOKEN_TTL` | 1 hour (configurable) | Lifetime of issued access tokens |
 | `AUTH_CODE_TTL` | 2 minutes | Lifetime of temporary auth codes |
 | `OAUTH_STATE_TTL` | 10 minutes | Lifetime of OAuth state tokens |
-| `TOKEN_DIR_PERMISSIONS` | `0700` | Directory permissions for token cache |
-| `TOKEN_FILE_PERMISSIONS` | `0600` | File permissions for cached tokens |
+| `TOKEN_DIR_PERMISSIONS` | `0700` | Directory permissions for credential cache |
+| `TOKEN_FILE_PERMISSIONS` | `0600` | File permissions for cached credentials |
 
 ---
 
