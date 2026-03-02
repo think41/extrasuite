@@ -728,6 +728,10 @@ class CredentialsManager:
             ) as response:
                 result = json.loads(response.read().decode("utf-8"))
         except urllib.error.HTTPError as e:
+            if e.code == 400:
+                raise Exception(
+                    "Auth code invalid or expired. Please re-authenticate: extrasuite auth login"
+                ) from e
             error_body = e.read().decode("utf-8") if e.fp else str(e)
             raise Exception(f"Session token exchange failed: {error_body}") from e
         except urllib.error.URLError as e:

@@ -48,7 +48,7 @@ import asyncio
 from datetime import UTC, datetime, timedelta
 
 from fastapi import Request
-from google.cloud.firestore_v1 import AsyncClient, AsyncQuery
+from google.cloud.firestore_v1 import AsyncClient
 from google.cloud.firestore_v1.async_transaction import async_transactional
 
 # OAuth state TTL (10 minutes)
@@ -172,27 +172,6 @@ class Database:
 
         transaction = self._client.transaction()
         return await asyncio.wait_for(_atomic_retrieve(transaction), timeout=self._timeout)
-
-    async def cleanup_expired_oauth_states(self) -> int:
-        """Clean up expired OAuth states. Returns count of deleted states."""
-        now = datetime.now(UTC)
-
-        async def _query() -> AsyncQuery:
-            return (
-                self._client.collection("oauth_states")
-                .where("expires_at", "<", now)
-                .limit(100)  # Batch size to avoid timeout
-            )
-
-        query = await asyncio.wait_for(_query(), timeout=self._timeout)
-        expired_docs = await asyncio.wait_for(query.get(), timeout=self._timeout)
-
-        count = 0
-        for doc in expired_docs:
-            await asyncio.wait_for(doc.reference.delete(), timeout=self._timeout)
-            count += 1
-
-        return count
 
     # =========================================================================
     # Auth Code Exchange (for secure token delivery)
@@ -511,10 +490,13 @@ class Database:
         non-owning admins (see api.py list_sessions).
         """
         now = datetime.now(UTC)
+        # revoked_at is set to None on creation and updated on revocation, so
+        # filtering here pushes the work to Firestore rather than Python.
         query = (
             self._client.collection("session_tokens")
             .where("email", "==", email)
             .where("active_expires_at", ">", now)
+            .where("revoked_at", "==", None)
         )
 
         async def _query() -> list:
@@ -526,8 +508,6 @@ class Database:
         for doc in docs:
             data = doc.to_dict()
             if data is None:
-                continue
-            if data.get("revoked_at") is not None:
                 continue
             result.append(
                 {
@@ -551,6 +531,7 @@ class Database:
             self._client.collection("session_tokens")
             .where("email", "==", email)
             .where("active_expires_at", ">", now)
+            .where("revoked_at", "==", None)
         )
 
         async def _query() -> list:
@@ -558,11 +539,7 @@ class Database:
 
         docs = await asyncio.wait_for(_query(), timeout=self._timeout)
 
-        active_docs = [
-            doc
-            for doc in docs
-            if doc.to_dict() is not None and doc.to_dict().get("revoked_at") is None
-        ]
+        active_docs = [doc for doc in docs if doc.to_dict() is not None]
 
         if not active_docs:
             return 0

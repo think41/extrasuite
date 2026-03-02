@@ -727,7 +727,11 @@ async def exchange_session_for_access_token(
 def _assert_session_authorized(
     caller_email: str, target_email: str, settings: Settings, action: str
 ) -> None:
-    """Raise 403 if caller is neither the owner nor an admin."""
+    """Raise 403 if caller is neither the owner nor an admin.
+
+    All email comparisons are case-insensitive. Settings.get_admin_emails()
+    must return lowercase-normalised addresses to make this work correctly.
+    """
     if (
         caller_email.lower() != target_email.lower()
         and caller_email.lower() not in settings.get_admin_emails()
