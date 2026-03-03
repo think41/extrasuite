@@ -676,6 +676,36 @@ def _segment_to_element(seg: SegmentXml, parent: Element) -> None:
 # ---------------------------------------------------------------------------
 
 
+def _t_child_to_inlines(sub: Element, inherited_class: str | None) -> list[InlineNode]:
+    """Convert a single child element inside <t> to one or more inline nodes.
+
+    Handles sugar tags (<b>, <i>, …), <span class>, and <a href> nested
+    inside a <t> wrapper.  Used by the mixed-content branch of
+    _inlines_from_element so that <t>prefix <b>bold</b> suffix</t> expands
+    into three separate TNodes instead of silently dropping the surrounding text.
+    """
+    tag = sub.tag
+    if tag in _SUGAR_TAGS:
+        return [TNode(text=sub.text or "", class_name=inherited_class, sugar_tag=tag)]
+    if tag == "span":
+        return [
+            TNode(text=sub.text or "", class_name=sub.get("class") or inherited_class)
+        ]
+    if tag == "a":
+        t_nodes = [TNode(text=t.text or "") for t in sub.findall("t")]
+        if not t_nodes and sub.text:
+            t_nodes = [TNode(text=sub.text)]
+        return [
+            LinkNode(
+                href=sub.get("href", ""),
+                children=t_nodes,
+                class_name=sub.get("class"),
+                link_type=sub.get("linkType"),
+            )
+        ]
+    return []
+
+
 def _inlines_from_element(parent: Element) -> list[InlineNode]:
     """Parse inline nodes from a paragraph-like element's children.
 
@@ -686,6 +716,9 @@ def _inlines_from_element(parent: Element) -> list[InlineNode]:
 
     Bare text (element.text / child.tail) is also parsed as TNode runs so
     that mixed-content markup like <p>Hello <b>world</b>!</p> works.
+
+    Mixed content inside <t> is also supported: <t>prefix <b>bold</b> suffix</t>
+    expands into multiple TNodes preserving all text.
     """
     inlines: list[InlineNode] = []
 
@@ -701,15 +734,31 @@ def _inlines_from_element(parent: Element) -> list[InlineNode]:
         tag = child.tag
         if tag == "t":
             class_name = child.get("class")
-            # Check for sugar tag child (e.g. <t><b>text</b></t>)
-            sugar_tag = None
-            text = child.text or ""
-            for sub in child:
-                if sub.tag in _SUGAR_TAGS:
-                    sugar_tag = sub.tag
-                    text = sub.text or ""
-                    break
-            inlines.append(TNode(text=text, class_name=class_name, sugar_tag=sugar_tag))
+            children_list = list(child)
+            if not children_list:
+                # Pure text: <t>text</t> or <t class="s">text</t>
+                inlines.append(TNode(text=child.text or "", class_name=class_name))
+            elif (
+                len(children_list) == 1
+                and children_list[0].tag in _SUGAR_TAGS
+                and not (child.text and child.text.strip())
+                and not (children_list[0].tail and children_list[0].tail.strip())
+            ):
+                # Canonical pull form: <t><b>text</b></t> — single sugar wrapper, no
+                # surrounding text.  Fast path that preserves the existing behaviour.
+                sub = children_list[0]
+                inlines.append(
+                    TNode(text=sub.text or "", class_name=class_name, sugar_tag=sub.tag)
+                )
+            else:
+                # Mixed content: expand into multiple inline nodes so that text
+                # like <t>prefix <b>bold</b> suffix</t> is not silently truncated.
+                if child.text and child.text.strip():
+                    inlines.append(TNode(text=child.text, class_name=class_name))
+                for sub in children_list:
+                    inlines.extend(_t_child_to_inlines(sub, class_name))
+                    if sub.tail and sub.tail.strip():
+                        inlines.append(TNode(text=sub.tail, class_name=class_name))
         elif tag in _SUGAR_TAGS:
             # Shorthand: <b>bold</b> directly inside <p> — equivalent to <t><b>bold</b></t>
             inlines.append(TNode(text=child.text or "", sugar_tag=tag))
@@ -720,6 +769,9 @@ def _inlines_from_element(parent: Element) -> list[InlineNode]:
             inlines.append(SoftBreakNode())
         elif tag == "a":
             t_nodes = [TNode(text=t.text or "") for t in child.findall("t")]
+            if not t_nodes and child.text:
+                # Support plain text: <a href="...">link text</a>
+                t_nodes = [TNode(text=child.text)]
             inlines.append(
                 LinkNode(
                     href=child.get("href", ""),

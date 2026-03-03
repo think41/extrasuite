@@ -313,6 +313,86 @@ class TestModels:
         assert bold_node.sugar_tag == "b"
         assert bold_node.text == "bold"
 
+    def test_mixed_content_in_t(self) -> None:
+        """Mixed text+sugar inside <t> expands into multiple TNodes (BUG-5 fix)."""
+        xml = """<tab id="t.0" title="Tab 1">
+          <body>
+            <p><t>ExtraSuite is an <b>open-source</b> CLI tool.</t></p>
+          </body>
+        </tab>"""
+        tab = TabXml.from_xml_string(xml)
+        para = tab.body[0]
+        assert isinstance(para, ParagraphXml)
+        # Should produce 3 TNodes: plain, bold, plain — not just 1
+        assert len(para.inlines) == 3
+        assert isinstance(para.inlines[0], TNode)
+        assert para.inlines[0].text == "ExtraSuite is an "
+        assert para.inlines[0].sugar_tag is None
+        assert isinstance(para.inlines[1], TNode)
+        assert para.inlines[1].text == "open-source"
+        assert para.inlines[1].sugar_tag == "b"
+        assert isinstance(para.inlines[2], TNode)
+        assert para.inlines[2].text == " CLI tool."
+        assert para.inlines[2].sugar_tag is None
+
+    def test_span_in_t(self) -> None:
+        """<span class> inside <t> is parsed as a TNode with class (BUG-10 fix)."""
+        xml = """<tab id="t.0" title="Tab 1">
+          <body>
+            <p><t><span class="code">some code</span></t></p>
+          </body>
+        </tab>"""
+        tab = TabXml.from_xml_string(xml)
+        para = tab.body[0]
+        assert isinstance(para, ParagraphXml)
+        assert len(para.inlines) == 1
+        node = para.inlines[0]
+        assert isinstance(node, TNode)
+        assert node.text == "some code"
+        assert node.class_name == "code"
+
+    def test_link_in_t(self) -> None:
+        """<a href> inside <t> is parsed as a LinkNode (BUG-6 fix)."""
+        from extradoc.serde._models import LinkNode
+
+        xml = """<tab id="t.0" title="Tab 1">
+          <body>
+            <p><t><a href="https://example.com">link text</a></t></p>
+          </body>
+        </tab>"""
+        tab = TabXml.from_xml_string(xml)
+        para = tab.body[0]
+        assert isinstance(para, ParagraphXml)
+        assert len(para.inlines) == 1
+        node = para.inlines[0]
+        assert isinstance(node, LinkNode)
+        assert node.href == "https://example.com"
+        assert len(node.children) == 1
+        assert node.children[0].text == "link text"
+
+    def test_plain_link_at_p_level(self) -> None:
+        """<a href> with plain text (no <t> children) at <p> level works (BUG-6 fix)."""
+        from extradoc.serde._models import LinkNode
+
+        xml = """<tab id="t.0" title="Tab 1">
+          <body>
+            <p>Project: <a href="https://github.com/think41/extrasuite">github.com/think41/extrasuite</a>.</p>
+          </body>
+        </tab>"""
+        tab = TabXml.from_xml_string(xml)
+        para = tab.body[0]
+        assert isinstance(para, ParagraphXml)
+        # Should be: TNode("Project: "), LinkNode, TNode(".")
+        assert len(para.inlines) == 3
+        assert isinstance(para.inlines[0], TNode)
+        assert para.inlines[0].text == "Project: "
+        link = para.inlines[1]
+        assert isinstance(link, LinkNode)
+        assert link.href == "https://github.com/think41/extrasuite"
+        assert link.children[0].text == "github.com/think41/extrasuite"
+        assert isinstance(para.inlines[2], TNode)
+        assert para.inlines[2].text == "."
+
     def test_index_xml_roundtrip(self) -> None:
         index = IndexXml(
             id="doc-1",
