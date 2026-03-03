@@ -24,7 +24,8 @@ Collections structure:
 - session_tokens: Document ID = SHA-256(raw_token) as 64-char hex
   - email: User's email
   - created_at: When the session was created
-  - expires_at: Firestore TTL field (SESSION_TOKEN_TTL after creation)
+  - active_expires_at: When the session stops being accepted (SESSION_TOKEN_EXPIRY_DAYS, default 30d)
+  - expires_at: Firestore TTL field for auto-deletion (SESSION_TOKEN_TTL = 60d = 30d active + 30d audit)
   - revoked_at: When the session was revoked (null if active)
   - device_ip, device_mac, device_hostname, device_os, device_platform
 
@@ -32,8 +33,9 @@ Collections structure:
   - email, session_hash_prefix, command_type, command_context (nested dict), reason, ip
   - timestamp, expires_at (30-day TTL)
 
-Note: Sessions are handled via starlette's signed cookies (stateless).
+Note: v1 sessions are handled via starlette's signed cookies (stateless).
 The cookie stores the user email, which is validated against the users collection.
+v2 sessions use long-lived session tokens stored in Firestore (session_tokens collection).
 
 Note: We do NOT store OAuth access tokens. Tokens are generated on-demand when
 the auth code is exchanged. We only store the service account email needed to

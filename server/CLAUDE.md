@@ -62,7 +62,17 @@ See [`auth-spec.md`](../website/docs/api/auth-spec.md) for the full protocol. Th
 }
 ```
 
-The `command_registry.py` module is the single source of truth for which commands use SA vs DWD and which OAuth scopes each DWD command requires. To add a new command: add a `Command` class to `commands.py`, register it in `command_registry._SA_COMMAND_TYPES` or `_DWD_COMMAND_SCOPES`, and the `TestCommandRegistrySync` test will catch any mismatch.
+The `command_registry.py` module is the single source of truth for which commands use SA vs DWD and which OAuth scopes each DWD command requires.
+
+**Adding a new command — checklist:**
+
+1. Add a `XyzCommand(BaseModel)` class to `commands.py` with a `Literal["xyz.op"]` type field and audit-context fields (all optional, empty defaults).
+2. Add the type string to `Command` union at the bottom of `commands.py`.
+3. Add the type to `_SA_COMMAND_TYPES` (service account) or `_DWD_COMMAND_SCOPES` (delegation, with full scope URL list) in `command_registry.py`.
+4. Run `pytest tests/test_v2_session.py::TestCommandRegistrySync` — this test catches union/registry drift automatically.
+5. Update the CLI (`client/src/extrasuite/client/cli/`) to build the typed command dict.
+6. If the command uses a new OAuth scope: update `CLAUDE.md` (root) OAuth Delegation Scopes table and `server/.env.template` `DELEGATION_SCOPES` example line.
+7. Update the Command Type Table in `website/docs/api/auth-spec.md`.
 
 **Admin session management:**
 

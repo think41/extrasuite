@@ -497,7 +497,9 @@ If you implement this specification, your server will be compatible with:
 
 ---
 
-## Delegation Protocol (Optional)
+## Delegation Protocol (Deprecated)
+
+> **Deprecated:** The explicit delegation endpoints below (`/api/delegation/auth`, `/api/delegation/exchange`) are superseded by the **v2 session-token protocol**. In v2, DWD tokens are obtained via `POST /api/auth/token` with a typed `command` object — no separate delegation flow needed. See the [v2 Session Token Protocol](#v2-session-token-protocol) and [Command Type Table](#command-type-table) sections. These endpoints remain functional but will be removed in a future release.
 
 The delegation protocol enables AI agents to obtain **user-level** access tokens for APIs like Gmail, Calendar, and Apps Script. Unlike the service account flow above (where tokens act as a service account), delegation tokens act **as the user** via Google's domain-wide delegation.
 

@@ -97,12 +97,19 @@ Three packages are published to PyPI independently using tag-based releases with
 
 ## OAuth Delegation Scopes
 
-The server only allows a specific set of OAuth delegation scopes. When calling `get_oauth_token()`, only request these scopes:
+The server issues DWD tokens for the following Google OAuth scopes. Each scope corresponds to one or more typed commands in `command_registry.py`. When adding a new command that requires a new scope, add the scope here and to `server/.env.template`.
 
-- `gmail.compose` - Create Gmail drafts
-- `calendar` - Read/write Google Calendar
-- `script.projects` - Google Apps Script
-- `drive.file` - Access Drive files created by the app
+| Short scope name | Full scope URL suffix | Used by |
+|---|---|---|
+| `gmail.compose` | `gmail.compose` | `gmail.compose`, `gmail.edit_draft`, `gmail.reply` |
+| `gmail.readonly` | `gmail.readonly` | `gmail.list`, `gmail.read`, `gmail.reply` |
+| `calendar` | `calendar` | All `calendar.*` commands |
+| `contacts.readonly` | `contacts.readonly` | `contacts.read` |
+| `contacts.other.readonly` | `contacts.other.readonly` | `contacts.other` |
+| `script.projects` | `script.projects` | `script.pull`, `script.push`, `script.create` |
+| `drive.file` | `drive.file` | `drive.file.create`, `drive.file.share` |
+
+Full scope URLs are prefixed with `https://www.googleapis.com/auth/`. SA commands (sheets, docs, slides, forms, drive.ls, drive.search) do not use OAuth scopes — they use the per-user service account token directly.
 
 ## Code Style: Type Safety and None Discipline
 
