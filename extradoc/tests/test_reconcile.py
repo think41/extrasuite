@@ -4508,3 +4508,156 @@ class TestListGrouping:
         result = reconcile(base, desired)
         assert _count_create_bullet_reqs(result) == 1
         # verify() skipped — mock simplifies numbered glyph types
+
+
+class TestListAtEndOfSegment:
+    """BUG-4: createParagraphBullets / updateParagraphStyle endIndex must be
+    strictly less than segment end index (the Google Docs API rejects endIndex
+    == segment_end with 'Index N must be less than the end index of the
+    referenced segment, N').
+
+    In a trailing gap the insert_text has its trailing \\n stripped because the
+    segment's pre-existing final \\n acts as the paragraph terminator.
+    _style_reqs_for_added_paras previously computed actual_end using the full
+    paragraph text length (including \\n), producing actual_end == segment_end.
+    """
+
+    def _get_segment_end(self, doc: Document) -> int:
+        """Return the segment end index for the first tab's body."""
+        body = doc.tabs[0].document_tab.body
+        assert body.content
+        last = body.content[-1]
+        assert last.end_index is not None
+        return last.end_index
+
+    def test_single_bullet_endindex_lt_segment_end(self):
+        """Single bullet at end of segment: createParagraphBullets endIndex < segment_end."""
+        base = _make_doc("")
+        desired = _make_doc_with_list_items([("Only item", 0)])
+        segment_end = self._get_segment_end(desired)
+
+        result = reconcile(base, desired)
+        ranges = _get_all_bullet_ranges(result)
+        assert len(ranges) == 1
+        _, end = ranges[0]
+        assert end < segment_end, (
+            f"createParagraphBullets endIndex {end} must be < segment_end {segment_end} "
+            f"(BUG-4: Google Docs API rejects endIndex == segment_end)"
+        )
+        ok, diffs = verify(base, result, desired)
+        assert ok, f"Diffs: {diffs}"
+
+    def test_multiple_bullets_endindex_lt_segment_end(self):
+        """Three bullets at end of segment: createParagraphBullets endIndex < segment_end."""
+        base = _make_doc("")
+        desired = _make_doc_with_list_items([("First", 0), ("Second", 0), ("Third", 0)])
+        segment_end = self._get_segment_end(desired)
+
+        result = reconcile(base, desired)
+        ranges = _get_all_bullet_ranges(result)
+        assert len(ranges) == 1
+        _, end = ranges[0]
+        assert (
+            end < segment_end
+        ), f"createParagraphBullets endIndex {end} must be < segment_end {segment_end}"
+        ok, diffs = verify(base, result, desired)
+        assert ok, f"Diffs: {diffs}"
+
+    def test_bullets_after_existing_paragraph(self):
+        """Bullets added after an existing paragraph: endIndex < segment_end."""
+        base = _make_doc("Intro paragraph")
+        # Build desired: intro paragraph + list items
+        desired = reindex_document(
+            Document.model_validate(
+                {
+                    "documentId": "test",
+                    "tabs": [
+                        {
+                            "tabProperties": {"tabId": "t.0"},
+                            "documentTab": {
+                                "body": {
+                                    "content": [
+                                        {"sectionBreak": {}},
+                                        {
+                                            "paragraph": {
+                                                "elements": [
+                                                    {
+                                                        "textRun": {
+                                                            "content": "Intro paragraph\n"
+                                                        }
+                                                    }
+                                                ]
+                                            }
+                                        },
+                                        {
+                                            "paragraph": {
+                                                "elements": [
+                                                    {
+                                                        "textRun": {
+                                                            "content": "Bullet 1\n"
+                                                        }
+                                                    }
+                                                ],
+                                                "bullet": {"listId": "list1"},
+                                                "paragraphStyle": {
+                                                    "indentFirstLine": {
+                                                        "magnitude": 18,
+                                                        "unit": "PT",
+                                                    },
+                                                    "indentStart": {
+                                                        "magnitude": 36,
+                                                        "unit": "PT",
+                                                    },
+                                                },
+                                            }
+                                        },
+                                        {
+                                            "paragraph": {
+                                                "elements": [
+                                                    {
+                                                        "textRun": {
+                                                            "content": "Bullet 2\n"
+                                                        }
+                                                    }
+                                                ],
+                                                "bullet": {"listId": "list1"},
+                                                "paragraphStyle": {
+                                                    "indentFirstLine": {
+                                                        "magnitude": 18,
+                                                        "unit": "PT",
+                                                    },
+                                                    "indentStart": {
+                                                        "magnitude": 36,
+                                                        "unit": "PT",
+                                                    },
+                                                },
+                                            }
+                                        },
+                                    ]
+                                },
+                                "lists": {
+                                    "list1": {
+                                        "listProperties": {
+                                            "nestingLevels": _make_nesting_levels_for_preset(
+                                                "BULLET_DISC_CIRCLE_SQUARE"
+                                            )
+                                        }
+                                    }
+                                },
+                            },
+                        }
+                    ],
+                }
+            )
+        )
+        segment_end = self._get_segment_end(desired)
+
+        result = reconcile(base, desired)
+        ranges = _get_all_bullet_ranges(result)
+        assert len(ranges) == 1
+        _, end = ranges[0]
+        assert (
+            end < segment_end
+        ), f"createParagraphBullets endIndex {end} must be < segment_end {segment_end}"
+        ok, diffs = verify(base, result, desired)
+        assert ok, f"Diffs: {diffs}"

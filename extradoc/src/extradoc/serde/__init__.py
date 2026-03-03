@@ -33,6 +33,12 @@ from ._to_xml import document_to_xml
 if TYPE_CHECKING:
     from pathlib import Path
 
+# Minimal styles.xml used when a new tab folder has no styles.xml yet.
+# This is equivalent to an empty <styles /> — no custom paragraph classes,
+# no custom list-level classes.  The reconciler treats absent custom styles
+# identically on both the base and desired sides, so the diff is still valid.
+_MINIMAL_STYLES_XML = '<?xml version="1.0" encoding="UTF-8"?>\n' "<styles />"
+
 
 def from_document(
     doc: Document,
@@ -166,7 +172,12 @@ def deserialize(folder: Path) -> DocumentWithComments:
         clean_xml = strip_comment_refs(raw_xml)
 
         tab_xml = TabXml.from_xml_string(clean_xml)
-        styles_xml = StylesXml.from_xml_string(styles_path.read_text(encoding="utf-8"))
+        if styles_path.exists():
+            styles_xml = StylesXml.from_xml_string(
+                styles_path.read_text(encoding="utf-8")
+            )
+        else:
+            styles_xml = StylesXml.from_xml_string(_MINIMAL_STYLES_XML)
         tf = TabFiles(tab=tab_xml, styles=styles_xml)
 
         # Read optional per-tab extras
