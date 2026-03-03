@@ -194,16 +194,10 @@ InlineNode ::= TNode | LinkNode | <image .../> | <footnoteref .../>
 **Text runs:**
 
 ```xml
-<t class="<styleClass>"?>plain text</t>
-<t class="<styleClass>"?><b>bold text</b></t>
-<t class="<styleClass>"?><i>italic text</i></t>
-<t class="<styleClass>"?><u>underline</u></t>
-<t class="<styleClass>"?><s>strikethrough</s></t>
-<t class="<styleClass>"?><sup>superscript</sup></t>
-<t class="<styleClass>"?><sub>subscript</sub></t>
+<t class="<styleClass>"?>text content</t>
 ```
 
-At most one sugar tag (`<b>`, `<i>`, `<u>`, `<s>`, `<sup>`, `<sub>`) per `<t>`. `class` is omitted when no style class applies.
+`class` references a style defined in `styles.xml`. Omitted when no style class applies.
 
 **Hyperlinks:**
 

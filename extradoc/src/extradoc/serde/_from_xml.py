@@ -98,9 +98,12 @@ def tabs_to_document(
 # will interpret correctly (glyphSymbol for unordered, glyphType for numbered).
 _SYNTH_LIST_PROPS: dict[str, dict[str, Any]] = {
     "bullet": {"listProperties": {"nestingLevels": [{"glyphSymbol": "●"}]}},
+    "checkbox": {"listProperties": {"nestingLevels": [{"glyphSymbol": "☐"}]}},
     "decimal": {"listProperties": {"nestingLevels": [{"glyphType": "DECIMAL"}]}},
-    "alpha": {"listProperties": {"nestingLevels": [{"glyphType": "ALPHA"}]}},
-    "roman": {"listProperties": {"nestingLevels": [{"glyphType": "ROMAN"}]}},
+    # UPPER_ALPHA maps to NUMBERED_UPPERALPHA_ALPHA_ROMAN: A,B,C at level 0
+    "alpha": {"listProperties": {"nestingLevels": [{"glyphType": "UPPER_ALPHA"}]}},
+    # UPPER_ROMAN maps to NUMBERED_UPPERROMAN_UPPERALPHA_DECIMAL: I,II,III at level 0
+    "roman": {"listProperties": {"nestingLevels": [{"glyphType": "UPPER_ROMAN"}]}},
 }
 
 
