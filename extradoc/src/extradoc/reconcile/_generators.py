@@ -180,6 +180,23 @@ def _make_insert_text(
     }
 
 
+def _make_insert_page_break(
+    index: int,
+    tab_id: TabID,
+) -> dict[str, Any]:
+    """Create an insertPageBreak request.
+
+    insertPageBreak inserts a page break element followed by a newline (2 chars)
+    at the given index.  The segmentId field must be omitted — the Google Docs
+    API only allows page breaks in the document body, not in headers, footers,
+    footnotes, or table cells.
+    """
+    loc: dict[str, Any] = {"index": index}
+    if tab_id:
+        loc["tabId"] = tab_id
+    return {"insertPageBreak": {"location": loc}}
+
+
 def _make_insert_table(
     rows: int,
     columns: int,
@@ -233,14 +250,36 @@ def _is_paragraph(se: StructuralElement) -> bool:
     return se.paragraph is not None
 
 
+def _is_pagebreak_paragraph(se: StructuralElement) -> bool:
+    """Return True if the paragraph's only content is a single page_break element.
+
+    Such paragraphs are inserted via insertPageBreak, not insertText.
+    """
+    if not se.paragraph:
+        return False
+    has_pagebreak = False
+    for elem in se.paragraph.elements or []:
+        if elem.page_break is not None:
+            has_pagebreak = True
+        elif elem.text_run and elem.text_run.content in (None, "", "\n"):
+            pass  # trailing paragraph terminator — ignore
+        else:
+            return False  # mixed content, not a pure pagebreak paragraph
+    return has_pagebreak
+
+
 def _has_non_text_elements(se: StructuralElement) -> bool:
-    """Check if a paragraph contains non-text elements (pageBreak, horizontalRule, etc.)."""
+    """Check if a paragraph contains non-text elements that cannot be inserted.
+
+    Returns True for horizontalRule, inlineObject, footnoteReference.
+    Does NOT return True for page_break — those are handled by _is_pagebreak_paragraph
+    and inserted via insertPageBreak.
+    """
     if not se.paragraph:
         return False
     for elem in se.paragraph.elements or []:
         if (
-            elem.page_break is not None
-            or elem.horizontal_rule is not None
+            elem.horizontal_rule is not None
             or elem.inline_object_element is not None
             or elem.footnote_reference is not None
         ):
@@ -551,8 +590,15 @@ def _process_slot_inner(
         if el and _is_paragraph(el) and _has_non_text_elements(el):
             raise ReconcileError(
                 "Cannot insert paragraph containing non-text elements "
-                "(pageBreak, horizontalRule, inlineObject, footnoteReference). "
+                "(horizontalRule, inlineObject, footnoteReference). "
                 "Use the appropriate API requests directly."
+            )
+        if el and _is_paragraph(el) and _is_pagebreak_paragraph(el) and segment_id:
+            raise ReconcileError(
+                "Cannot insert <pagebreak/> outside the document body. "
+                "The Google Docs API (InsertPageBreakRequest) only supports "
+                "page breaks in the body segment, not in headers, footers, or "
+                "table cells."
             )
 
     # --- INSERT must come before DELETE ---
@@ -627,16 +673,20 @@ def _process_slot_inner(
                     )
                     spurious_pending = True
                 elif _is_paragraph(el):
-                    text = _para_text(el)
-                    if not text:
-                        continue
-                    if spurious_pending:
-                        text = text.rstrip("\n")
+                    if _is_pagebreak_paragraph(el):
                         spurious_pending = False
-                    if text:
-                        insert_reqs.append(
-                            _make_insert_text(text, insert_idx, segment_id, tab_id)
-                        )
+                        insert_reqs.append(_make_insert_page_break(insert_idx, tab_id))
+                    else:
+                        text = _para_text(el)
+                        if not text:
+                            continue
+                        if spurious_pending:
+                            text = text.rstrip("\n")
+                            spurious_pending = False
+                        if text:
+                            insert_reqs.append(
+                                _make_insert_text(text, insert_idx, segment_id, tab_id)
+                            )
             insert_reqs.extend(
                 _generate_insert_table_with_content(
                     first_table_el.table,
@@ -717,23 +767,30 @@ def _process_slot_inner(
                         spurious_pending = True
                         first_in_reversed = False
                     elif _is_paragraph(el):
-                        text = _para_text(el)
-                        if not text:
-                            continue
-                        if spurious_pending:
-                            text = text.rstrip("\n")
+                        if _is_pagebreak_paragraph(el):
                             spurious_pending = False
-                        elif first_in_reversed:
-                            # Last para in doc order: the protected \n acts as its
-                            # trailing \n, so strip the explicit trailing \n.
-                            text = text.rstrip("\n")
                             first_in_reversed = False
-                        if text:
                             insert_reqs.append(
-                                _make_insert_text(
-                                    text, tbl_insert_idx, segment_id, tab_id
-                                )
+                                _make_insert_page_break(tbl_insert_idx, tab_id)
                             )
+                        else:
+                            text = _para_text(el)
+                            if not text:
+                                continue
+                            if spurious_pending:
+                                text = text.rstrip("\n")
+                                spurious_pending = False
+                            elif first_in_reversed:
+                                # Last para in doc order: the protected \n acts as its
+                                # trailing \n, so strip the explicit trailing \n.
+                                text = text.rstrip("\n")
+                                first_in_reversed = False
+                            if text:
+                                insert_reqs.append(
+                                    _make_insert_text(
+                                        text, tbl_insert_idx, segment_id, tab_id
+                                    )
+                                )
                 insert_reqs.extend(
                     _style_reqs_for_added_paras(
                         filtered,
@@ -760,18 +817,22 @@ def _process_slot_inner(
                     )
                     spurious_pending = True
                 elif _is_paragraph(el):
-                    text = _para_text(el)
-                    if not text:
-                        continue
-                    if spurious_pending:
-                        # The spurious \n from the preceding insertTable call becomes
-                        # this paragraph's trailing \n — strip it from the insert text.
-                        text = text.rstrip("\n")
+                    if _is_pagebreak_paragraph(el):
                         spurious_pending = False
-                    if text:
-                        insert_reqs.append(
-                            _make_insert_text(text, insert_idx, segment_id, tab_id)
-                        )
+                        insert_reqs.append(_make_insert_page_break(insert_idx, tab_id))
+                    else:
+                        text = _para_text(el)
+                        if not text:
+                            continue
+                        if spurious_pending:
+                            # The spurious \n from the preceding insertTable call becomes
+                            # this paragraph's trailing \n — strip it from the insert text.
+                            text = text.rstrip("\n")
+                            spurious_pending = False
+                        if text:
+                            insert_reqs.append(
+                                _make_insert_text(text, insert_idx, segment_id, tab_id)
+                            )
 
             # Style requests for added paragraphs.
             # table_size_extra=0: the spurious \n is absorbed by the preceding
@@ -843,6 +904,18 @@ def _process_slot_trailing(
                 "(pageBreak, horizontalRule, inlineObject, footnoteReference). "
                 "Use the appropriate API requests directly."
             )
+        if (
+            a.desired_element
+            and _is_paragraph(a.desired_element)
+            and _is_pagebreak_paragraph(a.desired_element)
+            and segment_id
+        ):
+            raise ReconcileError(
+                "Cannot insert <pagebreak/> outside the document body. "
+                "The Google Docs API (InsertPageBreakRequest) only supports "
+                "page breaks in the body segment, not in headers, footers, or "
+                "table cells."
+            )
 
     if not real_deletes and not real_adds:
         return []
@@ -877,8 +950,14 @@ def _process_slot_trailing(
         has_tables = any(
             a.desired_element and _is_table(a.desired_element) for a in real_adds
         )
+        has_pagebreaks = any(
+            a.desired_element
+            and _is_paragraph(a.desired_element)
+            and _is_pagebreak_paragraph(a.desired_element)
+            for a in real_adds
+        )
 
-        if has_tables:
+        if has_tables or has_pagebreaks:
             requests.extend(
                 _process_trailing_adds_with_tables(
                     left_anchor,
@@ -920,7 +999,7 @@ def _process_slot_trailing(
                 )
             )
         else:
-            # Pure paragraph adds (original Phase 1 logic)
+            # Pure paragraph adds with no tables or pagebreaks
             requests.extend(
                 _process_trailing_paragraph_adds(
                     left_anchor,
@@ -985,7 +1064,11 @@ def _style_reqs_for_added_paras(
             had_non_para = True
             continue
         para_text = _para_text(el)
-        para_len = utf16_len(para_text)
+        # insertPageBreak inserts 2 characters (pageBreak element + \n).
+        # _para_text returns "\n" (length 1) — use 2 for correct tracking.
+        # Pagebreak paragraphs have no bullet/style/text-run styles, so
+        # they produce no style requests but still advance the offset.
+        para_len = 2 if _is_pagebreak_paragraph(el) else utf16_len(para_text)
         actual_start = offset
         actual_end = offset + para_len
         offset = actual_end
@@ -1180,8 +1263,10 @@ def _process_trailing_adds_with_tables(
     # Filter out empty paragraphs that insertTable creates implicitly
     filtered_adds = _filter_trailing_empty_paras(real_adds)
 
-    # Group filtered_adds into alternating paragraph-runs and tables.
-    # A "run" is a maximal contiguous sequence of non-table elements.
+    # Group filtered_adds into alternating paragraph-runs, tables, and pagebreaks.
+    # A "run" is a maximal contiguous sequence of non-table, non-pagebreak elements.
+    # Pagebreak paragraphs are isolated as individual "pagebreak" groups because
+    # they are inserted via insertPageBreak (not insertText).
     groups: list[tuple[str, list[AlignedElement] | AlignedElement]] = []
     current_run: list[AlignedElement] = []
     for add in filtered_adds:
@@ -1191,6 +1276,11 @@ def _process_trailing_adds_with_tables(
                 groups.append(("paras", current_run))
                 current_run = []
             groups.append(("table", add))
+        elif el and _is_paragraph(el) and _is_pagebreak_paragraph(el):
+            if current_run:
+                groups.append(("paras", current_run))
+                current_run = []
+            groups.append(("pagebreak", add))
         else:
             current_run.append(add)
     if current_run:
@@ -1220,6 +1310,11 @@ def _process_trailing_adds_with_tables(
             # delete it: the API forbids removing the \n immediately before a
             # table, and consistent with the inner-slot behaviour we accept one
             # empty paragraph between consecutive tables.
+        elif group_type == "pagebreak":
+            # insertPageBreak inserts 2 chars (pageBreak element + \n).
+            # No segment_id — body only.  The pagebreak's own \n acts as the
+            # paragraph separator, just as a table's auto-\n does.
+            requests.append(_make_insert_page_break(insert_idx, tab_id))
         else:
             assert isinstance(group, list)
             combined = _collect_add_text(group)
@@ -1227,13 +1322,13 @@ def _process_trailing_adds_with_tables(
                 continue
             if non_sectionbreak:
                 # Always prepend \n to separate from the left anchor (or from
-                # the table that precedes this run in document order).
+                # the table/pagebreak that precedes this run in document order).
                 insert_text = "\n" + combined.rstrip("\n")
             else:
                 # Sectionbreak: the first run in document order needs NO leading
                 # \n — it inserts directly at insert_idx into the existing
-                # trailing paragraph.  Every other run (after a table) needs a
-                # leading \n so the table's auto-\n is used as its terminator.
+                # trailing paragraph.  Every other run (after a table/pagebreak)
+                # needs a leading \n so the preceding element's \n is its terminator.
                 if is_first_in_document_order:
                     insert_text = combined.rstrip("\n")
                 else:

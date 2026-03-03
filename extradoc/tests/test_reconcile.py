@@ -2621,19 +2621,122 @@ class TestReconcileSpecialElements:
         ok, diffs = verify(base, result, desired)
         assert ok, f"Diffs: {diffs}"
 
-    def test_add_paragraph_with_page_break_raises_error(self):
-        """Adding a paragraph with a page break raises ReconcileError."""
-        base = _make_doc("Before")
+    def test_add_pagebreak_between_paragraphs(self):
+        """Adding a pagebreak paragraph in an inner gap emits insertPageBreak correctly."""
+        # Base: sectionbreak + Para A + Para B
+        base = _make_doc("Para A", "Para B")
+        # Desired: sectionbreak + Para A + pagebreak + Para B
         desired = _make_doc_with_raw_content(
-            {"paragraph": {"elements": [{"textRun": {"content": "Before\n"}}]}},
+            {"paragraph": {"elements": [{"textRun": {"content": "Para A\n"}}]}},
             {
                 "paragraph": {
                     "elements": [{"pageBreak": {}}, {"textRun": {"content": "\n"}}]
                 }
             },
+            {"paragraph": {"elements": [{"textRun": {"content": "Para B\n"}}]}},
         )
 
-        with pytest.raises(ReconcileError, match="non-text elements"):
+        result = reconcile(base, desired)
+        all_reqs = [r for batch in result for r in batch.requests]
+        req_types = [
+            next(iter(r.model_dump(exclude_none=True, by_alias=True))) for r in all_reqs
+        ]
+        assert (
+            "insertPageBreak" in req_types
+        ), f"Expected insertPageBreak in {req_types}"
+        ok, diffs = verify(base, result, desired)
+        assert ok, f"Diffs: {diffs}"
+
+    def test_add_pagebreak_before_first_paragraph(self):
+        """Adding a pagebreak before existing content (inner gap with sectionbreak anchor)."""
+        # Base: sectionbreak + trailing "\n"
+        base = _make_doc("")
+        # Desired: sectionbreak + pagebreak + trailing "\n"
+        desired = _make_doc_with_raw_content(
+            {
+                "paragraph": {
+                    "elements": [{"pageBreak": {}}, {"textRun": {"content": "\n"}}]
+                }
+            },
+            {"paragraph": {"elements": [{"textRun": {"content": "\n"}}]}},
+        )
+
+        result = reconcile(base, desired)
+        all_reqs = [r for batch in result for r in batch.requests]
+        req_types = [
+            next(iter(r.model_dump(exclude_none=True, by_alias=True))) for r in all_reqs
+        ]
+        assert (
+            "insertPageBreak" in req_types
+        ), f"Expected insertPageBreak in {req_types}"
+        ok, diffs = verify(base, result, desired)
+        assert ok, f"Diffs: {diffs}"
+
+    def test_pagebreak_in_non_body_raises_error(self):
+        """Inserting a pagebreak in a header segment raises ReconcileError."""
+        # Create a base doc with a header segment
+        base_raw = {
+            "documentId": "test",
+            "tabs": [
+                {
+                    "tabProperties": {"tabId": "t.0"},
+                    "documentTab": {
+                        "body": {"content": [{"sectionBreak": {}}]},
+                        "headers": {
+                            "h1": {
+                                "headerId": "h1",
+                                "content": [
+                                    {
+                                        "paragraph": {
+                                            "elements": [
+                                                {"textRun": {"content": "Header\n"}}
+                                            ]
+                                        }
+                                    }
+                                ],
+                            }
+                        },
+                    },
+                }
+            ],
+        }
+        desired_raw = {
+            "documentId": "test",
+            "tabs": [
+                {
+                    "tabProperties": {"tabId": "t.0"},
+                    "documentTab": {
+                        "body": {"content": [{"sectionBreak": {}}]},
+                        "headers": {
+                            "h1": {
+                                "headerId": "h1",
+                                "content": [
+                                    {
+                                        "paragraph": {
+                                            "elements": [
+                                                {"textRun": {"content": "Header\n"}}
+                                            ]
+                                        }
+                                    },
+                                    {
+                                        "paragraph": {
+                                            "elements": [
+                                                {"pageBreak": {}},
+                                                {"textRun": {"content": "\n"}},
+                                            ]
+                                        }
+                                    },
+                                ],
+                            }
+                        },
+                    },
+                }
+            ],
+        }
+        base = reindex_document(Document.model_validate(base_raw))
+        desired = reindex_document(Document.model_validate(desired_raw))
+
+        with pytest.raises(ReconcileError, match=r"Cannot insert.*pagebreak.*body"):
             reconcile(base, desired)
 
     def test_matched_paragraph_with_horizontal_rule(self):
@@ -2653,11 +2756,8 @@ class TestReconcileSpecialElements:
             and (result[0].requests is None or len(result[0].requests) == 0)
         )
 
-    def test_add_page_break_paragraph_in_middle_raises_error(self):
-        """Adding a page break paragraph between existing paragraphs raises ReconcileError.
-
-        This triggers the inner gap (right anchor present) code path.
-        """
+    def test_add_page_break_paragraph_in_middle_succeeds(self):
+        """Adding a page break paragraph between existing paragraphs succeeds (inner gap)."""
         base = _make_doc("Before", "After")
         desired = _make_doc_with_raw_content(
             {"paragraph": {"elements": [{"textRun": {"content": "Before\n"}}]}},
@@ -2669,8 +2769,16 @@ class TestReconcileSpecialElements:
             {"paragraph": {"elements": [{"textRun": {"content": "After\n"}}]}},
         )
 
-        with pytest.raises(ReconcileError, match="non-text elements"):
-            reconcile(base, desired)
+        result = reconcile(base, desired)
+        all_reqs = [r for batch in result for r in batch.requests]
+        req_types = [
+            next(iter(r.model_dump(exclude_none=True, by_alias=True))) for r in all_reqs
+        ]
+        assert (
+            "insertPageBreak" in req_types
+        ), f"Expected insertPageBreak in {req_types}"
+        ok, diffs = verify(base, result, desired)
+        assert ok, f"Diffs: {diffs}"
 
 
 class TestReconcileUTF16:

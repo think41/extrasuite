@@ -476,6 +476,238 @@ def _insert_text_with_newlines_in_cell(
     cell_content[elem_idx : elem_idx + 1] = new_elements
 
 
+def handle_insert_page_break(
+    document: dict[str, Any],
+    request: dict[str, Any],
+    structure_tracker: Any,
+) -> dict[str, Any]:
+    """Handle InsertPageBreakRequest.
+
+    Inserts a page break element followed by a newline (2 chars) at location.
+    Only allowed in the document body (segmentId must be absent).
+    """
+    location = request.get("location")
+    end_of_segment = request.get("endOfSegmentLocation")
+
+    if not location and not end_of_segment:
+        raise ValidationError("Must specify either location or endOfSegmentLocation")
+    if location and end_of_segment:
+        raise ValidationError("Cannot specify both location and endOfSegmentLocation")
+
+    if location:
+        index = location["index"]
+        tab_id = location.get("tabId")
+        segment_id = location.get("segmentId")
+
+        if segment_id:
+            raise ValidationError(
+                "Cannot insert page break in header, footer, or footnote"
+            )
+        if index < 1:
+            raise ValidationError(f"Index must be at least 1, got {index}")
+
+        _insert_page_break_impl(document, index, tab_id)
+    else:
+        # endOfSegmentLocation: insert before the final \n of the body
+        assert end_of_segment is not None
+        tab_id = end_of_segment.get("tabId")
+        tab = get_tab(document, tab_id)
+        segment, _ = get_segment(tab, None)
+        content = segment.get("content", [])
+        if content:
+            last_elem = content[-1]
+            end_index = last_elem.get("endIndex", 1)
+            _insert_page_break_impl(document, max(1, end_index - 1), tab_id)
+
+    return {}
+
+
+def _insert_page_break_impl(
+    document: dict[str, Any],
+    index: int,
+    tab_id: str | None,
+) -> None:
+    """Insert a pageBreak paragraph at index in the document body.
+
+    insertPageBreak inserts 2 characters: a pageBreak element (1 char) followed
+    by a newline (1 char) that terminates the new pagebreak paragraph.
+
+    When index == elem_start of a paragraph, the new pagebreak paragraph is
+    inserted BEFORE that paragraph (no split needed).  When index falls within
+    a paragraph, the paragraph is split at that point and the pagebreak paragraph
+    is inserted between the two halves.
+    """
+    tab = get_tab(document, tab_id)
+    segment, _ = get_segment(tab, None)  # body only
+
+    content = segment.get("content", [])
+    if not content:
+        raise ValidationError("Body segment has no content")
+
+    last_element = content[-1]
+    max_index = last_element.get("endIndex", 1)
+    if index >= max_index:
+        raise ValidationError(f"Index {index} is beyond segment end {max_index - 1}")
+
+    pagebreak_para: dict[str, Any] = {
+        "startIndex": 0,
+        "endIndex": 0,
+        "paragraph": {
+            "elements": [
+                {"startIndex": 0, "endIndex": 0, "pageBreak": {}},
+                {
+                    "startIndex": 0,
+                    "endIndex": 0,
+                    "textRun": {"content": "\n", "textStyle": {}},
+                },
+            ],
+        },
+    }
+
+    for elem_idx, element in enumerate(content):
+        elem_start = element.get("startIndex", 0)
+        elem_end = element.get("endIndex", 0)
+
+        if elem_start <= index < elem_end and "paragraph" in element:
+            if index == elem_start:
+                # Insert pagebreak paragraph before this paragraph (no split).
+                content.insert(elem_idx, copy.deepcopy(pagebreak_para))
+            else:
+                # Split paragraph at index: left part gets content before index
+                # (with a trailing \n ensured), right part gets content from
+                # index onwards (including the original trailing \n).
+                paragraph = element["paragraph"]
+                left_para, right_para = _split_paragraph_at(
+                    paragraph, index, elem_start
+                )
+                content[elem_idx : elem_idx + 1] = [
+                    {"startIndex": 0, "endIndex": 0, "paragraph": left_para},
+                    copy.deepcopy(pagebreak_para),
+                    {"startIndex": 0, "endIndex": 0, "paragraph": right_para},
+                ]
+            return
+
+    raise ValidationError(f"Could not find paragraph at index {index}")
+
+
+def _split_paragraph_at(
+    paragraph: dict[str, Any],
+    index: int,
+    para_start: int,
+) -> tuple[dict[str, Any], dict[str, Any]]:
+    """Split paragraph at index, returning (left_para, right_para).
+
+    left_para: elements before index, guaranteed to end with \\n.
+    right_para: elements from index onwards (includes the original trailing \\n).
+    """
+    para_style = copy.deepcopy(paragraph.get("paragraphStyle", {}))
+    elements = paragraph.get("elements", [])
+
+    left_elems: list[dict[str, Any]] = []
+    right_elems: list[dict[str, Any]] = []
+
+    for pe in elements:
+        if "textRun" not in pe:
+            # Non-text elements (pageBreak, etc.): put in right half
+            right_elems.append(copy.deepcopy(pe))
+            continue
+
+        run_start = pe.get("startIndex", 0)
+        run_end = pe.get("endIndex", 0)
+        run_content = pe["textRun"].get("content", "")
+        run_style = copy.deepcopy(pe["textRun"].get("textStyle", {}))
+
+        if run_end <= index:
+            # Entirely in left part
+            left_elems.append(
+                {
+                    "startIndex": 0,
+                    "endIndex": 0,
+                    "textRun": {"content": run_content, "textStyle": run_style},
+                }
+            )
+        elif run_start >= index:
+            # Entirely in right part
+            right_elems.append(
+                {
+                    "startIndex": 0,
+                    "endIndex": 0,
+                    "textRun": {
+                        "content": run_content,
+                        "textStyle": copy.deepcopy(run_style),
+                    },
+                }
+            )
+        else:
+            # Straddles the split point
+            offset = calculate_utf16_offset(run_content, index - run_start)
+            left_content = run_content[:offset]
+            right_content = run_content[offset:]
+            if left_content:
+                left_elems.append(
+                    {
+                        "startIndex": 0,
+                        "endIndex": 0,
+                        "textRun": {
+                            "content": left_content,
+                            "textStyle": copy.deepcopy(run_style),
+                        },
+                    }
+                )
+            if right_content:
+                right_elems.append(
+                    {
+                        "startIndex": 0,
+                        "endIndex": 0,
+                        "textRun": {"content": right_content, "textStyle": run_style},
+                    }
+                )
+
+    # Left part must end with \n (paragraph terminator)
+    if not left_elems:
+        left_elems = [
+            {
+                "startIndex": 0,
+                "endIndex": 0,
+                "textRun": {"content": "\n", "textStyle": {}},
+            }
+        ]
+    elif "textRun" not in left_elems[-1] or not left_elems[-1]["textRun"][
+        "content"
+    ].endswith("\n"):
+        left_elems.append(
+            {
+                "startIndex": 0,
+                "endIndex": 0,
+                "textRun": {"content": "\n", "textStyle": {}},
+            }
+        )
+
+    # Right part must have at least the original trailing \n
+    if not right_elems:
+        right_elems = [
+            {
+                "startIndex": 0,
+                "endIndex": 0,
+                "textRun": {"content": "\n", "textStyle": {}},
+            }
+        ]
+
+    left_para: dict[str, Any] = {
+        "elements": left_elems,
+        "paragraphStyle": copy.deepcopy(para_style),
+    }
+    right_para: dict[str, Any] = {
+        "elements": right_elems,
+        "paragraphStyle": para_style,
+    }
+    if "bullet" in paragraph:
+        left_para["bullet"] = copy.deepcopy(paragraph["bullet"])
+        right_para["bullet"] = copy.deepcopy(paragraph["bullet"])
+
+    return left_para, right_para
+
+
 def _delete_content_range_impl(
     document: dict[str, Any],
     start_index: int,
