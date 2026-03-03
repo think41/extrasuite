@@ -122,7 +122,31 @@ This is also the format that pull produces and round-trips correctly.
 - Tab_1 has unintended empty header/footer ❌
 - Appendix has no header/footer ❌
 - Batch 2 (write header/footer content) fails with "Segment ID not found" ❌
-**Fix needed:** Fix the tabId reference in `createHeader`/`createFooter` requests during multi-tab push.
+
+**Root cause analysis (2026-03-03):**
+
+Headers and footers are **per-tab** objects in the Google Docs data model. The `DocumentTab` type has its own `headers` and `footers` dicts, and its own `documentStyle.defaultHeaderId`/`defaultFooterId`. Each tab independently owns its header/footer segments.
+
+The `CreateHeaderRequest` (`docs/googledocs/api/CreateHeaderRequest.md`) takes two fields:
+- `type` — the header type (DEFAULT, FIRST_PAGE, EVEN_PAGE)
+- `sectionBreakLocation` — a `Location` (which includes `tabId`) identifying the section break that begins the target section
+
+To create a header for a specific tab, you must pass `sectionBreakLocation.tabId`. However, the reconciler deliberately omits `sectionBreakLocation` because **specifying it (even with a valid index) causes a Google Docs API 500 error**. Without `sectionBreakLocation`, `createHeader` applies to the DocumentStyle of the **first tab**, not the newly-created tab.
+
+The consequence: `createHeader` always creates the header on Tab_1. Then `_reconcile_new_segment` tries to populate the header's content using `tab_id = DeferredID("new_tab")` — but the header belongs to Tab_1, so the API can't find the segment and returns 400.
+
+**Why there is no simple fix:**
+The `sectionBreakLocation` 500-error is a Google Docs API bug. Until it is resolved, there is no reliable way to create a header specifically for a newly-added tab when other tabs already exist. The correct handling depends on:
+- **Base has no tabs (first tab ever):** `createHeader` with no `sectionBreakLocation` correctly targets the new tab → safe
+- **Base has existing tabs + new tab wants header:** `createHeader` goes to Tab_1 → wrong tab, no clean workaround
+
+**Fix needed:** Raise `ReconcileError` when a new tab (added to a document that already has existing tabs) includes a `<header>` or `<footer>`. This converts the silent wrong-tab corruption into an explicit error with a clear workaround message. The error should direct users to: (1) push the new tab first without header/footer, (2) re-pull, (3) add the header/footer in a second push.
+
+**References:**
+- `docs/googledocs/api/CreateHeaderRequest.md` — no `tabId` field; only `sectionBreakLocation.tabId` targets a specific tab
+- `docs/googledocs/api/CreateFooterRequest.md` — same structure
+- `docs/googledocs/api/DocumentTab.md` — `headers` and `footers` are per-tab fields
+- `docs/googledocs/api/DocumentStyle.md` — `defaultHeaderId`/`defaultFooterId` are per-tab (live on `DocumentTab.documentStyle`)
 
 ---
 
@@ -275,11 +299,11 @@ The reconciler inserts new paragraphs via `insertText(\n) → updateParagraphSty
 | BUG-6 Hyperlinks dropped | Parser fix + `<a>` plain text | ✅ Fixed 2026-03-03 |
 | **P1 — High (advertised but broken)** | | | |
 | BUG-3 `<pagebreak/>` insert | Wire up `InsertPageBreakRequest` | ⬜ Open |
-| BUG-4 List at end of segment | Off-by-one in `_generators.py` | ⬜ Open |
-| BUG-8 Header on wrong tab | Remove `tabId` from `createHeader` | ⬜ Open |
+| BUG-4 List at end of segment | Off-by-one in `_generators.py` | ✅ Fixed 2026-03-03 |
+| BUG-8 Header on wrong tab | API limitation — `sectionBreakLocation` 500s; raise ReconcileError instead | 🔬 Analysed — parked (API bug) |
 | **P2 — Medium (workarounds exist)** | | | |
 | BUG-9 Multi-change batch ordering | Batch isolation for segments | ⬜ Open |
-| BUG-7 `styles.xml` not auto-generated | Auto-generate on missing file | ⬜ Open |
+| BUG-7 `styles.xml` not auto-generated | Auto-generate on missing file | ✅ Fixed 2026-03-03 |
 | BUG-1 `<sectionbreak>` docs | Add to `--help` critical rules | ✅ Fixed 2026-03-03 |
 | **P3 — Defer (high complexity)** | | | |
 | BUG-2 `<footnote>` insertion | Multi-batch DeferredID pattern (Phase 4+) | 📋 Deferred — removed from `--help` |

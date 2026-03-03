@@ -916,6 +916,7 @@ def _process_slot_trailing(
                     tab_id,
                     desired_lists,
                     table_size_extra=0,
+                    is_trailing_gap=True,
                 )
             )
         else:
@@ -941,6 +942,7 @@ def _style_reqs_for_added_paras(
     tab_id: TabID,
     desired_lists: dict[str, List] | None,
     table_size_extra: int = 1,
+    is_trailing_gap: bool = False,
 ) -> list[dict[str, Any]]:
     """Generate style requests for ADDED paragraphs using actual positions.
 
@@ -952,6 +954,14 @@ def _style_reqs_for_added_paras(
     elements) are batched into a single createParagraphBullets call covering their
     full range.  This ensures they form one list with sequential numbering (1, 2,
     3 …) rather than separate 1-item lists all showing "1.".
+
+    is_trailing_gap: True when called from a trailing-gap handler.  In a trailing
+    gap the insert_text has its trailing \\n stripped because the segment's
+    pre-existing final \\n acts as the last paragraph's terminator.  This means
+    the last paragraph's computed actual_end equals the segment end index, which
+    the Google Docs API forbids for updateParagraphStyle / createParagraphBullets
+    (endIndex must be strictly less than segment end).  Setting is_trailing_gap=True
+    decrements the last paragraph's actual_end by 1 to produce a valid range.
 
     Results are sorted right-to-left so they are safe to interleave with gap ops.
     """
@@ -981,6 +991,18 @@ def _style_reqs_for_added_paras(
         offset = actual_end
         para_records.append((actual_start, actual_end, el, had_non_para))
         had_non_para = False
+
+    # In a trailing gap the last paragraph's trailing \n is the segment-final \n
+    # (pre-existing, not part of the inserted text).  Decrement actual_end by 1 so
+    # the style range endIndex is strictly less than segment end, as required by the
+    # Google Docs API.  If this would produce a zero-length range (empty paragraph
+    # at the segment end), drop the record — there is no content to style.
+    if is_trailing_gap and para_records:
+        s, e, last_el, gap = para_records[-1]
+        if e - 1 > s:
+            para_records[-1] = (s, e - 1, last_el, gap)
+        else:
+            para_records.pop()
 
     # --- Phase 2: group bullet items, emit batched + individual style requests ---
     style_ops: list[tuple[int, list[dict[str, Any]]]] = []
@@ -1100,7 +1122,12 @@ def _process_trailing_paragraph_adds(
     first_para_start = insert_idx + (1 if has_leading_newline else 0)
     requests.extend(
         _style_reqs_for_added_paras(
-            real_adds, first_para_start, segment_id, tab_id, desired_lists
+            real_adds,
+            first_para_start,
+            segment_id,
+            tab_id,
+            desired_lists,
+            is_trailing_gap=True,
         )
     )
     return requests
