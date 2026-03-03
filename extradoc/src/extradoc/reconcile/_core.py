@@ -610,7 +610,13 @@ def _create_initial_body_segment() -> Segment:
         ),
         StructuralElement.model_validate(
             {
-                "paragraph": {"elements": [{"textRun": {"content": "\n"}}]},
+                "paragraph": {
+                    "paragraphStyle": {
+                        "namedStyleType": "NORMAL_TEXT",
+                        "direction": "LEFT_TO_RIGHT",
+                    },
+                    "elements": [{"textRun": {"content": "\n"}}],
+                },
                 "startIndex": 1,
                 "endIndex": 2,
             }
@@ -624,7 +630,15 @@ def _create_initial_segment(segment_type: type[Header] | type[Footer]) -> Segmen
     """Return a Segment with the initial content a newly-created header/footer has (just \\n)."""
     initial_content = [
         StructuralElement.model_validate(
-            {"paragraph": {"elements": [{"textRun": {"content": "\n"}}]}}
+            {
+                "paragraph": {
+                    "paragraphStyle": {
+                        "namedStyleType": "NORMAL_TEXT",
+                        "direction": "LEFT_TO_RIGHT",
+                    },
+                    "elements": [{"textRun": {"content": "\n"}}],
+                }
+            }
         )
     ]
     source: Header | Footer

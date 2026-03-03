@@ -31,10 +31,10 @@ Inline elements can be written directly inside block elements:
     <body>
       <sectionbreak sectionType="CONTINUOUS" contentDirection="LEFT_TO_RIGHT" columnSeparatorStyle="NONE" />
       <h1>Heading</h1>
-      <p>A paragraph with <b>bold</b> and <i>italic</i> text.</p>
+      <p>A paragraph. Use <t class="emphasis">styled text</t> with classes from styles.xml.</p>
       <p>A <a href="https://example.com">hyperlink</a> in a sentence.</p>
-      <li type="bullet" level="0">First bullet</li>
-      <li type="bullet" level="1">Nested bullet</li>
+      <li type="bullet">First bullet</li>
+      <li type="decimal">Numbered item</li>
     </body>
     <header id="h.abc" class="_base">
       <p>Document Title</p>
@@ -48,21 +48,13 @@ Inline elements can be written directly inside block elements:
 
 **Inline elements** — write these directly inside `<p>`, `<h1>`-`<h6>`, `<li>`, etc.:
 
-  <b>bold</b>              Bold text
-  <i>italic</i>            Italic text
-  <u>underline</u>         Underlined text
-  <s>strikethrough</s>     Strikethrough text
-  <sup>superscript</sup>   Superscript
-  <sub>subscript</sub>     Subscript
-  <span class="s1">text</span>   Custom style from styles.xml
+  <t class="s1">text</t>  Apply a named style class from styles.xml
   <a href="URL">text</a>  Hyperlink — text is required
 
-**`<t>` wrapper (optional):** pulled documents use `<t>` to group runs
-(`<t><b>bold</b></t>`, `<t class="s1">styled</t>`). You can use this form or
-bare tags interchangeably. Both forms accept mixed content:
+**`<t>` wrapper:** pulled documents use `<t>` to wrap text runs. Use `<t class="name">` to
+apply a style class. Bare text directly inside block elements is also valid:
 
-  <p><t>Hello </t><t><b>world</b></t><t>!</t></p>   ← pull form
-  <p>Hello <b>world</b>!</p>                         ← equivalent bare form
+  <p><t class="code">formatted text</t> and plain text</p>
 
 ## Tabs, Headers & Footers
 
@@ -89,7 +81,7 @@ assigns the real id on push and the re-pulled file will have the real id.
     <p>Content here.</p>
   </body>
   <header id="h.new" class="_base">
-    <p><b>My Document Title</b></p>
+    <p>My Document Title</p>
   </header>
   <footer id="f.new" class="_base">
     <p>(c) 2026 My Company</p>
@@ -99,7 +91,7 @@ assigns the real id on push and the re-pulled file will have the real id.
 
 ## Critical Rules
 
-  No newlines inside content elements (<p>, <h1>-<h6>, <li>, <b>, etc.)
+  No newlines inside content elements (<p>, <h1>-<h6>, <li>, <t>, etc.)
   Every <td> must contain at least one <p>, even if empty
   XML-escape special characters: &amp; &lt; &gt; &quot;
   <hr/>, <image/>, <autotext/>, <sectionbreak/> are read-only - cannot add or remove
@@ -112,7 +104,8 @@ assigns the real id on push and the re-pulled file will have the real id.
   <h1> - <h6>        Headings
   <title>            Document title style
   <subtitle>         Document subtitle style
-  <li>               List item (type: bullet/decimal/alpha/roman/checkbox, level: 0-8)
+  <li>               List item (type: bullet/decimal/alpha/roman/checkbox)
+                     Note: level= is read-only. New lists always start at level 0.
   <table>            Table container
   <tr>               Table row
   <td>               Table cell (must contain at least one <p>)

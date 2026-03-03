@@ -1910,6 +1910,133 @@ class TestReconcileMultiTab:
         ok, diffs = verify(base, result, desired)
         assert ok, f"Diffs: {diffs}"
 
+    def test_create_tab_with_heading_as_first_element(self):
+        """Create a new tab where the first body element is a heading.
+
+        Regression test: when h1 was the first element in a new tab, the reconciler
+        would emit updateParagraphStyle(NORMAL_TEXT) at the stale base position (1, 2)
+        after all content insertions, overwriting the h1's HEADING_1 style.
+
+        Root cause: _create_initial_body_segment() created P(\\n) with no paragraphStyle,
+        causing _compute_style_diff to generate a NORMAL_TEXT style request for the
+        MATCHED trailing paragraph. After insertions shifted positions, this request
+        landed on the h1.
+
+        Fix: _create_initial_body_segment() now initialises the paragraph with
+        namedStyleType=NORMAL_TEXT and direction=LEFT_TO_RIGHT, matching what
+        _ensure_trailing_paragraph produces, so the diff is empty.
+        """
+        base = _make_multi_tab_doc([("t.0", "Tab 1", ["Content"])])
+        desired = Document.model_validate(
+            {
+                "documentId": "test",
+                "tabs": [
+                    {
+                        "tabProperties": {"tabId": "t.0", "title": "Tab 1", "index": 0},
+                        "documentTab": {
+                            "body": {
+                                "content": [
+                                    {"sectionBreak": {}},
+                                    {
+                                        "paragraph": {
+                                            "paragraphStyle": {
+                                                "namedStyleType": "NORMAL_TEXT"
+                                            },
+                                            "elements": [
+                                                {"textRun": {"content": "Content\n"}}
+                                            ],
+                                        }
+                                    },
+                                ]
+                            }
+                        },
+                    },
+                    {
+                        "tabProperties": {
+                            "tabId": "t.1",
+                            "title": "New Tab",
+                            "index": 1,
+                        },
+                        "documentTab": {
+                            "body": {
+                                "content": [
+                                    {"sectionBreak": {}},
+                                    {
+                                        "paragraph": {
+                                            "paragraphStyle": {
+                                                "namedStyleType": "HEADING_1"
+                                            },
+                                            "elements": [
+                                                {"textRun": {"content": "My Heading\n"}}
+                                            ],
+                                        }
+                                    },
+                                    {
+                                        "paragraph": {
+                                            "paragraphStyle": {
+                                                "namedStyleType": "NORMAL_TEXT"
+                                            },
+                                            "elements": [
+                                                {"textRun": {"content": "Body text\n"}}
+                                            ],
+                                        }
+                                    },
+                                ]
+                            }
+                        },
+                    },
+                ],
+            }
+        )
+        desired = reindex_document(desired)
+
+        result = reconcile(base, desired)
+        assert len(result) == 2, f"Expected 2 batches, got {len(result)}"
+
+        base_dict = base.model_dump(by_alias=True, exclude_none=True)
+        mock = MockGoogleDocsAPI(Document.model_validate(base_dict))
+
+        batch_0_reqs = [
+            req.model_dump(by_alias=True, exclude_none=True)
+            for req in result[0].requests
+        ]
+        response_0 = mock.batch_update(
+            BatchUpdateDocumentRequest(
+                requests=[Request.model_validate(r) for r in batch_0_reqs]
+            )
+        ).model_dump(by_alias=True, exclude_none=True)
+
+        batch_1_resolved = resolve_deferred_ids([response_0], result[1])
+        batch_1_reqs = [
+            req.model_dump(by_alias=True, exclude_none=True)
+            for req in batch_1_resolved.requests
+        ]
+        mock.batch_update(
+            BatchUpdateDocumentRequest(
+                requests=[Request.model_validate(r) for r in batch_1_reqs]
+            )
+        )
+
+        actual = mock.get().model_dump(by_alias=True, exclude_none=True)
+        tabs = actual["tabs"]
+        assert len(tabs) == 2
+
+        new_tab = tabs[1]
+        body_content = new_tab["documentTab"]["body"]["content"]
+
+        # Find the heading paragraph
+        heading_para = next(
+            elem
+            for elem in body_content
+            if "paragraph" in elem
+            and elem["paragraph"].get("paragraphStyle", {}).get("namedStyleType")
+            == "HEADING_1"
+        )
+        heading_text = heading_para["paragraph"]["elements"][0]["textRun"]["content"]
+        assert (
+            heading_text == "My Heading\n"
+        ), f"Expected 'My Heading\\n', got {heading_text!r}"
+
     def test_modify_content_across_tabs(self):
         """Modify content in multiple tabs simultaneously."""
         base = _make_multi_tab_doc(
