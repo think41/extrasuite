@@ -35,7 +35,8 @@ Method: Using only `--help` documentation as the guide.
 **How triggered:** Added `<pagebreak/>` as a block element between two headings.
 **Expected (per --help):** `<pagebreak/>` is explicitly documented as "(can add/delete)".
 **Actual:** Fails at `diff` time.
-**Fix needed:** Implement page break insertion support, or correct the documentation.
+**Fix:** Implemented `InsertPageBreakRequest` support in `_generators.py`. Added `_is_pagebreak_paragraph()` helper, `_make_insert_page_break()` request builder, updated all three inner-gap loops and the trailing-gap handler to emit `insertPageBreak` instead of `insertText` for pagebreak paragraphs. Mock updated to actually insert the pagebreak element into the document structure. Pagebreaks in non-body segments (headers, footers, table cells) raise `ReconcileError`.
+**Note:** Pagebreaks in the trailing gap with a non-sectionbreak left anchor insert at `_el_end(left_anchor) - 1` (same as table inserts). In the real workflow, both base and desired have a trailing empty paragraph (added by serde), so trailing-gap pagebreaks appear as inner-gap inserts. The edge case of inserting a pagebreak with no trailing empty paragraph in the base is not supported.
 
 ---
 
@@ -269,7 +270,7 @@ The canonical multi-`<t>` form that `pull` produces continues to work identicall
 
 The reconciler inserts new paragraphs via `insertText(\n) → updateParagraphStyle`. The Google Docs API explicitly rejects `insertText` for paragraphs containing non-text elements: `pageBreak`, `footnoteReference`, `inlineObject`, `horizontalRule`.
 
-**BUG-3 (`<pagebreak/>`):** `<pagebreak/>` is correctly parsed and deserialized into a `{pageBreak: {}}` paragraph element. But when the reconciler tries to insert it, the `insertText` fails. The fix requires wiring up `InsertPageBreakRequest` in `_generators.py` as a special case.
+**BUG-3 (`<pagebreak/>`):** `<pagebreak/>` is correctly parsed and deserialized into a `{pageBreak: {}}` paragraph element. The reconciler now detects such paragraphs via `_is_pagebreak_paragraph()` and emits `InsertPageBreakRequest` (2 chars: pageBreak element + `\n`) instead of `insertText`. Fixed 2026-03-03.
 
 **BUG-2 (`<footnote>`):** Footnote insertion requires `createFootnoteRequest` (multi-batch with DeferredID), similar to how tab creation works. It's a planned future feature (`extradoc/CLAUDE.md` notes "Phase 4+"). Until implemented, `<footnote>` should be removed from the supported block tags in `--help`.
 
@@ -298,7 +299,7 @@ The reconciler inserts new paragraphs via `insertText(\n) → updateParagraphSty
 | BUG-10 `<span>` in `<t>` | Same fix | ✅ Fixed 2026-03-03 |
 | BUG-6 Hyperlinks dropped | Parser fix + `<a>` plain text | ✅ Fixed 2026-03-03 |
 | **P1 — High (advertised but broken)** | | | |
-| BUG-3 `<pagebreak/>` insert | Wire up `InsertPageBreakRequest` | ⬜ Open |
+| BUG-3 `<pagebreak/>` insert | Wire up `InsertPageBreakRequest` | ✅ Fixed 2026-03-03 |
 | BUG-4 List at end of segment | Off-by-one in `_generators.py` | ✅ Fixed 2026-03-03 |
 | BUG-8 Header on wrong tab | API limitation — `sectionBreakLocation` 500s; raise ReconcileError instead | 🔬 Analysed — parked (API bug) |
 | **P2 — Medium (workarounds exist)** | | | |

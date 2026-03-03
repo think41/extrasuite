@@ -241,7 +241,7 @@ class MockGoogleDocsAPI:
             "unmergeTableCells": stubs.handle_unmerge_table_cells,
             "pinTableHeaderRows": stubs.handle_pin_table_header_rows,
             "insertInlineImage": stubs.handle_insert_inline_image,
-            "insertPageBreak": stubs.handle_insert_page_break,
+            "insertPageBreak": text_ops.handle_insert_page_break,
             "insertSectionBreak": stubs.handle_insert_section_break,
             "insertPerson": stubs.handle_insert_person,
             "insertDate": stubs.handle_insert_date,
