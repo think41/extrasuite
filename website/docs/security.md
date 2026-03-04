@@ -71,43 +71,57 @@ Each employee is assigned a dedicated virtual agent with its own email address. 
 
 ### Token and Credential Handling
 
-**Short-lived credentials only:**
+**Typed command protocol:**
 
-- Agents receive OAuth access tokens that expire after **1 hour**
-- Tokens cannot be refreshed by the agent
-- Must be reissued by the server
+Every token request uses a **typed command** — a structured object declaring the exact operation the agent intends to perform (e.g. `sheet.pull`, `gmail.compose`, `calendar.view`). The server uses the command type to determine what credential to issue. No credential is issued speculatively or in bulk.
+
+**Two credential types, minimum scope:**
+
+| Command category | Credential issued | Scope |
+|---|---|---|
+| `sheet.*`, `doc.*`, `slide.*`, `form.*`, `drive.ls`, `drive.search` | Service account token | Files shared with the per-user SA |
+| `gmail.*`, `calendar.*`, `script.*`, `contacts.*`, `drive.file.*` | Delegated access token | Exactly the OAuth scope(s) required for that command |
+
+- Service account tokens give the agent access only to files explicitly shared with its service account
+- Delegated tokens impersonate the user for a single scope; the scope allowlist is controlled by the administrator
+
+**Short-lived Google access tokens:**
+
+- Google access tokens expire after **1 hour** (configurable)
+- Tokens are generated on demand and never stored server-side or client-side
+- The agent cannot refresh a token — it must request a new one via the server
+
+**Session token (stored locally):**
+
+- After the initial browser-based login, the client stores a **session token** in `~/.config/extrasuite/` (valid 30 days)
+- The session token authenticates the client to the ExtraSuite server only — it is never sent to Google APIs
+- Session tokens are stored as SHA-256 hashes in Firestore; the raw token never touches the database
+- Sessions can be listed and revoked at any time via `extrasuite auth sessions`
 
 **No private key material:**
 
 - ExtraSuite does not use downloaded service account key files
-- No private keys or long-lived credentials are exposed to agents or clients
+- No Google private keys or refresh tokens are exposed to agents or clients
 
-**Scoped Workspace access:**
+**Agent intent logging:**
 
-Issued tokens are scoped only to required Google Workspace APIs:
+Every token request includes a `reason` field — the agent's stated purpose for the operation. The server logs the user email, command type, command context, and reason to an audit log before issuing any token. This creates a record of not just *what* was accessed, but *why* the agent claimed it was needed.
 
-| API | Permission |
-|-----|------------|
-| Google Sheets | Read/Write |
-| Google Docs | Read/Write |
-| Google Slides | Read/Write |
-| Google Drive | **Read-only** |
-| Gmail, Calendar, Apps Script | Optional (via domain-wide delegation) |
-
-ExtraSuite does not issue broad Google Cloud API permissions.
+Administrators can also configure a `DELEGATION_SCOPES` allowlist. Token requests for scopes outside this list are rejected before any Google API call is made.
 
 ### Domain-Wide Delegation (Optional)
 
-ExtraSuite optionally supports **domain-wide delegation** for user-specific APIs like Gmail, Calendar, and Apps Script. This is an opt-in feature controlled by the `DELEGATION_ENABLED` environment variable.
+ExtraSuite optionally supports **domain-wide delegation** for user-specific APIs like Gmail, Calendar, Apps Script, and Contacts. This is an opt-in feature controlled by the `DELEGATION_ENABLED` environment variable.
 
 **How it works:**
 
 - The server impersonates the user via Google's domain-wide delegation mechanism
-- The client sends a typed **command object** (e.g. `{"type": "gmail.compose", ...}`); the server's command registry maps this to the required OAuth scope(s)
+- The client sends a typed **command object** (e.g. `{"type": "gmail.compose", "to": ["..."], ...}`) and a `reason` string; the server's command registry maps the command type to the required OAuth scope(s)
+- The server validates the command type and looks up the exact scope(s) needed — the client never specifies scopes directly
 - **Two layers of scope enforcement:**
     1. **Server-side allowlist** (`DELEGATION_SCOPES`) — optional, rejects disallowed scopes before any Google API call
     2. **Google Workspace Admin Console** — authoritative enforcement; if a scope isn't authorized there, the delegation call fails and the server returns 403
-- All delegation requests are logged with user email, command type, full command context, reason, and timestamp
+- All delegation requests are logged with user email, command type, full command context, reason, and timestamp before any token is issued
 
 **Security model comparison:**
 
@@ -126,22 +140,29 @@ ExtraSuite optionally supports **domain-wide delegation** for user-specific APIs
 
 ### CLI Authentication Flow
 
-**Auth code exchange pattern:**
+**Phase 1 — Initial login (once per 30 days, browser required):**
 
-- Tokens are never exposed in browser URLs or history
-- Server generates a temporary auth code (valid for 2 minutes)
-- CLI exchanges the auth code for the token via POST request
-- Auth codes are single-use and deleted immediately
+1. `extrasuite auth login` opens a browser for Google OAuth
+2. The server generates a temporary auth code (valid 2 minutes)
+3. The CLI exchanges the auth code for a **session token** via POST request
+4. Auth codes are single-use and deleted immediately after exchange
+5. The session token is stored locally and used to authenticate all subsequent requests
+
+**Phase 2 — Per-command token exchange (headless, no browser):**
+
+1. The CLI sends a typed command + reason to `POST /api/auth/token`, authenticated with the session token in the `Authorization` header (never in the URL or body)
+2. The server validates the session token (hash lookup in Firestore), then routes based on command type to issue the appropriate Google access token
+3. The CLI uses the returned token for the Google API call and discards it when done
 
 **Localhost binding:**
 
-- The CLI callback server binds to `127.0.0.1` (not `localhost`)
+- The OAuth callback server binds to `127.0.0.1` (not `localhost`)
 - Prevents DNS rebinding attacks
 - Only the local machine can receive the auth code
 
 **Secure token storage:**
 
-- Cached tokens are stored with restrictive file permissions
+- The session token is stored with restrictive file permissions
 - Directory: owner read/write/execute only (0700)
 - Token file: owner read/write only (0600)
 
@@ -149,9 +170,10 @@ ExtraSuite optionally supports **domain-wide delegation** for user-specific APIs
 
 **Minimal data retention:**
 
-- The server stores only the email-to-service-account mapping
-- No OAuth access tokens are stored server-side
+- The server stores the email-to-service-account mapping and session token hashes
 - Session tokens are stored as SHA-256 hashes in Firestore (the raw token never touches the database)
+- No Google OAuth access tokens are stored server-side — they are generated on demand and returned directly to the client
+- Access logs store command type, command context (non-sensitive fields like file URLs), and the agent's stated reason — not file contents or sensitive data
 
 **Automatic expiration:**
 
@@ -252,10 +274,12 @@ ExtraSuite guarantees the following:
 - ✅ Agents cannot access documents unless an employee explicitly shares them
 - ✅ Access is limited to the permission level chosen by the employee
 - ✅ All agent edits are attributable, auditable, and reversible using native Google Workspace tools
-- ✅ No long-lived credentials are exposed to agents or clients
-- ✅ Tokens are never exposed in browser URLs or history
-- ✅ Delegated scopes (if enabled) are allowlisted by the admin
-- ✅ All delegation requests are logged with user, scopes, and reason
+- ✅ Google access tokens are short-lived (1 hour), generated on demand, and never stored client-side or server-side
+- ✅ The local session token (30 days) only authenticates against the ExtraSuite server — it has no Google API access on its own
+- ✅ Google access tokens are never exposed in browser URLs or history
+- ✅ Every token request is logged with the command type, context, and the agent's stated reason before any token is issued
+- ✅ Delegated scopes (if enabled) are allowlisted by the admin at two levels: server config and Google Workspace Admin Console
+- ✅ The client declares the intended operation via a typed command; the server determines the scope — agents cannot request arbitrary scopes
 
 ---
 
@@ -264,7 +288,7 @@ ExtraSuite guarantees the following:
 ExtraSuite's security model is intentionally simple and transparent:
 
 !!! quote "The Security Promise"
-    *If an employee does not explicitly share a document with their agent, the agent cannot access it. If the agent edits a document, the employee can see exactly what changed — and undo it.*
+    *If an employee does not explicitly share a document with their agent, the agent cannot access it. The agent declares what it intends to do — and why — before receiving any credential. If the agent edits a document, the employee can see exactly what changed — and undo it.*
 
 This design prioritizes **least privilege**, **auditability**, and **employee trust** while staying fully within Google Workspace's native security model.
 

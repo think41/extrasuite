@@ -235,9 +235,9 @@
         <div class="w-8 h-8 bg-blue-600 rounded-lg flex items-center justify-center text-sm font-bold">A</div>
         <span class="text-blue-300 text-sm font-semibold uppercase tracking-wider">Differentiator One</span>
       </div>
-      <h2 class="text-3xl md:text-4xl font-bold mb-4">Security through a server-mediated token system</h2>
+      <h2 class="text-3xl md:text-4xl font-bold mb-4">Security through typed commands and server-mediated tokens</h2>
       <p class="text-blue-200 text-lg max-w-3xl mb-16">
-        Instead of handing the agent your OAuth token, ExtraSuite runs a lightweight server that issues fine-grained, short-lived tokens on demand — and keeps a full audit log of why each token was issued.
+        Instead of handing the agent an OAuth token, the agent declares what operation it intends to perform. The ExtraSuite server issues the minimum required credential for that specific command — and logs the agent's stated reason before doing so.
       </p>
 
       <div class="grid md:grid-cols-3 gap-6 mb-10 md:mb-16">
@@ -256,9 +256,9 @@
           <div class="w-12 h-12 bg-blue-600/30 rounded-xl flex items-center justify-center mb-5">
             <svg class="w-6 h-6" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M12 8v4l3 3m6-3a9 9 0 11-18 0 9 9 0 0118 0z"/></svg>
           </div>
-          <h3 class="font-bold text-lg mb-3">Short-lived, scoped tokens</h3>
+          <h3 class="font-bold text-lg mb-3">Command-scoped, short-lived tokens</h3>
           <p class="text-blue-200 text-sm leading-relaxed">
-            The server issues tokens that expire after 1 hour. The agent never holds a long-lived credential or a private key. Each token is scoped to exactly the operation being performed — one scope per call. There's nothing to rotate or leak.
+            The client sends a typed command (e.g. <code class="text-blue-300 text-xs">sheet.pull</code> or <code class="text-blue-300 text-xs">gmail.compose</code>). The server maps the command to the minimum required credential: a service account token for file operations, or a delegated access token scoped to exactly the needed OAuth scope(s) for user-impersonating operations. Tokens expire after 1 hour. A 30-day session token stored locally authenticates against the ExtraSuite server — it never touches the Google API.
           </p>
         </div>
 
@@ -268,7 +268,7 @@
           </div>
           <h3 class="font-bold text-lg mb-3">Audit log with agent intent</h3>
           <p class="text-blue-200 text-sm leading-relaxed">
-            Every token request is logged with the user's email, the command type (e.g. <code class="text-blue-300 text-xs">gmail.compose</code>), and the full command context. You know not just that a token was issued, but <em>why</em> — what the agent was about to do.
+            Every token request includes a <em>reason</em> field — the agent's stated purpose for the operation (e.g. "User asked me to draft a follow-up to the Q3 review email"). The server logs the user's email, command type, command context, and this reason before issuing any token. You know not just that a token was issued, but <em>why</em> the agent requested it.
           </p>
         </div>
       </div>
@@ -308,7 +308,7 @@
                 </div>
                 <div>
                   <span class="font-medium text-sm">Read arbitrary emails</span>
-                  <p class="text-blue-300 text-xs mt-0.5">Gmail read access is scoped to <code class="text-xs">gmail.readonly</code> and only issued for specific commands.</p>
+                  <p class="text-blue-300 text-xs mt-0.5">Gmail read access requires a typed <code class="text-xs">gmail.read</code> command and is only issued when that scope is in the administrator's allowlist.</p>
                 </div>
               </li>
             </ul>
@@ -340,8 +340,8 @@
                   <svg class="w-3 h-3 text-green-400" fill="currentColor" viewBox="0 0 20 20"><path fill-rule="evenodd" d="M16.707 5.293a1 1 0 010 1.414l-8 8a1 1 0 01-1.414 0l-4-4a1 1 0 011.414-1.414L8 12.586l7.293-7.293a1 1 0 011.414 0z" clip-rule="evenodd"/></svg>
                 </div>
                 <div>
-                  <span class="font-medium text-sm">Credential theft</span>
-                  <p class="text-blue-300 text-xs mt-0.5">No long-lived keys or refresh tokens are stored client-side. Nothing to steal.</p>
+                  <span class="font-medium text-sm">Google API credential theft</span>
+                  <p class="text-blue-300 text-xs mt-0.5">No Google access tokens or private keys are stored client-side. The local session token only authenticates against the ExtraSuite server — compromising it doesn't grant Google API access.</p>
                 </div>
               </li>
             </ul>

@@ -20,16 +20,23 @@ This is [the lethal trifecta](https://simonwillison.net/2025/Jun/16/the-lethal-t
 
 Every employee's agent gets its own Google service account (e.g. `alice-agent@your-project.iam.gserviceaccount.com`). The agent can only access files that have been **explicitly shared with that service account** — nothing else in your Drive is visible. All edits made by the agent appear in Google Drive version history attributed to "Alice's agent", not anonymously, not as Alice herself.
 
-### Short-Lived Tokens, Minimal Scope
+### Typed Commands, Minimal Scope
 
-Tokens are scoped to the exact operation being performed and expire after ~1 hour. The agent never holds a persistent credential. There are no long-lived API keys to rotate or leak.
+The client sends a **typed command** to the ExtraSuite server along with the agent's stated reason for the operation. The server uses the command type to determine the minimum required credentials:
+
+- **Pull/push operations** (Sheets, Docs, Slides, Forms, Drive) → a short-lived service account token, valid for 1 hour
+- **User-impersonating operations** (Gmail, Calendar, Apps Script, Contacts) → a short-lived delegated access token scoped to exactly the required OAuth scope(s), valid for 1 hour
+
+The client stores a session token locally (valid 30 days) to authenticate these requests without re-opening a browser. The session token never touches the Google API — it only authenticates against the ExtraSuite server. Short-lived Google access tokens are fetched on demand and never stored.
+
+The command type, context fields, and the agent's reason are all logged server-side before any token is issued. The server can reject operations that fall outside the configured scope allowlist.
 
 ### Local-Only Editing — No Arbitrary Code Execution
 
 The agent's job is simple: edit files on disk and call `pull`/`push`. It does not execute arbitrary code against the Google API. This means you can configure your agent sandbox to:
 
 - Whitelist only `extrasuite pull` and `extrasuite push` as allowed commands
-- Allow outbound connections only to Google API endpoints
+- Allow outbound connections only to Google API endpoints and the ExtraSuite server
 
 That eliminates the external communication leg of the lethal trifecta entirely.
 
@@ -225,11 +232,14 @@ See the [deployment documentation](https://extrasuite.think41.com/deployment/) f
 | Property | How ExtraSuite Achieves It |
 |----------|---------------------------|
 | Scoped access | Each employee's agent has a dedicated service account; only sees explicitly shared files |
-| Short-lived credentials | Tokens expire after ~1 hour; no persistent API keys |
+| Short-lived Google tokens | Access tokens expire after ~1 hour; generated on demand, never stored |
+| Session token | A 30-day session token stored locally authenticates against the ExtraSuite server only — not against Google APIs |
+| Typed commands | Client declares what operation it intends to perform; server issues the minimum required token type and scope |
+| Agent intent logging | The agent's stated reason is logged alongside command type and context before any token is issued |
 | Audit trail | All agent edits appear in Google Drive version history attributed to the agent |
 | Sandboxable | Agent only edits local files and calls `pull`/`push`; no arbitrary API access |
-| No external exfiltration | Outbound connections can be restricted to Google API endpoints only |
-| Minimal OAuth scope | Only the scopes needed for the specific operation are requested |
+| No external exfiltration | Outbound connections can be restricted to Google API endpoints and the ExtraSuite server |
+| Minimal OAuth scope | Only the scopes needed for the specific operation are requested; administrators control the scope allowlist |
 
 ---
 
