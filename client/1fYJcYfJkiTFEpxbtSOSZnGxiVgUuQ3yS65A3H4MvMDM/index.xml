@@ -1,0 +1,11 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<doc id="1fYJcYfJkiTFEpxbtSOSZnGxiVgUuQ3yS65A3H4MvMDM" title="Reconciler Bug Verification" revision="AIxLkSu_RP4kjutZy0K8J3YkJwPkqct3yEzOzGWVW52AFW4E1r5hiVR3hXZbs3igSpOAbH2XkiHOKd-oO3qSJ41H0Q">
+  <tab id="t.0" title="Tab 1" folder="Tab_1">
+    <h1>Reconciler Bug Verification — All Bugs Fixed</h1>
+    <h2>B3a: Formatted Table Cells</h2>
+    <h2>4: Table Inserted in Inner Gap</h2>
+    <h2>The table below sits between two paragraphs with no spurious empty paragraph after it:</h2>
+    <h2>The text below had bold and italic removed across multiple base runs:</h2>
+    <h2>Summary</h2>
+  </tab>
+</doc>

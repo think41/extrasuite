@@ -1,0 +1,11 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<doc id="17kmIdG_iSDA8E7NeKtmDgZRVab1fDM4EguaWOUeHbCY" title="Reconciler Bug Verification" revision="AIxLkSvGCyI34FmtMecPQ_lcLnA6Nqcngq09jy_5liMFgn3yH94WualumTFvoLR63AGY0a1-tvrlJtNNSDu28etCcA">
+  <tab id="t.0" title="Tab 1" folder="Tab_1">
+    <h1>Reconciler Bug Verification</h1>
+    <h2>B1: Insert into Empty Document</h2>
+    <h2>B3a: Table With Formatted Cells</h2>
+    <h2>B4: Table Between Two Paragraphs</h2>
+    <h2>B2: Interior Style Changes</h2>
+    <h2>Summary</h2>
+  </tab>
+</doc>

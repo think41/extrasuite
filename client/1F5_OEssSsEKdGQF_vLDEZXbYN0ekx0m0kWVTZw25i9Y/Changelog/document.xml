@@ -1,0 +1,356 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<tab id="t.changelog" title="Changelog" index="9">
+  <body>
+    <sectionbreak sectionType="CONTINUOUS" contentDirection="LEFT_TO_RIGHT" columnSeparatorStyle="NONE" />
+    <h1>
+      <t>Version 1 — Scope Reduction Changelog</t>
+    </h1>
+    <p>
+      <t>
+        <b>Date:</b>
+      </t>
+      <t> 2026-02-27</t>
+    </p>
+    <p>
+      <t>
+        <b>Summary:</b>
+      </t>
+      <t> All 23 project assignments have been simplified to reduce scope and complexity. The core domain idea and learning objectives remain intact. The changes make these projects achievable within a bootcamp timeframe while still covering the key backend engineering concepts (REST APIs, relational data modeling, background jobs, file storage, access control).</t>
+    </p>
+    <p />
+    <h2>
+      <t>What Was Removed Across All Projects</t>
+    </h2>
+    <li type="bullet" level="0">
+      <t>
+        <b>Temporal workflows</b>
+      </t>
+      <t> — Long-running orchestration workflows were removed. Where applicable, simple scheduled jobs or state-machine transitions replace them.</t>
+    </li>
+    <li type="bullet" level="0">
+      <t>
+        <b>3rd-party API integrations</b>
+      </t>
+      <t> — IoT sensors, OCR receipt processing, KYC/AML e-KYC, BGV criminal checks, sentiment analysis APIs, wearable device integrations, and logistics aggregators have all been removed. Where verification is needed, manual admin review replaces it.</t>
+    </li>
+    <li type="bullet" level="0">
+      <t>
+        <b>Regulatory compliance complexity</b>
+      </t>
+      <t> — 21 CFR Part 11 electronic signatures, NPCI/RBI mandate penalties, CDSCO audit immutability, and blockchain-linked document hashing have been removed.</t>
+    </li>
+    <li type="bullet" level="0">
+      <t>
+        <b>High-scale / high-concurrency requirements</b>
+      </t>
+      <t> — Flash-sale inventory locking, 500ms alert delivery SLAs, 5,000+ batch onboarding in 24 hours, and mass-outage grouping of 10,000 tickets have been removed.</t>
+    </li>
+    <li type="bullet" level="0">
+      <t>
+        <b>Complex edge cases</b>
+      </t>
+      <t> — Combo-SKU free-item triggers, travel-buffer traffic algorithms, family-tree guest tagging, and cross-state green-tax geo-restrictions have been removed.</t>
+    </li>
+    <p />
+    <h2>
+      <t>Per-Project Changes</t>
+    </h2>
+    <table>
+      <col />
+      <col />
+      <tr class="tr1">
+        <td>
+          <p>
+            <t>
+              <b>Project</b>
+            </t>
+          </p>
+        </td>
+        <td>
+          <p>
+            <t>
+              <b>Key Simplifications</b>
+            </t>
+          </p>
+        </td>
+      </tr>
+      <tr>
+        <td>
+          <p>
+            <t>1. B2B FMCG Distributor</t>
+          </p>
+        </td>
+        <td>
+          <p>
+            <t>Removed: UOM conversions, Temporal credit cycle, flash-sale concurrency, SMS OTP, combo-SKU logic. Kept: tiered pricing, GST, credit limits, partial delivery.</t>
+          </p>
+        </td>
+      </tr>
+      <tr>
+        <td>
+          <p>
+            <t>2. Solar Farm Task Mgmt</t>
+          </p>
+        </td>
+        <td>
+          <p>
+            <t>Removed: GPS geo-fencing, Temporal maintenance sprints, offline sync-later. Kept: 3-level hierarchy, predecessor dependencies, SLA tracking, milestone invoicing.</t>
+          </p>
+        </td>
+      </tr>
+      <tr>
+        <td>
+          <p>
+            <t>3. Geriatric Home-Care</t>
+          </p>
+        </td>
+        <td>
+          <p>
+            <t>Removed: Traffic buffer algorithm, Temporal session monitoring, tele-consult API. Kept: care plan subscriptions, conflict detection, refund policy, check-in alerts.</t>
+          </p>
+        </td>
+      </tr>
+      <tr>
+        <td>
+          <p>
+            <t>4. Vocational Portal</t>
+          </p>
+        </td>
+        <td>
+          <p>
+            <t>Removed: Video liveness questions, proctored exams, BGV integration, spotty-connection handling. Kept: prerequisites, multi-language, certificate generation, bulk enrollment.</t>
+          </p>
+        </td>
+      </tr>
+      <tr>
+        <td>
+          <p>
+            <t>5. Cloud Kitchen</t>
+          </p>
+        </td>
+        <td>
+          <p>
+            <t>Removed: Real-time market rate COGS, Swiggy/Zomato sync, Temporal, KDS preparation estimates. Kept: shared inventory, order state machine, void orders, time-based menu.</t>
+          </p>
+        </td>
+      </tr>
+      <tr>
+        <td>
+          <p>
+            <t>6. Agri-Advisory</t>
+          </p>
+        </td>
+        <td>
+          <p>
+            <t>Removed: ML pest identification API, auto-translation, Temporal weather alerts. Kept: geo-tagged feed, expert badge, district alerts, rate limiting.</t>
+          </p>
+        </td>
+      </tr>
+      <tr>
+        <td>
+          <p>
+            <t>7. Construction Petty Cash</t>
+          </p>
+        </td>
+        <td>
+          <p>
+            <t>Removed: OCR receipt processing, GSTIN verification API, Tally XML export, 3-level approval. Kept: budget heads, 2-level approval, advance tracking, CSV export.</t>
+          </p>
+        </td>
+      </tr>
+      <tr>
+        <td>
+          <p>
+            <t>8. Fractional CRE</t>
+          </p>
+        </td>
+        <td>
+          <p>
+            <t>Removed: AML checks, Aadhaar e-KYC, TDS deduction, quarterly exit windows, Temporal. Kept: fractional units, manual KYC, dividend calculation, funding goal refund.</t>
+          </p>
+        </td>
+      </tr>
+      <tr>
+        <td>
+          <p>
+            <t>9. Wedding Management</t>
+          </p>
+        </td>
+        <td>
+          <p>
+            <t>Removed: Mass SMS for venue change, Temporal countdown, family-tree tagging. Kept: milestone payments, guest list, budget variance, vendor overbooking check.</t>
+          </p>
+        </td>
+      </tr>
+      <tr>
+        <td>
+          <p>
+            <t>10. Gig Worker Onboarding</t>
+          </p>
+        </td>
+        <td>
+          <p>
+            <t>Removed: PAN/Aadhaar 3rd-party verification, Temporal, 5,000+ batch hiring. Kept: 4-stage funnel, document upload, reminders, duplicate prevention, re-activation.</t>
+          </p>
+        </td>
+      </tr>
+      <tr>
+        <td>
+          <p>
+            <t>11. Pharma Cold Chain</t>
+          </p>
+        </td>
+        <td>
+          <p>
+            <t>Removed: IoT sensor integration, Temporal quarantine workflow, CDSCO audit logs. Kept: FEFO, batch tracking, manual temperature logs, recall traceability.</t>
+          </p>
+        </td>
+      </tr>
+      <tr>
+        <td>
+          <p>
+            <t>12. Corporate Wellness</t>
+          </p>
+        </td>
+        <td>
+          <p>
+            <t>Removed: Wearable API integrations, insurance premium linking, Temporal challenges. Kept: manual activity logging, points, leaderboard, anonymized HR reports.</t>
+          </p>
+        </td>
+      </tr>
+      <tr>
+        <td>
+          <p>
+            <t>13. Fintech Dispute Mgmt</t>
+          </p>
+        </td>
+        <td>
+          <p>
+            <t>Removed: CBS integration, Temporal chargeback lifecycle, mass-outage 10K grouping. Kept: ticket categorization, 2-tier SLA escalation, auto-refund, PII masking.</t>
+          </p>
+        </td>
+      </tr>
+      <tr>
+        <td>
+          <p>
+            <t>14. Legal Archive</t>
+          </p>
+        </td>
+        <td>
+          <p>
+            <t>Removed: Full-text search via 3rd party, Chinese wall, physical-digital sync, Temporal. Kept: matter-level access, metadata search, billable time, retention flags.</t>
+          </p>
+        </td>
+      </tr>
+      <tr>
+        <td>
+          <p>
+            <t>15. Corporate Stay</t>
+          </p>
+        </td>
+        <td>
+          <p>
+            <t>Removed: Direct-bill hotel integration, Temporal approval expiry, passport/visa deletion. Kept: grade-based caps, cost center tagging, out-of-policy approval, GST invoice.</t>
+          </p>
+        </td>
+      </tr>
+      <tr>
+        <td>
+          <p>
+            <t>16. Pharma SOP CMS</t>
+          </p>
+        </td>
+        <td>
+          <p>
+            <t>Removed: 21 CFR Part 11 e-sign compliance, Temporal periodic review, dynamic watermarking. Kept: version locking, read receipts, review reminders, PDF export with watermark.</t>
+          </p>
+        </td>
+      </tr>
+      <tr>
+        <td>
+          <p>
+            <t>17. EV Fleet</t>
+          </p>
+        </td>
+        <td>
+          <p>
+            <t>Removed: MQTT/IoT telemetry, remote immobilization, Temporal swap reservations. Kept: manual shift logs, payout calculation, battery health flags, maintenance scheduling.</t>
+          </p>
+        </td>
+      </tr>
+      <tr>
+        <td>
+          <p>
+            <t>18. Automotive VoC</t>
+          </p>
+        </td>
+        <td>
+          <p>
+            <t>Removed: 3rd-party sentiment analysis, IVR calls, audio transcription, Temporal. Kept: milestone-triggered surveys, star rating, low-score alerts, loyalty points.</t>
+          </p>
+        </td>
+      </tr>
+      <tr>
+        <td>
+          <p>
+            <t>19. Society Billing</t>
+          </p>
+        </td>
+        <td>
+          <p>
+            <t>Removed: RFID access revocation, Temporal suspension workflow, split payouts. Kept: tiered water billing, late fees, pro-rated billing, bulk advance payment.</t>
+          </p>
+        </td>
+      </tr>
+      <tr>
+        <td>
+          <p>
+            <t>20. Hospital Diet Kitchen</t>
+          </p>
+        </td>
+        <td>
+          <p>
+            <t>Removed: HIS system sync, room-level route optimization, Temporal meal timing. Kept: diet restrictions, allergen block, dietitian approval, discharge cancellation.</t>
+          </p>
+        </td>
+      </tr>
+      <tr>
+        <td>
+          <p>
+            <t>21. Fintech Alerting</t>
+          </p>
+        </td>
+        <td>
+          <p>
+            <t>Removed: WhatsApp/Push channels, IVR calls, 500ms SLA, Temporal conditional workflows. Kept: Email + SMS, priority queues, user preferences, rate limiting, digest batching.</t>
+          </p>
+        </td>
+      </tr>
+      <tr>
+        <td>
+          <p>
+            <t>22. Title Deed Registry</t>
+          </p>
+        </td>
+        <td>
+          <p>
+            <t>Removed: Blockchain hashing, Aadhaar e-Sign API, Temporal lien release. Kept: hierarchical access, expiry alerts, multi-party PDF signing, duplicate prevention.</t>
+          </p>
+        </td>
+      </tr>
+      <tr>
+        <td>
+          <p>
+            <t>23. Scrap Auction</t>
+          </p>
+        </td>
+        <td>
+          <p>
+            <t>Removed: Reverse auctions, PCB license API verification, geo-restrictions, logistics quotes. Kept: forward auction, auto-increment bidding, weight variance invoice, dispute flag.</t>
+          </p>
+        </td>
+      </tr>
+    </table>
+    <p />
+  </body>
+</tab>

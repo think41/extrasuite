@@ -14,6 +14,11 @@ Unlike test_mock_api.py which focuses on validation, these tests verify:
 
 from __future__ import annotations
 
+from extradoc.api_types._generated import (
+    BatchUpdateDocumentRequest,
+    Document,
+    Request,
+)
 from extradoc.mock.api import MockGoogleDocsAPI
 
 
@@ -70,7 +75,7 @@ def create_minimal_document() -> dict[str, any]:
 def test_insert_text_simple_updates_document_structure() -> None:
     """TC-001: InsertText - Simple text insertion updates document correctly."""
     doc = create_minimal_document()
-    api = MockGoogleDocsAPI(doc)
+    api = MockGoogleDocsAPI(Document.model_validate(doc))
 
     # Insert " World" at index 6 (before the newline)
     requests = [
@@ -82,23 +87,31 @@ def test_insert_text_simple_updates_document_structure() -> None:
         }
     ]
 
-    response = api.batch_update(requests)
+    response = api.batch_update(
+        BatchUpdateDocumentRequest(
+            requests=[Request.model_validate(r) for r in requests]
+        )
+    )
 
     # Verify response structure
-    assert "replies" in response
-    assert len(response["replies"]) == 1
-    assert response["replies"][0] == {}  # InsertText returns empty reply
-    assert "writeControl" in response
-    assert "requiredRevisionId" in response["writeControl"]
-    assert response["documentId"] == "test_doc_123"
+    assert response.replies is not None
+    assert len(response.replies or []) == 1
+    assert (
+        response.replies[0].model_dump(by_alias=True, exclude_none=True) == {}
+    )  # InsertText returns empty reply
+    assert response.write_control is not None
+    assert response.write_control.required_revision_id is not None
+    assert response.document_id == "test_doc_123"
 
     # Get updated document
     updated_doc = api.get()
 
     # Verify document structure
-    assert updated_doc["revisionId"] != "initial_revision"  # Revision updated
+    assert updated_doc.revision_id != "initial_revision"  # Revision updated
 
-    body_content = updated_doc["tabs"][0]["documentTab"]["body"]["content"]
+    body_content = updated_doc.model_dump(by_alias=True, exclude_none=True)["tabs"][0][
+        "documentTab"
+    ]["body"]["content"]
     assert len(body_content) == 1  # Still one paragraph
 
     paragraph = body_content[0]
@@ -118,7 +131,7 @@ def test_insert_text_simple_updates_document_structure() -> None:
 def test_insert_text_with_newline_creates_new_paragraph() -> None:
     """TC-002: InsertText with newline creates new paragraph structure."""
     doc = create_minimal_document()
-    api = MockGoogleDocsAPI(doc)
+    api = MockGoogleDocsAPI(Document.model_validate(doc))
 
     # Insert "Title\n" at index 1 (beginning)
     requests = [
@@ -130,11 +143,17 @@ def test_insert_text_with_newline_creates_new_paragraph() -> None:
         }
     ]
 
-    api.batch_update(requests)
+    api.batch_update(
+        BatchUpdateDocumentRequest(
+            requests=[Request.model_validate(r) for r in requests]
+        )
+    )
     updated_doc = api.get()
 
     # Verify two paragraphs now exist
-    body_content = updated_doc["tabs"][0]["documentTab"]["body"]["content"]
+    body_content = updated_doc.model_dump(by_alias=True, exclude_none=True)["tabs"][0][
+        "documentTab"
+    ]["body"]["content"]
     assert len(body_content) == 2
 
     # First paragraph: "Title\n" (indices 1-7)
@@ -153,7 +172,7 @@ def test_insert_text_with_newline_creates_new_paragraph() -> None:
 def test_insert_text_at_end_of_segment_location() -> None:
     """TC-003: InsertText using endOfSegmentLocation inserts before final newline."""
     doc = create_minimal_document()
-    api = MockGoogleDocsAPI(doc)
+    api = MockGoogleDocsAPI(Document.model_validate(doc))
 
     requests = [
         {
@@ -164,11 +183,17 @@ def test_insert_text_at_end_of_segment_location() -> None:
         }
     ]
 
-    api.batch_update(requests)
+    api.batch_update(
+        BatchUpdateDocumentRequest(
+            requests=[Request.model_validate(r) for r in requests]
+        )
+    )
     updated_doc = api.get()
 
     # Should insert before final newline
-    body_content = updated_doc["tabs"][0]["documentTab"]["body"]["content"]
+    body_content = updated_doc.model_dump(by_alias=True, exclude_none=True)["tabs"][0][
+        "documentTab"
+    ]["body"]["content"]
     paragraph = body_content[0]
 
     # Text should be "Hello World\n"
@@ -205,7 +230,7 @@ def test_delete_content_range_simple_updates_document() -> None:
         },
     }
 
-    api = MockGoogleDocsAPI(doc)
+    api = MockGoogleDocsAPI(Document.model_validate(doc))
 
     # Delete " World" (range 6-12, exclusive end)
     requests = [
@@ -219,11 +244,17 @@ def test_delete_content_range_simple_updates_document() -> None:
         }
     ]
 
-    api.batch_update(requests)
+    api.batch_update(
+        BatchUpdateDocumentRequest(
+            requests=[Request.model_validate(r) for r in requests]
+        )
+    )
     updated_doc = api.get()
 
     # Verify document structure
-    body_content = updated_doc["tabs"][0]["documentTab"]["body"]["content"]
+    body_content = updated_doc.model_dump(by_alias=True, exclude_none=True)["tabs"][0][
+        "documentTab"
+    ]["body"]["content"]
     paragraph = body_content[0]
 
     # Paragraph should now end at index 7 (was 13, deleted 6 chars)
@@ -277,7 +308,7 @@ def test_delete_content_range_with_emoji_updates_indexes_correctly() -> None:
         ],
     }
 
-    api = MockGoogleDocsAPI(doc)
+    api = MockGoogleDocsAPI(Document.model_validate(doc))
 
     # Delete the emoji (indices 6-8)
     requests = [
@@ -291,11 +322,17 @@ def test_delete_content_range_with_emoji_updates_indexes_correctly() -> None:
         }
     ]
 
-    api.batch_update(requests)
+    api.batch_update(
+        BatchUpdateDocumentRequest(
+            requests=[Request.model_validate(r) for r in requests]
+        )
+    )
     updated_doc = api.get()
 
     # Verify document structure
-    body_content = updated_doc["tabs"][0]["documentTab"]["body"]["content"]
+    body_content = updated_doc.model_dump(by_alias=True, exclude_none=True)["tabs"][0][
+        "documentTab"
+    ]["body"]["content"]
     paragraph = body_content[0]
 
     # Should be "HelloWorld\n" now (13 - 2 = 12)
@@ -311,7 +348,7 @@ def test_delete_content_range_with_emoji_updates_indexes_correctly() -> None:
 def test_create_named_range_adds_to_document_structure() -> None:
     """TC-013: CreateNamedRange adds named range to document structure."""
     doc = create_minimal_document()
-    api = MockGoogleDocsAPI(doc)
+    api = MockGoogleDocsAPI(Document.model_validate(doc))
 
     # Create named range "greeting" covering "Hello" (indices 1-6)
     requests = [
@@ -326,19 +363,32 @@ def test_create_named_range_adds_to_document_structure() -> None:
         }
     ]
 
-    response = api.batch_update(requests)
+    response = api.batch_update(
+        BatchUpdateDocumentRequest(
+            requests=[Request.model_validate(r) for r in requests]
+        )
+    )
 
     # Verify response includes namedRangeId
-    assert len(response["replies"]) == 1
-    assert "createNamedRange" in response["replies"][0]
-    assert "namedRangeId" in response["replies"][0]["createNamedRange"]
-    named_range_id = response["replies"][0]["createNamedRange"]["namedRangeId"]
+    assert len(response.replies or []) == 1
+    assert "createNamedRange" in response.replies[0].model_dump(
+        by_alias=True, exclude_none=True
+    )
+    assert (
+        "namedRangeId"
+        in response.replies[0].model_dump(by_alias=True, exclude_none=True)[
+            "createNamedRange"
+        ]
+    )
+    named_range_id = response.replies[0].create_named_range.named_range_id
 
     # Get updated document
     updated_doc = api.get()
 
     # Verify named range in document structure
-    named_ranges = updated_doc["tabs"][0]["documentTab"]["namedRanges"]
+    named_ranges = updated_doc.model_dump(by_alias=True, exclude_none=True)["tabs"][0][
+        "documentTab"
+    ]["namedRanges"]
     assert "greeting" in named_ranges
 
     greeting_ranges = named_ranges["greeting"]["namedRanges"]
@@ -354,7 +404,7 @@ def test_create_named_range_adds_to_document_structure() -> None:
 def test_create_multiple_named_ranges_same_name() -> None:
     """TC-014: Create multiple named ranges with same name."""
     doc = create_minimal_document()
-    api = MockGoogleDocsAPI(doc)
+    api = MockGoogleDocsAPI(Document.model_validate(doc))
 
     # Create two named ranges with same name, different ranges
     requests = [
@@ -372,18 +422,24 @@ def test_create_multiple_named_ranges_same_name() -> None:
         },
     ]
 
-    response = api.batch_update(requests)
+    response = api.batch_update(
+        BatchUpdateDocumentRequest(
+            requests=[Request.model_validate(r) for r in requests]
+        )
+    )
 
     # Verify both ranges created
-    id1 = response["replies"][0]["createNamedRange"]["namedRangeId"]
-    id2 = response["replies"][1]["createNamedRange"]["namedRangeId"]
+    id1 = response.replies[0].create_named_range.named_range_id
+    id2 = response.replies[1].create_named_range.named_range_id
     assert id1 != id2  # IDs should be unique
 
     # Get updated document
     updated_doc = api.get()
 
     # Verify both ranges in document
-    named_ranges = updated_doc["tabs"][0]["documentTab"]["namedRanges"]
+    named_ranges = updated_doc.model_dump(by_alias=True, exclude_none=True)["tabs"][0][
+        "documentTab"
+    ]["namedRanges"]
     marker_ranges = named_ranges["marker"]["namedRanges"]
     assert len(marker_ranges) == 2
 
@@ -395,7 +451,7 @@ def test_create_multiple_named_ranges_same_name() -> None:
 def test_delete_named_range_by_id_removes_from_document() -> None:
     """TC-015: DeleteNamedRange by ID removes specific range."""
     doc = create_minimal_document()
-    api = MockGoogleDocsAPI(doc)
+    api = MockGoogleDocsAPI(Document.model_validate(doc))
 
     # Create two named ranges with same name
     create_requests = [
@@ -413,9 +469,13 @@ def test_delete_named_range_by_id_removes_from_document() -> None:
         },
     ]
 
-    create_response = api.batch_update(create_requests)
-    id_to_delete = create_response["replies"][0]["createNamedRange"]["namedRangeId"]
-    id_to_keep = create_response["replies"][1]["createNamedRange"]["namedRangeId"]
+    create_response = api.batch_update(
+        BatchUpdateDocumentRequest(
+            requests=[Request.model_validate(r) for r in create_requests]
+        )
+    )
+    id_to_delete = create_response.replies[0].create_named_range.named_range_id
+    id_to_keep = create_response.replies[1].create_named_range.named_range_id
 
     # Delete first one by ID
     delete_requests = [
@@ -426,11 +486,17 @@ def test_delete_named_range_by_id_removes_from_document() -> None:
         }
     ]
 
-    api.batch_update(delete_requests)
+    api.batch_update(
+        BatchUpdateDocumentRequest(
+            requests=[Request.model_validate(r) for r in delete_requests]
+        )
+    )
     updated_doc = api.get()
 
     # Verify only one range remains
-    named_ranges = updated_doc["tabs"][0]["documentTab"]["namedRanges"]
+    named_ranges = updated_doc.model_dump(by_alias=True, exclude_none=True)["tabs"][0][
+        "documentTab"
+    ]["namedRanges"]
     marker_ranges = named_ranges["marker"]["namedRanges"]
     assert len(marker_ranges) == 1
     assert marker_ranges[0]["namedRangeId"] == id_to_keep
@@ -439,7 +505,7 @@ def test_delete_named_range_by_id_removes_from_document() -> None:
 def test_delete_named_range_by_name_removes_all() -> None:
     """TC-016: DeleteNamedRange by name removes all ranges with that name."""
     doc = create_minimal_document()
-    api = MockGoogleDocsAPI(doc)
+    api = MockGoogleDocsAPI(Document.model_validate(doc))
 
     # Create two named ranges with same name
     create_requests = [
@@ -457,7 +523,11 @@ def test_delete_named_range_by_name_removes_all() -> None:
         },
     ]
 
-    api.batch_update(create_requests)
+    api.batch_update(
+        BatchUpdateDocumentRequest(
+            requests=[Request.model_validate(r) for r in create_requests]
+        )
+    )
 
     # Delete all by name
     delete_requests = [
@@ -468,11 +538,17 @@ def test_delete_named_range_by_name_removes_all() -> None:
         }
     ]
 
-    api.batch_update(delete_requests)
+    api.batch_update(
+        BatchUpdateDocumentRequest(
+            requests=[Request.model_validate(r) for r in delete_requests]
+        )
+    )
     updated_doc = api.get()
 
     # Verify named range completely removed
-    named_ranges = updated_doc["tabs"][0]["documentTab"]["namedRanges"]
+    named_ranges = updated_doc.model_dump(by_alias=True, exclude_none=True)["tabs"][0][
+        "documentTab"
+    ]["namedRanges"]
     # Should either be absent or empty
     if "marker" in named_ranges:
         assert len(named_ranges["marker"]["namedRanges"]) == 0
@@ -486,7 +562,7 @@ def test_delete_named_range_by_name_removes_all() -> None:
 def test_create_header_adds_header_segment() -> None:
     """TC-023: CreateHeader creates header segment with correct structure."""
     doc = create_minimal_document()
-    api = MockGoogleDocsAPI(doc)
+    api = MockGoogleDocsAPI(Document.model_validate(doc))
 
     # Create DEFAULT header
     requests = [
@@ -497,19 +573,32 @@ def test_create_header_adds_header_segment() -> None:
         }
     ]
 
-    response = api.batch_update(requests)
+    response = api.batch_update(
+        BatchUpdateDocumentRequest(
+            requests=[Request.model_validate(r) for r in requests]
+        )
+    )
 
     # Verify response includes headerId
-    assert len(response["replies"]) == 1
-    assert "createHeader" in response["replies"][0]
-    assert "headerId" in response["replies"][0]["createHeader"]
-    header_id = response["replies"][0]["createHeader"]["headerId"]
+    assert len(response.replies or []) == 1
+    assert "createHeader" in response.replies[0].model_dump(
+        by_alias=True, exclude_none=True
+    )
+    assert (
+        "headerId"
+        in response.replies[0].model_dump(by_alias=True, exclude_none=True)[
+            "createHeader"
+        ]
+    )
+    header_id = response.replies[0].create_header.header_id
 
     # Get updated document
     updated_doc = api.get()
 
     # Verify header in document structure
-    headers = updated_doc["tabs"][0]["documentTab"]["headers"]
+    headers = updated_doc.model_dump(by_alias=True, exclude_none=True)["tabs"][0][
+        "documentTab"
+    ]["headers"]
     assert header_id in headers
 
     header = headers[header_id]
@@ -528,7 +617,7 @@ def test_create_header_adds_header_segment() -> None:
 def test_create_footer_adds_footer_segment() -> None:
     """TC-024: CreateFooter creates footer segment with correct structure."""
     doc = create_minimal_document()
-    api = MockGoogleDocsAPI(doc)
+    api = MockGoogleDocsAPI(Document.model_validate(doc))
 
     # Create DEFAULT footer
     requests = [
@@ -539,18 +628,31 @@ def test_create_footer_adds_footer_segment() -> None:
         }
     ]
 
-    response = api.batch_update(requests)
+    response = api.batch_update(
+        BatchUpdateDocumentRequest(
+            requests=[Request.model_validate(r) for r in requests]
+        )
+    )
 
     # Verify response includes footerId
-    assert "createFooter" in response["replies"][0]
-    assert "footerId" in response["replies"][0]["createFooter"]
-    footer_id = response["replies"][0]["createFooter"]["footerId"]
+    assert "createFooter" in response.replies[0].model_dump(
+        by_alias=True, exclude_none=True
+    )
+    assert (
+        "footerId"
+        in response.replies[0].model_dump(by_alias=True, exclude_none=True)[
+            "createFooter"
+        ]
+    )
+    footer_id = response.replies[0].create_footer.footer_id
 
     # Get updated document
     updated_doc = api.get()
 
     # Verify footer in document structure
-    footers = updated_doc["tabs"][0]["documentTab"]["footers"]
+    footers = updated_doc.model_dump(by_alias=True, exclude_none=True)["tabs"][0][
+        "documentTab"
+    ]["footers"]
     assert footer_id in footers
 
     footer = footers[footer_id]
@@ -568,7 +670,7 @@ def test_create_footer_adds_footer_segment() -> None:
 def test_create_footnote_adds_footnote_segment() -> None:
     """TC-025: CreateFootnote creates footnote segment and reference."""
     doc = create_minimal_document()
-    api = MockGoogleDocsAPI(doc)
+    api = MockGoogleDocsAPI(Document.model_validate(doc))
 
     # Create footnote at index 3
     requests = [
@@ -579,18 +681,31 @@ def test_create_footnote_adds_footnote_segment() -> None:
         }
     ]
 
-    response = api.batch_update(requests)
+    response = api.batch_update(
+        BatchUpdateDocumentRequest(
+            requests=[Request.model_validate(r) for r in requests]
+        )
+    )
 
     # Verify response includes footnoteId
-    assert "createFootnote" in response["replies"][0]
-    assert "footnoteId" in response["replies"][0]["createFootnote"]
-    footnote_id = response["replies"][0]["createFootnote"]["footnoteId"]
+    assert "createFootnote" in response.replies[0].model_dump(
+        by_alias=True, exclude_none=True
+    )
+    assert (
+        "footnoteId"
+        in response.replies[0].model_dump(by_alias=True, exclude_none=True)[
+            "createFootnote"
+        ]
+    )
+    footnote_id = response.replies[0].create_footnote.footnote_id
 
     # Get updated document
     updated_doc = api.get()
 
     # Verify footnote in document structure
-    footnotes = updated_doc["tabs"][0]["documentTab"]["footnotes"]
+    footnotes = updated_doc.model_dump(by_alias=True, exclude_none=True)["tabs"][0][
+        "documentTab"
+    ]["footnotes"]
     assert footnote_id in footnotes
 
     footnote = footnotes[footnote_id]
@@ -607,11 +722,15 @@ def test_create_footnote_adds_footnote_segment() -> None:
 def test_delete_header_removes_from_document() -> None:
     """TC-026: DeleteHeader removes header from document structure."""
     doc = create_minimal_document()
-    api = MockGoogleDocsAPI(doc)
+    api = MockGoogleDocsAPI(Document.model_validate(doc))
 
     # Create header first
-    create_response = api.batch_update([{"createHeader": {"type": "DEFAULT"}}])
-    header_id = create_response["replies"][0]["createHeader"]["headerId"]
+    create_response = api.batch_update(
+        BatchUpdateDocumentRequest(
+            requests=[Request.model_validate({"createHeader": {"type": "DEFAULT"}})]
+        )
+    )
+    header_id = create_response.replies[0].create_header.header_id
 
     # Delete header
     delete_requests = [
@@ -624,8 +743,12 @@ def test_delete_header_removes_from_document() -> None:
 
     # Note: Current implementation doesn't actually remove it, but should
     # For now, just verify the operation succeeds
-    response = api.batch_update(delete_requests)
-    assert len(response["replies"]) == 1
+    response = api.batch_update(
+        BatchUpdateDocumentRequest(
+            requests=[Request.model_validate(r) for r in delete_requests]
+        )
+    )
+    assert len(response.replies or []) == 1
 
 
 # ============================================================================
@@ -636,7 +759,7 @@ def test_delete_header_removes_from_document() -> None:
 def test_add_document_tab_creates_new_tab() -> None:
     """TC-028: AddDocumentTab creates new tab with correct structure."""
     doc = create_minimal_document()
-    api = MockGoogleDocsAPI(doc)
+    api = MockGoogleDocsAPI(Document.model_validate(doc))
 
     # Add new tab
     requests = [
@@ -649,22 +772,33 @@ def test_add_document_tab_creates_new_tab() -> None:
         }
     ]
 
-    response = api.batch_update(requests)
+    response = api.batch_update(
+        BatchUpdateDocumentRequest(
+            requests=[Request.model_validate(r) for r in requests]
+        )
+    )
 
     # Verify response includes tabProperties with tabId
-    assert "addDocumentTab" in response["replies"][0]
-    assert "tabProperties" in response["replies"][0]["addDocumentTab"]
-    new_tab_id = response["replies"][0]["addDocumentTab"]["tabProperties"]["tabId"]
+    assert "addDocumentTab" in response.replies[0].model_dump(
+        by_alias=True, exclude_none=True
+    )
+    assert (
+        "tabProperties"
+        in response.replies[0].model_dump(by_alias=True, exclude_none=True)[
+            "addDocumentTab"
+        ]
+    )
+    new_tab_id = response.replies[0].add_document_tab.tab_properties.tab_id
 
     # Get updated document
     updated_doc = api.get()
 
     # Verify two tabs now exist
-    assert len(updated_doc["tabs"]) == 2
+    assert len(updated_doc.model_dump(by_alias=True, exclude_none=True)["tabs"]) == 2
 
     # Find the new tab
     new_tab = None
-    for tab in updated_doc["tabs"]:
+    for tab in updated_doc.model_dump(by_alias=True, exclude_none=True)["tabs"]:
         if tab["tabProperties"]["tabId"] == new_tab_id:
             new_tab = tab
             break
@@ -696,7 +830,7 @@ def test_multiple_inserts_in_sequence_update_indexes() -> None:
     ] = 8
     doc["tabs"][0]["documentTab"]["body"]["content"][0]["endIndex"] = 8
 
-    api = MockGoogleDocsAPI(doc)
+    api = MockGoogleDocsAPI(Document.model_validate(doc))
 
     # Insert "Start " at beginning, then " End" at end
     # Note: Second insert must account for first insert's index shift
@@ -715,11 +849,17 @@ def test_multiple_inserts_in_sequence_update_indexes() -> None:
         },
     ]
 
-    api.batch_update(requests)
+    api.batch_update(
+        BatchUpdateDocumentRequest(
+            requests=[Request.model_validate(r) for r in requests]
+        )
+    )
     updated_doc = api.get()
 
     # Verify final content
-    body_content = updated_doc["tabs"][0]["documentTab"]["body"]["content"]
+    body_content = updated_doc.model_dump(by_alias=True, exclude_none=True)["tabs"][0][
+        "documentTab"
+    ]["body"]["content"]
     paragraph = body_content[0]
 
     # Should be "Start Middle End\n"
@@ -743,7 +883,7 @@ def test_delete_then_insert_at_same_location() -> None:
     ] = 13
     doc["tabs"][0]["documentTab"]["body"]["content"][0]["endIndex"] = 13
 
-    api = MockGoogleDocsAPI(doc)
+    api = MockGoogleDocsAPI(Document.model_validate(doc))
 
     # Delete " World", then insert " Universe" at same position
     requests = [
@@ -760,11 +900,17 @@ def test_delete_then_insert_at_same_location() -> None:
         },
     ]
 
-    api.batch_update(requests)
+    api.batch_update(
+        BatchUpdateDocumentRequest(
+            requests=[Request.model_validate(r) for r in requests]
+        )
+    )
     updated_doc = api.get()
 
     # Verify final content is "Hello Universe\n"
-    body_content = updated_doc["tabs"][0]["documentTab"]["body"]["content"]
+    body_content = updated_doc.model_dump(by_alias=True, exclude_none=True)["tabs"][0][
+        "documentTab"
+    ]["body"]["content"]
     paragraph = body_content[0]
 
     assert (
@@ -783,7 +929,7 @@ def test_delete_then_insert_at_same_location() -> None:
 def test_insert_emoji_accounts_for_surrogate_pairs() -> None:
     """TC-035: Insert emoji accounts for 2 UTF-16 code units."""
     doc = create_minimal_document()
-    api = MockGoogleDocsAPI(doc)
+    api = MockGoogleDocsAPI(Document.model_validate(doc))
 
     # Insert emoji before newline
     requests = [
@@ -795,11 +941,17 @@ def test_insert_emoji_accounts_for_surrogate_pairs() -> None:
         }
     ]
 
-    api.batch_update(requests)
+    api.batch_update(
+        BatchUpdateDocumentRequest(
+            requests=[Request.model_validate(r) for r in requests]
+        )
+    )
     updated_doc = api.get()
 
     # Verify document structure
-    body_content = updated_doc["tabs"][0]["documentTab"]["body"]["content"]
+    body_content = updated_doc.model_dump(by_alias=True, exclude_none=True)["tabs"][0][
+        "documentTab"
+    ]["body"]["content"]
     paragraph = body_content[0]
 
     # Should be "Hello😀\n"
@@ -811,10 +963,10 @@ def test_insert_emoji_accounts_for_surrogate_pairs() -> None:
 def test_revision_id_updates_after_batch() -> None:
     """TC-040: Revision ID updates after batch update."""
     doc = create_minimal_document()
-    api = MockGoogleDocsAPI(doc)
+    api = MockGoogleDocsAPI(Document.model_validate(doc))
 
     initial_doc = api.get()
-    initial_revision = initial_doc["revisionId"]
+    initial_revision = initial_doc.revision_id
 
     # Perform any batch update
     requests = [
@@ -826,18 +978,22 @@ def test_revision_id_updates_after_batch() -> None:
         }
     ]
 
-    response = api.batch_update(requests)
+    response = api.batch_update(
+        BatchUpdateDocumentRequest(
+            requests=[Request.model_validate(r) for r in requests]
+        )
+    )
 
     # Verify response has new revision
-    assert "writeControl" in response
-    assert "requiredRevisionId" in response["writeControl"]
-    new_revision = response["writeControl"]["requiredRevisionId"]
+    assert response.write_control is not None
+    assert response.write_control.required_revision_id is not None
+    new_revision = response.write_control.required_revision_id
     assert new_revision != initial_revision
 
     # Verify get() returns document with new revision
     updated_doc = api.get()
-    assert updated_doc["revisionId"] == new_revision
-    assert updated_doc["revisionId"] != initial_revision
+    assert updated_doc.revision_id == new_revision
+    assert updated_doc.revision_id != initial_revision
 
 
 # ============================================================================
@@ -848,25 +1004,25 @@ def test_revision_id_updates_after_batch() -> None:
 def test_empty_batch_update_increments_revision() -> None:
     """Empty batch update should still increment revision."""
     doc = create_minimal_document()
-    api = MockGoogleDocsAPI(doc)
+    api = MockGoogleDocsAPI(Document.model_validate(doc))
 
-    initial_revision = api.get()["revisionId"]
+    initial_revision = api.get().revision_id
 
     # Empty batch
-    response = api.batch_update([])
+    response = api.batch_update(BatchUpdateDocumentRequest())
 
     # Revision should still update
-    new_revision = response["writeControl"]["requiredRevisionId"]
+    new_revision = response.write_control.required_revision_id
     assert new_revision != initial_revision
 
     updated_doc = api.get()
-    assert updated_doc["revisionId"] == new_revision
+    assert updated_doc.revision_id == new_revision
 
 
 def test_multiple_operations_maintain_document_consistency() -> None:
     """Complex batch maintains consistent document structure."""
     doc = create_minimal_document()
-    api = MockGoogleDocsAPI(doc)
+    api = MockGoogleDocsAPI(Document.model_validate(doc))
 
     # Complex batch: insert, create named range, insert again
     requests = [
@@ -890,11 +1046,17 @@ def test_multiple_operations_maintain_document_consistency() -> None:
         },
     ]
 
-    api.batch_update(requests)
+    api.batch_update(
+        BatchUpdateDocumentRequest(
+            requests=[Request.model_validate(r) for r in requests]
+        )
+    )
     updated_doc = api.get()
 
     # Verify all operations reflected in document
-    body_content = updated_doc["tabs"][0]["documentTab"]["body"]["content"]
+    body_content = updated_doc.model_dump(by_alias=True, exclude_none=True)["tabs"][0][
+        "documentTab"
+    ]["body"]["content"]
 
     # Content should be "Start Hello End\n" or similar structure
     # Just verify document is still valid
@@ -902,7 +1064,9 @@ def test_multiple_operations_maintain_document_consistency() -> None:
     assert "paragraph" in body_content[0]
 
     # Verify named range exists
-    named_ranges = updated_doc["tabs"][0]["documentTab"]["namedRanges"]
+    named_ranges = updated_doc.model_dump(by_alias=True, exclude_none=True)["tabs"][0][
+        "documentTab"
+    ]["namedRanges"]
     assert "original" in named_ranges
 
 
@@ -913,7 +1077,7 @@ def test_complex_batch_sequential_index_updates() -> None:
     the document state AFTER all previous requests have been applied.
     """
     doc = create_minimal_document()  # "Hello\n" at indices 1-7
-    api = MockGoogleDocsAPI(doc)
+    api = MockGoogleDocsAPI(Document.model_validate(doc))
 
     # Build a complex sequence where each operation depends on previous ones
     requests = [
@@ -967,20 +1131,38 @@ def test_complex_batch_sequential_index_updates() -> None:
         },
     ]
 
-    response = api.batch_update(requests)
+    response = api.batch_update(
+        BatchUpdateDocumentRequest(
+            requests=[Request.model_validate(r) for r in requests]
+        )
+    )
 
     # Verify response structure
-    assert len(response["replies"]) == 6
-    assert response["replies"][0] == {}  # insertText
-    assert response["replies"][1] == {}  # insertText
-    assert response["replies"][2] == {}  # deleteContentRange
-    assert response["replies"][3] == {}  # insertText
-    assert "createNamedRange" in response["replies"][4]
-    assert response["replies"][5] == {}  # insertText
+    assert len(response.replies or []) == 6
+    assert (
+        response.replies[0].model_dump(by_alias=True, exclude_none=True) == {}
+    )  # insertText
+    assert (
+        response.replies[1].model_dump(by_alias=True, exclude_none=True) == {}
+    )  # insertText
+    assert (
+        response.replies[2].model_dump(by_alias=True, exclude_none=True) == {}
+    )  # deleteContentRange
+    assert (
+        response.replies[3].model_dump(by_alias=True, exclude_none=True) == {}
+    )  # insertText
+    assert "createNamedRange" in response.replies[4].model_dump(
+        by_alias=True, exclude_none=True
+    )
+    assert (
+        response.replies[5].model_dump(by_alias=True, exclude_none=True) == {}
+    )  # insertText
 
     # Get final document
     updated_doc = api.get()
-    body_content = updated_doc["tabs"][0]["documentTab"]["body"]["content"]
+    body_content = updated_doc.model_dump(by_alias=True, exclude_none=True)["tabs"][0][
+        "documentTab"
+    ]["body"]["content"]
 
     # Verify final text
     assert len(body_content) == 1
@@ -994,14 +1176,16 @@ def test_complex_batch_sequential_index_updates() -> None:
     # Verify named range was created and still exists
     # Note: The range was created for "HelloWorld" at 7-17, but after the space
     # insertion at 12, it should still be at 7-17 (Google Docs doesn't auto-update ranges)
-    named_ranges = updated_doc["tabs"][0]["documentTab"]["namedRanges"]
+    named_ranges = updated_doc.model_dump(by_alias=True, exclude_none=True)["tabs"][0][
+        "documentTab"
+    ]["namedRanges"]
     assert "greeting" in named_ranges
 
 
 def test_batch_with_dependent_operations() -> None:
     """Test batch where later operations depend on earlier ones' side effects."""
     doc = create_minimal_document()  # "Hello\n"
-    api = MockGoogleDocsAPI(doc)
+    api = MockGoogleDocsAPI(Document.model_validate(doc))
 
     requests = [
         # 1. Insert text with newline to create multiple paragraphs
@@ -1038,11 +1222,17 @@ def test_batch_with_dependent_operations() -> None:
         },
     ]
 
-    api.batch_update(requests)
+    api.batch_update(
+        BatchUpdateDocumentRequest(
+            requests=[Request.model_validate(r) for r in requests]
+        )
+    )
     updated_doc = api.get()
 
     # Verify we have two paragraphs
-    body_content = updated_doc["tabs"][0]["documentTab"]["body"]["content"]
+    body_content = updated_doc.model_dump(by_alias=True, exclude_none=True)["tabs"][0][
+        "documentTab"
+    ]["body"]["content"]
     assert len(body_content) == 2
 
     # Verify paragraph 1
@@ -1059,7 +1249,9 @@ def test_batch_with_dependent_operations() -> None:
     assert body_content[1]["startIndex"] == 7
 
     # Verify both named ranges exist
-    named_ranges = updated_doc["tabs"][0]["documentTab"]["namedRanges"]
+    named_ranges = updated_doc.model_dump(by_alias=True, exclude_none=True)["tabs"][0][
+        "documentTab"
+    ]["namedRanges"]
     assert "line1" in named_ranges
     assert "line2" in named_ranges
 
@@ -1076,7 +1268,7 @@ def test_batch_with_multiple_deletes_and_inserts() -> None:
     ] = 17
     doc["tabs"][0]["documentTab"]["body"]["content"][0]["endIndex"] = 17
 
-    api = MockGoogleDocsAPI(doc)
+    api = MockGoogleDocsAPI(Document.model_validate(doc))
 
     requests = [
         # Start: "AAABBBCCCDDDEEE\n" (1-17)
@@ -1119,11 +1311,17 @@ def test_batch_with_multiple_deletes_and_inserts() -> None:
         },
     ]
 
-    api.batch_update(requests)
+    api.batch_update(
+        BatchUpdateDocumentRequest(
+            requests=[Request.model_validate(r) for r in requests]
+        )
+    )
     updated_doc = api.get()
 
     # Verify final result
-    body_content = updated_doc["tabs"][0]["documentTab"]["body"]["content"]
+    body_content = updated_doc.model_dump(by_alias=True, exclude_none=True)["tabs"][0][
+        "documentTab"
+    ]["body"]["content"]
     paragraph = body_content[0]
 
     final_text = paragraph["paragraph"]["elements"][0]["textRun"]["content"]
@@ -1134,7 +1332,7 @@ def test_batch_with_multiple_deletes_and_inserts() -> None:
 def test_batch_creates_and_deletes_named_ranges() -> None:
     """Test creating and deleting named ranges in same batch."""
     doc = create_minimal_document()
-    api = MockGoogleDocsAPI(doc)
+    api = MockGoogleDocsAPI(Document.model_validate(doc))
 
     requests = [
         # 1. Create named range "temp"
@@ -1159,10 +1357,16 @@ def test_batch_creates_and_deletes_named_ranges() -> None:
         },
     ]
 
-    api.batch_update(requests)
+    api.batch_update(
+        BatchUpdateDocumentRequest(
+            requests=[Request.model_validate(r) for r in requests]
+        )
+    )
     updated_doc = api.get()
 
     # Verify only "keep" exists
-    named_ranges = updated_doc["tabs"][0]["documentTab"]["namedRanges"]
+    named_ranges = updated_doc.model_dump(by_alias=True, exclude_none=True)["tabs"][0][
+        "documentTab"
+    ]["namedRanges"]
     assert "keep" in named_ranges
     assert "temp" not in named_ranges

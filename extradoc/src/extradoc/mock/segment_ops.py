@@ -270,6 +270,10 @@ def handle_delete_header(
     if header_id not in headers:
         raise ValidationError(f"Header not found: {header_id}")
 
+    del headers[header_id]
+    # Remove empty headers dict
+    if not headers:
+        document_tab.pop("headers", None)
     return {}
 
 
@@ -291,6 +295,10 @@ def handle_delete_footer(
     if footer_id not in footers:
         raise ValidationError(f"Footer not found: {footer_id}")
 
+    del footers[footer_id]
+    # Remove empty footers dict
+    if not footers:
+        document_tab.pop("footers", None)
     return {}
 
 
@@ -316,4 +324,39 @@ def handle_delete_tab(
         t for t in tabs if t.get("tabProperties", {}).get("tabId") != tab_id
     ]
 
+    return {}
+
+
+def handle_update_document_tab_properties(
+    document: dict[str, Any],
+    request: dict[str, Any],
+    structure_tracker: Any,
+) -> dict[str, Any]:
+    """Handle UpdateDocumentTabPropertiesRequest."""
+    tab_properties = request.get("tabProperties")
+    fields = request.get("fields")
+
+    if not tab_properties:
+        raise ValidationError("tabProperties is required")
+    if not fields:
+        raise ValidationError("fields is required")
+
+    tab_id = tab_properties.get("tabId")
+    if not tab_id:
+        raise ValidationError("tabProperties.tabId is required")
+
+    tab = get_tab(document, tab_id)
+
+    # Parse the fields mask (comma-separated list)
+    field_list = [f.strip() for f in fields.split(",")]
+
+    # Get current tab properties
+    current_props = tab.get("tabProperties", {})
+
+    # Update fields specified in the mask
+    for field in field_list:
+        if field in tab_properties:
+            current_props[field] = tab_properties[field]
+
+    tab["tabProperties"] = current_props
     return {}

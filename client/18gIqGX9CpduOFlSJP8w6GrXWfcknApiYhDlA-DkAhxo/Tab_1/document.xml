@@ -1,0 +1,642 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<tab id="t.0" title="Tab 1" index="0">
+  <lists>
+    <list id="kix.44ohxtf8trcq">
+      <level index="0" glyphFormat="%0" glyphSymbol="●" bulletAlignment="START" startNumber="1" />
+      <level index="1" glyphFormat="%1" glyphSymbol="○" bulletAlignment="START" startNumber="1" class="ls2" />
+      <level index="2" glyphFormat="%2" glyphSymbol="■" bulletAlignment="START" startNumber="1" class="ls3" />
+      <level index="3" glyphFormat="%3" glyphSymbol="●" bulletAlignment="START" startNumber="1" class="ls4" />
+      <level index="4" glyphFormat="%4" glyphSymbol="○" bulletAlignment="START" startNumber="1" class="ls5" />
+      <level index="5" glyphFormat="%5" glyphSymbol="■" bulletAlignment="START" startNumber="1" class="ls6" />
+      <level index="6" glyphFormat="%6" glyphSymbol="●" bulletAlignment="START" startNumber="1" class="ls7" />
+      <level index="7" glyphFormat="%7" glyphSymbol="○" bulletAlignment="START" startNumber="1" class="ls8" />
+      <level index="8" glyphFormat="%8" glyphSymbol="■" bulletAlignment="START" startNumber="1" class="ls9" />
+    </list>
+    <list id="kix.7nfar8qrdamx">
+      <level index="0" glyphFormat="%0" glyphSymbol="●" bulletAlignment="START" startNumber="1" />
+      <level index="1" glyphFormat="%1" glyphSymbol="○" bulletAlignment="START" startNumber="1" class="ls2" />
+      <level index="2" glyphFormat="%2" glyphSymbol="■" bulletAlignment="START" startNumber="1" class="ls3" />
+      <level index="3" glyphFormat="%3" glyphSymbol="●" bulletAlignment="START" startNumber="1" class="ls4" />
+      <level index="4" glyphFormat="%4" glyphSymbol="○" bulletAlignment="START" startNumber="1" class="ls5" />
+      <level index="5" glyphFormat="%5" glyphSymbol="■" bulletAlignment="START" startNumber="1" class="ls6" />
+      <level index="6" glyphFormat="%6" glyphSymbol="●" bulletAlignment="START" startNumber="1" class="ls7" />
+      <level index="7" glyphFormat="%7" glyphSymbol="○" bulletAlignment="START" startNumber="1" class="ls8" />
+      <level index="8" glyphFormat="%8" glyphSymbol="■" bulletAlignment="START" startNumber="1" class="ls9" />
+    </list>
+    <list id="kix.biwomvai5t4z">
+      <level index="0" glyphFormat="%0" glyphSymbol="●" bulletAlignment="START" startNumber="1" />
+      <level index="1" glyphFormat="%1" glyphSymbol="○" bulletAlignment="START" startNumber="1" class="ls2" />
+      <level index="2" glyphFormat="%2" glyphSymbol="■" bulletAlignment="START" startNumber="1" class="ls3" />
+      <level index="3" glyphFormat="%3" glyphSymbol="●" bulletAlignment="START" startNumber="1" class="ls4" />
+      <level index="4" glyphFormat="%4" glyphSymbol="○" bulletAlignment="START" startNumber="1" class="ls5" />
+      <level index="5" glyphFormat="%5" glyphSymbol="■" bulletAlignment="START" startNumber="1" class="ls6" />
+      <level index="6" glyphFormat="%6" glyphSymbol="●" bulletAlignment="START" startNumber="1" class="ls7" />
+      <level index="7" glyphFormat="%7" glyphSymbol="○" bulletAlignment="START" startNumber="1" class="ls8" />
+      <level index="8" glyphFormat="%8" glyphSymbol="■" bulletAlignment="START" startNumber="1" class="ls9" />
+    </list>
+    <list id="kix.f9gcdd6wccus">
+      <level index="0" glyphFormat="%0" glyphSymbol="●" bulletAlignment="START" startNumber="1" />
+      <level index="1" glyphFormat="%1" glyphSymbol="○" bulletAlignment="START" startNumber="1" class="ls2" />
+      <level index="2" glyphFormat="%2" glyphSymbol="■" bulletAlignment="START" startNumber="1" class="ls3" />
+      <level index="3" glyphFormat="%3" glyphSymbol="●" bulletAlignment="START" startNumber="1" class="ls4" />
+      <level index="4" glyphFormat="%4" glyphSymbol="○" bulletAlignment="START" startNumber="1" class="ls5" />
+      <level index="5" glyphFormat="%5" glyphSymbol="■" bulletAlignment="START" startNumber="1" class="ls6" />
+      <level index="6" glyphFormat="%6" glyphSymbol="●" bulletAlignment="START" startNumber="1" class="ls7" />
+      <level index="7" glyphFormat="%7" glyphSymbol="○" bulletAlignment="START" startNumber="1" class="ls8" />
+      <level index="8" glyphFormat="%8" glyphSymbol="■" bulletAlignment="START" startNumber="1" class="ls9" />
+    </list>
+    <list id="kix.hedn31pirzyp">
+      <level index="0" glyphFormat="%0" glyphSymbol="●" bulletAlignment="START" startNumber="1" />
+      <level index="1" glyphFormat="%1" glyphSymbol="○" bulletAlignment="START" startNumber="1" class="ls2" />
+      <level index="2" glyphFormat="%2" glyphSymbol="■" bulletAlignment="START" startNumber="1" class="ls3" />
+      <level index="3" glyphFormat="%3" glyphSymbol="●" bulletAlignment="START" startNumber="1" class="ls4" />
+      <level index="4" glyphFormat="%4" glyphSymbol="○" bulletAlignment="START" startNumber="1" class="ls5" />
+      <level index="5" glyphFormat="%5" glyphSymbol="■" bulletAlignment="START" startNumber="1" class="ls6" />
+      <level index="6" glyphFormat="%6" glyphSymbol="●" bulletAlignment="START" startNumber="1" class="ls7" />
+      <level index="7" glyphFormat="%7" glyphSymbol="○" bulletAlignment="START" startNumber="1" class="ls8" />
+      <level index="8" glyphFormat="%8" glyphSymbol="■" bulletAlignment="START" startNumber="1" class="ls9" />
+    </list>
+    <list id="kix.jr2redxw3mz4">
+      <level index="0" glyphFormat="%0" glyphSymbol="●" bulletAlignment="START" startNumber="1" />
+      <level index="1" glyphFormat="%1" glyphSymbol="○" bulletAlignment="START" startNumber="1" class="ls2" />
+      <level index="2" glyphFormat="%2" glyphSymbol="■" bulletAlignment="START" startNumber="1" class="ls3" />
+      <level index="3" glyphFormat="%3" glyphSymbol="●" bulletAlignment="START" startNumber="1" class="ls4" />
+      <level index="4" glyphFormat="%4" glyphSymbol="○" bulletAlignment="START" startNumber="1" class="ls5" />
+      <level index="5" glyphFormat="%5" glyphSymbol="■" bulletAlignment="START" startNumber="1" class="ls6" />
+      <level index="6" glyphFormat="%6" glyphSymbol="●" bulletAlignment="START" startNumber="1" class="ls7" />
+      <level index="7" glyphFormat="%7" glyphSymbol="○" bulletAlignment="START" startNumber="1" class="ls8" />
+      <level index="8" glyphFormat="%8" glyphSymbol="■" bulletAlignment="START" startNumber="1" class="ls9" />
+    </list>
+    <list id="kix.my12lbojswev">
+      <level index="0" glyphFormat="%0" glyphSymbol="●" bulletAlignment="START" startNumber="1" />
+      <level index="1" glyphFormat="%1" glyphSymbol="○" bulletAlignment="START" startNumber="1" class="ls2" />
+      <level index="2" glyphFormat="%2" glyphSymbol="■" bulletAlignment="START" startNumber="1" class="ls3" />
+      <level index="3" glyphFormat="%3" glyphSymbol="●" bulletAlignment="START" startNumber="1" class="ls4" />
+      <level index="4" glyphFormat="%4" glyphSymbol="○" bulletAlignment="START" startNumber="1" class="ls5" />
+      <level index="5" glyphFormat="%5" glyphSymbol="■" bulletAlignment="START" startNumber="1" class="ls6" />
+      <level index="6" glyphFormat="%6" glyphSymbol="●" bulletAlignment="START" startNumber="1" class="ls7" />
+      <level index="7" glyphFormat="%7" glyphSymbol="○" bulletAlignment="START" startNumber="1" class="ls8" />
+      <level index="8" glyphFormat="%8" glyphSymbol="■" bulletAlignment="START" startNumber="1" class="ls9" />
+    </list>
+    <list id="kix.o8ewzohhdgks">
+      <level index="0" glyphFormat="%0" glyphSymbol="●" bulletAlignment="START" startNumber="1" />
+      <level index="1" glyphFormat="%1" glyphSymbol="○" bulletAlignment="START" startNumber="1" class="ls2" />
+      <level index="2" glyphFormat="%2" glyphSymbol="■" bulletAlignment="START" startNumber="1" class="ls3" />
+      <level index="3" glyphFormat="%3" glyphSymbol="●" bulletAlignment="START" startNumber="1" class="ls4" />
+      <level index="4" glyphFormat="%4" glyphSymbol="○" bulletAlignment="START" startNumber="1" class="ls5" />
+      <level index="5" glyphFormat="%5" glyphSymbol="■" bulletAlignment="START" startNumber="1" class="ls6" />
+      <level index="6" glyphFormat="%6" glyphSymbol="●" bulletAlignment="START" startNumber="1" class="ls7" />
+      <level index="7" glyphFormat="%7" glyphSymbol="○" bulletAlignment="START" startNumber="1" class="ls8" />
+      <level index="8" glyphFormat="%8" glyphSymbol="■" bulletAlignment="START" startNumber="1" class="ls9" />
+    </list>
+    <list id="kix.xe4hjjqqqcb4">
+      <level index="0" glyphFormat="%0" glyphSymbol="●" bulletAlignment="START" startNumber="1" />
+      <level index="1" glyphFormat="%1" glyphSymbol="○" bulletAlignment="START" startNumber="1" class="ls2" />
+      <level index="2" glyphFormat="%2" glyphSymbol="■" bulletAlignment="START" startNumber="1" class="ls3" />
+      <level index="3" glyphFormat="%3" glyphSymbol="●" bulletAlignment="START" startNumber="1" class="ls4" />
+      <level index="4" glyphFormat="%4" glyphSymbol="○" bulletAlignment="START" startNumber="1" class="ls5" />
+      <level index="5" glyphFormat="%5" glyphSymbol="■" bulletAlignment="START" startNumber="1" class="ls6" />
+      <level index="6" glyphFormat="%6" glyphSymbol="●" bulletAlignment="START" startNumber="1" class="ls7" />
+      <level index="7" glyphFormat="%7" glyphSymbol="○" bulletAlignment="START" startNumber="1" class="ls8" />
+      <level index="8" glyphFormat="%8" glyphSymbol="■" bulletAlignment="START" startNumber="1" class="ls9" />
+    </list>
+  </lists>
+  <body>
+    <sectionbreak sectionType="CONTINUOUS" contentDirection="LEFT_TO_RIGHT" columnSeparatorStyle="NONE" />
+    <title headingId="h.cmt0vv5okkim">
+      <t>Priya Nair</t>
+    </title>
+    <subtitle headingId="h.hgze8li0eaqi">
+      <t>Senior Python &amp; Cloud Engineer · Data Platform · GCP</t>
+    </subtitle>
+    <p>
+      <t>priya.nair@gmail.com · +91 98765 43210 · github.com/priya-nair · linkedin.com/in/priyanair · Hyderabad, India</t>
+    </p>
+    <h2 headingId="h.glmd91p51ldn">
+      <t>Professional Summary</t>
+    </h2>
+    <p>
+      <t>Results-driven </t>
+      <t>
+        <b>Senior Python &amp; Cloud Engineer</b>
+      </t>
+      <t> with 9+ years of experience designing </t>
+      <t>
+        <b>petabyte-scale data platforms</b>
+      </t>
+      <t>, </t>
+      <t>
+        <b>ML infrastructure</b>
+      </t>
+      <t>, and </t>
+      <t>
+        <b>cloud-native backend systems</b>
+      </t>
+      <t> on Google Cloud Platform. Currently at Google, building internal data lakehouse infrastructure used by 6,000+ engineers across Search, Ads, and Maps. Deep expertise in Apache Beam, BigQuery, Vertex AI, and distributed systems. GCP Professional Data Engineer and Cloud Architect certified. Speaker at PyCon India, DataEngConf, and Google Cloud Next.</t>
+    </p>
+    <h2 headingId="h.crf0f6p8l9ej">
+      <t>Technical Skills</t>
+    </h2>
+    <table>
+      <col />
+      <col />
+      <tr>
+        <td>
+          <p>
+            <t>
+              <b>Category</b>
+            </t>
+          </p>
+        </td>
+        <td>
+          <p>
+            <t>
+              <b>Technologies &amp; Tools</b>
+            </t>
+          </p>
+        </td>
+      </tr>
+      <tr>
+        <td>
+          <p>
+            <t>Core Languages</t>
+          </p>
+        </td>
+        <td>
+          <p>
+            <t>Python 3.12, Go, SQL, Bash, YAML, Jinja2, TypeScript (scripting)</t>
+          </p>
+        </td>
+      </tr>
+      <tr>
+        <td>
+          <p>
+            <t>GCP Platform</t>
+          </p>
+        </td>
+        <td>
+          <p>
+            <t>BigQuery, Cloud Run, GKE, Pub/Sub, Dataflow, Vertex AI, Cloud Storage, Firestore, AlloyDB, Cloud Spanner</t>
+          </p>
+        </td>
+      </tr>
+      <tr>
+        <td>
+          <p>
+            <t>Data Engineering</t>
+          </p>
+        </td>
+        <td>
+          <p>
+            <t>Apache Beam, dbt, Apache Airflow, Apache Spark, Pandas, Polars, DuckDB, Apache Iceberg</t>
+          </p>
+        </td>
+      </tr>
+      <tr>
+        <td>
+          <p>
+            <t>ML &amp; AI</t>
+          </p>
+        </td>
+        <td>
+          <p>
+            <t>scikit-learn, TensorFlow, Vertex AI Pipelines, MLflow, Kubeflow, BQML, Feature Store</t>
+          </p>
+        </td>
+      </tr>
+      <tr>
+        <td>
+          <p>
+            <t>Web &amp; APIs</t>
+          </p>
+        </td>
+        <td>
+          <p>
+            <t>FastAPI, Django REST Framework, gRPC, GraphQL, Pydantic v2, SQLAlchemy 2, Celery</t>
+          </p>
+        </td>
+      </tr>
+      <tr>
+        <td>
+          <p>
+            <t>Infrastructure</t>
+          </p>
+        </td>
+        <td>
+          <p>
+            <t>Terraform, Docker, Kubernetes, Helm, Pulumi, GitHub Actions, Cloud Build, Artifact Registry</t>
+          </p>
+        </td>
+      </tr>
+      <tr>
+        <td>
+          <p>
+            <t>Databases</t>
+          </p>
+        </td>
+        <td>
+          <p>
+            <t>PostgreSQL, Cloud Spanner, Redis, BigQuery, Firestore, AlloyDB, Memorystore, Cloud SQL</t>
+          </p>
+        </td>
+      </tr>
+      <tr>
+        <td>
+          <p>
+            <t>Observability</t>
+          </p>
+        </td>
+        <td>
+          <p>
+            <t>Cloud Monitoring, OpenTelemetry, Grafana, PagerDuty, Error Reporting, Prometheus, Loki</t>
+          </p>
+        </td>
+      </tr>
+    </table>
+    <h2 headingId="h.205jhuye8ijh">
+      <t>Work Experience</t>
+    </h2>
+    <h3 headingId="h.hshqnpgpf3st">
+      <t>Google · Senior Software Engineer, Cloud Data Platform</t>
+    </h3>
+    <p>
+      <t>
+        <i>Hyderabad, India · April 2020 – Present</i>
+      </t>
+    </p>
+    <li parent="kix.hedn31pirzyp">
+      <t>Architected </t>
+      <t>
+        <b>Monarch Data Lakehouse</b>
+      </t>
+      <t>, Google's internal petabyte-scale analytics platform built on BigQuery and Cloud Storage Iceberg; serves 6,000+ engineers across 40 product areas, replacing 5 legacy Hive clusters with 60% cost reduction.</t>
+    </li>
+    <li parent="kix.hedn31pirzyp">
+      <t>Built a </t>
+      <t>
+        <b>streaming ingestion framework</b>
+      </t>
+      <t> using Apache Beam and Pub/Sub that processes 4 million events per second with end-to-end latency under 800ms; powers real-time dashboards for Search, Ads, and Maps quality metrics.</t>
+    </li>
+    <li parent="kix.hedn31pirzyp">
+      <t>Designed and delivered </t>
+      <t>
+        <b>Vertex AI Pipeline Orchestrator</b>
+      </t>
+      <t>, an internal MLOps platform used by 200+ ML engineers to schedule, version, and monitor training pipelines; reduced model-to-production time from 3 weeks to 4 days.</t>
+    </li>
+    <li parent="kix.hedn31pirzyp">
+      <t>Led </t>
+      <t>
+        <b>multi-region Cloud Spanner migration</b>
+      </t>
+      <t> for Google's internal billing service, handling 50k TPS with 99.999% availability SLA; eliminated 11 hours of annual planned downtime from the previous PostgreSQL setup.</t>
+    </li>
+    <li parent="kix.hedn31pirzyp">
+      <t>Implemented </t>
+      <t>
+        <b>OpenTelemetry-based observability stack</b>
+      </t>
+      <t> across 18 Cloud Run services, integrating with Cloud Monitoring and Grafana; reduced mean time to detection for production incidents from 22 minutes to 4 minutes.</t>
+    </li>
+    <p />
+    <h3 headingId="h.2ysirvbxw7ne">
+      <t>Swiggy · Software Engineer II, Data Platform</t>
+    </h3>
+    <p>
+      <t>
+        <i>Bangalore, India · June 2017 – March 2020</i>
+      </t>
+    </p>
+    <li parent="kix.biwomvai5t4z">
+      <t>Built Swiggy's </t>
+      <t>
+        <b>real-time order analytics pipeline</b>
+      </t>
+      <t> on GCP using Pub/Sub, Dataflow (Apache Beam), and BigQuery; ingested 2M+ daily order events, enabling ops teams to detect restaurant anomalies within 90 seconds of occurrence.</t>
+    </li>
+    <li parent="kix.biwomvai5t4z">
+      <t>Designed </t>
+      <t>
+        <b>dbt + Airflow data warehouse</b>
+      </t>
+      <t> on BigQuery replacing a fragile Hive + Oozie setup; standardised 300+ transformation models, cut nightly pipeline runtime from 6 hours to 45 minutes, and eliminated recurring data-quality incidents.</t>
+    </li>
+    <li parent="kix.biwomvai5t4z">
+      <t>Developed </t>
+      <t>
+        <b>ML feature store</b>
+      </t>
+      <t> on Firestore + Redis backed by Dataflow feature pipelines; served real-time features to Swiggy's delivery ETA and restaurant-ranking models at P99 latency of 12ms, improving ETA accuracy by 23%.</t>
+    </li>
+    <li parent="kix.biwomvai5t4z">
+      <t>Led </t>
+      <t>
+        <b>Python microservices migration</b>
+      </t>
+      <t> from monolithic Django app to 12 FastAPI services deployed on Cloud Run; reduced deployment frequency from biweekly to 30+ deploys per day with zero-downtime rollouts via Terraform and Cloud Build.</t>
+    </li>
+    <p />
+    <h3 headingId="h.7zudtqtoaizd">
+      <t>Sigmoid Analytics · Data Engineer</t>
+    </h3>
+    <p>
+      <t>
+        <i>Bangalore, India · July 2015 – May 2017</i>
+      </t>
+    </p>
+    <li parent="kix.o8ewzohhdgks">
+      <t>Built </t>
+      <t>
+        <b>GCP-based ETL pipelines</b>
+      </t>
+      <t> for 3 Fortune 500 clients (retail, logistics, BFSI) using Dataflow and BigQuery; automated previously manual reporting workflows, saving 40 analyst-hours per week per client.</t>
+    </li>
+    <li parent="kix.o8ewzohhdgks">
+      <t>Developed </t>
+      <t>
+        <b>customer churn prediction service</b>
+      </t>
+      <t> in Python (scikit-learn + FastAPI) deployed on Cloud Run; reduced churn in pilot segment by 17% over 6 months for a leading telecom client.</t>
+    </li>
+    <li parent="kix.o8ewzohhdgks">
+      <t>Introduced </t>
+      <t>
+        <b>infrastructure-as-code</b>
+      </t>
+      <t> practices using Terraform across all client projects; reduced environment provisioning from 3 days to 45 minutes and eliminated configuration drift between staging and production.</t>
+    </li>
+    <li parent="kix.o8ewzohhdgks">
+      <t>Received </t>
+      <t>
+        <b>"Rookie of the Year"</b>
+      </t>
+      <t> award (2016) for independently delivering an end-to-end GCP data platform for a fintech client 3 weeks ahead of schedule, which became Sigmoid's reference architecture for GCP engagements.</t>
+    </li>
+    <p />
+    <h2 headingId="h.v44v0mhpzshf">
+      <t>Key Projects</t>
+    </h2>
+    <table>
+      <col />
+      <col />
+      <col />
+      <tr>
+        <td>
+          <p>
+            <t>
+              <b>Project</b>
+            </t>
+          </p>
+        </td>
+        <td>
+          <p>
+            <t>
+              <b>Description &amp; Impact</b>
+            </t>
+          </p>
+        </td>
+        <td>
+          <p>
+            <t>
+              <b>Tech Stack</b>
+            </t>
+          </p>
+        </td>
+      </tr>
+      <tr>
+        <td>
+          <p>
+            <t>
+              <b>Monarch Data Lakehouse</b>
+            </t>
+          </p>
+          <p>
+            <t>
+              <i>Architect &amp; Lead</i>
+            </t>
+          </p>
+        </td>
+        <td>
+          <p>
+            <t>Google's internal petabyte-scale analytics platform. Unified data access for 6,000+ engineers across Search, Ads, and Maps. Replaced 5 Hive clusters, cutting storage costs 60% and query latency by 4×.</t>
+          </p>
+        </td>
+        <td>
+          <p>
+            <t>BigQuery, Dataflow, Apache Beam, Cloud Storage (Iceberg), dbt, Terraform, Airflow</t>
+          </p>
+        </td>
+      </tr>
+      <tr>
+        <td>
+          <p>
+            <t>
+              <b>Vertex AI Pipeline Orchestrator</b>
+            </t>
+          </p>
+          <p>
+            <t>
+              <i>Lead Engineer</i>
+            </t>
+          </p>
+        </td>
+        <td>
+          <p>
+            <t>Internal MLOps platform for 200+ ML engineers. Declarative pipeline authoring, automatic lineage tracking, and A/B experiment management. Reduced model deployment cycle from 3 weeks to 4 days.</t>
+          </p>
+        </td>
+        <td>
+          <p>
+            <t>Vertex AI, Python, Kubeflow Pipelines, MLflow, Cloud Build, Artifact Registry, GKE</t>
+          </p>
+        </td>
+      </tr>
+      <tr>
+        <td>
+          <p>
+            <t>
+              <b>gcp-cost-lens</b>
+            </t>
+          </p>
+          <p>
+            <t>
+              <i>Open-Source Author</i>
+            </t>
+          </p>
+        </td>
+        <td>
+          <p>
+            <t>Open-source Python CLI + dashboard for GCP cost attribution and anomaly detection. 1.8k GitHub stars, used by 400+ companies to cut unplanned cloud spend. Detects cost spikes within 15 minutes.</t>
+          </p>
+        </td>
+        <td>
+          <p>
+            <t>Python, BigQuery, Cloud Run, Looker Studio, Terraform, GitHub Actions</t>
+          </p>
+        </td>
+      </tr>
+      <tr>
+        <td>
+          <p>
+            <t>
+              <b>Real-time Event Hub</b>
+            </t>
+          </p>
+          <p>
+            <t>
+              <i>Technical Lead</i>
+            </t>
+          </p>
+        </td>
+        <td>
+          <p>
+            <t>Pub/Sub + Dataflow streaming platform at Swiggy processing 2M+ daily events. Sub-second latency for restaurant anomaly detection, powering operational dashboards for 5,000 delivery agents.</t>
+          </p>
+        </td>
+        <td>
+          <p>
+            <t>Pub/Sub, Dataflow, Apache Beam, BigQuery, Cloud Run, Python, Terraform</t>
+          </p>
+        </td>
+      </tr>
+    </table>
+    <h2 headingId="h.lzj8tz5hxab1">
+      <t>Education</t>
+    </h2>
+    <p>
+      <t>
+        <b>Indian Institute of Technology Bombay</b>
+      </t>
+      <t> — </t>
+      <t>
+        <i>B.Tech, Computer Science &amp; Engineering</i>
+      </t>
+    </p>
+    <p>
+      <t>Graduated May 2015 · </t>
+      <t>
+        <b>GPA: 9.1 / 10</b>
+      </t>
+      <t> · Department Rank: 4 of 120</t>
+    </p>
+    <p>
+      <t>Thesis: </t>
+      <t>
+        <i>"Distributed Query Optimisation in Column-Oriented Data Warehouses"</i>
+      </t>
+      <t> — Advisor: Prof. S. Sudarshan</t>
+    </p>
+    <p>
+      <t>Relevant Coursework: Algorithms, Database Systems, Distributed Systems, Operating Systems, Computer Networks, Machine Learning, Cloud Computing</t>
+    </p>
+    <h2 headingId="h.3o78hk3d0xdz">
+      <t>Certifications &amp; Awards</t>
+    </h2>
+    <li parent="kix.7nfar8qrdamx">
+      <t>
+        <b>Google Cloud Professional Data Engineer</b>
+      </t>
+      <t> (certified 2022, credential ID: GCP-PDE-7823)</t>
+    </li>
+    <li parent="kix.7nfar8qrdamx">
+      <t>
+        <b>Google Cloud Professional Cloud Architect</b>
+      </t>
+      <t> (certified 2023, credential ID: GCP-PCA-3291)</t>
+    </li>
+    <li parent="kix.7nfar8qrdamx">
+      <t>
+        <b>Google Peer Bonus Award</b>
+      </t>
+      <t> (2022) — for cross-org collaboration on Monarch Data Lakehouse, nominated by 3 separate engineering teams</t>
+    </li>
+    <li parent="kix.7nfar8qrdamx">
+      <t>
+        <b>Sigmoid "Rookie of the Year"</b>
+      </t>
+      <t>, 2016 — for independently delivering a GCP data platform 3 weeks ahead of schedule for a fintech client</t>
+    </li>
+    <li parent="kix.7nfar8qrdamx">
+      <t>
+        <b>IIT Bombay Academic Excellence Award</b>
+      </t>
+      <t>, 2013–2015 — awarded for top-5 GPA in department across two consecutive years</t>
+    </li>
+    <p />
+    <h2 headingId="h.it14enkgrxz">
+      <t>Publications &amp; Conference Talks</t>
+    </h2>
+    <li parent="kix.44ohxtf8trcq">
+      <t>"Building a Petabyte-Scale Data Lakehouse on BigQuery: Lessons from Google" — </t>
+      <t>
+        <i>DataEngConf 2024</i>
+      </t>
+      <t>, San Francisco (1,200 attendees)</t>
+    </li>
+    <li parent="kix.44ohxtf8trcq">
+      <t>"MLOps at Scale: How We Cut Model Deployment Time by 80% with Vertex AI Pipelines" — </t>
+      <t>
+        <i>Google Cloud Next 2023</i>
+      </t>
+      <t>, San Francisco</t>
+    </li>
+    <li parent="kix.44ohxtf8trcq">
+      <t>"Apache Beam in Production: Patterns for Reliable Streaming Pipelines" — </t>
+      <t>
+        <i>PyCon India 2023</i>
+      </t>
+      <t>, Hyderabad (900 attendees)</t>
+    </li>
+    <li parent="kix.44ohxtf8trcq">
+      <t>"dbt + BigQuery: A Data Team's Guide to Modern Analytics Engineering" — </t>
+      <t>
+        <i>dbt Coalesce 2022</i>
+      </t>
+      <t>, New Orleans</t>
+    </li>
+    <p />
+    <h2 headingId="h.qggcjfh6ipm4">
+      <t>Open Source &amp; Community</t>
+    </h2>
+    <li parent="kix.jr2redxw3mz4">
+      <t>
+        <b>gcp-cost-lens</b>
+      </t>
+      <t> (github.com/priya-nair/gcp-cost-lens) — Creator; 1.8k stars, 400+ companies using in production, MIT license</t>
+    </li>
+    <li parent="kix.jr2redxw3mz4">
+      <t>
+        <b>Apache Beam</b>
+      </t>
+      <t> — Contributor; 4 merged PRs improving Python SDK performance for windowed aggregations and fixing BigQuery IO connector edge cases</t>
+    </li>
+    <li parent="kix.jr2redxw3mz4">
+      <t>
+        <b>dbt-core</b>
+      </t>
+      <t> — Contributor; added BigQuery partition pruning optimisations to the BigQuery adapter that reduced costs for 10k+ dbt users by up to 40% on large incremental models</t>
+    </li>
+    <li parent="kix.jr2redxw3mz4">
+      <t>Co-organiser of </t>
+      <t>
+        <b>Hyderabad Python &amp; Data Engineering Meetup</b>
+      </t>
+      <t> (monthly, 350+ members); curated 22 speaker sessions on GCP, Python, and data engineering since 2020</t>
+    </li>
+    <p />
+  </body>
+  <header id="kix.h52h1kgfexeu">
+    <p>
+      <t>
+        <b>Priya Nair</b>
+      </t>
+      <t> · Senior Python &amp; Cloud Engineer · priya.nair@gmail.com</t>
+    </p>
+  </header>
+  <footer id="kix.caflbe4dalyz">
+    <p>
+      <t>Confidential · Page  of  · Last updated March 2026</t>
+    </p>
+  </footer>
+</tab>

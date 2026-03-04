@@ -1,0 +1,16 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<tab id="t.0" title="Tab 1" index="0">
+  <body>
+    <sectionbreak sectionType="CONTINUOUS" contentDirection="LEFT_TO_RIGHT" columnSeparatorStyle="NONE" />
+    <p>
+      <t>Tab 1 body content.</t>
+    </p>
+  </body>
+  <header id="kix.2de3atfcfaii">
+    <p>
+      <t>
+        <b>Header Fix Validation — Updated From Tab 2</b>
+      </t>
+    </p>
+  </header>
+</tab>

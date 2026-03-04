@@ -1,0 +1,71 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<tab id="t.0" title="Resume" index="0">
+  <body>
+    <sectionbreak sectionType="CONTINUOUS" contentDirection="LEFT_TO_RIGHT" columnSeparatorStyle="NONE" />
+    <h1>Ramesh Sippy</h1>
+    <p>Lead Engineer, ExtraSuite | ramesh.sippy@extrasuite.io | +1 (415) 555-0192 | linkedin.com/in/rameshsippy | github.com/rameshsippy</p>
+
+    <h2>Summary</h2>
+    <p>Senior software engineer with 12+ years of experience building large-scale distributed systems and developer tools. Lead engineer at ExtraSuite, where I architected the pull/diff/push workflow that enables AI agents to read and write Google Workspace files with full audit trails. Deep expertise in Python, Google APIs, and LLM-integrated tooling. Passionate about developer experience, API design, and making complex systems accessible.</p>
+
+    <h2>Experience</h2>
+
+    <h3>Lead Engineer — ExtraSuite (Think41)</h3>
+    <p><i>Bangalore, India | March 2023 – Present</i></p>
+    <li>Designed and implemented the core pull/diff/push reconciliation engine for Google Docs, Sheets, Slides, and Forms — enabling AI agents to make precise, auditable edits via local XML files</li>
+    <li>Built the ExtraSuite reconciler: a right-to-left structural diffing algorithm that converts XML document trees into minimal Google Docs batchUpdate API requests, handling tables, nested bullets, headers/footers, footnotes, and multi-tab documents</li>
+    <li>Architected the 1:1 service account model: each employee's AI agent gets a dedicated service account with scoped, short-lived credentials, ensuring changes appear in Google Drive version history with the agent's identity</li>
+    <li>Developed a pure-function mock of the Google Docs batchUpdate API (61/61 scenarios verified against the live API), enabling deterministic, reproducible test suites without network calls</li>
+    <li>Led the migration from a legacy diff engine to the serde+reconcile pipeline, reducing the codebase by 40% (23 dead source files, 15 test files removed) while improving correctness on edge cases</li>
+    <li>Built the ExtraSuite CLI used daily by 200+ AI agents across 15 enterprise customers, processing 50,000+ document edits per month</li>
+    <li>Mentored 4 engineers, conducted 30+ technical interviews, and established code review standards that reduced production incidents by 60%</li>
+
+    <h3>Senior Software Engineer — Google</h3>
+    <p><i>Mountain View, CA | June 2019 – February 2023</i></p>
+    <li>Core contributor to Google Docs API v1 — designed the batchUpdate request schema, index semantics, and UTF-16 code unit offset model used by millions of developers</li>
+    <li>Built the Docs API migration pipeline that moved 1.2 billion legacy documents to the new structural format with zero data loss and zero user-visible downtime</li>
+    <li>Implemented server-side validation for 40+ batchUpdate request types, catching malformed requests before they corrupt document state</li>
+    <li>Reduced Docs API p99 latency by 35% by profiling and optimizing the document serialization path, eliminating redundant index recomputation on read</li>
+    <li>Led a 6-engineer team to deliver real-time collaboration conflict resolution for Docs on mobile, shipped to 2B+ users in Q3 2021</li>
+    <li>Designed and shipped the Google Docs Named Ranges API, enabling programmatic document anchoring for third-party integrations</li>
+
+    <h3>Software Engineer II — Flipkart</h3>
+    <p><i>Bangalore, India | August 2016 – May 2019</i></p>
+    <li>Built the product catalog ingestion pipeline processing 5M+ SKU updates per day using Apache Kafka, Flink, and Elasticsearch</li>
+    <li>Designed the A/B testing framework used by 40+ product teams, supporting 200+ simultaneous experiments with statistically rigorous assignment and analysis</li>
+    <li>Reduced catalog search latency from 450ms to 38ms p99 by redesigning the inverted index with query-time filtering pushed to the indexing layer</li>
+    <li>Shipped seller onboarding automation that reduced new seller time-to-first-listing from 5 days to 4 hours</li>
+
+    <h3>Software Engineer — Infosys</h3>
+    <p><i>Pune, India | July 2013 – July 2016</i></p>
+    <li>Developed RESTful microservices for a Fortune 500 banking client's loan origination system, handling 10,000+ loan applications per day</li>
+    <li>Built internal developer tooling (CI/CD dashboards, log aggregation, deployment automation) adopted across a 300-person engineering org</li>
+    <li>Earned "Best Innovator" award two consecutive years for reducing deployment cycle time by 70% through pipeline parallelization</li>
+
+    <h2>Open Source</h2>
+    <li><b>ExtraSuite</b> (github.com/think41/extrasuite) — Core maintainer. 1,200+ GitHub stars. Python CLI for AI agents to read/write Google Workspace files</li>
+    <li><b>extradoc / extrasheet / extraslide</b> — Author. Standalone Python libraries published to PyPI implementing the pull/diff/push workflow for each Google file type</li>
+    <li><b>mock-google-docs</b> — Author. Pure-function Python mock of the Google Docs batchUpdate API, used in automated testing pipelines</li>
+
+    <h2>Education</h2>
+    <h3>B.Tech, Computer Science — Indian Institute of Technology, Bombay</h3>
+    <p><i>Mumbai, India | 2009 – 2013 | GPA: 9.1 / 10</i></p>
+    <li>Thesis: "Conflict-free Replicated Data Types for Collaborative Document Editing" — implemented a CRDT-based rich-text editor in Haskell</li>
+    <li>Teaching assistant for CS 101 (Intro to Programming) and CS 344 (Distributed Systems)</li>
+    <li>Won Inter-IIT Tech Meet gold medal in the systems programming track, 2012</li>
+
+    <h2>Skills</h2>
+    <p><b>Languages:</b> Python (expert), Go, TypeScript, Java, Haskell</p>
+    <p><b>Infrastructure:</b> Google Cloud (GKE, Cloud Run, Pub/Sub, Spanner), AWS (EKS, SQS, DynamoDB), Kubernetes, Terraform</p>
+    <p><b>Data:</b> PostgreSQL, Redis, Elasticsearch, Apache Kafka, Apache Flink, BigQuery</p>
+    <p><b>APIs &amp; Protocols:</b> Google Workspace APIs (Docs, Sheets, Slides, Drive, Gmail, Calendar), OAuth 2.0, gRPC, OpenAPI</p>
+    <p><b>AI / LLM:</b> Claude API, OpenAI API, LangChain, prompt engineering, agent tool design, RAG pipelines</p>
+    <p><b>Practices:</b> Domain-driven design, event sourcing, CQRS, test-driven development, system design, API design</p>
+
+    <h2>Publications &amp; Talks</h2>
+    <li>"Diffing Structured Documents at Scale" — PyCon India 2024 (keynote)</li>
+    <li>"How AI Agents Edit Google Docs Without Breaking Them" — Google I/O Extended Bangalore 2023</li>
+    <li>"UTF-16 Is a Trap: Lessons from the Google Docs API" — Strange Loop 2022</li>
+    <li>Patent US11,234,567: "Method and System for Index-Preserving Batch Updates in Collaborative Document Editors" (Google, 2021)</li>
+  </body>
+</tab>

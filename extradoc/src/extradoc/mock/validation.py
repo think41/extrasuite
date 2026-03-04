@@ -8,35 +8,75 @@ from extradoc.mock.exceptions import ValidationError
 from extradoc.mock.navigation import get_segment
 
 
+class _SegmentStructure:
+    """Structural elements tracked within a single segment."""
+
+    def __init__(self) -> None:
+        self.tables: list[tuple[int, int]] = []
+        self.table_cell_ranges: list[list[tuple[int, int]]] = []
+        self.table_of_contents: list[tuple[int, int]] = []
+        self.equations: list[tuple[int, int]] = []
+        self.section_breaks: list[int] = []
+
+
 class DocumentStructureTracker:
     """Track structural elements in a document for validation.
 
     This class scans the document and maintains indexes of all structural
     elements (tables, TableOfContents, equations, section breaks) to enable
     validation of operations that might violate structural constraints.
+
+    Structures are indexed per (tab_id, segment_id) so that index ranges
+    from different tabs/segments are never confused.
     """
 
     def __init__(self, document: dict[str, Any]) -> None:
+        # Legacy flat lists — kept for backward compat with any external callers
         self.tables: list[tuple[int, int]] = []
-        # For each table, store the cell content ranges (start, end) for validation
         self.table_cell_ranges: list[list[tuple[int, int]]] = []
         self.table_of_contents: list[tuple[int, int]] = []
         self.equations: list[tuple[int, int]] = []
         self.section_breaks: list[int] = []
+
+        # Per-(tab, segment) structures
+        self._segments: dict[tuple[str | None, str | None], _SegmentStructure] = {}
         self._scan_document(document)
+
+    def _get_or_create(
+        self, tab_id: str | None, segment_id: str | None
+    ) -> _SegmentStructure:
+        key = (tab_id, segment_id)
+        if key not in self._segments:
+            self._segments[key] = _SegmentStructure()
+        return self._segments[key]
 
     def _scan_document(self, document: dict[str, Any]) -> None:
         for tab in document.get("tabs", []):
+            tab_id = tab.get("tabProperties", {}).get("tabId")
             document_tab = tab.get("documentTab", {})
-            body = document_tab.get("body", {})
-            self._scan_content(body.get("content", []))
 
-    def _scan_content(self, content: list[dict[str, Any]]) -> None:
+            # Body
+            body = document_tab.get("body", {})
+            self._scan_content(body.get("content", []), tab_id, None)
+
+            # Headers, footers, footnotes
+            for seg_type in ("headers", "footers", "footnotes"):
+                for seg_id, seg in document_tab.get(seg_type, {}).items():
+                    self._scan_content(seg.get("content", []), tab_id, seg_id)
+
+    def _scan_content(
+        self,
+        content: list[dict[str, Any]],
+        tab_id: str | None,
+        segment_id: str | None,
+    ) -> None:
+        seg = self._get_or_create(tab_id, segment_id)
         for element in content:
             start = element.get("startIndex", 0)
             end = element.get("endIndex", 0)
 
             if "table" in element:
+                seg.tables.append((start, end))
                 self.tables.append((start, end))
                 cell_ranges: list[tuple[int, int]] = []
                 for row in element["table"].get("tableRows", []):
@@ -46,12 +86,15 @@ class DocumentStructureTracker:
                             c_start = cell_content[0].get("startIndex", 0)
                             c_end = cell_content[-1].get("endIndex", 0)
                             cell_ranges.append((c_start, c_end))
+                seg.table_cell_ranges.append(cell_ranges)
                 self.table_cell_ranges.append(cell_ranges)
             elif "tableOfContents" in element:
+                seg.table_of_contents.append((start, end))
                 self.table_of_contents.append((start, end))
                 toc = element["tableOfContents"]
-                self._scan_content(toc.get("content", []))
+                self._scan_content(toc.get("content", []), tab_id, segment_id)
             elif "sectionBreak" in element:
+                seg.section_breaks.append(start)
                 self.section_breaks.append(start)
             elif "paragraph" in element:
                 para = element["paragraph"]
@@ -59,17 +102,39 @@ class DocumentStructureTracker:
                     if "equation" in para_elem:
                         eq_start = para_elem.get("startIndex", 0)
                         eq_end = para_elem.get("endIndex", 0)
+                        seg.equations.append((eq_start, eq_end))
                         self.equations.append((eq_start, eq_end))
 
-    def validate_delete_range(self, start_index: int, end_index: int) -> None:
+    def _resolve_segment(
+        self, tab_id: str | None, segment_id: str | None
+    ) -> _SegmentStructure:
+        key = (tab_id, segment_id)
+        if key in self._segments:
+            return self._segments[key]
+        # When tab_id is None, fall back to the first tab's segment
+        if tab_id is None:
+            for stored_key, seg in self._segments.items():
+                if stored_key[1] == segment_id:
+                    return seg
+        return _SegmentStructure()
+
+    def validate_delete_range(
+        self,
+        start_index: int,
+        end_index: int,
+        tab_id: str | None = None,
+        segment_id: str | None = None,
+    ) -> None:
         """Validate that deletion doesn't violate structural rules."""
+        seg = self._resolve_segment(tab_id, segment_id)
+
         # Validate tables
-        for i, (table_start, table_end) in enumerate(self.tables):
+        for i, (table_start, table_end) in enumerate(seg.tables):
             if start_index > table_start and end_index < table_end:
                 # Range is inside the table — only valid if it falls entirely
                 # within a single cell's content range (not structural overhead)
                 cell_ranges = (
-                    self.table_cell_ranges[i] if i < len(self.table_cell_ranges) else []
+                    seg.table_cell_ranges[i] if i < len(seg.table_cell_ranges) else []
                 )
                 in_cell = any(
                     c_start <= start_index and end_index <= c_end
@@ -96,7 +161,7 @@ class DocumentStructureTracker:
                 )
 
         # Validate TableOfContents
-        for toc_start, toc_end in self.table_of_contents:
+        for toc_start, toc_end in seg.table_of_contents:
             if self._is_partial_overlap(start_index, end_index, toc_start, toc_end):
                 raise ValidationError(
                     f"Cannot partially delete table of contents at indices {toc_start}-{toc_end}. "
@@ -111,7 +176,7 @@ class DocumentStructureTracker:
                 )
 
         # Validate Equations
-        for eq_start, eq_end in self.equations:
+        for eq_start, eq_end in seg.equations:
             if self._is_partial_overlap(start_index, end_index, eq_start, eq_end):
                 raise ValidationError(
                     f"Cannot partially delete equation at indices {eq_start}-{eq_end}. "
@@ -120,7 +185,7 @@ class DocumentStructureTracker:
                 )
 
         # Validate SectionBreaks
-        for sb_index in self.section_breaks:
+        for sb_index in seg.section_breaks:
             if sb_index > 1 and start_index < sb_index == end_index:
                 raise ValidationError(
                     f"Cannot delete newline before section break without deleting the break. "

@@ -20,28 +20,83 @@ After push, always re-pull before making more changes.
 
 ## document.xml Format
 
-Semantic HTML-like XML. Block elements: <p>, <h1>-<h6>, <title>, <subtitle>,
-<li>, <table>, <tr>, <td>. Inline: <b>, <i>, <u>, <s>, <a href>, <span class>.
+Semantic HTML-like XML. A document contains one or more tabs. Each tab has a
+<body> and optional <header> and <footer>. Block elements inside body/header/
+footer: <p>, <h1>-<h6>, <title>, <subtitle>, <li>, <table>, <tr>, <td>.
+Inline elements can be written directly inside block elements:
 
 ```xml
 <doc id="DOCUMENT_ID" revision="REVISION_ID">
   <tab id="t.0" title="Tab 1" class="_base">
     <body>
+      <sectionbreak sectionType="CONTINUOUS" contentDirection="LEFT_TO_RIGHT" columnSeparatorStyle="NONE" />
       <h1>Heading</h1>
-      <p>A paragraph with <b>bold</b> and <i>italic</i> text.</p>
-      <li type="bullet" level="0">First bullet</li>
-      <li type="bullet" level="1">Nested bullet</li>
+      <p>A paragraph. Use <t class="emphasis">styled text</t> with classes from styles.xml.</p>
+      <p>A <a href="https://example.com">hyperlink</a> in a sentence.</p>
+      <li type="bullet">First bullet</li>
+      <li type="decimal">Numbered item</li>
     </body>
+    <header id="h.abc" class="_base">
+      <p>Document Title</p>
+    </header>
+    <footer id="f.abc" class="_base">
+      <p>(c) 2026 My Company</p>
+    </footer>
   </tab>
 </doc>
 ```
 
+**Inline elements** — write these directly inside `<p>`, `<h1>`-`<h6>`, `<li>`, etc.:
+
+  <t class="s1">text</t>  Apply a named style class from styles.xml
+  <a href="URL">text</a>  Hyperlink — text is required
+
+**`<t>` wrapper:** pulled documents use `<t>` to wrap text runs. Use `<t class="name">` to
+apply a style class. Bare text directly inside block elements is also valid:
+
+  <p><t class="code">formatted text</t> and plain text</p>
+
+## Tabs, Headers & Footers
+
+**Adding a new tab:** Add a <tab> element with a unique id and title before </doc>.
+The id can be any short string not already used (e.g. t.summary, t.newtab).
+
+**Adding a header/footer to an existing tab:** Add <header> and/or <footer>
+elements inside the <tab>, after </body>. Provide any placeholder id — Google
+assigns the real id on push and the re-pulled file will have the real id.
+
+**Headers and footers support the same block elements as <body>.**
+
+**New tab requirements:**
+1. Create a `<TabName>/document.xml` file with a `<sectionbreak/>` as the first body element.
+2. Create a `<TabName>/styles.xml` file (can be empty: `<styles />`).
+3. Add a `<tab>` entry to `index.xml`.
+
+```xml
+<!-- New tab with header and footer -->
+<tab id="t.summary" title="Summary" class="_base">
+  <body>
+    <sectionbreak sectionType="CONTINUOUS" contentDirection="LEFT_TO_RIGHT" columnSeparatorStyle="NONE" />
+    <h1>Summary</h1>
+    <p>Content here.</p>
+  </body>
+  <header id="h.new" class="_base">
+    <p>My Document Title</p>
+  </header>
+  <footer id="f.new" class="_base">
+    <p>(c) 2026 My Company</p>
+  </footer>
+</tab>
+```
+
 ## Critical Rules
 
-  No newlines inside content elements (<p>, <h1>-<h6>, <li>, <b>, etc.)
+  No newlines inside content elements (<p>, <h1>-<h6>, <li>, <t>, etc.)
   Every <td> must contain at least one <p>, even if empty
   XML-escape special characters: &amp; &lt; &gt; &quot;
-  <hr/>, <image/>, <autotext/> are read-only - cannot add or remove
+  <hr/>, <image/>, <autotext/>, <sectionbreak/> are read-only - cannot add or remove
+  <sectionbreak/> must be the first element in every <body> — never delete it
+  After a list, add <p></p> before a heading to break out of the list context
 
 ## Supported Block Tags
 
@@ -49,12 +104,15 @@ Semantic HTML-like XML. Block elements: <p>, <h1>-<h6>, <title>, <subtitle>,
   <h1> - <h6>        Headings
   <title>            Document title style
   <subtitle>         Document subtitle style
-  <li>               List item (type: bullet/decimal/alpha/roman/checkbox, level: 0-8)
+  <li>               List item (type: bullet/decimal/alpha/roman/checkbox)
+                     Note: level= is read-only. New lists always start at level 0.
   <table>            Table container
   <tr>               Table row
   <td>               Table cell (must contain at least one <p>)
-  <pagebreak/>       Page break (can add/delete)
-  <footnote>         Footnote (inline at the marker position)
+  <pagebreak/>       Page break (can add/delete — NOT YET IMPLEMENTED, will fail at diff)
+
+Note: <footnote> insertion is not yet supported. Existing footnotes are shown
+read-only; to add new footnotes use the Google Docs UI.
 
 ## Comments
 

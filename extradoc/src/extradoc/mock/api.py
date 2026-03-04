@@ -6,6 +6,11 @@ import copy
 from collections.abc import Callable
 from typing import Any
 
+from extradoc.api_types._generated import (
+    BatchUpdateDocumentRequest,
+    BatchUpdateDocumentResponse,
+    Document,
+)
 from extradoc.mock import (
     bullet_ops,
     named_range_ops,
@@ -31,11 +36,18 @@ class MockGoogleDocsAPI:
 
     After each request, a centralized reindex + normalize pass fixes all
     indices and consolidates text runs. Handlers only modify content.
+
+    Public interface uses Pydantic types (Document, BatchUpdateDocumentRequest,
+    BatchUpdateDocumentResponse). Internally the document is stored as a plain
+    dict so that all 13 handler modules can continue to operate without change.
+    Use _get_raw() / _batch_update_raw() when you need the raw dict boundary
+    (e.g. MockTransport, CompositeTransport).
     """
 
-    def __init__(self, initial_document: dict[str, Any]) -> None:
-        self._document = copy.deepcopy(initial_document)
-        self._revision_id = initial_document.get("revisionId", "mock_revision_1")
+    def __init__(self, doc: Document) -> None:
+        initial = doc.model_dump(by_alias=True, exclude_none=True)
+        self._document = copy.deepcopy(initial)
+        self._revision_id = initial.get("revisionId", "mock_revision_1")
         self._revision_counter = 1
 
         self._named_ranges: dict[str, dict[str, Any]] = {}
@@ -61,19 +73,42 @@ class MockGoogleDocsAPI:
                         }
 
     def _extract_header_footer_types(self) -> None:
-        pass
+        for tab in self._document.get("tabs", []):
+            doc_style = tab.get("documentTab", {}).get("documentStyle", {})
+            if doc_style.get("defaultHeaderId"):
+                self._header_types.add("DEFAULT")
+            if doc_style.get("defaultFooterId"):
+                self._footer_types.add("DEFAULT")
+            if doc_style.get("firstPageHeaderId"):
+                self._header_types.add("FIRST_PAGE")
+            if doc_style.get("firstPageFooterId"):
+                self._footer_types.add("FIRST_PAGE")
+            if doc_style.get("evenPageHeaderId"):
+                self._header_types.add("EVEN_PAGE")
+            if doc_style.get("evenPageFooterId"):
+                self._footer_types.add("EVEN_PAGE")
 
-    def get(self) -> dict[str, Any]:
+    def _get_raw(self) -> dict[str, Any]:
+        """Return current document state as a raw dict (internal/transport use only)."""
         result = copy.deepcopy(self._document)
         result["revisionId"] = self._revision_id
         _strip_explicit_keys(result)
         return result
 
-    def batch_update(
+    def get(self) -> Document:
+        """Return current document state as a typed Document."""
+        return Document.model_validate(self._get_raw())
+
+    def _batch_update_raw(
         self,
         requests: list[dict[str, Any]],
         write_control: dict[str, Any] | None = None,
     ) -> dict[str, Any]:
+        """Apply a list of raw request dicts and return a raw response dict.
+
+        Internal method used by MockTransport and CompositeTransport.
+        Prefer batch_update() for typed callers.
+        """
         if write_control:
             self._validate_write_control(write_control)
 
@@ -91,10 +126,12 @@ class MockGoogleDocsAPI:
                 # Reindex and normalize after each request
                 reindex_and_normalize_all_tabs(self._document)
 
+                # Rebuild structure tracker so subsequent requests
+                # validate against the updated document state
+                self._structure_tracker = DocumentStructureTracker(self._document)
+
             self._revision_counter += 1
             self._revision_id = f"mock_revision_{self._revision_counter}"
-
-            self._structure_tracker = DocumentStructureTracker(self._document)
 
             return {
                 "replies": replies,
@@ -107,6 +144,23 @@ class MockGoogleDocsAPI:
             self._revision_id = backup_revision
             self._named_ranges = backup_named_ranges
             raise
+
+    def batch_update(
+        self,
+        batch: BatchUpdateDocumentRequest,
+    ) -> BatchUpdateDocumentResponse:
+        """Apply a batch of typed requests and return a typed response."""
+        request_dicts = [
+            req.model_dump(by_alias=True, exclude_none=True)
+            for req in (batch.requests or [])
+        ]
+        write_control_dict = None
+        if batch.write_control:
+            write_control_dict = batch.write_control.model_dump(
+                by_alias=True, exclude_none=True
+            )
+        response_dict = self._batch_update_raw(request_dicts, write_control_dict)
+        return BatchUpdateDocumentResponse.model_validate(response_dict)
 
     def _validate_write_control(self, write_control: dict[str, Any]) -> None:
         required_revision = write_control.get("requiredRevisionId")
@@ -182,12 +236,12 @@ class MockGoogleDocsAPI:
             "updateTableRowStyle": stubs.handle_update_table_row_style,
             "updateDocumentStyle": stubs.handle_update_document_style,
             "updateSectionStyle": stubs.handle_update_section_style,
-            "updateDocumentTabProperties": stubs.handle_update_document_tab_properties,
+            "updateDocumentTabProperties": segment_ops.handle_update_document_tab_properties,
             "mergeTableCells": stubs.handle_merge_table_cells,
             "unmergeTableCells": stubs.handle_unmerge_table_cells,
             "pinTableHeaderRows": stubs.handle_pin_table_header_rows,
             "insertInlineImage": stubs.handle_insert_inline_image,
-            "insertPageBreak": stubs.handle_insert_page_break,
+            "insertPageBreak": text_ops.handle_insert_page_break,
             "insertSectionBreak": stubs.handle_insert_section_break,
             "insertPerson": stubs.handle_insert_person,
             "insertDate": stubs.handle_insert_date,

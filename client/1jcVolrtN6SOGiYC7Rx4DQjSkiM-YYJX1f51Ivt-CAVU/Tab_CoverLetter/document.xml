@@ -1,0 +1,43 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<tab id="t.cover" title="Cover Letter" index="1">
+  <body>
+    <sectionbreak sectionType="CONTINUOUS" contentDirection="LEFT_TO_RIGHT" columnSeparatorStyle="NONE" />
+    <title align="CENTER">Alex Chen</title>
+    <subtitle align="CENTER">Cover Letter</subtitle>
+    <p align="END"><i>26 February 2026</i></p>
+    <p></p>
+    <p><b>Hiring Manager</b></p>
+    <p><b>Google DeepMind / AI Engineering Team</b></p>
+    <p>1600 Amphitheatre Parkway, Mountain View, CA 94043</p>
+    <p></p>
+    <p><b>RE: Senior Software Engineer – AI Tooling &amp; Developer Productivity</b></p>
+    <p></p>
+    <p>Dear Hiring Manager,</p>
+    <p></p>
+    <p>I am writing to express my enthusiastic interest in the Senior Software Engineer position on your AI Tooling team. As the lead author of <span class="highlight">ExtraSuite</span> — an open-source CLI framework that enables AI agents to securely interact with Google Workspace files via a <b>git-like pull/diff/push workflow</b> — I have developed deep, hands-on expertise in exactly the kind of infrastructure-meets-AI work your team values.</p>
+    <p></p>
+    <p>Over the past two years at Think41, I have built systems that sit at the intersection of <b>LLM agent capabilities</b> and <b>real-world enterprise tooling</b>. Specifically, I have:</p>
+    <li type="bullet" level="0">Designed and shipped a <b>serde reconciliation engine</b> that faithfully round-trips rich Google Docs content (styles, tables, lists, footnotes, multi-tab documents) through an XML representation that LLMs can reason about natively — without any Google API knowledge</li>
+    <li type="bullet" level="0">Built a <b>token issuance gateway</b> on Cloud Run using OIDC and domain-wide delegation, creating a unique 1:1 service account identity per employee's AI agent — ensuring all agent actions are <span class="highlight">auditable and minimal-scope</span></li>
+    <li type="bullet" level="0">Published three independent PyPI packages (<span class="code">extrasuite</span>, <span class="code">extrasheet</span>, <span class="code">extraslide</span>) with tag-based automated releases and zero-secret trusted publishing via GitHub Actions OIDC</li>
+    <li type="bullet" level="0">Integrated the framework with leading AI coding assistants (Claude Code, Codex) via the <b>AgentSkills.io</b> standard, enabling autonomous document editing in production workflows today</li>
+    <p></p>
+    <p>What excites me most about your team is the opportunity to work on <span class="highlight">large language model applications</span> that have immediate, measurable impact on developer productivity. My experience building systems that make AI agents more reliable, auditable, and capable of operating on real enterprise data aligns directly with your mission.</p>
+    <p></p>
+    <p>I also bring a strong track record of <b>open-source leadership</b>. Contributing to the developer community — through clean APIs, comprehensive documentation, and the AgentSkills.io standard — is core to how I build software. I believe the best tools are the ones that other engineers <i>want</i> to use.</p>
+    <p></p>
+    <p>I would welcome the chance to discuss how my background can contribute to your goals. Thank you for your time and consideration.</p>
+    <p></p>
+    <p>Warm regards,</p>
+    <p></p>
+    <p><b>Alex Chen</b></p>
+    <p><u>alex.chen@think41.com</u> · +91-98765-43210</p>
+    <p><u>github.com/alexchen</u> · <u>linkedin.com/in/alexchen</u></p>
+  </body>
+  <header id="h.cover_hdr" class="_base">
+    <p align="CENTER"><b>Alex Chen</b> · Cover Letter · Senior Software Engineer Application</p>
+  </header>
+  <footer id="f.cover_ftr" class="_base">
+    <p align="CENTER"><i>Confidential · February 2026 · alex.chen@think41.com</i></p>
+  </footer>
+</tab>

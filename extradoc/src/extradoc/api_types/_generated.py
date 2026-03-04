@@ -20,7 +20,41 @@ else:
         pass
 
 
+from dataclasses import dataclass
+
 from pydantic import BaseModel, ConfigDict, Field
+
+
+@dataclass(frozen=True)
+class DeferredID:
+    """Placeholder for an ID that will be created in an earlier batch.
+
+    Used during reconciliation to reference IDs that don't exist yet (new tabs,
+    headers, footers, footnotes). The actual ID is resolved from API responses
+    between batch executions.
+
+    Attributes:
+        placeholder: Unique identifier for debugging (e.g., "tab_0", "header_1")
+        batch_index: Absolute batch index that creates this ID (0, 1, 2, ...)
+        request_index: Index of the creation request within that batch
+        response_path: Dot-path to extract real ID from response
+                      (e.g., "createHeader.headerId")
+    """
+
+    placeholder: str
+    batch_index: int
+    request_index: int
+    response_path: str
+
+    def __str__(self) -> str:
+        return f"DeferredID({self.placeholder})"
+
+    def __repr__(self) -> str:
+        return (
+            f"DeferredID(placeholder={self.placeholder!r}, "
+            f"batch={self.batch_index}, req={self.request_index}, "
+            f"path={self.response_path!r})"
+        )
 
 
 class AutoTextType(StrEnum):
@@ -441,8 +475,8 @@ class EndOfSegmentLocation(BaseModel):
 
     model_config = ConfigDict(populate_by_name=True, extra="allow")
 
-    segment_id: str | None = Field(None, alias="segmentId")
-    tab_id: str | None = Field(None, alias="tabId")
+    segment_id: str | DeferredID | None = Field(None, alias="segmentId")
+    tab_id: str | DeferredID | None = Field(None, alias="tabId")
 
 
 class Equation(BaseModel):
@@ -487,8 +521,8 @@ class Location(BaseModel):
     model_config = ConfigDict(populate_by_name=True, extra="allow")
 
     index: int | None = Field(None)
-    segment_id: str | None = Field(None, alias="segmentId")
-    tab_id: str | None = Field(None, alias="tabId")
+    segment_id: str | DeferredID | None = Field(None, alias="segmentId")
+    tab_id: str | DeferredID | None = Field(None, alias="tabId")
 
 
 class ObjectReferences(BaseModel):
@@ -524,9 +558,9 @@ class Range(BaseModel):
     model_config = ConfigDict(populate_by_name=True, extra="allow")
 
     end_index: int | None = Field(None, alias="endIndex")
-    segment_id: str | None = Field(None, alias="segmentId")
+    segment_id: str | DeferredID | None = Field(None, alias="segmentId")
     start_index: int | None = Field(None, alias="startIndex")
-    tab_id: str | None = Field(None, alias="tabId")
+    tab_id: str | DeferredID | None = Field(None, alias="tabId")
 
 
 class ReplaceAllTextResponse(BaseModel):
