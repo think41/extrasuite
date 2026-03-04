@@ -1884,14 +1884,43 @@ def test_update_table_column_properties_missing_fields() -> None:
 
 
 def test_update_table_cell_style_basic() -> None:
-    """Test basic table cell style update."""
+    """Test basic table cell style update applies to the correct cell."""
     doc = create_minimal_document()
     api = MockGoogleDocsAPI(Document.model_validate(doc))
 
-    requests = [
+    # First insert a 2x2 table at index 1
+    insert_requests = [
+        {
+            "insertTable": {
+                "rows": 2,
+                "columns": 2,
+                "location": {"index": 1},
+            }
+        }
+    ]
+    api.batch_update(
+        BatchUpdateDocumentRequest(
+            requests=[Request.model_validate(r) for r in insert_requests]
+        )
+    )
+
+    # insertTable at index 1 first inserts "\n" at index 1, so the
+    # table element ends up at startIndex 2.
+    table_start = 2
+
+    # Apply backgroundColor to cell [0][1] via tableRange
+    style_requests = [
         {
             "updateTableCellStyle": {
-                "tableStartLocation": {"index": 1},
+                "tableRange": {
+                    "tableCellLocation": {
+                        "tableStartLocation": {"index": table_start},
+                        "rowIndex": 0,
+                        "columnIndex": 1,
+                    },
+                    "rowSpan": 1,
+                    "columnSpan": 1,
+                },
                 "tableCellStyle": {
                     "backgroundColor": {"color": {"rgbColor": {"red": 1.0}}}
                 },
@@ -1902,11 +1931,25 @@ def test_update_table_cell_style_basic() -> None:
 
     response = api.batch_update(
         BatchUpdateDocumentRequest(
-            requests=[Request.model_validate(r) for r in requests]
+            requests=[Request.model_validate(r) for r in style_requests]
         )
     )
     assert len(response.replies or []) == 1
     assert response.replies[0].model_dump(by_alias=True, exclude_none=True) == {}
+
+    # Verify the style was applied
+    result = api.get().model_dump(by_alias=True, exclude_none=True)
+    body_content = result["tabs"][0]["documentTab"]["body"]["content"]
+    table_el = next(el for el in body_content if "table" in el)
+    cell_01 = table_el["table"]["tableRows"][0]["tableCells"][1]
+    assert cell_01.get("tableCellStyle", {}).get("backgroundColor") == {
+        "color": {"rgbColor": {"red": 1.0}}
+    }
+    # Cell [0][0] should be unaffected
+    cell_00 = table_el["table"]["tableRows"][0]["tableCells"][0]
+    assert cell_00.get("tableCellStyle", {}).get("backgroundColor") != {
+        "color": {"rgbColor": {"red": 1.0}}
+    }
 
 
 def test_update_table_cell_style_missing_fields() -> None:

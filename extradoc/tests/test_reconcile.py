@@ -3873,10 +3873,10 @@ def _make_table_with_cell_style(
 
 
 class TestIssue17TableCellStyleSilentFailure:
-    """Issue 17: tableCellStyle changes must raise ReconcileError, not be silently ignored."""
+    """Issue 17: tableCellStyle changes must be applied via updateTableCellStyle."""
 
-    def test_table_cell_style_change_raises_error(self):
-        """Changing tableCellStyle must raise ReconcileError."""
+    def test_table_cell_style_change_applies(self):
+        """Changing tableCellStyle generates updateTableCellStyle and verify passes."""
         base_table = _make_table_with_cell_style(
             "Cell",
             {"backgroundColor": {"color": {"rgbColor": {"red": 1.0}}}},
@@ -3888,11 +3888,12 @@ class TestIssue17TableCellStyleSilentFailure:
         base = _make_doc_with_content("Hello", base_table)
         desired = _make_doc_with_content("Hello", desired_table)
 
-        with pytest.raises(ReconcileError, match="[Tt]able[Cc]ell[Ss]tyle"):
-            reconcile(base, desired)
+        result = reconcile(base, desired)
+        ok, diffs = verify(base, result, desired)
+        assert ok, f"Cell style change should apply correctly: {diffs}"
 
-    def test_table_cell_style_added_raises_error(self):
-        """Adding tableCellStyle to a cell that previously had none raises ReconcileError."""
+    def test_table_cell_style_added_applies(self):
+        """Adding tableCellStyle to a cell generates updateTableCellStyle and verify passes."""
         base_table = _make_table_with_cell_style("Cell", None)
         desired_table = _make_table_with_cell_style(
             "Cell",
@@ -3901,17 +3902,17 @@ class TestIssue17TableCellStyleSilentFailure:
         base = _make_doc_with_content("Hello", base_table)
         desired = _make_doc_with_content("Hello", desired_table)
 
-        with pytest.raises(ReconcileError, match="[Tt]able[Cc]ell[Ss]tyle"):
-            reconcile(base, desired)
+        result = reconcile(base, desired)
+        ok, diffs = verify(base, result, desired)
+        assert ok, f"Cell style addition should apply correctly: {diffs}"
 
-    def test_identical_table_cell_style_no_error(self):
-        """Identical tableCellStyle in both base and desired does not raise."""
+    def test_identical_table_cell_style_no_requests(self):
+        """Identical tableCellStyle in both base and desired generates no requests."""
         style = {"backgroundColor": {"color": {"rgbColor": {"red": 0.5}}}}
         table = _make_table_with_cell_style("Cell", style)
         base = _make_doc_with_content("Hello", table)
         desired = _make_doc_with_content("Hello", table)
 
-        # Must not raise
         result = reconcile(base, desired)
         assert result is not None
 

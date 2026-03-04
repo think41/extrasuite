@@ -45,6 +45,7 @@ if TYPE_CHECKING:
         Paragraph,
         Table,
         TableCell,
+        TableCellStyle,
         TableRow,
     )
 
@@ -230,6 +231,72 @@ def _make_table_cell_location(
         "tableStartLocation": loc,
         "rowIndex": row_index,
         "columnIndex": col_index,
+    }
+
+
+_CELL_STYLE_READ_ONLY = frozenset({"rowSpan", "columnSpan"})
+
+
+def _cell_style_request_parts(
+    base_style: TableCellStyle | None,
+    desired_style: TableCellStyle | None,
+) -> tuple[dict[str, Any], list[str]]:
+    """Compute (tableCellStyle dict, fields mask). Returns ({}, []) if no change."""
+    base_d = {
+        k: v
+        for k, v in (
+            base_style.model_dump(by_alias=True, exclude_none=True)
+            if base_style
+            else {}
+        ).items()
+        if k not in _CELL_STYLE_READ_ONLY
+    }
+    desired_d = {
+        k: v
+        for k, v in (
+            desired_style.model_dump(by_alias=True, exclude_none=True)
+            if desired_style
+            else {}
+        ).items()
+        if k not in _CELL_STYLE_READ_ONLY
+    }
+    # backgroundColor: {} (empty OptionalColor) == absent — normalize both
+    if desired_d.get("backgroundColor") == {} and base_d.get("backgroundColor") in (
+        None,
+        {},
+    ):
+        desired_d.pop("backgroundColor", None)
+        base_d.pop("backgroundColor", None)
+    if base_d == desired_d:
+        return {}, []
+    all_keys = set(base_d) | set(desired_d)
+    changed_fields = sorted(k for k in all_keys if base_d.get(k) != desired_d.get(k))
+    out_style = {k: desired_d[k] for k in changed_fields if k in desired_d}
+    return out_style, changed_fields
+
+
+def _make_update_table_cell_style(
+    table_start: int,
+    row_idx: int,
+    col_idx: int,
+    style_dict: dict[str, Any],
+    fields: list[str],
+    segment_id: SegmentID,
+    tab_id: TabID,
+) -> dict[str, Any]:
+    """Create an updateTableCellStyle request targeting a single cell."""
+    return {
+        "updateTableCellStyle": {
+            "tableRange": {
+                "tableCellLocation": _make_table_cell_location(
+                    table_start, row_idx, col_idx, segment_id, tab_id
+                ),
+                "rowSpan": 1,
+                "columnSpan": 1,
+            },
+            "tableCellStyle": style_dict,
+            "fields": ",".join(fields),
+        }
     }
 
 
@@ -1408,6 +1475,19 @@ def _generate_insert_table_with_content(
             )
             requests.extend(pop_reqs)
 
+    # 3. Apply tableCellStyle for cells with non-default styles
+    table_start = insert_idx + 1
+    for r, row in enumerate(table_rows):
+        cells = row.table_cells or []
+        for c, cell in enumerate(cells):
+            style_dict, fields = _cell_style_request_parts(None, cell.table_cell_style)
+            if fields:
+                requests.append(
+                    _make_update_table_cell_style(
+                        table_start, r, c, style_dict, fields, segment_id, tab_id
+                    )
+                )
+
     return requests
 
 
@@ -1452,7 +1532,12 @@ def _generate_table_diff(
     if _tables_have_identical_text_structure(base_se.table, desired_se.table):
         # Same dimensions and same text in each cell position — style changes only
         return _diff_table_cell_styles_only(
-            base_se.table, desired_se.table, segment_id, tab_id, desired_lists
+            base_se.table,
+            desired_se.table,
+            segment_id,
+            tab_id,
+            desired_lists,
+            table_start_index=base_se.start_index or 0,
         )
 
     # Same shape (rows x cols) but different cell text — positional cell diff.
@@ -1492,18 +1577,19 @@ def _diff_table_cell_styles_only(
     segment_id: SegmentID,
     tab_id: TabID,
     desired_lists: dict[str, List] | None = None,
+    table_start_index: int = 0,
 ) -> list[dict[str, Any]]:
     """Diff paragraph/text styles within table cells when text is identical.
 
     Iterates matched row/cell pairs and applies _generate_paragraph_style_diff
     on each matched paragraph. Uses the base paragraph's actual start_index
-    (valid since no structural changes are made).
+    (valid since no structural changes are made). Also emits updateTableCellStyle
+    requests for any cell whose tableCellStyle differs.
 
     Returns requests sorted right-to-left by paragraph start index.
-
-    Raises ReconcileError if tableCellStyle changes are detected (unsupported).
     """
     requests: list[dict[str, Any]] = []
+    cell_style_reqs: list[dict[str, Any]] = []
     base_rows = base_table.table_rows or []
     desired_rows = desired_table.table_rows or []
 
@@ -1522,12 +1608,21 @@ def _diff_table_cell_styles_only(
         base_cells = base_row.table_cells or []
         desired_cells = desired_row.table_cells or []
 
-        for bc, dc in zip(base_cells, desired_cells, strict=False):
-            if _table_cell_style_changed(bc, dc):
-                raise ReconcileError(
-                    "tableCellStyle changes are not supported by reconcile(). "
-                    "The Google Docs API requires updateTableCellStyle which is "
-                    "not yet implemented. Use the API directly to change cell styles."
+        for c_idx, (bc, dc) in enumerate(zip(base_cells, desired_cells, strict=False)):
+            style_dict, fields = _cell_style_request_parts(
+                bc.table_cell_style, dc.table_cell_style
+            )
+            if fields:
+                cell_style_reqs.append(
+                    _make_update_table_cell_style(
+                        table_start_index,
+                        entry.base_idx,
+                        c_idx,
+                        style_dict,
+                        fields,
+                        segment_id,
+                        tab_id,
+                    )
                 )
             # Each cell's content is a list of StructuralElements (paragraphs)
             base_paras = [se for se in (bc.content or []) if se.paragraph]
@@ -1557,7 +1652,8 @@ def _diff_table_cell_styles_only(
         return int(rng.get("startIndex", 0))
 
     requests.sort(key=_sort_key, reverse=True)
-    return requests
+    # cell_style_reqs are style-only and don't affect indices; append after para diffs
+    return requests + cell_style_reqs
 
 
 # ---------------------------------------------------------------------------

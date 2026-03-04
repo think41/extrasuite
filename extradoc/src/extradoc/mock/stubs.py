@@ -6,7 +6,12 @@ import uuid
 from typing import Any
 
 from extradoc.mock.exceptions import ValidationError
-from extradoc.mock.navigation import get_segment, get_tab, validate_range
+from extradoc.mock.navigation import (
+    find_table_at_index,
+    get_segment,
+    get_tab,
+    validate_range,
+)
 
 
 def handle_replace_all_text(
@@ -87,11 +92,47 @@ def handle_update_table_cell_style(
         raise ValidationError("Must specify either tableRange or tableStartLocation")
 
     if table_range:
-        tab_id = table_range.get("tabId")
+        location = table_range.get("tableCellLocation", {})
+        tsl = location.get("tableStartLocation", {})
+        row_index = location.get("rowIndex", 0)
+        col_index = location.get("columnIndex", 0)
+        row_span = table_range.get("rowSpan", 1)
+        col_span = table_range.get("columnSpan", 1)
+        tab_id = tsl.get("tabId")
+        segment_id = tsl.get("segmentId")
+        table_idx = tsl.get("index", 0)
     else:
-        tab_id = table_start_location.get("tabId") if table_start_location else None
+        tsl = table_start_location or {}
+        tab_id = tsl.get("tabId")
+        segment_id = tsl.get("segmentId")
+        table_idx = tsl.get("index", 0)
+        row_index = 0
+        col_index = 0
+        row_span = 1
+        col_span = 1
 
-    get_tab(document, tab_id)
+    tab = get_tab(document, tab_id)
+    segment, _ = get_segment(tab, segment_id)
+    table_element, _ = find_table_at_index(segment, table_idx)
+    table = table_element["table"]
+    table_rows = table.get("tableRows", [])
+
+    field_list = [f.strip() for f in fields.split(",")]
+
+    for r in range(row_index, min(row_index + row_span, len(table_rows))):
+        row = table_rows[r]
+        cells = row.get("tableCells", [])
+        for c in range(col_index, min(col_index + col_span, len(cells))):
+            cell = cells[c]
+            cell_style = cell.setdefault("tableCellStyle", {})
+            for field in field_list:
+                if field == "*":
+                    cell_style.update(table_cell_style)
+                elif field in table_cell_style:
+                    cell_style[field] = table_cell_style[field]
+                else:
+                    cell_style.pop(field, None)
+
     return {}
 
 
