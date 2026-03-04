@@ -68,7 +68,7 @@ class FakeDatabase:
         return self.oauth_states.pop(state, None)
 
     async def save_auth_code(
-        self, auth_code: str, service_account_email: str, user_email: str = ""
+        self, auth_code: str, service_account_email: str, user_email: str
     ) -> None:
         """Save auth code with associated service account and user email."""
         self.auth_codes[auth_code] = {
@@ -225,22 +225,20 @@ class FakeDatabase:
         self,
         email: str,
         session_hash_prefix: str,
-        scope: str,
-        credential_type: str,
+        command_type: str,
+        command_context: dict,
         reason: str,
         ip: str,
-        file_hint: str = "",
     ) -> None:
         """Log an access token request."""
         self.access_logs.append(
             {
                 "email": email,
                 "session_hash_prefix": session_hash_prefix,
-                "scope": scope,
-                "credential_type": credential_type,
+                "command_type": command_type,
+                "command_context": command_context,
                 "reason": reason,
                 "ip": ip,
-                "file_hint": file_hint,
                 "timestamp": datetime.now(UTC),
             }
         )

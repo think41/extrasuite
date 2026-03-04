@@ -4,23 +4,33 @@ from __future__ import annotations
 
 from typing import Any
 
-from extrasuite.client.cli._common import _get_token, _parse_drive_file_id
+from extrasuite.client.cli._common import (
+    _get_credential,
+    _get_reason,
+    _parse_drive_file_id,
+)
 
 
 def cmd_drive_ls(args: Any) -> None:
     """List files visible to the service account in Google Drive."""
     from extrasuite.client.google_api import format_drive_files, list_drive_files
 
+    folder_url = getattr(args, "folder", "") or ""
     query_parts: list[str] = []
-    if getattr(args, "folder", None):
-        folder_id = _parse_drive_file_id(args.folder)
+    if folder_url:
+        folder_id = _parse_drive_file_id(folder_url)
         query_parts.append(f"'{folder_id}' in parents")
 
     query = " and ".join(query_parts)
-    access_token = _get_token(args, reason="Listing Drive files", scope="drive.ls")
+    reason = _get_reason(args, default="Listing Drive files")
+    cred = _get_credential(
+        args,
+        command={"type": "drive.ls", "folder_url": folder_url, "query": query},
+        reason=reason,
+    )
 
     result = list_drive_files(
-        access_token,
+        cred.token,
         query=query,
         page_size=args.max,
         page_token=args.page or "",
@@ -34,10 +44,15 @@ def cmd_drive_search(args: Any) -> None:
     """Search files visible to the service account in Google Drive."""
     from extrasuite.client.google_api import format_drive_files, list_drive_files
 
-    access_token = _get_token(args, reason="Searching Drive files", scope="drive.ls")
+    reason = _get_reason(args, default="Searching Drive files")
+    cred = _get_credential(
+        args,
+        command={"type": "drive.search", "query": args.query},
+        reason=reason,
+    )
 
     result = list_drive_files(
-        access_token,
+        cred.token,
         query=args.query,
         page_size=args.max,
         page_token=args.page or "",

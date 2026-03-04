@@ -10,7 +10,8 @@ from typing import Any
 from extrasuite.client.cli._common import (
     _cmd_create,
     _cmd_share,
-    _get_token,
+    _get_credential,
+    _get_reason,
     _parse_spreadsheet_id,
 )
 
@@ -23,11 +24,16 @@ def cmd_sheet_pull(args: Any) -> None:
 
     spreadsheet_id = _parse_spreadsheet_id(args.url)
     output_dir = Path(args.output_dir) if args.output_dir else Path()
-    access_token = _get_token(args, reason="Pulling Google Sheet", scope="sheet.pull")
+    reason = _get_reason(args, default="Pulling Google Sheet")
+    cred = _get_credential(
+        args,
+        command={"type": "sheet.pull", "file_url": args.url, "file_name": ""},
+        reason=reason,
+    )
     max_rows = 0 if args.no_limit else args.max_rows
 
     async def _run() -> None:
-        transport = GoogleSheetsTransport(access_token)
+        transport = GoogleSheetsTransport(cred.token)
         client = SheetsClient(transport)
         try:
             files = await client.pull(
@@ -90,12 +96,15 @@ def cmd_sheet_push(args: Any) -> None:
 
     from extrasheet import GoogleSheetsTransport, SheetsClient
 
-    access_token = _get_token(
-        args, reason="Pushing changes to Google Sheet", scope="sheet.push"
+    reason = _get_reason(args, default="Pushing changes to Google Sheet")
+    cred = _get_credential(
+        args,
+        command={"type": "sheet.push", "file_url": "", "file_name": ""},
+        reason=reason,
     )
 
     async def _run() -> None:
-        transport = GoogleSheetsTransport(access_token)
+        transport = GoogleSheetsTransport(cred.token)
         client = SheetsClient(transport)
         try:
             result = client.push(args.folder, force=args.force)
@@ -133,12 +142,20 @@ def cmd_sheet_batchupdate(args: Any) -> None:
         )
         sys.exit(1)
 
-    access_token = _get_token(
-        args, reason="Executing batchUpdate on Google Sheet", scope="sheet.push"
+    reason = _get_reason(args, default="Executing batchUpdate on Google Sheet")
+    cred = _get_credential(
+        args,
+        command={
+            "type": "sheet.batchupdate",
+            "file_url": args.url,
+            "file_name": "",
+            "request_count": len(requests_list),
+        },
+        reason=reason,
     )
 
     async def _run() -> None:
-        transport = GoogleSheetsTransport(access_token)
+        transport = GoogleSheetsTransport(cred.token)
         try:
             response = await transport.batch_update(spreadsheet_id, requests_list)
             print(f"Applied {len(requests_list)} requests.")

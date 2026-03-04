@@ -15,6 +15,8 @@ FastAPI server that authenticates users in a Google Workspace domain and issues 
 | File | Purpose |
 |------|---------|
 | `src/extrasuite/server/api.py` | Route definitions for all auth and token endpoints |
+| `src/extrasuite/server/commands.py` | Pydantic discriminated union of all command types |
+| `src/extrasuite/server/command_registry.py` | Maps command type → SA vs DWD, OAuth scopes, credential resolution |
 | `src/extrasuite/server/token_generator.py` | Service account creation and token generation |
 | `src/extrasuite/server/database.py` | Firestore: session state, auth codes, user→SA mapping |
 | `src/extrasuite/server/main.py` | FastAPI app, middleware, exception handlers |
@@ -31,9 +33,46 @@ See [`auth-spec.md`](../website/docs/api/auth-spec.md) for the full protocol. Th
 - `GET /api/token/auth?port=N` — existing endpoint, reused as Phase 1 start. Redirects to Google OAuth. On success redirects to `localhost:{port}/on-authentication?code=X`.
 - `POST /api/auth/session/exchange` — exchange auth code for 30-day session token. Stores device fingerprint in Firestore `session_tokens` collection.
 
-**Phase 2 — Headless access token exchange** (every command, no browser):
+**Phase 2 — Headless credential exchange** (every command, no browser):
 
-- `POST /api/auth/token` — session token passed in `Authorization: Bearer` header (not body, to avoid proxy log exposure). Validates session, logs request to `access_logs`, dispatches to `TokenGenerator.generate_token()` (SA) or `TokenGenerator.generate_delegated_token()` (DWD) based on scope.
+- `POST /api/auth/token` — session token passed in `Authorization: Bearer` header (not body, to avoid proxy log exposure). Request body contains a typed `command` object and a `reason` string. Validates session, resolves credentials via `command_registry.resolve_credentials()`, logs the full command context to `access_logs`, returns a `credentials` array.
+
+**Request body (Phase 2):**
+```json
+{
+  "command": {"type": "sheet.pull", "file_url": "...", "file_name": "..."},
+  "reason": "User wants to review the Q4 budget"
+}
+```
+
+**Response (Phase 2):**
+```json
+{
+  "credentials": [
+    {
+      "provider": "google",
+      "kind": "bearer_sa",
+      "token": "ya29.xxx",
+      "expires_at": "2026-03-02T11:00:00+00:00",
+      "scopes": [],
+      "metadata": {"service_account_email": "user-abc@project.iam.gserviceaccount.com"}
+    }
+  ],
+  "command_type": "sheet.pull"
+}
+```
+
+The `command_registry.py` module is the single source of truth for which commands use SA vs DWD and which OAuth scopes each DWD command requires.
+
+**Adding a new command — checklist:**
+
+1. Add a `XyzCommand(BaseModel)` class to `commands.py` with a `Literal["xyz.op"]` type field and audit-context fields (all optional, empty defaults).
+2. Add the type string to `Command` union at the bottom of `commands.py`.
+3. Add the type to `_SA_COMMAND_TYPES` (service account) or `_DWD_COMMAND_SCOPES` (delegation, with full scope URL list) in `command_registry.py`.
+4. Run `pytest tests/test_v2_session.py::TestCommandRegistrySync` — this test catches union/registry drift automatically.
+5. Update the CLI (`client/src/extrasuite/client/cli/`) to build the typed command dict.
+6. If the command uses a new OAuth scope: update `CLAUDE.md` (root) OAuth Delegation Scopes table and `server/.env.template` `DELEGATION_SCOPES` example line.
+7. Update the Command Type Table in `website/docs/api/auth-spec.md`.
 
 **Admin session management:**
 

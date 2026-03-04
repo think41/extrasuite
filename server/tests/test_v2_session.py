@@ -1,10 +1,12 @@
 """Tests for v2 session-token auth protocol — database and scope-allowlist logic."""
 
 import hashlib
+import typing
 
 import pytest
 
-from extrasuite.server.api import _DWD_SCOPES
+from extrasuite.server.command_registry import _ALL_COMMAND_TYPES, _DWD_COMMAND_SCOPES
+from extrasuite.server.commands import Command
 from tests.fakes import FakeDatabase, FakeSettings
 
 
@@ -92,15 +94,16 @@ class TestFakeDatabaseSessionTokens:
         await db.log_access_token_request(
             email="user@example.com",
             session_hash_prefix="abc123",
-            scope="sheet.pull",
-            credential_type="sa",
+            command_type="sheet.pull",
+            command_context={"file_url": "https://docs.google.com/s/1", "file_name": "Budget"},
             reason="Pulling sheet data",
             ip="1.2.3.4",
         )
         assert len(db.access_logs) == 1
         log = db.access_logs[0]
         assert log["email"] == "user@example.com"
-        assert log["scope"] == "sheet.pull"
+        assert log["command_type"] == "sheet.pull"
+        assert log["command_context"]["file_url"] == "https://docs.google.com/s/1"
         assert log["reason"] == "Pulling sheet data"
 
 
@@ -126,24 +129,16 @@ class TestScopeAllowlist:
         assert settings.is_scope_allowed(f"{self._PREFIX}script.projects") is False
         assert settings.is_scope_allowed(f"{self._PREFIX}gmail.readonly") is False
 
-    def test_dwd_scope_set_matches_claude_md(self) -> None:
-        """Verify _DWD_SCOPES in api.py matches the documented allowed scopes in CLAUDE.md."""
-        expected = frozenset(
-            {
-                "calendar",
-                "gmail.compose",
-                "gmail.readonly",
-                "script.projects",
-                "script.deployments",
-                "contacts.readonly",
-                "contacts.other.readonly",
-                "drive.file",
-            }
-        )
-        assert expected == _DWD_SCOPES, (
-            f"_DWD_SCOPES {_DWD_SCOPES} does not match documented allowed scopes {expected}. "
-            "Update either _DWD_SCOPES or CLAUDE.md."
-        )
+    def test_dwd_command_scopes_use_full_urls(self) -> None:
+        """Verify all values in _DWD_COMMAND_SCOPES are full Google OAuth scope URLs."""
+        prefix = "https://www.googleapis.com/auth/"
+        for cmd_type, scopes in _DWD_COMMAND_SCOPES.items():
+            assert scopes, f"Command {cmd_type!r} has empty scopes list"
+            for scope in scopes:
+                assert scope.startswith(prefix), (
+                    f"Command {cmd_type!r} scope {scope!r} is not a full URL. "
+                    "All scopes in _DWD_COMMAND_SCOPES must be full https://... URLs."
+                )
 
 
 class TestSAAuthCodeRetrieve:
@@ -187,9 +182,36 @@ class TestSAAuthCodeRetrieve:
     async def test_retrieve_auth_code_is_single_use(self, db: FakeDatabase) -> None:
         """Auth code is consumed on first retrieval."""
         await db.save_auth_code(
-            "one-time-code", service_account_email="sa@proj.iam.gserviceaccount.com"
+            "one-time-code",
+            service_account_email="sa@proj.iam.gserviceaccount.com",
+            user_email="user@example.com",
         )
         first = await db.retrieve_auth_code("one-time-code")
         assert first is not None
         second = await db.retrieve_auth_code("one-time-code")
         assert second is None
+
+
+class TestCommandRegistrySync:
+    """Ensures the Command union and command_registry stay in sync."""
+
+    def test_command_union_matches_registry(self) -> None:
+        """Every type literal in the Command union must appear in command_registry,
+        and every registry entry must have a corresponding Command class.
+
+        This test prevents the common mistake of adding a new Command class to
+        commands.py but forgetting to register it in command_registry.py (or
+        vice versa).
+        """
+        # Extract the type literals from the discriminated union via Pydantic metadata.
+        union_args = typing.get_args(typing.get_args(Command)[0])
+        union_types: set[str] = set()
+        for cls in union_args:
+            (literal_type,) = typing.get_args(cls.model_fields["type"].annotation)
+            union_types.add(literal_type)
+
+        assert union_types == _ALL_COMMAND_TYPES, (
+            f"Mismatch between Command union and command_registry._ALL_COMMAND_TYPES.\n"
+            f"  In union but not registry: {union_types - _ALL_COMMAND_TYPES}\n"
+            f"  In registry but not union: {_ALL_COMMAND_TYPES - union_types}"
+        )

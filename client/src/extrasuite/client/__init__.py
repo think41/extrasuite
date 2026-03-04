@@ -1,36 +1,32 @@
-"""ExtraSuite Client - Secure OAuth token exchange for CLI tools.
+"""ExtraSuite Client - Secure credential exchange for CLI tools.
 
-This library provides a simple interface to obtain short-lived Google service
-account tokens via the ExtraSuite protocol or service account files. It handles
-the OAuth flow automatically, including browser-based authentication and token caching.
+This library provides a simple interface to obtain short-lived credentials via
+the ExtraSuite protocol or service account files. It handles the OAuth flow
+automatically, including browser-based authentication and credential caching.
 
-Tokens are cached in ~/.config/extrasuite/token.json with secure file permissions
-(readable only by owner). This follows the same pattern used by gcloud, aws-cli,
-and other CLI tools that store short-lived credentials.
+Credentials are cached per command type in ~/.config/extrasuite/credentials/
+with secure file permissions (readable only by owner).
 
-Example:
+Example::
+
     from extrasuite.client import CredentialsManager
 
     manager = CredentialsManager()
-    token = manager.get_token()
-
-    # Use token with Google APIs
-    import gspread
-    from google.oauth2.credentials import Credentials
-
-    creds = Credentials(token=token.access_token)
-    gc = gspread.authorize(creds)
+    cred = manager.get_credential(
+        command={"type": "sheet.pull", "file_url": "https://docs.google.com/..."},
+        reason="User wants to review the Q4 budget sheet",
+    )
+    # cred.token is the Bearer token for Google APIs
+    # cred.service_account_email is the SA email (for file sharing)
 """
 
 from extrasuite.client.credentials import (
+    Credential,
     CredentialsManager,
-    OAuthToken,
-    Token,
 )
 
 __version__ = "0.4.0"
 __all__ = [
+    "Credential",
     "CredentialsManager",
-    "OAuthToken",
-    "Token",
 ]

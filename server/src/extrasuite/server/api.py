@@ -11,7 +11,7 @@ Endpoints:
 - POST /api/delegation/exchange - [Deprecated] Exchange auth code for delegated token
 - GET  /api/auth/callback       - OAuth callback (shared by all flows)
 - POST /api/auth/session/exchange - Phase 1: Exchange auth code for 30-day session token
-- POST /api/auth/token          - Phase 2: Exchange session token for short-lived access token
+- POST /api/auth/token          - Phase 2: Exchange session token for credential(s) via typed Command
 - GET  /api/admin/sessions      - List sessions for email (self-service or admin)
 - DELETE /api/admin/sessions/{hash} - Revoke a session
 - POST /api/admin/sessions/revoke-all - Revoke all sessions for email
@@ -34,6 +34,8 @@ from pydantic import BaseModel, Field
 from slowapi import Limiter
 from slowapi.util import get_remote_address
 
+from extrasuite.server.command_registry import _ALL_COMMAND_TYPES, Credential, resolve_credentials
+from extrasuite.server.commands import Command
 from extrasuite.server.config import Settings, get_settings
 from extrasuite.server.database import Database, get_database
 from extrasuite.server.token_generator import DelegationError, TokenGenerator
@@ -53,34 +55,6 @@ MIN_PORT = 1024
 MAX_PORT = 65535
 
 router = APIRouter()
-
-# Scope → credential type mapping (server-authoritative)
-_SA_SCOPES: frozenset[str] = frozenset(
-    {
-        "sheet.pull",
-        "sheet.push",
-        "doc.pull",
-        "doc.push",
-        "slide.pull",
-        "slide.push",
-        "form.pull",
-        "form.push",
-        "drive.ls",
-    }
-)
-_DWD_SCOPES: frozenset[str] = frozenset(
-    {
-        "calendar",
-        "gmail.compose",
-        "gmail.readonly",
-        "script.projects",
-        "script.deployments",
-        "contacts.readonly",
-        "contacts.other.readonly",
-        "drive.file",
-    }
-)
-_ALL_SCOPES = _SA_SCOPES | _DWD_SCOPES
 
 # Deprecation sunset date (one year from design)
 _DEPRECATION_SUNSET = "2026-12-31"
@@ -552,25 +526,31 @@ class SessionExchangeResponse(BaseModel):
     email: str
 
 
-class AccessTokenRequest(BaseModel):
+class TokenRequest(BaseModel):
     """Request body for access token exchange (Phase 2).
 
     The session token is passed in the Authorization: Bearer header, not in the body,
     to avoid it appearing in server access logs.
+
+    ``command`` is a typed discriminated union — the ``type`` field identifies the
+    operation and carries exactly the context fields relevant for that operation.
+    ``reason`` is agent-supplied user intent (not a hardcoded code description).
     """
 
-    scope: str = Field(..., min_length=1, description="Scope (e.g., sheet.pull, gmail.compose)")
-    reason: str = Field(..., min_length=1, description="Reason for requesting this token")
-    file_hint: str = Field("", description="Optional Drive file URL or ID")
+    command: Command = Field(..., description="Typed command describing the operation")
+    reason: str = Field(..., min_length=1, description="Agent-supplied user intent")
 
 
-class AccessTokenResponse(BaseModel):
-    """Response body for access token exchange."""
+class TokenResponse(BaseModel):
+    """Response body for access token exchange.
 
-    access_token: str
-    expires_at: str  # ISO 8601
-    token_type: str = "Bearer"
-    service_account_email: str
+    ``credentials`` is a list so that future multi-provider operations can return
+    tokens for several services in a single round-trip.  Today it always contains
+    exactly one Google credential.
+    """
+
+    credentials: list[Credential]
+    command_type: str  # echo of command.type — useful as a client-side cache key
 
 
 def _get_client_ip(request: Request) -> str:
@@ -651,16 +631,25 @@ async def exchange_auth_code_for_session(
     client_ip = _get_client_ip(request)
     expires_at = datetime.now(UTC) + timedelta(days=settings.session_token_expiry_days)
 
-    await db.save_session_token(
-        token_hash=token_hash,
-        email=email,
-        device_ip=client_ip,
-        device_mac=body.device_mac,
-        device_hostname=body.device_hostname,
-        device_os=body.device_os,
-        device_platform=body.device_platform,
-        expiry_days=settings.session_token_expiry_days,
-    )
+    try:
+        await db.save_session_token(
+            token_hash=token_hash,
+            email=email,
+            device_ip=client_ip,
+            device_mac=body.device_mac,
+            device_hostname=body.device_hostname,
+            device_os=body.device_os,
+            device_platform=body.device_platform,
+            expiry_days=settings.session_token_expiry_days,
+        )
+    except Exception as e:
+        logger.exception(
+            "Failed to persist session token",
+            extra={"email": email, "error": str(e)},
+        )
+        raise HTTPException(
+            status_code=500, detail="Failed to provision session — please retry"
+        ) from e
 
     logger.info(
         "Session token issued", extra={"email": email, "device_hostname": body.device_hostname}
@@ -673,77 +662,61 @@ async def exchange_auth_code_for_session(
     )
 
 
-@router.post("/auth/token", response_model=AccessTokenResponse)
+@router.post("/auth/token", response_model=TokenResponse)
 @limiter.limit("60/minute")
 async def exchange_session_for_access_token(
     request: Request,
-    body: AccessTokenRequest,
+    body: TokenRequest,
     db: Database = Depends(get_database),
     settings: Settings = Depends(get_settings),
-) -> AccessTokenResponse:
+) -> TokenResponse:
     """Exchange a session token for a short-lived access token (Phase 2).
 
     This is the headless path: no browser required. The session token is passed
     in the Authorization: Bearer header (not the body) to prevent it from being
     recorded in server access logs.
+
+    The ``command`` field is a typed discriminated union. The server resolves the
+    command type to the appropriate credential(s) and performs allowlist checks.
     """
     # Validate session token from Authorization: Bearer header
     caller = await _validate_bearer_session(request, db)
     email = caller["email"]
     token_hash = caller["token_hash"]
 
-    # Validate scope
-    if body.scope not in _ALL_SCOPES:
+    cmd_type = body.command.type
+
+    # Reject unknown command types with an informative error
+    if cmd_type not in _ALL_COMMAND_TYPES:
         raise HTTPException(
             status_code=400,
-            detail=f"Unknown scope: {body.scope}. Valid: {sorted(_ALL_SCOPES)}",
+            detail=f"Unknown command type: {cmd_type!r}. Valid types: {sorted(_ALL_COMMAND_TYPES)}",
         )
 
-    # For DWD scopes, enforce the server's delegation scope allowlist (DELEGATION_SCOPES env var)
-    if body.scope in _DWD_SCOPES:
-        scope_url = _resolve_scope(body.scope)
-        if not settings.is_scope_allowed(scope_url):
-            logger.warning(
-                "Disallowed DWD scope requested via v2 session token",
-                extra={"email": email, "scope": body.scope},
-            )
-            raise HTTPException(
-                status_code=403,
-                detail=f"Scope '{body.scope}' is not permitted by server configuration.",
-            )
-
-    # Log access (best-effort)
+    # Log access (best-effort) — store command context for risk modelling
     client_ip = _get_client_ip(request)
     try:
         await db.log_access_token_request(
             email=email,
             session_hash_prefix=token_hash[:16],
-            scope=body.scope,
-            credential_type="sa" if body.scope in _SA_SCOPES else "dwd",
+            command_type=cmd_type,
+            command_context=body.command.model_dump(exclude={"type"}),
             reason=body.reason,
             ip=client_ip,
-            file_hint=body.file_hint,
         )
     except Exception as e:
         logger.warning("Failed to log access token request", extra={"error": str(e)})
 
-    # Generate token
+    # Resolve credentials — allowlist check and token generation
     token_generator = TokenGenerator(database=db, settings=settings)
-    if body.scope in _SA_SCOPES:
-        result = await token_generator.generate_token(email)
-    else:
-        result = await token_generator.generate_delegated_token(email, [_resolve_scope(body.scope)])
+    credentials = await resolve_credentials(body.command, email, token_generator, settings)
 
     logger.info(
         "Access token issued",
-        extra={"email": email, "scope": body.scope},
+        extra={"email": email, "command_type": cmd_type},
     )
 
-    return AccessTokenResponse(
-        access_token=result.token,
-        expires_at=result.expires_at.isoformat(),
-        service_account_email=result.service_account_email,
-    )
+    return TokenResponse(credentials=credentials, command_type=cmd_type)
 
 
 # =============================================================================
@@ -754,7 +727,11 @@ async def exchange_session_for_access_token(
 def _assert_session_authorized(
     caller_email: str, target_email: str, settings: Settings, action: str
 ) -> None:
-    """Raise 403 if caller is neither the owner nor an admin."""
+    """Raise 403 if caller is neither the owner nor an admin.
+
+    All email comparisons are case-insensitive. Settings.get_admin_emails()
+    must return lowercase-normalised addresses to make this work correctly.
+    """
     if (
         caller_email.lower() != target_email.lower()
         and caller_email.lower() not in settings.get_admin_emails()

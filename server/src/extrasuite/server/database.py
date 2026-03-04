@@ -24,16 +24,18 @@ Collections structure:
 - session_tokens: Document ID = SHA-256(raw_token) as 64-char hex
   - email: User's email
   - created_at: When the session was created
-  - expires_at: Firestore TTL field (SESSION_TOKEN_TTL after creation)
+  - active_expires_at: When the session stops being accepted (SESSION_TOKEN_EXPIRY_DAYS, default 30d)
+  - expires_at: Firestore TTL field for auto-deletion (SESSION_TOKEN_TTL = 60d = 30d active + 30d audit)
   - revoked_at: When the session was revoked (null if active)
   - device_ip, device_mac, device_hostname, device_os, device_platform
 
 - access_logs: Auto-generated doc ID
-  - email, session_hash_prefix, scope, credential_type, reason, ip, file_hint
+  - email, session_hash_prefix, command_type, command_context (nested dict), reason, ip
   - timestamp, expires_at (30-day TTL)
 
-Note: Sessions are handled via starlette's signed cookies (stateless).
+Note: v1 sessions are handled via starlette's signed cookies (stateless).
 The cookie stores the user email, which is validated against the users collection.
+v2 sessions use long-lived session tokens stored in Firestore (session_tokens collection).
 
 Note: We do NOT store OAuth access tokens. Tokens are generated on-demand when
 the auth code is exchanged. We only store the service account email needed to
@@ -48,7 +50,7 @@ import asyncio
 from datetime import UTC, datetime, timedelta
 
 from fastapi import Request
-from google.cloud.firestore_v1 import AsyncClient, AsyncQuery
+from google.cloud.firestore_v1 import AsyncClient
 from google.cloud.firestore_v1.async_transaction import async_transactional
 
 # OAuth state TTL (10 minutes)
@@ -172,27 +174,6 @@ class Database:
 
         transaction = self._client.transaction()
         return await asyncio.wait_for(_atomic_retrieve(transaction), timeout=self._timeout)
-
-    async def cleanup_expired_oauth_states(self) -> int:
-        """Clean up expired OAuth states. Returns count of deleted states."""
-        now = datetime.now(UTC)
-
-        async def _query() -> AsyncQuery:
-            return (
-                self._client.collection("oauth_states")
-                .where("expires_at", "<", now)
-                .limit(100)  # Batch size to avoid timeout
-            )
-
-        query = await asyncio.wait_for(_query(), timeout=self._timeout)
-        expired_docs = await asyncio.wait_for(query.get(), timeout=self._timeout)
-
-        count = 0
-        for doc in expired_docs:
-            await asyncio.wait_for(doc.reference.delete(), timeout=self._timeout)
-            count += 1
-
-        return count
 
     # =========================================================================
     # Auth Code Exchange (for secure token delivery)
@@ -511,10 +492,13 @@ class Database:
         non-owning admins (see api.py list_sessions).
         """
         now = datetime.now(UTC)
+        # revoked_at is set to None on creation and updated on revocation, so
+        # filtering here pushes the work to Firestore rather than Python.
         query = (
             self._client.collection("session_tokens")
             .where("email", "==", email)
             .where("active_expires_at", ">", now)
+            .where("revoked_at", "==", None)
         )
 
         async def _query() -> list:
@@ -526,8 +510,6 @@ class Database:
         for doc in docs:
             data = doc.to_dict()
             if data is None:
-                continue
-            if data.get("revoked_at") is not None:
                 continue
             result.append(
                 {
@@ -551,6 +533,7 @@ class Database:
             self._client.collection("session_tokens")
             .where("email", "==", email)
             .where("active_expires_at", ">", now)
+            .where("revoked_at", "==", None)
         )
 
         async def _query() -> list:
@@ -558,11 +541,7 @@ class Database:
 
         docs = await asyncio.wait_for(_query(), timeout=self._timeout)
 
-        active_docs = [
-            doc
-            for doc in docs
-            if doc.to_dict() is not None and doc.to_dict().get("revoked_at") is None
-        ]
+        active_docs = [doc for doc in docs if doc.to_dict() is not None]
 
         if not active_docs:
             return 0
@@ -582,13 +561,16 @@ class Database:
         self,
         email: str,
         session_hash_prefix: str,
-        scope: str,
-        credential_type: str,
+        command_type: str,
+        command_context: dict,
         reason: str,
         ip: str,
-        file_hint: str = "",
     ) -> None:
-        """Log an access token request for audit purposes.
+        """Log an access token request for audit and risk-modelling purposes.
+
+        ``command_context`` is the serialised command fields (excluding ``type``),
+        e.g. ``{"file_url": "...", "file_name": "..."}`` for a sheet.pull command
+        or ``{"subject": "...", "recipients": [...]}`` for a gmail.compose command.
 
         Stored in access_logs collection with 30-day TTL for auto-cleanup.
         """
@@ -601,11 +583,10 @@ class Database:
                 {
                     "email": email,
                     "session_hash_prefix": session_hash_prefix,
-                    "scope": scope,
-                    "credential_type": credential_type,
+                    "command_type": command_type,
+                    "command_context": command_context,
                     "reason": reason,
                     "ip": ip,
-                    "file_hint": file_hint,
                     "timestamp": now,
                     "expires_at": expires_at,
                 }
