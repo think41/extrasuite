@@ -150,8 +150,6 @@ def _build_list_level_indents(
     Used to suppress paragraph-style indent attributes that merely duplicate what
     the list-level definition already provides.
     """
-    from ._utils import dim_to_str
-
     result: dict[tuple[str, int], tuple[str | None, str | None]] = {}
     if not doc_tab.lists:
         return result

@@ -4,7 +4,7 @@ build-backend = "hatchling.build"
 
 [project]
 name = "extradoc"
-version = "0.3.0"
+version = "0.4.0"
 requires-python = ">=3.10"
 description = "File-based Google Docs representation library for LLM agents"
 readme = "README.md"
@@ -77,6 +77,9 @@ ignore = [
 # for dispatch even when not all params are used.
 "src/extradoc/mock/*_ops.py" = ["ARG001"]
 "src/extradoc/mock/stubs.py" = ["ARG001"]
+# Tests and scripts use local imports intentionally (test isolation, import-visibility tests).
+"tests/*.py" = ["PLC0415"]
+"scripts/*.py" = ["PLC0415"]
 
 [tool.ruff.lint.isort]
 known-first-party = ["extradoc"]

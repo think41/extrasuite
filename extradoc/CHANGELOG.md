@@ -2,6 +2,38 @@
 
 All notable changes to the extradoc library will be documented in this file.
 
+## [0.4.0] - 2026-03-04
+
+### Added
+
+- **Serde module** (`src/extradoc/serde/`) — bidirectional `Document ↔ XML folder` conversion replacing the legacy xml_converter pipeline. Supports text styles, paragraph styles, table cells, lists (bullet/decimal/alpha/roman), inline objects, comments, soft line breaks, and page breaks.
+- **Reconcile module** (`src/extradoc/reconcile/`) — diffs two `Document` objects and produces `list[BatchUpdateDocumentRequest]`. Covers text insertion/deletion, paragraph and text style reconciliation, table row/column operations, multi-segment (header/footer) support, multi-tab support, bullet list creation/deletion, and `DeferredID` resolution for multi-batch pushes.
+- **`updateTableCellStyle`** support in both reconcile and mock.
+- **`insertPageBreak`** — `<pagebreak/>` element in XML round-trips through serde and generates the correct API request.
+- **New-tab authoring** — reconcile handles tabs created from scratch (no pull required), with correct handling of the synthetic initial body segment.
+- **Named style default suppression** in serde — text/paragraph style attributes implied by the paragraph's named style (e.g. bold on HEADING_1) are omitted from XML output and restored on deserialize.
+- **List-level indent suppression** in serde — paragraph indent attributes duplicating the list-level definition are omitted.
+- **Multi-batch reconciliation with DeferredID** — when creating new tabs or segments, IDs are unknown until the first batch executes; `DeferredID` placeholders are resolved via `resolve_deferred_ids()` before each subsequent batch.
+- **Style provenance tracking** (`__explicit__` key) in the mock — replicates the real API's inherited-vs-explicit style behavior for `updateTextStyle`, heading clearing, link-style stripping, and `createParagraphBullets`.
+- Golden file tests for serde round-trips and reconcile scenarios.
+
+### Changed
+
+- Legacy pipeline files (`xml_converter.py`, `engine.py`, `parser.py`, `differ.py`, `walker.py`, `push.py`, `generators/`, `desugar.py`, `block_indexer.py`, `indexer.py`, `style_factorizer.py`) removed — 23 source files and 15 orphaned tests deleted.
+- `DocsClient` (`client.py`) migrated to the serde + reconcile pipeline.
+- Mock API fidelity: 393 tests passing.
+
+### Fixed
+
+- New-tab heading bug: spurious `updateParagraphStyle` no longer overwrites `HEADING_1` style when creating a new tab.
+- List type handling: `bullet`, `decimal`, `alpha`, `roman` list types now correctly round-trip via serde.
+- Mixed `<t>` content, `<a>` inside `<t>`, and plain-text `<a href>` parsed correctly (BUG-5/6/10).
+- Table diff: content updates emitted before column structural operations.
+- Explicit `<p/>` after tables and other slot-ordering bugs in reconcile.
+- Default headers/footers handled correctly in multi-tab reconcile.
+- `headingId` excluded from `updateParagraphStyle` requests.
+- Consecutive added list items batched into a single `createParagraphBullets` call.
+
 ## [0.3.0] - 2026-02-18
 
 ### Added

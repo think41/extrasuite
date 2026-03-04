@@ -3535,7 +3535,7 @@ class TestDocumentsMatchCellParaStyle:
         actual = _table_doc_dict(None)
         desired = _table_doc_dict({"namedStyleType": "HEADING_1"})
 
-        ok, diffs = documents_match(actual, desired)
+        ok, _diffs = documents_match(actual, desired)
         assert not ok, "Missing heading in cell should be detected"
 
     def test_center_alignment_detected(self):
@@ -3543,7 +3543,7 @@ class TestDocumentsMatchCellParaStyle:
         actual = _table_doc_dict(None)
         desired = _table_doc_dict({"alignment": "CENTER"})
 
-        ok, diffs = documents_match(actual, desired)
+        ok, _diffs = documents_match(actual, desired)
         assert not ok, "Missing CENTER alignment in cell should be detected"
 
     def test_matching_heading_style_passes(self):
@@ -4041,7 +4041,7 @@ class TestIssue18SectionSpecificHeaders:
         )
         desired = _make_two_section_doc_with_new_header("New Header")
 
-        with pytest.raises(ReconcileError, match="[Ss]ection"):
+        with pytest.raises(ReconcileError, match=r"[Ss]ection"):
             reconcile(base, desired)
 
     def test_modify_existing_header_in_multi_section_doc_works(self):
