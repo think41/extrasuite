@@ -76,6 +76,12 @@
     .tok-key { color: #F9A8D4; }
     .tok-val { color: #FCD34D; }
     .tok-dim { color: #9CA3AF; }
+
+    /* Mobile */
+    code { word-break: break-word; overflow-wrap: break-word; }
+    @media (max-width: 640px) {
+      .code-block { font-size: 0.7rem; }
+    }
   </style>
 </head>
 <body class="bg-white text-gray-900">
@@ -118,7 +124,7 @@
         </div>
 
         <h1 class="text-4xl md:text-5xl lg:text-6xl font-bold text-es-navy mb-6 leading-tight">
-          AI Agents for Google Workspace,<br>
+          AI Agents for Google Workspace,<br class="hidden sm:block">
           <span class="text-es-blue">Done Right</span>
         </h1>
 
@@ -143,7 +149,7 @@
   </section>
 
   <!-- Section 1: Why care? The problem -->
-  <section class="py-20 bg-white">
+  <section class="py-12 md:py-20 bg-white">
     <div class="max-w-6xl mx-auto px-6">
       <div class="max-w-3xl mx-auto text-center mb-16">
         <h2 class="text-3xl md:text-4xl font-bold text-es-navy mb-4">Why should you care?</h2>
@@ -223,7 +229,7 @@
   </section>
 
   <!-- Section 2: Why ExtraSuite - Security -->
-  <section class="py-20 bg-es-navy text-white">
+  <section class="py-12 md:py-20 bg-es-navy text-white">
     <div class="max-w-6xl mx-auto px-6">
       <div class="flex items-center gap-3 mb-4">
         <div class="w-8 h-8 bg-blue-600 rounded-lg flex items-center justify-center text-sm font-bold">A</div>
@@ -234,7 +240,7 @@
         Instead of handing the agent your OAuth token, ExtraSuite runs a lightweight server that issues fine-grained, short-lived tokens on demand — and keeps a full audit log of why each token was issued.
       </p>
 
-      <div class="grid md:grid-cols-3 gap-8 mb-16">
+      <div class="grid md:grid-cols-3 gap-6 mb-10 md:mb-16">
 
         <div class="bg-white/5 border border-white/10 rounded-2xl p-6">
           <div class="w-12 h-12 bg-blue-600/30 rounded-xl flex items-center justify-center mb-5">
@@ -352,7 +358,7 @@
   </section>
 
   <!-- Section 3: Why ExtraSuite - Token efficiency -->
-  <section class="py-20 bg-white">
+  <section class="py-12 md:py-20 bg-white">
     <div class="max-w-6xl mx-auto px-6">
       <div class="flex items-center gap-3 mb-4">
         <div class="w-8 h-8 bg-es-blue rounded-lg flex items-center justify-center text-white text-sm font-bold">B</div>
@@ -368,7 +374,7 @@
 
         <!-- Step 1: Pull -->
         <div class="grid md:grid-cols-2 gap-8 items-center">
-          <div>
+          <div class="min-w-0">
             <div class="flex items-center gap-3 mb-4">
               <div class="w-8 h-8 bg-es-light border border-blue-200 rounded-full flex items-center justify-center text-es-blue font-bold text-sm">1</div>
               <h3 class="text-xl font-bold text-es-navy">Pull — convert to files the agent can read</h3>
@@ -380,7 +386,7 @@
               A <code class="bg-gray-100 px-1 py-0.5 rounded text-xs font-mono">.pristine/</code> directory captures the original state as a reference point for diff and push.
             </p>
           </div>
-          <div class="bg-gray-950 rounded-xl overflow-hidden">
+          <div class="bg-gray-950 rounded-xl overflow-hidden min-w-0">
             <div class="flex items-center gap-1.5 px-4 py-3 bg-gray-900 border-b border-gray-800">
               <div class="w-3 h-3 rounded-full bg-red-500/70"></div>
               <div class="w-3 h-3 rounded-full bg-yellow-500/70"></div>
@@ -405,7 +411,7 @@ abc123/
 
         <!-- Step 2: Edit -->
         <div class="grid md:grid-cols-2 gap-8 items-center">
-          <div class="md:order-2">
+          <div class="md:order-2 min-w-0">
             <div class="flex items-center gap-3 mb-4">
               <div class="w-8 h-8 bg-es-light border border-blue-200 rounded-full flex items-center justify-center text-es-blue font-bold text-sm">2</div>
               <h3 class="text-xl font-bold text-es-navy">Edit — just modify the files</h3>
@@ -417,7 +423,7 @@ abc123/
               The agent can also run <code class="bg-gray-100 px-1 py-0.5 rounded text-xs font-mono">extrasuite sheet diff ./abc123/</code> to preview what the resulting API request will look like — before touching any live data.
             </p>
           </div>
-          <div class="bg-gray-950 rounded-xl overflow-hidden md:order-1">
+          <div class="bg-gray-950 rounded-xl overflow-hidden md:order-1 min-w-0">
             <div class="flex items-center gap-1.5 px-4 py-3 bg-gray-900 border-b border-gray-800">
               <div class="w-3 h-3 rounded-full bg-red-500/70"></div>
               <div class="w-3 h-3 rounded-full bg-yellow-500/70"></div>
@@ -442,7 +448,7 @@ Jun	<span class="tok-val">0</span>	<span class="tok-string">175000</span></pre>
 
         <!-- Step 3: Push -->
         <div class="grid md:grid-cols-2 gap-8 items-center">
-          <div>
+          <div class="min-w-0">
             <div class="flex items-center gap-3 mb-4">
               <div class="w-8 h-8 bg-es-light border border-blue-200 rounded-full flex items-center justify-center text-es-blue font-bold text-sm">3</div>
               <h3 class="text-xl font-bold text-es-navy">Push — one command applies all changes</h3>
@@ -454,7 +460,7 @@ Jun	<span class="tok-val">0</span>	<span class="tok-string">175000</span></pre>
               The agent's sandbox can be configured to allow <em>only</em> <code class="bg-gray-100 px-1 py-0.5 rounded text-xs font-mono">pull</code> and <code class="bg-gray-100 px-1 py-0.5 rounded text-xs font-mono">push</code> as outbound calls. Arbitrary API access is never needed.
             </p>
           </div>
-          <div class="bg-gray-950 rounded-xl overflow-hidden">
+          <div class="bg-gray-950 rounded-xl overflow-hidden min-w-0">
             <div class="flex items-center gap-1.5 px-4 py-3 bg-gray-900 border-b border-gray-800">
               <div class="w-3 h-3 rounded-full bg-red-500/70"></div>
               <div class="w-3 h-3 rounded-full bg-yellow-500/70"></div>
@@ -476,8 +482,8 @@ Jun	<span class="tok-val">0</span>	<span class="tok-string">175000</span></pre>
       </div>
 
       <!-- Comparison table -->
-      <div class="mt-16 overflow-x-auto">
-        <table class="w-full text-sm border-collapse">
+      <div class="mt-16 overflow-x-auto -mx-6 px-6">
+        <table class="w-full text-sm border-collapse min-w-[520px]">
           <thead>
             <tr class="border-b-2 border-gray-200">
               <th class="text-left py-3 px-4 font-semibold text-gray-500 uppercase tracking-wide text-xs"></th>
@@ -518,7 +524,7 @@ Jun	<span class="tok-val">0</span>	<span class="tok-string">175000</span></pre>
   </section>
 
   <!-- What you can do -->
-  <section class="py-20 bg-es-light">
+  <section class="py-12 md:py-20 bg-es-light">
     <div class="max-w-6xl mx-auto px-6">
       <div class="text-center mb-14">
         <h2 class="text-3xl md:text-4xl font-bold text-es-navy mb-4">Supported across Google Workspace</h2>
@@ -602,7 +608,7 @@ Jun	<span class="tok-val">0</span>	<span class="tok-string">175000</span></pre>
   </section>
 
   <!-- Getting Started -->
-  <section class="py-20 bg-white">
+  <section class="py-12 md:py-20 bg-white">
     <div class="max-w-6xl mx-auto px-6">
       <div class="text-center mb-14">
         <h2 class="text-3xl md:text-4xl font-bold text-es-navy mb-4">Get started in minutes</h2>
@@ -616,7 +622,7 @@ Jun	<span class="tok-val">0</span>	<span class="tok-string">175000</span></pre>
           </div>
           <h3 class="text-xl font-bold text-es-navy mb-3">For teams</h3>
           <p class="text-gray-600 mb-6 text-sm">Deploy the ExtraSuite server on Google Cloud Run. One deployment, one service account pool, one audit log for your whole organization.</p>
-          <div class="bg-gray-950 rounded-lg overflow-hidden mb-6">
+          <div class="bg-gray-950 rounded-lg overflow-hidden mb-6 min-w-0">
             <pre class="code-block p-4 text-gray-300 text-xs overflow-x-auto">gcloud run deploy extrasuite-server \
   --image=ghcr.io/think41/extrasuite-server:latest \
   --region=us-central1 \
@@ -633,7 +639,7 @@ Jun	<span class="tok-val">0</span>	<span class="tok-string">175000</span></pre>
           </div>
           <h3 class="text-xl font-bold text-es-navy mb-3">Employee onboarding</h3>
           <p class="text-gray-600 mb-6 text-sm">Each employee signs in, runs one command to install their agent skill, then shares documents with their dedicated service account — just like sharing with a colleague.</p>
-          <div class="bg-gray-950 rounded-lg overflow-hidden mb-6">
+          <div class="bg-gray-950 rounded-lg overflow-hidden mb-6 min-w-0">
             <pre class="code-block p-4 text-gray-300 text-xs overflow-x-auto"><span class="tok-comment"># Install the agent skill</span>
 extrasuite auth install-skill
 
@@ -649,7 +655,7 @@ extrasuite sheet pull https://docs.google.com/...</pre>
   </section>
 
   <!-- CTA -->
-  <section class="py-20 bg-es-blue">
+  <section class="py-12 md:py-20 bg-es-blue">
     <div class="max-w-4xl mx-auto px-6 text-center">
       <h2 class="text-3xl md:text-4xl font-bold text-white mb-4">Ready to give your agents Google Workspace access?</h2>
       <p class="text-blue-100 text-lg mb-10 max-w-2xl mx-auto">Security-first, token-efficient, and open source.</p>
