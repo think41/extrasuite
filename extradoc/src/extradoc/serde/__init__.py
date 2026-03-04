@@ -37,7 +37,7 @@ if TYPE_CHECKING:
 # This is equivalent to an empty <styles /> — no custom paragraph classes,
 # no custom list-level classes.  The reconciler treats absent custom styles
 # identically on both the base and desired sides, so the diff is still valid.
-_MINIMAL_STYLES_XML = '<?xml version="1.0" encoding="UTF-8"?>\n' "<styles />"
+_MINIMAL_STYLES_XML = '<?xml version="1.0" encoding="UTF-8"?>\n<styles />'
 
 
 def from_document(
