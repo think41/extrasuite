@@ -1,9 +1,0 @@
-<?xml version="1.0" encoding="UTF-8"?>
-<tab id="t.d6fqo0r95w6k" title="1 Paragraph Only" index="1">
-  <body>
-    <sectionbreak sectionType="CONTINUOUS" contentDirection="LEFT_TO_RIGHT" columnSeparatorStyle="NONE" />
-    <p>
-      <t>This is a paragraph, I did not press enter in this para.</t>
-    </p>
-  </body>
-</tab>

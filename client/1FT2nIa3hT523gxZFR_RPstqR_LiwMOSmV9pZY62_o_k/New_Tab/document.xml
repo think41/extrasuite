@@ -1,9 +1,0 @@
-<?xml version="1.0" encoding="UTF-8"?>
-<tab id="t.d208k580ae1h" title="New Tab" index="1">
-  <body>
-    <sectionbreak sectionType="CONTINUOUS" contentDirection="LEFT_TO_RIGHT" columnSeparatorStyle="NONE" />
-    <p>
-      <t>Body content in the new tab.</t>
-    </p>
-  </body>
-</tab>

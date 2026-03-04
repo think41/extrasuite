@@ -1,9 +1,0 @@
-<?xml version="1.0" encoding="UTF-8"?>
-<tab id="t.3l5morqq25yq" title="Tab 2" index="1">
-  <body>
-    <sectionbreak sectionType="CONTINUOUS" contentDirection="LEFT_TO_RIGHT" columnSeparatorStyle="NONE" />
-    <p>
-      <t>Tab 2 body content.</t>
-    </p>
-  </body>
-</tab>
