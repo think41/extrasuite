@@ -2,6 +2,17 @@
 
 All notable changes to the extrasheet library will be documented in this file.
 
+## [0.3.0] - 2026-03-04
+
+### Added
+
+- **Comments workflow** — `pull`, `diff`, and `push` support for Google Sheets comments. Comments are stored as `comments.json` in the sheet folder and round-trip through the standard pull/diff/push cycle.
+
+### Fixed
+
+- Empty sheet folder creation no longer fails.
+- `--no-limit` flag correctly removes the row range constraint when fetching data.
+
 ## [0.2.0] - 2026-02-11
 
 ### Breaking Changes

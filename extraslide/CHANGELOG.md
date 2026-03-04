@@ -2,6 +2,12 @@
 
 All notable changes to the extraslide library will be documented in this file.
 
+## [0.2.2] - 2026-03-04
+
+### Changed
+
+- Updated internal documentation (CLAUDE.md) and added local dev wrapper script.
+
 ## [0.2.0] - 2026-02-11
 
 ### Breaking Changes
