@@ -1,15 +1,15 @@
-"""Serde module: Document ↔ folder of XML files.
+"""Serde module: Document ↔ folder of files (XML or markdown).
 
 Public API:
-    serialize(bundle, output_path) → list[Path]   — DocumentWithComments → folder
-    deserialize(folder) → DocumentWithComments     — folder → DocumentWithComments
+    serialize(bundle, output_path, format='xml') → list[Path]
+    deserialize(folder) → DocumentWithComments   — auto-detects format from index.xml
     from_document(doc) → (IndexXml, dict[folder, TabFiles])
     to_document(tabs, document_id) → Document
 """
 
 from __future__ import annotations
 
-from typing import TYPE_CHECKING, TypeVar
+from typing import TYPE_CHECKING, Literal, TypeVar
 
 from extradoc.api_types._generated import Document
 from extradoc.comments._inject import inject_comment_refs, strip_comment_refs
@@ -77,7 +77,11 @@ def to_document(
     return tabs_to_document(tabs, document_id=document_id, title=title)
 
 
-def serialize(bundle: DocumentWithComments | Document, output_path: Path) -> list[Path]:
+def serialize(
+    bundle: DocumentWithComments | Document,
+    output_path: Path,
+    format: Literal["xml", "markdown"] = "xml",
+) -> list[Path]:
     """Write DocumentWithComments (or plain Document) to folder structure.
 
     When passed a plain Document, creates an empty FileComments and serializes
@@ -87,6 +91,7 @@ def serialize(bundle: DocumentWithComments | Document, output_path: Path) -> lis
     Args:
         bundle: The DocumentWithComments (or plain Document) to serialize
         output_path: Root directory to write into
+        format: Output format — "xml" (default) or "markdown"
 
     Returns:
         List of created file paths
@@ -97,6 +102,9 @@ def serialize(bundle: DocumentWithComments | Document, output_path: Path) -> lis
             document=bundle,
             comments=FileComments(file_id=bundle.document_id or ""),
         )
+
+    if format == "markdown":
+        return _serialize_markdown(bundle, output_path)
 
     index, tabs = from_document(bundle.document)
     created: list[Path] = []
@@ -146,9 +154,56 @@ def serialize(bundle: DocumentWithComments | Document, output_path: Path) -> lis
     return created
 
 
+def _serialize_markdown(bundle: DocumentWithComments, output_path: Path) -> list[Path]:
+    """Write a Document to folder structure using markdown format."""
+    from ._to_markdown import document_to_markdown
+
+    doc = bundle.document
+    per_tab = document_to_markdown(doc)
+
+    # Build index (same structure as XML, but format="markdown")
+    folder_map: dict[str, str] = {}
+    for folder in per_tab:
+        # We need tab_id → folder mapping; use tab index order
+        pass
+    index = build_index(doc)
+    index.format = "markdown"
+    # Patch folder names into the index tabs
+    tab_list = doc.tabs or []
+    from ._utils import sanitize_tab_name
+    for i, idx_tab in enumerate(index.tabs):
+        if i < len(tab_list):
+            props = tab_list[i].tab_properties
+            title = (props.title or "Tab 1") if props else "Tab 1"
+            idx_tab.folder = sanitize_tab_name(title)
+
+    created: list[Path] = []
+    output_path.mkdir(parents=True, exist_ok=True)
+
+    index_path = output_path / "index.xml"
+    index_path.write_text(index.to_xml_string(), encoding="utf-8")
+    created.append(index_path)
+
+    for folder, files in per_tab.items():
+        tab_dir = output_path / folder
+        tab_dir.mkdir(parents=True, exist_ok=True)
+        for filename, content in files.items():
+            p = tab_dir / filename
+            p.write_text(content, encoding="utf-8")
+            created.append(p)
+
+    # Write comments.xml (unchanged format)
+    comments_path = output_path / "comments.xml"
+    comments_path.write_text(comments_to_xml(bundle.comments), encoding="utf-8")
+    created.append(comments_path)
+
+    return created
+
+
 def deserialize(folder: Path) -> DocumentWithComments:
     """Read folder structure back into a DocumentWithComments.
 
+    Auto-detects format from index.xml (format="markdown" or default "xml").
     Strips <comment-ref> tags from each tab's document.xml before parsing.
     Reads comments.xml if present.
 
@@ -160,6 +215,9 @@ def deserialize(folder: Path) -> DocumentWithComments:
     """
     index_path = folder / "index.xml"
     index = IndexXml.from_xml_string(index_path.read_text(encoding="utf-8"))
+
+    if index.format == "markdown":
+        return _deserialize_markdown(folder, index)
 
     tabs: dict[str, TabFiles] = {}
     for index_tab in index.all_tabs_flat():
@@ -199,6 +257,33 @@ def deserialize(folder: Path) -> DocumentWithComments:
     )
 
     # Read comments.xml
+    comments_path = folder / "comments.xml"
+    if comments_path.exists():
+        file_comments = comments_from_xml(comments_path.read_text(encoding="utf-8"))
+    else:
+        file_comments = FileComments(file_id=index.id)
+
+    return DocumentWithComments(document=document, comments=file_comments)
+
+
+def _deserialize_markdown(folder: Path, index: IndexXml) -> DocumentWithComments:
+    """Read a markdown-format folder into a DocumentWithComments."""
+    from ._from_markdown import markdown_to_document
+
+    tab_content: dict[str, str] = {}
+    for index_tab in index.all_tabs_flat():
+        tab_dir = folder / index_tab.folder
+        md_path = tab_dir / "document.md"
+        source = md_path.read_text(encoding="utf-8") if md_path.exists() else ""
+        tab_content[index_tab.folder] = source
+
+    document = markdown_to_document(
+        tab_content,
+        document_id=index.id,
+        title=index.title,
+        revision_id=index.revision,
+    )
+
     comments_path = folder / "comments.xml"
     if comments_path.exists():
         file_comments = comments_from_xml(comments_path.read_text(encoding="utf-8"))
