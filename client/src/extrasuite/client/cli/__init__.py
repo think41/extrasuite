@@ -46,7 +46,9 @@ from extrasuite.client.cli.doc import (
     cmd_doc_create,
     cmd_doc_diff,
     cmd_doc_pull,
+    cmd_doc_pull_md,
     cmd_doc_push,
+    cmd_doc_push_md,
     cmd_doc_share,
 )
 from extrasuite.client.cli.drive import cmd_drive_ls, cmd_drive_search
@@ -115,8 +117,10 @@ _COMMANDS: dict[tuple[str, str | None], Callable[..., Any]] = {
     ("script", "lint"): cmd_script_lint,
     ("script", "share"): cmd_script_share,
     ("doc", "pull"): cmd_doc_pull,
+    ("doc", "pull-md"): cmd_doc_pull_md,
     ("doc", "diff"): cmd_doc_diff,
     ("doc", "push"): cmd_doc_push,
+    ("doc", "push-md"): cmd_doc_push_md,
     ("doc", "create"): cmd_doc_create,
     ("doc", "share"): cmd_doc_share,
     ("gmail", "compose"): cmd_gmail_compose,
@@ -602,6 +606,19 @@ def build_parser() -> Any:
     )
 
     sp = doc_sub.add_parser(
+        "pull-md",
+        help="Download a document as markdown",
+        parents=[auth_parent],
+        description="Pull a Google Doc and save it as markdown files (document.md per tab).",
+        formatter_class=argparse.RawDescriptionHelpFormatter,
+    )
+    sp.add_argument("url", help="Document URL or ID")
+    sp.add_argument("output_dir", nargs="?", help="Output directory (default: .)")
+    sp.add_argument(
+        "--no-raw", action="store_true", help="Don't save raw API responses"
+    )
+
+    sp = doc_sub.add_parser(
         "diff",
         help="Offline debugging tool - show pending changes",
         description=_load_help("doc", "diff"),
@@ -614,6 +631,17 @@ def build_parser() -> Any:
         help="Apply changes",
         parents=[auth_parent],
         description=_load_help("doc", "push"),
+        formatter_class=argparse.RawDescriptionHelpFormatter,
+    )
+    sp.add_argument("folder", help="Document folder path")
+    sp.add_argument("-f", "--force", action="store_true", help="Push despite warnings")
+    sp.add_argument("--verify", action="store_true", help="Pull after push to verify")
+
+    sp = doc_sub.add_parser(
+        "push-md",
+        help="Apply changes from a markdown folder",
+        parents=[auth_parent],
+        description="Push changes from a markdown-format document folder. Format is auto-detected from index.xml.",
         formatter_class=argparse.RawDescriptionHelpFormatter,
     )
     sp.add_argument("folder", help="Document folder path")

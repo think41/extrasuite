@@ -99,6 +99,42 @@ def cmd_doc_push(args: Any) -> None:
     asyncio.run(_run())
 
 
+def cmd_doc_pull_md(args: Any) -> None:
+    """Pull a Google Doc in markdown format."""
+    from extradoc import DocsClient, GoogleDocsTransport
+
+    document_id = _parse_document_id(args.url)
+    output_dir = Path(args.output_dir) if args.output_dir else Path()
+    reason = _get_reason(args, default="Pulling Google Doc as markdown")
+    cred = _get_credential(
+        args,
+        command={"type": "doc.pull", "file_url": args.url, "file_name": ""},
+        reason=reason,
+    )
+
+    async def _run() -> None:
+        transport = GoogleDocsTransport(cred.token)
+        client = DocsClient(transport)
+        try:
+            await client.pull(
+                document_id,
+                output_dir,
+                save_raw=not args.no_raw,
+                format="markdown",
+            )
+            print(f"Pulled document to {output_dir / document_id}/")
+        finally:
+            await transport.close()
+
+    asyncio.run(_run())
+
+
+def cmd_doc_push_md(args: Any) -> None:
+    """Push changes to a Google Doc (markdown format, auto-detected)."""
+    # Format is auto-detected from index.xml; push logic is identical to XML.
+    cmd_doc_push(args)
+
+
 def cmd_doc_create(args: Any) -> None:
     """Create a new Google Doc."""
     _cmd_create("doc", args)

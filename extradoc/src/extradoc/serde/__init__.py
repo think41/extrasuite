@@ -271,17 +271,20 @@ def _deserialize_markdown(folder: Path, index: IndexXml) -> DocumentWithComments
     from ._from_markdown import markdown_to_document
 
     tab_content: dict[str, str] = {}
+    tab_ids: dict[str, str] = {}
     for index_tab in index.all_tabs_flat():
         tab_dir = folder / index_tab.folder
         md_path = tab_dir / "document.md"
         source = md_path.read_text(encoding="utf-8") if md_path.exists() else ""
         tab_content[index_tab.folder] = source
+        tab_ids[index_tab.folder] = index_tab.id
 
     document = markdown_to_document(
         tab_content,
         document_id=index.id,
         title=index.title,
         revision_id=index.revision,
+        tab_ids=tab_ids,
     )
 
     comments_path = folder / "comments.xml"

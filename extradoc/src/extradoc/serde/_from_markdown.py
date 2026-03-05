@@ -147,6 +147,7 @@ def markdown_to_document(
     document_id: str = "",
     title: str = "",
     revision_id: str | None = None,
+    tab_ids: dict[str, str] | None = None,
 ) -> Document:
     """Convert per-tab markdown content to a Document.
 
@@ -154,6 +155,7 @@ def markdown_to_document(
         tab_content: dict[folder_name → markdown_source]
         document_id: Optional document ID
         title: Optional document title
+        tab_ids: Optional dict[folder_name → tab_id] for using real API tab IDs
 
     Returns:
         Document without indices. Call reindex_document() if needed.
@@ -167,13 +169,14 @@ def markdown_to_document(
     for folder, source in tab_content.items():
         # Derive tab title from folder name
         tab_title = folder.replace("_", " ")
-        tab = _parse_tab(source, tab_title, folder)
+        tab_id = (tab_ids or {}).get(folder, f"t.{folder}")
+        tab = _parse_tab(source, tab_title, folder, tab_id=tab_id)
         doc.tabs.append(tab)
 
     return doc
 
 
-def _parse_tab(source: str, tab_title: str, folder: str) -> Tab:
+def _parse_tab(source: str, tab_title: str, folder: str, *, tab_id: str = "") -> Tab:
     """Parse a single tab's markdown source into a Tab."""
 
     list_synth = _ListSynth()
@@ -197,7 +200,7 @@ def _parse_tab(source: str, tab_title: str, folder: str) -> Tab:
             for fn_id, fn in footnotes.items()
         }
 
-    tab_props = TabProperties(tab_id=f"t.{folder}", title=tab_title)
+    tab_props = TabProperties(tab_id=tab_id or f"t.{folder}", title=tab_title)
     doc_tab = DocumentTab.model_validate(doc_tab_d)
     return Tab(tab_properties=tab_props, document_tab=doc_tab)
 

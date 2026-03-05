@@ -69,6 +69,7 @@ class DocsClient:
         output_path: str | Path,
         *,
         save_raw: bool = True,
+        format: str = "xml",
     ) -> list[Path]:
         """Pull a document from Google Docs to local files.
 
@@ -76,6 +77,7 @@ class DocsClient:
             document_id: The document identifier
             output_path: Parent directory for the output folder
             save_raw: Whether to save raw API responses to .raw/ folder
+            format: Output format — "xml" (default) or "markdown"
 
         Returns:
             List of file paths written
@@ -95,7 +97,7 @@ class DocsClient:
         document_dir.mkdir(parents=True, exist_ok=True)
 
         # Serialize bundle to folder
-        written_files = serde.serialize(bundle, document_dir)
+        written_files = serde.serialize(bundle, document_dir, format=format)
 
         # Optionally save raw API responses
         if save_raw:

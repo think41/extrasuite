@@ -281,17 +281,18 @@ def _serialize_text_run(tr: Any) -> str:
     link = style.link
     if link:
         url = link.url or f"#{link.heading_id or link.bookmark_id or ''}"
-        inner = _apply_formatting(content, style)
+        # Underline is implied by markdown link syntax — skip it inside links
+        inner = _apply_formatting(content, style, skip_underline=True)
         return f"[{inner}]({url})"
 
     return _apply_formatting(content, style)
 
 
-def _apply_formatting(text: str, style: Any) -> str:
+def _apply_formatting(text: str, style: Any, *, skip_underline: bool = False) -> str:
     result = _escape_md(text)
     if style.strikethrough:
         result = f"~~{result}~~"
-    if style.underline:
+    if style.underline and not skip_underline:
         result = f"<u>{result}</u>"
     if style.bold and style.italic:
         result = f"***{result}***"

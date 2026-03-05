@@ -904,6 +904,15 @@ def _process_slot_inner(
             # Style requests for added paragraphs.
             # table_size_extra=0: the spurious \n is absorbed by the preceding
             # paragraph, so the table's position immediately follows that paragraph.
+            # right_anchor_has_bullet: if the insert point is at the start of a
+            # bullet paragraph, added non-bullet paragraphs inherit the bullet and
+            # need deleteParagraphBullets to clear it.
+            _right_anchor_has_bullet = (
+                right_anchor is not None
+                and not _is_section_break(right_anchor)
+                and right_anchor.paragraph is not None
+                and right_anchor.paragraph.bullet is not None
+            )
             insert_reqs.extend(
                 _style_reqs_for_added_paras(
                     filtered,
@@ -912,6 +921,7 @@ def _process_slot_inner(
                     tab_id,
                     desired_lists,
                     table_size_extra=0,
+                    right_anchor_has_bullet=_right_anchor_has_bullet,
                 )
             )
 
@@ -1089,6 +1099,7 @@ def _style_reqs_for_added_paras(
     desired_lists: dict[str, List] | None,
     table_size_extra: int = 1,
     is_trailing_gap: bool = False,
+    right_anchor_has_bullet: bool = False,
 ) -> list[dict[str, Any]]:
     """Generate style requests for ADDED paragraphs using actual positions.
 
@@ -1108,6 +1119,11 @@ def _style_reqs_for_added_paras(
     the Google Docs API forbids for updateParagraphStyle / createParagraphBullets
     (endIndex must be strictly less than segment end).  Setting is_trailing_gap=True
     decrements the last paragraph's actual_end by 1 to produce a valid range.
+
+    right_anchor_has_bullet: True when the insertion point is at the start of a
+    bullet paragraph.  In this case, insertText causes the new paragraphs to
+    inherit the bullet style.  Non-bullet added paragraphs need an explicit
+    deleteParagraphBullets to clear the inherited bullet.
 
     Results are sorted right-to-left so they are safe to interleave with gap ops.
     """
@@ -1212,10 +1228,20 @@ def _style_reqs_for_added_paras(
 
             i = j
         else:
-            # Non-list paragraph: generate all style reqs normally
+            # Non-list paragraph: generate all style reqs normally.
+            # If inserted into a bullet context (right_anchor_has_bullet), the
+            # paragraph inherits bullet styling from the split point — prepend
+            # deleteParagraphBullets to explicitly clear it.
             reqs = _generate_style_for_added_paragraph(
                 el, actual_start, actual_end, segment_id, tab_id, desired_lists
             )
+            if right_anchor_has_bullet:
+                reqs = [
+                    _make_delete_paragraph_bullets(
+                        actual_start, actual_end, segment_id, tab_id
+                    ),
+                    *reqs,
+                ]
             if reqs:
                 style_ops.append((actual_start, reqs))
             i += 1
