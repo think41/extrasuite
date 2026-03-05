@@ -93,3 +93,6 @@ logs/
 *.sqlite
 *.sqlite3
 
+
+# Dolt database files (added by bd init)
+.dolt/
