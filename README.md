@@ -2,7 +2,50 @@
 
 **AI agents that safely read and edit your Google Workspace files — with a full audit trail.**
 
-ExtraSuite gives AI agents (Claude Code, Codex, Cursor, etc.) a structured, sandboxable way to work with Google Docs, Sheets, Slides, Forms, Apps Script, Gmail, and Calendar. Built for small and mid-sized teams who rely on Google Workspace and want AI to help — without handing an agent the keys to your entire Drive.
+ExtraSuite is terraform for google drive files. You can `pull` a google drive file (sheets/docs/forms/app scripts/slide), edit the files locally and `push` it back. Extrasuite will figure out what you changed, then create the right API calls to update the google drive file.
+
+ExtraSuite gives agents its own identity that is distinct from the users. For each user, we create a 1:1 service account. The service acount has a unique "email like" identity. Users explicitly share the file or folder with this service account. This has two unique advantages:
+- the agent can only read/comment/edit the files you explicitly share with it
+- any changes made by the agent show up in version history as "Edited by Alice's agent" instead of "Edited by Alice"
+
+ExtraSuite is built for small and mid-sized teams who rely on Google Workspace and want AI to help — without handing an agent the keys to your entire Drive. Individual users can also use it, but primary workflow is designed for teams.
+
+---
+## The Pull → Edit → Push Workflow
+
+This is the core of ExtraSuite. It works like Git for Google Workspace files.
+
+```bash
+uvx extrasuite sheet pull https://docs.google.com/spreadsheets/d/...
+# Edit the local files
+uvx extrasuite sheet push ./spreadsheet_id/
+```
+
+### Why Declarative Beats Imperative
+
+Most AI-driven automation is **imperative**: "call the Sheets API to set cell A1 to X, then call it again to set B2 to Y". This is fragile, hard to review, and impossible to sandbox meaningfully.
+
+ExtraSuite is **declarative**: the agent edits local files to express the *desired state*, and `push` figures out what changed and translates it into the correct API calls.
+
+| | Imperative API calls | ExtraSuite pull/push |
+|---|---|---|
+| Reviewability | Hard — sequence of API calls | Easy — `diff` shows exactly what changes |
+| Sandboxability | Hard — agent needs live API access throughout | Simple — agent only touches local files |
+| Recoverability | Manual | Re-pull to get back to last-pushed state |
+| Token efficiency | High — agent must read/write raw API structures | Low — agent works in human-readable formats |
+| Audit trail | Depends on logging | Built-in via Google Drive version history |
+
+### What `pull` Produces
+
+Each file type is converted into a folder of human- and LLM-readable files:
+
+- **Sheets** → `data.tsv`, `formula.json`, `format.json` (factored CSS-like styles)
+- **Slides** → `content.sml` per slide (SML: an HTML-inspired markup language)
+- **Docs** → `document.xml` (semantic HTML-like XML), `comments.xml`
+- **Forms** → a single `form.json` with all questions and settings
+- **Scripts** → `.js` and `.html` files, one per script file
+
+A `.pristine/` directory captures the original state. `diff` compares current files against pristine and shows the pending batchUpdate request — no API calls needed. `push` applies it.
 
 ---
 
@@ -42,43 +85,6 @@ That eliminates the external communication leg of the lethal trifecta entirely.
 
 ---
 
-## The Pull → Edit → Push Workflow
-
-This is the core of ExtraSuite. It works like Git for Google Workspace files.
-
-```bash
-extrasuite sheet pull https://docs.google.com/spreadsheets/d/...
-# Edit the local files
-extrasuite sheet push ./spreadsheet_id/
-```
-
-### Why Declarative Beats Imperative
-
-Most AI-driven automation is **imperative**: "call the Sheets API to set cell A1 to X, then call it again to set B2 to Y". This is fragile, hard to review, and impossible to sandbox meaningfully.
-
-ExtraSuite is **declarative**: the agent edits local files to express the *desired state*, and `push` figures out what changed and translates it into the correct API calls.
-
-| | Imperative API calls | ExtraSuite pull/push |
-|---|---|---|
-| Reviewability | Hard — sequence of API calls | Easy — `diff` shows exactly what changes |
-| Sandboxability | Hard — agent needs live API access throughout | Simple — agent only touches local files |
-| Recoverability | Manual | Re-pull to get back to last-pushed state |
-| Token efficiency | High — agent must read/write raw API structures | Low — agent works in human-readable formats |
-| Audit trail | Depends on logging | Built-in via Google Drive version history |
-
-### What `pull` Produces
-
-Each file type is converted into a folder of human- and LLM-readable files:
-
-- **Sheets** → `data.tsv`, `formula.json`, `format.json` (factored CSS-like styles)
-- **Slides** → `content.sml` per slide (SML: an HTML-inspired markup language)
-- **Docs** → `document.xml` (semantic HTML-like XML), `comments.xml`
-- **Forms** → a single `form.json` with all questions and settings
-- **Scripts** → `.js` and `.html` files, one per script file
-
-A `.pristine/` directory captures the original state. `diff` compares current files against pristine and shows the pending batchUpdate request — no API calls needed. `push` applies it.
-
----
 
 ## What You Can Actually Do
 
