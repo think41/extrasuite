@@ -33,6 +33,8 @@ class IndexHeading:
 
     tag: str  # title, subtitle, h1, h2, h3
     text: str
+    xpath: str | None = None
+    heading_id: str | None = None
 
 
 @dataclass
@@ -109,6 +111,10 @@ def _index_tab_to_element(tab: IndexTab, parent: Element) -> None:
         tab_elem.set("iconEmoji", tab.icon_emoji)
     for h in tab.headings:
         h_elem = SubElement(tab_elem, h.tag)
+        if h.xpath:
+            h_elem.set("xpath", h.xpath)
+        if h.heading_id:
+            h_elem.set("headingId", h.heading_id)
         h_elem.text = h.text
     for child_tab in tab.child_tabs:
         _index_tab_to_element(child_tab, tab_elem)
@@ -120,7 +126,14 @@ def _index_tab_from_element(tab_elem: Element) -> IndexTab:
     child_tabs: list[IndexTab] = []
     for child in tab_elem:
         if child.tag in ("title", "subtitle", "h1", "h2", "h3"):
-            headings.append(IndexHeading(tag=child.tag, text=child.text or ""))
+            headings.append(
+                IndexHeading(
+                    tag=child.tag,
+                    text=child.text or "",
+                    xpath=child.get("xpath"),
+                    heading_id=child.get("headingId"),
+                )
+            )
         elif child.tag == "tab":
             child_tabs.append(_index_tab_from_element(child))
     nl_str = tab_elem.get("nestingLevel")

@@ -404,8 +404,17 @@ class TestModels:
                     title="Tab 1",
                     folder="Tab_1",
                     headings=[
-                        IndexHeading(tag="title", text="Document Title"),
-                        IndexHeading(tag="h1", text="Introduction"),
+                        IndexHeading(
+                            tag="title",
+                            text="Document Title",
+                            xpath="/tab/body/title[1]",
+                        ),
+                        IndexHeading(
+                            tag="h1",
+                            text="Introduction",
+                            xpath="/tab/body/h1[1]",
+                            heading_id="h.intro",
+                        ),
                     ],
                 )
             ],
@@ -418,6 +427,8 @@ class TestModels:
         assert len(index2.tabs) == 1
         assert len(index2.tabs[0].headings) == 2
         assert index2.tabs[0].headings[0].text == "Document Title"
+        assert index2.tabs[0].headings[0].xpath == "/tab/body/title[1]"
+        assert index2.tabs[0].headings[1].heading_id == "h.intro"
 
 
 # ===========================================================================
@@ -612,7 +623,9 @@ class TestRoundTrip:
             [
                 _make_para("My Title", named_style=ParagraphStyleNamedStyleType.TITLE),
                 _make_para(
-                    "Introduction", named_style=ParagraphStyleNamedStyleType.HEADING_1
+                    "Introduction",
+                    named_style=ParagraphStyleNamedStyleType.HEADING_1,
+                    heading_id="h.intro",
                 ),
                 _make_para("Body text"),
                 _make_para(
@@ -627,8 +640,12 @@ class TestRoundTrip:
         assert len(headings) == 3
         assert headings[0].tag == "title"
         assert headings[0].text == "My Title"
+        assert headings[0].xpath == "/tab/body/title[1]"
         assert headings[1].tag == "h1"
         assert headings[1].text == "Introduction"
+        assert headings[1].xpath == "/tab/body/h1[1]"
+        assert headings[1].heading_id == "h.intro"
+        assert headings[2].xpath == "/tab/body/h1[2]"
 
     def test_link_roundtrip(self) -> None:
         """Links survive round-trip."""

@@ -46,17 +46,17 @@ Optional tab files (`docstyle.xml`, `namedstyles.xml`, `objects.xml`, `positione
 
 ## `index.xml`
 
-Provides the document outline and maps tab IDs to folder names. Used by `deserialize()` to discover tab folders.
+Provides the document outline and maps tab IDs to folder names. Used by `deserialize()` to discover tab folders. Heading entries also carry navigation metadata so agents can jump into the matching node in `document.xml` without scanning the full tab.
 
 ```xml
 <doc id="<documentId>" title="<title>" revision="<revisionId>">
   <tab id="<tabId>" title="<tabTitle>" folder="<folderName>"
        nestingLevel="<int>"? iconEmoji="<emoji>"? parentTabId="<id>"?>
-    <title>Document title text</title>?
-    <subtitle>Subtitle text</subtitle>?
-    <h1>Heading text</h1>*
-    <h2>...</h2>*
-    <h3>...</h3>*
+    <title xpath="<absoluteXPath>" headingId="<id>"?>Document title text</title>?
+    <subtitle xpath="<absoluteXPath>" headingId="<id>"?>Subtitle text</subtitle>?
+    <h1 xpath="<absoluteXPath>" headingId="<id>"?>Heading text</h1>*
+    <h2 xpath="<absoluteXPath>" headingId="<id>"?>...</h2>*
+    <h3 xpath="<absoluteXPath>" headingId="<id>"?>...</h3>*
     <!-- Child tabs are nested inside their parent <tab> element -->
     <tab ...>...</tab>*
   </tab>+
@@ -69,6 +69,13 @@ Provides the document outline and maps tab IDs to folder names. Used by `deseria
 - `tab/@parentTabId` — omitted for top-level tabs
 - `tab/@iconEmoji` — omitted when no icon is set
 - `tab/@folder` — the subfolder name used to locate this tab's files
+- `title|subtitle|h1|h2|h3/@xpath` — absolute XPath to the matching heading node inside the tab's `document.xml`
+- `title|subtitle|h1|h2|h3/@headingId` — copied from `document.xml` when the heading has a native Docs heading ID
+
+**Progressive disclosure pattern:**
+- Use the heading text plus `@xpath` in `index.xml` to choose the section most likely to contain the answer.
+- Open that node in `<tab>/document.xml`, then use the next indexed heading's `@xpath` as the section boundary.
+- Read or edit only the blocks between those two headings unless the task clearly requires broader context.
 
 ---
 
