@@ -51,6 +51,8 @@ Optional files (only created when content exists):
 ## Reference Docs (detailed)
 
   extrasuite sheet help                    List available reference topics
+  extrasuite sheet help formulas           All Google Sheets formulas, grouped by category
+  extrasuite sheet help formulas <name>    Syntax, summary, and official docs for one formula
   extrasuite sheet help format-reference   Colors, borders, conditional formats, merges, rich text
   extrasuite sheet help features-reference Charts, data validation, pivot tables, named ranges
   extrasuite sheet help comments-reference Comments: add replies, resolve

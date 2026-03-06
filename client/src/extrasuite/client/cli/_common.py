@@ -62,16 +62,56 @@ def _print_help_topics(module: str, module_dir: Path) -> None:
         print(f"  extrasuite {module} help {topic:<26} {description}")
 
 
+def _resolve_help_path(module_dir: Path, topic_parts: list[str]) -> Path | None:
+    """Resolve a help topic path, matching directories/files case-insensitively."""
+    if not topic_parts:
+        return None
+
+    current_dir = module_dir
+    for part in topic_parts[:-1]:
+        next_dir = next(
+            (
+                child
+                for child in current_dir.iterdir()
+                if child.is_dir() and child.name.lower() == part.lower()
+            ),
+            None,
+        )
+        if next_dir is None:
+            return None
+        current_dir = next_dir
+
+    last_part = topic_parts[-1].lower()
+    return next(
+        (
+            child
+            for child in current_dir.glob("*.md")
+            if child.stem.lower() == last_part
+        ),
+        None,
+    )
+
+
 def cmd_module_help(args: Any) -> None:
     """Show reference documentation for a module."""
     module = args.command
     module_dir = _HELP_DIR / module
-    topic: str | None = getattr(args, "topic", None)
+    topic_parts = list(getattr(args, "topic_parts", []) or [])
 
-    if topic:
-        path = module_dir / f"{topic}.md"
-        if not path.exists():
-            print(f"Unknown topic '{topic}' for '{module}'.", file=sys.stderr)
+    # Backward compatibility for callers still passing a single `topic`.
+    if not topic_parts:
+        topic = getattr(args, "topic", None)
+        if topic:
+            topic_parts = [topic]
+
+    if topic_parts:
+        path = _resolve_help_path(module_dir, topic_parts)
+        if path is None:
+            topic_display = " ".join(topic_parts)
+            print(
+                f"Unknown topic '{topic_display}' for '{module}'.",
+                file=sys.stderr,
+            )
             _print_help_topics(module, module_dir)
             sys.exit(1)
         print(path.read_text("utf-8"))
