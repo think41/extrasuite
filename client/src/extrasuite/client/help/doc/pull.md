@@ -17,22 +17,26 @@ Download a Google Doc to a local folder.
 
 Creates <output_dir>/<document_id>/ with:
 
-  document.xml    Document content in semantic XML - this is what you edit
-  styles.xml      Named style definitions (edit to add/modify styles)
-  comments.xml    Comments and replies (present only if document has comments)
+  index.xml       Document outline and tab-to-folder mapping
+  comments.xml    Comments and replies
   .pristine/      Snapshot for diff/push comparison - do not edit
   .raw/           Raw API responses for debugging - do not edit
+  <tab_folder>/   One folder per document tab
+    document.xml  Tab content in semantic XML - this is what you edit
+    styles.xml    Named style definitions (edit to add/modify styles)
+    ...           Optional read-only tab metadata files
 
 ## What to Edit
 
-document.xml is the primary file. It contains all document content as
-semantic XML (headings, paragraphs, lists, tables, etc.).
+Each tab folder's document.xml is the primary file. It contains that tab's
+content as semantic XML (headings, paragraphs, lists, tables, etc.).
 
-styles.xml defines named styles referenced by class attributes in document.xml.
-Edit it when you need to add a new style or modify an existing one.
+styles.xml in a tab folder defines named styles referenced by class attributes
+in that tab's document.xml. Edit it when you need to add a new style or modify
+an existing one.
 
-comments.xml is for adding replies to comments or resolving them.
-New top-level comments cannot be added via the API.
+comments.xml is for adding replies to comments or resolving them. New top-level
+comments cannot be added via the API.
 
 ## Example
 

@@ -3,7 +3,7 @@ Google Docs - edit documents via local XML files.
 ## Workflow
 
   extrasuite doc pull <url> [output_dir]   Download document
-  # Edit document.xml (and optionally styles.xml, comments.xml)
+  # Edit tab folders plus comments.xml
   extrasuite doc push <folder>             Apply changes to Google Docs
   extrasuite doc create <title>            Create a new document
 
@@ -12,38 +12,41 @@ After push, always re-pull before making more changes.
 ## Directory Structure
 
   <document_id>/
-    document.xml    Document content - this is what you edit
-    styles.xml      Named style definitions
-    comments.xml    Comments and replies (if any)
+    index.xml       Document outline and tab-to-folder mapping
+    comments.xml    Comments and replies
     .pristine/      Internal state - do not edit
     .raw/           Raw API responses - do not edit
+    <tab_folder>/
+      document.xml  Tab content - this is what you edit
+      styles.xml    Named style definitions
+      ...           Optional read-only tab metadata files
 
 ## document.xml Format
 
-Semantic HTML-like XML. A document contains one or more tabs. Each tab has a
-<body> and optional <header> and <footer>. Block elements inside body/header/
-footer: <p>, <h1>-<h6>, <title>, <subtitle>, <li>, <table>, <tr>, <td>.
-Inline elements can be written directly inside block elements:
+Semantic HTML-like XML for a single tab. The document as a whole is represented
+by `index.xml` plus one tab folder per tab. Each tab `document.xml` has a
+`<body>` and optional `<header>`, `<footer>`, and `<footnote>` segments. Block
+elements inside body/header/footer: `<p>`, `<h1>`-`<h6>`, `<title>`,
+`<subtitle>`, `<li>`, `<table>`, `<tr>`, `<td>`. Inline elements can be
+written directly inside block elements:
 
 ```xml
-<doc id="DOCUMENT_ID" revision="REVISION_ID">
-  <tab id="t.0" title="Tab 1" class="_base">
-    <body>
-      <sectionbreak sectionType="CONTINUOUS" contentDirection="LEFT_TO_RIGHT" columnSeparatorStyle="NONE" />
-      <h1>Heading</h1>
-      <p>A paragraph. Use <t class="emphasis">styled text</t> with classes from styles.xml.</p>
-      <p>A <a href="https://example.com">hyperlink</a> in a sentence.</p>
-      <li type="bullet">First bullet</li>
-      <li type="decimal">Numbered item</li>
-    </body>
-    <header id="h.abc" class="_base">
-      <p>Document Title</p>
-    </header>
-    <footer id="f.abc" class="_base">
-      <p>(c) 2026 My Company</p>
-    </footer>
-  </tab>
-</doc>
+<tab id="t.0" title="Tab 1" index="0">
+  <body>
+    <sectionbreak sectionType="CONTINUOUS" contentDirection="LEFT_TO_RIGHT" columnSeparatorStyle="NONE" />
+    <h1>Heading</h1>
+    <p>A paragraph. Use <t class="emphasis">styled text</t> with classes from styles.xml.</p>
+    <p>A <a href="https://example.com">hyperlink</a> in a sentence.</p>
+    <li type="bullet">First bullet</li>
+    <li type="decimal">Numbered item</li>
+  </body>
+  <header id="h.abc">
+    <p>Document Title</p>
+  </header>
+  <footer id="f.abc">
+    <p>(c) 2026 My Company</p>
+  </footer>
+</tab>
 ```
 
 **Inline elements** — write these directly inside `<p>`, `<h1>`-`<h6>`, `<li>`, etc.:
@@ -58,8 +61,9 @@ apply a style class. Bare text directly inside block elements is also valid:
 
 ## Tabs, Headers & Footers
 
-**Adding a new tab:** Add a <tab> element with a unique id and title before </doc>.
-The id can be any short string not already used (e.g. t.summary, t.newtab).
+**Adding a new tab:** Add a `<tab>` entry to `index.xml` with a unique id and
+title, then create a matching tab folder. The id can be any short string not
+already used (e.g. `t.summary`, `t.newtab`).
 
 **Adding a header/footer to an existing tab:** Add <header> and/or <footer>
 elements inside the <tab>, after </body>. Provide any placeholder id — Google
@@ -69,21 +73,21 @@ assigns the real id on push and the re-pulled file will have the real id.
 
 **New tab requirements:**
 1. Create a `<TabName>/document.xml` file with a `<sectionbreak/>` as the first body element.
-2. Create a `<TabName>/styles.xml` file (can be empty: `<styles />`).
+2. Optionally create a `<TabName>/styles.xml` file (if omitted it is treated as empty `<styles />`).
 3. Add a `<tab>` entry to `index.xml`.
 
 ```xml
 <!-- New tab with header and footer -->
-<tab id="t.summary" title="Summary" class="_base">
+<tab id="t.summary" title="Summary">
   <body>
     <sectionbreak sectionType="CONTINUOUS" contentDirection="LEFT_TO_RIGHT" columnSeparatorStyle="NONE" />
     <h1>Summary</h1>
     <p>Content here.</p>
   </body>
-  <header id="h.new" class="_base">
+  <header id="h.new">
     <p>My Document Title</p>
   </header>
-  <footer id="f.new" class="_base">
+  <footer id="f.new">
     <p>(c) 2026 My Company</p>
   </footer>
 </tab>
