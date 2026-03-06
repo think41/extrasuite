@@ -4,14 +4,32 @@
     title    CDATA #REQUIRED
     revision CDATA #IMPLIED>
 
-<!ELEMENT tab (title | subtitle | h1 | h2 | h3)*>
+<!ELEMENT tab ((title | subtitle | h1 | h2 | h3 | tab)*)>
 <!ATTLIST tab
-    id     CDATA #REQUIRED
-    title  CDATA #REQUIRED
-    folder CDATA #REQUIRED>
+    id           CDATA #REQUIRED
+    title        CDATA #REQUIRED
+    folder       CDATA #REQUIRED
+    parentTabId  CDATA #IMPLIED
+    nestingLevel CDATA #IMPLIED
+    iconEmoji    CDATA #IMPLIED>
 
 <!ELEMENT title (#PCDATA)>
 <!ELEMENT subtitle (#PCDATA)>
 <!ELEMENT h1 (#PCDATA)>
 <!ELEMENT h2 (#PCDATA)>
 <!ELEMENT h3 (#PCDATA)>
+<!ATTLIST title
+    xpath     CDATA #IMPLIED
+    headingId CDATA #IMPLIED>
+<!ATTLIST subtitle
+    xpath     CDATA #IMPLIED
+    headingId CDATA #IMPLIED>
+<!ATTLIST h1
+    xpath     CDATA #IMPLIED
+    headingId CDATA #IMPLIED>
+<!ATTLIST h2
+    xpath     CDATA #IMPLIED
+    headingId CDATA #IMPLIED>
+<!ATTLIST h3
+    xpath     CDATA #IMPLIED
+    headingId CDATA #IMPLIED>

@@ -52,10 +52,12 @@ def from_document(
 
     # Build folder_map: tab_id → folder_name for index generation
     folder_map: dict[str, str] = {}
+    tab_xml_map: dict[str, TabXml] = {}
     for folder, tab_files in tabs.items():
         folder_map[tab_files.tab.id] = folder
+        tab_xml_map[tab_files.tab.id] = tab_files.tab
 
-    index = build_index(doc, folder_map)
+    index = build_index(doc, folder_map, tab_xml_map)
     return index, tabs
 
 

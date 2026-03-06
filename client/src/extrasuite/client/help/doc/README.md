@@ -9,10 +9,16 @@ Google Docs - edit documents via local XML files.
 
 After push, always re-pull before making more changes.
 
+## Agent Hints
+
+- Start with `index.xml`
+- Use `tab/@folder` and heading `@xpath` to jump to the target section
+- Read until the next indexed heading and avoid full-file rewrites
+
 ## Directory Structure
 
   <document_id>/
-    index.xml       Document outline and tab-to-folder mapping
+    index.xml       Outline, tab mapping, and heading XPaths into document.xml
     comments.xml    Comments and replies
     .pristine/      Internal state - do not edit
     .raw/           Raw API responses - do not edit

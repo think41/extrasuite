@@ -1,4 +1,4 @@
-"""Generate IndexXml from a Document."""
+"""Generate IndexXml from a Document and serialized tab models."""
 
 from __future__ import annotations
 
@@ -8,12 +8,9 @@ from ._models import IndexHeading, IndexTab, IndexXml
 from ._utils import sanitize_tab_name
 
 if TYPE_CHECKING:
-    from extradoc.api_types._generated import (
-        Document,
-        DocumentTab,
-        Paragraph,
-        Tab,
-    )
+    from extradoc.api_types._generated import Document, Tab
+
+    from ._models import TabXml
 
 # Named styles that appear in the index outline
 _OUTLINE_STYLES: dict[str, str] = {
@@ -25,13 +22,20 @@ _OUTLINE_STYLES: dict[str, str] = {
 }
 
 
-def build_index(doc: Document, folder_map: dict[str, str] | None = None) -> IndexXml:
+def build_index(
+    doc: Document,
+    folder_map: dict[str, str] | None = None,
+    tab_xml_map: dict[str, TabXml] | None = None,
+) -> IndexXml:
     """Build an IndexXml from a Document.
 
     Args:
         doc: The Document to index.
         folder_map: Optional mapping from tab_id → folder_name.
             If not provided, folder names are derived from tab titles.
+        tab_xml_map: Optional mapping from tab_id → serialized TabXml.
+            When present, heading XPaths are derived from the exact on-disk XML
+            shape instead of the Google Docs API structure.
 
     Returns:
         IndexXml with document overview.
@@ -43,12 +47,16 @@ def build_index(doc: Document, folder_map: dict[str, str] | None = None) -> Inde
     )
 
     for tab in doc.tabs or []:
-        index.tabs.append(_build_index_tab(tab, folder_map))
+        index.tabs.append(_build_index_tab(tab, folder_map, tab_xml_map or {}))
 
     return index
 
 
-def _build_index_tab(tab: Tab, folder_map: dict[str, str] | None) -> IndexTab:
+def _build_index_tab(
+    tab: Tab,
+    folder_map: dict[str, str] | None,
+    tab_xml_map: dict[str, TabXml],
+) -> IndexTab:
     """Build an IndexTab from a Tab, recursively handling child_tabs."""
     tab_props = tab.tab_properties
     tab_id = (tab_props.tab_id or "t.0") if tab_props else "t.0"
@@ -59,7 +67,7 @@ def _build_index_tab(tab: Tab, folder_map: dict[str, str] | None) -> IndexTab:
     else:
         folder = sanitize_tab_name(tab_title)
 
-    headings = _extract_outline(tab.document_tab) if tab.document_tab else []
+    headings = _extract_outline(tab_xml_map.get(tab_id))
 
     parent_tab_id = tab_props.parent_tab_id if tab_props else None
     nesting_level = tab_props.nesting_level if tab_props else None
@@ -67,7 +75,7 @@ def _build_index_tab(tab: Tab, folder_map: dict[str, str] | None) -> IndexTab:
 
     child_tabs: list[IndexTab] = []
     for child_tab in tab.child_tabs or []:
-        child_tabs.append(_build_index_tab(child_tab, folder_map))
+        child_tabs.append(_build_index_tab(child_tab, folder_map, tab_xml_map))
 
     return IndexTab(
         id=tab_id,
@@ -81,35 +89,47 @@ def _build_index_tab(tab: Tab, folder_map: dict[str, str] | None) -> IndexTab:
     )
 
 
-def _extract_outline(doc_tab: DocumentTab) -> list[IndexHeading]:
-    """Extract heading outline from a DocumentTab (title, subtitle, h1-h3)."""
+def _extract_outline(tab_xml: TabXml | None) -> list[IndexHeading]:
+    """Extract indexed headings from the serialized TabXml body."""
     headings: list[IndexHeading] = []
-    if not doc_tab.body or not doc_tab.body.content:
+    if tab_xml is None:
         return headings
 
-    for se in doc_tab.body.content:
-        if not se.paragraph:
+    counts: dict[str, int] = {}
+    for block in tab_xml.body:
+        if not hasattr(block, "tag"):
             continue
-        para = se.paragraph
-        ps = para.paragraph_style
-        if not ps or not ps.named_style_type:
+        tag = block.tag
+        if tag not in _OUTLINE_STYLES.values():
             continue
-
-        tag = _OUTLINE_STYLES.get(ps.named_style_type.value)
-        if not tag:
-            continue
-
-        text = _paragraph_text(para)
+        counts[tag] = counts.get(tag, 0) + 1
+        text = _paragraph_text(block.inlines)
         if text:
-            headings.append(IndexHeading(tag=tag, text=text))
+            headings.append(
+                IndexHeading(
+                    tag=tag,
+                    text=text,
+                    xpath=f"/tab/body/{tag}[{counts[tag]}]",
+                    heading_id=block.heading_id,
+                )
+            )
 
     return headings
 
 
-def _paragraph_text(para: Paragraph) -> str:
+def _paragraph_text(inlines: list[object]) -> str:
     """Extract plain text from a paragraph."""
     parts: list[str] = []
-    for pe in para.elements or []:
-        if pe.text_run and pe.text_run.content:
-            parts.append(pe.text_run.content.rstrip("\n"))
+    for inline in inlines:
+        text = getattr(inline, "text", None)
+        if text:
+            parts.append(text.rstrip("\n"))
+            continue
+        children = getattr(inline, "children", None)
+        if children:
+            parts.extend(
+                child.text.rstrip("\n")
+                for child in children
+                if getattr(child, "text", None)
+            )
     return "".join(parts)
