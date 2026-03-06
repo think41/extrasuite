@@ -332,7 +332,7 @@ def build_parser() -> Any:
         help="Show reference documentation",
         formatter_class=argparse.RawDescriptionHelpFormatter,
     )
-    sp.add_argument("topic", nargs="?", help="Topic name (omit to list all)")
+    sp.add_argument("topic_parts", nargs="*", help="Topic path (omit to list all)")
 
     # --- slide ---
     slide_parser = subparsers.add_parser(
@@ -410,7 +410,7 @@ def build_parser() -> Any:
         help="Show reference documentation",
         formatter_class=argparse.RawDescriptionHelpFormatter,
     )
-    sp.add_argument("topic", nargs="?", help="Topic name (omit to list all)")
+    sp.add_argument("topic_parts", nargs="*", help="Topic path (omit to list all)")
 
     # --- form ---
     form_parser = subparsers.add_parser(
@@ -493,7 +493,7 @@ def build_parser() -> Any:
         help="Show reference documentation",
         formatter_class=argparse.RawDescriptionHelpFormatter,
     )
-    sp.add_argument("topic", nargs="?", help="Topic name (omit to list all)")
+    sp.add_argument("topic_parts", nargs="*", help="Topic path (omit to list all)")
 
     # --- script ---
     script_parser = subparsers.add_parser(
@@ -577,7 +577,7 @@ def build_parser() -> Any:
         help="Show reference documentation",
         formatter_class=argparse.RawDescriptionHelpFormatter,
     )
-    sp.add_argument("topic", nargs="?", help="Topic name (omit to list all)")
+    sp.add_argument("topic_parts", nargs="*", help="Topic path (omit to list all)")
 
     # --- doc ---
     doc_parser = subparsers.add_parser(
@@ -657,7 +657,7 @@ def build_parser() -> Any:
         help="Show reference documentation",
         formatter_class=argparse.RawDescriptionHelpFormatter,
     )
-    sp.add_argument("topic", nargs="?", help="Topic name (omit to list all)")
+    sp.add_argument("topic_parts", nargs="*", help="Topic path (omit to list all)")
 
     # --- gmail ---
     gmail_parser = subparsers.add_parser(
@@ -771,7 +771,7 @@ def build_parser() -> Any:
         help="Show reference documentation",
         formatter_class=argparse.RawDescriptionHelpFormatter,
     )
-    sp.add_argument("topic", nargs="?", help="Topic name (omit to list all)")
+    sp.add_argument("topic_parts", nargs="*", help="Topic path (omit to list all)")
 
     # --- calendar ---
     calendar_parser = subparsers.add_parser(
@@ -933,7 +933,7 @@ def build_parser() -> Any:
         help="Show reference documentation",
         formatter_class=argparse.RawDescriptionHelpFormatter,
     )
-    sp.add_argument("topic", nargs="?", help="Topic name (omit to list all)")
+    sp.add_argument("topic_parts", nargs="*", help="Topic path (omit to list all)")
 
     # --- contacts ---
     contacts_parser = subparsers.add_parser(

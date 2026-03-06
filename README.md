@@ -154,7 +154,9 @@ Each of these commands exists on all five modules. The links below go to the `sh
 | `push <folder>` | Apply changes to Google | [sheet](client/src/extrasuite/client/help/sheet/push.md) · [doc](client/src/extrasuite/client/help/doc/push.md) · [slide](client/src/extrasuite/client/help/slide/push.md) · [form](client/src/extrasuite/client/help/form/push.md) · [script](client/src/extrasuite/client/help/script/push.md) |
 | `create <title>` | Create a new file | [sheet](client/src/extrasuite/client/help/sheet/create.md) · [doc](client/src/extrasuite/client/help/doc/create.md) · [slide](client/src/extrasuite/client/help/slide/create.md) · [form](client/src/extrasuite/client/help/form/create.md) · [script](client/src/extrasuite/client/help/script/create.md) |
 | `share <folder>` | Share the file with trusted contacts | [sheet](client/src/extrasuite/client/help/sheet/share.md) |
-| `help [topic]` | Show reference documentation for the module | [sheet topics](client/src/extrasuite/client/help/sheet/README.md) · [doc topics](client/src/extrasuite/client/help/doc/README.md) |
+| `help [topic ...]` | Show reference documentation for the module | [sheet topics](client/src/extrasuite/client/help/sheet/README.md) · [doc topics](client/src/extrasuite/client/help/doc/README.md) |
+
+For Sheets formula help, use `extrasuite sheet help formulas` to list all supported formulas by category, or `extrasuite sheet help formulas <formula-name>` for the syntax and reference link for a specific formula.
 
 ### Gmail Commands
 

@@ -84,6 +84,9 @@ Currently informational only on push:
 
 ## Reference Docs
 
+  extrasuite sheet help                    List available reference topics
+  extrasuite sheet help formulas           All Google Sheets formulas, grouped by category
+  extrasuite sheet help formulas <name>    Syntax, summary, and official docs for one formula
   extrasuite sheet help format-reference    format.json and dimension.json details
   extrasuite sheet help features-reference  charts, filters, pivot tables, tables, named ranges
   extrasuite sheet help comments-reference  comments.json format and limits

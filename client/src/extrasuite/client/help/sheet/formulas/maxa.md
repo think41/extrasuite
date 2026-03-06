@@ -1,0 +1,7 @@
+# MAXA
+
+MAXA(value1, value2)
+
+Returns the maximum numeric value in a dataset.
+
+To learn more, see https://support.google.com/docs/answer/3094016
