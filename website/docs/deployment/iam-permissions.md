@@ -164,17 +164,16 @@ Domain-wide delegation is only needed if you want agents to access user-specific
 
 ### Configure ExtraSuite Server
 
-Enable delegation and optionally restrict scopes:
+Configure the delegation scope allowlist if desired:
 
 ```bash
 gcloud run services update extrasuite-server \
   --region=asia-southeast1 \
-  --update-env-vars="DELEGATION_ENABLED=true,DELEGATION_SCOPES=gmail.send,calendar,script.projects" \
+  --update-env-vars="DELEGATION_SCOPES=gmail.send,calendar,script.projects" \
   --project=$PROJECT_ID
 ```
 
-- `DELEGATION_ENABLED=true` activates the delegation endpoints
-- `DELEGATION_SCOPES` (optional) restricts which scopes clients can request — an additional layer on top of Workspace Admin Console enforcement
+- `DELEGATION_SCOPES` (optional) restricts which scopes DWD-backed command types can receive
 - If `DELEGATION_SCOPES` is omitted, any scope is allowed (Workspace Admin Console is the sole enforcement)
 
 ---

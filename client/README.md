@@ -1,6 +1,6 @@
 # extrasuite
 
-Python client library for [ExtraSuite](https://github.com/think41/extrasuite) - secure OAuth token exchange for AI agents and CLI tools.
+Python client library for ExtraSuite's v2 session-token authentication flow.
 
 ## Installation
 
@@ -8,143 +8,54 @@ Python client library for [ExtraSuite](https://github.com/think41/extrasuite) - 
 pip install extrasuite
 ```
 
-## Quick Start
-
-### CLI Authentication
-
-```bash
-# Login (opens browser for OAuth)
-python -m extrasuite.client login
-
-# Or using the console script
-extrasuite login
-
-# Logout (clears cached credentials)
-python -m extrasuite.client logout
-```
-
-### Programmatic Usage
-
-```python
-from extrasuite.client import authenticate
-
-# Get a token - opens browser for authentication if needed
-token = authenticate()
-
-# Use the token with Google APIs
-import gspread
-from google.oauth2.credentials import Credentials
-
-creds = Credentials(token.access_token)
-gc = gspread.authorize(creds)
-sheet = gc.open("My Spreadsheet").sheet1
-```
-
 ## Configuration
 
-Authentication can be configured via:
+Use one of these:
 
-1. **Constructor parameters** (highest priority)
-2. **Environment variables**
-3. **Gateway config file** `~/.config/extrasuite/gateway.json` (created by skill installation)
+1. `EXTRASUITE_SERVER_URL=https://your-server.example.com`
+2. `~/.config/extrasuite/gateway.json` containing `{"EXTRASUITE_SERVER_URL": "https://your-server.example.com"}`
+3. `CredentialsManager(server_url="https://your-server.example.com")`
+4. `CredentialsManager(service_account_path="/path/to/service-account.json")`
 
-### Environment Variables
-
-| Variable | Description |
-|----------|-------------|
-| `EXTRASUITE_AUTH_URL` | URL to start authentication flow |
-| `EXTRASUITE_EXCHANGE_URL` | URL to exchange auth code for token |
-| `SERVICE_ACCOUNT_PATH` | Path to service account JSON file (alternative auth) |
-
-### Using CredentialsManager
-
-For more control, use the `CredentialsManager` class directly:
+## Programmatic Usage
 
 ```python
 from extrasuite.client import CredentialsManager
 
-manager = CredentialsManager(
-    auth_url="https://your-server.example.com/api/token/auth",
-    exchange_url="https://your-server.example.com/api/token/exchange",
+manager = CredentialsManager(server_url="https://your-server.example.com")
+
+credential = manager.get_credential(
+    command={"type": "sheet.pull", "file_url": "https://docs.google.com/..."},
+    reason="User asked to inspect the spreadsheet",
 )
 
-token = manager.get_token()
-print(f"Service account: {token.service_account_email}")
-print(f"Expires in: {token.expires_in_seconds()} seconds")
+print(credential.kind)
+print(credential.service_account_email)
+print(credential.expires_in_seconds())
 ```
 
-### Service Account Mode
+## Session Flow
 
-For non-interactive environments, you can use a service account file:
+1. `CredentialsManager` opens `GET /api/token/auth?port=<port>` in the browser when no valid session exists
+2. The browser is redirected to localhost with a short-lived auth code
+3. The client exchanges that code at `POST /api/auth/session/exchange`
+4. The returned session token is stored in `~/.config/extrasuite/session.json`
+5. Each command exchanges the session token at `POST /api/auth/token`
+
+Credential cache files are stored under `~/.config/extrasuite/credentials/`.
+
+## Service Account Mode
+
+For non-interactive environments:
 
 ```python
 from extrasuite.client import CredentialsManager
 
 manager = CredentialsManager(service_account_path="/path/to/service-account.json")
-token = manager.get_token()
 ```
 
-Note: Service account mode requires the `google-auth` package:
+This mode requires:
+
 ```bash
 pip install google-auth
 ```
-
-## Token Storage
-
-Tokens are securely stored in the OS keyring:
-- **macOS**: Keychain
-- **Windows**: Credential Locker
-- **Linux**: Secret Service (via libsecret)
-
-## How It Works
-
-1. When you call `authenticate()` or `get_token()`, the client checks the OS keyring for a cached token
-2. If no valid cached token exists, it starts a local HTTP server and opens your browser
-3. After authentication with the ExtraSuite server, the browser redirects back with an auth code
-4. The client exchanges the auth code for a short-lived access token
-5. The token is cached in the OS keyring for subsequent calls
-
-Tokens are short-lived (1 hour) and automatically refreshed when expired.
-
-## API Reference
-
-### `authenticate()`
-
-Convenience function to get a token with minimal code.
-
-```python
-from extrasuite.client import authenticate
-
-token = authenticate(
-    auth_url=None,           # Optional: override auth URL
-    exchange_url=None,       # Optional: override exchange URL
-    service_account_path=None,  # Optional: use service account instead
-    force_refresh=False,     # Force re-authentication
-)
-```
-
-### `Token`
-
-The token object returned by authentication.
-
-```python
-token.access_token          # The OAuth2 access token string
-token.service_account_email # Email of the service account
-token.expires_at            # Unix timestamp when token expires
-token.is_valid()            # Check if token is still valid
-token.expires_in_seconds()  # Seconds until expiration
-```
-
-## Requirements
-
-- Python 3.10+
-- Dependencies: `keyring`, `certifi`
-
-For Google Sheets/Docs/Slides integration:
-```bash
-pip install gspread google-auth
-```
-
-## License
-
-MIT - Copyright (c) 2026 Think41 Technologies Pvt. Ltd.

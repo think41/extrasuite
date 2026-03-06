@@ -98,21 +98,6 @@ class TestSessionExchange:
         assert resp.status_code == 400
         assert "Invalid or expired" in resp.json()["detail"]
 
-    async def test_delegation_code_cannot_create_session(
-        self, client: httpx.AsyncClient, fake_db: FakeDatabase
-    ) -> None:
-        """Delegation auth codes must be rejected — they must not become session tokens."""
-        await fake_db.save_delegation_auth_code(
-            "deleg-code",
-            email=_USER_EMAIL,
-            scopes=["https://www.googleapis.com/auth/gmail.compose"],
-            reason="test",
-        )
-
-        resp = await client.post("/api/auth/session/exchange", json={"code": "deleg-code"})
-        # Delegation codes look like missing codes to this endpoint
-        assert resp.status_code == 400
-
     async def test_disallowed_email_domain_returns_403(self, fake_db: FakeDatabase) -> None:
         """Email domain not in allowlist → 403."""
         restricted_settings = FakeSettings(

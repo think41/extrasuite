@@ -18,6 +18,7 @@ from __future__ import annotations
 
 from typing import TYPE_CHECKING, Any
 
+from fastapi import HTTPException
 from pydantic import BaseModel
 
 if TYPE_CHECKING:
@@ -124,8 +125,6 @@ async def resolve_credentials(
         HTTPException(403): Scope not permitted by server configuration.
         DelegationError: DWD token generation failed.
     """
-    from fastapi import HTTPException
-
     cmd_type = command.type
 
     if cmd_type not in _ALL_COMMAND_TYPES:

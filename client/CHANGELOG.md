@@ -15,14 +15,9 @@ All notable changes to the extrasuite client library will be documented in this 
 
 ### Changed
 
-- **`get_token()` now requires `reason` keyword argument** — breaking change. All callers must pass `reason="..."`. Also accepts optional `pseudo_scope` (defaults to `"drive.file"`).
-- **DWD token cache reduced to 10 minutes** — `get_oauth_token()` caps cached token lifetime at `DWD_TOKEN_CACHE_SECONDS = 600`.
-- All `extrasuite <module> pull/push` commands now use the v2 headless flow when a server URL is configured.
-- `get_oauth_token()` accepts a new optional `file_hint` keyword argument.
-
-### Deprecated
-
-- Old per-command browser flow (via legacy `/api/token/auth` + `/api/token/exchange` endpoints) still works but is deprecated. Use `extrasuite auth login` to migrate to the v2 protocol.
+- Programmatic credential requests now require a `reason` keyword argument.
+- DWD credential cache reduced to 10 minutes.
+- All `extrasuite <module> pull/push` commands now use the headless session-token flow when a server URL is configured.
 
 ## [0.7.0] - 2026-02-18
 
@@ -83,18 +78,16 @@ All notable changes to the extrasuite client library will be documented in this 
 
 ### Breaking Changes
 
-- **Removed `authenticate()` and `get_oauth_token()` convenience functions.** Use
-  `CredentialsManager` directly instead:
+- **Removed older convenience helpers.** Use `CredentialsManager` directly instead:
 
   ```python
-  # Before (0.3.x)
-  from extrasuite.client import authenticate
-  token = authenticate()
-
-  # After (0.4.0)
+  # Preferred
   from extrasuite.client import CredentialsManager
   manager = CredentialsManager()
-  token = manager.get_token()
+  credential = manager.get_credential(
+      command={"type": "sheet.pull"},
+      reason="User requested spreadsheet access",
+  )
   ```
 
 - **Removed CLI entry point** (`extrasuite login`/`extrasuite logout`). The CLI was an
@@ -150,4 +143,4 @@ All notable changes to the extrasuite client library will be documented in this 
 - Service account file authentication
 - Token caching via OS keyring (macOS Keychain, Windows Credential Locker, Linux Secret Service)
 - CLI commands: `extrasuite login` and `extrasuite logout`
-- Programmatic API: `authenticate()` and `CredentialsManager`
+- Programmatic API: `CredentialsManager`

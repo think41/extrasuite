@@ -142,7 +142,7 @@ class TestScopeAllowlist:
 
 
 class TestSAAuthCodeRetrieve:
-    """Tests that retrieve_auth_code only returns SA codes, not delegation codes."""
+    """Tests for auth-code retrieval used by session establishment."""
 
     @pytest.fixture
     def db(self) -> FakeDatabase:
@@ -160,23 +160,6 @@ class TestSAAuthCodeRetrieve:
         assert result is not None
         assert result["service_account_email"] == "sa@proj.iam.gserviceaccount.com"
         assert result["user_email"] == "user@example.com"
-
-    @pytest.mark.asyncio
-    async def test_delegation_auth_code_is_not_returned_by_retrieve_auth_code(
-        self, db: FakeDatabase
-    ) -> None:
-        """Delegation auth codes must NOT be returned by retrieve_auth_code.
-
-        This enforces that delegation codes cannot be used to obtain 30-day sessions.
-        """
-        await db.save_delegation_auth_code(
-            "deleg-code",
-            email="user@example.com",
-            scopes=["https://www.googleapis.com/auth/gmail.compose"],
-            reason="test",
-        )
-        result = await db.retrieve_auth_code("deleg-code")
-        assert result is None
 
     @pytest.mark.asyncio
     async def test_retrieve_auth_code_is_single_use(self, db: FakeDatabase) -> None:

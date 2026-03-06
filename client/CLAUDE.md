@@ -27,8 +27,7 @@ manager = CredentialsManager()
 
 # Explicit server URL
 manager = CredentialsManager(
-    auth_url="https://server.example.com/api/token/auth",
-    exchange_url="https://server.example.com/api/token/exchange",
+    server_url="https://server.example.com",
 )
 
 # Service account file (no server needed)
@@ -143,8 +142,8 @@ Note: `SERVICE_ACCOUNT_PATH` mode bypasses the session flow entirely and calls G
 
 ## Configuration precedence
 
-1. Constructor parameters (`auth_url`, `exchange_url`, `delegation_auth_url`, `delegation_exchange_url`, `gateway_config_path`, `service_account_path`)
-2. Environment variables (`EXTRASUITE_SERVER_URL`, `EXTRASUITE_AUTH_URL`, `EXTRASUITE_EXCHANGE_URL`, `EXTRASUITE_DELEGATION_AUTH_URL`, `EXTRASUITE_DELEGATION_EXCHANGE_URL`)
+1. Constructor parameters (`server_url`, `gateway_config_path`, `service_account_path`)
+2. Environment variables (`EXTRASUITE_SERVER_URL`)
 3. `~/.config/extrasuite/gateway.json`
 4. `SERVICE_ACCOUNT_PATH` env var (fallback, no server needed)
 
@@ -156,11 +155,8 @@ Note: `SERVICE_ACCOUNT_PATH` mode bypasses the session flow entirely and calls G
 
 From `EXTRASUITE_SERVER_URL`, the following are derived:
 - `{server}/api/token/auth`
-- `{server}/api/token/exchange`
-- `{server}/api/delegation/auth`
-- `{server}/api/delegation/exchange`
-
-Explicit URL keys (`EXTRASUITE_AUTH_URL`, `EXTRASUITE_EXCHANGE_URL`, `EXTRASUITE_DELEGATION_AUTH_URL`, `EXTRASUITE_DELEGATION_EXCHANGE_URL`) override server-derived values.
+- `{server}/api/auth/session/exchange`
+- `{server}/api/auth/token`
 
 ## Help Documentation
 

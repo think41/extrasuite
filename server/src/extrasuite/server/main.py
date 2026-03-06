@@ -1,7 +1,6 @@
 """ExtraSuite Server.
 
-Headless API server for CLI authentication and service account token exchange.
-Entry point: CLI creates ExtraSuiteClient instance and calls get_token()
+Headless API server for CLI session establishment and credential exchange.
 """
 
 from contextlib import asynccontextmanager

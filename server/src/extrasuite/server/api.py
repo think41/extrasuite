@@ -5,17 +5,14 @@ This module contains all HTTP endpoints. Business logic is delegated to:
 - Database: Credential storage and OAuth state management
 
 Endpoints:
-- GET  /api/token/auth          - [Deprecated] CLI entry point, starts OAuth or refreshes token
-- POST /api/token/exchange      - [Deprecated] Exchange auth code for service account token
-- GET  /api/delegation/auth     - [Deprecated] Start delegation flow for user-level API access
-- POST /api/delegation/exchange - [Deprecated] Exchange auth code for delegated token
-- GET  /api/auth/callback       - OAuth callback (shared by all flows)
-- POST /api/auth/session/exchange - Phase 1: Exchange auth code for 30-day session token
-- POST /api/auth/token          - Phase 2: Exchange session token for credential(s) via typed Command
-- GET  /api/admin/sessions      - List sessions for email (self-service or admin)
+- GET  /api/token/auth             - Phase 1 browser entry point
+- GET  /api/auth/callback          - OAuth callback
+- POST /api/auth/session/exchange  - Exchange auth code for 30-day session token
+- POST /api/auth/token             - Exchange session token for credential(s) via typed Command
+- GET  /api/admin/sessions         - List sessions for email (self-service or admin)
 - DELETE /api/admin/sessions/{hash} - Revoke a session
 - POST /api/admin/sessions/revoke-all - Revoke all sessions for email
-- GET  /api/health              - Health check
+- GET  /api/health                 - Health check
 """
 
 import hashlib
@@ -24,7 +21,7 @@ from datetime import UTC, datetime, timedelta
 from urllib.parse import urlencode
 
 from fastapi import APIRouter, Depends, HTTPException, Query, Request, Response
-from fastapi.responses import HTMLResponse, JSONResponse, RedirectResponse
+from fastapi.responses import HTMLResponse, RedirectResponse
 from google.auth.transport import requests as google_requests
 from google.oauth2 import id_token
 from google_auth_oauthlib.flow import Flow
@@ -38,7 +35,7 @@ from extrasuite.server.command_registry import _ALL_COMMAND_TYPES, Credential, r
 from extrasuite.server.commands import Command
 from extrasuite.server.config import Settings, get_settings
 from extrasuite.server.database import Database, get_database
-from extrasuite.server.token_generator import DelegationError, TokenGenerator
+from extrasuite.server.token_generator import TokenGenerator
 
 # Reduced OAuth scopes - only what we need to identify the user
 # We use server's ADC for SA impersonation, NOT user's OAuth credentials
@@ -55,10 +52,6 @@ MIN_PORT = 1024
 MAX_PORT = 65535
 
 router = APIRouter()
-
-# Deprecation sunset date (one year from design)
-_DEPRECATION_SUNSET = "2026-12-31"
-
 
 # =============================================================================
 # Health Endpoints
@@ -112,102 +105,30 @@ async def logout(request: Request) -> dict:
 # =============================================================================
 
 
-class TokenExchangeRequest(BaseModel):
-    """Request body for auth code exchange."""
-
-    code: str = Field(..., min_length=1, description="Auth code received from redirect")
-
-
-class TokenExchangeResponse(BaseModel):
-    """Response body for auth code exchange."""
-
-    token: str
-    expires_at: str
-    service_account: str
-
-
-@router.post("/token/exchange", response_model=TokenExchangeResponse)
-@limiter.limit("20/minute")
-async def exchange_auth_code(
-    request: Request,  # noqa: ARG001 - Required for rate limiter
-    body: TokenExchangeRequest,
-    db: Database = Depends(get_database),
-    settings: Settings = Depends(get_settings),
-) -> TokenExchangeResponse:
-    """Exchange auth code for token.
-
-    **Deprecated**: Use POST /api/auth/session/exchange + POST /api/auth/token instead.
-
-    No authentication required - the auth code is the proof of authentication.
-    Auth codes are single-use and expire after AUTH_CODE_TTL.
-
-    The token is generated on-demand via SA impersonation.
-    The service account MUST already exist - this endpoint does not create SAs.
-    """
-    logger.warning("Deprecated endpoint called: POST /api/token/exchange")
-    auth_code_data = await db.retrieve_auth_code(body.code)
-
-    if not auth_code_data:
-        logger.warning("Invalid or expired auth code", extra={"code_prefix": body.code[:8]})
-        raise HTTPException(status_code=400, detail="Invalid or expired auth code")
-
-    service_account_email = auth_code_data["service_account_email"]
-
-    # Generate token via impersonation - SA must exist, errors propagate to global handler
-    token_generator = TokenGenerator(database=db, settings=settings)
-    result = await token_generator.generate_token_for_service_account(service_account_email)
-
-    logger.info(
-        "Auth code exchanged for token",
-        extra={"service_account": service_account_email},
-    )
-
-    response = TokenExchangeResponse(
-        token=result.token,
-        expires_at=result.expires_at.isoformat(),
-        service_account=result.service_account_email,
-    )
-    # Return as JSONResponse so we can add deprecation headers
-    resp = JSONResponse(content=response.model_dump())
-    resp.headers["Deprecation"] = "true"
-    resp.headers["Sunset"] = _DEPRECATION_SUNSET
-    return resp  # type: ignore[return-value]
-
-
 @router.get("/token/auth", response_model=None)
 @limiter.limit("10/minute")
 async def start_token_auth(
     request: Request,
     port: int = Query(..., description="CLI localhost callback port", ge=MIN_PORT, le=MAX_PORT),
-    v: int = Query(
-        1, description="Protocol version (2 = v2 session Phase 1, suppresses deprecation warning)"
-    ),
     settings: Settings = Depends(get_settings),
     db: Database = Depends(get_database),
 ) -> RedirectResponse | HTMLResponse:
-    """Start OAuth flow for CLI token exchange.
-
-    **Deprecated for v1**: Still used as Phase 1 of the v2 session protocol (pass v=2).
-    After obtaining a session token via POST /api/auth/session/exchange,
-    use POST /api/auth/token for all subsequent token requests.
+    """Start the Phase 1 browser flow for CLI session establishment.
 
     The CLI should call this with a port parameter for its localhost server.
-    Example: /api/token/auth?port=8085&v=2  (v2 session Phase 1)
-             /api/token/auth?port=8085      (legacy v1, deprecated)
+    Example: /api/token/auth?port=8085
 
     Flow:
-    1. If user has valid session → generate token and redirect to CLI
+    1. If user has valid browser session → generate auth code and redirect to CLI
     2. Otherwise → redirect to Google OAuth (callback handles token generation)
     """
-    if v < 2:
-        logger.warning("Deprecated endpoint called: GET /api/token/auth")
     cli_redirect = _build_cli_redirect_url(port)
 
     # If user has a valid session, generate token directly
     email = request.session.get("email")
     if email:
         logger.info("Session found, generating token", extra={"email": email, "cli_port": port})
-        return await _generate_token_and_redirect(db, settings, email, cli_redirect)
+        return await _generate_auth_code_and_redirect(db, settings, email, cli_redirect)
 
     # No session - start OAuth flow
     logger.info("No session, starting OAuth flow", extra={"cli_port": port})
@@ -280,7 +201,6 @@ async def google_callback(
         return _cli_error_response("", "invalid_state")
 
     cli_redirect = str(state_data["redirect_url"])
-    flow_type = str(state_data.get("flow_type", ""))
 
     # Exchange code for tokens
     flow = _create_oauth_flow(settings)
@@ -335,172 +255,7 @@ async def google_callback(
             # Continue to home page - user can retry later
         return RedirectResponse(url="/")
 
-    # Handle delegation flow
-    if flow_type == "delegation":
-        delegation_scopes = list(state_data.get("scopes", []))  # type: ignore[arg-type]
-        delegation_reason = str(state_data.get("reason", ""))
-        return await _generate_delegation_code_and_redirect(
-            db, user_email, delegation_scopes, delegation_reason, cli_redirect
-        )
-
-    # Generate token and redirect to CLI
-    return await _generate_token_and_redirect(db, settings, user_email, cli_redirect)
-
-
-# =============================================================================
-# Delegation Endpoints (Domain-Wide Delegation)
-# =============================================================================
-
-
-class DelegationExchangeRequest(BaseModel):
-    """Request body for delegation auth code exchange."""
-
-    code: str = Field(..., min_length=1, description="Auth code received from redirect")
-
-
-class DelegationExchangeResponse(BaseModel):
-    """Response body for delegation auth code exchange."""
-
-    access_token: str
-    expires_at: str
-    scopes: list[str]
-
-
-@router.get("/delegation/auth", response_model=None)
-@limiter.limit("10/minute")
-async def start_delegation_auth(
-    request: Request,
-    port: int = Query(..., description="CLI localhost callback port", ge=MIN_PORT, le=MAX_PORT),
-    scopes: str = Query(..., description="Comma-separated scope names (e.g., gmail.send,calendar)"),
-    reason: str = Query("", description="Reason for requesting delegation"),
-    settings: Settings = Depends(get_settings),
-    db: Database = Depends(get_database),
-) -> RedirectResponse | HTMLResponse:
-    """Start delegation auth flow for user-level API access.
-
-    **Deprecated**: Use POST /api/auth/token with a session token instead.
-
-    Resolves scope names to full URLs, validates against the optional
-    DELEGATION_SCOPES allowlist, then either generates a delegation auth code
-    (if session exists) or redirects to Google OAuth.
-    """
-    logger.warning("Deprecated endpoint called: GET /api/delegation/auth")
-    cli_redirect = _build_cli_redirect_url(port)
-
-    # Check if delegation is enabled
-    if not settings.is_delegation_enabled():
-        logger.warning("Delegation not enabled, redirecting error to CLI")
-        return _cli_error_response(cli_redirect, "delegation_not_enabled")
-
-    # Resolve short scope names to full URLs
-    requested_scopes = [s.strip() for s in scopes.split(",") if s.strip()]
-    if not requested_scopes:
-        return _cli_error_response(cli_redirect, "no_scopes_requested")
-
-    resolved_scopes = [_resolve_scope(s) for s in requested_scopes]
-
-    # Validate against allowlist if configured
-    disallowed = [s for s in resolved_scopes if not settings.is_scope_allowed(s)]
-    if disallowed:
-        short_names = [s.removeprefix(_GOOGLE_SCOPE_PREFIX) for s in disallowed]
-        logger.warning("Disallowed scopes requested", extra={"scopes": short_names})
-        return _cli_error_response(cli_redirect, "disallowed_scopes")
-
-    # If user has a valid session, generate delegation auth code directly
-    email = request.session.get("email")
-    if email:
-        logger.info(
-            "Session found, generating delegation auth code",
-            extra={"email": email, "scopes": resolved_scopes},
-        )
-        return await _generate_delegation_code_and_redirect(
-            db, email, resolved_scopes, reason, cli_redirect
-        )
-
-    # No session - start OAuth flow with delegation context
-    logger.info(
-        "No session, starting OAuth flow for delegation",
-        extra={"scopes": resolved_scopes},
-    )
-    state = secrets.token_urlsafe(32)
-    await db.save_state(
-        state,
-        cli_redirect,
-        scopes=resolved_scopes,
-        reason=reason,
-        flow_type="delegation",
-    )
-
-    flow = _create_oauth_flow(settings)
-    authorization_url, _ = flow.authorization_url(
-        access_type="offline",
-        state=state,
-        prompt="consent",
-    )
-
-    return RedirectResponse(url=authorization_url)
-
-
-@router.post("/delegation/exchange", response_model=DelegationExchangeResponse)
-@limiter.limit("20/minute")
-async def exchange_delegation_code(
-    request: Request,  # noqa: ARG001 - Required for rate limiter
-    body: DelegationExchangeRequest,
-    db: Database = Depends(get_database),
-    settings: Settings = Depends(get_settings),
-) -> DelegationExchangeResponse:
-    """Exchange delegation auth code for a delegated access token.
-
-    **Deprecated**: Use POST /api/auth/token with a session token instead.
-
-    The auth code contains the user email and requested scopes.
-    Generates a token via domain-wide delegation (IAM signBlob).
-    """
-    logger.warning("Deprecated endpoint called: POST /api/delegation/exchange")
-    auth_data = await db.retrieve_delegation_auth_code(body.code)
-
-    if not auth_data:
-        logger.warning(
-            "Invalid or expired delegation auth code",
-            extra={"code_prefix": body.code[:8]},
-        )
-        raise HTTPException(status_code=400, detail="Invalid or expired auth code")
-
-    email = str(auth_data["email"])
-    scopes = list(auth_data["scopes"])  # type: ignore[arg-type]
-    reason = str(auth_data.get("reason", ""))
-
-    # Log the delegation request for audit
-    await db.log_delegation_request(email, scopes, reason)
-
-    # Generate delegated token
-    token_generator = TokenGenerator(database=db, settings=settings)
-    try:
-        result = await token_generator.generate_delegated_token(email, scopes)
-    except DelegationError as e:
-        logger.warning(
-            "Delegation failed",
-            extra={"email": email, "scopes": scopes, "error": str(e)},
-        )
-        raise HTTPException(
-            status_code=403,
-            detail="Domain-wide delegation failed. The requested scopes may not be authorized in Google Workspace Admin Console.",
-        ) from e
-
-    logger.info(
-        "Delegation auth code exchanged for token",
-        extra={"email": email, "scopes": scopes},
-    )
-
-    response = DelegationExchangeResponse(
-        access_token=result.token,
-        expires_at=result.expires_at.isoformat(),
-        scopes=scopes,
-    )
-    resp = JSONResponse(content=response.model_dump())
-    resp.headers["Deprecation"] = "true"
-    resp.headers["Sunset"] = _DEPRECATION_SUNSET
-    return resp  # type: ignore[return-value]
+    return await _generate_auth_code_and_redirect(db, settings, user_email, cli_redirect)
 
 
 # =============================================================================
@@ -599,7 +354,7 @@ async def exchange_auth_code_for_session(
     On success, returns a session token that can be used with POST /api/auth/token
     to obtain short-lived access tokens without browser interaction.
     """
-    # Validate SA auth code only — delegation auth codes must not be exchangeable for sessions
+    # Auth codes are single-use and represent successful Phase 1 login.
     auth_code_data = await db.retrieve_auth_code(body.code)
     if not auth_code_data:
         raise HTTPException(status_code=400, detail="Invalid or expired auth code")
@@ -833,16 +588,6 @@ async def revoke_all_sessions(
 # =============================================================================
 
 
-_GOOGLE_SCOPE_PREFIX = "https://www.googleapis.com/auth/"
-
-
-def _resolve_scope(scope: str) -> str:
-    """Resolve a short scope name to a full Google API scope URL."""
-    if scope.startswith("https://"):
-        return scope
-    return f"{_GOOGLE_SCOPE_PREFIX}{scope}"
-
-
 def _build_cli_redirect_url(port: int) -> str:
     """Build CLI redirect URL from port - always localhost."""
     return f"http://localhost:{port}/on-authentication"
@@ -874,15 +619,14 @@ def _create_oauth_flow(settings: Settings) -> Flow:
     return flow
 
 
-async def _generate_token_and_redirect(
+async def _generate_auth_code_and_redirect(
     db: Database, settings: Settings, email: str, cli_redirect: str
 ) -> RedirectResponse | HTMLResponse:
     """Ensure service account exists and redirect to CLI with auth code.
 
-    Creates service account if needed. Does NOT generate token here.
-    Stores auth code with service account email in Firestore.
-    CLI then exchanges auth code for token via POST to /api/token/exchange.
-    Token is generated on-demand during exchange for security.
+    Creates the user's service account if needed and stores a short-lived auth code
+    for the Phase 1 browser flow. The CLI then exchanges that code for a long-lived
+    session token via POST /api/auth/session/exchange.
     """
     token_generator = TokenGenerator(database=db, settings=settings)
 
@@ -902,22 +646,6 @@ async def _generate_token_and_redirect(
     await db.save_auth_code(auth_code, service_account_email, email)
 
     # Redirect with auth code only
-    params = {"code": auth_code}
-    redirect_url = f"{cli_redirect}?{urlencode(params)}"
-    return RedirectResponse(url=redirect_url)
-
-
-async def _generate_delegation_code_and_redirect(
-    db: Database,
-    email: str,
-    scopes: list[str],
-    reason: str,
-    cli_redirect: str,
-) -> RedirectResponse:
-    """Generate a delegation auth code and redirect to CLI."""
-    auth_code = secrets.token_urlsafe(32)
-    await db.save_delegation_auth_code(auth_code, email, scopes, reason)
-
     params = {"code": auth_code}
     redirect_url = f"{cli_redirect}?{urlencode(params)}"
     return RedirectResponse(url=redirect_url)

@@ -106,12 +106,8 @@ class Settings(BaseSettings):
     # If domain not in map, falls back to 4-char hash of domain
     domain_abbreviations: str = ""
 
-    # Domain-wide delegation (optional)
-    # When true, enables the /api/delegation/* endpoints for user-level API access
-    delegation_enabled: bool = False
-
     # Delegation scope allowlist (short scope names, comma-separated, optional)
-    # When set, only these scopes can be requested via delegation endpoints.
+    # When set, only these scopes can be requested for DWD-backed commands.
     # When empty, any scope is allowed (Google Workspace Admin Console still enforces).
     # Env var: DELEGATION_SCOPES=gmail.send,calendar,script.projects
     delegation_scopes: str = ""
@@ -178,10 +174,6 @@ class Settings(BaseSettings):
 
         # Fallback: 4-char hash of domain
         return hashlib.sha256(domain.lower().encode()).hexdigest()[:4]
-
-    def is_delegation_enabled(self) -> bool:
-        """Check if domain-wide delegation is enabled."""
-        return self.delegation_enabled
 
     def get_delegation_scopes(self) -> list[str]:
         """Get resolved delegation scope URLs from the allowlist.

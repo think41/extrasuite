@@ -82,23 +82,6 @@ The `command_registry.py` module is the single source of truth for which command
 
 All admin endpoints use `Authorization: Bearer <session_token>`. Self-service (own sessions) or admin (`ADMIN_EMAILS` env var).
 
-### v1 Legacy Flows [Deprecated]
-
-These endpoints still work but return `Deprecation: true` and `Sunset: 2026-12-31` headers.
-
-**[Deprecated] Service account flow** (`get_token` in client, legacy):
-
-- `GET /api/token/auth` → `_generate_token_and_redirect()` (api.py)
-- `GET /api/auth/callback` (api.py): handles Google OAuth callback
-- `POST /api/token/exchange` (api.py): validates auth code, generates SA token
-
-**[Deprecated] Delegation flow** (`get_oauth_token` in client, legacy):
-
-- `GET /api/delegation/auth` (api.py): validates scopes, starts OAuth
-- `POST /api/delegation/exchange` (api.py): validates code, generates DWD token
-
-Allowed delegation scopes: `gmail.compose`, `calendar`, `script.projects`, `drive.file`.
-
 ### Firestore Collections
 
 | Collection | Document ID | TTL field | Purpose |
@@ -106,7 +89,6 @@ Allowed delegation scopes: `gmail.compose`, `calendar`, `script.projects`, `driv
 | `users` | email (encoded) | none | user → service account mapping |
 | `oauth_states` | state token | `expires_at` (10 min) | CSRF protection |
 | `auth_codes` | auth code | `expires_at` (120 sec) | single-use auth delivery |
-| `delegation_logs` | auto | `expires_at` (30 days) | legacy DWD audit trail |
 | `session_tokens` | SHA-256(raw_token) | `expires_at` (60 days) | 30-day session tokens + 30-day audit |
 | `access_logs` | auto | `expires_at` (30 days) | per-request access audit |
 
