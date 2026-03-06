@@ -11,6 +11,7 @@ Formal specification for the folder structure produced by `serde.serialize()` an
 ```
 <output_dir>/
   index.xml               # Document outline — lists tabs and headings
+  comments.xml            # Editable comments/replies metadata
   .pristine/
     document.zip          # Zip of the entire output_dir at pull time (baseline for diff)
   <tab_folder>/           # One folder per tab (folder name from index.xml)
@@ -23,15 +24,17 @@ Formal specification for the folder structure produced by `serde.serialize()` an
     namedranges.xml       # READ-ONLY: NamedRanges
 ```
 
-Optional files (`docstyle.xml`, `namedstyles.xml`, `objects.xml`, `positionedObjects.xml`, `namedranges.xml`) are written only when the tab has data for them. `document.xml` and `styles.xml` are always present.
+`comments.xml` is always written at the document root, even when there are no comments yet.
+Optional tab files (`docstyle.xml`, `namedstyles.xml`, `objects.xml`, `positionedObjects.xml`, `namedranges.xml`) are written only when the tab has data for them. `document.xml` is always present. `styles.xml` is always written by `serialize()`, and `deserialize()` also accepts a missing `styles.xml` and treats it as empty `<styles />`.
 
 ### Editable vs Read-Only
 
 | File | Editable | Notes |
 |------|----------|-------|
 | `index.xml` | Conditionally | Regenerated from Document on each pull. Do not edit existing entries. **Add entries only when creating new tabs from scratch** (see [Authoring New Tabs](#authoring-new-tabs)). |
+| `comments.xml` | **Yes** | Edit comment/reply content, add replies, resolve comments, or delete `<comment>` elements. New top-level comments cannot be created via the API. |
 | `<tab>/document.xml` | **Yes** | Primary editing surface. See grammar below. |
-| `<tab>/styles.xml` | **Yes** | Add or modify style classes referenced in document.xml. |
+| `<tab>/styles.xml` | **Yes** | Add or modify style classes referenced in document.xml. If absent, deserialization treats it as empty `<styles />`. |
 | `<tab>/docstyle.xml` | No | Page layout is not diffed by reconcile. |
 | `<tab>/namedstyles.xml` | No | Named style overrides are not diffed by reconcile. |
 | `<tab>/objects.xml` | No | Inline objects cannot be created or modified via XML. |
@@ -224,6 +227,18 @@ InlineNode ::= TNode | LinkNode | <image .../> | <footnoteref .../>
 <br/>                             <!-- soft line break (Shift+Enter) -->
 ```
 
+### Comment anchors in `document.xml`
+
+Pulled documents may contain read-only `<comment-ref>` wrapper elements injected around body blocks that overlap a comment anchor. These wrappers are derived from `comments.xml` and are stripped during deserialization, so they are display metadata rather than part of the editable document model:
+
+```xml
+<comment-ref id="<commentId>" message="Short preview" replies="0" resolved="false">
+  <p>...</p>
+</comment-ref>
+```
+
+Do not create or edit `<comment-ref>` tags manually. Edit `comments.xml` instead.
+
 ---
 
 ## `<tab>/styles.xml`
@@ -236,6 +251,38 @@ Agents may add new style classes or modify existing ones. Do not rename a class 
 
 ---
 
+## `comments.xml`
+
+`comments.xml` lives at the document root, next to `index.xml`.
+
+```xml
+<comments file-id="<documentId>">
+  <comment id="<commentId>" author="..." created="..." resolved="false" anchor="...">
+    <content>Comment text</content>
+    <replies>?
+      <reply id="<replyId>" author="..." created="...">
+        <content>Reply text</content>
+      </reply>
+    </replies>
+  </comment>*
+</comments>
+```
+
+Editable operations:
+
+1. change `<content>` text for existing comments or replies
+2. add new `<reply>` elements under an existing `<comment>`
+3. set `resolved="true"` on an existing `<comment>`
+4. delete a `<comment>` or `<reply>` element
+
+Read-only attributes:
+
+- `id`, `author`, `created`, and `anchor`
+
+Creating new top-level `<comment>` elements is not supported by the Google Drive API integration used here.
+
+---
+
 ## `<tab>/docstyle.xml`, `namedstyles.xml`, `objects.xml`, `positionedObjects.xml`, `namedranges.xml`
 
 These files store their data as JSON wrapped in a single XML element. They are **read-only**: the reconciler does not diff them and changes will be silently ignored on push.
@@ -244,8 +291,8 @@ These files store their data as JSON wrapped in a single XML element. They are *
 
 ## Editing Rules
 
-1. **Edit only `document.xml` and `styles.xml`** in each tab folder. All other files are read-only.
-2. **Do not delete `index.xml`** or the `.pristine/` folder — they are required for diff and push.
+1. **Edit only `document.xml`, `styles.xml`, and `comments.xml`**. All per-tab extras are read-only.
+2. **Do not delete `index.xml`**, `comments.xml`, or the `.pristine/` folder — they are required for diff and push.
 3. **Structural IDs** (`id` attributes on `<header>`, `<footer>`, `<footnote>`, `<list>`) must remain stable. Do not change existing IDs; you may add new headers/footers (new `<header>`/`<footer>` elements), which will receive server-assigned IDs on push.
 4. **Heading IDs** (`headingId` on `<h1>`-`<h6>`) are assigned by Google Docs. Do not change them; they may be referenced by internal links.
 5. **TOC content** is read-only. The reconciler ignores changes inside `<toc>` elements.
@@ -257,7 +304,7 @@ These files store their data as JSON wrapped in a single XML element. They are *
 
 ## Authoring New Tabs
 
-When writing a new tab folder from scratch (not pulled from the API), all three of the following are required:
+When writing a new tab folder from scratch (not pulled from the API), the tab must be registered in `index.xml` and its `document.xml` must start with a `<sectionbreak>`. A `styles.xml` file is recommended but not strictly required.
 
 ### 1. Register the tab in `index.xml`
 
@@ -272,16 +319,13 @@ Add a `<tab>` entry with `id="NEW"` and a unique folder name:
 
 `deserialize()` discovers tab folders by reading `index.xml`, not by scanning the filesystem. A folder without an `index.xml` entry is silently ignored.
 
-### 2. Create a valid `styles.xml`
+### 2. Optional: create `styles.xml`
 
-The deserializer always reads `styles.xml` — it does not check for its existence first. A minimal valid file:
+`serialize()` always writes `styles.xml`, but `deserialize()` tolerates a missing file and substitutes empty styles. If you want an explicit file, a minimal valid file is:
 
 ```xml
 <?xml version="1.0" encoding="UTF-8"?>
-<styles>
-  <para class="_default" />
-  <listlevel class="_default" indentFirst="18.0pt" indentLeft="36.0pt" />
-</styles>
+<styles />
 ```
 
 ### 3. Start `<body>` with a `<sectionbreak>`

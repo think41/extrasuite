@@ -14,14 +14,8 @@ result = mock.get()                         # returns updated document as dict
 
 ## Status
 
-**61/61 test scenarios pass** against the real Google Docs API via `CompositeTransport`. A small number pass via provenance leniency (B/I/U-only textStyle divergences and run consolidation differences are tolerated — see Known Limitations).
-
-To run scenarios against a live document:
-```bash
-cd extradoc
-uv run python scripts/test_mock_scenarios.py "https://docs.google.com/document/d/<ID>/edit"
-```
-Mismatch logs are saved to `mismatch_logs/scenarios/scenario_NN/`.
+The mock is exercised by the `extradoc` test suite and is intended to be
+good enough for reconcile verification and focused request-level testing.
 
 ## How It Works
 
@@ -41,12 +35,18 @@ The mock tracks which `textStyle` properties were explicitly set via `updateText
 
 ## Known Limitations
 
-The mock passes all 61 scenarios but some rely on **provenance leniency** in `CompositeTransport._documents_match()`:
+Some mock-vs-real comparisons require provenance leniency when asserting
+document equivalence:
 
 1. **B/I/U-only textStyle divergences**: `{bold: true}` vs `{}` on `textRun.textStyle` or `bullet.textStyle`
 2. **Run consolidation divergences**: Mock merges adjacent same-style runs that the real API keeps separate
 
-**Root cause:** The real API tracks full lifecycle provenance (user UI, `updateTextStyle`, `insertText` inheritance) indefinitely. The mock only tracks provenance for styles set via `updateTextStyle` in the current session. These divergences only occur in multi-operation batches combining `insertText` with a provenance-sensitive operation (heading, link insert, or bullet creation) in the same batch.
+**Root cause:** The real API tracks full lifecycle provenance (user UI,
+`updateTextStyle`, `insertText` inheritance) indefinitely. The mock only
+tracks provenance for styles set via `updateTextStyle` in the current session.
+These divergences only occur in multi-operation batches combining `insertText`
+with a provenance-sensitive operation (heading, link insert, or bullet
+creation) in the same batch.
 
 ## Module Guide
 

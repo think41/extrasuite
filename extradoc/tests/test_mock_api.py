@@ -6,7 +6,6 @@ import pytest
 
 from extradoc.api_types._generated import (
     BatchUpdateDocumentRequest,
-    CreateHeaderRequest,
     Document,
     Request,
     WriteControl,
@@ -3313,17 +3312,12 @@ def test_create_different_header_types_succeeds() -> None:
         by_alias=True, exclude_none=True
     )
 
-    # Create FIRST_PAGE header (different type, should succeed)
-    # Use model_construct to bypass enum validation since FIRST_PAGE is not in the generated enum
-    first_page_request = Request.model_construct(
-        create_header=CreateHeaderRequest.model_construct(type="FIRST_PAGE")
-    )
-    response = api.batch_update(
-        BatchUpdateDocumentRequest(requests=[first_page_request])
-    )
-    assert "createHeader" in response.replies[0].model_dump(
-        by_alias=True, exclude_none=True
-    )
+    # Create FIRST_PAGE header (different type, should succeed).
+    # The generated API model only exposes DEFAULT, but the mock supports the
+    # broader set of header types accepted by the real API behavior we want to
+    # simulate here, so use the raw request path.
+    raw_response = api._batch_update_raw([{"createHeader": {"type": "FIRST_PAGE"}}])
+    assert "createHeader" in raw_response["replies"][0]
 
 
 # ------------------------------------------------------------------------

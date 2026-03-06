@@ -41,7 +41,7 @@ class MockGoogleDocsAPI:
     BatchUpdateDocumentResponse). Internally the document is stored as a plain
     dict so that all 13 handler modules can continue to operate without change.
     Use _get_raw() / _batch_update_raw() when you need the raw dict boundary
-    (e.g. MockTransport, CompositeTransport).
+    for transport or test helpers.
     """
 
     def __init__(self, doc: Document) -> None:
@@ -106,7 +106,7 @@ class MockGoogleDocsAPI:
     ) -> dict[str, Any]:
         """Apply a list of raw request dicts and return a raw response dict.
 
-        Internal method used by MockTransport and CompositeTransport.
+        Internal method used by transport and test helpers.
         Prefer batch_update() for typed callers.
         """
         if write_control:

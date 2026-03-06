@@ -6,81 +6,53 @@ Part of the [ExtraSuite](https://github.com/think41/extrasuite) project.
 
 ## Overview
 
-extradoc transforms Google Docs into a file-based representation optimized for LLM agents, enabling efficient "fly-blind" editing through the pull/diff/push workflow.
+`extradoc` is the library layer behind the Google Docs support in ExtraSuite.
+It:
 
-## Installation
+- pulls Google Docs into an XML folder representation
+- deserializes edited XML back into typed `Document` objects
+- reconciles base vs desired documents into Docs API `batchUpdate` requests
+- pushes those requests through a transport
 
-```bash
-pip install extradoc
-# or
-uvx extradoc
+The canonical on-disk format is documented in [docs/on-disk-format.md](/Users/sripathikrishnan/.codex/worktrees/8d0e/extrasuite/extradoc/docs/on-disk-format.md).
+
+## Status
+
+This package currently exposes a programmatic API. The end-user CLI lives in
+the `extrasuite` client package and is invoked as `extrasuite doc ...`.
+
+There is no supported standalone `python -m extradoc` pull/diff/push CLI in
+this repo.
+
+## Programmatic Usage
+
+```python
+from pathlib import Path
+
+from extradoc import DocsClient, GoogleDocsTransport
+
+
+async def main() -> None:
+    transport = GoogleDocsTransport("ACCESS_TOKEN")
+    client = DocsClient(transport)
+    try:
+        await client.pull("DOCUMENT_ID", Path("output"))
+        result = await client.push(Path("output") / "DOCUMENT_ID")
+        print(result.message)
+    finally:
+        await transport.close()
 ```
 
-## Quick Start
+`DocsClient.diff(folder)` is available for local debugging, but normal user
+workflow is pull, edit, push, then re-pull.
 
-```bash
-# Authenticate (one-time)
-uv run python -m extrasuite.client login
+## Main Modules
 
-# Pull a document
-uv run python -m extradoc pull https://docs.google.com/document/d/DOCUMENT_ID/edit
-
-# Edit files locally...
-
-# Preview changes (dry run)
-uv run python -m extradoc diff ./DOCUMENT_ID/
-
-# Push changes
-uv run python -m extradoc push ./DOCUMENT_ID/
-```
-
-## CLI Commands
-
-### pull
-
-Download a Google Doc to local files:
-
-```bash
-uv run python -m extradoc pull <document_url_or_id> [output_dir]
-
-# Options:
-#   --no-raw    Don't save raw API responses to .raw/ folder
-```
-
-### diff
-
-Preview changes (dry run, no API calls):
-
-```bash
-uv run python -m extradoc diff <folder>
-# Output: batchUpdate JSON to stdout
-```
-
-### push
-
-Apply changes to Google Docs:
-
-```bash
-uv run python -m extradoc push <folder>
-
-# Options:
-#   -f, --force    Push despite warnings (blocks still prevent push)
-#   --verify       Re-pull after push and compare to verify correctness
-```
-
-## Folder Structure
-
-After `pull`, the folder contains:
-
-```
-<document_id>/
-  document.xml            # ExtraDoc XML (main content)
-  styles.xml              # Factorized style definitions
-  .raw/
-    document.json         # Raw API response
-  .pristine/
-    document.zip          # Original state for diff comparison
-```
+- `src/extradoc/client.py` — `DocsClient` orchestration
+- `src/extradoc/serde/` — `Document ↔ XML folder`
+- `src/extradoc/reconcile/` — base/desired diff to batchUpdate requests
+- `src/extradoc/mock/` — in-process mock Docs API for tests
+- `src/extradoc/transport.py` — transport interfaces and implementations
 
 ## Development
 
@@ -94,4 +66,4 @@ uv run mypy src/extradoc
 
 ## License
 
-MIT License - see LICENSE file for details.
+MIT License - see `LICENSE`.
