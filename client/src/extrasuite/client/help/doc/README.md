@@ -11,11 +11,9 @@ After push, always re-pull before making more changes.
 
 ## Agent Hints
 
-- Start with `index.xml`, not a full `document.xml` read
-- Use `tab/@folder` to choose the tab and heading `@xpath` to jump to the node
-- To read one section, use the next indexed heading in the same tab as the end boundary
-- Make the smallest XML edit that solves the task; avoid full-file rewrites
-- Use `styles.xml` only when you need a new or modified named class
+- Start with `index.xml`
+- Use `tab/@folder` and heading `@xpath` to jump to the target section
+- Read until the next indexed heading and avoid full-file rewrites
 
 ## Directory Structure
 

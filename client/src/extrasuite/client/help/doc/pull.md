@@ -28,10 +28,6 @@ Creates <output_dir>/<document_id>/ with:
 
 ## What to Edit
 
-Start with `index.xml`, not with a full `document.xml` read. It tells you which
-tab folder to inspect and gives XPath metadata for indexed headings so you can
-jump straight to the relevant section.
-
 Each tab folder's document.xml is the primary file for edits. It contains that
 tab's content as semantic XML (headings, paragraphs, lists, tables, etc.).
 
