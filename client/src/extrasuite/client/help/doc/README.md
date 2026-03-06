@@ -9,34 +9,13 @@ Google Docs - edit documents via local XML files.
 
 After push, always re-pull before making more changes.
 
-## Agent Workflow
+## Agent Hints
 
-Use progressive disclosure. Do not read an entire `document.xml` unless the
-task clearly needs full-tab context.
-
-1. Start with `index.xml`.
-   It tells you which tab folder to open and lists indexed headings with
-   absolute XPath metadata into that tab's `document.xml`.
-2. Pick the most relevant tab and heading before opening `document.xml`.
-3. Use the heading's `xpath` to jump directly to that node.
-4. If you need the full section, use the next indexed heading in the same tab
-   as the boundary and read only the blocks between the two headings.
-5. Prefer XML-aware tools and XPath queries over raw text scans when locating
-   or editing content.
-6. If the task affects only one section, do not rewrite unrelated siblings or
-   reformat the rest of the file.
-
-Example `index.xml` heading entry:
-
-```xml
-<h1 xpath="/tab/body/h1[2]" headingId="h.abc">Implementation Plan</h1>
-```
-
-Meaning:
-- open the matching tab folder from `tab/@folder`
-- in `<tab>/document.xml`, jump to `/tab/body/h1[2]`
-- if the next indexed heading is `/tab/body/h1[3]`, treat everything between
-  those two headings as the section body
+- Start with `index.xml`, not a full `document.xml` read
+- Use `tab/@folder` to choose the tab and heading `@xpath` to jump to the node
+- To read one section, use the next indexed heading in the same tab as the end boundary
+- Make the smallest XML edit that solves the task; avoid full-file rewrites
+- Use `styles.xml` only when you need a new or modified named class
 
 ## Directory Structure
 
@@ -88,23 +67,6 @@ apply a style class. Bare text directly inside block elements is also valid:
 
   <p><t class="code">formatted text</t> and plain text</p>
 
-## Editing Strategy
-
-When changing an existing document:
-
-- Start from `index.xml`, then open only the target tab's `document.xml`
-- Make the smallest subtree edit that solves the task
-- Preserve surrounding XML structure, sibling order, and read-only elements
-- Use `styles.xml` only when you need a new or modified named class
-- Avoid broad search/replace across a whole tab unless the task explicitly
-  requires a document-wide transformation
-
-When inspecting a section:
-
-- Read the heading node at `index.xml`'s `xpath`
-- Read forward until the next indexed heading in the same tab
-- Expand outward only if the local section is insufficient
-
 ## Tabs, Headers & Footers
 
 **Adding a new tab:** Add a `<tab>` entry to `index.xml` with a unique id and
@@ -147,7 +109,6 @@ assigns the real id on push and the re-pulled file will have the real id.
   <hr/>, <image/>, <autotext/>, <sectionbreak/> are read-only - cannot add or remove
   <sectionbreak/> must be the first element in every <body> — never delete it
   After a list, add <p></p> before a heading to break out of the list context
-  Prefer XPath-targeted edits over full-file rewrites
 
 ## Supported Block Tags
 
