@@ -4,138 +4,114 @@ File-based Google Sheets representation library for LLM agents.
 
 ## Overview
 
-`extrasheet` transforms Google Sheets into a file-based representation optimized for LLM agents. Instead of working with complex API responses, agents interact with simple files:
+`extrasheet` pulls a spreadsheet into a small set of TSV and JSON files that are
+easier for humans and agents to inspect than raw Google Sheets API responses.
+The current on-disk format uses:
 
-- **data.tsv** - Cell values in tab-separated format (formulas show computed values)
-- **formula.json** - Sparse dictionary mapping cell coordinates to formulas
-- **format.json** - Cell formatting definitions
-- **feature.json** - Advanced features (charts, pivot tables, filters, etc.)
+- `spreadsheet.json` for spreadsheet metadata, sheet list, previews, and
+  truncation hints
+- `data.tsv` for cell values
+- `formula.json` for formulas
+- `format.json` for cell formatting, merges, notes, and rich text runs
+- Separate feature files such as `charts.json`, `filters.json`,
+  `pivot-tables.json`, and `data-validation.json`
+- Optional per-sheet `comments.json` files for Google Drive comments
 
-This separation allows LLM agents to selectively load only the data they need, reducing token usage and enabling efficient "fly-blind" editing.
+Some pulled files are informational only today and are not diffed or pushed
+back. See [docs/gaps.md](docs/gaps.md).
 
-## Installation
-
-```bash
-pip install extrasheet
-```
-
-Or with uv:
-
-```bash
-uv add extrasheet
-```
-
-## Quick Start
+## Python Usage
 
 ```python
 import asyncio
-from extrasheet import SheetsClient, GoogleSheetsTransport
+from extrasheet import GoogleSheetsTransport, SheetsClient
 
-async def main():
-    # Create transport with access token
+
+async def main() -> None:
     transport = GoogleSheetsTransport(access_token="your_token")
-
-    # Initialize client with transport
     client = SheetsClient(transport)
 
-    # Pull spreadsheet to local files
-    files = await client.pull(
-        "1BxiMVs0XRA5nFMdKvBdBZjgmUUqptlbs74OgvE2upms",
-        "./output",
-        max_rows=100,      # Default: 100 rows per sheet
-        save_raw=True,     # Default: saves raw API responses
-    )
+    try:
+        await client.pull(
+            "1BxiMVs0XRA5nFMdKvBdBZjgmUUqptlbs74OgvE2upms",
+            "./output",
+            max_rows=100,
+            save_raw=True,
+        )
+    finally:
+        await transport.close()
 
-    # Clean up
-    await transport.close()
 
 asyncio.run(main())
+```
 
-# Files created:
-# ./output/1BxiMVs0XRA5nFMdKvBdBZjgmUUqptlbs74OgvE2upms/
-#   ├── spreadsheet.json     # Spreadsheet metadata
-#   ├── Sheet1/
-#   │   ├── data.tsv         # Cell values
-#   │   ├── formula.json     # Cell formulas
-#   │   ├── format.json      # Cell formatting
-#   │   └── feature.json     # Charts, pivot tables, etc.
-#   ├── .raw/
-#   │   ├── metadata.json    # Raw metadata API response
-#   │   └── data.json        # Raw data API response
-#   └── .pristine/
-#       └── spreadsheet.zip  # Pristine copy for diff/push
+Typical output:
+
+```text
+./output/<spreadsheet_id>/
+  spreadsheet.json
+  theme.json                     # optional, informational
+  named_ranges.json              # optional, editable
+  developer_metadata.json        # optional, informational
+  data_sources.json              # optional, informational
+  <sheet_folder>/
+    data.tsv
+    formula.json
+    format.json                  # optional
+    dimension.json               # optional
+    charts.json                  # optional
+    pivot-tables.json            # optional
+    tables.json                  # optional
+    filters.json                 # optional
+    banded-ranges.json           # optional
+    data-validation.json         # optional
+    slicers.json                 # optional
+    data-source-tables.json      # optional
+    protection.json              # optional, informational
+    comments.json                # optional, replies/resolve only
+  .raw/
+    metadata.json                # optional, saved unless save_raw=False
+    data.json
+  .pristine/
+    spreadsheet.zip
 ```
 
 ## CLI Usage
 
+`extrasheet` is the library package. The CLI lives in `extrasuite`:
+
 ```bash
-# Pull a spreadsheet to local files (defaults to ./<spreadsheet_id>/)
-python -m extrasheet pull <spreadsheet_url_or_id> [output_dir]
-
-# Limit rows fetched per sheet (default: 100)
-python -m extrasheet pull <url> --max-rows 500
-
-# Fetch all rows (may timeout on large spreadsheets)
-python -m extrasheet pull <url> --no-limit
-
-# Don't save raw API responses
-python -m extrasheet pull <url> --no-raw
+extrasuite sheet pull <url> [output_dir]
+extrasuite sheet diff <folder>
+extrasuite sheet push <folder>
+extrasuite sheet batchUpdate <url> <requests.json>
 ```
 
-## Architecture
+Inside this repo you can run the local CLI with:
 
-The library uses a transport-based architecture for clean separation of concerns:
-
-```
-┌─────────────────┐     ┌──────────────────┐     ┌─────────────────┐
-│ SheetsClient    │────▶│ Transport        │────▶│ Google API /    │
-│ (orchestration) │     │ (data fetching)  │     │ Local Files     │
-└─────────────────┘     └──────────────────┘     └─────────────────┘
-        │
-        ▼
-┌─────────────────┐     ┌──────────────────┐
-│ Transformer     │────▶│ FileWriter       │
-│ (API → files)   │     │ (disk I/O)       │
-└─────────────────┘     └──────────────────┘
+```bash
+uv run --project client extrasuite sheet pull <url>
 ```
 
-**Transport implementations:**
-- `GoogleSheetsTransport` - Production transport using Google Sheets API
-- `LocalFileTransport` - Test transport reading from local golden files
+## Notes
 
-## Testing with Golden Files
-
-The library supports golden file testing without mocking:
-
-```python
-import pytest
-from pathlib import Path
-from extrasheet import SheetsClient, LocalFileTransport
-
-@pytest.fixture
-def client():
-    transport = LocalFileTransport(Path("tests/golden"))
-    return SheetsClient(transport)
-
-@pytest.mark.asyncio
-async def test_pull(client, tmp_path):
-    files = await client.pull("my_spreadsheet", tmp_path)
-    assert (tmp_path / "my_spreadsheet" / "Sheet1" / "data.tsv").exists()
-```
-
-Golden files are stored as:
-```
-tests/golden/
-  my_spreadsheet/
-    metadata.json    # First API call response
-    data.json        # Second API call response
-```
+- `pull` always fetches metadata first, then grid data with the requested row
+  limit.
+- `comments.json` is fetched separately through the Drive API and written per
+  sheet when comments exist.
+- `.pristine/spreadsheet.zip` is the baseline used by `diff` and `push`.
+- After any successful `push`, re-pull before editing again. `.pristine` is not
+  updated in place.
 
 ## Documentation
 
-- **[On-Disk Format](docs/on-disk-format.md)** - Complete specification of the file format
-- **[LLM Agent Guide](docs/llm-agent-guide.md)** - How to use extrasheet output for spreadsheet modifications
-- **[API Types](src/extrasheet/api_types.py)** - TypedDict definitions generated from Google Sheets API
+- [docs/on-disk-format.md](docs/on-disk-format.md) - Current file layout and
+  field reference
+- [docs/architecture.md](docs/architecture.md) - Implementation overview
+- [docs/diff-push-spec.md](docs/diff-push-spec.md) - What diff/push actually
+  honors
+- [docs/gaps.md](docs/gaps.md) - Current pull-only and partially supported
+  areas
 
 ## Development
 
@@ -150,8 +126,4 @@ uv run mypy src/extrasheet
 
 ## License
 
-MIT License - see [LICENSE](LICENSE) for details.
-
-## Part of ExtraSuite
-
-This package is part of the [ExtraSuite](https://github.com/think41/extrasuite) project, which provides AI agents with secure access to Google Workspace files.
+MIT License - see [LICENSE](LICENSE).
