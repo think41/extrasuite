@@ -17,7 +17,7 @@ Download a Google Doc to a local folder.
 
 Creates <output_dir>/<document_id>/ with:
 
-  index.xml       Document outline and tab-to-folder mapping
+  index.xml       Document outline, tab mapping, and heading XPaths into document.xml
   comments.xml    Comments and replies
   .pristine/      Snapshot for diff/push comparison - do not edit
   .raw/           Raw API responses for debugging - do not edit
@@ -28,8 +28,12 @@ Creates <output_dir>/<document_id>/ with:
 
 ## What to Edit
 
-Each tab folder's document.xml is the primary file. It contains that tab's
-content as semantic XML (headings, paragraphs, lists, tables, etc.).
+Start with `index.xml`, not with a full `document.xml` read. It tells you which
+tab folder to inspect and gives XPath metadata for indexed headings so you can
+jump straight to the relevant section.
+
+Each tab folder's document.xml is the primary file for edits. It contains that
+tab's content as semantic XML (headings, paragraphs, lists, tables, etc.).
 
 styles.xml in a tab folder defines named styles referenced by class attributes
 in that tab's document.xml. Edit it when you need to add a new style or modify
