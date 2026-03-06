@@ -1,206 +1,155 @@
 # Extrasheet On-Disk Format Specification
 
-Version: 2.3.0
-Last Updated: 2026-01-30
+Version: 2.4.0
+Last Updated: 2026-03-06
 
-## Overview
+This document describes the current on-disk format emitted by
+`extrasuite sheet pull` / `SheetsClient.pull()`.
 
-Extrasheet transforms Google Sheets spreadsheets into a file-based representation. The format separates data, formulas, formatting, and features into distinct files to enable token-efficient loading by LLM agents.
-
-This document describes the current implementation's output format.
+It was cross-checked against the implementation in `transformer.py`,
+`client.py`, `diff.py`, and a live pull of spreadsheet
+`1popsVtwuaYvGK8-ZkLIibesvbfnljjpUiOVWFMBMDkU`.
 
 ## Directory Structure
 
-```
+```text
 <output_dir>/
-└── <spreadsheet_id>/
-    ├── spreadsheet.json           # Spreadsheet metadata, sheet index, and data previews
-    ├── theme.json                 # Default formatting and theme colors (if any)
-    ├── named_ranges.json          # Named ranges (if any exist)
-    ├── developer_metadata.json    # Developer metadata (if any exist)
-    ├── data_sources.json          # External data sources (if any exist)
-    ├── <sheet_folder>/            # One folder per sheet
-    │   ├── data.tsv               # Cell values as tab-separated values
-    │   ├── formula.json           # Formulas (sparse representation)
-    │   ├── format.json            # Cell formatting
-    │   ├── charts.json            # Embedded charts (if any)
-    │   ├── pivot-tables.json      # Pivot tables (if any)
-    │   ├── tables.json            # Structured tables (if any)
-    │   ├── filters.json           # Basic filter + filter views (if any)
-    │   ├── banded-ranges.json     # Alternating row/column colors (if any)
-    │   ├── data-validation.json   # Input validation rules (if any)
-    │   ├── slicers.json           # Interactive filter slicers (rare)
-    │   ├── data-source-tables.json # Data source tables (rare)
-    │   ├── dimension.json         # Row/column sizing and groups
-    │   └── protection.json        # Protected ranges (if any exist)
-    ├── .raw/                      # Raw API responses (saved by default)
-    │   ├── metadata.json          # Metadata API response (no grid data)
-    │   └── data.json              # Data API response (with grid data)
-    └── .pristine/
-        └── spreadsheet.zip        # Pristine copy for diff/push workflow
+  <spreadsheet_id>/
+    spreadsheet.json
+    theme.json                     # optional, informational
+    named_ranges.json              # optional, editable
+    developer_metadata.json        # optional, informational
+    data_sources.json              # optional, informational
+    <sheet_folder>/
+      data.tsv
+      formula.json
+      format.json                  # optional
+      dimension.json               # optional
+      charts.json                  # optional
+      pivot-tables.json            # optional
+      tables.json                  # optional
+      filters.json                 # optional
+      banded-ranges.json           # optional
+      data-validation.json         # optional
+      slicers.json                 # optional
+      data-source-tables.json      # optional
+      protection.json              # optional, informational
+      comments.json                # optional, replies/resolve only
+    .raw/
+      metadata.json                # omitted when pull uses --no-raw
+      data.json
+    .pristine/
+      spreadsheet.zip
 ```
-
-### Raw API Responses
-
-The `.raw/` folder contains the raw Google Sheets API responses, saved by default:
-
-- **metadata.json** - First API call response (spreadsheet metadata without grid data)
-- **data.json** - Second API call response (with grid data, limited by `--max-rows`)
-
-These files are useful for:
-- Debugging transformation issues
-- Creating golden files for testing
-- Understanding what data the API returned
-
-Use `--no-raw` to skip saving these files.
-
-### Pristine Copy
-
-The `.pristine/spreadsheet.zip` file contains an exact copy of all files as they were when pulled. This enables the diff/push workflow:
-
-1. **pull** - Creates files and stores pristine copy in `.pristine/spreadsheet.zip`
-2. **edit** - Agent modifies files in place
-3. **diff** - Compares current files against pristine copy to generate `batchUpdate` JSON
-4. **push** - Same as diff, but applies changes to Google Sheets API
-
-The zip contains all files with paths relative to the spreadsheet folder (e.g., `spreadsheet.json`, `Sheet1/data.tsv`). The `.raw/` folder is excluded from the pristine copy since it's not part of the canonical representation.
-
-### Sheet Folder Naming
-
-Sheet folders are named using the sanitized sheet title:
-- Invalid filesystem characters (`/`, `\`, `:`, `*`, `?`, `"`, `<`, `>`, `|`) are replaced with `_`
-- Leading/trailing whitespace and dots are trimmed
-- Multiple consecutive underscores are collapsed to one
-- If duplicate folder names exist after sanitization, `_<sheetId>` is appended
-
-Example: Sheet "Other Locations / Virtual" becomes folder `Other Locations _ Virtual`
 
 ### File Creation Rules
 
-Files are only created when they contain meaningful data:
-- `theme.json` - Only if spreadsheet has defaultFormat or spreadsheetTheme
-- `formula.json` - Only if sheet has formulas
-- `format.json` - Only if sheet has non-default formatting, conditional formats, merges, text runs, or notes
-- `charts.json` - Only if sheet has embedded charts
-- `pivot-tables.json` - Only if sheet has pivot tables
-- `tables.json` - Only if sheet has structured tables
-- `filters.json` - Only if sheet has basic filter or filter views
-- `banded-ranges.json` - Only if sheet has alternating row/column colors
-- `data-validation.json` - Only if sheet has input validation rules
-- `slicers.json` - Only if sheet has interactive filter slicers
-- `data-source-tables.json` - Only if sheet has data source tables
-- `dimension.json` - Only if sheet has non-default row/column sizes, groups, or dimension metadata
-- `protection.json` - Only if sheet has protected ranges
-- `named_ranges.json` - Only if spreadsheet has named ranges
-- `developer_metadata.json` - Only if spreadsheet has developer metadata
-- `data_sources.json` - Only if spreadsheet has external data sources
+- `spreadsheet.json` is always written.
+- `data.tsv` and `formula.json` are always written for empty GRID sheets as stub
+  files (`""` and `{}` respectively).
+- Non-empty optional files are only written when the source spreadsheet has
+  relevant content.
+- `comments.json` is written per sheet only when Drive comments for that sheet
+  exist.
+- `.raw/*` is skipped when `--no-raw` / `save_raw=False` is used.
 
----
+## Root-Level Files
 
-## Spreadsheet-Level Files
+### `spreadsheet.json`
 
-### spreadsheet.json
+Entry point for understanding the spreadsheet.
 
-Contains spreadsheet metadata, an index of all sheets, and data previews for quick understanding.
-
-**Design for progressive disclosure:** This file is optimized for LLM agents to understand the spreadsheet structure at a glance. Theme and formatting details are stored separately in `theme.json` to keep this file focused on content.
+Example:
 
 ```json
 {
-  "spreadsheetId": "1BxiMVs0XRA5nFMdKvBdBZjgmUUqptlbs74OgvE2upms",
-  "spreadsheetUrl": "https://docs.google.com/spreadsheets/d/.../edit",
+  "spreadsheetId": "1popsVtwuaYvGK8-ZkLIibesvbfnljjpUiOVWFMBMDkU",
+  "spreadsheetUrl": "https://docs.google.com/spreadsheets/d/1popsVtwuaYvGK8-ZkLIibesvbfnljjpUiOVWFMBMDkU/edit",
   "properties": {
-    "title": "My Spreadsheet",
-    "locale": "en_US",
+    "title": "R41 Interview COGS Model",
+    "locale": "en_GB",
     "autoRecalc": "ON_CHANGE",
-    "timeZone": "America/New_York"
+    "timeZone": "Asia/Calcutta"
   },
   "sheets": [
     {
-      "sheetId": 0,
-      "title": "Sheet1",
+      "sheetId": 177409360,
+      "title": "Inputs",
       "index": 0,
       "sheetType": "GRID",
-      "folder": "Sheet1",
+      "folder": "Inputs",
       "gridProperties": {
-        "rowCount": 1000,
-        "columnCount": 26,
-        "frozenRowCount": 1,
-        "frozenColumnCount": 0
+        "rowCount": 100,
+        "columnCount": 10
       },
-      "hidden": false,
-      "tabColorStyle": { "rgbColor": { "red": 1.0, "green": 0, "blue": 0 } },
       "preview": {
-        "firstRows": [
-          ["Name", "Age", "City", "Sales"],
-          ["Alice", "30", "NYC", "1000"],
-          ["Bob", "25", "LA", "1500"],
-          ["Carol", "35", "Chicago", "2000"],
-          ["Dave", "28", "Boston", "1200"]
-        ],
-        "lastRows": [
-          ["Tom", "40", "Miami", "800"],
-          ["Sue", "32", "Denver", "950"],
-          ["Joe", "45", "Seattle", "1100"]
-        ]
+        "firstRows": [["RECRUIT41 INTERVIEW COGS MODEL - INPUTS"]],
+        "lastRows": [["Chunk Duration", "10", "minutes", ""]]
+      }
+    },
+    {
+      "sheetId": 657127928,
+      "title": "Documentation",
+      "index": 3,
+      "sheetType": "GRID",
+      "folder": "Documentation",
+      "gridProperties": {
+        "rowCount": 150,
+        "columnCount": 5
+      },
+      "truncation": {
+        "totalRows": 150,
+        "fetchedRows": 100,
+        "truncated": true
       }
     }
-  ]
+  ],
+  "_truncationWarning": "Some sheets have partial data. Check each sheet's 'truncation' field for details."
 }
 ```
 
-**Key Fields:**
+Key points:
 
-| Field | Description |
-|-------|-------------|
-| `spreadsheetId` | Unique identifier for the spreadsheet |
-| `spreadsheetUrl` | URL to open the spreadsheet in browser |
-| `properties.title` | Spreadsheet title |
-| `properties.locale` | Locale for formatting (e.g., `en_US`) |
-| `properties.timeZone` | Time zone for date calculations |
-| `sheets[].sheetId` | Unique numeric ID for each sheet (used in API calls) |
-| `sheets[].title` | Display title of the sheet |
-| `sheets[].folder` | Sanitized folder name on disk |
-| `sheets[].sheetType` | `GRID`, `OBJECT`, or `DATA_SOURCE` |
-| `sheets[].gridProperties` | Row/column counts and frozen dimensions |
-| `sheets[].hidden` | `true` if sheet is hidden (omitted if visible) |
-| `sheets[].preview.firstRows` | First 5 rows of data (for quick understanding) |
-| `sheets[].preview.lastRows` | Last 3 rows of data (non-overlapping with firstRows) |
+- `properties` only keeps `title`, `locale`, `autoRecalc`, and `timeZone`.
+- `preview` exists only for GRID sheets.
+- `hidden`, `rightToLeft`, `tabColor`, and `tabColorStyle` appear only when set.
+- `truncation` appears on individual sheets when row limiting cut data short.
+- `_truncationWarning` appears at the top level when any sheet was truncated.
 
-### theme.json
+Push support from this file:
 
-Contains default cell formatting and spreadsheet theme colors. This file is separated from `spreadsheet.json` to keep the main metadata file focused on content structure.
+- spreadsheet `properties.title`
+- sheet `title`
+- sheet `hidden`
+- sheet `rightToLeft`
+- sheet `tabColor` / `tabColorStyle`
+- sheet `gridProperties.frozenRowCount`
+- sheet `gridProperties.frozenColumnCount`
+- new/delete sheet detection via the `sheets` list and sheet folders
 
-```json
-{
-  "defaultFormat": {
-    "backgroundColor": { "red": 1, "green": 1, "blue": 1 },
-    "padding": { "top": 2, "right": 3, "bottom": 2, "left": 3 },
-    "verticalAlignment": "BOTTOM",
-    "wrapStrategy": "OVERFLOW_CELL",
-    "textFormat": {
-      "fontFamily": "arial,sans,sans-serif",
-      "fontSize": 10,
-      "bold": false,
-      "italic": false
-    }
-  },
-  "spreadsheetTheme": {
-    "primaryFontFamily": "Arial",
-    "themeColors": [
-      { "colorType": "TEXT", "color": { "rgbColor": {} } },
-      { "colorType": "BACKGROUND", "color": { "rgbColor": { "red": 1, "green": 1, "blue": 1 } } },
-      { "colorType": "ACCENT1", "color": { "rgbColor": { "red": 0.26, "green": 0.52, "blue": 0.96 } } }
-    ]
-  }
-}
-```
+Informational only today:
 
-**When to use:** Only read this file if you need to understand or modify the spreadsheet's default formatting or theme colors. Most editing tasks don't require this file.
+- `properties.locale`
+- `properties.autoRecalc`
+- `properties.timeZone`
+- `preview`
+- `truncation`
+- `_truncationWarning`
 
-### named_ranges.json
+### `theme.json`
 
-Contains all named ranges defined in the spreadsheet.
+Spreadsheet default format and theme metadata. Written when the spreadsheet has
+`defaultFormat` or `spreadsheetTheme`.
+
+This file is currently informational only. Diff/push does not apply edits to it.
+
+Note: editable files use hex colors for concrete color values, but pull-only
+metadata files may still contain API-style wrappers such as
+`{"rgbColor": "#FFFFFF"}` or empty objects.
+
+### `named_ranges.json`
+
+Spreadsheet-level named ranges in A1 notation.
 
 ```json
 {
@@ -208,153 +157,112 @@ Contains all named ranges defined in the spreadsheet.
     {
       "namedRangeId": "abc123",
       "name": "SalesData",
-      "range": "Sheet1!A1:E100"
+      "range": "Sheet1!A1:E100",
+      "sheetId": 0
     }
   ]
 }
 ```
 
-**Note:** Ranges use A1 notation with sheet name prefix.
+This file is diffed and pushed.
 
-### developer_metadata.json
+### `developer_metadata.json`
 
-Contains spreadsheet-level developer metadata.
+Spreadsheet-level developer metadata.
 
-```json
-{
-  "developerMetadata": [
-    {
-      "metadataId": 12345,
-      "metadataKey": "app-version",
-      "metadataValue": "1.0.0",
-      "location": {
-        "locationType": "SPREADSHEET"
-      },
-      "visibility": "DOCUMENT"
-    }
-  ]
-}
-```
+Written on pull when present. Informational only today.
 
-### data_sources.json
+### `data_sources.json`
 
-Contains external data source connections (BigQuery, Looker).
+Spreadsheet-level external data source metadata and refresh schedules.
 
-```json
-{
-  "dataSources": [
-    {
-      "dataSourceId": "datasource_abc",
-      "spec": {
-        "bigQuery": {
-          "projectId": "my-project",
-          "querySpec": {
-            "rawQuery": "SELECT * FROM dataset.table"
-          }
-        }
-      }
-    }
-  ],
-  "refreshSchedules": [
-    {
-      "enabled": true,
-      "refreshScope": "ALL_DATA_SOURCES",
-      "dailySchedule": {
-        "startTime": { "hours": 6, "minutes": 0 }
-      }
-    }
-  ]
-}
-```
+Written on pull when present. Informational only today.
 
----
+### `.raw/metadata.json` and `.raw/data.json`
+
+Raw API responses saved by default for debugging and golden-file creation.
+
+These files are not part of the canonical editable representation and are not
+included in `.pristine/spreadsheet.zip`.
+
+### `.pristine/spreadsheet.zip`
+
+Canonical snapshot of the pulled representation used by `diff` and `push`.
+
+Re-pull after every successful push. The zip is not updated in place.
+
+## Sheet Folder Naming
+
+Sheet folders are based on sanitized sheet titles:
+
+- invalid filesystem characters become `_`
+- leading/trailing whitespace and dots are trimmed
+- repeated underscores collapse
+- if sanitization would collide, `_<sheetId>` is appended
+
+Example:
+
+- `Other Locations / Virtual` -> `Other Locations _ Virtual`
 
 ## Sheet-Level Files
 
-### data.tsv
+### `data.tsv`
 
-Tab-separated values containing cell data. Formulas display their computed result, not the formula text.
+Tab-separated cell values.
 
-**Format:**
-- Each row contains cell values separated by tabs
-- Trailing empty columns and rows are trimmed
-- Row and column indices are zero-based (first row is row 0, first column is column 0)
+Rules:
 
-**Escaping:**
-- Tab characters: `\t`
-- Newline characters: `\n`
-- Carriage return: `\r`
-- Backslash: `\\`
+- Each line is one spreadsheet row.
+- Each tab-separated field is one spreadsheet cell.
+- Trailing empty rows and columns are trimmed.
+- Formulas appear here as computed values, not formula text.
+- Values are derived from `effectiveValue`.
 
-**Example:**
-```
-Name	Sales	Region	Total
-Alice	1000	North	1500
-Bob	500	South	1200
-```
+Escaping:
 
-**Value Representation:**
+- tab -> `\t`
+- newline -> `\n`
+- carriage return -> `\r`
+- backslash -> `\\`
 
-| Type | Representation |
-|------|----------------|
-| String | Raw text |
-| Number | Raw numeric value (e.g., `1234.56` not `$1,234.56`) |
-| Boolean | `TRUE` or `FALSE` |
-| Date/Time | Serial number (days since 1899-12-30) |
-| Error | Error string (e.g., `#REF!`, `#N/A`, `#DIV/0!`) |
-| Empty | Empty string |
+Typical value representation:
 
-**Source:** Values are extracted from `CellData.effectiveValue` to preserve type information for round-trip safety. This means numbers appear as raw values without formatting (currency symbols, percentage signs, etc.). Formatting information is available in `format.json`.
+| Sheet value | TSV value |
+|-------------|-----------|
+| text | raw text |
+| number | raw number like `1234.56` |
+| boolean | `TRUE` / `FALSE` |
+| date/time | serial number |
+| error | API error message text |
+| empty | empty string |
 
-### formula.json
+There are no explicit row or column numbers inside the file. Line number and
+field position imply the grid position.
 
-Formulas are stored as a flat dictionary where keys are either single cell references or ranges, and values are the formula strings. When multiple contiguous cells share the same formula pattern (with relative references), they are compressed into a single range entry.
+### `formula.json`
+
+Sparse map of formulas by A1 cell or A1 range.
 
 ```json
 {
-  "B2:K2": "='Operating Model'!B37",
-  "B3:K3": "=B2*operating_expense_ratio",
-  "B4:K4": "=B2-B3",
-  "A1": "=NOW()",
-  "Z1": "=UNIQUE(Sheet2!A:A)"
+  "B4": "=Inputs!C44/Inputs!B35",
+  "B5:D5": "=B4*0.3"
 }
 ```
 
-**Format:**
+Rules:
 
-- **Keys**: Cell references (`"A1"`) or ranges (`"B2:K2"`)
-- **Values**: The formula string as entered in the first cell
+- keys are cell references or ranges
+- values are the formula from the first cell in the range
+- relative references auto-fill across compressed ranges
+- computed results still live in `data.tsv`
 
-**Range Compression:**
+Empty GRID sheets get `{}` so the sheet folder still exposes a writable formula
+surface.
 
-When contiguous cells share the same relative reference pattern, they are compressed into a single entry:
+### `format.json`
 
-```json
-{
-  "C2:C100": "=A2+B2"
-}
-```
-
-This means:
-- C2: `=A2+B2`
-- C3: `=A3+B3` (row references increment)
-- C4: `=A4+B4`
-- ... and so on to C100
-
-The formula auto-fills across the range using standard Excel/Google Sheets behavior: relative references increment, absolute references (like `$A$1`) stay fixed.
-
-**Additional Sections (if present):**
-
-| Section | Description |
-|---------|-------------|
-| `arrayFormulas` | Array formulas with their output range (rare) |
-| `dataSourceFormulas` | Formulas connected to external data sources (rare) |
-
-**Note:** The computed values appear in `data.tsv`. The `formula.json` file only contains cells that have formulas.
-
-### format.json
-
-Cell formatting is stored with range-based compression. Cells with identical formatting are grouped into rectangular ranges.
+Formatting for cells, merges, notes, and rich text.
 
 ```json
 {
@@ -362,20 +270,10 @@ Cell formatting is stored with range-based compression. Cells with identical for
     {
       "range": "A1:J1",
       "format": {
-        "horizontalAlignment": "CENTER",
-        "textFormat": { "bold": true }
-      }
-    },
-    {
-      "range": "F2:F50",
-      "format": {
-        "numberFormat": { "type": "NUMBER", "pattern": "$#,##0" }
-      }
-    },
-    {
-      "range": "A2:A23",
-      "format": {
-        "backgroundColor": "#FFD9D9"
+        "backgroundColor": "#CCCCCC",
+        "textFormat": {
+          "bold": true
+        }
       }
     }
   ],
@@ -386,7 +284,7 @@ Cell formatting is stored with range-based compression. Cells with identical for
       "booleanRule": {
         "condition": {
           "type": "NUMBER_GREATER",
-          "values": [{ "userEnteredValue": "1000" }]
+          "values": [{"userEnteredValue": "1000"}]
         },
         "format": {
           "backgroundColor": "#CCFFCC"
@@ -400,184 +298,101 @@ Cell formatting is stored with range-based compression. Cells with identical for
     }
   ],
   "textFormatRuns": {
-    "E22": [
-      { "format": {} },
-      {
-        "startIndex": 23,
-        "format": {
-          "foregroundColor": "#1254CC",
-          "underline": true,
-          "link": { "uri": "https://example.com" }
-        }
-      }
+    "A1": [
+      {"format": {}},
+      {"startIndex": 5, "format": {"bold": true}}
     ]
   },
   "notes": {
-    "A1": "This is a cell note"
+    "A1": "Cell note text"
   }
 }
 ```
 
-**Format Compression:**
+Key points:
 
-The `formatRules` array contains range-based formatting rules:
+- concrete editable colors are normalized to hex strings
+- `notes` are cell notes, not Drive comments
+- `textFormatRuns` is keyed by cell A1 notation
+- existing conditional format rules keep their `ruleIndex`
+- new conditional format rules may omit `ruleIndex`; diff assigns one
 
-1. **Range-based rules**: Cells with identical formatting are grouped into the largest possible rectangular ranges
-2. **Cascade model**: Rules are applied in order; later rules override earlier ones for overlapping cells
-3. **Delta encoding**: When a dominant format exists, rules for other cells only contain properties that differ
-4. **Format optimization**: Deprecated fields are removed (e.g., `backgroundColor` when `backgroundColorStyle` exists)
+### `dimension.json`
 
-**Format Rule Fields:**
-
-| Field | Description |
-|-------|-------------|
-| `range` | A1 notation for the range this rule applies to |
-| `format` | CellFormat object with formatting properties |
-
-**Conditional Format Fields:**
-
-| Field | Description |
-|-------|-------------|
-| `ruleIndex` | Zero-based index for updating/deleting rules |
-| `ranges` | Array of A1-notation ranges the rule applies to |
-| `booleanRule` | Condition + format for boolean rules |
-| `gradientRule` | Min/mid/max colors for gradient rules |
-
-### Feature Files (Split Format)
-
-Advanced spreadsheet features are stored in separate JSON files per feature type. This split format provides better organization and allows agents to read only the features they need.
-
-**Note:** The diff/push workflow supports both the new split format and the legacy `feature.json` for backward compatibility.
-
-#### charts.json
-
-Embedded charts with position and specification.
+Row/column size and visibility metadata, plus some informational sections.
 
 ```json
 {
-  "charts": [
-    {
-      "chartId": 123456,
-      "position": {
-        "overlayPosition": {
-          "anchorCell": "F1",
-          "widthPixels": 400,
-          "heightPixels": 300
-        }
-      },
-      "spec": {
-        "title": "Sales by Region",
-        "basicChart": {
-          "chartType": "BAR",
-          "axis": [...],
-          "domains": [{"domain": {"sourceRange": {"sources": [{"range": "A2:A10"}]}}}],
-          "series": [{"series": {"sourceRange": {"sources": [{"range": "B2:B10"}]}}}]
-        }
-      }
-    }
+  "rowMetadata": [
+    {"row": 11, "pixelSize": 50, "hidden": true}
+  ],
+  "columnMetadata": [
+    {"column": "A", "pixelSize": 150}
+  ],
+  "rowGroups": [
+    {"range": "6:10", "depth": 1, "collapsed": false}
   ]
 }
 ```
 
-#### pivot-tables.json
+Writable today:
 
-Pivot tables with anchor cell and configuration.
+- `rowMetadata[].pixelSize`
+- `rowMetadata[].hidden`
+- `columnMetadata[].pixelSize`
+- `columnMetadata[].hidden`
 
-```json
-{
-  "pivotTables": [
-    {
-      "anchorCell": "G1",
-      "source": "A1:E100",
-      "rows": [...],
-      "columns": [...],
-      "values": [...]
-    }
-  ]
-}
-```
+Informational only today:
 
-**Pivot Table Editing:** You can add, modify, or delete pivot tables by editing this file. The anchor cell (A1 notation) identifies each pivot table.
+- `rowGroups`
+- `columnGroups`
+- `developerMetadata`
+- row/column `developerMetadata`
 
-#### tables.json
+Conventions:
 
-Structured tables with column definitions.
+- row numbers are 1-based
+- columns use letters
 
-```json
-{
-  "tables": [
-    {
-      "tableId": "1778223018",
-      "name": "Table1",
-      "range": "A1:J47",
-      "columnProperties": [
-        { "column": "A", "columnName": "Category" },
-        { "column": "B", "columnName": "Resource Type" }
-      ]
-    }
-  ]
-}
-```
+### `charts.json`
 
-#### filters.json
+Embedded charts. Diff/push supports add/modify/delete.
 
-Basic filter and filter views.
+### `pivot-tables.json`
 
-```json
-{
-  "basicFilter": {
-    "range": "A1:E100",
-    "sortSpecs": [...],
-    "filterSpecs": [{"column": "C", "filterCriteria": {...}}]
-  },
-  "filterViews": [
-    {
-      "filterViewId": 789,
-      "title": "Top Performers",
-      "range": "A1:E100",
-      "filterSpecs": [{"column": "B", "filterCriteria": {...}}]
-    }
-  ]
-}
-```
+Pivot tables keyed by `anchorCell`. Diff/push supports add/modify/delete.
 
-#### banded-ranges.json
+### `tables.json`
 
-Alternating row/column colors.
+Structured tables. Diff/push supports add/modify/delete.
 
-```json
-{
-  "bandedRanges": [
-    {
-      "bandedRangeId": 1778223018,
-      "range": "A1:E100",
-      "rowProperties": {
-        "headerColor": "#336699",
-        "firstBandColor": "#FFFFFF",
-        "secondBandColor": "#F2F2F2"
-      }
-    }
-  ]
-}
-```
+### `filters.json`
 
-#### data-validation.json
+Contains:
 
-Input validation rules grouped by rule type.
+- `basicFilter`
+- `filterViews`
+
+Diff/push supports both.
+
+### `banded-ranges.json`
+
+Alternating row/column color definitions. Diff/push supports add/modify/delete.
+
+### `data-validation.json`
+
+Grouped validation rules.
 
 ```json
 {
   "dataValidation": [
     {
       "range": "H2... (49 cells)",
-      "cells": ["H2", "H3", "H4", ...],
+      "cells": ["H2", "H3", "H4"],
       "rule": {
         "condition": {
           "type": "ONE_OF_LIST",
-          "values": [
-            { "userEnteredValue": "Keep" },
-            { "userEnteredValue": "Delete" }
-          ]
+          "values": [{"userEnteredValue": "Keep"}]
         },
         "showCustomUi": true
       }
@@ -586,365 +401,84 @@ Input validation rules grouped by rule type.
 }
 ```
 
-Cells with identical validation rules are grouped together. The `cells` array lists all cells with that rule, and `range` provides a summary.
+Cells with identical rules are grouped together. The `range` field is only a
+human-readable summary; `cells` is the canonical per-cell list.
 
-#### slicers.json (rare)
+### `slicers.json`
 
-Interactive filter slicers.
+Interactive filter slicers. Diff/push supports add/modify/delete.
+
+### `data-source-tables.json`
+
+Tables backed by external data sources.
+
+Current support is partial:
+
+- modify/refresh-style changes are supported
+- creating or deleting data source tables is not
+
+### `protection.json`
+
+Protected ranges and editor metadata.
+
+This file is emitted on pull when present but is informational only today.
+
+### `comments.json`
+
+Drive comments for a single sheet.
 
 ```json
 {
-  "slicers": [
+  "fileId": "spreadsheet_id",
+  "comments": [
     {
-      "slicerId": 456,
-      "position": {
-        "overlayPosition": {
-          "anchorCell": "M1",
-          "widthPixels": 200,
-          "heightPixels": 300
+      "id": "AAABzqZTYuo",
+      "author": "Alice <alice@example.com>",
+      "time": "2024-01-15T10:30:00.000Z",
+      "resolved": false,
+      "content": "Please double-check this formula",
+      "quotedContent": "=SUM(B2:B10)",
+      "replies": [
+        {
+          "id": "AAABzqZTYus",
+          "author": "Bob <bob@example.com>",
+          "time": "2024-01-15T11:00:00.000Z",
+          "content": "Verified"
         }
-      },
-      "spec": {
-        "dataRange": "A1:E100",
-        "title": "Region Filter",
-        "column": "C"
-      }
+      ]
     }
   ]
 }
 ```
 
-#### data-source-tables.json (rare)
+Notes:
 
-Tables connected to external data sources.
-
-```json
-{
-  "dataSourceTables": [
-    {
-      "anchorCell": "M1",
-      "dataSourceId": "datasource_abc",
-      "columns": [...]
-    }
-  ]
-}
-```
-
-**Feature Files Summary:**
-
-| File | Content | Source |
-|------|---------|--------|
-| `charts.json` | Embedded charts | `Sheet.charts[]` |
-| `pivot-tables.json` | Pivot tables | `CellData.pivotTable` |
-| `tables.json` | Structured tables | `Sheet.tables[]` |
-| `filters.json` | Basic filter + filter views | `Sheet.basicFilter`, `Sheet.filterViews[]` |
-| `banded-ranges.json` | Alternating colors | `Sheet.bandedRanges[]` |
-| `data-validation.json` | Input validation | `CellData.dataValidation` |
-| `slicers.json` | Interactive slicers | `Sheet.slicers[]` |
-| `data-source-tables.json` | External data tables | `CellData.dataSourceTable` |
-
-### dimension.json
-
-Row and column metadata including sizes, visibility, and groups.
-
-```json
-{
-  "rowMetadata": [
-    { "row": 1, "pixelSize": 21 },
-    { "row": 11, "pixelSize": 50 },
-    { "row": 16, "pixelSize": 21, "hidden": true }
-  ],
-  "columnMetadata": [
-    { "column": "A", "pixelSize": 100 },
-    { "column": "B", "pixelSize": 80 },
-    { "column": "F", "pixelSize": 150 }
-  ],
-  "rowGroups": [
-    {
-      "range": "6:10",
-      "depth": 1,
-      "collapsed": false
-    }
-  ],
-  "columnGroups": [
-    {
-      "range": "C:E",
-      "depth": 1,
-      "collapsed": true
-    }
-  ],
-  "developerMetadata": [
-    {
-      "metadataId": 67890,
-      "metadataKey": "row-category",
-      "location": {
-        "dimensionRange": { "dimension": "ROWS", "startIndex": 0, "endIndex": 1 }
-      }
-    }
-  ]
-}
-```
-
-**Key conventions:**
-- **rowMetadata**: Uses 1-based row numbers (`"row": 5` = row 5)
-- **columnMetadata**: Uses column letters (`"column": "A"`)
-- **rowGroups/columnGroups range**: Uses A1-style notation (`"6:10"` for rows, `"C:E"` for columns)
-
-**Sparse Representation:**
-
-Only non-default dimensions are included:
-- Default row height: 21 pixels
-- Default column width: 100 pixels
-
-A dimension is considered non-default if:
-- `pixelSize` differs from default by more than 1 pixel
-- `hidden` is true
-- `developerMetadata` is present
-
-### protection.json
-
-Protected ranges and their permissions.
-
-```json
-{
-  "protectedRanges": [
-    {
-      "protectedRangeId": 12345,
-      "range": "A1:J1",
-      "description": "Header row - do not modify",
-      "warningOnly": false,
-      "requestingUserCanEdit": true,
-      "editors": {
-        "users": ["admin@example.com"],
-        "groups": ["admins@example.com"],
-        "domainUsersCanEdit": false
-      }
-    }
-  ]
-}
-```
-
----
-
-## Coordinate Systems
-
-### A1 Notation
-
-Used for human-readable cell references in formulas and format files.
-
-| Example | Description |
-|---------|-------------|
-| `A1` | Single cell (column A, row 1) |
-| `A1:D4` | Range from A1 to D4 |
-| `A:A` | Entire column A |
-| `1:1` | Entire row 1 |
-| `Sheet2!A1:D4` | Range on another sheet |
-
-### Zero-Based Indices
-
-Used in GridRange objects for API calls.
-
-```json
-{
-  "sheetId": 0,
-  "startRowIndex": 0,
-  "endRowIndex": 10,
-  "startColumnIndex": 0,
-  "endColumnIndex": 5
-}
-```
-
-- Indices are zero-based
-- Ranges are half-open: `[start, end)`
-- Missing index means unbounded
-
-### Column Letter Conversion
-
-```
-0 -> A, 1 -> B, ..., 25 -> Z
-26 -> AA, 27 -> AB, ..., 51 -> AZ
-52 -> BA, ..., 701 -> ZZ
-702 -> AAA, ...
-```
-
----
+- this is separate from `format.json.notes`
+- it is written per sheet
+- push supports adding replies and resolving comments
+- push does not support creating new top-level comments
 
 ## Special Sheet Types
 
-### OBJECT Sheets
+For non-GRID sheets:
 
-Sheets containing only embedded objects (charts, images) without grid data:
-- No `data.tsv` file
-- No `formula.json` file
-- `feature.json` contains the embedded object
+- `spreadsheet.json` still lists the sheet
+- no `data.tsv` or `formula.json` is written
+- feature files may still be written
 
-### DATA_SOURCE Sheets
+## Coordinate Conventions
 
-Sheets connected to external data sources:
-- `data.tsv` contains preview data (read-only)
-- `feature.json` contains data source configuration
+- Cells and ranges in JSON files use A1 notation.
+- `dimension.json` rows are 1-based and columns use letters.
+- Internally, diff/request generation converts those references back to the
+  Sheets API's 0-based indices.
 
----
+## Practical Gotchas
 
-## Encoding
-
-- **Character encoding:** UTF-8
-- **Line endings:** LF (`\n`) only
-- **JSON formatting:** Pretty-printed with 2-space indentation
-- **No BOM:** Byte Order Mark is not included
-
----
-
-## Gaps and Limitations
-
-### Not Currently Extracted
-
-1. **Chip runs** - Smart chips (people, dates, etc.) are not extracted
-2. **Comments** - Google Sheets comments (distinct from cell notes) are not extracted
-3. **Version history** - Not accessible via Sheets API
-4. **Images** - Embedded images are not extracted
-
-### Compression Limitations
-
-1. **Borders not compressed** - Border formatting is stored per-cell, not as range rules
-2. **Complex formulas** - Formulas with non-standard patterns may not compress well
-
-### Data Validation Representation
-
-1. **Non-contiguous ranges** - Cells are listed individually, not as ranges
-2. **Rule deduplication** - Uses JSON serialization for comparison, which may miss equivalent rules with different key ordering
-
-### Large Spreadsheet Handling
-
-Splitting large sheets into multiple `data_*.tsv` files is **not currently implemented**. All data goes into a single `data.tsv` regardless of size.
-
----
-
-## Known Limitations and Gotchas
-
-### Color Format Requirements
-
-All colors in editable files use **hex strings**: `"#RRGGBB"`
-
-Examples: `"#FF0000"` (red), `"#00FF00"` (green), `"#0000FF"` (blue)
-
-This applies to:
-- `formatRules[].format.backgroundColor`
-- `formatRules[].format.textFormat.foregroundColor`
-- `conditionalFormats[].booleanRule.format.backgroundColor`
-- `conditionalFormats[].gradientRule.*.color`
-- `textFormatRuns[].format.foregroundColor`
-- `bandedRanges[].rowProperties.*Color`
-
-The pull command normalizes all colors to hex. The push command converts hex to the API's RGB format internally.
-
-### Pristine State Not Updated After Push
-
-After successfully pushing changes, the `.pristine/spreadsheet.zip` is **NOT** automatically updated. This means:
-
-1. If you push changes and then push again without re-pulling, the diff will compare against the OLD pristine state
-2. This may cause errors like `Sheet with id XXXX already exists` if you created sheets
-
-**Workaround:** Always re-pull the spreadsheet after pushing changes before making additional edits.
-
-### Sheet IDs May Change After Push
-
-When creating new sheets, you may specify a `sheetId` in `spreadsheet.json`. However, Google may assign different IDs after the sheet is created.
-
-**Example:**
-- You specify `sheetId: 100, 200, 300` in your new sheets
-- After push and re-pull, Google may have assigned `sheetId: 1101, 1102, 1103`
-
-**Impact:** Charts, filters, pivot tables, and other features reference sheets by `sheetId`. After creating sheets, re-pull to get the server-assigned IDs before adding features that reference them.
-
-### A1 Notation Throughout
-
-ExtraSheet uses A1 notation consistently across all file formats:
-
-| Context | Convention | Example |
-|---------|------------|---------|
-| data.tsv line numbers | 1-based | Line 5 = row 5 in spreadsheet |
-| Cell references | A1 notation | `"A1"`, `"B5"`, `"AA100"` |
-| Range references | A1 notation | `"A1:B5"`, `"Sheet1!C3:D10"` |
-| Merges | A1 range | `{"range": "K50:L51"}` |
-| Tables/filters/banded ranges | A1 range | `{"range": "A1:J47"}` |
-| Chart anchor cells | A1 notation | `{"anchorCell": "F1"}` |
-| Chart source ranges | A1 range | `{"range": "A2:A13"}` |
-| Dimension metadata | Column letter / 1-based row | `{"column": "A"}`, `{"row": 5}` |
-
-The diff engine automatically converts A1 notation to 0-based indices when generating Google Sheets API requests. You never need to work with 0-based indices directly.
-
-### Unsupported Data Validation Types
-
-The following validation types are **NOT** supported by the Google Sheets API despite appearing in some documentation:
-- `TEXT_IS_VALID_EMAIL`
-- `TEXT_IS_VALID_URL`
-
-Using these types causes: `API error (400): Invalid value at 'requests[X].setDataValidation.rule.condition.type'`
-
-**Workaround:** Use `CUSTOM_FORMULA` with a regex pattern instead.
-
-### Conditional Format Rule Index Required
-
-Each conditional format rule must have a `ruleIndex` field specifying its position:
-
-```json
-{
-  "conditionalFormats": [
-    {
-      "ruleIndex": 0,
-      "ranges": ["A1:A10"],
-      "booleanRule": {...}
-    }
-  ]
-}
-```
-
-The `ruleIndex` determines the order rules are applied (lower indices are applied first).
-
-### Chart Structure Varies by Type
-
-Different chart types have different JSON structures:
-
-**Basic charts (bar, line, scatter, area, column):**
-```json
-{
-  "spec": {
-    "basicChart": {
-      "chartType": "BAR",
-      "domains": [...],   // Note: plural, array
-      "series": [...]     // Note: array
-    }
-  }
-}
-```
-
-**Pie charts:**
-```json
-{
-  "spec": {
-    "pieChart": {
-      "domain": {...},    // Note: singular, object
-      "series": {...}     // Note: object, not array
-    }
-  }
-}
-```
-
-### No Pre-flight Validation
-
-There is no validation before push to catch common errors. Issues are only discovered when the API returns a 400 error, sometimes after partial changes have been applied.
-
-Common errors that are not caught until push:
-- Invalid color formats (hex vs RGB mismatch)
-- Invalid data validation types
-- Malformed JSON structures
-- Sheet ID conflicts
-
-**Recommendation:** Always run `diff` before `push` to preview the generated requests.
-
----
-
-## API Type Definitions
-
-For complete TypedDict definitions of all Google Sheets API types, see `src/extrasheet/api_types.py`. This file is auto-generated from the Google Sheets API discovery document using `scripts/generate_types.py`.
+- Start with `spreadsheet.json`; it usually tells you whether you need to open
+  `data.tsv` at all.
+- If a sheet is truncated, use `--no-limit` or a higher `--max-rows` before
+  making decisions based on missing rows.
+- Re-pull after push.
+- Treat `theme.json`, `developer_metadata.json`, `data_sources.json`,
+  `protection.json`, and grouping metadata as pull-only unless the code changes.

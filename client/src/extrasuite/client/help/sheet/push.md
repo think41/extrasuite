@@ -6,7 +6,7 @@ Apply local changes to Google Sheets.
 
 ## Arguments
 
-  folder    Path to the spreadsheet folder (created by pull)
+  folder    Path to the spreadsheet folder created by pull
 
 ## Flags
 
@@ -14,35 +14,64 @@ Apply local changes to Google Sheets.
 
 ## How It Works
 
-Compares current files against .pristine/ snapshot, generates batchUpdate
-requests, and applies them to Google Sheets in a single API call.
+Push compares the current files against `.pristine/spreadsheet.zip`, validates
+structural changes, generates Google Sheets `batchUpdate` requests, applies
+those requests, then applies supported `comments.json` operations through the
+Drive API.
 
-## After Push
+## Editable Files
 
-Always re-pull before making more changes. The .pristine/ snapshot is not
-auto-updated, so subsequent pushes would generate incorrect diffs.
+Push currently honors edits in:
 
-  extrasuite sheet push ./abc123
-  extrasuite sheet pull https://docs.google.com/spreadsheets/d/abc123 .
+  spreadsheet.json        Spreadsheet title; sheet title/hidden/RTL/tab color/frozen rows/cols
+  data.tsv                Cell values and row/column insert/delete
+  formula.json            Formulas
+  format.json             Cell formats, conditional formats, merges, notes, rich text
+  dimension.json          Row/column size and hidden state
+  charts.json             Charts
+  pivot-tables.json       Pivot tables
+  tables.json             Structured tables
+  filters.json            Basic filter + filter views
+  banded-ranges.json      Alternating colors
+  data-validation.json    Validation rules
+  slicers.json            Slicers
+  data-source-tables.json Limited support only
+  named_ranges.json       Named ranges
+  comments.json           New replies and comment resolution
 
-## Validation
+Push currently ignores edits in:
 
-Push validates changes before sending them. Blocked operations will print
-an error and exit. Warnings can be bypassed with --force if you're certain
-the change is correct.
+  theme.json
+  developer_metadata.json
+  data_sources.json
+  protection.json
+  dimension.json rowGroups / columnGroups / developerMetadata
+  spreadsheet.json properties.locale / autoRecalc / timeZone
 
 ## Comments
 
-Push also applies changes to `comments.json` via the Drive API:
-- Add a reply: add an entry to `replies` without an `id` field
-- Resolve a comment: set `"resolved": true`
-- Creating new top-level comments is not supported
+Push supports these `comments.json` operations:
 
-See `extrasuite sheet help comments-reference` for format details and examples.
+  Add a reply     Add a reply object without an `id`
+  Resolve         Set `"resolved": true`
 
-## Notes
+Not supported:
 
-- All edits to data.tsv, formula.json, format.json, etc. are applied in one push
-- Adding/deleting sheets and changing cell values all happen in one operation
-- Comment operations are applied after sheet data changes
-- If push fails partway through, re-pull to see the current state
+  Create new top-level comments
+
+See `extrasuite sheet help comments-reference` for the file format.
+
+## After Push
+
+Always re-pull before making more changes. `.pristine` is not auto-updated, so
+reusing the same folder after a push will generate stale diffs.
+
+## Validation
+
+Push validates structural edits before sending requests:
+
+  BLOCK    Push fails
+  WARN     Push requires --force
+
+Typical causes include row/column insertions or deletions that conflict with
+formula edits.

@@ -1,6 +1,9 @@
 # comments.json Reference
 
-Cell comments for a sheet. Only created by pull if the sheet has at least one comment.
+Drive comments for a single sheet. This file lives inside a sheet folder and is
+only created when that sheet has at least one comment.
+
+This is separate from `format.json` cell notes.
 
 ## Format
 

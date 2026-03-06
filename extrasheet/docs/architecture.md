@@ -1,124 +1,108 @@
 # ExtraSheet Architecture
 
-Technical overview for engineers working on or integrating with ExtraSheet.
+Technical overview of the current `extrasheet` implementation.
 
 ## Overview
 
-ExtraSheet transforms Google Sheets into a file-based representation optimized for LLM agents. Instead of working with the verbose Google Sheets API, agents interact with simple local files (TSV, JSON) that can be diffed and pushed back.
+`extrasheet` sits between Google Sheets APIs and a local file representation used
+by `extrasuite sheet`. The design goal is progressive disclosure: agents should
+be able to start with `spreadsheet.json`, then load only the files needed for a
+task.
 
+```text
+SheetsClient
+  -> Transport (metadata, grid data, Drive comments, batchUpdate)
+  -> SpreadsheetTransformer
+  -> FileWriter
+  -> .pristine snapshot for diff/push
 ```
-┌─────────────────┐     ┌──────────────────┐     ┌─────────────────┐
-│ SheetsClient    │────▶│ Transport        │────▶│ Google Sheets   │
-│ (orchestration) │     │ (data fetching)  │     │ API             │
-└─────────────────┘     └──────────────────┘     └─────────────────┘
-        │
-        ▼
-┌─────────────────┐     ┌──────────────────┐
-│ Transformer     │────▶│ Local Files      │
-│ (API → Files)   │     │ (TSV, JSON)      │
-└─────────────────┘     └──────────────────┘
-```
-
-## Core Workflow
-
-```bash
-extrasheet pull <url>      # API → Local files
-# ... agent edits files ...
-extrasheet diff <folder>   # Compare against .pristine, output batchUpdate JSON
-extrasheet push <folder>   # Apply changes via batchUpdate API
-```
-
-## Key Components
-
-| Component | File | Purpose |
-|-----------|------|---------|
-| SheetsClient | `client.py` | Main interface: `pull()`, `diff()`, `push()` |
-| Transport | `transport.py` | Abstract data fetching (Google API or local files) |
-| Transformer | `transformer.py` | Converts API response to on-disk format |
-| FileWriter | `writer.py` | Writes transformed data to disk |
-| Diff Engine | `diff.py` | Compares pristine vs current state |
-| RequestGenerator | `request_generator.py` | Generates batchUpdate requests from diff |
 
 ## Pull Flow
 
-1. **Metadata fetch** — `transport.get_metadata()` gets sheet names and dimensions
-2. **Data fetch** — `transport.get_data()` gets cell contents (with configurable row limits)
-3. **Transform** — `SpreadsheetTransformer` converts API response to file format
-4. **Write** — `FileWriter` writes TSV/JSON files to disk
-5. **Pristine copy** — Creates `.pristine/spreadsheet.zip` for diff comparison
+`SheetsClient.pull()` does the following:
+
+1. Fetch spreadsheet metadata without grid data.
+2. Fetch grid data with the configured row limit.
+3. Transform the API payload into `spreadsheet.json`, sheet files, and optional
+   root-level files.
+4. Write `.raw/metadata.json` and `.raw/data.json` unless `save_raw=False`.
+5. Fetch Drive comments and write per-sheet `comments.json` files when present.
+6. Zip the canonical pulled files into `.pristine/spreadsheet.zip`.
+
+Important details:
+
+- `spreadsheet.json` includes sheet previews and truncation metadata.
+- Empty GRID sheets still produce an empty `data.tsv` and `{}` `formula.json`.
+- Non-GRID sheets do not get `data.tsv` or `formula.json`; they may still emit
+  feature files.
+
+## On-Disk Model
+
+Editable files in the declarative workflow:
+
+- `spreadsheet.json`
+- `data.tsv`
+- `formula.json`
+- `format.json`
+- `dimension.json` for row/column size and hidden state
+- `charts.json`
+- `pivot-tables.json`
+- `tables.json`
+- `filters.json`
+- `banded-ranges.json`
+- `data-validation.json`
+- `slicers.json`
+- `data-source-tables.json` with limited support
+- `named_ranges.json`
+- `comments.json` with limited support
+
+Pulled but currently informational:
+
+- `theme.json`
+- `developer_metadata.json`
+- `data_sources.json`
+- `protection.json`
+- `rowGroups`, `columnGroups`, and `developerMetadata` inside `dimension.json`
+- Spreadsheet-level `locale`, `autoRecalc`, and `timeZone`
 
 ## Diff/Push Flow
 
-1. **Extract pristine** — `pristine.extract_pristine()` extracts `.pristine/spreadsheet.zip`
-2. **Read current** — `file_reader.read_current_files()` reads edited files
-3. **Diff** — `diff.diff()` compares and returns `DiffResult`
-4. **Validate** — Structural changes are validated for formula conflicts
-5. **Generate requests** — `request_generator.generate_requests()` converts to batchUpdate JSON
-6. **Push** — `transport.batch_update()` sends to Google Sheets API
+`SheetsClient.diff()` and `SheetsClient.push()` use the pulled zip as the source
+of truth for the original state.
 
-## Design Decisions
+1. Read `.pristine/spreadsheet.zip`.
+2. Read the current working files from disk.
+3. Validate structural edits such as row/column insertions or deletions.
+4. Diff spreadsheet metadata, sheet properties, cell data, formulas, formats,
+   notes, rich text runs, dimensions, split feature files, and named ranges.
+5. Generate Google Sheets `batchUpdate` requests.
+6. Diff `comments.json` separately and apply comment replies/resolution through
+   the Drive API after the Sheets requests succeed.
 
-**Async-first:** All transport and client methods are async for efficient I/O.
+Actual spreadsheet-level push support is intentionally narrower than pull:
 
-**Two API calls always:** Metadata first (to get sheet dimensions), then data with specific ranges. This allows row limiting without fetching everything.
+- Spreadsheet: title only
+- Sheet properties: title, hidden, right-to-left, tab color, frozen rows, frozen
+  columns
+- Structure: new/delete sheet, insert/delete rows, insert/delete columns
 
-**Transport abstraction:** `GoogleSheetsTransport` for production, `LocalFileTransport` for testing with golden files. No mocking needed.
+## Why The Format Is Split
 
-**Declarative over imperative:** Most operations work by editing local files and pushing. Only complex operations (sort, move) require direct batchUpdate calls.
+- `spreadsheet.json` stays small enough to inspect first.
+- `data.tsv` is compact and easy to diff.
+- `formula.json` keeps formulas separate from displayed values.
+- `format.json` avoids forcing every task to load formatting data.
+- Split feature files avoid the old monolithic `feature.json` while still
+  remaining backward-compatible in the diff engine.
 
-**Formula compression:** Contiguous cells with the same formula pattern are stored as ranges (e.g., `"C2:C100": "=A2+B2"`). Relative references auto-increment on push.
+## Current Boundaries
 
-**Format compression:** Cell formats are stored as range-based rules, not per-cell. Reduces file size and makes bulk formatting changes easier.
+- Theme/default format changes are not pushed.
+- Protection and developer metadata are not pushed.
+- Data source metadata is not pushed; data source tables only support refresh-
+  style updates.
+- Comments cannot be created from scratch because Sheets comments do not expose a
+  stable A1-based anchor model through the public APIs used here.
 
-## File Format
-
-The on-disk format is designed for:
-- Human readability (TSV for data, JSON for structure)
-- LLM comprehension (progressive disclosure via `spreadsheet.json` previews)
-- Efficient diffing (range-based compression, stable ordering)
-
-See **[on-disk-format.md](on-disk-format.md)** for the complete specification.
-
-## Diff/Push Implementation
-
-The diff engine handles:
-- Cell value changes (add, modify, delete)
-- Formula changes (single cells and ranges with autoFill)
-- Format rule changes
-- Structural changes (insert/delete rows/columns, create/delete sheets)
-- Feature changes (charts, pivot tables, filters, etc.)
-
-Structural change validation prevents silent bugs:
-- **BLOCK:** Formula edits + conflicting structural changes
-- **WARN:** Structural changes that break existing formulas (use `--force`)
-
-See **[diff-push-spec.md](diff-push-spec.md)** for implementation details.
-
-## Known Issues
-
-**Color formats:** `formatRules` uses hex strings, but `conditionalFormats` and other sections use RGB dicts. Mixing them causes `'dict' object has no attribute 'lstrip'`.
-
-**Pristine state:** Not auto-updated after push. Always re-pull before making additional changes.
-
-**Sheet IDs:** Google may reassign IDs when creating sheets. Re-pull to get server-assigned IDs.
-
-**Error messages:** The error `'dict' object has no attribute 'lstrip'` can mean several different things (wrong color format, wrong JSON structure, etc.).
-
-## Testing
-
-Tests use golden files instead of mocks:
-
-```
-tests/golden/
-  <spreadsheet_id>/
-    metadata.json    # First API call response
-    data.json        # Second API call response
-```
-
-`LocalFileTransport` reads from these files, enabling deterministic testing without API calls.
-
-## Related Documentation
-
-- **[on-disk-format.md](on-disk-format.md)** — Complete file format specification
-- **[diff-push-spec.md](diff-push-spec.md)** — Diff/push implementation details
-- **[agent-guide/](agent-guide/)** — LLM-focused usage guides
+See [on-disk-format.md](on-disk-format.md) for the file reference and
+[diff-push-spec.md](diff-push-spec.md) for the exact editable surface.
