@@ -21,17 +21,6 @@ pip install extraslide
 uvx extraslide --help
 ```
 
-## Authentication
-
-extraslide uses [extrasuite](https://github.com/think41/extrasuite) for authentication. Each user gets a dedicated service account:
-
-```bash
-# One-time login (opens browser)
-uvx extrasuite login
-
-# Share your Google Slides file with the service account email shown after login
-```
-
 ## The Pull-Edit-Diff-Push Workflow
 
 ### Step 1: Pull
@@ -227,7 +216,7 @@ Element styles (fill, stroke, text formatting) are stored in `styles.json` and a
 ## Requirements
 
 - Python 3.10+
-- Google Slides file shared with your service account
+- A valid Google Slides access token supplied by the caller
 
 ## Project Status
 

@@ -18,7 +18,6 @@ Instead of working with complex API responses, agents interact with simple files
 | `src/extrasheet/writer.py` | Writes transformed data to files |
 | `src/extrasheet/formula_compression.py` | Compresses formulas with relative references |
 | `src/extrasheet/format_compression.py` | Compresses cell formatting |
-| `src/extrasheet/credentials.py` | `CredentialsManager` for OAuth token handling |
 | `src/extrasheet/api_types.py` | TypedDict definitions for Google Sheets API |
 | `src/extrasheet/utils.py` | A1 notation parsing utilities |
 | `src/extrasheet/diff.py` | Core diff engine - compares pristine vs current |

@@ -11,7 +11,7 @@ Batching is particularly useful when:
 
 ## Important Considerations
 
-**Authentication & Limits:** A batch request is authenticated once, with that single authentication applying to all subrequests. The server processes subrequests sequentially, allowing later requests to depend on actions from earlier ones.
+**Limits:** A batch request uses one already-available access token for all subrequests. The server processes subrequests sequentially, allowing later requests to depend on actions from earlier ones.
 
 **Atomicity:** All subrequests are applied atomically—if any request fails validation, the entire batch operation is unsuccessful and no changes are applied.
 

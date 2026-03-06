@@ -17,7 +17,6 @@ Python library that converts Google Slides to/from SML (Slide Markup Language), 
 | `src/extraslide/id_manager.py` | Clean ID assignment and mapping |
 | `src/extraslide/transport.py` | `Transport` ABC, `GoogleSlidesTransport`, `LocalFileTransport` |
 | `src/extraslide/classes.py` | Data classes for slide elements (Color, Fill, Stroke, etc.) |
-| `src/extraslide/credentials.py` | `CredentialsManager` for OAuth token handling |
 | `src/extraslide/units.py` | EMU/pt conversion utilities |
 
 ## Documentation

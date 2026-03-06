@@ -248,7 +248,7 @@ This prevents double-scaling and ensures the image's aspect ratio is preserved.
 
 ### Application-Owned Templates
 
-Use a service account to create and maintain the template, then grant read/write permissions appropriately.
+Create and maintain the template under a stable owner, then ensure the runtime access token has the needed read/write permissions.
 
 ### User Instances
 

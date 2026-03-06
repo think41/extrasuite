@@ -19,18 +19,15 @@ uvx extraform pull <form_url>
 ## Quick Start
 
 ```bash
-# 1. Login (one-time)
-extraform login
-
-# 2. Pull a form
+# 1. Pull a form
 extraform pull https://docs.google.com/forms/d/1FAIpQLSd.../edit
 
-# 3. Edit form.json in your editor or with an AI agent
+# 2. Edit form.json in your editor or with an AI agent
 
-# 4. Preview changes
+# 3. Preview changes
 extraform diff 1FAIpQLSd...
 
-# 5. Apply changes
+# 4. Apply changes
 extraform push 1FAIpQLSd...
 ```
 
