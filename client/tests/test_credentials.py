@@ -151,13 +151,9 @@ class TestCredential:
 class TestCredentialsManagerInit:
     """Tests for CredentialsManager initialization."""
 
-    def test_init_with_auth_and_exchange_urls(self) -> None:
-        manager = CredentialsManager(
-            auth_url="https://auth.example.com/api/token/auth",
-            exchange_url="https://auth.example.com/api/token/exchange",
-        )
-        assert manager._auth_url == "https://auth.example.com/api/token/auth"
-        assert manager._exchange_url == "https://auth.example.com/api/token/exchange"
+    def test_init_with_server_url_param(self) -> None:
+        manager = CredentialsManager(server_url="https://auth.example.com")
+        assert manager._server_base_url == "https://auth.example.com"
         assert manager._use_extrasuite is True
         assert manager.auth_mode == "extrasuite"
 
@@ -171,14 +167,10 @@ class TestCredentialsManagerInit:
         assert manager.auth_mode == "service_account"
 
     def test_init_with_env_vars(self) -> None:
-        env = {
-            "EXTRASUITE_AUTH_URL": "https://auth.example.com/api/token/auth",
-            "EXTRASUITE_EXCHANGE_URL": "https://auth.example.com/api/token/exchange",
-        }
+        env = {"EXTRASUITE_SERVER_URL": "https://auth.example.com"}
         with mock.patch.dict(os.environ, env, clear=True):
             manager = CredentialsManager()
-        assert manager._auth_url == "https://auth.example.com/api/token/auth"
-        assert manager._exchange_url == "https://auth.example.com/api/token/exchange"
+        assert manager._server_base_url == "https://auth.example.com"
 
     def test_init_with_env_var_service_account(self) -> None:
         env = {"SERVICE_ACCOUNT_PATH": "/path/to/sa.json"}
@@ -193,21 +185,14 @@ class TestCredentialsManagerInit:
         assert manager._use_extrasuite is False
 
     def test_init_param_overrides_env_var(self) -> None:
-        env = {
-            "EXTRASUITE_AUTH_URL": "https://env.example.com/api/token/auth",
-            "EXTRASUITE_EXCHANGE_URL": "https://env.example.com/api/token/exchange",
-        }
+        env = {"EXTRASUITE_SERVER_URL": "https://env.example.com"}
         with mock.patch.dict(os.environ, env, clear=True):
-            manager = CredentialsManager(
-                auth_url="https://param.example.com/api/token/auth",
-                exchange_url="https://param.example.com/api/token/exchange",
-            )
-        assert manager._auth_url == "https://param.example.com/api/token/auth"
+            manager = CredentialsManager(server_url="https://param.example.com")
+        assert manager._server_base_url == "https://param.example.com"
 
     def test_init_extrasuite_takes_precedence_over_service_account(self) -> None:
         manager = CredentialsManager(
-            auth_url="https://auth.example.com/api/token/auth",
-            exchange_url="https://auth.example.com/api/token/exchange",
+            server_url="https://auth.example.com",
             service_account_path="/path/to/sa.json",
         )
         assert manager._use_extrasuite is True
@@ -222,46 +207,17 @@ class TestCredentialsManagerInit:
         ):
             CredentialsManager()
 
-    def test_init_partial_urls_raises_error(self) -> None:
-        with (
-            mock.patch.object(
-                CredentialsManager, "GATEWAY_CONFIG_PATH", Path("/nonexistent")
-            ),
-            pytest.raises(ValueError, match="exchange_url is missing"),
-        ):
-            CredentialsManager(auth_url="https://auth.example.com/api/token/auth")
-
     def test_init_with_server_url_env_var(self) -> None:
         env = {"EXTRASUITE_SERVER_URL": "https://myserver.example.com"}
         with mock.patch.dict(os.environ, env, clear=True):
             manager = CredentialsManager()
         assert manager._server_base_url == "https://myserver.example.com"
-        assert manager._auth_url == "https://myserver.example.com/api/token/auth"
-        assert (
-            manager._exchange_url == "https://myserver.example.com/api/token/exchange"
-        )
 
     def test_init_with_server_url_env_var_trailing_slash(self) -> None:
         env = {"EXTRASUITE_SERVER_URL": "https://myserver.example.com/"}
         with mock.patch.dict(os.environ, env, clear=True):
             manager = CredentialsManager()
         assert manager._server_base_url == "https://myserver.example.com"
-
-    def test_init_delegation_url_params(self) -> None:
-        manager = CredentialsManager(
-            auth_url="https://auth.example.com/api/token/auth",
-            exchange_url="https://auth.example.com/api/token/exchange",
-            delegation_auth_url="https://deleg.example.com/api/delegation/auth",
-            delegation_exchange_url="https://deleg.example.com/api/delegation/exchange",
-        )
-        assert (
-            manager._delegation_auth_url
-            == "https://deleg.example.com/api/delegation/auth"
-        )
-        assert (
-            manager._delegation_exchange_url
-            == "https://deleg.example.com/api/delegation/exchange"
-        )
 
 
 # ---------------------------------------------------------------------------
@@ -275,15 +231,10 @@ class TestCredentialsManagerGatewayConfig:
     def test_gateway_config_path_override(self, tmp_path: Path) -> None:
         gateway = tmp_path / "gateway.json"
         gateway.write_text(
-            json.dumps(
-                {
-                    "EXTRASUITE_AUTH_URL": "https://gw.example.com/api/token/auth",
-                    "EXTRASUITE_EXCHANGE_URL": "https://gw.example.com/api/token/exchange",
-                }
-            )
+            json.dumps({"EXTRASUITE_SERVER_URL": "https://gw.example.com"})
         )
         manager = CredentialsManager(gateway_config_path=gateway)
-        assert manager._auth_url == "https://gw.example.com/api/token/auth"
+        assert manager._server_base_url == "https://gw.example.com"
 
     def test_gateway_config_path_not_found_raises(self, tmp_path: Path) -> None:
         missing = tmp_path / "missing_gateway.json"
@@ -297,31 +248,7 @@ class TestCredentialsManagerGatewayConfig:
         )
         with mock.patch.dict(os.environ, {}, clear=True):
             manager = CredentialsManager(gateway_config_path=gateway)
-        assert manager._auth_url == "https://srv.example.com/api/token/auth"
-        assert manager._exchange_url == "https://srv.example.com/api/token/exchange"
-        assert (
-            manager._delegation_auth_url
-            == "https://srv.example.com/api/delegation/auth"
-        )
-        assert (
-            manager._delegation_exchange_url
-            == "https://srv.example.com/api/delegation/exchange"
-        )
         assert manager._server_base_url == "https://srv.example.com"
-
-    def test_gateway_explicit_auth_urls(self, tmp_path: Path) -> None:
-        gateway = tmp_path / "gateway.json"
-        gateway.write_text(
-            json.dumps(
-                {
-                    "EXTRASUITE_AUTH_URL": "https://explicit.example.com/api/token/auth",
-                    "EXTRASUITE_EXCHANGE_URL": "https://explicit.example.com/api/token/exchange",
-                }
-            )
-        )
-        with mock.patch.dict(os.environ, {}, clear=True):
-            manager = CredentialsManager(gateway_config_path=gateway)
-        assert manager._auth_url == "https://explicit.example.com/api/token/auth"
 
 
 # ---------------------------------------------------------------------------
@@ -660,10 +587,7 @@ class TestCredentialsManagerIntegration:
         cred = _make_sa_cred(token="cached-access-token", expires_at=time.time() + 3600)
         cache_path.write_text(json.dumps(cred.to_dict()))
 
-        manager = CredentialsManager(
-            auth_url="https://auth.example.com/api/token/auth",
-            exchange_url="https://auth.example.com/api/token/exchange",
-        )
+        manager = CredentialsManager(server_url="https://auth.example.com")
 
         with mock.patch.object(
             manager, "_credential_cache_path", return_value=cache_path
@@ -680,32 +604,40 @@ class TestCredentialsManagerIntegration:
         assert result.service_account_email == "sa@example.com"
         assert result.is_valid()
 
-    def test_expired_cache_triggers_auth(self, tmp_path: Path) -> None:
-        """Expired cache should trigger re-authentication."""
+    def test_expired_cache_triggers_session_exchange(self, tmp_path: Path) -> None:
+        """Expired cache should trigger a fresh session-backed credential exchange."""
         cache_path = tmp_path / "sheet.pull.json"
         expired_cred = _make_sa_cred(
             token="expired-token", expires_at=time.time() - 100
         )
         cache_path.write_text(json.dumps(expired_cred.to_dict()))
 
-        manager = CredentialsManager(
-            auth_url="https://auth.example.com/api/token/auth",
-            exchange_url="https://auth.example.com/api/token/exchange",
+        manager = CredentialsManager(server_url="https://auth.example.com")
+        valid_session = SessionToken(
+            raw_token="session-token",
+            email="user@example.com",
+            expires_at=time.time() + 86400,
         )
-
-        fresh_cred = _make_sa_cred(token="fresh-token", expires_at=time.time() + 3600)
+        mock_response = _v2_token_response("fresh-token")
 
         with (
             mock.patch.object(
                 manager, "_credential_cache_path", return_value=cache_path
             ),
             mock.patch.object(
-                manager, "_authenticate_extrasuite", return_value=fresh_cred
+                manager, "_get_or_create_session_token", return_value=valid_session
             ),
+            mock.patch("urllib.request.urlopen") as mock_urlopen,
         ):
+            mock_resp = mock.MagicMock()
+            mock_resp.read.return_value = json.dumps(mock_response).encode()
+            mock_resp.__enter__ = mock.MagicMock(return_value=mock_resp)
+            mock_resp.__exit__ = mock.MagicMock(return_value=False)
+            mock_urlopen.return_value = mock_resp
+
             result = manager.get_credential(
                 command={"type": "sheet.pull"},
-                reason="Test: re-authenticate after token expiry",
+                reason="Test: refresh after token expiry",
             )
 
         assert result.token == "fresh-token"
@@ -1146,49 +1078,3 @@ class TestV2SessionFlow:
         port = CredentialsManager._find_free_port()
         assert isinstance(port, int)
         assert 1024 <= port <= 65535
-
-    def test_exchange_auth_code_success(self) -> None:
-        """Legacy _exchange_auth_code returns Credential."""
-        manager = CredentialsManager(
-            auth_url="https://auth.example.com/api/token/auth",
-            exchange_url="https://auth.example.com/api/token/exchange",
-        )
-
-        mock_response = {
-            "token": "sa-token-value",
-            "expires_at": "2027-01-01T12:00:00Z",
-            "service_account": "sa@proj.iam.gserviceaccount.com",
-        }
-
-        with mock.patch("urllib.request.urlopen") as mock_urlopen:
-            mock_resp_obj = mock.MagicMock()
-            mock_resp_obj.read.return_value = json.dumps(mock_response).encode()
-            mock_resp_obj.__enter__ = mock.MagicMock(return_value=mock_resp_obj)
-            mock_resp_obj.__exit__ = mock.MagicMock(return_value=False)
-            mock_urlopen.return_value = mock_resp_obj
-
-            cred = manager._exchange_auth_code("test-code")
-
-        assert cred.token == "sa-token-value"
-        assert cred.service_account_email == "sa@proj.iam.gserviceaccount.com"
-        assert cred.kind == "bearer_sa"
-
-    def test_exchange_auth_code_http_error(self) -> None:
-        manager = CredentialsManager(
-            auth_url="https://auth.example.com/api/token/auth",
-            exchange_url="https://auth.example.com/api/token/exchange",
-        )
-
-        with mock.patch("urllib.request.urlopen") as mock_urlopen:
-            error = urllib.error.HTTPError(
-                url="https://auth.example.com/api/token/exchange",
-                code=400,
-                msg="Bad Request",
-                hdrs={},
-                fp=mock.MagicMock(read=lambda: b"Invalid code"),
-            )
-            mock_urlopen.side_effect = error
-
-            with pytest.raises(Exception) as exc_info:
-                manager._exchange_auth_code("bad-code")
-        assert "Token exchange failed" in str(exc_info.value)

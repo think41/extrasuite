@@ -27,7 +27,6 @@ class FakeDatabase:
         self.users: dict[str, str] = {}
         self.oauth_states: dict[str, dict[str, Any]] = {}
         self.auth_codes: dict[str, dict[str, Any]] = {}
-        self.delegation_logs: list[dict[str, Any]] = []
         self.session_tokens: dict[str, dict[str, Any]] = {}
         self.access_logs: list[dict[str, Any]] = []
         self._should_fail_get_sa: bool = False
@@ -45,23 +44,9 @@ class FakeDatabase:
             raise TimeoutError("Simulated database timeout")
         self.users[email] = service_account_email
 
-    async def save_state(
-        self,
-        state: str,
-        redirect_url: str,
-        scopes: list[str] | None = None,
-        reason: str = "",
-        flow_type: str = "",
-    ) -> None:
-        """Save OAuth state token with redirect URL and optional delegation fields."""
-        data: dict[str, Any] = {"redirect_url": redirect_url}
-        if scopes is not None:
-            data["scopes"] = scopes
-        if reason:
-            data["reason"] = reason
-        if flow_type:
-            data["flow_type"] = flow_type
-        self.oauth_states[state] = data
+    async def save_state(self, state: str, redirect_url: str) -> None:
+        """Save OAuth state token with redirect URL."""
+        self.oauth_states[state] = {"redirect_url": redirect_url}
 
     async def retrieve_state(self, state: str) -> dict[str, Any] | None:
         """Retrieve AND delete OAuth state."""
@@ -84,11 +69,6 @@ class FakeDatabase:
 
         data = self.auth_codes[auth_code]
 
-        # Delegation codes must not be returned here; consume and discard
-        if data.get("flow_type") == "delegation":
-            self.auth_codes.pop(auth_code)
-            return None
-
         expires_at = data.get("expires_at")
         if not expires_at or datetime.now(UTC) > expires_at:
             self.auth_codes.pop(auth_code)
@@ -99,48 +79,6 @@ class FakeDatabase:
             "service_account_email": data.get("service_account_email", ""),
             "user_email": data.get("user_email", ""),
         }
-
-    async def save_delegation_auth_code(
-        self, auth_code: str, email: str, scopes: list[str], reason: str
-    ) -> None:
-        """Save delegation auth code."""
-        self.auth_codes[auth_code] = {
-            "email": email,
-            "scopes": scopes,
-            "reason": reason,
-            "flow_type": "delegation",
-            "expires_at": datetime.now(UTC) + AUTH_CODE_TTL,
-        }
-
-    async def retrieve_delegation_auth_code(self, auth_code: str) -> dict[str, Any] | None:
-        """Retrieve AND delete delegation auth code."""
-        if auth_code not in self.auth_codes:
-            return None
-
-        data = self.auth_codes.pop(auth_code)
-        if data.get("flow_type") != "delegation":
-            return None
-
-        expires_at = data.get("expires_at")
-        if not expires_at or datetime.now(UTC) > expires_at:
-            return None
-
-        return {
-            "email": data.get("email", ""),
-            "scopes": data.get("scopes", []),
-            "reason": data.get("reason", ""),
-        }
-
-    async def log_delegation_request(self, email: str, scopes: list[str], reason: str) -> None:
-        """Log a delegation request for audit."""
-        self.delegation_logs.append(
-            {
-                "email": email,
-                "scopes": scopes,
-                "reason": reason,
-                "timestamp": datetime.now(UTC),
-            }
-        )
 
     async def save_session_token(
         self,
@@ -261,10 +199,10 @@ class FakeSettings:
         admin_emails: list[str] | None = None,
         allowed_domains: list[str] | None = None,
     ) -> None:
+        _ = delegation_enabled
         self.google_cloud_project = google_cloud_project
         self._domain_abbreviations = domain_abbreviations or {}
         self.token_expiry_minutes = token_expiry_minutes
-        self._delegation_enabled = delegation_enabled
         self._delegation_scopes = delegation_scopes or []
         self.session_token_expiry_days = session_token_expiry_days
         self._admin_emails = [e.lower() for e in (admin_emails or [])]
@@ -276,10 +214,6 @@ class FakeSettings:
             return self._domain_abbreviations[domain.lower()]
         # Fallback: 4-char hash of domain
         return hashlib.sha256(domain.lower().encode()).hexdigest()[:4]
-
-    def is_delegation_enabled(self) -> bool:
-        """Check if delegation is enabled."""
-        return self._delegation_enabled
 
     def get_delegation_scopes(self) -> list[str]:
         """Get configured delegation scopes."""

@@ -114,7 +114,7 @@ response = service.documents().batchUpdate(documentId=DOCUMENT_ID, body=body).ex
 
 ## Template Management
 
-For application-owned templates, use a service account for creation. When generating document instances, use end-user credentials to ensure proper access control and prevent scaling issues.
+For application-owned templates, create them under a stable owner and ensure the runtime access token has the necessary document permissions.
 
 ### Creation Steps (with application credentials)
 

@@ -71,24 +71,18 @@ def cmd_auth_status(args: Any) -> None:
     else:
         print("Session: not found or expired. Run: extrasuite auth login")
 
-    access_token = info["access_token"]
-    if access_token and access_token.get("cached"):
-        expires_dt = datetime.fromtimestamp(access_token["expires_at"], tz=timezone.utc)
-        print(
-            f"Access token: cached (expires={expires_dt.strftime('%Y-%m-%d %H:%M:%S')} UTC)"
-        )
-    else:
-        print("Access token: not cached")
+    credentials = info["credentials"]
+    if not credentials:
+        print("Credentials: not cached")
+        return
 
-    oauth_token = info["oauth_token"]
-    if oauth_token and oauth_token.get("cached"):
-        expires_dt = datetime.fromtimestamp(oauth_token["expires_at"], tz=timezone.utc)
+    print("Credentials:")
+    for command_type, cred_info in sorted(credentials.items()):
+        if cred_info.get("invalid"):
+            print(f"  {command_type}: invalid cache")
+            continue
+        state = "cached" if cred_info.get("cached") else "expired"
+        expires_dt = datetime.fromtimestamp(cred_info["expires_at"], tz=timezone.utc)
         print(
-            f"OAuth token: cached (expires={expires_dt.strftime('%Y-%m-%d %H:%M:%S')} UTC)"
+            f"  {command_type}: {state} ({cred_info['kind']}, expires={expires_dt.strftime('%Y-%m-%d %H:%M:%S')} UTC)"
         )
-    elif oauth_token and oauth_token.get("expired"):
-        print("OAuth token: expired")
-    elif oauth_token and oauth_token.get("invalid"):
-        print("OAuth token: invalid cache")
-    else:
-        print("OAuth token: not cached")

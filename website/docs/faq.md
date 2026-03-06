@@ -103,10 +103,10 @@ Everything you need to know about using ExtraSuite.
 
     Your admin must:
 
-    1. Set `DELEGATION_ENABLED=true` on the ExtraSuite server (optionally set `DELEGATION_SCOPES` to restrict which scopes can be requested)
+    1. Configure the ExtraSuite server for DWD-backed commands (optionally set `DELEGATION_SCOPES` to restrict which scopes can be requested)
     2. Set up domain-wide delegation in Google Workspace Admin Console
 
-    Once configured, use `extrasuite authorize --scopes gmail.send --reason "sending report"` to get a delegated token.
+    Once configured, log in with `extrasuite auth login` and run the relevant command, such as `extrasuite gmail compose ...` or `extrasuite calendar view ...`.
 
 ??? question "Is domain-wide delegation required?"
     No. Domain-wide delegation is entirely optional and only needed for user-level API access (Gmail, Calendar, Apps Script). The core ExtraSuite functionality (Sheets, Docs, Slides) works without it using the standard service-account-per-user model.

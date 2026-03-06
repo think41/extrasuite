@@ -1,8 +1,7 @@
 """Credentials management for Google API access.
 
 Supports two authentication modes:
-1. ExtraSuite server - short-lived tokens via OAuth flow (v1 legacy)
-   and session-token protocol (v2: one browser login per 30 days, then headless)
+1. ExtraSuite server - v2 session-token protocol
 2. Service account file - direct credentials from JSON key file
 """
 
@@ -186,20 +185,18 @@ class CredentialsManager:
     """Manages credentials for Google API access.
 
     Supports two authentication modes:
-    1. ExtraSuite protocol - obtains short-lived tokens via OAuth flow
+    1. ExtraSuite protocol - obtains short-lived tokens via the v2 session flow
     2. Service account file - uses credentials from a JSON key file
 
     Precedence order for configuration:
     1. Constructor parameters
-    2. Environment variables (EXTRASUITE_SERVER_URL, EXTRASUITE_AUTH_URL, etc.)
+    2. Environment variables (EXTRASUITE_SERVER_URL)
     3. ~/.config/extrasuite/gateway.json (created by install script)
     4. service_account_path constructor parameter / SERVICE_ACCOUNT_PATH env var
 
     Args:
-        auth_url: URL to start authentication (e.g., "https://server.com/api/token/auth").
-        exchange_url: URL to exchange auth code for token.
-        delegation_auth_url: URL for delegation auth flow.
-        delegation_exchange_url: URL to exchange delegation auth code.
+        server_url: Base URL for the ExtraSuite server
+            (e.g., "https://server.com").
         service_account_path: Path to service account JSON file (optional).
         token_cache_path: Path to cache tokens. Defaults to ~/.config/extrasuite/token.json
         gateway_config_path: Path to gateway.json. Defaults to ~/.config/extrasuite/gateway.json.
@@ -213,10 +210,7 @@ class CredentialsManager:
 
     def __init__(
         self,
-        auth_url: str | None = None,
-        exchange_url: str | None = None,
-        delegation_auth_url: str | None = None,
-        delegation_exchange_url: str | None = None,
+        server_url: str | None = None,
         service_account_path: str | Path | None = None,
         gateway_config_path: str | Path | None = None,
         headless: bool | None = None,
@@ -234,90 +228,27 @@ class CredentialsManager:
             self._headless = os.environ.get("EXTRASUITE_HEADLESS", "").strip() == "1"
 
         # Resolve configuration with precedence: constructor > env var > gateway.json
-        self._auth_url = auth_url or os.environ.get("EXTRASUITE_AUTH_URL")
-        self._exchange_url = exchange_url or os.environ.get("EXTRASUITE_EXCHANGE_URL")
-        self._delegation_auth_url = delegation_auth_url or os.environ.get(
-            "EXTRASUITE_DELEGATION_AUTH_URL"
+        self._server_base_url = (
+            server_url or os.environ.get("EXTRASUITE_SERVER_URL") or None
         )
-        self._delegation_exchange_url = delegation_exchange_url or os.environ.get(
-            "EXTRASUITE_DELEGATION_EXCHANGE_URL"
-        )
+        if self._server_base_url:
+            self._server_base_url = self._server_base_url.rstrip("/")
 
-        # Track whether explicit auth URLs were provided.  When True, gateway.json
-        # may still fill in missing delegation URLs but must NOT activate v2 session
-        # flow (server_base_url).  This prevents a developer's personal gateway.json
-        # from silently enabling v2 in tests or scripts that pass explicit auth_url.
-        #
-        # Known limitation: if EXTRASUITE_AUTH_URL is set to a v2-capable server AND
-        # a gateway.json with EXTRASUITE_SERVER_URL is also present, the v2 session
-        # flow will NOT be activated (server_base_url stays None).  The caller must
-        # set EXTRASUITE_SERVER_URL (or gateway.json) without also setting the
-        # individual EXTRASUITE_AUTH_URL override to get v2 behaviour.
-        _explicit_auth_urls = bool(self._auth_url)
-
-        # Derived server base URL for new v2 endpoints (session exchange, access token)
-        self._server_base_url: str | None = None
-
-        # Check EXTRASUITE_SERVER_URL env var (derives all 4 URLs)
-        server_url_env = os.environ.get("EXTRASUITE_SERVER_URL")
-        if server_url_env:
-            server_url_env = server_url_env.rstrip("/")
-            self._server_base_url = server_url_env
-            if not self._auth_url:
-                self._auth_url = f"{server_url_env}/api/token/auth"
-            if not self._exchange_url:
-                self._exchange_url = f"{server_url_env}/api/token/exchange"
-            if not self._delegation_auth_url:
-                self._delegation_auth_url = f"{server_url_env}/api/delegation/auth"
-            if not self._delegation_exchange_url:
-                self._delegation_exchange_url = (
-                    f"{server_url_env}/api/delegation/exchange"
-                )
-
-        # If not set, try gateway.json
-        if (
-            not self._auth_url
-            or not self._exchange_url
-            or not self._delegation_auth_url
-            or not self._delegation_exchange_url
-        ):
+        if not self._server_base_url:
             gateway_urls = self._load_gateway_config()
             if gateway_urls:
-                self._auth_url = self._auth_url or gateway_urls.get("auth_url")
-                self._exchange_url = self._exchange_url or gateway_urls.get(
-                    "exchange_url"
-                )
-                self._delegation_auth_url = (
-                    self._delegation_auth_url or gateway_urls.get("delegation_auth_url")
-                )
-                self._delegation_exchange_url = (
-                    self._delegation_exchange_url
-                    or gateway_urls.get("delegation_exchange_url")
-                )
-                if (
-                    not self._server_base_url
-                    and not _explicit_auth_urls
-                    and gateway_urls.get("server_base_url")
-                ):
-                    self._server_base_url = gateway_urls.get("server_base_url")
+                self._server_base_url = gateway_urls.get("server_base_url")
 
         sa_path = service_account_path or os.environ.get("SERVICE_ACCOUNT_PATH")
         self._sa_path = Path(sa_path) if sa_path else None
 
         # Validate that at least one auth method is configured
-        has_extrasuite = bool(self._auth_url and self._exchange_url)
-        has_partial_extrasuite = bool(self._auth_url) != bool(self._exchange_url)
-        if has_partial_extrasuite:
-            missing = "exchange_url" if self._auth_url else "auth_url"
-            raise ValueError(
-                f"Incomplete ExtraSuite configuration: {missing} is missing. "
-                "Both auth_url and exchange_url must be provided together."
-            )
+        has_extrasuite = bool(self._server_base_url)
         if not has_extrasuite and not self._sa_path:
             raise ValueError(
                 "No authentication method configured.\n\n"
                 "Fix with ONE of these options:\n"
-                "  1. Pass --gateway /path/to/gateway.json (contains server URLs)\n"
+                "  1. Pass --gateway /path/to/gateway.json (contains EXTRASUITE_SERVER_URL)\n"
                 "  2. Pass --service-account /path/to/sa.json (direct Google credentials)\n"
                 "  3. Set EXTRASUITE_SERVER_URL environment variable\n"
                 "  4. Create ~/.config/extrasuite/gateway.json with:\n"
@@ -349,7 +280,7 @@ class CredentialsManager:
 
         ``reason`` is agent-supplied user intent logged server-side for auditing.
 
-        For ExtraSuite v2 mode: validates the session, POSTs to /api/auth/token,
+        For ExtraSuite mode: validates the session, POSTs to /api/auth/token,
         caches the first Google credential by command type.
 
         For service account file mode: generates a token directly from the SA key.
@@ -398,18 +329,12 @@ class CredentialsManager:
             if cached and cached.is_valid():
                 return cached
 
-        if self._server_base_url:
-            session = self._get_or_create_session_token()
-            result = self._exchange_session_for_credential(
-                session, command=command, reason=reason
-            )
-            # result["credentials"] is a list; pick the first Google credential
-            cred = _parse_first_google_credential(result, cmd_type)
-            self._save_credential(cache_path, cred)
-            return cred
-
-        # Legacy v1 flow — only SA commands are supported here
-        cred = self._authenticate_extrasuite()
+        session = self._get_or_create_session_token()
+        result = self._exchange_session_for_credential(
+            session, command=command, reason=reason
+        )
+        # result["credentials"] is a list; pick the first Google credential
+        cred = _parse_first_google_credential(result, cmd_type)
         self._save_credential(cache_path, cred)
         return cred
 
@@ -489,13 +414,11 @@ class CredentialsManager:
     def _load_gateway_config(self) -> dict[str, str] | None:
         """Load endpoint URLs from gateway.json if it exists.
 
-        Supports these formats in gateway.json:
-        - EXTRASUITE_SERVER_URL: Derives all 4 endpoints (preferred)
-        - EXTRASUITE_AUTH_URL / EXTRASUITE_EXCHANGE_URL: Explicit token URLs
-        - EXTRASUITE_DELEGATION_AUTH_URL / EXTRASUITE_DELEGATION_EXCHANGE_URL: Explicit delegation URLs
+        Supports this format in gateway.json:
+        - EXTRASUITE_SERVER_URL: Base URL for the server (preferred)
 
         Returns:
-            Dictionary with up to 4 URL keys, or None if file not found.
+            Dictionary with the resolved server base URL, or None if file not found.
 
         Raises:
             FileNotFoundError: If explicit gateway_config_path was set and doesn't exist.
@@ -512,29 +435,10 @@ class CredentialsManager:
 
             result: dict[str, str] = {}
 
-            # Derive from EXTRASUITE_SERVER_URL if present
             server_url = data.get("EXTRASUITE_SERVER_URL")
             if server_url:
                 server_url = server_url.rstrip("/")
                 result["server_base_url"] = server_url
-                result["auth_url"] = f"{server_url}/api/token/auth"
-                result["exchange_url"] = f"{server_url}/api/token/exchange"
-                result["delegation_auth_url"] = f"{server_url}/api/delegation/auth"
-                result["delegation_exchange_url"] = (
-                    f"{server_url}/api/delegation/exchange"
-                )
-
-            # Explicit URLs override server-derived values
-            if data.get("EXTRASUITE_AUTH_URL"):
-                result["auth_url"] = data["EXTRASUITE_AUTH_URL"]
-            if data.get("EXTRASUITE_EXCHANGE_URL"):
-                result["exchange_url"] = data["EXTRASUITE_EXCHANGE_URL"]
-            if data.get("EXTRASUITE_DELEGATION_AUTH_URL"):
-                result["delegation_auth_url"] = data["EXTRASUITE_DELEGATION_AUTH_URL"]
-            if data.get("EXTRASUITE_DELEGATION_EXCHANGE_URL"):
-                result["delegation_exchange_url"] = data[
-                    "EXTRASUITE_DELEGATION_EXCHANGE_URL"
-                ]
 
             return result if result else None
         except (json.JSONDecodeError, OSError):
@@ -705,7 +609,7 @@ class CredentialsManager:
         # complete the session exchange even if the user authenticates successfully.
         if self._server_base_url is None:
             raise RuntimeError(
-                "server_base_url is not configured; cannot use v2 session flow. "
+                "server_base_url is not configured; cannot use session flow. "
                 "Set EXTRASUITE_SERVER_URL or add it to gateway.json."
             )
 
@@ -831,7 +735,7 @@ class CredentialsManager:
         Otherwise: delegates to _run_browser_flow (HTTP callback + optional stdin).
         """
         port = self._find_free_port()
-        auth_url = f"{self._auth_url}?port={port}&v=2"
+        auth_url = f"{self._server_base_url}/api/token/auth?port={port}"
 
         if self._headless:
             print(
@@ -874,7 +778,7 @@ class CredentialsManager:
         """
         if self._server_base_url is None:
             raise RuntimeError(
-                "server_base_url is not configured; cannot use v2 session flow"
+                "server_base_url is not configured; cannot use session flow"
             )
         access_token_url = f"{self._server_base_url}/api/auth/token"
         body = json.dumps({"command": command, "reason": reason}).encode("utf-8")
@@ -905,60 +809,6 @@ class CredentialsManager:
             raise Exception(f"Access token exchange failed: {error_body}") from e
         except urllib.error.URLError as e:
             raise Exception(f"Failed to connect to server: {e}") from e
-
-    # =========================================================================
-    # Legacy v1 Auth Methods (SA only — delegation removed)
-    # =========================================================================
-
-    def _authenticate_extrasuite(self) -> Credential:
-        """Run the ExtraSuite authentication flow (legacy v1 SA path)."""
-        port = self._find_free_port()
-        auth_url = f"{self._auth_url}?port={port}"
-        auth_code = self._run_browser_flow(
-            port, auth_url, "Open this URL to authenticate:"
-        )
-        return self._exchange_auth_code(auth_code)
-
-    def _exchange_auth_code(self, auth_code: str) -> Credential:
-        """Exchange auth code for credential via POST request to server (legacy v1)."""
-        if self._exchange_url is None:
-            raise RuntimeError(
-                "exchange_url is not configured; cannot exchange auth code"
-            )
-        body = json.dumps({"code": auth_code}).encode("utf-8")
-
-        req = urllib.request.Request(
-            self._exchange_url,
-            data=body,
-            headers={"Content-Type": "application/json"},
-            method="POST",
-        )
-
-        try:
-            with urllib.request.urlopen(
-                req, timeout=30, context=SSL_CONTEXT
-            ) as response:
-                result = json.loads(response.read().decode("utf-8"))
-        except urllib.error.HTTPError as e:
-            error_body = e.read().decode("utf-8") if e.fp else str(e)
-            raise Exception(f"Token exchange failed: {error_body}") from e
-        except urllib.error.URLError as e:
-            raise Exception(f"Failed to connect to server: {e}") from e
-
-        expires_at_str = result["expires_at"]
-        expires_at_dt = datetime.fromisoformat(expires_at_str.replace("Z", "+00:00"))
-        expires_at = min(
-            expires_at_dt.timestamp(), time.time() + SA_TOKEN_CACHE_SECONDS
-        )
-
-        return Credential(
-            provider="google",
-            kind="bearer_sa",
-            token=result["token"],
-            expires_at=expires_at,
-            scopes=[],
-            metadata={"service_account_email": result.get("service_account", "")},
-        )
 
     @staticmethod
     def _find_free_port() -> int:

@@ -111,7 +111,7 @@ Administrators can also configure a `DELEGATION_SCOPES` allowlist. Token request
 
 ### Domain-Wide Delegation (Optional)
 
-ExtraSuite optionally supports **domain-wide delegation** for user-specific APIs like Gmail, Calendar, Apps Script, and Contacts. This is an opt-in feature controlled by the `DELEGATION_ENABLED` environment variable.
+ExtraSuite supports **domain-wide delegation** for user-specific APIs like Gmail, Calendar, Apps Script, and Contacts when those command types are enabled by your deployment and authorized in Google Workspace.
 
 **How it works:**
 
@@ -130,7 +130,7 @@ ExtraSuite optionally supports **domain-wide delegation** for user-specific APIs
 | Token acts as | Service account | User |
 | Access scope | Files shared with SA | Delegated scopes (Gmail, Calendar, etc.) |
 | Admin control | SA creation | Workspace Admin Console |
-| Audit trail | Token generation logs | Delegation request logs with reason |
+| Audit trail | Access-token request logs with reason | Access-token request logs with reason |
 
 **Risk analysis:**
 

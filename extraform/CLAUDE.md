@@ -15,7 +15,6 @@ Instead of working with complex API responses, agents interact with a single fil
 | `src/extraform/diff.py` | Compares pristine vs current form state |
 | `src/extraform/request_generator.py` | Generates batchUpdate requests from diff results |
 | `src/extraform/pristine.py` | Handles `.pristine/form.zip` creation and extraction |
-| `src/extraform/credentials.py` | Token management via extrasuite.client |
 
 ## CLI Interface
 

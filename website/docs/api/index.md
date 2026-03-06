@@ -73,18 +73,18 @@ The `extrasuite` client library implements the client side of this protocol:
 ```python
 from extrasuite.client import CredentialsManager
 
-# Point to your endpoints
-manager = CredentialsManager(
-    auth_url="https://your-server.com/api/token/auth",
-    exchange_url="https://your-server.com/api/token/exchange",
+# Point to your server
+manager = CredentialsManager(server_url="https://your-server.com")
+
+# Get a credential (handles session establishment automatically)
+credential = manager.get_credential(
+    command={"type": "sheet.pull", "file_url": "https://docs.google.com/..."},
+    reason="User asked to review the spreadsheet",
 )
 
-# Get a token (handles auth flow automatically)
-token = manager.get_token()
-
-print(f"Token: {token.access_token}")
-print(f"Expires in: {token.expires_in_seconds()} seconds")
-print(f"Service Account: {token.service_account_email}")
+print(f"Kind: {credential.kind}")
+print(f"Expires in: {credential.expires_in_seconds()} seconds")
+print(f"Service Account: {credential.service_account_email}")
 ```
 
 The client library works with any server that implements the [Authentication API Specification](auth-spec.md).

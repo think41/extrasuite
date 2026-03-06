@@ -109,8 +109,6 @@ class SettingsProtocol(Protocol):
 
     def get_domain_abbreviation(self, domain: str) -> str: ...
 
-    def is_delegation_enabled(self) -> bool: ...
-
 
 def sanitize_email_for_account_id(email: str, domain_abbrev: str) -> str:
     """Convert email to valid service account ID.

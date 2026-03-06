@@ -50,7 +50,6 @@ ExtraSuite stores time-limited data in Firestore that must be auto-cleaned via T
 | `auth_codes` | `expires_at` | 120 seconds (auto) |
 | `session_tokens` | `expires_at` | 60 days (30 active + 30 audit) |
 | `access_logs` | `expires_at` | 30 days |
-| `delegation_logs` | `expires_at` | 30 days |
 
 #### Using gcloud CLI
 
@@ -64,12 +63,6 @@ gcloud firestore fields ttls update expires_at \
 # access_logs
 gcloud firestore fields ttls update expires_at \
   --collection-group=access_logs \
-  --enable-ttl \
-  --project=$PROJECT_ID
-
-# delegation_logs
-gcloud firestore fields ttls update expires_at \
-  --collection-group=delegation_logs \
   --enable-ttl \
   --project=$PROJECT_ID
 

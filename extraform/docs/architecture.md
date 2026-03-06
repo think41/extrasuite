@@ -189,16 +189,7 @@ The Forms API supports optional concurrency control via `writeControl`:
 
 Currently not implemented in ExtraForm but could be added for conflict detection.
 
-## Shared Credentials
+## Access Tokens
 
-ExtraForm reuses the `extrasuite.client` package for authentication:
-
-```python
-from extrasuite.client import authenticate
-token = authenticate()
-```
-
-This provides:
-- OAuth flow with browser authentication
-- Service account support
-- Token caching via OS keyring
+`extraform` assumes the caller already has a valid Google Forms access token.
+Authentication and token acquisition live outside this package.

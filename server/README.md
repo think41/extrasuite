@@ -1,6 +1,6 @@
 # ExtraSuite Server
 
-FastAPI backend for ExtraSuite - secure OAuth token exchange for CLI tools.
+FastAPI backend for ExtraSuite's v2 session-token authentication flow.
 
 ## Development
 
@@ -25,10 +25,11 @@ uv run ruff format .
 
 | Method | Endpoint | Description |
 |--------|----------|-------------|
-| GET | `/api/token/auth?port=<port>` | CLI entry point - starts OAuth flow |
-| GET | `/api/auth/callback` | OAuth callback - exchanges code for SA token |
+| GET | `/api/token/auth?port=<port>` | Phase 1 browser entry point |
+| GET | `/api/auth/callback` | OAuth callback |
+| POST | `/api/auth/session/exchange` | Exchange auth code for 30-day session token |
+| POST | `/api/auth/token` | Exchange session token for Google credential(s) |
 | GET | `/api/health` | Health check |
-| GET | `/api/health/ready` | Readiness check |
 
 ## Environment Variables
 
@@ -47,8 +48,10 @@ See `.env.template` for required configuration:
 ## Database
 
 Uses Firestore to store:
-- User OAuth credentials (refresh tokens)
 - Service account email mappings
-- OAuth state tokens (CSRF protection)
+- OAuth state tokens
+- Auth codes
+- Session token hashes
+- Access logs
 
 Collections are created automatically on first use.
