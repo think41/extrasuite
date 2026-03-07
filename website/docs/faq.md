@@ -169,10 +169,12 @@ Everything you need to know about using ExtraSuite.
 ??? question "Authentication keeps failing"
     1. Clear your browser cookies for extrasuite.think41.com
     2. Re-authenticate through the ExtraSuite homepage
-    3. Clear cached tokens:
+    3. Clear cached tokens and log out:
        ```bash
-       rm -f ~/.config/extrasuite/token.json
+       extrasuite auth logout
+       extrasuite auth login
        ```
+    Note: session tokens are stored in the OS keyring, not as plain files on disk. Use `extrasuite auth logout` rather than deleting files manually.
 
 ??? question "The AI doesn't recognize the skill"
     1. Verify the skill is installed:

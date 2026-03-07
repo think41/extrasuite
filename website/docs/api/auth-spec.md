@@ -163,7 +163,7 @@ Reference categories:
 1. Session tokens should be opaque random secrets with high entropy
 2. Session tokens must be stored server-side as hashes, not raw values
 3. Google access tokens should remain short-lived (reference implementation: 1 hour)
-4. The client should cache credentials only with restrictive file permissions
+4. The client must not write access tokens to disk; they should be held only in process memory
 
 ### Auth codes and state
 
@@ -240,8 +240,8 @@ An ExtraSuite-compatible client should:
 
 1. Read `EXTRASUITE_SERVER_URL` or `gateway.json`
 2. Start a localhost callback server for Phase 1
-3. Store the returned session token securely on disk
-4. Cache short-lived credentials per command type
+3. Store the returned session token in the OS keyring (macOS Keychain, Linux SecretService, Windows Credential Locker). The only on-disk file is `~/.config/extrasuite/profiles.json` (0600) which stores profile names and email addresses — no tokens.
+4. Never cache short-lived access tokens to disk. Hold them only in process memory.
 5. Re-run Phase 1 when the session expires or is revoked
 
 ## Reference Implementation

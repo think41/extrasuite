@@ -10,7 +10,7 @@ Usage:
     extrasuite gmail    compose|edit-draft|reply|list|read
     extrasuite calendar view|list|search|freebusy|create|update|delete|rsvp
     extrasuite contacts sync|search|touch
-    extrasuite auth     login|logout|status
+    extrasuite auth     login|logout|status|activate
 """
 
 from __future__ import annotations
@@ -23,6 +23,7 @@ if TYPE_CHECKING:
 
 from extrasuite.client.cli._common import _load_help, cmd_module_help
 from extrasuite.client.cli.auth import (
+    cmd_auth_activate,
     cmd_auth_login,
     cmd_auth_logout,
     cmd_auth_status,
@@ -145,6 +146,7 @@ _COMMANDS: dict[tuple[str, str | None], Callable[..., Any]] = {
     ("auth", "login"): cmd_auth_login,
     ("auth", "logout"): cmd_auth_logout,
     ("auth", "status"): cmd_auth_status,
+    ("auth", "activate"): cmd_auth_activate,
 }
 
 
@@ -168,6 +170,12 @@ def build_parser() -> Any:
         "--service-account",
         metavar="PATH",
         help="Path to service account JSON key file",
+    )
+    auth_parent.add_argument(
+        "--profile",
+        metavar="NAME",
+        default=None,
+        help="Profile name to use (default: active profile, or 'default')",
     )
     auth_parent.add_argument(
         "--reason",
@@ -1008,6 +1016,14 @@ def build_parser() -> Any:
         parents=[auth_parent],
         formatter_class=argparse.RawDescriptionHelpFormatter,
     )
+
+    sp = auth_sub.add_parser(
+        "activate",
+        help="Set the active profile",
+        parents=[auth_parent],
+        formatter_class=argparse.RawDescriptionHelpFormatter,
+    )
+    sp.add_argument("profile_name", help="Profile name to activate")
 
     return parser
 

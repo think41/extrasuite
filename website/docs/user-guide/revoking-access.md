@@ -153,15 +153,24 @@ If you need to immediately stop all access:
 3. Select all matching documents
 4. Right-click > Share > Remove service account from all
 
-### Delete Cached Tokens
+### Revoke Authentication
 
-Remove local token cache:
+Log out to revoke the session server-side and remove it from the OS keyring:
 
 ```bash
-rm -f ~/.config/extrasuite/token.json
+extrasuite auth logout
 ```
 
-This prevents the skill from using any existing authentication.
+This invalidates the local session and revokes access on the server. If you have
+multiple profiles, log out of each:
+
+```bash
+extrasuite auth logout --profile work
+extrasuite auth logout --profile personal
+```
+
+After logging out, the agent will require re-authentication before making any
+further API calls.
 
 ## Re-Granting Access
 

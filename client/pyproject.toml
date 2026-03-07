@@ -28,6 +28,7 @@ dependencies = [
     "extraform>=0.2.1",
     "extrascript>=0.2.1",
     "extradoc>=0.3.0",
+    "keyring>=25.0",
     "markdown>=3.0",
     "tomli>=2.0; python_version < '3.11'",
 ]
@@ -81,8 +82,9 @@ ignore = [
 ]
 
 [tool.ruff.lint.per-file-ignores]
-# credentials.py uses intentional lazy imports for optional dependencies
-"src/extrasuite/client/credentials.py" = ["PLC0415"]
+# credentials.py uses intentional lazy imports for optional dependencies;
+# force_refresh kept for API compatibility (no longer has effect)
+"src/extrasuite/client/credentials.py" = ["PLC0415", "ARG002"]
 # cli/ uses lazy imports to avoid loading all modules at startup
 "src/extrasuite/client/cli/*.py" = ["PLC0415"]
 # tests also use lazy imports to check if google-auth is available

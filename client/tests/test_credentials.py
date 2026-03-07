@@ -13,6 +13,7 @@ import pytest
 from extrasuite.client.credentials import (
     Credential,
     CredentialsManager,
+    InMemorySessionStore,
     SessionToken,
 )
 
@@ -49,13 +50,8 @@ def _make_dwd_cred(**kwargs) -> Credential:
     return Credential(**defaults)
 
 
-def _cred_dict(**kwargs) -> dict:
-    """Return a dict matching Credential.to_dict() for writing to cache files."""
-    return _make_sa_cred(**kwargs).to_dict()
-
-
 def _v2_token_response(token: str = "v2-token", kind: str = "bearer_sa") -> dict:
-    """Return a mock /api/auth/token response (new TokenResponse format)."""
+    """Return a mock /api/auth/token response."""
     return {
         "credentials": [
             {
@@ -71,6 +67,29 @@ def _v2_token_response(token: str = "v2-token", kind: str = "bearer_sa") -> dict
         ],
         "command_type": "sheet.pull",
     }
+
+
+def _make_manager(
+    server_url: str = "https://myserver.example.com",
+    store: InMemorySessionStore | None = None,
+    **kwargs,
+) -> CredentialsManager:
+    """Create a CredentialsManager with an InMemorySessionStore."""
+    return CredentialsManager(
+        server_url=server_url,
+        session_store=store or InMemorySessionStore(),
+        **kwargs,
+    )
+
+
+def _valid_session(**kwargs) -> SessionToken:
+    defaults = {
+        "raw_token": "my-session-token",
+        "email": "user@example.com",
+        "expires_at": time.time() + 86400,
+    }
+    defaults.update(kwargs)
+    return SessionToken(**defaults)
 
 
 # ---------------------------------------------------------------------------
@@ -152,7 +171,7 @@ class TestCredentialsManagerInit:
     """Tests for CredentialsManager initialization."""
 
     def test_init_with_server_url_param(self) -> None:
-        manager = CredentialsManager(server_url="https://auth.example.com")
+        manager = _make_manager(server_url="https://auth.example.com")
         assert manager._server_base_url == "https://auth.example.com"
         assert manager._use_extrasuite is True
         assert manager.auth_mode == "extrasuite"
@@ -169,7 +188,7 @@ class TestCredentialsManagerInit:
     def test_init_with_env_vars(self) -> None:
         env = {"EXTRASUITE_SERVER_URL": "https://auth.example.com"}
         with mock.patch.dict(os.environ, env, clear=True):
-            manager = CredentialsManager()
+            manager = _make_manager(server_url="https://auth.example.com")
         assert manager._server_base_url == "https://auth.example.com"
 
     def test_init_with_env_var_service_account(self) -> None:
@@ -187,13 +206,12 @@ class TestCredentialsManagerInit:
     def test_init_param_overrides_env_var(self) -> None:
         env = {"EXTRASUITE_SERVER_URL": "https://env.example.com"}
         with mock.patch.dict(os.environ, env, clear=True):
-            manager = CredentialsManager(server_url="https://param.example.com")
+            manager = _make_manager(server_url="https://param.example.com")
         assert manager._server_base_url == "https://param.example.com"
 
     def test_init_extrasuite_takes_precedence_over_service_account(self) -> None:
-        manager = CredentialsManager(
+        manager = _make_manager(
             server_url="https://auth.example.com",
-            service_account_path="/path/to/sa.json",
         )
         assert manager._use_extrasuite is True
 
@@ -210,13 +228,13 @@ class TestCredentialsManagerInit:
     def test_init_with_server_url_env_var(self) -> None:
         env = {"EXTRASUITE_SERVER_URL": "https://myserver.example.com"}
         with mock.patch.dict(os.environ, env, clear=True):
-            manager = CredentialsManager()
+            manager = _make_manager()
         assert manager._server_base_url == "https://myserver.example.com"
 
     def test_init_with_server_url_env_var_trailing_slash(self) -> None:
         env = {"EXTRASUITE_SERVER_URL": "https://myserver.example.com/"}
         with mock.patch.dict(os.environ, env, clear=True):
-            manager = CredentialsManager()
+            manager = _make_manager()
         assert manager._server_base_url == "https://myserver.example.com"
 
 
@@ -233,7 +251,10 @@ class TestCredentialsManagerGatewayConfig:
         gateway.write_text(
             json.dumps({"EXTRASUITE_SERVER_URL": "https://gw.example.com"})
         )
-        manager = CredentialsManager(gateway_config_path=gateway)
+        manager = _make_manager(
+            server_url="https://gw.example.com",
+            gateway_config_path=gateway,
+        )
         assert manager._server_base_url == "https://gw.example.com"
 
     def test_gateway_config_path_not_found_raises(self, tmp_path: Path) -> None:
@@ -247,87 +268,62 @@ class TestCredentialsManagerGatewayConfig:
             json.dumps({"EXTRASUITE_SERVER_URL": "https://srv.example.com"})
         )
         with mock.patch.dict(os.environ, {}, clear=True):
-            manager = CredentialsManager(gateway_config_path=gateway)
+            manager = CredentialsManager(
+                gateway_config_path=gateway,
+                session_store=InMemorySessionStore(),
+            )
         assert manager._server_base_url == "https://srv.example.com"
 
 
 # ---------------------------------------------------------------------------
-# TestCredentialsManagerCredentialCache
+# TestInMemorySessionStore
 # ---------------------------------------------------------------------------
 
 
-class TestCredentialsManagerCredentialCache:
-    """Tests for per-command-type credential file caching."""
+class TestInMemorySessionStore:
+    """Tests for the InMemorySessionStore."""
 
-    def test_load_cached_credential_no_file(self, tmp_path: Path) -> None:
-        with mock.patch.object(
-            CredentialsManager, "GATEWAY_CONFIG_PATH", Path("/nonexistent")
-        ):
-            manager = CredentialsManager(service_account_path="/sa.json")
-        cache_path = tmp_path / "sheet.pull.json"
-        assert manager._load_cached_credential(cache_path) is None
+    def test_load_returns_none_when_empty(self) -> None:
+        store = InMemorySessionStore()
+        assert store.load("default") is None
 
-    def test_load_cached_credential_valid(self, tmp_path: Path) -> None:
-        cache_path = tmp_path / "sheet.pull.json"
-        cred = _make_sa_cred(token="cached-tok", expires_at=time.time() + 3600)
-        cache_path.write_text(json.dumps(cred.to_dict()))
+    def test_save_and_load_valid_token(self) -> None:
+        store = InMemorySessionStore()
+        token = _valid_session()
+        store.save("default", token)
+        loaded = store.load("default")
+        assert loaded is not None
+        assert loaded.raw_token == token.raw_token
 
-        with mock.patch.object(
-            CredentialsManager, "GATEWAY_CONFIG_PATH", Path("/nonexistent")
-        ):
-            manager = CredentialsManager(service_account_path="/sa.json")
-        result = manager._load_cached_credential(cache_path)
-        assert result is not None
-        assert result.token == "cached-tok"
+    def test_load_returns_none_for_expired_token(self) -> None:
+        store = InMemorySessionStore()
+        expired = SessionToken(
+            raw_token="tok", email="u@e.com", expires_at=time.time() - 100
+        )
+        store.save("default", expired)
+        assert store.load("default") is None
 
-    def test_load_cached_credential_expired_returns_cred(self, tmp_path: Path) -> None:
-        """Expired credential is loaded (caller decides freshness)."""
-        cache_path = tmp_path / "sheet.pull.json"
-        cred = _make_sa_cred(expires_at=time.time() - 100)
-        cache_path.write_text(json.dumps(cred.to_dict()))
+    def test_delete_removes_token(self) -> None:
+        store = InMemorySessionStore()
+        store.save("default", _valid_session())
+        store.delete("default")
+        assert store.load("default") is None
 
-        with mock.patch.object(
-            CredentialsManager, "GATEWAY_CONFIG_PATH", Path("/nonexistent")
-        ):
-            manager = CredentialsManager(service_account_path="/sa.json")
-        result = manager._load_cached_credential(cache_path)
-        assert result is not None
-        assert result.is_valid() is False
+    def test_delete_nonexistent_is_noop(self) -> None:
+        store = InMemorySessionStore()
+        store.delete("nonexistent")  # should not raise
 
-    def test_load_cached_credential_invalid_json(self, tmp_path: Path) -> None:
-        cache_path = tmp_path / "sheet.pull.json"
-        cache_path.write_text("not-json")
-        with mock.patch.object(
-            CredentialsManager, "GATEWAY_CONFIG_PATH", Path("/nonexistent")
-        ):
-            manager = CredentialsManager(service_account_path="/sa.json")
-        assert manager._load_cached_credential(cache_path) is None
-
-    def test_save_credential_creates_secure_file(self, tmp_path: Path) -> None:
-        cache_path = tmp_path / "creds" / "sheet.pull.json"
-        cred = _make_sa_cred(token="fresh-tok", expires_at=time.time() + 3600)
-        with mock.patch.object(
-            CredentialsManager, "GATEWAY_CONFIG_PATH", Path("/nonexistent")
-        ):
-            manager = CredentialsManager(service_account_path="/sa.json")
-        manager._save_credential(cache_path, cred)
-
-        assert cache_path.exists()
-        import stat as stat_module
-
-        mode = cache_path.stat().st_mode
-        assert mode & 0o777 == stat_module.S_IRUSR | stat_module.S_IWUSR
-
-        data = json.loads(cache_path.read_text())
-        assert data["token"] == "fresh-tok"
-
-    def test_credential_cache_path_uses_cmd_type(self) -> None:
-        env = {"EXTRASUITE_SERVER_URL": "https://srv.example.com"}
-        with mock.patch.dict(os.environ, env, clear=True):
-            manager = CredentialsManager()
-        path = manager._credential_cache_path("sheet.pull")
-        assert path.name == "sheet.pull.json"
-        assert path.parent == CredentialsManager.CREDENTIALS_CACHE_DIR
+    def test_multiple_profiles_are_independent(self) -> None:
+        store = InMemorySessionStore()
+        t1 = _valid_session(raw_token="tok-work", email="work@example.com")
+        t2 = _valid_session(raw_token="tok-personal", email="personal@example.com")
+        store.save("work", t1)
+        store.save("personal", t2)
+        assert store.load("work").raw_token == "tok-work"  # type: ignore[union-attr]
+        assert store.load("personal").raw_token == "tok-personal"  # type: ignore[union-attr]
+        store.delete("work")
+        assert store.load("work") is None
+        assert store.load("personal") is not None
 
 
 # ---------------------------------------------------------------------------
@@ -338,72 +334,13 @@ class TestCredentialsManagerCredentialCache:
 class TestGetCredentialExtraSuite:
     """Tests for get_credential() in ExtraSuite (v2 session) mode."""
 
-    def _make_v2_manager(self) -> CredentialsManager:
-        env = {"EXTRASUITE_SERVER_URL": "https://myserver.example.com"}
-        with mock.patch.dict(os.environ, env, clear=True):
-            return CredentialsManager()
-
-    def test_get_credential_uses_cache(self, tmp_path: Path) -> None:
-        manager = self._make_v2_manager()
-        cred = _make_sa_cred(token="cached-tok", expires_at=time.time() + 3600)
-        cache_path = tmp_path / "sheet.pull.json"
-        cache_path.write_text(json.dumps(cred.to_dict()))
-
-        with mock.patch.object(
-            manager, "_credential_cache_path", return_value=cache_path
-        ):
-            result = manager.get_credential(
-                command={
-                    "type": "sheet.pull",
-                    "file_url": "https://docs.google.com/...",
-                },
-                reason="Pulling sheet",
-            )
-        assert result.token == "cached-tok"
-
-    def test_get_credential_force_refresh_ignores_cache(self, tmp_path: Path) -> None:
-        manager = self._make_v2_manager()
-        cached_cred = _make_sa_cred(token="old-tok", expires_at=time.time() + 3600)
-        cache_path = tmp_path / "sheet.pull.json"
-        cache_path.write_text(json.dumps(cached_cred.to_dict()))
-
-        fresh_cred = _make_sa_cred(token="fresh-tok")
-        with (
-            mock.patch.object(
-                manager, "_credential_cache_path", return_value=cache_path
-            ),
-            mock.patch.object(
-                manager, "_get_extrasuite_credential", return_value=fresh_cred
-            ) as mock_get,
-        ):
-            result = manager.get_credential(
-                command={"type": "sheet.pull"},
-                reason="Forced refresh",
-                force_refresh=True,
-            )
-        mock_get.assert_called_once()
-        assert result.token == "fresh-tok"
-
-    def test_get_credential_v2_session_exchange(self, tmp_path: Path) -> None:
-        manager = self._make_v2_manager()
-        cache_path = tmp_path / "sheet.pull.json"
-
-        valid_session = SessionToken(
-            raw_token="my-session",
-            email="user@example.com",
-            expires_at=time.time() + 86400,
-        )
+    def test_get_credential_v2_session_exchange(self) -> None:
+        store = InMemorySessionStore()
+        store.save("default", _valid_session())
+        manager = _make_manager(store=store)
         mock_response = _v2_token_response("v2-access-token")
 
-        with (
-            mock.patch.object(
-                manager, "_credential_cache_path", return_value=cache_path
-            ),
-            mock.patch.object(
-                manager, "_get_or_create_session_token", return_value=valid_session
-            ),
-            mock.patch("urllib.request.urlopen") as mock_urlopen,
-        ):
+        with mock.patch("urllib.request.urlopen") as mock_urlopen:
             mock_resp = mock.MagicMock()
             mock_resp.read.return_value = json.dumps(mock_response).encode()
             mock_resp.__enter__ = mock.MagicMock(return_value=mock_resp)
@@ -411,38 +348,45 @@ class TestGetCredentialExtraSuite:
             mock_urlopen.return_value = mock_resp
 
             result = manager.get_credential(
-                command={
-                    "type": "sheet.pull",
-                    "file_url": "https://docs.google.com/...",
-                },
+                command={"type": "sheet.pull", "file_url": "https://docs.google.com/..."},
                 reason="Pull sheet for analysis",
             )
 
         assert result.token == "v2-access-token"
         assert result.service_account_email == "sa@project.iam.gserviceaccount.com"
 
-    def test_get_credential_expired_cache_re_exchanges(self, tmp_path: Path) -> None:
-        manager = self._make_v2_manager()
-        expired_cred = _make_sa_cred(token="expired-tok", expires_at=time.time() - 100)
-        cache_path = tmp_path / "sheet.pull.json"
-        cache_path.write_text(json.dumps(expired_cred.to_dict()))
-
-        valid_session = SessionToken(
-            raw_token="my-session",
-            email="user@example.com",
-            expires_at=time.time() + 86400,
-        )
+    def test_get_credential_always_fetches_fresh(self) -> None:
+        """get_credential() never returns a stale cached value — always exchanges."""
+        store = InMemorySessionStore()
+        store.save("default", _valid_session())
+        manager = _make_manager(store=store)
         mock_response = _v2_token_response("fresh-tok")
 
-        with (
-            mock.patch.object(
-                manager, "_credential_cache_path", return_value=cache_path
-            ),
-            mock.patch.object(
-                manager, "_get_or_create_session_token", return_value=valid_session
-            ),
-            mock.patch("urllib.request.urlopen") as mock_urlopen,
-        ):
+        call_count = 0
+
+        def fake_urlopen(_req, **_kwargs):
+            nonlocal call_count
+            call_count += 1
+            mock_resp = mock.MagicMock()
+            mock_resp.read.return_value = json.dumps(mock_response).encode()
+            mock_resp.__enter__ = mock.MagicMock(return_value=mock_resp)
+            mock_resp.__exit__ = mock.MagicMock(return_value=False)
+            return mock_resp
+
+        with mock.patch("urllib.request.urlopen", side_effect=fake_urlopen):
+            manager.get_credential(command={"type": "sheet.pull"}, reason="First call")
+            manager.get_credential(command={"type": "sheet.pull"}, reason="Second call")
+
+        assert call_count == 2
+
+    def test_get_credential_force_refresh_accepted(self) -> None:
+        """force_refresh=True is accepted without error (no effect, kept for API compat)."""
+        store = InMemorySessionStore()
+        store.save("default", _valid_session())
+        manager = _make_manager(store=store)
+        mock_response = _v2_token_response("v2-access-token")
+
+        with mock.patch("urllib.request.urlopen") as mock_urlopen:
             mock_resp = mock.MagicMock()
             mock_resp.read.return_value = json.dumps(mock_response).encode()
             mock_resp.__enter__ = mock.MagicMock(return_value=mock_resp)
@@ -451,10 +395,10 @@ class TestGetCredentialExtraSuite:
 
             result = manager.get_credential(
                 command={"type": "sheet.pull"},
-                reason="Re-pull",
+                reason="Test",
+                force_refresh=True,
             )
-
-        assert result.token == "fresh-tok"
+        assert result.token == "v2-access-token"
 
 
 # ---------------------------------------------------------------------------
@@ -482,43 +426,18 @@ class TestGetCredentialServiceAccount:
             with pytest.raises(ImportError):
                 manager.get_credential(command={"type": "sheet.pull"}, reason="Test")
 
-    def test_service_account_uses_cache(self, tmp_path: Path) -> None:
-        cred = _make_sa_cred(token="cached-sa-token", expires_at=time.time() + 3600)
-        cache_path = tmp_path / "sheet.pull.json"
-        cache_path.write_text(json.dumps(cred.to_dict()))
-
+    def test_service_account_missing_google_auth(self) -> None:
         with mock.patch.object(
             CredentialsManager, "GATEWAY_CONFIG_PATH", Path("/nonexistent")
         ):
             manager = CredentialsManager(service_account_path="/path/to/sa.json")
 
-        with mock.patch.object(
-            manager, "_credential_cache_path", return_value=cache_path
-        ):
-            result = manager.get_credential(
-                command={"type": "sheet.pull"}, reason="Test"
-            )
-
-        assert result.token == "cached-sa-token"
-
-    def test_service_account_missing_google_auth(self, tmp_path: Path) -> None:
-        with mock.patch.object(
-            CredentialsManager, "GATEWAY_CONFIG_PATH", Path("/nonexistent")
-        ):
-            manager = CredentialsManager(service_account_path="/path/to/sa.json")
-
-        cache_path = tmp_path / "sheet.pull.json"
         try:
             import google.auth  # noqa: F401
 
             pytest.skip("google-auth is installed, cannot test ImportError case")
         except ImportError:
-            with (
-                mock.patch.object(
-                    manager, "_credential_cache_path", return_value=cache_path
-                ),
-                pytest.raises(ImportError, match="google-auth"),
-            ):
+            with pytest.raises(ImportError, match="google-auth"):
                 manager.get_credential(command={"type": "sheet.pull"}, reason="Test")
 
 
@@ -574,80 +493,6 @@ class TestCredentialsManagerCallbackHandler:
 
 
 # ---------------------------------------------------------------------------
-# TestCredentialsManagerIntegration
-# ---------------------------------------------------------------------------
-
-
-class TestCredentialsManagerIntegration:
-    """Integration-style tests for complete flows."""
-
-    def test_full_extrasuite_flow_with_cached_credential(self, tmp_path: Path) -> None:
-        """Complete flow: load from file cache, return credential."""
-        cache_path = tmp_path / "sheet.pull.json"
-        cred = _make_sa_cred(token="cached-access-token", expires_at=time.time() + 3600)
-        cache_path.write_text(json.dumps(cred.to_dict()))
-
-        manager = CredentialsManager(server_url="https://auth.example.com")
-
-        with mock.patch.object(
-            manager, "_credential_cache_path", return_value=cache_path
-        ):
-            result = manager.get_credential(
-                command={
-                    "type": "sheet.pull",
-                    "file_url": "https://docs.google.com/...",
-                },
-                reason="Test: pulling spreadsheet data",
-            )
-
-        assert result.token == "cached-access-token"
-        assert result.service_account_email == "sa@example.com"
-        assert result.is_valid()
-
-    def test_expired_cache_triggers_session_exchange(self, tmp_path: Path) -> None:
-        """Expired cache should trigger a fresh session-backed credential exchange."""
-        cache_path = tmp_path / "sheet.pull.json"
-        expired_cred = _make_sa_cred(
-            token="expired-token", expires_at=time.time() - 100
-        )
-        cache_path.write_text(json.dumps(expired_cred.to_dict()))
-
-        manager = CredentialsManager(server_url="https://auth.example.com")
-        valid_session = SessionToken(
-            raw_token="session-token",
-            email="user@example.com",
-            expires_at=time.time() + 86400,
-        )
-        mock_response = _v2_token_response("fresh-token")
-
-        with (
-            mock.patch.object(
-                manager, "_credential_cache_path", return_value=cache_path
-            ),
-            mock.patch.object(
-                manager, "_get_or_create_session_token", return_value=valid_session
-            ),
-            mock.patch("urllib.request.urlopen") as mock_urlopen,
-        ):
-            mock_resp = mock.MagicMock()
-            mock_resp.read.return_value = json.dumps(mock_response).encode()
-            mock_resp.__enter__ = mock.MagicMock(return_value=mock_resp)
-            mock_resp.__exit__ = mock.MagicMock(return_value=False)
-            mock_urlopen.return_value = mock_resp
-
-            result = manager.get_credential(
-                command={"type": "sheet.pull"},
-                reason="Test: refresh after token expiry",
-            )
-
-        assert result.token == "fresh-token"
-
-        # Verify file was updated
-        stored = json.loads(cache_path.read_text())
-        assert stored["token"] == "fresh-token"
-
-
-# ---------------------------------------------------------------------------
 # TestSessionToken
 # ---------------------------------------------------------------------------
 
@@ -693,77 +538,6 @@ class TestSessionToken:
 
 
 # ---------------------------------------------------------------------------
-# TestSessionTokenCache
-# ---------------------------------------------------------------------------
-
-
-class TestSessionTokenCache:
-    """Tests for session token file caching."""
-
-    def _make_manager(self) -> CredentialsManager:
-        env = {"EXTRASUITE_SERVER_URL": "https://myserver.example.com"}
-        with mock.patch.dict(os.environ, env, clear=True):
-            return CredentialsManager()
-
-    def test_load_session_token_no_file(self, tmp_path: Path) -> None:
-        manager = self._make_manager()
-        with mock.patch.object(
-            CredentialsManager, "SESSION_CACHE_PATH", tmp_path / "session.json"
-        ):
-            assert manager._load_session_token() is None
-
-    def test_load_session_token_valid(self, tmp_path: Path) -> None:
-        session_path = tmp_path / "session.json"
-        session_data = {
-            "raw_token": "my-raw-token",
-            "email": "user@example.com",
-            "expires_at": time.time() + 86400,
-        }
-        session_path.write_text(json.dumps(session_data))
-
-        manager = self._make_manager()
-        with mock.patch.object(CredentialsManager, "SESSION_CACHE_PATH", session_path):
-            token = manager._load_session_token()
-        assert token is not None
-        assert token.raw_token == "my-raw-token"
-        assert token.email == "user@example.com"
-
-    def test_load_session_token_expired(self, tmp_path: Path) -> None:
-        session_path = tmp_path / "session.json"
-        session_data = {
-            "raw_token": "my-raw-token",
-            "email": "user@example.com",
-            "expires_at": time.time() - 100,
-        }
-        session_path.write_text(json.dumps(session_data))
-
-        manager = self._make_manager()
-        with mock.patch.object(CredentialsManager, "SESSION_CACHE_PATH", session_path):
-            assert manager._load_session_token() is None
-
-    def test_save_session_token(self, tmp_path: Path) -> None:
-        session_path = tmp_path / "session.json"
-        manager = self._make_manager()
-        token = SessionToken(
-            raw_token="my-raw-token",
-            email="user@example.com",
-            expires_at=time.time() + 86400,
-        )
-        with mock.patch.object(CredentialsManager, "SESSION_CACHE_PATH", session_path):
-            manager._save_session_token(token)
-
-        assert session_path.exists()
-        import stat as stat_module
-
-        mode = session_path.stat().st_mode
-        assert mode & 0o777 == stat_module.S_IRUSR | stat_module.S_IWUSR
-
-        stored = json.loads(session_path.read_text())
-        assert stored["raw_token"] == "my-raw-token"
-        assert stored["email"] == "user@example.com"
-
-
-# ---------------------------------------------------------------------------
 # TestV2SessionFlow
 # ---------------------------------------------------------------------------
 
@@ -771,30 +545,17 @@ class TestSessionTokenCache:
 class TestV2SessionFlow:
     """Tests for v2 session-token auth protocol."""
 
-    def _make_v2_manager(self) -> CredentialsManager:
-        env = {"EXTRASUITE_SERVER_URL": "https://myserver.example.com"}
-        with mock.patch.dict(os.environ, env, clear=True):
-            return CredentialsManager()
-
     def test_get_or_create_session_token_returns_cached(self) -> None:
-        manager = self._make_v2_manager()
-        valid_session = SessionToken(
-            raw_token="cached-session-token",
-            email="user@example.com",
-            expires_at=time.time() + 86400,
-        )
-        with mock.patch.object(
-            manager, "_load_session_token", return_value=valid_session
-        ):
-            result = manager._get_or_create_session_token()
+        store = InMemorySessionStore()
+        session = _valid_session(raw_token="cached-session-token")
+        store.save("default", session)
+        manager = _make_manager(store=store)
+
+        result = manager._get_or_create_session_token()
         assert result.raw_token == "cached-session-token"
 
-    def test_get_or_create_session_token_creates_new_when_no_cache(
-        self, tmp_path: Path
-    ) -> None:
-        manager = self._make_v2_manager()
-        session_path = tmp_path / "session.json"
-
+    def test_get_or_create_session_token_creates_new_when_no_cache(self) -> None:
+        manager = _make_manager()
         mock_exchange_response = {
             "session_token": "new-session-token",
             "email": "user@example.com",
@@ -802,12 +563,11 @@ class TestV2SessionFlow:
         }
 
         with (
-            mock.patch.object(manager, "_load_session_token", return_value=None),
             mock.patch.object(
                 manager, "_run_browser_flow_for_session", return_value="test-auth-code"
             ),
             mock.patch("urllib.request.urlopen") as mock_urlopen,
-            mock.patch.object(CredentialsManager, "SESSION_CACHE_PATH", session_path),
+            mock.patch.object(manager, "_save_profiles"),
         ):
             mock_resp = mock.MagicMock()
             mock_resp.read.return_value = json.dumps(mock_exchange_response).encode()
@@ -819,12 +579,13 @@ class TestV2SessionFlow:
 
         assert result.raw_token == "new-session-token"
         assert result.email == "user@example.com"
+        # Saved in the in-memory store
+        assert manager._session_store.load("default") is not None  # type: ignore[attr-defined]
 
-    def test_get_or_create_session_token_force_skips_cache(
-        self, tmp_path: Path
-    ) -> None:
-        manager = self._make_v2_manager()
-        session_path = tmp_path / "session.json"
+    def test_get_or_create_session_token_force_skips_cache(self) -> None:
+        store = InMemorySessionStore()
+        store.save("default", _valid_session(raw_token="old-token"))
+        manager = _make_manager(store=store)
         mock_exchange_response = {
             "session_token": "new-token",
             "email": "user@example.com",
@@ -836,7 +597,7 @@ class TestV2SessionFlow:
                 manager, "_run_browser_flow_for_session", return_value="fresh-auth-code"
             ),
             mock.patch("urllib.request.urlopen") as mock_urlopen,
-            mock.patch.object(CredentialsManager, "SESSION_CACHE_PATH", session_path),
+            mock.patch.object(manager, "_save_profiles"),
         ):
             mock_resp = mock.MagicMock()
             mock_resp.read.return_value = json.dumps(mock_exchange_response).encode()
@@ -849,14 +610,8 @@ class TestV2SessionFlow:
         assert result.raw_token == "new-token"
 
     def test_exchange_session_for_credential_success(self) -> None:
-        """_exchange_session_for_credential returns raw response dict."""
-        manager = self._make_v2_manager()
-        session = SessionToken(
-            raw_token="my-session-token",
-            email="user@example.com",
-            expires_at=time.time() + 86400,
-        )
-
+        manager = _make_manager()
+        session = _valid_session()
         mock_response = _v2_token_response("short-lived-token")
 
         with mock.patch("urllib.request.urlopen") as mock_urlopen:
@@ -875,12 +630,8 @@ class TestV2SessionFlow:
         assert result["credentials"][0]["token"] == "short-lived-token"
 
     def test_exchange_session_for_credential_401_raises_helpful_error(self) -> None:
-        manager = self._make_v2_manager()
-        session = SessionToken(
-            raw_token="expired-session",
-            email="user@example.com",
-            expires_at=time.time() + 86400,
-        )
+        manager = _make_manager()
+        session = _valid_session()
 
         with mock.patch("urllib.request.urlopen") as mock_urlopen:
             error = urllib.error.HTTPError(
@@ -900,25 +651,13 @@ class TestV2SessionFlow:
                 )
         assert "extrasuite auth login" in str(exc_info.value)
 
-    def test_get_credential_v2_uses_session_exchange(self, tmp_path: Path) -> None:
-        manager = self._make_v2_manager()
-        cache_path = tmp_path / "sheet.pull.json"
-        valid_session = SessionToken(
-            raw_token="my-session",
-            email="user@example.com",
-            expires_at=time.time() + 86400,
-        )
+    def test_get_credential_v2_uses_session_exchange(self) -> None:
+        store = InMemorySessionStore()
+        store.save("default", _valid_session())
+        manager = _make_manager(store=store)
         mock_response = _v2_token_response("v2-access-token")
 
-        with (
-            mock.patch.object(
-                manager, "_credential_cache_path", return_value=cache_path
-            ),
-            mock.patch.object(
-                manager, "_get_or_create_session_token", return_value=valid_session
-            ),
-            mock.patch("urllib.request.urlopen") as mock_urlopen,
-        ):
+        with mock.patch("urllib.request.urlopen") as mock_urlopen:
             mock_resp = mock.MagicMock()
             mock_resp.read.return_value = json.dumps(mock_response).encode()
             mock_resp.__enter__ = mock.MagicMock(return_value=mock_resp)
@@ -926,37 +665,21 @@ class TestV2SessionFlow:
             mock_urlopen.return_value = mock_resp
 
             result = manager.get_credential(
-                command={
-                    "type": "sheet.pull",
-                    "file_url": "https://docs.google.com/...",
-                },
+                command={"type": "sheet.pull", "file_url": "https://docs.google.com/..."},
                 reason="Test: pull sheet",
             )
 
         assert result.token == "v2-access-token"
         assert result.service_account_email == "sa@project.iam.gserviceaccount.com"
 
-    def test_get_credential_dwd_v2_uses_session_exchange(self, tmp_path: Path) -> None:
-        """get_credential() for a DWD command type works via session exchange."""
-        manager = self._make_v2_manager()
-        cache_path = tmp_path / "gmail.compose.json"
-        valid_session = SessionToken(
-            raw_token="my-session",
-            email="user@example.com",
-            expires_at=time.time() + 86400,
-        )
+    def test_get_credential_dwd_v2_uses_session_exchange(self) -> None:
+        store = InMemorySessionStore()
+        store.save("default", _valid_session())
+        manager = _make_manager(store=store)
         mock_response = _v2_token_response("dwd-access-token", kind="bearer_dwd")
         mock_response["command_type"] = "gmail.compose"
 
-        with (
-            mock.patch.object(
-                manager, "_credential_cache_path", return_value=cache_path
-            ),
-            mock.patch.object(
-                manager, "_get_or_create_session_token", return_value=valid_session
-            ),
-            mock.patch("urllib.request.urlopen") as mock_urlopen,
-        ):
+        with mock.patch("urllib.request.urlopen") as mock_urlopen:
             mock_resp = mock.MagicMock()
             mock_resp.read.return_value = json.dumps(mock_response).encode()
             mock_resp.__enter__ = mock.MagicMock(return_value=mock_resp)
@@ -964,115 +687,139 @@ class TestV2SessionFlow:
             mock_urlopen.return_value = mock_resp
 
             result = manager.get_credential(
-                command={
-                    "type": "gmail.compose",
-                    "subject": "Hello",
-                    "recipients": ["a@b.com"],
-                    "cc": [],
-                },
+                command={"type": "gmail.compose", "subject": "Hello", "recipients": ["a@b.com"]},
                 reason="Test: send email",
             )
 
         assert result.token == "dwd-access-token"
         assert result.kind == "bearer_dwd"
 
-    def test_login_public_method_calls_get_or_create(self) -> None:
-        manager = self._make_v2_manager()
-        valid_session = SessionToken(
-            raw_token="new-session",
-            email="user@example.com",
-            expires_at=time.time() + 86400,
-        )
+    def test_login_force_revokes_existing_and_creates_new(self) -> None:
+        store = InMemorySessionStore()
+        old_session = _valid_session(raw_token="old-session")
+        store.save("default", old_session)
+        manager = _make_manager(store=store)
+
+        mock_exchange_response = {
+            "session_token": "new-session",
+            "email": "user@example.com",
+            "expires_at": "2026-12-31T00:00:00+00:00",
+        }
 
         with (
-            mock.patch.object(manager, "_revoke_and_clear_session") as mock_revoke,
+            mock.patch.object(manager, "_revoke_server_side") as mock_revoke,
             mock.patch.object(
-                manager, "_get_or_create_session_token", return_value=valid_session
-            ) as mock_create,
+                manager, "_run_browser_flow_for_session", return_value="auth-code"
+            ),
+            mock.patch("urllib.request.urlopen") as mock_urlopen,
+            mock.patch.object(manager, "_save_profiles"),
         ):
+            mock_resp = mock.MagicMock()
+            mock_resp.read.return_value = json.dumps(mock_exchange_response).encode()
+            mock_resp.__enter__ = mock.MagicMock(return_value=mock_resp)
+            mock_resp.__exit__ = mock.MagicMock(return_value=False)
+            mock_urlopen.return_value = mock_resp
+
             result = manager.login(force=True)
 
-        mock_revoke.assert_called_once()
-        mock_create.assert_called_once_with(force=True)
+        mock_revoke.assert_called_once_with("old-session")
         assert result.raw_token == "new-session"
+        # Old token deleted from store
+        assert store.load("default") is not None  # new token now there
+        assert store.load("default").raw_token == "new-session"  # type: ignore[union-attr]
 
-    def test_login_without_force_does_not_revoke(self) -> None:
-        manager = self._make_v2_manager()
-        valid_session = SessionToken(
-            raw_token="existing-session",
-            email="user@example.com",
-            expires_at=time.time() + 86400,
-        )
+    def test_login_without_force_returns_existing_session(self) -> None:
+        store = InMemorySessionStore()
+        existing = _valid_session(raw_token="existing-session")
+        store.save("default", existing)
+        manager = _make_manager(store=store)
 
         with (
-            mock.patch.object(manager, "_revoke_and_clear_session") as mock_revoke,
-            mock.patch.object(
-                manager, "_get_or_create_session_token", return_value=valid_session
-            ),
+            mock.patch.object(manager, "_revoke_server_side") as mock_revoke,
+            mock.patch.object(manager, "_save_profiles"),
         ):
-            manager.login(force=False)
+            result = manager.login(force=False)
 
         mock_revoke.assert_not_called()
+        assert result.raw_token == "existing-session"
 
-    def test_logout_clears_local_caches(self, tmp_path: Path) -> None:
-        session_path = tmp_path / "session.json"
-        cred_dir = tmp_path / "credentials"
-        cred_dir.mkdir()
-        cred_file = cred_dir / "sheet.pull.json"
-
-        session_path.write_text(
-            '{"raw_token":"t","email":"u@e.com","expires_at":9999999999}'
-        )
-        cred = _make_sa_cred()
-        cred_file.write_text(json.dumps(cred.to_dict()))
-
-        manager = self._make_v2_manager()
+    def test_logout_revokes_server_side_and_deletes_from_store(self) -> None:
+        store = InMemorySessionStore()
+        store.save("default", _valid_session(raw_token="tok-to-revoke"))
+        manager = _make_manager(store=store)
 
         with (
-            mock.patch.object(CredentialsManager, "SESSION_CACHE_PATH", session_path),
-            mock.patch.object(CredentialsManager, "CREDENTIALS_CACHE_DIR", cred_dir),
-            mock.patch.object(manager, "_revoke_and_clear_session") as mock_revoke,
+            mock.patch.object(manager, "_revoke_server_side") as mock_revoke,
+            mock.patch.object(manager, "_load_profiles", return_value={"profiles": {"default": "u@e.com"}, "active": "default"}),
+            mock.patch.object(manager, "_save_profiles"),
         ):
             manager.logout()
 
-        mock_revoke.assert_called_once()
-        assert not cred_file.exists()
+        mock_revoke.assert_called_once_with("tok-to-revoke")
+        assert store.load("default") is None
 
-    def test_status_returns_active_session_info(self, tmp_path: Path) -> None:
-        manager = self._make_v2_manager()
-        valid_session = SessionToken(
-            raw_token="my-token",
-            email="user@example.com",
-            expires_at=time.time() + 86400 * 5,
-        )
+    def test_logout_with_no_session_is_noop(self) -> None:
+        manager = _make_manager()
 
         with (
-            mock.patch.object(
-                manager, "_load_session_token", return_value=valid_session
-            ),
-            mock.patch.object(
-                CredentialsManager, "CREDENTIALS_CACHE_DIR", tmp_path / "empty"
-            ),
+            mock.patch.object(manager, "_revoke_server_side") as mock_revoke,
+            mock.patch.object(manager, "_load_profiles", return_value={"profiles": {}, "active": None}),
+            mock.patch.object(manager, "_save_profiles"),
         ):
+            manager.logout()  # should not raise
+
+        mock_revoke.assert_not_called()
+
+    def test_status_returns_active_profiles(self) -> None:
+        store = InMemorySessionStore()
+        session = _valid_session(email="user@example.com", expires_at=time.time() + 86400 * 5)
+        store.save("work", session)
+        manager = _make_manager(store=store)
+
+        profiles_data = {"profiles": {"work": "user@example.com"}, "active": "work"}
+        with mock.patch.object(manager, "_load_profiles", return_value=profiles_data):
             info = manager.status()
 
-        assert info["session"] is not None
-        assert info["session"]["active"] is True
-        assert info["session"]["email"] == "user@example.com"
-        assert info["session"]["days_remaining"] in (4, 5)
+        assert "work" in info["profiles"]
+        assert info["profiles"]["work"]["active"] is True
+        assert info["profiles"]["work"]["email"] == "user@example.com"
+        assert info["profiles"]["work"]["days_remaining"] in (4, 5)
+        assert info["active"] == "work"
 
-    def test_status_returns_none_when_no_session(self, tmp_path: Path) -> None:
-        manager = self._make_v2_manager()
+    def test_status_marks_expired_profile(self) -> None:
+        store = InMemorySessionStore()
+        # No token saved → expired
+        manager = _make_manager(store=store)
+
+        profiles_data = {"profiles": {"work": "user@example.com"}, "active": "work"}
+        with mock.patch.object(manager, "_load_profiles", return_value=profiles_data):
+            info = manager.status()
+
+        assert info["profiles"]["work"]["active"] is False
+        assert info["profiles"]["work"].get("expired") is True
+
+    def test_activate_sets_active_profile(self) -> None:
+        manager = _make_manager()
+        profiles_data = {"profiles": {"work": "u@e.com", "personal": "u2@e.com"}, "active": "work"}
 
         with (
-            mock.patch.object(manager, "_load_session_token", return_value=None),
-            mock.patch.object(
-                CredentialsManager, "CREDENTIALS_CACHE_DIR", tmp_path / "empty"
-            ),
+            mock.patch.object(manager, "_load_profiles", return_value=profiles_data),
+            mock.patch.object(manager, "_save_profiles") as mock_save,
         ):
-            info = manager.status()
+            manager.activate("personal")
 
-        assert info["session"] is None
+        saved = mock_save.call_args[0][0]
+        assert saved["active"] == "personal"
+
+    def test_activate_unknown_profile_raises(self) -> None:
+        manager = _make_manager()
+        profiles_data = {"profiles": {"work": "u@e.com"}, "active": "work"}
+
+        with (
+            mock.patch.object(manager, "_load_profiles", return_value=profiles_data),
+            pytest.raises(ValueError, match="Profile 'ghost' not found"),
+        ):
+            manager.activate("ghost")
 
     def test_find_free_port(self) -> None:
         port = CredentialsManager._find_free_port()
