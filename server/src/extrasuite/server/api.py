@@ -625,6 +625,11 @@ async def revoke_all_sessions(
 
     Self-service: users can revoke all their own sessions.
     Admin: users in ADMIN_EMAILS can revoke sessions for any email.
+
+    NOTE (OAuth modes): This revokes ExtraSuite session tokens but does NOT revoke the user's
+    Google OAuth refresh token. In CREDENTIAL_MODE=sa+oauth or oauth, the response includes a
+    warning and the user's OAuth token remains valid. To fully lock out a user, also revoke their
+    OAuth token via POST /api/auth/oauth/revoke or delete their Firestore refresh token manually.
     """
     caller = await _validate_bearer_session(request, db)
     caller_email = caller["email"]
@@ -632,7 +637,17 @@ async def revoke_all_sessions(
 
     count = await db.revoke_all_session_tokens(email)
     logger.info("All sessions revoked", extra={"email": email, "count": count, "by": caller_email})
-    return {"revoked_count": count}
+
+    response: dict = {"revoked_count": count}
+    if settings.uses_oauth:
+        response["oauth_token_revoked"] = False
+        response["warning"] = (
+            "OAuth refresh token was NOT revoked. "
+            "The user can still obtain new access tokens until their OAuth token is revoked. "
+            "To fully lock out the user, also call POST /api/auth/oauth/revoke with their session token, "
+            "or delete the 'encrypted_refresh_token' field from their Firestore user document."
+        )
+    return response
 
 
 # =============================================================================

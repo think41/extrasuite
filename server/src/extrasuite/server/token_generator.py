@@ -109,6 +109,8 @@ class DatabaseProtocol(Protocol):
 
     async def set_service_account_email(self, email: str, service_account_email: str) -> None: ...
 
+    async def get_refresh_token(self, email: str) -> Any: ...  # Returns RefreshTokenRecord or raises
+
     async def set_refresh_token(self, email: str, encrypted: str, scopes: str) -> None: ...
 
 
@@ -474,11 +476,21 @@ class TokenGenerator:
             ) from e
 
         # Handle refresh token rotation: if Google issues a new refresh_token, store it.
+        # Preserve the existing consented scopes — the rotation does not change what
+        # the user consented to at login. Overwriting with command-minimum scopes would
+        # break consent checks for other commands after the first rotation.
         new_refresh_token = token_data.get("refresh_token")
         if new_refresh_token:
             try:
                 new_encrypted = self._encryptor.encrypt(new_refresh_token)
-                await self._db.set_refresh_token(user_email, new_encrypted, " ".join(scopes))
+                # Preserve the consented scopes from the existing record so consent checks
+                # for other commands continue to work after rotation.
+                try:
+                    existing_record = await self._db.get_refresh_token(user_email)
+                    existing_scopes = " ".join(existing_record.scopes) if existing_record.scopes else ""
+                except Exception:
+                    existing_scopes = ""
+                await self._db.set_refresh_token(user_email, new_encrypted, existing_scopes)
                 logger.info(
                     "Google issued new refresh_token; updated in Firestore",
                     extra={"user_email": user_email},

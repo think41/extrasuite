@@ -75,15 +75,19 @@ Each employee is assigned a dedicated virtual agent with its own email address. 
 
 Every token request uses a **typed command** — a structured object declaring the exact operation the agent intends to perform (e.g. `sheet.pull`, `gmail.compose`, `calendar.view`). The server uses the command type to determine what credential to issue. No credential is issued speculatively or in bulk.
 
-**Two credential types, minimum scope:**
+**Three credential strategies, minimum scope:**
 
-| Command category | Credential issued | Scope |
-|---|---|---|
-| `sheet.*`, `doc.*`, `slide.*`, `form.*`, `drive.ls`, `drive.search` | Service account token | Files shared with the per-user SA |
-| `gmail.*`, `calendar.*`, `script.*`, `contacts.*`, `drive.file.*` | Delegated access token | Exactly the OAuth scope(s) required for that command |
+The credential strategy is determined by the server's `CREDENTIAL_MODE` setting:
+
+| Mode | SA commands (`sheet.*`, `doc.*`, etc.) | DWD commands (`gmail.*`, `calendar.*`, etc.) | Agent attribution |
+|---|---|---|---|
+| `sa+dwd` *(default)* | Service account token | Delegated token (DWD) | ✅ Edits appear as agent |
+| `sa+oauth` | Service account token | User OAuth token | ✅ Edits appear as agent (files only) |
+| `oauth` | User OAuth token | User OAuth token | ❌ Edits appear as the user |
 
 - Service account tokens give the agent access only to files explicitly shared with its service account
-- Delegated tokens impersonate the user for a single scope; the scope allowlist is controlled by the administrator
+- Delegated tokens (DWD) and OAuth tokens impersonate the user for exactly the required scope(s)
+- In `oauth` mode, no service account is created; the user's own Google credentials are used for all operations
 
 **Short-lived Google access tokens:**
 
@@ -102,7 +106,8 @@ Every token request uses a **typed command** — a structured object declaring t
 **No private key material:**
 
 - ExtraSuite does not use downloaded service account key files
-- No Google private keys or refresh tokens are exposed to agents or clients
+- No Google private keys are exposed to agents or clients
+- In `sa+oauth` and `oauth` modes, the server stores an AES-256-GCM encrypted OAuth refresh token in Firestore; the plaintext is never exposed to agents or clients
 
 **Agent intent logging:**
 
@@ -110,34 +115,46 @@ Every token request includes a `reason` field — the agent's stated purpose for
 
 Administrators can also configure a `DELEGATION_SCOPES` allowlist. Token requests for scopes outside this list are rejected before any Google API call is made.
 
-### Domain-Wide Delegation (Optional)
+### User-Impersonating Commands (Gmail, Calendar, Contacts, Apps Script)
 
-ExtraSuite supports **domain-wide delegation** for user-specific APIs like Gmail, Calendar, Apps Script, and Contacts when those command types are enabled by your deployment and authorized in Google Workspace.
+ExtraSuite supports user-specific APIs like Gmail, Calendar, Apps Script, and Contacts. The server can use one of two strategies for these commands:
 
-**How it works:**
+**Option A: Domain-Wide Delegation (DWD) — `CREDENTIAL_MODE=sa+dwd`**
 
 - The server impersonates the user via Google's domain-wide delegation mechanism
-- The client sends a typed **command object** (e.g. `{"type": "gmail.compose", "to": ["..."], ...}`) and a `reason` string; the server's command registry maps the command type to the required OAuth scope(s)
-- The server validates the command type and looks up the exact scope(s) needed — the client never specifies scopes directly
+- Requires DWD to be enabled in Google Workspace Admin Console
 - **Two layers of scope enforcement:**
     1. **Server-side allowlist** (`DELEGATION_SCOPES`) — optional, rejects disallowed scopes before any Google API call
-    2. **Google Workspace Admin Console** — authoritative enforcement; if a scope isn't authorized there, the delegation call fails and the server returns 403
-- All delegation requests are logged with user email, command type, full command context, reason, and timestamp before any token is issued
+    2. **Google Workspace Admin Console** — authoritative enforcement; if a scope isn't authorized there, the delegation call fails
 
-**Security model comparison:**
+**Option B: OAuth Refresh Token — `CREDENTIAL_MODE=sa+oauth` or `oauth`**
 
-| Aspect | SA-per-user (default) | Domain-wide delegation |
-|--------|----------------------|----------------------|
-| Token acts as | Service account | User |
-| Access scope | Files shared with SA | Delegated scopes (Gmail, Calendar, etc.) |
-| Admin control | SA creation | Workspace Admin Console |
-| Audit trail | Access-token request logs with reason | Access-token request logs with reason |
+- The user grants consent during login; the server stores an encrypted OAuth refresh token in Firestore
+- No Google Workspace admin action required; works with standard Google OAuth
+- Scope enforcement: only scopes consented to at login are permitted per-user
+- Token stored as AES-256-GCM ciphertext; encryption key must be managed as a secret (Cloud Run Secret Manager recommended)
 
-**Risk analysis:**
+**Strategy comparison:**
+
+| Aspect | DWD (`sa+dwd`) | OAuth (`sa+oauth` / `oauth`) |
+|--------|----------------|-------------------------------|
+| Token acts as | User (server-side impersonation) | User (consent-based) |
+| Admin prerequisite | Workspace Admin Console DWD config | None beyond standard OAuth |
+| Scope control | `DELEGATION_SCOPES` allowlist + Workspace Admin | Per-user consent + `OAUTH_SCOPES` allowlist |
+| Refresh token stored | No | Yes (AES-256-GCM encrypted) |
+| Server compromise risk | Impersonation of any user | Access to encrypted refresh tokens |
+
+**Risk analysis (DWD):**
 
 - Server compromise could allow impersonation of any user for delegated scopes
 - Mitigations: Cloud Run (no SSH, immutable containers), IAM audit logs, no SA key files
-- Scopes are enforced at two levels: server-side `DELEGATION_SCOPES` allowlist and Google Workspace Admin Console
+
+**Risk analysis (OAuth modes):**
+
+- Server compromise with database access exposes encrypted refresh tokens
+- Mitigations: encryption key stored in Cloud Run secrets (not Firestore), key rotation capability, Firestore security rules
+
+All user-impersonating requests (regardless of strategy) are logged with user email, command type, full command context, reason, and timestamp before any token is issued.
 
 ### CLI Authentication Flow
 
@@ -173,7 +190,8 @@ ExtraSuite supports **domain-wide delegation** for user-specific APIs like Gmail
 
 - The server stores the email-to-service-account mapping and session token hashes
 - Session tokens are stored as SHA-256 hashes in Firestore (the raw token never touches the database)
-- No Google OAuth access tokens are stored server-side — they are generated on demand and returned directly to the client
+- Google access tokens are never stored — they are generated on demand and returned directly to the client
+- In `sa+oauth` and `oauth` modes, an AES-256-GCM encrypted OAuth refresh token is stored in Firestore per user. The plaintext is never written to the database; only the server (via its Cloud Run secret) can decrypt it.
 - Access logs store command type, command context (non-sensitive fields like file URLs), and the agent's stated reason — not file contents or sensitive data
 
 **Automatic expiration:**
@@ -272,14 +290,15 @@ If an employee grants edit access, the agent can edit within that permission. Ex
 
 ExtraSuite guarantees the following:
 
-- ✅ Agents cannot access documents unless an employee explicitly shares them
+- ✅ Agents cannot access documents unless an employee explicitly shares them (in `sa+dwd`/`sa+oauth` modes; in `oauth` mode, the user's own credentials are used)
 - ✅ Access is limited to the permission level chosen by the employee
-- ✅ All agent edits are attributable, auditable, and reversible using native Google Workspace tools
+- ✅ All agent edits are attributable and reversible using native Google Workspace tools. In `sa+dwd`/`sa+oauth` modes, edits are attributed to the agent; in `oauth` mode, they appear as the user.
 - ✅ Google access tokens are short-lived (1 hour), generated on demand, held only in process memory, and never stored client-side or server-side
 - ✅ The local session token (30 days) only authenticates against the ExtraSuite server — it has no Google API access on its own
 - ✅ Google access tokens are never exposed in browser URLs or history
 - ✅ Every token request is logged with the command type, context, and the agent's stated reason before any token is issued
-- ✅ Delegated scopes (if enabled) are allowlisted by the admin at two levels: server config and Google Workspace Admin Console
+- ✅ In `sa+dwd` mode, delegated scopes are allowlisted at two levels: server config (`DELEGATION_SCOPES`) and Google Workspace Admin Console
+- ✅ In OAuth modes, only scopes explicitly consented to by the user at login are permitted per-user
 - ✅ The client declares the intended operation via a typed command; the server determines the scope — agents cannot request arbitrary scopes
 
 ---

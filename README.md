@@ -4,11 +4,15 @@
 
 ExtraSuite is terraform for google drive files. You can `pull` a google drive file (sheets/docs/forms/app scripts/slide), edit the files locally and `push` it back. Extrasuite will figure out what you changed, then create the right API calls to update the google drive file.
 
-ExtraSuite gives agents its own identity that is distinct from the users. For each user, we create a 1:1 service account. The service acount has a unique "email like" identity. Users explicitly share the file or folder with this service account. This has two unique advantages:
+> **Requires a server-side component.** ExtraSuite is not a standalone CLI — it connects to a self-hosted ExtraSuite server that manages credentials and authentication. See [Deploy the Server](#deploy-the-server) below.
+
+ExtraSuite gives agents their own identity distinct from the user. For each user, we create a 1:1 service account with a unique "email-like" identity. Users explicitly share files or folders with this service account. This has two unique advantages:
 - the agent can only read/comment/edit the files you explicitly share with it
 - any changes made by the agent show up in version history as "Edited by Alice's agent" instead of "Edited by Alice"
 
-ExtraSuite is built for small and mid-sized teams who rely on Google Workspace and want AI to help — without handing an agent the keys to your entire Drive. Individual users can also use it, but primary workflow is designed for teams.
+> **Note:** Agent attribution requires the default `sa+dwd` or `sa+oauth` credential mode. In `oauth` mode, edits appear as the user themselves. See [Credential Modes](#credential-modes) below.
+
+ExtraSuite is built for small and mid-sized teams who rely on Google Workspace and want AI to help — without handing an agent the keys to your entire Drive. Individual users can also use it, but the primary workflow is designed for teams.
 
 ---
 ## The Pull → Edit → Push Workflow
@@ -190,13 +194,30 @@ For Sheets formula help, use `extrasuite sheet help formulas` to list all suppor
 
 ---
 
+## Credential Modes
+
+The server supports three credential modes, configured via `CREDENTIAL_MODE`:
+
+| Mode | Sheet/Doc/Slide/Form access | Gmail/Calendar/Contacts access | Agent attribution in Drive history | Requires DWD |
+|---|---|---|---|---|
+| `sa+dwd` *(default)* | Per-user service account | Domain-wide delegation | ✅ Yes | ✅ Yes |
+| `sa+oauth` | Per-user service account | User's OAuth token | ✅ Yes (for files) | ❌ No |
+| `oauth` | User's OAuth token | User's OAuth token | ❌ No — edits appear as the user | ❌ No |
+
+**When to use each:**
+- `sa+dwd` — recommended for Google Workspace organizations; provides full agent attribution and the strictest access isolation
+- `sa+oauth` — use when your Google Workspace admin cannot enable domain-wide delegation; file edits are still attributed to the agent
+- `oauth` — simplest setup for personal use or when attribution is not a requirement; no service accounts or DWD needed
+
+---
+
 ## Getting Started
 
 ### Prerequisites
 
 1. Google Workspace that allows collaboration with external users
 2. A Google Cloud project with editor access (does not need to be your organization's project)
-3. ExtraSuite server deployed (see below)
+3. ExtraSuite server deployed (see [Deploy the Server](#deploy-the-server) below)
 
 ### Install the Client
 
@@ -239,12 +260,12 @@ See the [deployment documentation](https://extrasuite.think41.com/deployment/) f
 
 | Property | How ExtraSuite Achieves It |
 |----------|---------------------------|
-| Scoped access | Each employee's agent has a dedicated service account; only sees explicitly shared files |
-| Short-lived Google tokens | Access tokens expire after ~1 hour; generated on demand, never stored |
+| Scoped access | In `sa+dwd`/`sa+oauth` modes, each agent has a dedicated service account; only sees explicitly shared files |
+| Short-lived Google tokens | Access tokens expire after ~1 hour; generated on demand, never stored client-side |
 | Session token | A 30-day session token stored locally authenticates against the ExtraSuite server only — not against Google APIs |
 | Typed commands | Client declares what operation it intends to perform; server issues the minimum required token type and scope |
 | Agent intent logging | The agent's stated reason is logged alongside command type and context before any token is issued |
-| Audit trail | All agent edits appear in Google Drive version history attributed to the agent |
+| Audit trail | In `sa+dwd`/`sa+oauth` modes, all agent edits appear attributed to the agent in Drive version history. In `oauth` mode, edits appear as the user. |
 | Sandboxable | Agent only edits local files and calls `pull`/`push`; no arbitrary API access |
 | No external exfiltration | Outbound connections can be restricted to Google API endpoints and the ExtraSuite server |
 | Minimal OAuth scope | Only the scopes needed for the specific operation are requested; administrators control the scope allowlist |

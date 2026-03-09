@@ -239,10 +239,10 @@ class Database:
             if data is None:
                 return None
 
-            service_account_email = data.get("service_account_email")
             expires_at = data.get("expires_at")
+            user_email = data.get("user_email")
 
-            if not service_account_email or not expires_at:
+            if not user_email or not expires_at:
                 transaction.delete(doc_ref)
                 return None
 
@@ -254,8 +254,8 @@ class Database:
             # Delete the auth code (one-time use)
             transaction.delete(doc_ref)
             return {
-                "service_account_email": service_account_email,
-                "user_email": data.get("user_email", ""),
+                "service_account_email": data.get("service_account_email", ""),
+                "user_email": user_email,
             }
 
         transaction = self._client.transaction()

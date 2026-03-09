@@ -193,11 +193,14 @@ class TestResolve:
         assert exc_info.value.status_code == 403
 
     @pytest.mark.asyncio
-    async def test_resolve_oauth_mode_sa_command_disallowed_scope_raises_403(self):
-        """In oauth mode, SA-class commands also go through the server allowlist."""
+    async def test_resolve_oauth_mode_sa_command_ignores_delegation_scope_allowlist(self):
+        """In oauth mode, SA-class commands are NOT gated by delegation_scopes.
+        The delegation_scopes allowlist only applies to DWD-backed commands.
+        OAuth SA commands are governed by the per-user consent check instead."""
         db = FakeDatabase()
         settings = FakeSettings(
             credential_mode="oauth",
+            # delegation_scopes does NOT include spreadsheets — irrelevant for OAuth SA commands
             delegation_scopes=["https://www.googleapis.com/auth/calendar"],
         )
         tg = _make_token_generator()
@@ -211,10 +214,11 @@ class TestResolve:
             "https://www.googleapis.com/auth/spreadsheets",
         )
 
-        cmd = self._make_command("sheet.pull")  # maps to spreadsheets scope in oauth mode
-        with pytest.raises(HTTPException) as exc_info:
-            await router.resolve(cmd, "user@example.com")
-        assert exc_info.value.status_code == 403
+        # sheet.pull uses spreadsheets scope via OAuth; delegation_scopes is irrelevant for it
+        cmd = self._make_command("sheet.pull")
+        result = await router.resolve(cmd, "user@example.com")
+        assert len(result) == 1
+        assert result[0].kind == "bearer_oauth"
 
     @pytest.mark.asyncio
     async def test_resolve_scope_not_in_consented_scopes_raises_403(self):

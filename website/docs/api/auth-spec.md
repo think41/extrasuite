@@ -129,12 +129,23 @@ Response:
 
 ### Credential selection
 
-The server maps `command.type` to the minimum required credential:
+The server maps `command.type` to the minimum required credential. The mapping depends on the server's configured `CREDENTIAL_MODE`:
 
-- Service-account credential for file operations such as `sheet.*`, `doc.*`, `slide.*`, `form.*`, and read-only Drive listing/search commands
-- Domain-wide-delegation credential for user-impersonating commands such as `gmail.*`, `calendar.*`, `contacts.*`, `script.*`, and `drive.file.*`
+| `CREDENTIAL_MODE` | SA commands (`sheet.*`, `doc.*`, etc.) | DWD commands (`gmail.*`, `calendar.*`, etc.) |
+|---|---|---|
+| `sa+dwd` (default) | Per-user service account impersonation | Domain-wide delegation (DWD) |
+| `sa+oauth` | Per-user service account impersonation | User's stored OAuth refresh token |
+| `oauth` | User's stored OAuth refresh token | User's stored OAuth refresh token |
 
 Scope selection is server-defined. The client does not request raw OAuth scopes directly.
+
+**Credential mode tradeoffs:**
+
+| Mode | Agent attribution in Drive history | DWD required | OAuth refresh token stored |
+|---|---|---|---|
+| `sa+dwd` | Yes — actions show per-user SA | Yes | No |
+| `sa+oauth` | Yes — for file operations | No | Yes (encrypted) |
+| `oauth` | No — actions appear as the user | No | Yes (encrypted) |
 
 ## Command Type Table
 
@@ -143,12 +154,14 @@ The authoritative command-to-credential mapping lives in:
 - `server/src/extrasuite/server/command_registry.py`
 - `server/src/extrasuite/server/commands.py`
 
-Reference categories:
+Reference categories (for `sa+dwd` mode):
 
 | Category | Credential kind | Notes |
 |---|---|---|
 | `sheet.*`, `doc.*`, `slide.*`, `form.*`, `drive.ls`, `drive.search` | `bearer_sa` | Access is limited to files shared with the per-user service account |
 | `gmail.*`, `calendar.*`, `contacts.*`, `script.*`, `drive.file.*` | `bearer_dwd` | Scopes are determined by the server's command registry |
+
+In `sa+oauth` or `oauth` mode, `bearer_dwd` credentials become `bearer_oauth`.
 
 ## Security Requirements
 
@@ -185,11 +198,17 @@ Each `POST /api/auth/token` request should log:
 
 ### Scope controls
 
-For DWD-backed commands:
+For DWD-backed commands (`CREDENTIAL_MODE=sa+dwd`):
 
 1. The server must derive scopes from `command.type`
 2. The optional `DELEGATION_SCOPES` allowlist may reject commands before token generation
 3. Google Workspace Admin Console remains the final authority for allowed scopes
+
+For OAuth-backed commands (`CREDENTIAL_MODE=sa+oauth` or `oauth`):
+
+1. `OAUTH_SCOPES` defines the scopes requested at user consent time
+2. Only commands whose scope was consented to at login are permitted (enforced per-user)
+3. `OAUTH_TOKEN_ENCRYPTION_KEY` (AES-256) protects refresh tokens at rest in Firestore
 
 ## Rate Limits
 
@@ -229,10 +248,23 @@ POST /api/admin/sessions/revoke-all?email=<email>
 Authorization: Bearer <session_token>
 ```
 
+### Revoke OAuth refresh token (self-service)
+
+Only available in `sa+oauth` or `oauth` credential modes:
+
+```http
+POST /api/auth/oauth/revoke
+Authorization: Bearer <session_token>
+```
+
+This revokes the caller's stored OAuth refresh token at Google and deletes it from Firestore. All access tokens derived from the refresh token are immediately invalidated.
+
 Authorization rules:
 
 - Users may manage their own sessions
 - Emails in `ADMIN_EMAILS` may manage sessions for any user
+
+**Note:** Revoking all sessions does NOT automatically revoke the user's Google OAuth refresh token in OAuth modes. Use `POST /api/auth/oauth/revoke` or manually delete the Firestore refresh token to fully lock out a user.
 
 ## Client Expectations
 

@@ -179,14 +179,18 @@ class CommandCredentialRouter:
 
         provider, scopes = self._table[cmd_type]
 
-        # Enforce server-side scope allowlist (DWD-class commands only; SA scopes are internal)
-        disallowed = [s for s in scopes if not self._settings.is_scope_allowed(s)]
-        if disallowed:
-            short_names = [s.removeprefix(_GOOGLE_SCOPE_PREFIX) for s in disallowed]
-            raise HTTPException(
-                status_code=403,
-                detail=f"Scope(s) {short_names!r} are not permitted by server configuration.",
-            )
+        # Enforce server-side scope allowlist for DWD commands only.
+        # - DWD provider: check against DELEGATION_SCOPES allowlist (operator-configured)
+        # - OAuth provider: OAUTH_SCOPES is enforced at consent time; per-user consent check below
+        # - SA provider: scopes=[] (internal impersonation), no allowlist needed
+        if provider.kind == "bearer_dwd":
+            disallowed = [s for s in scopes if not self._settings.is_scope_allowed(s)]
+            if disallowed:
+                short_names = [s.removeprefix(_GOOGLE_SCOPE_PREFIX) for s in disallowed]
+                raise HTTPException(
+                    status_code=403,
+                    detail=f"Scope(s) {short_names!r} are not permitted by server configuration.",
+                )
 
         # For OAuth providers: retrieve the stored refresh token record and enforce consent
         encrypted_token = ""

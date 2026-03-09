@@ -14,21 +14,6 @@ from pydantic_settings import BaseSettings, SettingsConfigDict
 
 _GOOGLE_SCOPE_PREFIX = "https://www.googleapis.com/auth/"
 
-# Full scope URLs for OAuth mode (SA commands routed through user's OAuth token)
-_OAUTH_SA_SCOPE_NAMES: dict[str, str] = {
-    "sheet.pull": "spreadsheets",
-    "sheet.push": "spreadsheets",
-    "sheet.batchupdate": "spreadsheets",
-    "doc.pull": "documents",
-    "doc.push": "documents",
-    "slide.pull": "presentations",
-    "slide.push": "presentations",
-    "form.pull": "forms.body",
-    "form.push": "forms.body",
-    "drive.ls": "drive.readonly",
-    "drive.search": "drive.readonly",
-}
-
 
 class Settings(BaseSettings):
     """Application settings loaded from environment variables.
@@ -182,14 +167,6 @@ class Settings(BaseSettings):
             return []
         scopes = [s.strip() for s in self.oauth_scopes.split(",") if s.strip()]
         return [f"{_GOOGLE_SCOPE_PREFIX}{s}" for s in scopes]
-
-    def get_oauth_sa_scope_url(self, command_type: str) -> str:
-        """Return the full OAuth scope URL needed for a SA-class command in oauth mode.
-
-        Raises:
-            KeyError: If command_type is not a known SA command.
-        """
-        return f"{_GOOGLE_SCOPE_PREFIX}{_OAUTH_SA_SCOPE_NAMES[command_type]}"
 
     def validate_oauth_config(self) -> None:
         """Raise ValueError at startup if required OAuth vars are missing or invalid."""

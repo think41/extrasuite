@@ -16,9 +16,12 @@ FastAPI server that authenticates users in a Google Workspace domain and issues 
 |------|---------|
 | `src/extrasuite/server/api.py` | Route definitions for all auth and token endpoints |
 | `src/extrasuite/server/commands.py` | Pydantic discriminated union of all command types |
-| `src/extrasuite/server/command_registry.py` | Maps command type → SA vs DWD, OAuth scopes, credential resolution |
-| `src/extrasuite/server/token_generator.py` | Service account creation and token generation |
-| `src/extrasuite/server/database.py` | Firestore: session state, auth codes, user→SA mapping |
+| `src/extrasuite/server/command_registry.py` | Maps command type → SA vs DWD, OAuth scopes |
+| `src/extrasuite/server/credential_provider.py` | Credential strategy classes (SA, DWD, OAuth) |
+| `src/extrasuite/server/credential_router.py` | Routes commands to providers; built once at startup |
+| `src/extrasuite/server/crypto.py` | AES-256-GCM encryption for stored OAuth refresh tokens |
+| `src/extrasuite/server/token_generator.py` | Service account creation, SA impersonation, DWD, OAuth exchange |
+| `src/extrasuite/server/database.py` | Firestore: session state, auth codes, user→SA mapping, refresh tokens |
 | `src/extrasuite/server/main.py` | FastAPI app, middleware, exception handlers |
 | `src/extrasuite/server/config.py` | Environment config via pydantic-settings |
 
@@ -35,7 +38,7 @@ See [`auth-spec.md`](../website/docs/api/auth-spec.md) for the full protocol. Th
 
 **Phase 2 — Headless credential exchange** (every command, no browser):
 
-- `POST /api/auth/token` — session token passed in `Authorization: Bearer` header (not body, to avoid proxy log exposure). Request body contains a typed `command` object and a `reason` string. Validates session, resolves credentials via `command_registry.resolve_credentials()`, logs the full command context to `access_logs`, returns a `credentials` array.
+- `POST /api/auth/token` — session token passed in `Authorization: Bearer` header (not body, to avoid proxy log exposure). Request body contains a typed `command` object and a `reason` string. Validates session, resolves credentials via `credential_router.resolve()`, logs the full command context to `access_logs`, returns a `credentials` array.
 
 **Request body (Phase 2):**
 ```json
@@ -62,35 +65,47 @@ See [`auth-spec.md`](../website/docs/api/auth-spec.md) for the full protocol. Th
 }
 ```
 
-The `command_registry.py` module is the single source of truth for which commands use SA vs DWD and which OAuth scopes each DWD command requires.
+The `command_registry.py` module is the single source of truth for which commands use SA vs DWD and which OAuth scopes each DWD command requires. The `credential_router.py` module builds the runtime routing table from these registries and the active `CREDENTIAL_MODE`.
 
 **Adding a new command — checklist:**
 
 1. Add a `XyzCommand(BaseModel)` class to `commands.py` with a `Literal["xyz.op"]` type field and audit-context fields (all optional, empty defaults).
 2. Add the type string to `Command` union at the bottom of `commands.py`.
 3. Add the type to `_SA_COMMAND_TYPES` (service account) or `_DWD_COMMAND_SCOPES` (delegation, with full scope URL list) in `command_registry.py`.
-4. Run `pytest tests/test_v2_session.py::TestCommandRegistrySync` — this test catches union/registry drift automatically.
-5. Update the CLI (`client/src/extrasuite/client/cli/`) to build the typed command dict.
-6. If the command uses a new OAuth scope: update `CLAUDE.md` (root) OAuth Delegation Scopes table and `server/.env.template` `DELEGATION_SCOPES` example line.
-7. Update the Command Type Table in `website/docs/api/auth-spec.md`.
+4. If the command is SA-class and `CREDENTIAL_MODE=oauth` must be supported: add it to `_OAUTH_SA_COMMAND_SCOPES` in `credential_router.py` with the appropriate scope URL.
+5. Run `pytest tests/test_v2_session.py::TestCommandRegistrySync` — this test catches union/registry drift automatically.
+6. Update the CLI (`client/src/extrasuite/client/cli/`) to build the typed command dict.
+7. If the command uses a new OAuth scope: update `CLAUDE.md` (root) OAuth Delegation Scopes table and `server/.env.template` `DELEGATION_SCOPES` example line.
+8. Update the Command Type Table in `website/docs/api/auth-spec.md`.
 
 **Admin session management:**
 
 - `GET /api/admin/sessions?email=<email>` — list active sessions
 - `DELETE /api/admin/sessions/<hash>` — revoke a session
 - `POST /api/admin/sessions/revoke-all?email=<email>` — revoke all sessions
+- `POST /api/auth/oauth/revoke` — revoke the caller's stored OAuth refresh token (self-service only)
 
 All admin endpoints use `Authorization: Bearer <session_token>`. Self-service (own sessions) or admin (`ADMIN_EMAILS` env var).
+
+**Important (OAuth modes):** `revoke-all` revokes ExtraSuite session tokens but does NOT revoke the user's Google OAuth refresh token. To fully lock out a user in `sa+oauth` or `oauth` mode, you must also delete the `encrypted_refresh_token` field from their Firestore user document.
 
 ### Firestore Collections
 
 | Collection | Document ID | TTL field | Purpose |
 |---|---|---|---|
-| `users` | email (encoded) | none | user → service account mapping |
+| `users` | email (encoded) | none | user → service account + OAuth refresh token |
 | `oauth_states` | state token | `expires_at` (10 min) | CSRF protection |
 | `auth_codes` | auth code | `expires_at` (120 sec) | single-use auth delivery |
 | `session_tokens` | SHA-256(raw_token) | `expires_at` (60 days) | 30-day session tokens + 30-day audit |
 | `access_logs` | auto | `expires_at` (30 days) | per-request access audit |
+
+**`users` document fields:**
+- `email`: user email
+- `service_account_email`: per-user SA email (set by SA/DWD modes)
+- `encrypted_refresh_token`: AES-256-GCM ciphertext of OAuth refresh token (set by OAuth modes)
+- `refresh_token_scopes`: space-separated scope URLs consented at login (set by OAuth modes)
+- `refresh_token_updated_at`: when the refresh token was last stored/rotated
+- `updated_at`: when service_account_email was last updated
 
 ### New Environment Variables
 

@@ -72,6 +72,27 @@ asia-southeast1-docker.pkg.dev/thinker41/extrasuite/server
 - **[IAM Permissions Reference](iam-permissions.md)** - Detailed explanation of required permissions
 - **[Operations Guide](operations.md)** - Monitoring, troubleshooting, and maintenance
 
+## Choosing a Credential Mode
+
+Before deploying, choose how the server will authenticate agents for Gmail, Calendar, and other user-specific commands:
+
+| Mode | `CREDENTIAL_MODE` | Best for | Requirements |
+|------|-------------------|----------|--------------|
+| Service account + DWD | `sa+dwd` *(default)* | Google Workspace organizations with admin access | Workspace admin must enable domain-wide delegation |
+| Service account + OAuth | `sa+oauth` | Organizations where DWD is not available | No admin action needed beyond standard OAuth |
+| OAuth only | `oauth` | Personal use or minimal setup | No DWD or service accounts; edits appear as the user |
+
+For `sa+oauth` and `oauth` modes, two additional secrets are required:
+- `OAUTH_SCOPES` — comma-separated list of Google OAuth scope short names (e.g., `gmail.compose,calendar`)
+- `OAUTH_TOKEN_ENCRYPTION_KEY` — 64-char hex AES-256 key for encrypting stored refresh tokens. **Store this in Cloud Run Secret Manager, not as a plain env var.**
+
+Generate the key:
+```bash
+python -c "import secrets; print(secrets.token_hex(32))"
+```
+
+See the [Authentication API Specification](../api/auth-spec.md) for the full credential mode reference.
+
 ## Build Your Own Implementation
 
 This deployment guide is for the reference implementation using Google OAuth and Cloud Run. If you prefer to:
