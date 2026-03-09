@@ -471,30 +471,60 @@ gcloud beta run domain-mappings describe \
 
 ## Environment Variables Reference
 
-| Variable | Required | Description |
-|----------|----------|-------------|
-| `GOOGLE_CLIENT_ID` | Yes | OAuth 2.0 Client ID |
-| `GOOGLE_CLIENT_SECRET` | Yes | OAuth 2.0 Client Secret |
-| `GOOGLE_CLOUD_PROJECT` | Yes | Your GCP project ID |
-| `SECRET_KEY` | Yes | Random string for signing session tokens |
-| `BASE_DOMAIN` | Yes | Your server's domain (without `https://`) |
-| `ALLOWED_EMAIL_DOMAINS` | No | Comma-separated list of allowed email domains |
-| `TOKEN_EXPIRY_MINUTES` | No | Access token lifetime (default: 60) |
-| `SESSION_COOKIE_EXPIRY_MINUTES` | No | Session duration (default: 1440 = 24 hours) |
-| `DELEGATION_SCOPES` | No | Optional scope allowlist for delegation (e.g., `gmail.send,calendar`) |
+### Required
+
+| Variable | Description |
+|----------|-------------|
+| `GOOGLE_CLIENT_ID` | OAuth 2.0 Client ID |
+| `GOOGLE_CLIENT_SECRET` | OAuth 2.0 Client Secret |
+| `GOOGLE_CLOUD_PROJECT` | Your GCP project ID |
+| `SECRET_KEY` | Random string for signing session cookies |
+| `BASE_DOMAIN` | Your server's domain (without `https://`) |
+
+### Optional — Server Configuration
+
+| Variable | Default | Description |
+|----------|---------|-------------|
+| `ALLOWED_EMAIL_DOMAINS` | (all) | Comma-separated email domain allowlist |
+| `TOKEN_EXPIRY_MINUTES` | `60` | Access token lifetime in minutes |
+| `SESSION_TOKEN_EXPIRY_DAYS` | `30` | Session token lifetime in days |
+| `ADMIN_EMAILS` | (none) | CSV of admin email addresses for session management |
+| `FIRESTORE_DATABASE` | `(default)` | Firestore database name |
+
+### Optional — Credential Mode
+
+| Variable | Default | Description |
+|----------|---------|-------------|
+| `CREDENTIAL_MODE` | `sa+dwd` | Auth strategy: `sa+dwd`, `sa+oauth`, or `oauth` |
+| `DELEGATION_SCOPES` | (all) | DWD scope allowlist (only for `sa+dwd` mode) |
+| `OAUTH_SCOPES` | (none) | Required for `sa+oauth`/`oauth`. Comma-separated scope names. |
+| `OAUTH_TOKEN_ENCRYPTION_KEY` | (none) | Required for `sa+oauth`/`oauth`. 64-char hex AES-256 key. |
+
+### Optional — Performance
+
+| Variable | Default | Description |
+|----------|---------|-------------|
+| `THREAD_POOL_SIZE` | `10` | Max threads for blocking I/O |
+| `RATE_LIMIT_AUTH` | `10/minute` | Rate limit for auth endpoints |
+| `RATE_LIMIT_TOKEN` | `60/minute` | Rate limit for token exchange |
+| `RATE_LIMIT_ADMIN` | `30/minute` | Rate limit for admin endpoints |
 
 ---
 
-## Optional: Enable Domain-Wide Delegation
+## Optional: Enable Gmail, Calendar, and Other User APIs
 
-If you want agents to access user-level APIs like Gmail, Calendar, or Apps Script, enable domain-wide delegation:
+Agents can access Gmail, Calendar, Apps Script, and Contacts via one of two credential strategies:
+
+### Option A: Domain-Wide Delegation (recommended for Workspace organizations)
+
+Requires a Google Workspace admin to enable DWD in the Admin Console.
 
 1. **Set the optional scope allowlist:**
 
     ```bash
     gcloud run services update extrasuite-server \
       --region=asia-southeast1 \
-      --update-env-vars="DELEGATION_SCOPES=gmail.send,calendar,script.projects" \
+      --update-env-vars="DELEGATION_SCOPES=gmail.compose,gmail.readonly,calendar,script.projects" \
       --project=$PROJECT_ID
     ```
 
@@ -502,7 +532,39 @@ If you want agents to access user-level APIs like Gmail, Calendar, or Apps Scrip
 
 2. **Configure Google Workspace Admin Console** — see [IAM Permissions: Domain-Wide Delegation](iam-permissions.md#optional-domain-wide-delegation) for setup steps.
 
-3. **Verify:** Run a DWD-backed command such as `extrasuite gmail compose ...` or `extrasuite calendar view ...` after logging in with `extrasuite auth login`.
+3. **Verify:** Run `extrasuite calendar view` after logging in.
+
+### Option B: OAuth Refresh Token (no DWD required)
+
+Use this when DWD is not available. The user grants consent during login; the server stores an encrypted refresh token.
+
+1. **Generate an encryption key:**
+
+    ```bash
+    python -c "import secrets; print(secrets.token_hex(32))"
+    ```
+
+2. **Store the key in Secret Manager:**
+
+    ```bash
+    echo -n "YOUR_64_CHAR_HEX_KEY" | gcloud secrets create extrasuite-oauth-key \
+      --data-file=- --project=$PROJECT_ID
+    gcloud secrets add-iam-policy-binding extrasuite-oauth-key \
+      --member="serviceAccount:extrasuite-server@$PROJECT_ID.iam.gserviceaccount.com" \
+      --role="roles/secretmanager.secretAccessor" --project=$PROJECT_ID
+    ```
+
+3. **Deploy with OAuth mode:**
+
+    ```bash
+    gcloud run services update extrasuite-server \
+      --region=asia-southeast1 \
+      --update-env-vars="CREDENTIAL_MODE=sa+oauth,OAUTH_SCOPES=gmail.compose,gmail.readonly,calendar,script.projects" \
+      --set-secrets="OAUTH_TOKEN_ENCRYPTION_KEY=extrasuite-oauth-key:latest" \
+      --project=$PROJECT_ID
+    ```
+
+    Use `CREDENTIAL_MODE=oauth` instead of `sa+oauth` if you don't want per-user service accounts (note: edits will appear as the user in Drive version history, not as the agent).
 
 ---
 

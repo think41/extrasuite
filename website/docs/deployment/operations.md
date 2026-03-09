@@ -93,6 +93,8 @@ gcloud firestore fields ttls update expires_at \
 
 Required for the v2 session-token protocol. Without these, `list_session_tokens` and `revoke_all_session_tokens` queries will fail.
 
+The server attempts to create this index automatically at startup (requires `roles/datastore.indexAdmin`). If auto-creation fails, create it manually:
+
 ```bash
 # Create via Firebase CLI — add to firestore.indexes.json:
 # {
@@ -100,12 +102,13 @@ Required for the v2 session-token protocol. Without these, `list_session_tokens`
 #   "queryScope": "COLLECTION",
 #   "fields": [
 #     {"fieldPath": "email", "order": "ASCENDING"},
-#     {"fieldPath": "active_expires_at", "order": "ASCENDING"}
+#     {"fieldPath": "active_expires_at", "order": "ASCENDING"},
+#     {"fieldPath": "revoked_at", "order": "ASCENDING"}
 #   ]
 # }
 ```
 
-Or create manually in **Firestore > Indexes > Composite** with the fields above.
+Or create manually in **Firestore > Indexes > Composite** with all three fields above (`email`, `active_expires_at`, `revoked_at`, all ASCENDING).
 
 ---
 
