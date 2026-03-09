@@ -1,5 +1,10 @@
 Apply local SML changes to Google Slides.
 
+
+## Flags
+
+  --reason TEXT  State the user's intent that led to this command (required). Also -r or -m.
+
 ## Usage
 
   extrasuite slide push <folder>

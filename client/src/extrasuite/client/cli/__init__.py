@@ -180,12 +180,13 @@ def build_parser() -> Any:
     auth_parent.add_argument(
         "--reason",
         "-r",
+        "-m",
         metavar="TEXT",
         default=None,
         help=(
-            "Why this operation is being performed. "
-            "Pass the user's actual intent for audit trails. "
-            "Can also be set via the EXTRASUITE_REASON environment variable."
+            "Why this operation is being performed (required). "
+            "Pass the user's actual intent so the server audit log records "
+            "the real reason credentials were requested."
         ),
     )
 

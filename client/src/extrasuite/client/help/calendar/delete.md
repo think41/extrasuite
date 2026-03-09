@@ -2,6 +2,11 @@ Cancel (delete) a Google Calendar event.
 
 By default, cancellation notification emails are sent to all attendees.
 
+
+## Flags
+
+  --reason TEXT  State the user's intent that led to this command (required). Also -r or -m.
+
 ## Usage
 
   extrasuite calendar delete EVENT_ID [--calendar ID] [--no-notify] [--this-and-following]
@@ -17,7 +22,7 @@ By default, cancellation notification emails are sent to all attendees.
 ## Examples
 
   # Cancel a one-off event
-  extrasuite calendar delete abc123xyz
+  extrasuite calendar delete abc123xyz --reason "state the user's intent that led to this command"
 
   # Cancel silently (no notification emails)
   extrasuite calendar delete abc123xyz --no-notify

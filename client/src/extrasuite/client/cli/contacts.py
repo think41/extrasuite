@@ -13,7 +13,7 @@ def cmd_contacts_sync(args: Any) -> None:
     """Sync Google Contacts to local DB."""
     from extrasuite.client.contacts import sync
 
-    reason = _get_reason(args, default="Sync Google Contacts")
+    reason = _get_reason(args)
     token = _get_credential(
         args,
         command={"type": "contacts.read", "query": ""},
@@ -22,7 +22,7 @@ def cmd_contacts_sync(args: Any) -> None:
     other_token = _get_credential(
         args,
         command={"type": "contacts.other", "query": ""},
-        reason=_get_reason(args, default="Sync Gmail-suggested contacts"),
+        reason=_get_reason(args),
     )
     people_count, other_count = sync(
         token.token, other_token=other_token.token, verbose=True
@@ -53,7 +53,7 @@ def cmd_contacts_search(args: Any) -> None:
     other_token_str = None
     if needs_sync:
         query_str = " ".join(queries)
-        reason = _get_reason(args, default="Sync Google Contacts")
+        reason = _get_reason(args)
         cred = _get_credential(
             args,
             command={"type": "contacts.read", "query": query_str},
@@ -62,7 +62,7 @@ def cmd_contacts_search(args: Any) -> None:
         other_cred = _get_credential(
             args,
             command={"type": "contacts.other", "query": query_str},
-            reason=_get_reason(args, default="Sync Gmail-suggested contacts"),
+            reason=_get_reason(args),
         )
         token_str = cred.token
         other_token_str = other_cred.token

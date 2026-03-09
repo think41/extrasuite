@@ -10,6 +10,8 @@ Apply local XML changes to Google Docs.
 
 ## Flags
 
+  --reason TEXT  State the user's intent that led to this command (required). Also -r or -m.
+
   -f, --force    Push despite validation warnings
   --verify       Re-pull after push to verify changes were applied correctly
 

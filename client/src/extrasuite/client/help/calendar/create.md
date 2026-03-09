@@ -7,6 +7,8 @@ Create a Google Calendar event from a JSON file.
 
 ## Flags
 
+  --reason TEXT  State the user's intent that led to this command (required). Also -r or -m.
+
   --json PATH         Path to event JSON file, or - to read from stdin
   --calendar ID       Calendar ID (default: primary, or value from JSON)
 

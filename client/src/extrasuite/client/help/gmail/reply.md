@@ -1,5 +1,10 @@
 Create a Gmail draft that replies in an existing thread.
 
+
+## Flags
+
+  --reason TEXT  State the user's intent that led to this command (required). Also -r or -m.
+
 ## Usage
 
   extrasuite gmail reply <message_id> <file>
@@ -41,7 +46,7 @@ Alice
 ## Examples
 
   # Reply with auto-inferred recipients
-  extrasuite gmail reply 19c8a19dbda1d3f7 reply.md
+  extrasuite gmail reply 19c8a19dbda1d3f7 reply.md --reason "state the user's intent that led to this command"
 
   # Reply with explicit recipients
   extrasuite gmail reply 19c8a19dbda1d3f7 reply.md

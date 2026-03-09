@@ -11,6 +11,8 @@ Download a Google Sheet to a local folder.
 
 ## Flags
 
+  --reason TEXT  State the user's intent that led to this command (required). Also -r or -m.
+
   --max-rows N  Max rows per sheet to download (default: 100)
   --no-limit    Download all rows
   --no-raw      Skip saving raw API responses (.raw/ folder)
@@ -61,5 +63,5 @@ Creates <output_dir>/<spreadsheet_id>/ with:
 
 ## Example
 
-  extrasuite sheet pull https://docs.google.com/spreadsheets/d/abc123
+  extrasuite sheet pull https://docs.google.com/spreadsheets/d/abc123 --reason "state the user's intent that led to this command"
   extrasuite sheet pull https://docs.google.com/spreadsheets/d/abc123 /tmp/sheets

@@ -17,7 +17,7 @@ def cmd_script_pull(args: Any) -> None:
 
     script_id = parse_script_id(args.url)
     output_dir = Path(args.output_dir) if args.output_dir else Path()
-    reason = _get_reason(args, default="Pull Apps Script project")
+    reason = _get_reason(args)
     cred = _get_credential(
         args,
         command={"type": "script.pull", "file_url": args.url, "file_name": ""},
@@ -61,7 +61,7 @@ def cmd_script_push(args: Any) -> None:
     """Push changes to a Google Apps Script project."""
     from extrascript import GoogleAppsScriptTransport, ScriptClient
 
-    reason = _get_reason(args, default="Push Apps Script project")
+    reason = _get_reason(args)
     cred = _get_credential(
         args,
         command={"type": "script.push", "file_url": "", "file_name": ""},
@@ -99,7 +99,7 @@ def cmd_script_create(args: Any) -> None:
     from extrascript import GoogleAppsScriptTransport, ScriptClient
     from extrascript.client import parse_file_id
 
-    reason = _get_reason(args, default="Create Apps Script project")
+    reason = _get_reason(args)
     bind_to = args.bind_to or ""
     cred = _get_credential(
         args,

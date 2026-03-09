@@ -18,7 +18,7 @@ def cmd_calendar_view(args: Any) -> None:
     )
 
     time_min, time_max = parse_time_value(args.when)
-    reason = _get_reason(args, default="View calendar events")
+    reason = _get_reason(args)
     cred = _get_credential(
         args,
         command={
@@ -43,7 +43,7 @@ def cmd_calendar_list(args: Any) -> None:
     """List all calendars the user has access to."""
     from extrasuite.client.google_api import format_calendars_markdown, list_calendars
 
-    reason = _get_reason(args, default="List calendars")
+    reason = _get_reason(args)
     cred = _get_credential(
         args,
         command={"type": "calendar.list"},
@@ -76,7 +76,7 @@ def cmd_calendar_search(args: Any) -> None:
 
         time_max = time_min + timedelta(days=30)
 
-    reason = _get_reason(args, default="Search calendar events")
+    reason = _get_reason(args)
     cred = _get_credential(
         args,
         command={
@@ -115,7 +115,7 @@ def cmd_calendar_freebusy(args: Any) -> None:
         sys.exit(1)
 
     time_min, time_max = parse_time_value(args.when)
-    reason = _get_reason(args, default="Check free/busy")
+    reason = _get_reason(args)
     cred = _get_credential(
         args,
         command={
@@ -139,6 +139,7 @@ def cmd_calendar_create(args: Any) -> None:
         format_created_event_markdown,
     )
 
+    reason = _get_reason(args)
     json_path = args.json
     if json_path == "-":
         event_json = _json.load(sys.stdin)
@@ -159,8 +160,6 @@ def cmd_calendar_create(args: Any) -> None:
     end_time = (event_json.get("end") or {}).get("dateTime", "") or (
         event_json.get("end") or {}
     ).get("date", "")
-
-    reason = _get_reason(args, default="Create calendar event")
     cred = _get_credential(
         args,
         command={
@@ -191,6 +190,7 @@ def cmd_calendar_update(args: Any) -> None:
         update_calendar_event,
     )
 
+    reason = _get_reason(args)
     json_path = args.json
     if json_path == "-":
         patch_json = _json.load(sys.stdin)
@@ -204,8 +204,6 @@ def cmd_calendar_update(args: Any) -> None:
     attendees = [
         a.get("email", "") for a in patch_json.get("attendees", []) if a.get("email")
     ]
-
-    reason = _get_reason(args, default="Update calendar event")
     cred = _get_credential(
         args,
         command={
@@ -231,7 +229,7 @@ def cmd_calendar_delete(args: Any) -> None:
     """Delete (cancel) a calendar event."""
     from extrasuite.client.google_api import delete_calendar_event
 
-    reason = _get_reason(args, default="Delete calendar event")
+    reason = _get_reason(args)
     cred = _get_credential(
         args,
         command={
@@ -266,7 +264,7 @@ def cmd_calendar_rsvp(args: Any) -> None:
     }
     api_response = response_map.get(args.response, args.response)
 
-    reason = _get_reason(args, default="RSVP to calendar event")
+    reason = _get_reason(args)
     cred = _get_credential(
         args,
         command={

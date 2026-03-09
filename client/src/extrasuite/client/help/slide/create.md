@@ -1,5 +1,10 @@
 Create a new Google Slides presentation and share it with your service account.
 
+
+## Flags
+
+  --reason TEXT  State the user's intent that led to this command (required). Also -r or -m.
+
 ## Usage
 
   extrasuite slide create <title>

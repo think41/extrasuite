@@ -205,18 +205,22 @@ def _auth_kwargs(args: Any) -> dict[str, Any]:
     return kwargs
 
 
-def _get_reason(args: Any, *, default: str) -> str:
-    """Resolve the reason string for a token request.
+def _get_reason(args: Any) -> str:
+    """Get the reason string from CLI args.
 
-    Precedence: --reason CLI flag > EXTRASUITE_REASON env var > hardcoded default.
+    Raises SystemExit with a clear message if --reason was not provided.
+    This is required for all credentialed commands so the server audit log
+    records the actual user intent.
     """
-    import os
-
-    return (
-        getattr(args, "reason", None)
-        or os.environ.get("EXTRASUITE_REASON", "")
-        or default
-    )
+    reason = getattr(args, "reason", None)
+    if not reason:
+        print(
+            "This command requires --reason.\n"
+            "Provide the user's actual intent so the server audit log records why credentials were requested.",
+            file=sys.stderr,
+        )
+        sys.exit(1)
+    return reason
 
 
 def _get_credential(args: Any, *, command: dict[str, Any], reason: str) -> Credential:
@@ -247,10 +251,13 @@ def _cmd_share(file_type: str, args: Any) -> None:
     from extrasuite.client.google_api import share_file
     from extrasuite.client.settings import load_trusted_contacts
 
-    # 1. Load trusted contacts (no user_domain injection — settings.toml is explicit)
+    # 1. Require reason before any other work
+    reason = _get_reason(args)
+
+    # 2. Load trusted contacts (no user_domain injection — settings.toml is explicit)
     trusted = load_trusted_contacts()
 
-    # 2. Validate all emails before any API call
+    # 3. Validate all emails before any API call
     untrusted = [e for e in args.emails if not trusted.is_trusted(e)]
     if untrusted:
         for e in untrusted:
@@ -261,11 +268,10 @@ def _cmd_share(file_type: str, args: Any) -> None:
         )
         sys.exit(1)
 
-    # 3. Parse file ID using type-specific URL parser
+    # 4. Parse file ID using type-specific URL parser
     file_id = _URL_PARSERS[file_type](args.url)
 
-    # 4. Get DWD credential for drive.file.share
-    reason = _get_reason(args, default=f"Share {file_type} with users")
+    # 5. Get DWD credential for drive.file.share
     cred = _get_credential(
         args,
         command={
@@ -312,9 +318,7 @@ def _cmd_create(file_type: str, args: Any) -> None:
     manager = CredentialsManager(**_auth_kwargs(args))
 
     # Get credential for drive.file.create — SA email is always in metadata
-    reason = _get_reason(
-        args, default=f"Create {file_type} and share with service account"
-    )
+    reason = _get_reason(args)
     cred = manager.get_credential(
         command={
             "type": "drive.file.create",

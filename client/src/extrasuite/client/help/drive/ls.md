@@ -6,6 +6,8 @@ List files in Google Drive that are visible to the service account.
 
 ## Options
 
+  --reason TEXT  State the user's intent that led to this command (required). Also -r or -m.
+
   --folder URL    Limit listing to files inside this folder (URL or folder ID)
   --max N         Maximum number of files to return (default: 20)
   --page TOKEN    Page token for pagination (printed at the end of previous output)
@@ -16,7 +18,7 @@ Prints a table with columns: NAME, TYPE, MODIFIED, URL.
 
 ## Examples
 
-  extrasuite drive ls
+  extrasuite drive ls --reason "state the user's intent that led to this command"
   extrasuite drive ls --folder https://drive.google.com/drive/folders/FOLDER_ID
   extrasuite drive ls --max 50
 

@@ -10,6 +10,8 @@ Apply local changes to Google Forms.
 
 ## Flags
 
+  --reason TEXT  State the user's intent that led to this command (required). Also -r or -m.
+
   -f, --force   Push despite validation warnings
 
 ## How It Works

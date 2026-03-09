@@ -3,11 +3,13 @@
 from __future__ import annotations
 
 from argparse import Namespace
-
-import pytest
+from typing import TYPE_CHECKING
 
 from extrasuite.client.cli import build_parser
 from extrasuite.client.cli._common import cmd_module_help
+
+if TYPE_CHECKING:
+    import pytest
 
 
 def test_sheet_help_lists_formulas_topic(capsys: pytest.CaptureFixture[str]) -> None:

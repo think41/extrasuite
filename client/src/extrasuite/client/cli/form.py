@@ -23,7 +23,7 @@ def cmd_form_pull(args: Any) -> None:
 
     form_id = _parse_form_id(args.url)
     output_dir = Path(args.output_dir) if args.output_dir else Path()
-    reason = _get_reason(args, default="Pulling Google Form")
+    reason = _get_reason(args)
     cred = _get_credential(
         args,
         command={"type": "form.pull", "file_url": args.url, "file_name": ""},
@@ -64,7 +64,7 @@ def cmd_form_push(args: Any) -> None:
     """Push changes to a Google Form."""
     from extraform import FormsClient, GoogleFormsTransport
 
-    reason = _get_reason(args, default="Pushing changes to Google Form")
+    reason = _get_reason(args)
     cred = _get_credential(
         args,
         command={"type": "form.push", "file_url": "", "file_name": ""},

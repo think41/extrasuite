@@ -9,6 +9,8 @@ Only fields present in the JSON are changed. Omitted fields are left as-is.
 
 ## Flags
 
+  --reason TEXT  State the user's intent that led to this command (required). Also -r or -m.
+
   EVENT_ID            Event ID (from `calendar view` or `calendar search` output)
   --json PATH         Path to patch JSON file, or - to read from stdin
   --calendar ID       Calendar ID (default: primary)
