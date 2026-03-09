@@ -11,6 +11,8 @@ Download a Google Doc to a local folder.
 
 ## Flags
 
+  --reason TEXT  State the user's intent that led to this command (required). Also -r or -m.
+
   --no-raw      Skip saving raw API responses (.raw/ folder)
 
 ## Output
@@ -56,5 +58,5 @@ comments cannot be added via the API.
 
 ## Example
 
-  extrasuite doc pull https://docs.google.com/document/d/abc123
+  extrasuite doc pull https://docs.google.com/document/d/abc123 --reason "state the user's intent that led to this command"
   extrasuite doc pull https://docs.google.com/document/d/abc123 /tmp/docs

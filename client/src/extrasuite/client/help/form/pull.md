@@ -11,6 +11,8 @@ Download a Google Form to a local folder.
 
 ## Flags
 
+  --reason TEXT  State the user's intent that led to this command (required). Also -r or -m.
+
   --responses         Include form responses in the output
   --max-responses N   Max responses to fetch (default: 100)
   --no-raw            Skip saving raw API responses (.raw/ folder)
@@ -70,5 +72,5 @@ After push, form.json is updated with API-assigned IDs — no need to re-pull.
 
 ## Example
 
-  extrasuite form pull https://docs.google.com/forms/d/abc123
+  extrasuite form pull https://docs.google.com/forms/d/abc123 --reason "state the user's intent that led to this command"
   extrasuite form pull https://docs.google.com/forms/d/abc123 --responses

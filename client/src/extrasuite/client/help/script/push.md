@@ -10,6 +10,8 @@ Apply local changes to a Google Apps Script project.
 
 ## Flags
 
+  --reason TEXT  State the user's intent that led to this command (required). Also -r or -m.
+
   --skip-lint   Skip JavaScript linting before push
 
 ## How It Works

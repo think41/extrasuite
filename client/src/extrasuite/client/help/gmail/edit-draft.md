@@ -1,5 +1,10 @@
 Update an existing Gmail draft from a markdown file with front matter.
 
+
+## Flags
+
+  --reason TEXT  State the user's intent that led to this command (required). Also -r or -m.
+
 ## Usage
 
   extrasuite gmail edit-draft <draft_id> <file> [--attach FILE ...]

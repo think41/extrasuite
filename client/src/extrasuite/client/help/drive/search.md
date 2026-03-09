@@ -10,6 +10,8 @@ Search Google Drive files visible to the service account using a query string.
 
 ## Options
 
+  --reason TEXT  State the user's intent that led to this command (required). Also -r or -m.
+
   --max N         Maximum number of files to return (default: 20)
   --page TOKEN    Page token for pagination (printed at the end of previous output)
 
@@ -26,7 +28,7 @@ Prints a table with columns: NAME, TYPE, MODIFIED, URL.
 
 ## Examples
 
-  extrasuite drive search "name contains 'budget'"
+  extrasuite drive search "name contains 'budget'" --reason "state the user's intent that led to this command"
   extrasuite drive search "mimeType = 'application/vnd.google-apps.spreadsheet'"
 
 ## Notes

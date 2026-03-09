@@ -1,5 +1,10 @@
 Save an email as a Gmail draft from a markdown file with front matter.
 
+
+## Flags
+
+  --reason TEXT  State the user's intent that led to this command (required). Also -r or -m.
+
 ## Usage
 
   extrasuite gmail compose <file> [--attach FILE ...]

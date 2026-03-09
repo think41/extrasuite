@@ -14,6 +14,8 @@ pull-edit-push workflow cannot express.
 
 ## Flags
 
+  --reason TEXT  State the user's intent that led to this command (required). Also -r or -m.
+
   -v, --verbose   Print the full API response
 
 ## Operations Only Possible via batchUpdate
@@ -39,7 +41,7 @@ Or with a wrapper object:
 
 Always re-pull - the local state is now stale:
 
-  extrasuite sheet batchUpdate <url> requests.json
+  extrasuite sheet batchUpdate <url> requests.json --reason "state the user's intent that led to this command"
   extrasuite sheet pull <url>
 
 ## Examples

@@ -22,7 +22,7 @@ def cmd_drive_ls(args: Any) -> None:
         query_parts.append(f"'{folder_id}' in parents")
 
     query = " and ".join(query_parts)
-    reason = _get_reason(args, default="Listing Drive files")
+    reason = _get_reason(args)
     cred = _get_credential(
         args,
         command={"type": "drive.ls", "folder_url": folder_url, "query": query},
@@ -44,7 +44,7 @@ def cmd_drive_search(args: Any) -> None:
     """Search files visible to the service account in Google Drive."""
     from extrasuite.client.google_api import format_drive_files, list_drive_files
 
-    reason = _get_reason(args, default="Searching Drive files")
+    reason = _get_reason(args)
     cred = _get_credential(
         args,
         command={"type": "drive.search", "query": args.query},

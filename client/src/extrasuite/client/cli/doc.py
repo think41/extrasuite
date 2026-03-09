@@ -23,7 +23,7 @@ def cmd_doc_pull(args: Any) -> None:
 
     document_id = _parse_document_id(args.url)
     output_dir = Path(args.output_dir) if args.output_dir else Path()
-    reason = _get_reason(args, default="Pulling Google Doc")
+    reason = _get_reason(args)
     cred = _get_credential(
         args,
         command={"type": "doc.pull", "file_url": args.url, "file_name": ""},
@@ -78,7 +78,7 @@ def cmd_doc_push(args: Any) -> None:
     """Push changes to a Google Doc."""
     from extradoc import DocsClient, GoogleDocsTransport
 
-    reason = _get_reason(args, default="Pushing changes to Google Doc")
+    reason = _get_reason(args)
     cred = _get_credential(
         args,
         command={"type": "doc.push", "file_url": "", "file_name": ""},

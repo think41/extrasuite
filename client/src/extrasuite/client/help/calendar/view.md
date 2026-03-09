@@ -6,6 +6,8 @@ View Google Calendar events for a time range.
 
 ## Flags
 
+  --reason TEXT  State the user's intent that led to this command (required). Also -r or -m.
+
   --when <range>      Time range to view (default: today)
   --calendar <id>     Calendar ID (default: primary)
 
@@ -30,7 +32,7 @@ Events grouped by date. Each event shows:
 
 ## Examples
 
-  extrasuite calendar view
+  extrasuite calendar view --reason "state the user's intent that led to this command"
   extrasuite calendar view --when tomorrow
   extrasuite calendar view --when this-week
   extrasuite calendar view --when 2025-03-15

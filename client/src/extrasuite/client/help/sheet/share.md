@@ -14,6 +14,8 @@ Share a Google Workspace file with one or more trusted contacts.
 
 ## Options
 
+  --reason TEXT  State the user's intent that led to this command (required). Also -r or -m.
+
   --role   Permission role: reader, writer, or commenter (default: reader)
 
 ## Trusted Contacts

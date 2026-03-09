@@ -1,8 +1,13 @@
 List all Google Calendars you have access to.
 
+
+## Flags
+
+  --reason TEXT  State the user's intent that led to this command (required). Also -r or -m.
+
 ## Usage
 
-  extrasuite calendar list
+  extrasuite calendar list --reason "state the user's intent that led to this command"
 
 ## Output
 
