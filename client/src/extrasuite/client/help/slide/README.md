@@ -7,7 +7,7 @@ Google Slides - edit presentations via SML (Slide Markup Language) files.
   extrasuite slide push <folder>             Apply changes to Google Slides
   extrasuite slide create <title>            Create a new presentation
 
-After push, always re-pull before making more changes.
+See `extrasuite slide pull --help` for directory layout, SML key rules, and examples (self-contained).
 
 ## Directory Structure
 
@@ -25,28 +25,15 @@ After push, always re-pull before making more changes.
 
 SML is an HTML-inspired markup language. Each slide is an XML file with
 positioned elements (TextBox, Rect, Ellipse, Image, etc.) using
-Tailwind-inspired classes for styling.
-
-Key rules:
-  All text must be wrapped in <P> and <T> elements (never bare text)
-  Never use \n in text - create new <P> elements instead
-  Never modify id or range attributes - they are internal references
-  Use hex colors - named colors are not supported
-
-## Example
-
-  <TextBox id="title" class="x-72 y-144 w-576 h-80 font-family-roboto text-size-36">
-    <P><T>Slide Title</T></P>
-  </TextBox>
-
-  <Rect class="x-100 y-300 w-200 h-100 fill-#4285f4"/>
+Tailwind-inspired classes for styling. See `extrasuite slide help sml-reference` for the full reference.
 
 ## Commands
 
-  extrasuite slide pull --help     Pull flags and folder layout
+  extrasuite slide pull --help     Pull flags, folder layout, and key rules
   extrasuite slide push --help     Push flags
   extrasuite slide diff --help     Offline debugging tool (no auth needed)
   extrasuite slide create --help   Create a new presentation
+  extrasuite slide share --help    Share with trusted contacts
 
 ## Reference Docs (detailed)
 

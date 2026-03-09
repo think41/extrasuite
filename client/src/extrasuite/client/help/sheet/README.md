@@ -2,47 +2,12 @@ Google Sheets - edit spreadsheets via local TSV and JSON files.
 
 ## Workflow
 
-  extrasuite sheet pull <url> [output_dir]
+  extrasuite sheet pull <url> [output_dir]   # Downloads to <output_dir>/<spreadsheet_id>/
   # Edit files in <output_dir>/<spreadsheet_id>/
-  extrasuite sheet diff <folder>
-  extrasuite sheet push <folder>
+  extrasuite sheet diff <folder>             # Preview changes (no API calls)
+  extrasuite sheet push <folder>             # Apply changes
 
-After push, always re-pull before making more changes.
-
-## Start Here
-
-  spreadsheet.json   Overview of the spreadsheet, sheet list, previews, and any truncation hints
-
-If a pull was row-limited, `spreadsheet.json` may contain:
-
-  sheets[].truncation     Per-sheet details about totalRows vs fetchedRows
-  _truncationWarning      Top-level warning that one or more sheets are partial
-
-## Directory Structure
-
-  <spreadsheet_id>/
-    spreadsheet.json        Required
-    theme.json              Optional, informational only
-    named_ranges.json       Optional, editable
-    developer_metadata.json Optional, informational only
-    data_sources.json       Optional, informational only
-    <sheet_name>/
-      data.tsv              Cell values
-      formula.json          Formulas
-      format.json           Cell formatting, merges, notes, rich text
-      dimension.json        Row/column size + hidden state
-      charts.json           Charts
-      pivot-tables.json     Pivot tables
-      tables.json           Structured tables
-      filters.json          Basic filter + filter views
-      banded-ranges.json    Alternating colors
-      data-validation.json  Dropdowns, checkboxes, validation rules
-      slicers.json          Interactive slicers
-      data-source-tables.json Data source tables
-      protection.json       Optional, informational only
-      comments.json         Optional, replies/resolve only
-    .pristine/              Internal state - do not edit
-    .raw/                   Raw API responses - do not edit
+See `extrasuite sheet pull --help` for directory layout, flags, and key rules (self-contained).
 
 ## Editable Surface
 
@@ -76,10 +41,11 @@ Currently informational only on push:
 
 ## Commands
 
-  extrasuite sheet pull --help        Pull flags and folder layout details
+  extrasuite sheet pull --help        Pull flags, folder layout, and key rules
   extrasuite sheet diff --help        Preview requests and comment ops
   extrasuite sheet push --help        Apply local changes
   extrasuite sheet create --help      Create a new spreadsheet
+  extrasuite sheet share --help       Share with trusted contacts
   extrasuite sheet batchUpdate --help Execute raw API requests directly
 
 ## Reference Docs

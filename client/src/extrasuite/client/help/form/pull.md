@@ -25,6 +25,49 @@ Creates <output_dir>/<form_id>/ with:
 
 When --responses is used, responses are included in the pull output.
 
+## form.json Structure
+
+```json
+{
+  "formId": "abc123",
+  "info": {
+    "title": "Form title shown to responders",
+    "description": "Optional description"
+  },
+  "settings": {
+    "quizSettings": {"isQuiz": false}
+  },
+  "items": [...]
+}
+```
+
+Editable: info.title, info.description, settings, items
+Read-only: formId, revisionId, info.documentTitle, responderUri
+
+## Editing form.json
+
+  Add question    Add an object to items (omit itemId/questionId — API assigns them)
+  Edit question   Modify in place, keeping itemId and questionId intact
+  Reorder         Change the order in the items array — diff engine handles moves
+  Delete          Remove the item from the items array
+
+## Question Types (items array)
+
+  textQuestion    Short answer (paragraph: false) or long answer (paragraph: true)
+  choiceQuestion  Multiple choice (RADIO), checkboxes (CHECKBOX), dropdown (DROP_DOWN)
+  scaleQuestion   Linear scale with labels
+  dateQuestion    Date picker
+  timeQuestion    Time picker
+  ratingQuestion  Star/heart/thumb rating
+  pageBreakItem   Section divider
+  textItem        Static text (no answer)
+  imageItem       Image display
+  videoItem       YouTube video
+
+## Notes
+
+After push, form.json is updated with API-assigned IDs — no need to re-pull.
+
 ## Example
 
   extrasuite form pull https://docs.google.com/forms/d/abc123

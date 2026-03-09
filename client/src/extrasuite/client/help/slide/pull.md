@@ -35,8 +35,15 @@ representation of one slide's content.
 Start by reading presentation.json to understand the slide structure,
 then open the specific slide's content.sml to make changes.
 
-For SML syntax, see: extrasuite slide pull --help sml-reference
-Or read sml-reference.md bundled at the same path as this help file.
+For SML syntax, see: extrasuite slide help sml-reference
+
+## Key Rules
+
+  All text must be wrapped in <P> and <T> elements — never bare text
+  Never use \n inside text — create new <P> elements instead
+  Never modify id or range attributes — they are internal references
+  Use hex colors (#rrggbb) — named colors are not supported
+  Always re-pull before making further changes after a push
 
 ## Example
 

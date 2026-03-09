@@ -7,17 +7,7 @@ Google Apps Script - edit standalone and container-bound scripts via local JS/HT
   extrasuite script push <folder>             Apply changes to Apps Script
   extrasuite script create <title>            Create a new standalone script
 
-After push, always re-pull before making more changes.
-
-## Directory Structure
-
-  <script_id>/
-    project.json    Project metadata and manifest (appsscript.json content)
-    Code.js         Script files (one per file in the project)
-    Utilities.js
-    Page.html       HTML files (if any)
-    .pristine/      Internal state - do not edit
-    .raw/           Raw API responses - do not edit
+See `extrasuite script pull --help` for directory layout and flags (self-contained).
 
 ## Files to Edit
 

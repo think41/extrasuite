@@ -42,6 +42,13 @@ Creates <output_dir>/<spreadsheet_id>/ with:
   .pristine/                Snapshot for diff/push comparison - do not edit
   .raw/                     Raw API responses for debugging - do not edit
 
+## Key Rules
+
+  data.tsv stores raw values: write 8000 not $8,000; write 0.72 not 72%
+  Formula cells should stay blank in data.tsv — define them in formula.json
+  Cell notes live in format.json; Drive comments live in comments.json
+  Always re-pull before making further changes after a push
+
 ## Notes
 
 - Start with `spreadsheet.json`

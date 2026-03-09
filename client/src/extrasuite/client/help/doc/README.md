@@ -7,13 +7,7 @@ Google Docs - edit documents via local XML files.
   extrasuite doc push <folder>             Apply changes to Google Docs
   extrasuite doc create <title>            Create a new document
 
-After push, always re-pull before making more changes.
-
-## Agent Hints
-
-- Start with `index.xml`
-- Use `tab/@folder` and heading `@xpath` to jump to the target section
-- Read until the next indexed heading and avoid full-file rewrites
+See `extrasuite doc pull --help` for directory layout, agent hints, and critical rules (self-contained).
 
 ## Directory Structure
 
@@ -99,15 +93,6 @@ assigns the real id on push and the re-pulled file will have the real id.
 </tab>
 ```
 
-## Critical Rules
-
-  No newlines inside content elements (<p>, <h1>-<h6>, <li>, <t>, etc.)
-  Every <td> must contain at least one <p>, even if empty
-  XML-escape special characters: &amp; &lt; &gt; &quot;
-  <hr/>, <image/>, <autotext/>, <sectionbreak/> are read-only - cannot add or remove
-  <sectionbreak/> must be the first element in every <body> — never delete it
-  After a list, add <p></p> before a heading to break out of the list context
-
 ## Supported Block Tags
 
   <p>                Paragraph (class, align, lineSpacing, spaceAbove, spaceBelow)
@@ -132,10 +117,11 @@ read-only; to add new footnotes use the Google Docs UI.
 
 ## Commands
 
-  extrasuite doc pull --help          Pull flags and folder layout
+  extrasuite doc pull --help          Pull flags, folder layout, and critical rules
   extrasuite doc push --help          Push flags
   extrasuite doc diff --help          Offline debugging tool (no auth needed)
   extrasuite doc create --help        Create a new document
+  extrasuite doc share --help         Share with trusted contacts
 
 ## Reference Docs (detailed)
 
