@@ -833,17 +833,25 @@ class CredentialsManager:
     def _run_browser_flow_for_session(self) -> str:
         """Run OAuth browser flow and return the auth code.
 
-        In headless mode: prints URL to stderr and reads code from stdin with timeout.
-        Otherwise: delegates to _run_browser_flow (HTTP callback + optional stdin).
-        """
-        port = self._find_free_port()
-        auth_url = f"{self._server_base_url}/api/token/auth?port={port}"
+        In headless mode: calls /api/token/auth (no port), which shows the auth
+        code on an HTML page instead of redirecting to localhost. Prints the URL
+        to stderr and reads the code from stdin — no local callback server needed.
 
+        Otherwise: starts a local HTTP callback server, opens the browser, and
+        waits for the redirect from the ExtraSuite server.
+        """
         if self._headless:
+            auth_url = f"{self._server_base_url}/api/token/auth"
             print(
-                f"\nOpen this URL to authenticate:\n\n  {auth_url}\n", file=sys.stderr
+                f"\nOpen this URL to authenticate:\n\n  {auth_url}\n",
+                file=sys.stderr,
             )
-            print("Paste the auth code here: ", end="", flush=True, file=sys.stderr)
+            print(
+                "After authenticating, copy the code shown on the page and paste it here: ",
+                end="",
+                flush=True,
+                file=sys.stderr,
+            )
             code_holder: list[str] = []
 
             def _read_code() -> None:
@@ -864,6 +872,8 @@ class CredentialsManager:
                 )
             return code_holder[0]
 
+        port = self._find_free_port()
+        auth_url = f"{self._server_base_url}/api/token/auth?port={port}"
         return self._run_browser_flow(port, auth_url, "Open this URL to authenticate:")
 
     def _exchange_session_for_credential(
