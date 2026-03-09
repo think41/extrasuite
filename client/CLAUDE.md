@@ -5,7 +5,7 @@ Python client library for obtaining short-lived Google API credentials. All cred
 ## Security Constraint: No Auth in Agent Code
 
 **Agents invoking the CLI must never:**
-- Read credential files (`~/.config/extrasuite/credentials/`, etc.)
+- Read credential files or keyring entries
 - Call Google APIs directly (Sheets, Docs, Drive, Gmail, Calendar, etc.)
 - Construct OAuth or service account credentials
 - Pass raw access tokens between commands
@@ -68,7 +68,7 @@ cred = manager.get_credential(
 )
 ```
 
-**How it works (v2):** Loads the cached session token from `~/.config/extrasuite/session.json`. If valid, POSTs to `POST /api/auth/token` for a headless credential exchange. If no session exists, initiates the Phase 1 browser flow to get a 30-day session first. Credentials are cached per-command-type under `~/.config/extrasuite/credentials/<cmd_type>.json`.
+**How it works (v2):** Loads the session token from the OS keyring (macOS Keychain, Linux SecretService, Windows Credential Locker). If valid, POSTs to `POST /api/auth/token` for a headless credential exchange. If no session exists, initiates the Phase 1 browser flow to get a 30-day session first. Access tokens are never written to disk — they are held only in process memory.
 
 **Service account mode:** If `service_account_path` is configured, generates a token directly from the SA file — no server interaction needed. Only SA-backed commands are supported in this mode.
 
@@ -91,15 +91,15 @@ cred = manager.get_credential(
 | `email` | `str` | Authenticated user email |
 | `expires_at` | `float` | Unix timestamp of expiry |
 
-### Credential Cache Lifetimes
+### Token Lifetimes
 
-| Credential type | Server lifetime | Client cache TTL |
-|---|---|---|
-| SA (service account) | 1 hour | 60 min |
-| DWD (domain-wide delegation) | 1 hour | 10 min |
-| Session | 30 days | 30 days |
+| Token type | Server lifetime | Client-side cap | Stored where |
+|---|---|---|---|
+| SA (service account) | 1 hour | 60 min | process memory only |
+| DWD (domain-wide delegation) | 1 hour | 10 min | process memory only |
+| Session | 30 days | 30 days | OS keyring |
 
-Credentials are cached per command type at `~/.config/extrasuite/credentials/<cmd_type>.json` (0600).
+Profile metadata (profile name → email, active pointer) is stored in `~/.config/extrasuite/profiles.json` (0600). No tokens in that file.
 
 ### headless parameter
 
@@ -108,17 +108,20 @@ manager = CredentialsManager(headless=True)
 # Or: EXTRASUITE_HEADLESS=1
 ```
 
-In headless mode, Phase 1 prints the URL to stderr and reads the auth code from stdin instead of opening a browser.
+In headless mode, Phase 1 calls `/api/token/auth` (no port parameter), which displays the auth code on an HTML page instead of redirecting to a localhost callback server. The URL is printed to stderr and the code is read from stdin.
 
 ## CLI
 
 ### Auth commands (v2)
 
 ```bash
-extrasuite auth login              # Browser flow → 30-day session token
-extrasuite auth login --headless   # Print URL, prompt for code on stdin
-extrasuite auth logout             # Revoke session server-side + clear cache
-extrasuite auth status             # Show session + credential validity
+extrasuite auth login                        # Browser flow → 30-day session token (keyring)
+extrasuite auth login --headless             # Print URL, prompt for code on stdin
+extrasuite auth login --profile work         # Log in to a named profile
+extrasuite auth logout                       # Revoke session server-side + remove from keyring
+extrasuite auth logout --profile work        # Log out a specific profile
+extrasuite auth status                       # Show all profiles and session validity
+extrasuite auth activate <profile>           # Set the active profile
 ```
 
 ### All other commands (use cached session silently)

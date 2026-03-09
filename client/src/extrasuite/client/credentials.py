@@ -329,8 +329,8 @@ class CredentialsManager:
         elif self._use_extrasuite:
             if not _KEYRING_AVAILABLE:
                 raise RuntimeError(
-                    "keyring package is required for ExtraSuite authentication.\n"
-                    "Install it with: pip install 'extrasuite[keyring]'"
+                    "keyring package is required but is not installed.\n"
+                    "Install it with: pip install keyring"
                 )
             self._session_store = KeyringSessionStore()
         else:
