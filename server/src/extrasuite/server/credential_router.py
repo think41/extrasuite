@@ -28,6 +28,7 @@ from extrasuite.server.credential_provider import (
     OAuthRefreshProvider,
     ServiceAccountProvider,
 )
+from extrasuite.server.database import RefreshTokenNotFound
 
 if TYPE_CHECKING:
     from extrasuite.server.config import Settings
@@ -187,18 +188,36 @@ class CommandCredentialRouter:
                 detail=f"Scope(s) {short_names!r} are not permitted by server configuration.",
             )
 
-        # For OAuth providers: retrieve the encrypted refresh token from DB
+        # For OAuth providers: retrieve the stored refresh token record and enforce consent
         encrypted_token = ""
         if provider.needs_refresh_token:
-            encrypted_token = await self._database.get_encrypted_refresh_token(email) or ""
-            if not encrypted_token:
+            try:
+                record = await self._database.get_refresh_token(email)
+            except RefreshTokenNotFound as exc:
                 raise HTTPException(
                     status_code=400,
                     detail=(
                         "OAuth credentials not found for this account. "
                         "Run 'extrasuite auth login' to authenticate."
                     ),
-                )
+                ) from exc
+
+            # Enforce that every requested scope was consented to at login.
+            # Records stored before scope tracking was added have empty scopes — skip
+            # the check for those (they go through the server allowlist only).
+            if record.scopes and scopes:
+                not_consented = [s for s in scopes if s not in record.scopes]
+                if not_consented:
+                    short_names = [s.removeprefix(_GOOGLE_SCOPE_PREFIX) for s in not_consented]
+                    raise HTTPException(
+                        status_code=403,
+                        detail=(
+                            f"Scope(s) {short_names!r} were not consented to at login. "
+                            "Re-run 'extrasuite auth login' to grant the required permissions."
+                        ),
+                    )
+
+            encrypted_token = record.encrypted_token
 
         result = await provider.generate_token(email, scopes, encrypted_token)
 

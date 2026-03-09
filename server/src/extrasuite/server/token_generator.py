@@ -475,7 +475,7 @@ class TokenGenerator:
             try:
                 new_encrypted = self._encryptor.encrypt(new_refresh_token)
                 await self._db.set_refresh_token(user_email, new_encrypted, " ".join(scopes))
-                logger.warning(
+                logger.info(
                     "Google issued new refresh_token; updated in Firestore",
                     extra={"user_email": user_email},
                 )

@@ -10,6 +10,7 @@ from unittest.mock import MagicMock, patch
 import pytest
 
 from extrasuite.server.crypto import RefreshTokenEncryptor
+from extrasuite.server.database import RefreshTokenNotFound
 from extrasuite.server.token_generator import OAuthTokenError, TokenGenerator
 from tests.fakes import (
     FakeDatabase,
@@ -139,10 +140,9 @@ class TestGenerateOauthToken:
             await tg.generate_oauth_token("user@example.com", encrypted, scopes)
 
         # New token should be stored in DB (encrypted)
-        new_encrypted = await db.get_encrypted_refresh_token("user@example.com")
-        assert new_encrypted is not None
+        record = await db.get_refresh_token("user@example.com")
         # Verify it decrypts to the new token
-        assert encryptor.decrypt(new_encrypted) == "brand-new-refresh-token"
+        assert encryptor.decrypt(record.encrypted_token) == "brand-new-refresh-token"
 
     @pytest.mark.asyncio
     async def test_no_rotation_does_not_update_firestore(self):
@@ -158,7 +158,8 @@ class TestGenerateOauthToken:
             await tg.generate_oauth_token("user@example.com", encrypted, scopes)
 
         # No new token should be stored
-        assert not await db.has_refresh_token("user@example.com")
+        with pytest.raises(RefreshTokenNotFound):
+            await db.get_refresh_token("user@example.com")
 
     @pytest.mark.asyncio
     async def test_network_error_raises_oauth_token_error(self):
@@ -189,3 +190,32 @@ class TestGenerateOauthToken:
 
         with patch("urllib.request.urlopen", side_effect=http_error), pytest.raises(OAuthTokenError):
             await tg.generate_oauth_token("user@example.com", encrypted, [])
+
+    @pytest.mark.asyncio
+    async def test_rotation_db_failure_still_returns_access_token(self):
+        """If set_refresh_token raises during rotation, the access token is still returned."""
+        encryptor = _make_encryptor()
+        db = FakeDatabase()
+        tg = _make_token_generator(db, encryptor)
+
+        encrypted = encryptor.encrypt("old-token")
+        scopes = ["https://www.googleapis.com/auth/spreadsheets"]
+        response_data = _make_token_response(new_refresh_token="rotated-token")
+
+        # Patch set_refresh_token to raise so we can verify error is logged, not raised
+        async def _failing_set(*_args, **_kwargs):
+            raise RuntimeError("Firestore unavailable")
+
+        db.set_refresh_token = _failing_set
+
+        with (
+            patch("urllib.request.urlopen") as mock_open,
+            patch("extrasuite.server.token_generator.logger.error") as mock_log_error,
+        ):
+            mock_open.return_value = FakeHTTPResponse(response_data)
+            token = await tg.generate_oauth_token("user@example.com", encrypted, scopes)
+
+        # Access token is still returned despite the DB write failure
+        assert token.token == "ya29.access-token"
+        # Error must be logged, not silently swallowed
+        mock_log_error.assert_called_once()

@@ -12,6 +12,7 @@ from extrasuite.server.credential_provider import (
     ServiceAccountProvider,
 )
 from extrasuite.server.crypto import RefreshTokenEncryptor
+from extrasuite.server.database import RefreshTokenNotFound
 from extrasuite.server.token_generator import (
     GeneratedToken,
     TokenGenerator,
@@ -166,11 +167,9 @@ class TestOAuthRefreshProvider:
 
         await provider.on_google_auth_callback("user@example.com", fake_creds)
 
-        assert await db.has_refresh_token("user@example.com")
-        stored_encrypted = await db.get_encrypted_refresh_token("user@example.com")
-        assert stored_encrypted is not None
+        record = await db.get_refresh_token("user@example.com")
         # Verify it decrypts to the original token
-        assert encryptor.decrypt(stored_encrypted) == "the-refresh-token"
+        assert encryptor.decrypt(record.encrypted_token) == "the-refresh-token"
 
     @pytest.mark.asyncio
     async def test_on_google_auth_callback_no_refresh_token_is_warning(self):
@@ -182,7 +181,8 @@ class TestOAuthRefreshProvider:
 
         # Should NOT raise even when refresh_token is absent
         await provider.on_google_auth_callback("user@example.com", fake_creds)
-        assert not await db.has_refresh_token("user@example.com")
+        with pytest.raises(RefreshTokenNotFound):
+            await db.get_refresh_token("user@example.com")
 
     @pytest.mark.asyncio
     async def test_on_logout_revokes_and_deletes(self):
@@ -198,7 +198,8 @@ class TestOAuthRefreshProvider:
             await provider.on_logout("user@example.com")
             mock_revoke.assert_called_once_with("refresh-token-to-revoke")
 
-        assert not await db.has_refresh_token("user@example.com")
+        with pytest.raises(RefreshTokenNotFound):
+            await db.get_refresh_token("user@example.com")
 
     @pytest.mark.asyncio
     async def test_on_logout_no_token_is_noop(self):
@@ -228,7 +229,8 @@ class TestOAuthRefreshProvider:
             await provider.on_logout("user@example.com")
 
         # Token should still be deleted from Firestore
-        assert not await db.has_refresh_token("user@example.com")
+        with pytest.raises(RefreshTokenNotFound):
+            await db.get_refresh_token("user@example.com")
 
     @pytest.mark.asyncio
     async def test_on_session_establishment_is_noop(self):

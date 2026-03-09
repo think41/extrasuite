@@ -3,7 +3,9 @@
 Stores five types of data:
 1. Users: email -> service account mapping
 2. OAuth States: state_token -> redirect_url (for OAuth flow)
-3. Auth Codes: auth_code -> service_account_email (for Phase 1 auth delivery)
+3. Auth Codes: auth_code -> user_email (for Phase 1 auth delivery).
+   service_account_email is always stored as "" — SA provisioning is deferred
+   to on_session_establishment() via the credential router.
 4. Session Tokens: long-lived (30-day) tokens for headless agent access
 5. Access Logs: audit trail for access token requests
 
@@ -18,7 +20,7 @@ Collections structure:
   - expires_at: Firestore TTL field (OAUTH_STATE_TTL after creation)
 
 - auth_codes: Document ID = auth_code
-  - service_account_email: Associated service account
+  - service_account_email: Always empty string; SA provisioning is deferred
   - user_email: Authenticated user email
   - expires_at: Firestore TTL field (AUTH_CODE_TTL after creation)
 
@@ -47,11 +49,39 @@ to automatically delete expired documents.
 """
 
 import asyncio
+from dataclasses import dataclass
 from datetime import UTC, datetime, timedelta
 
 from fastapi import Request
 from google.cloud.firestore_v1 import DELETE_FIELD, AsyncClient
 from google.cloud.firestore_v1.async_transaction import async_transactional
+
+
+@dataclass(frozen=True)
+class RefreshTokenRecord:
+    """An OAuth refresh token stored for a user, together with its consented scopes.
+
+    Both fields are always populated after successful retrieval:
+    - encrypted_token: non-empty base64url AES-256-GCM ciphertext
+    - scopes: tuple of Google scope URLs consented to at login; may be empty
+      for records stored before scope tracking was introduced (old records).
+    """
+
+    encrypted_token: str
+    scopes: tuple[str, ...]
+
+
+class RefreshTokenNotFound(Exception):
+    """Raised when a user has no stored OAuth refresh token in the database.
+
+    Callers should translate this into an HTTP 400 with a message directing
+    the user to run 'extrasuite auth login'.
+    """
+
+    def __init__(self, email: str) -> None:
+        super().__init__(f"No OAuth refresh token found for {email!r}")
+        self.email = email
+
 
 # OAuth state TTL (10 minutes)
 OAUTH_STATE_TTL = timedelta(minutes=10)
@@ -266,24 +296,36 @@ class Database:
     # OAuth Refresh Tokens (encrypted; only used when CREDENTIAL_MODE != sa+dwd)
     # =========================================================================
 
-    async def get_encrypted_refresh_token(self, email: str) -> str | None:
-        """Get the encrypted refresh token for a user.
+    async def get_refresh_token(self, email: str) -> RefreshTokenRecord:
+        """Get the stored OAuth refresh token record for a user.
 
-        Returns the encrypted token string, or None if not set.
-        Decryption is the caller's responsibility.
+        Returns a RefreshTokenRecord with the encrypted token and consented scopes.
+        The encrypted_token is always a non-empty AES-256-GCM ciphertext; decryption
+        is the caller's responsibility.
+
+        Raises:
+            RefreshTokenNotFound: If no token is stored for this user, the Firestore
+                document does not exist, or the encrypted_refresh_token field is absent.
         """
         doc_id = self._email_to_doc_id(email)
         doc_ref = self._client.collection("users").document(doc_id)
         doc = await asyncio.wait_for(doc_ref.get(), timeout=self._timeout)
 
         if not doc.exists:
-            return None
+            raise RefreshTokenNotFound(email)
 
         data = doc.to_dict()
         if data is None:
-            return None
+            raise RefreshTokenNotFound(email)
 
-        return data.get("encrypted_refresh_token")
+        encrypted = data.get("encrypted_refresh_token")
+        if not encrypted:
+            raise RefreshTokenNotFound(email)
+
+        scopes_str: str = data.get("refresh_token_scopes") or ""
+        scopes = tuple(scopes_str.split()) if scopes_str else ()
+
+        return RefreshTokenRecord(encrypted_token=encrypted, scopes=scopes)
 
     async def set_refresh_token(self, email: str, encrypted: str, scopes: str) -> None:
         """Store (or update) the encrypted refresh token for a user.
@@ -334,11 +376,6 @@ class Database:
             ),
             timeout=self._timeout,
         )
-
-    async def has_refresh_token(self, email: str) -> bool:
-        """Return True if the user has a stored (non-null) encrypted refresh token."""
-        token = await self.get_encrypted_refresh_token(email)
-        return bool(token)
 
     # =========================================================================
     # Session Tokens (30-day long-lived tokens for headless agent access)

@@ -19,6 +19,8 @@ from typing import TYPE_CHECKING, Any
 
 from loguru import logger
 
+from extrasuite.server.database import RefreshTokenNotFound
+
 if TYPE_CHECKING:
     from extrasuite.server.crypto import RefreshTokenEncryptor
     from extrasuite.server.token_generator import GeneratedToken, TokenGenerator
@@ -187,19 +189,22 @@ class OAuthRefreshProvider(CredentialProvider):
         Google revocation invalidates all access tokens minted from this refresh token.
         Network failure on revocation is logged but does NOT block logout —
         the Firestore deletion still prevents future use from ExtraSuite's server.
+        If no token is stored (user never completed OAuth login), this is a no-op.
         """
-        encrypted = await self._db.get_encrypted_refresh_token(email)
+        try:
+            record = await self._db.get_refresh_token(email)
+        except RefreshTokenNotFound:
+            return  # Nothing to revoke; user never completed OAuth login
 
-        if encrypted:
-            try:
-                plaintext = self._encryptor.decrypt(encrypted)
-                _revoke_token_at_google(plaintext)
-                logger.info("OAuth refresh token revoked at Google", extra={"email": email})
-            except Exception as e:
-                logger.warning(
-                    "Failed to revoke OAuth token at Google (continuing logout)",
-                    extra={"email": email, "error": str(e)},
-                )
+        try:
+            plaintext = self._encryptor.decrypt(record.encrypted_token)
+            _revoke_token_at_google(plaintext)
+            logger.info("OAuth refresh token revoked at Google", extra={"email": email})
+        except Exception as e:
+            logger.warning(
+                "Failed to revoke OAuth token at Google (continuing logout)",
+                extra={"email": email, "error": str(e)},
+            )
 
         try:
             await self._db.delete_refresh_token(email)

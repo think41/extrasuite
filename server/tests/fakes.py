@@ -12,6 +12,8 @@ from typing import Any
 from google.api_core.exceptions import NotFound
 from google.auth.exceptions import RefreshError
 
+from extrasuite.server.database import RefreshTokenNotFound, RefreshTokenRecord
+
 # Auth code TTL matching the real database
 AUTH_CODE_TTL = timedelta(seconds=120)
 
@@ -185,12 +187,21 @@ class FakeDatabase:
             }
         )
 
-    async def get_encrypted_refresh_token(self, email: str) -> str | None:
-        """Get encrypted refresh token for a user."""
+    async def get_refresh_token(self, email: str) -> RefreshTokenRecord:
+        """Get the stored refresh token record for a user.
+
+        Raises:
+            RefreshTokenNotFound: If no token is stored for this user.
+        """
         user_data = self._refresh_tokens.get(email)
         if user_data is None:
-            return None
-        return user_data.get("encrypted_token")
+            raise RefreshTokenNotFound(email)
+        encrypted = user_data.get("encrypted_token", "")
+        if not encrypted:
+            raise RefreshTokenNotFound(email)
+        scopes_str = user_data.get("scopes", "")
+        scopes = tuple(scopes_str.split()) if scopes_str else ()
+        return RefreshTokenRecord(encrypted_token=encrypted, scopes=scopes)
 
     async def set_refresh_token(self, email: str, encrypted: str, scopes: str) -> None:
         """Store encrypted refresh token for a user."""
@@ -199,12 +210,6 @@ class FakeDatabase:
     async def delete_refresh_token(self, email: str) -> None:
         """Remove refresh token for a user."""
         self._refresh_tokens.pop(email, None)
-
-    async def has_refresh_token(self, email: str) -> bool:
-        """Return True if user has a stored refresh token."""
-        return email in self._refresh_tokens and bool(
-            self._refresh_tokens[email].get("encrypted_token")
-        )
 
 
 class FakeSettings:

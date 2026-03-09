@@ -12,7 +12,7 @@ The fixtures `client`, `fake_db`, and `fake_settings` come from conftest.py.
 import hashlib
 import secrets
 from datetime import UTC, datetime, timedelta
-from unittest.mock import AsyncMock
+from unittest.mock import AsyncMock, MagicMock
 
 import httpx
 from fastapi import HTTPException
@@ -730,3 +730,45 @@ class TestSessionTokenSecurity:
         sessions = resp.json()
         assert len(sessions) == 1
         assert "session_hash" not in sessions[0]
+
+
+# ===========================================================================
+# POST /api/auth/oauth/revoke
+# ===========================================================================
+
+
+class TestRevokeOAuthToken:
+    """Tests for POST /api/auth/oauth/revoke."""
+
+    async def test_missing_authorization_header_returns_401(
+        self, client: httpx.AsyncClient
+    ) -> None:
+        """No Authorization header → 401."""
+        resp = await client.post("/api/auth/oauth/revoke")
+        assert resp.status_code == 401
+
+    async def test_invalid_session_token_returns_401(
+        self, client: httpx.AsyncClient
+    ) -> None:
+        """Invalid/unknown Bearer token → 401."""
+        resp = await client.post(
+            "/api/auth/oauth/revoke",
+            headers=_bearer("not-a-real-session-token"),
+        )
+        assert resp.status_code == 401
+
+    async def test_valid_session_calls_on_logout_and_returns_200(
+        self, fake_db: FakeDatabase, fake_settings: FakeSettings, fake_router: MagicMock
+    ) -> None:
+        """Valid session → on_logout called with correct email, response is {status: revoked}."""
+        app = make_test_app(fake_db, fake_settings, fake_router)
+        raw = await _make_session(fake_db)
+
+        async with httpx.AsyncClient(
+            transport=httpx.ASGITransport(app=app), base_url="http://test"
+        ) as c:
+            resp = await c.post("/api/auth/oauth/revoke", headers=_bearer(raw))
+
+        assert resp.status_code == 200
+        assert resp.json() == {"status": "revoked"}
+        fake_router.on_logout.assert_called_once_with(_USER_EMAIL)

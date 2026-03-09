@@ -192,6 +192,84 @@ class TestResolve:
             await router.resolve(cmd, "user@example.com")
         assert exc_info.value.status_code == 403
 
+    @pytest.mark.asyncio
+    async def test_resolve_oauth_mode_sa_command_disallowed_scope_raises_403(self):
+        """In oauth mode, SA-class commands also go through the server allowlist."""
+        db = FakeDatabase()
+        settings = FakeSettings(
+            credential_mode="oauth",
+            delegation_scopes=["https://www.googleapis.com/auth/calendar"],
+        )
+        tg = _make_token_generator()
+        encryptor = _make_encryptor()
+        router = CommandCredentialRouter.from_settings(settings, tg, db, encryptor)
+
+        encrypted = encryptor.encrypt("some-token")
+        await db.set_refresh_token(
+            "user@example.com",
+            encrypted,
+            "https://www.googleapis.com/auth/spreadsheets",
+        )
+
+        cmd = self._make_command("sheet.pull")  # maps to spreadsheets scope in oauth mode
+        with pytest.raises(HTTPException) as exc_info:
+            await router.resolve(cmd, "user@example.com")
+        assert exc_info.value.status_code == 403
+
+    @pytest.mark.asyncio
+    async def test_resolve_scope_not_in_consented_scopes_raises_403(self):
+        """Command scope not consented to at login → 403 with clear re-login message."""
+        encryptor = _make_encryptor()
+        router, db = _make_router("sa+oauth", encryptor)
+
+        encrypted = encryptor.encrypt("my-refresh-token")
+        # Consent only covered spreadsheets; gmail.compose was NOT consented
+        await db.set_refresh_token(
+            "user@example.com",
+            encrypted,
+            "https://www.googleapis.com/auth/spreadsheets",
+        )
+
+        cmd = self._make_command("gmail.compose")
+        with pytest.raises(HTTPException) as exc_info:
+            await router.resolve(cmd, "user@example.com")
+        assert exc_info.value.status_code == 403
+        assert "auth login" in exc_info.value.detail
+
+    @pytest.mark.asyncio
+    async def test_resolve_scope_within_consented_scopes_succeeds(self):
+        """Command scope is a subset of consented scopes → resolves successfully."""
+        encryptor = _make_encryptor()
+        router, db = _make_router("sa+oauth", encryptor)
+
+        encrypted = encryptor.encrypt("my-refresh-token")
+        gmail_compose = "https://www.googleapis.com/auth/gmail.compose"
+        gmail_readonly = "https://www.googleapis.com/auth/gmail.readonly"
+        await db.set_refresh_token(
+            "user@example.com",
+            encrypted,
+            f"{gmail_compose} {gmail_readonly}",
+        )
+
+        cmd = self._make_command("gmail.compose")
+        credentials = await router.resolve(cmd, "user@example.com")
+        assert credentials[0].kind == "bearer_oauth"
+
+    @pytest.mark.asyncio
+    async def test_resolve_oauth_no_stored_scopes_skips_consent_check(self):
+        """Old records without stored scopes skip the consent check (backward compat)."""
+        encryptor = _make_encryptor()
+        router, db = _make_router("sa+oauth", encryptor)
+
+        encrypted = encryptor.encrypt("my-refresh-token")
+        # Store with empty scopes — simulates pre-scope-tracking records
+        await db.set_refresh_token("user@example.com", encrypted, "")
+
+        cmd = self._make_command("gmail.compose")
+        # Should not raise 403 for scope consent — falls through to token generation
+        credentials = await router.resolve(cmd, "user@example.com")
+        assert credentials[0].kind == "bearer_oauth"
+
 
 # ---------------------------------------------------------------------------
 # Lifecycle hooks

@@ -337,7 +337,7 @@ def _get_client_ip(request: Request) -> str:
 async def _validate_bearer_session(request: Request, db: Database) -> dict:
     """Extract and validate Bearer session token from Authorization header.
 
-    Returns {email} dict or raises HTTPException(401).
+    Returns {"email": str, "token_hash": str} dict or raises HTTPException(401).
     """
     auth_header = request.headers.get("Authorization", "")
     if not auth_header.startswith("Bearer "):

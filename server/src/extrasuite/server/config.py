@@ -182,12 +182,21 @@ class Settings(BaseSettings):
         return f"{_GOOGLE_SCOPE_PREFIX}{_OAUTH_SA_SCOPE_NAMES[command_type]}"
 
     def validate_oauth_config(self) -> None:
-        """Raise ValueError at startup if required OAuth vars are missing."""
+        """Raise ValueError at startup if required OAuth vars are missing or invalid."""
         if not self.uses_oauth:
             return
         errors = []
         if not self.oauth_token_encryption_key:
             errors.append("OAUTH_TOKEN_ENCRYPTION_KEY must be set when CREDENTIAL_MODE != sa+dwd")
+        else:
+            # Validate that the key is a well-formed 32-byte hex string.
+            # Import locally to avoid circular imports (crypto → nothing, but belt-and-suspenders).
+            try:
+                from extrasuite.server.crypto import RefreshTokenEncryptor  # noqa: PLC0415
+
+                RefreshTokenEncryptor(self.oauth_token_encryption_key)
+            except ValueError as e:
+                errors.append(f"OAUTH_TOKEN_ENCRYPTION_KEY is invalid: {e}")
         if not self.oauth_scopes:
             errors.append("OAUTH_SCOPES must be set when CREDENTIAL_MODE != sa+dwd")
         if errors:
