@@ -1,122 +1,199 @@
-# Step-by-Step Deployment Guide
+# Deploying ExtraSuite to Cloud Run
 
-This guide walks you through deploying ExtraSuite to Google Cloud Run. Each step includes both **gcloud CLI** commands and **Google Cloud Console** instructions.
+This guide walks you through deploying ExtraSuite to Google Cloud Run. It covers all three credential modes from start to finish in a single place.
 
 ---
 
-## Before You Begin
+## Step 0: Choose a Credential Mode
 
-**If using gcloud CLI:** Open a terminal and set your project ID. You'll use this variable throughout the guide.
+Before touching GCP, decide how ExtraSuite will authenticate agents for Gmail, Calendar, and other user-specific APIs. This choice affects nearly every step.
+
+| Mode | `CREDENTIAL_MODE` | How Gmail/Calendar tokens are issued | Who sets it up |
+|------|-------------------|--------------------------------------|----------------|
+| Service account + Domain-Wide Delegation | `sa+dwd` *(default)* | Server impersonates users via Google DWD | Workspace admin configures DWD once |
+| Service account + OAuth | `sa+oauth` | User consents at login; server stores encrypted refresh token | No admin action needed |
+| OAuth only (no service accounts) | `oauth` | User consents at login; server stores encrypted refresh token | No admin action needed |
+
+### Which mode should I use?
+
+**Use `sa+dwd` if:**
+
+- You run a Google Workspace organization (not personal Gmail)
+- A Workspace admin can configure the Admin Console (one-time, ~10 minutes)
+- You want the cleanest security model: no refresh tokens stored, server never touches user data at rest
+
+**Use `sa+oauth` if:**
+
+- You can't or don't want to involve a Workspace admin
+- You still want agent edits attributed to the agent's service account in Drive version history
+
+**Use `oauth` if:**
+
+- You want the minimal setup (no service accounts at all)
+- This is for personal use or a small team
+- You're OK with Drive edits appearing under the user's name, not the agent's
+
+### Tradeoffs
+
+| Aspect | `sa+dwd` | `sa+oauth` | `oauth` |
+|--------|----------|------------|---------|
+| Workspace admin required | Yes (one-time) | No | No |
+| Drive edits attributed to agent | Yes | Yes | No (appear as user) |
+| Refresh token stored in Firestore | No | Yes (AES-256-GCM encrypted) | Yes (AES-256-GCM encrypted) |
+| Server compromise risk | Impersonation of any user for delegated scopes | Access to encrypted refresh tokens | Access to encrypted refresh tokens |
+| Per-user service accounts created | Yes | Yes | No |
+| OAuth consent screen scopes | email only | Gmail/Calendar/etc. | Gmail/Calendar/etc. |
+
+> **Note on agent attribution in `oauth` mode:** Edits appear under the user's own identity in Google Drive version history, not under a dedicated agent identity. If attribution matters to your organization, use `sa+dwd` or `sa+oauth`.
+
+---
+
+## Prerequisites
+
+Before you begin:
+
+| Requirement | Details |
+|-------------|---------|
+| Google Cloud Project | A project where you have **Owner** or **Editor** role, with billing enabled |
+| Google Workspace account | For testing authentication after deployment. Personal Gmail works for `sa+oauth`/`oauth` modes. |
+| gcloud CLI (optional) | Makes deployment faster. [Install gcloud CLI](https://cloud.google.com/sdk/docs/install) |
+
+Set your project ID in the terminal — you'll use this throughout:
 
 ```bash
 export PROJECT_ID=your-project-id
 ```
 
-**If using Google Cloud Console:** Open [console.cloud.google.com](https://console.cloud.google.com) and select your project from the project dropdown at the top of the page.
-
 ---
 
 ## Step 1: Enable Required APIs
 
-ExtraSuite needs several Google Cloud APIs to function. This step enables them.
+=== "gcloud CLI"
 
-### Using gcloud CLI
+    ```bash
+    gcloud services enable \
+      run.googleapis.com \
+      firestore.googleapis.com \
+      iam.googleapis.com \
+      iamcredentials.googleapis.com \
+      secretmanager.googleapis.com \
+      drive.googleapis.com \
+      sheets.googleapis.com \
+      docs.googleapis.com \
+      slides.googleapis.com \
+      --project=$PROJECT_ID
+    ```
 
-```bash
-gcloud services enable \
-  run.googleapis.com \
-  firestore.googleapis.com \
-  iam.googleapis.com \
-  iamcredentials.googleapis.com \
-  secretmanager.googleapis.com \
-  drive.googleapis.com \
-  sheets.googleapis.com \
-  docs.googleapis.com \
-  slides.googleapis.com \
-  --project=$PROJECT_ID
-```
+    For `sa+oauth` or `oauth` mode, also enable the People API (for Contacts):
+    ```bash
+    gcloud services enable people.googleapis.com --project=$PROJECT_ID
+    ```
 
-### Using Google Cloud Console
+=== "Google Cloud Console"
 
-1. Go to **APIs & Services > Library** ([direct link](https://console.cloud.google.com/apis/library))
-2. Search for and enable each of the following APIs:
-   - Cloud Run Admin API
-   - Cloud Firestore API
-   - Identity and Access Management (IAM) API
-   - IAM Service Account Credentials API
-   - Secret Manager API
-   - Google Drive API
-   - Google Sheets API
-   - Google Docs API
-   - Google Slides API
-
-**Verify:** After enabling, you should see all APIs listed in **APIs & Services > Enabled APIs**.
+    1. Go to **APIs & Services > Library** ([direct link](https://console.cloud.google.com/apis/library))
+    2. Search for and enable each of these APIs:
+       - Cloud Run Admin API
+       - Cloud Firestore API
+       - Identity and Access Management (IAM) API
+       - IAM Service Account Credentials API
+       - Secret Manager API
+       - Google Drive API
+       - Google Sheets API
+       - Google Docs API
+       - Google Slides API
 
 ---
 
 ## Step 2: Create Firestore Database
 
-ExtraSuite uses Firestore to store user records and session data. Collections are created automatically when the server first runs.
+ExtraSuite uses Firestore to store user records, session data, and (in OAuth modes) encrypted refresh tokens. Collections are created automatically on first run.
 
-### Using gcloud CLI
+=== "gcloud CLI"
 
-```bash
-gcloud firestore databases create \
-  --location=asia-southeast1 \
-  --project=$PROJECT_ID
-```
+    ```bash
+    gcloud firestore databases create \
+      --location=asia-southeast1 \
+      --project=$PROJECT_ID
+    ```
 
-!!! note "Choose a location close to your users"
     Replace `asia-southeast1` with your preferred [Firestore location](https://cloud.google.com/firestore/docs/locations). Common choices: `us-central1`, `europe-west1`, `asia-southeast1`.
 
-### Using Google Cloud Console
+=== "Google Cloud Console"
 
-1. Go to **Firestore** ([direct link](https://console.cloud.google.com/firestore))
-2. Click **Create Database**
-3. Select **Native mode** (not Datastore mode)
-4. Choose a location close to your users
-5. Click **Create Database**
-
-**Verify:** The Firestore page should show "No collections yet" - this is expected.
+    1. Go to **Firestore** ([direct link](https://console.cloud.google.com/firestore))
+    2. Click **Create Database**
+    3. Select **Native mode** (not Datastore mode)
+    4. Choose a location close to your users
+    5. Click **Create Database**
 
 ---
 
-## Step 3: Configure OAuth Consent Screen
+## Step 3: Configure Google OAuth
 
-Before creating OAuth credentials, you must configure the consent screen that users see when logging in.
+This is the most confusing part of the setup. Read this section carefully — the choices you make here affect security and user experience.
 
-### Using Google Cloud Console
+### What Google OAuth does here
+
+ExtraSuite uses Google OAuth so users can log in with their Google account. The OAuth client is NOT the same as the service account — these are two separate things:
+
+- **OAuth client** (created in this step): used for the user-facing login page. Lives in **APIs & Services > Credentials**.
+- **Service account** (created in Step 4): used by the server to create per-user agent accounts. Lives in **IAM & Admin > Service Accounts**.
+
+### Part A: Configure the OAuth consent screen
+
+The consent screen is what users see when they log in to ExtraSuite.
 
 1. Go to **APIs & Services > OAuth consent screen** ([direct link](https://console.cloud.google.com/apis/credentials/consent))
 
-2. **Select User Type:**
-   - Choose **Internal** if all users are in your Google Workspace organization
-   - Choose **External** if users have personal Gmail accounts or are from multiple organizations
+2. **Choose the User Type:**
+
+    !!! important "Internal vs External — this matters"
+        - **Internal**: Only users in your Google Workspace organization can log in. **No Google verification required, even for sensitive scopes.** Choose this for company deployments.
+        - **External**: Any Google account can log in. For `sa+oauth`/`oauth` modes (which request Gmail/Calendar scopes), Google requires app verification before going to production — a weeks-long process. Alternatively, leave the app in **Testing** mode (max 100 users, users see an "unverified app" warning).
+
+    | Your situation | Recommended |
+    |----------------|-------------|
+    | Google Workspace org, all users in same domain | **Internal** |
+    | Google Workspace org, users across domains | **External** (or separate project per domain) |
+    | Personal use / small team with Gmail accounts | **External** + Testing mode |
 
 3. Click **Create**
 
-4. **Fill in App Information:**
+4. Fill in **App Information:**
    - **App name:** `ExtraSuite` (or your preferred name)
    - **User support email:** Your email address
    - **Developer contact email:** Your email address
 
 5. Click **Save and Continue**
 
-6. **Scopes:** Click **Save and Continue** (no additional scopes needed)
+6. **Scopes — this depends on your credential mode:**
 
-7. **Test users (External only):** Add email addresses of users who can test before verification. Click **Save and Continue**.
+    === "`sa+dwd` mode"
 
-8. **Summary:** Review and click **Back to Dashboard**
+        Click **Save and Continue** — no additional scopes needed. In `sa+dwd` mode, ExtraSuite only needs your email address at login. Gmail/Calendar access happens via server-side domain-wide delegation, not user consent.
 
-**Verify:** The OAuth consent screen page should show your app name with "Publishing status" displayed.
+    === "`sa+oauth` or `oauth` mode"
 
----
+        Click **Add or Remove Scopes** and add the scopes your users will consent to. These must match what you'll set in `OAUTH_SCOPES` in Step 7.
 
-## Step 4: Create OAuth Credentials
+        Common scopes:
+        | Short name | Full scope URL | Grants access to |
+        |-----------|----------------|-----------------|
+        | `gmail.compose` | `.../auth/gmail.compose` | Create and send email drafts |
+        | `gmail.readonly` | `.../auth/gmail.readonly` | Read emails |
+        | `calendar` | `.../auth/calendar` | Read and write calendar |
+        | `contacts.readonly` | `.../auth/contacts.readonly` | Read contacts |
+        | `script.projects` | `.../auth/script.projects` | Apps Script |
 
-Create the OAuth client ID and secret that ExtraSuite uses to authenticate users.
+        Full scope URLs: prefix with `https://www.googleapis.com/auth/`
 
-### Using Google Cloud Console
+        !!! warning "Sensitive scopes and Google verification"
+            Gmail and Calendar scopes are classified as **sensitive** by Google. If you chose **External** app type, your app must go through Google's [OAuth app verification](https://support.google.com/cloud/answer/9110914) process (typically 4-8 weeks) before you can have more than 100 users. **Use Internal app type to avoid this entirely.**
+
+7. Click **Save and Continue** through Test Users and Summary.
+
+### Part B: Create the OAuth client
 
 1. Go to **APIs & Services > Credentials** ([direct link](https://console.cloud.google.com/apis/credentials))
 
@@ -126,175 +203,223 @@ Create the OAuth client ID and secret that ExtraSuite uses to authenticate users
 
 4. **Name:** Enter `ExtraSuite Server`
 
-5. **Authorized redirect URIs:** Click **Add URI** and enter:
+5. **Authorized redirect URIs:** Click **Add URI** and enter a placeholder:
    ```
    https://placeholder.example.com/api/auth/callback
    ```
-   (You'll update this with your actual URL after deployment in Step 7)
+   You'll update this with your actual URL after deployment in Step 8.
 
 6. Click **Create**
 
-7. **Save your credentials:** A dialog shows your Client ID and Client Secret. Copy both values - you'll need them in Step 6.
+7. **Copy your credentials:** A dialog shows your **Client ID** and **Client Secret**. Save both — you'll need them in Step 5.
 
 !!! warning "Keep your Client Secret secure"
-    The Client Secret is like a password. Don't share it or commit it to version control.
-
-**Verify:** The Credentials page should list your new OAuth client under "OAuth 2.0 Client IDs".
+    Never commit it to version control or share it in plaintext.
 
 ---
 
-## Step 5: Create Service Account for ExtraSuite
+## Step 4: Create the Server Service Account
 
-ExtraSuite needs a service account with permissions to create user service accounts and generate access tokens.
+ExtraSuite needs a service account to manage per-user agent accounts and issue access tokens.
 
-### Using gcloud CLI
+!!! note "oauth mode: reduced permissions"
+    In `oauth` mode, no per-user service accounts are created. Skip the `serviceAccountAdmin` and `serviceAccountTokenCreator` bindings below.
 
-**Create the service account:**
+=== "gcloud CLI"
 
-```bash
-gcloud iam service-accounts create extrasuite-server \
-  --display-name="ExtraSuite Server" \
-  --project=$PROJECT_ID
-```
+    **Create the service account:**
 
-**Grant required permissions:**
+    ```bash
+    gcloud iam service-accounts create extrasuite-server \
+      --display-name="ExtraSuite Server" \
+      --project=$PROJECT_ID
+    ```
 
-```bash
-# Permission to read/write Firestore
-gcloud projects add-iam-policy-binding $PROJECT_ID \
-  --member="serviceAccount:extrasuite-server@$PROJECT_ID.iam.gserviceaccount.com" \
-  --role="roles/datastore.user"
+    **Grant Firestore access (all modes):**
 
-# Permission to create service accounts for users
-gcloud projects add-iam-policy-binding $PROJECT_ID \
-  --member="serviceAccount:extrasuite-server@$PROJECT_ID.iam.gserviceaccount.com" \
-  --role="roles/iam.serviceAccountAdmin"
+    ```bash
+    gcloud projects add-iam-policy-binding $PROJECT_ID \
+      --member="serviceAccount:extrasuite-server@$PROJECT_ID.iam.gserviceaccount.com" \
+      --role="roles/datastore.user"
+    ```
 
-# Permission to generate access tokens
-gcloud projects add-iam-policy-binding $PROJECT_ID \
-  --member="serviceAccount:extrasuite-server@$PROJECT_ID.iam.gserviceaccount.com" \
-  --role="roles/iam.serviceAccountTokenCreator"
-```
+    **Grant service account management (sa+dwd and sa+oauth modes only):**
 
-### Using Google Cloud Console
+    ```bash
+    # Permission to create service accounts for each user
+    gcloud projects add-iam-policy-binding $PROJECT_ID \
+      --member="serviceAccount:extrasuite-server@$PROJECT_ID.iam.gserviceaccount.com" \
+      --role="roles/iam.serviceAccountAdmin"
 
-**Create the service account:**
+    # Permission to generate access tokens by impersonating user service accounts
+    gcloud projects add-iam-policy-binding $PROJECT_ID \
+      --member="serviceAccount:extrasuite-server@$PROJECT_ID.iam.gserviceaccount.com" \
+      --role="roles/iam.serviceAccountTokenCreator"
+    ```
 
-1. Go to **IAM & Admin > Service Accounts** ([direct link](https://console.cloud.google.com/iam-admin/serviceaccounts))
-2. Click **Create Service Account**
-3. **Service account name:** `extrasuite-server`
-4. **Service account ID:** Leave as auto-generated (`extrasuite-server`)
-5. Click **Create and Continue**
-6. Click **Done** (we'll add roles next)
+=== "Google Cloud Console"
 
-**Grant permissions:**
+    1. Go to **IAM & Admin > Service Accounts** ([direct link](https://console.cloud.google.com/iam-admin/serviceaccounts))
+    2. Click **Create Service Account**
+    3. **Service account name:** `extrasuite-server`
+    4. Click **Create and Continue**, then **Done**
 
-1. Go to **IAM & Admin > IAM** ([direct link](https://console.cloud.google.com/iam-admin/iam))
-2. Click **Grant Access**
-3. **New principals:** Enter `extrasuite-server@YOUR_PROJECT_ID.iam.gserviceaccount.com`
-4. **Assign roles:** Add these three roles (click **Add Another Role** between each):
-   - `Cloud Datastore User`
-   - `Service Account Admin`
-   - `Service Account Token Creator`
-5. Click **Save**
+    **Grant roles:**
 
-**Verify:** In **IAM & Admin > IAM**, you should see `extrasuite-server@...` with three roles listed.
-
----
-
-## Step 6: Store Secrets in Secret Manager
-
-Store your OAuth credentials securely using Secret Manager.
-
-### Using gcloud CLI
-
-```bash
-# Store OAuth Client ID
-echo -n "YOUR_CLIENT_ID" | gcloud secrets create extrasuite-client-id \
-  --data-file=- \
-  --project=$PROJECT_ID
-
-# Store OAuth Client Secret
-echo -n "YOUR_CLIENT_SECRET" | gcloud secrets create extrasuite-client-secret \
-  --data-file=- \
-  --project=$PROJECT_ID
-
-# Generate and store a random secret key for session signing
-echo -n "$(openssl rand -base64 32)" | gcloud secrets create extrasuite-secret-key \
-  --data-file=- \
-  --project=$PROJECT_ID
-```
-
-Replace `YOUR_CLIENT_ID` and `YOUR_CLIENT_SECRET` with the values from Step 4.
-
-**Grant the service account access to read these secrets:**
-
-```bash
-for secret in extrasuite-client-id extrasuite-client-secret extrasuite-secret-key; do
-  gcloud secrets add-iam-policy-binding $secret \
-    --member="serviceAccount:extrasuite-server@$PROJECT_ID.iam.gserviceaccount.com" \
-    --role="roles/secretmanager.secretAccessor" \
-    --project=$PROJECT_ID
-done
-```
-
-### Using Google Cloud Console
-
-**Create the secrets:**
-
-1. Go to **Security > Secret Manager** ([direct link](https://console.cloud.google.com/security/secret-manager))
-
-2. Click **Create Secret**
-   - **Name:** `extrasuite-client-id`
-   - **Secret value:** Paste your OAuth Client ID from Step 4
-   - Click **Create Secret**
-
-3. Click **Create Secret** again
-   - **Name:** `extrasuite-client-secret`
-   - **Secret value:** Paste your OAuth Client Secret from Step 4
-   - Click **Create Secret**
-
-4. Click **Create Secret** again
-   - **Name:** `extrasuite-secret-key`
-   - **Secret value:** Generate a random string (you can use an online generator or run `openssl rand -base64 32` in a terminal)
-   - Click **Create Secret**
-
-**Grant access to each secret:**
-
-For each of the three secrets:
-
-1. Click the secret name to open it
-2. Go to the **Permissions** tab
-3. Click **Grant Access**
-4. **New principals:** `extrasuite-server@YOUR_PROJECT_ID.iam.gserviceaccount.com`
-5. **Role:** `Secret Manager Secret Accessor`
-6. Click **Save**
-
-**Verify:** Each secret should show `extrasuite-server@...` in its Permissions tab.
+    1. Go to **IAM & Admin > IAM** ([direct link](https://console.cloud.google.com/iam-admin/iam))
+    2. Click **Grant Access**
+    3. **New principals:** `extrasuite-server@YOUR_PROJECT_ID.iam.gserviceaccount.com`
+    4. Assign roles based on mode:
+       - All modes: `Cloud Datastore User`
+       - `sa+dwd` and `sa+oauth` modes also: `Service Account Admin` and `Service Account Token Creator`
+    5. Click **Save**
 
 ---
 
-## Step 7: Deploy to Cloud Run
+## Step 5: Store Secrets in Secret Manager
 
-Now deploy ExtraSuite using the pre-built Docker image.
+=== "gcloud CLI"
 
-### Using gcloud CLI
+    **Core secrets (all modes):**
 
-```bash
-gcloud run deploy extrasuite-server \
-  --image=asia-southeast1-docker.pkg.dev/thinker41/extrasuite/server:latest \
-  --service-account=extrasuite-server@$PROJECT_ID.iam.gserviceaccount.com \
-  --region=asia-southeast1 \
-  --allow-unauthenticated \
-  --set-env-vars="GOOGLE_CLOUD_PROJECT=$PROJECT_ID" \
-  --set-env-vars="BASE_DOMAIN=placeholder.run.app" \
-  --set-secrets="SECRET_KEY=extrasuite-secret-key:latest" \
-  --set-secrets="GOOGLE_CLIENT_ID=extrasuite-client-id:latest" \
-  --set-secrets="GOOGLE_CLIENT_SECRET=extrasuite-client-secret:latest" \
-  --project=$PROJECT_ID
-```
+    ```bash
+    # OAuth client credentials from Step 3
+    echo -n "YOUR_CLIENT_ID" | gcloud secrets create extrasuite-client-id \
+      --data-file=- --project=$PROJECT_ID
 
-After deployment, get your service URL:
+    echo -n "YOUR_CLIENT_SECRET" | gcloud secrets create extrasuite-client-secret \
+      --data-file=- --project=$PROJECT_ID
+
+    # Session signing key (generate randomly)
+    python -c "import secrets; print(secrets.token_urlsafe(32), end='')" | \
+      gcloud secrets create extrasuite-secret-key \
+      --data-file=- --project=$PROJECT_ID
+    ```
+
+    **Encryption key (sa+oauth and oauth modes only):**
+
+    ```bash
+    # AES-256 key for encrypting stored OAuth refresh tokens
+    python -c "import secrets; print(secrets.token_hex(32), end='')" | \
+      gcloud secrets create extrasuite-oauth-key \
+      --data-file=- --project=$PROJECT_ID
+    ```
+
+    !!! warning "Key rotation"
+        If you change `OAUTH_TOKEN_ENCRYPTION_KEY` later, all stored refresh tokens become undecryptable. Users will need to re-run `extrasuite auth login`.
+
+    **Grant the server SA access to read these secrets:**
+
+    ```bash
+    # Core secrets
+    for secret in extrasuite-client-id extrasuite-client-secret extrasuite-secret-key; do
+      gcloud secrets add-iam-policy-binding $secret \
+        --member="serviceAccount:extrasuite-server@$PROJECT_ID.iam.gserviceaccount.com" \
+        --role="roles/secretmanager.secretAccessor" \
+        --project=$PROJECT_ID
+    done
+
+    # OAuth key (sa+oauth and oauth modes only)
+    gcloud secrets add-iam-policy-binding extrasuite-oauth-key \
+      --member="serviceAccount:extrasuite-server@$PROJECT_ID.iam.gserviceaccount.com" \
+      --role="roles/secretmanager.secretAccessor" \
+      --project=$PROJECT_ID
+    ```
+
+=== "Google Cloud Console"
+
+    1. Go to **Security > Secret Manager** ([direct link](https://console.cloud.google.com/security/secret-manager))
+
+    2. Create these secrets (click **Create Secret** for each):
+       - `extrasuite-client-id` → paste your OAuth Client ID from Step 3
+       - `extrasuite-client-secret` → paste your OAuth Client Secret from Step 3
+       - `extrasuite-secret-key` → paste a random string (run `python -c "import secrets; print(secrets.token_urlsafe(32))"`)
+       - `extrasuite-oauth-key` *(sa+oauth/oauth modes only)* → paste a 64-char hex string (run `python -c "import secrets; print(secrets.token_hex(32))"`)
+
+    3. For each secret, open it → **Permissions** tab → **Grant Access** → add `extrasuite-server@YOUR_PROJECT_ID.iam.gserviceaccount.com` with role `Secret Manager Secret Accessor`.
+
+---
+
+## Step 6: Deploy to Cloud Run
+
+=== "sa+dwd (gcloud CLI)"
+
+    ```bash
+    gcloud run deploy extrasuite-server \
+      --image=asia-southeast1-docker.pkg.dev/thinker41/extrasuite/server:latest \
+      --service-account=extrasuite-server@$PROJECT_ID.iam.gserviceaccount.com \
+      --region=asia-southeast1 \
+      --allow-unauthenticated \
+      --set-env-vars="GOOGLE_CLOUD_PROJECT=$PROJECT_ID" \
+      --set-env-vars="BASE_DOMAIN=placeholder.run.app" \
+      --set-env-vars="CREDENTIAL_MODE=sa+dwd" \
+      --set-secrets="SECRET_KEY=extrasuite-secret-key:latest" \
+      --set-secrets="GOOGLE_CLIENT_ID=extrasuite-client-id:latest" \
+      --set-secrets="GOOGLE_CLIENT_SECRET=extrasuite-client-secret:latest" \
+      --project=$PROJECT_ID
+    ```
+
+=== "sa+oauth (gcloud CLI)"
+
+    ```bash
+    gcloud run deploy extrasuite-server \
+      --image=asia-southeast1-docker.pkg.dev/thinker41/extrasuite/server:latest \
+      --service-account=extrasuite-server@$PROJECT_ID.iam.gserviceaccount.com \
+      --region=asia-southeast1 \
+      --allow-unauthenticated \
+      --set-env-vars="GOOGLE_CLOUD_PROJECT=$PROJECT_ID" \
+      --set-env-vars="BASE_DOMAIN=placeholder.run.app" \
+      --set-env-vars="CREDENTIAL_MODE=sa+oauth" \
+      --set-env-vars="OAUTH_SCOPES=gmail.compose,gmail.readonly,calendar" \
+      --set-secrets="SECRET_KEY=extrasuite-secret-key:latest" \
+      --set-secrets="GOOGLE_CLIENT_ID=extrasuite-client-id:latest" \
+      --set-secrets="GOOGLE_CLIENT_SECRET=extrasuite-client-secret:latest" \
+      --set-secrets="OAUTH_TOKEN_ENCRYPTION_KEY=extrasuite-oauth-key:latest" \
+      --project=$PROJECT_ID
+    ```
+
+    Adjust `OAUTH_SCOPES` to match what you configured in the OAuth consent screen (Step 3).
+
+=== "oauth (gcloud CLI)"
+
+    ```bash
+    gcloud run deploy extrasuite-server \
+      --image=asia-southeast1-docker.pkg.dev/thinker41/extrasuite/server:latest \
+      --service-account=extrasuite-server@$PROJECT_ID.iam.gserviceaccount.com \
+      --region=asia-southeast1 \
+      --allow-unauthenticated \
+      --set-env-vars="GOOGLE_CLOUD_PROJECT=$PROJECT_ID" \
+      --set-env-vars="BASE_DOMAIN=placeholder.run.app" \
+      --set-env-vars="CREDENTIAL_MODE=oauth" \
+      --set-env-vars="OAUTH_SCOPES=gmail.compose,gmail.readonly,calendar" \
+      --set-secrets="SECRET_KEY=extrasuite-secret-key:latest" \
+      --set-secrets="GOOGLE_CLIENT_ID=extrasuite-client-id:latest" \
+      --set-secrets="GOOGLE_CLIENT_SECRET=extrasuite-client-secret:latest" \
+      --set-secrets="OAUTH_TOKEN_ENCRYPTION_KEY=extrasuite-oauth-key:latest" \
+      --project=$PROJECT_ID
+    ```
+
+=== "Google Cloud Console"
+
+    1. Go to **Cloud Run** ([direct link](https://console.cloud.google.com/run)) → **Create Service**
+    2. **Container image:** `asia-southeast1-docker.pkg.dev/thinker41/extrasuite/server:latest`
+    3. **Service name:** `extrasuite-server`, **Region:** your preferred region
+    4. **Authentication:** Allow unauthenticated invocations
+    5. Expand **Container(s), Volumes, Networking, Security**
+    6. Under **Variables & Secrets**, add environment variables:
+       - `GOOGLE_CLOUD_PROJECT` = your project ID
+       - `BASE_DOMAIN` = `placeholder.run.app` (update after deployment)
+       - `CREDENTIAL_MODE` = `sa+dwd`, `sa+oauth`, or `oauth`
+       - `OAUTH_SCOPES` = (OAuth modes only) e.g. `gmail.compose,gmail.readonly,calendar`
+    7. Reference secrets:
+       - `GOOGLE_CLIENT_ID` ← `extrasuite-client-id`
+       - `GOOGLE_CLIENT_SECRET` ← `extrasuite-client-secret`
+       - `SECRET_KEY` ← `extrasuite-secret-key`
+       - `OAUTH_TOKEN_ENCRYPTION_KEY` ← `extrasuite-oauth-key` *(OAuth modes only)*
+    8. Under **Security** tab, set **Service account** to `extrasuite-server@...`
+    9. Click **Create**
+
+**Get your service URL:**
 
 ```bash
 SERVICE_URL=$(gcloud run services describe extrasuite-server \
@@ -307,114 +432,108 @@ echo "Your ExtraSuite URL: $SERVICE_URL"
 **Update BASE_DOMAIN with your actual URL:**
 
 ```bash
-# Extract domain from URL (removes https://)
 DOMAIN=$(echo $SERVICE_URL | sed 's|https://||')
-
 gcloud run services update extrasuite-server \
   --region=asia-southeast1 \
   --update-env-vars="BASE_DOMAIN=$DOMAIN" \
   --project=$PROJECT_ID
 ```
 
-### Using Google Cloud Console
-
-1. Go to **Cloud Run** ([direct link](https://console.cloud.google.com/run))
-
-2. Click **Create Service**
-
-3. **Container image:** Enter:
-   ```
-   asia-southeast1-docker.pkg.dev/thinker41/extrasuite/server:latest
-   ```
-
-4. **Service name:** `extrasuite-server`
-
-5. **Region:** Select a region (e.g., `asia-southeast1`)
-
-6. **Authentication:** Select **Allow unauthenticated invocations**
-
-7. Expand **Container(s), Volumes, Networking, Security**
-
-8. Click the **Container** tab, then **Variables & Secrets**
-
-9. **Add environment variables:**
-   - Click **Add Variable**
-   - Name: `GOOGLE_CLOUD_PROJECT`, Value: Your project ID
-   - Click **Add Variable**
-   - Name: `BASE_DOMAIN`, Value: `placeholder.run.app` (you'll update this after deployment)
-
-10. **Add secrets:**
-    - Click **Reference a Secret**
-    - Secret: `extrasuite-client-id`, Referenced as: Environment variable, Name: `GOOGLE_CLIENT_ID`
-    - Click **Reference a Secret**
-    - Secret: `extrasuite-client-secret`, Referenced as: Environment variable, Name: `GOOGLE_CLIENT_SECRET`
-    - Click **Reference a Secret**
-    - Secret: `extrasuite-secret-key`, Referenced as: Environment variable, Name: `SECRET_KEY`
-
-11. Click the **Security** tab
-    - **Service account:** Select `extrasuite-server@YOUR_PROJECT_ID.iam.gserviceaccount.com`
-
-12. Click **Create**
-
-13. After deployment completes, copy the URL shown (e.g., `https://extrasuite-server-xxxxx-as.a.run.app`)
-
-14. **Update BASE_DOMAIN:**
-    - Click **Edit & Deploy New Revision**
-    - Go to **Variables & Secrets**
-    - Update `BASE_DOMAIN` to your actual domain (without `https://`)
-    - Click **Deploy**
-
 ---
 
-## Step 8: Update OAuth Redirect URI
+## Step 7 (sa+dwd only): Configure Domain-Wide Delegation
 
-Update your OAuth credentials with the actual Cloud Run URL.
+Skip this step if you chose `sa+oauth` or `oauth` mode.
 
-### Using Google Cloud Console
+Domain-wide delegation lets the ExtraSuite server impersonate users for Gmail, Calendar, and other user-specific APIs. A Google Workspace admin must authorize this once.
 
-1. Go to **APIs & Services > Credentials** ([direct link](https://console.cloud.google.com/apis/credentials))
+### Find your service account's Unique ID
 
-2. Click your OAuth client ID (`ExtraSuite Server`)
+!!! important "Client ID ≠ Unique ID"
+    The Admin Console needs the service account's **numeric Unique ID**, not the OAuth 2.0 Client ID from Step 3. These are different things.
 
-3. Under **Authorized redirect URIs:**
-   - Remove the placeholder URI
-   - Add your actual URI: `https://YOUR_CLOUD_RUN_URL/api/auth/callback`
+=== "gcloud CLI"
 
-4. Click **Save**
+    ```bash
+    gcloud iam service-accounts describe \
+      extrasuite-server@$PROJECT_ID.iam.gserviceaccount.com \
+      --format='value(uniqueId)' \
+      --project=$PROJECT_ID
+    ```
 
----
+=== "Google Cloud Console"
 
-## Verify Your Deployment
+    1. Go to **IAM & Admin > Service Accounts**
+    2. Click **extrasuite-server**
+    3. Under **Details**, copy the **Unique ID** (a long number like `112345678901234567890`)
 
-Test that everything is working:
+### Authorize DWD in Google Workspace Admin Console
 
-### Health Check
+A Workspace admin must perform this step. See [Google's official DWD setup guide](https://support.google.com/a/answer/162106) for reference.
+
+1. Go to **Admin Console** → **Security** → **Access and data control** → **API Controls** → **Domain-wide Delegation** ([direct link](https://admin.google.com/ac/owl/domainwidedelegation))
+2. Click **Add new**
+3. **Client ID:** Paste the **numeric Unique ID** from above (NOT the OAuth client ID)
+4. **OAuth scopes:** Add the scopes you want to allow, comma-separated:
+
+    ```
+    https://www.googleapis.com/auth/gmail.compose,https://www.googleapis.com/auth/gmail.readonly,https://www.googleapis.com/auth/calendar,https://www.googleapis.com/auth/script.projects
+    ```
+
+    Only add scopes you actually want agents to access. See the [OAuth Delegation Scopes table](../../CLAUDE.md) for the full list.
+
+5. Click **Authorize**
+
+### (Optional) Restrict DWD scopes server-side
+
+You can add a second layer of scope enforcement on the server side:
 
 ```bash
+gcloud run services update extrasuite-server \
+  --region=asia-southeast1 \
+  --update-env-vars="DELEGATION_SCOPES=gmail.compose,gmail.readonly,calendar" \
+  --project=$PROJECT_ID
+```
+
+If `DELEGATION_SCOPES` is omitted, the Admin Console configuration is the sole enforcement point.
+
+---
+
+## Step 8: Update OAuth Redirect URI and Verify
+
+### Update the redirect URI
+
+Now that you have your actual service URL, update the OAuth client:
+
+1. Go to **APIs & Services > Credentials**
+2. Click your OAuth client ID (`ExtraSuite Server`)
+3. Under **Authorized redirect URIs:**
+   - Remove the placeholder URI
+   - Add: `https://YOUR_CLOUD_RUN_URL/api/auth/callback`
+4. Click **Save**
+
+### Verify the deployment
+
+```bash
+# Health check
 curl https://YOUR_CLOUD_RUN_URL/api/health
+# Expected: {"status":"healthy","service":"extrasuite-server"}
+
+# Login test
+cd /path/to/extrasuite/client
+uv run python -m extrasuite.client login
 ```
 
-Expected response:
-```json
-{"status":"healthy","service":"extrasuite-server"}
-```
-
-### Login Test
-
-1. Open your Cloud Run URL in a browser
-2. Click **Login with Google**
-3. Complete the OAuth flow
-4. You should see your service account email and the installation command
-
-**Congratulations!** ExtraSuite is now deployed. Share your Cloud Run URL with users in your organization.
+Expected login behavior:
+1. Browser opens to the login page
+2. User authenticates with Google
+3. (`sa+oauth`/`oauth` modes) User sees consent screen with the scopes you configured
+4. Browser redirects back and closes
+5. Terminal prints confirmation
 
 ---
 
 ## Optional: Restrict Access by Email Domain
-
-Limit who can authenticate to specific email domains:
-
-### Using gcloud CLI
 
 ```bash
 gcloud run services update extrasuite-server \
@@ -423,23 +542,12 @@ gcloud run services update extrasuite-server \
   --project=$PROJECT_ID
 ```
 
-### Using Google Cloud Console
-
-1. Go to **Cloud Run > extrasuite-server > Edit & Deploy New Revision**
-2. Under **Variables & Secrets**, add or update:
-   - Name: `ALLOWED_EMAIL_DOMAINS`
-   - Value: `yourcompany.com,partner.org` (comma-separated, no spaces)
-3. Click **Deploy**
-
 ---
 
 ## Optional: Custom Domain
 
-Use your own domain instead of the auto-generated Cloud Run URL.
-
-### Using gcloud CLI
-
 ```bash
+# Map custom domain
 gcloud beta run domain-mappings create \
   --service=extrasuite-server \
   --domain=extrasuite.yourdomain.com \
@@ -447,125 +555,66 @@ gcloud beta run domain-mappings create \
   --project=$PROJECT_ID
 ```
 
-**Configure DNS:** Add a CNAME record pointing `extrasuite.yourdomain.com` to `ghs.googlehosted.com`
+Add a CNAME record: `extrasuite.yourdomain.com` → `ghs.googlehosted.com`
 
-**Wait for SSL certificate:** This can take 15-30 minutes. Check status:
-
-```bash
-gcloud beta run domain-mappings describe \
-  --domain=extrasuite.yourdomain.com \
-  --region=asia-southeast1 \
-  --project=$PROJECT_ID
-```
-
-**Update BASE_DOMAIN and OAuth redirect URI** with your custom domain after SSL is provisioned.
-
-### Using Google Cloud Console
-
-1. Go to **Cloud Run > extrasuite-server**
-2. Click the **Integrations** tab
-3. Click **Add Integration > Custom domains**
-4. Follow the prompts to add your domain and configure DNS
+SSL certificate provisioning takes 15-30 minutes. After it's ready, update `BASE_DOMAIN` and the OAuth redirect URI with your custom domain.
 
 ---
 
 ## Environment Variables Reference
 
-### Required
+### Required (all modes)
 
-| Variable | Description |
-|----------|-------------|
-| `GOOGLE_CLIENT_ID` | OAuth 2.0 Client ID |
-| `GOOGLE_CLIENT_SECRET` | OAuth 2.0 Client Secret |
-| `GOOGLE_CLOUD_PROJECT` | Your GCP project ID |
-| `SECRET_KEY` | Random string for signing session cookies |
-| `BASE_DOMAIN` | Your server's domain (without `https://`) |
+| Variable | Source | Description |
+|----------|--------|-------------|
+| `GOOGLE_CLIENT_ID` | Secret | OAuth 2.0 Client ID from Step 3 |
+| `GOOGLE_CLIENT_SECRET` | Secret | OAuth 2.0 Client Secret from Step 3 |
+| `SECRET_KEY` | Secret | Random string for signing session cookies |
+| `GOOGLE_CLOUD_PROJECT` | Env var | Your GCP project ID |
+| `BASE_DOMAIN` | Env var | Your server domain (without `https://`) |
 
-### Optional — Server Configuration
+### Required for `sa+oauth` and `oauth` modes
+
+| Variable | Source | Description |
+|----------|--------|-------------|
+| `OAUTH_SCOPES` | Env var | Comma-separated scope short names (e.g. `gmail.compose,calendar`) |
+| `OAUTH_TOKEN_ENCRYPTION_KEY` | Secret | 64-char hex AES-256 key for encrypting stored refresh tokens |
+
+### Credential mode
+
+| Variable | Default | Description |
+|----------|---------|-------------|
+| `CREDENTIAL_MODE` | `sa+dwd` | `sa+dwd`, `sa+oauth`, or `oauth` |
+| `DELEGATION_SCOPES` | (all allowed) | DWD-only: comma-separated scope short names to allowlist. No effect in OAuth modes. |
+
+### Access control
 
 | Variable | Default | Description |
 |----------|---------|-------------|
 | `ALLOWED_EMAIL_DOMAINS` | (all) | Comma-separated email domain allowlist |
-| `TOKEN_EXPIRY_MINUTES` | `60` | Access token lifetime in minutes |
-| `SESSION_TOKEN_EXPIRY_DAYS` | `30` | Session token lifetime in days |
 | `ADMIN_EMAILS` | (none) | CSV of admin email addresses for session management |
-| `FIRESTORE_DATABASE` | `(default)` | Firestore database name |
 
-### Optional — Credential Mode
+### Session and token settings
 
 | Variable | Default | Description |
 |----------|---------|-------------|
-| `CREDENTIAL_MODE` | `sa+dwd` | Auth strategy: `sa+dwd`, `sa+oauth`, or `oauth` |
-| `DELEGATION_SCOPES` | (all) | DWD scope allowlist (only for `sa+dwd` mode) |
-| `OAUTH_SCOPES` | (none) | Required for `sa+oauth`/`oauth`. Comma-separated scope names. |
-| `OAUTH_TOKEN_ENCRYPTION_KEY` | (none) | Required for `sa+oauth`/`oauth`. 64-char hex AES-256 key. |
+| `SESSION_TOKEN_EXPIRY_DAYS` | `30` | Session token lifetime in days |
+| `TOKEN_EXPIRY_MINUTES` | `60` | Access token lifetime in minutes |
+| `FIRESTORE_DATABASE` | `(default)` | Firestore database name |
 
-### Optional — Performance
+### Performance
 
 | Variable | Default | Description |
 |----------|---------|-------------|
 | `THREAD_POOL_SIZE` | `10` | Max threads for blocking I/O |
 | `RATE_LIMIT_AUTH` | `10/minute` | Rate limit for auth endpoints |
-| `RATE_LIMIT_TOKEN` | `60/minute` | Rate limit for token exchange |
-| `RATE_LIMIT_ADMIN` | `30/minute` | Rate limit for admin endpoints |
+| `RATE_LIMIT_TOKEN` | `60/minute` | Rate limit for `/api/auth/token` |
+| `RATE_LIMIT_ADMIN` | `30/minute` | Rate limit for admin session endpoints |
 
 ---
 
-## Optional: Enable Gmail, Calendar, and Other User APIs
+## Next Steps
 
-Agents can access Gmail, Calendar, Apps Script, and Contacts via one of two credential strategies:
-
-### Option A: Domain-Wide Delegation (recommended for Workspace organizations)
-
-Requires a Google Workspace admin to enable DWD in the Admin Console.
-
-1. **Set the optional scope allowlist:**
-
-    ```bash
-    gcloud run services update extrasuite-server \
-      --region=asia-southeast1 \
-      --update-env-vars="DELEGATION_SCOPES=gmail.compose,gmail.readonly,calendar,script.projects" \
-      --project=$PROJECT_ID
-    ```
-
-    `DELEGATION_SCOPES` is optional — omit it to allow any scope (Workspace Admin Console still enforces).
-
-2. **Configure Google Workspace Admin Console** — see [IAM Permissions: Domain-Wide Delegation](iam-permissions.md#optional-domain-wide-delegation) for setup steps.
-
-3. **Verify:** Run `extrasuite calendar view` after logging in.
-
-### Option B: OAuth Refresh Token (no DWD required)
-
-Use this when DWD is not available. The user grants consent during login; the server stores an encrypted refresh token.
-
-1. **Generate an encryption key:**
-
-    ```bash
-    python -c "import secrets; print(secrets.token_hex(32))"
-    ```
-
-2. **Store the key in Secret Manager:**
-
-    ```bash
-    echo -n "YOUR_64_CHAR_HEX_KEY" | gcloud secrets create extrasuite-oauth-key \
-      --data-file=- --project=$PROJECT_ID
-    gcloud secrets add-iam-policy-binding extrasuite-oauth-key \
-      --member="serviceAccount:extrasuite-server@$PROJECT_ID.iam.gserviceaccount.com" \
-      --role="roles/secretmanager.secretAccessor" --project=$PROJECT_ID
-    ```
-
-3. **Deploy with OAuth mode:**
-
-    ```bash
-    gcloud run services update extrasuite-server \
-      --region=asia-southeast1 \
-      --update-env-vars="CREDENTIAL_MODE=sa+oauth,OAUTH_SCOPES=gmail.compose,gmail.readonly,calendar,script.projects" \
-      --set-secrets="OAUTH_TOKEN_ENCRYPTION_KEY=extrasuite-oauth-key:latest" \
-      --project=$PROJECT_ID
-    ```
-
-    Use `CREDENTIAL_MODE=oauth` instead of `sa+oauth` if you don't want per-user service accounts (note: edits will appear as the user in Drive version history, not as the agent).
-
----
-
-**Next:** Review the [Operations Guide](operations.md) for monitoring and troubleshooting.
+- **[Operations Guide](operations.md)** — monitoring, updating, and troubleshooting
+- **[IAM Permissions Reference](iam-permissions.md)** — detailed explanation of each required role
+- **[Authentication API Specification](../api/auth-spec.md)** — protocol details for building custom integrations

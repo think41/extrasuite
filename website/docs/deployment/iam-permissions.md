@@ -4,14 +4,16 @@ This reference document explains the IAM roles and permissions required by Extra
 
 ## Summary
 
-ExtraSuite requires **one service account** (`extrasuite-server`) with **four roles**:
+ExtraSuite requires **one service account** (`extrasuite-server`). Required roles vary by credential mode:
 
-| Role | Purpose |
-|------|---------|
-| `roles/datastore.user` | Read/write user records in Firestore |
-| `roles/iam.serviceAccountAdmin` | Create service accounts for each user |
-| `roles/iam.serviceAccountTokenCreator` | Generate short-lived access tokens |
-| `roles/secretmanager.secretAccessor` | Read OAuth credentials and secret key |
+| Role | `sa+dwd` | `sa+oauth` | `oauth` | Purpose |
+|------|----------|------------|---------|---------|
+| `roles/datastore.user` | ✅ | ✅ | ✅ | Read/write Firestore (sessions, user records) |
+| `roles/iam.serviceAccountAdmin` | ✅ | ✅ | — | Create per-user agent service accounts |
+| `roles/iam.serviceAccountTokenCreator` | ✅ | ✅ | — | Generate tokens by impersonating user service accounts |
+| `roles/secretmanager.secretAccessor` | ✅ | ✅ | ✅ | Read OAuth credentials and secret key (per-secret binding) |
+
+In `oauth` mode, no per-user service accounts are created. Only Firestore access and Secret Manager access are needed.
 
 ## Role Details
 
@@ -101,21 +103,25 @@ A common misconception is that end users need GCP permissions. They do not.
 
 ### User Authentication Scopes
 
-When users log in to ExtraSuite, they grant only:
+In `sa+dwd` mode, users grant only:
 
-- `openid` - Standard OpenID Connect
-- `userinfo.email` - Access to email address
+- `openid` — Standard OpenID Connect
+- `userinfo.email` — Access to email address
 
-Users do NOT grant `cloud-platform` or any Google Workspace scopes during login.
+In `sa+oauth` and `oauth` modes, users also grant the workspace scopes configured in `OAUTH_SCOPES` (e.g., Gmail, Calendar). See [Deployment Guide: Step 3](cloud-run.md#step-3-configure-google-oauth) for scope configuration.
+
+Users never grant `cloud-platform` or any GCP-level scopes.
 
 ### Service Account Token Scopes
 
-The short-lived tokens issued to AI agents include:
+Short-lived tokens issued to agents are scoped to Google Workspace APIs only:
 
-- `https://www.googleapis.com/auth/drive.readonly` - Read Google Drive files
-- `https://www.googleapis.com/auth/spreadsheets` - Read/write Google Sheets
-- `https://www.googleapis.com/auth/documents` - Read/write Google Docs
-- `https://www.googleapis.com/auth/presentations` - Read/write Google Slides
+- `https://www.googleapis.com/auth/drive.file` — Drive files shared with the agent
+- `https://www.googleapis.com/auth/spreadsheets` — Google Sheets
+- `https://www.googleapis.com/auth/documents` — Google Docs
+- `https://www.googleapis.com/auth/presentations` — Google Slides
+
+In `sa+oauth`/`oauth` modes, user-impersonating commands (Gmail, Calendar) use the stored OAuth refresh token to obtain scoped access tokens rather than service account tokens.
 
 ---
 
@@ -142,39 +148,13 @@ This requires updating bindings each time a new user is onboarded.
 
 ---
 
-## Optional: Domain-Wide Delegation
+## Domain-Wide Delegation (`sa+dwd` mode)
 
-Domain-wide delegation is only needed if you want agents to access user-specific APIs like Gmail, Calendar, or Apps Script. It uses the same `extrasuite-server` service account — no new service account is needed.
+Domain-wide delegation allows the ExtraSuite server to impersonate users for Gmail, Calendar, and Apps Script. This is only relevant in `sa+dwd` mode and requires a Google Workspace admin.
 
-### Prerequisites
+**Setup instructions:** See [Deployment Guide: Step 7 (sa+dwd only)](cloud-run.md#step-7-sadwd-only-configure-domain-wide-delegation).
 
-- The `extrasuite-server` SA already has `roles/iam.serviceAccountTokenCreator` (from the base setup)
-- A Google Workspace domain with admin console access
-
-### Configure in Google Workspace Admin Console
-
-1. Go to **Admin Console** → **Security** → **Access and data control** → **API Controls** → **Domain-wide Delegation**
-2. Click **Add new**
-3. **Client ID:** Enter the OAuth client ID of your `extrasuite-server` service account (find it in IAM & Admin → Service Accounts → click the SA → Details → Unique ID)
-4. **OAuth scopes:** Add the scopes you want to allow, comma-separated:
-   ```
-   https://www.googleapis.com/auth/gmail.send,https://www.googleapis.com/auth/calendar,https://www.googleapis.com/auth/script.projects
-   ```
-5. Click **Authorize**
-
-### Configure ExtraSuite Server
-
-Configure the delegation scope allowlist if desired:
-
-```bash
-gcloud run services update extrasuite-server \
-  --region=asia-southeast1 \
-  --update-env-vars="DELEGATION_SCOPES=gmail.send,calendar,script.projects" \
-  --project=$PROJECT_ID
-```
-
-- `DELEGATION_SCOPES` (optional) restricts which scopes DWD-backed command types can receive
-- If `DELEGATION_SCOPES` is omitted, any scope is allowed (Workspace Admin Console is the sole enforcement)
+**Security note:** The Admin Console DWD configuration is the authoritative enforcement point. The server-side `DELEGATION_SCOPES` env var provides an optional second layer that rejects requests before they reach Google.
 
 ---
 
