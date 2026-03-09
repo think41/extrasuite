@@ -142,6 +142,17 @@ def make_test_app(
     return app
 
 
+@pytest.fixture(autouse=True)
+def reset_rate_limiter() -> None:
+    """Reset the module-level rate limiter storage between tests.
+
+    api.limiter is a module-level singleton whose in-memory state persists
+    across tests. Without this reset, tests that call rate-limited endpoints
+    can exhaust the limit and cause later tests to receive unexpected 429s.
+    """
+    api.limiter.reset()
+
+
 @pytest.fixture
 def fake_db() -> FakeDatabase:
     return FakeDatabase()

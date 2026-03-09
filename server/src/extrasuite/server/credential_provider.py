@@ -11,6 +11,7 @@ No credential-mode if/else branches exist outside of router construction.
 
 from __future__ import annotations
 
+import asyncio
 import urllib.error
 import urllib.parse
 import urllib.request
@@ -198,7 +199,7 @@ class OAuthRefreshProvider(CredentialProvider):
 
         try:
             plaintext = self._encryptor.decrypt(record.encrypted_token)
-            _revoke_token_at_google(plaintext)
+            await asyncio.to_thread(_revoke_token_at_google, plaintext)
             logger.info("OAuth refresh token revoked at Google", extra={"email": email})
         except Exception as e:
             logger.warning(

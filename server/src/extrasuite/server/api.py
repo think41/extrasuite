@@ -21,7 +21,7 @@ from datetime import UTC, datetime, timedelta
 from urllib.parse import urlencode
 
 from fastapi import APIRouter, Depends, HTTPException, Query, Request, Response
-from fastapi.responses import HTMLResponse, RedirectResponse
+from fastapi.responses import HTMLResponse, JSONResponse, RedirectResponse
 from google.auth.transport import requests as google_requests
 from google.oauth2 import id_token
 from google_auth_oauthlib.flow import Flow
@@ -50,6 +50,18 @@ limiter = Limiter(key_func=get_remote_address)
 MIN_PORT = 1024
 MAX_PORT = 65535
 
+
+def _auth_rate_limit() -> str:
+    return get_settings().rate_limit_auth
+
+
+def _token_rate_limit() -> str:
+    return get_settings().rate_limit_token
+
+
+def _admin_rate_limit() -> str:
+    return get_settings().rate_limit_admin
+
 router = APIRouter()
 
 
@@ -63,9 +75,18 @@ def get_credential_router(request: Request) -> CommandCredentialRouter:
 
 
 @router.get("/health")
-async def health_check() -> dict:
-    """Basic health check endpoint."""
-    return {"status": "healthy", "service": "extrasuite-server"}
+async def health_check(_request: Request, db: Database = Depends(get_database)) -> JSONResponse:
+    """Health check endpoint. Returns 503 if Firestore is unreachable."""
+    db_ok = await db.ping()
+    if not db_ok:
+        return JSONResponse(
+            status_code=503,
+            content={"status": "unhealthy", "service": "extrasuite-server", "firestore": "unreachable"},
+        )
+    return JSONResponse(
+        status_code=200,
+        content={"status": "healthy", "service": "extrasuite-server", "firestore": "ok"},
+    )
 
 
 # =============================================================================
@@ -110,7 +131,7 @@ async def logout(request: Request) -> dict:
 
 
 @router.get("/token/auth", response_model=None)
-@limiter.limit("10/minute")
+@limiter.limit(_auth_rate_limit)
 async def start_token_auth(
     request: Request,
     settings: Settings = Depends(get_settings),
@@ -156,7 +177,7 @@ async def start_token_auth(
 
 
 @router.get("/auth/login", response_model=None)
-@limiter.limit("10/minute")
+@limiter.limit(_auth_rate_limit)
 async def start_ui_login(
     request: Request,
     settings: Settings = Depends(get_settings),
@@ -189,7 +210,7 @@ async def start_ui_login(
 
 
 @router.get("/auth/callback", response_model=None)
-@limiter.limit("10/minute")
+@limiter.limit(_auth_rate_limit)
 async def google_callback(
     request: Request,
     code: str,
@@ -280,10 +301,10 @@ class SessionExchangeRequest(BaseModel):
     """Request body for session token exchange (Phase 1)."""
 
     code: str = Field(..., min_length=1, description="Auth code received from redirect")
-    device_mac: str = Field("", description="Device MAC address")
-    device_hostname: str = Field("", description="Device hostname")
-    device_os: str = Field("", description="Device OS (e.g., Darwin, Linux, Windows)")
-    device_platform: str = Field("", description="Device platform string")
+    device_mac: str = Field("", max_length=64, description="Device MAC address")
+    device_hostname: str = Field("", max_length=253, description="Device hostname")
+    device_os: str = Field("", max_length=64, description="Device OS (e.g., Darwin, Linux, Windows)")
+    device_platform: str = Field("", max_length=256, description="Device platform string")
 
 
 class SessionExchangeResponse(BaseModel):
@@ -354,7 +375,7 @@ async def _validate_bearer_session(request: Request, db: Database) -> dict:
 
 
 @router.post("/auth/session/exchange", response_model=SessionExchangeResponse)
-@limiter.limit("10/minute")
+@limiter.limit(_auth_rate_limit)
 async def exchange_auth_code_for_session(
     request: Request,
     body: SessionExchangeRequest,
@@ -431,7 +452,7 @@ async def exchange_auth_code_for_session(
 
 
 @router.post("/auth/token", response_model=TokenResponse)
-@limiter.limit("60/minute")
+@limiter.limit(_token_rate_limit)
 async def exchange_session_for_access_token(
     request: Request,
     body: TokenRequest,
@@ -505,7 +526,7 @@ def _assert_session_authorized(
 
 
 @router.post("/auth/oauth/revoke")
-@limiter.limit("10/minute")
+@limiter.limit(_auth_rate_limit)
 async def revoke_oauth_token(
     request: Request,
     db: Database = Depends(get_database),
@@ -529,7 +550,7 @@ async def revoke_oauth_token(
 
 
 @router.get("/admin/sessions")
-@limiter.limit("30/minute")
+@limiter.limit(_admin_rate_limit)
 async def list_sessions(
     request: Request,
     email: str = Query(..., description="Email address to list sessions for"),
@@ -559,7 +580,7 @@ async def list_sessions(
 
 
 @router.delete("/admin/sessions/{session_hash}", status_code=204)
-@limiter.limit("30/minute")
+@limiter.limit(_admin_rate_limit)
 async def revoke_session(
     request: Request,
     session_hash: str,
@@ -593,7 +614,7 @@ async def revoke_session(
 
 
 @router.post("/admin/sessions/revoke-all")
-@limiter.limit("10/minute")
+@limiter.limit(_admin_rate_limit)
 async def revoke_all_sessions(
     request: Request,
     email: str = Query(..., description="Email address to revoke all sessions for"),

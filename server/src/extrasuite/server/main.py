@@ -3,6 +3,8 @@
 Headless API server for CLI session establishment and credential exchange.
 """
 
+import asyncio
+import concurrent.futures
 from contextlib import asynccontextmanager
 from pathlib import Path
 
@@ -18,6 +20,7 @@ from extrasuite.server.config import get_settings
 from extrasuite.server.credential_router import CommandCredentialRouter
 from extrasuite.server.crypto import RefreshTokenEncryptor
 from extrasuite.server.database import Database
+from extrasuite.server.firestore_setup import ensure_firestore_setup
 from extrasuite.server.logging import configure_logging
 from extrasuite.server.token_generator import TokenGenerator
 
@@ -53,6 +56,15 @@ async def lifespan(app: FastAPI):
 
     logger.info("Starting ExtraSuite server")
 
+    # Set the default thread pool executor used by asyncio.to_thread().
+    # Controls max concurrency for blocking I/O: DWD JWT signing, SA impersonation,
+    # OAuth token exchange, and token revocation.
+    executor = concurrent.futures.ThreadPoolExecutor(
+        max_workers=settings.thread_pool_size,
+        thread_name_prefix="extrasuite-blocking-io",
+    )
+    asyncio.get_event_loop().set_default_executor(executor)
+
     # Initialize database and store in app.state for dependency injection
     database = Database(
         project=settings.google_cloud_project,
@@ -70,14 +82,26 @@ async def lifespan(app: FastAPI):
         settings=settings,
         encryptor=encryptor,
     )
+    app.state.token_generator = token_generator
     credential_router = CommandCredentialRouter.from_settings(
         settings, token_generator, database, encryptor
     )
     app.state.credential_router = credential_router
 
+    # Ensure Firestore TTL policies and composite indexes exist (fire-and-forget).
+    # Task reference kept to prevent premature GC (RUF006).
+    _setup_task = ensure_firestore_setup(
+        project=settings.google_cloud_project,
+        database=settings.firestore_database,
+    )
+
     yield
 
+    _setup_task.cancel()
+
+    await token_generator.close()
     await database.close()
+    executor.shutdown(wait=False)
     logger.info("Shutting down ExtraSuite server")
 
 

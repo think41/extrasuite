@@ -119,6 +119,15 @@ class Database:
         """Close the database connection."""
         self._client.close()
 
+    async def ping(self) -> bool:
+        """Check Firestore connectivity. Returns True if reachable within 5 seconds."""
+        try:
+            doc_ref = self._client.collection("_health").document("ping")
+            await asyncio.wait_for(doc_ref.get(), timeout=5.0)
+            return True
+        except Exception:
+            return False
+
     @staticmethod
     def _email_to_doc_id(email: str) -> str:
         """Convert email to valid Firestore document ID."""

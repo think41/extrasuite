@@ -141,6 +141,16 @@ class Settings(BaseSettings):
     # Env var: ADMIN_EMAILS=admin@example.com,ops@example.com
     admin_emails: str = ""
 
+    # Thread pool size for blocking I/O operations (DWD JWT signing, OAuth exchange, SA impersonation)
+    # Env var: THREAD_POOL_SIZE
+    thread_pool_size: int = 10
+
+    # Rate limits for endpoint groups (slowapi format: "N/period")
+    # Env var: RATE_LIMIT_AUTH, RATE_LIMIT_TOKEN, RATE_LIMIT_ADMIN
+    rate_limit_auth: str = "10/minute"
+    rate_limit_token: str = "60/minute"
+    rate_limit_admin: str = "30/minute"
+
     # Credential mode: controls how SA and DWD-class commands are authenticated.
     # sa+dwd (default): SA for sheet/doc/slide/form; DWD for gmail/calendar/etc.
     # sa+oauth: SA for sheet/doc/slide/form; user OAuth for gmail/calendar/etc.

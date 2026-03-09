@@ -36,6 +36,10 @@ class FakeDatabase:
         self._should_fail_get_sa: bool = False
         self._should_fail_set_sa: bool = False
 
+    async def ping(self) -> bool:
+        """Always returns True for tests."""
+        return True
+
     async def get_service_account_email(self, email: str) -> str | None:
         """Get service account email for a user."""
         if self._should_fail_get_sa:
@@ -233,6 +237,9 @@ class FakeSettings:
         oauth_token_encryption_key: str = "",
         google_client_id: str = "test-client-id",
         google_client_secret: str = "test-client-secret",
+        rate_limit_auth: str = "1000/minute",
+        rate_limit_token: str = "1000/minute",
+        rate_limit_admin: str = "1000/minute",
     ) -> None:
         _ = delegation_enabled
         self.google_cloud_project = google_cloud_project
@@ -247,6 +254,9 @@ class FakeSettings:
         self.oauth_token_encryption_key = oauth_token_encryption_key
         self.google_client_id = google_client_id
         self.google_client_secret = google_client_secret
+        self.rate_limit_auth = rate_limit_auth
+        self.rate_limit_token = rate_limit_token
+        self.rate_limit_admin = rate_limit_admin
 
     @property
     def uses_oauth(self) -> bool:

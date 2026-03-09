@@ -205,6 +205,10 @@ class TokenGenerator:
         self._admin_creds: Any = None
         self._encryptor = encryptor  # RefreshTokenEncryptor | None
 
+    async def close(self) -> None:
+        """Close the IAM client and release gRPC connections."""
+        await self._iam_client.transport.close()
+
     @property
     def _project_id(self) -> str:
         """Get project ID from settings."""
