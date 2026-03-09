@@ -88,15 +88,16 @@ Every token request uses a **typed command** — a structured object declaring t
 **Short-lived Google access tokens:**
 
 - Google access tokens expire after **1 hour** (configurable)
-- Tokens are generated on demand and never stored server-side or client-side
+- Tokens are generated on demand and never stored server-side or client-side; the client holds them only in process memory
 - The agent cannot refresh a token — it must request a new one via the server
 
-**Session token (stored locally):**
+**Session token (stored in OS keyring):**
 
-- After the initial browser-based login, the client stores a **session token** in `~/.config/extrasuite/` (valid 30 days)
+- After the initial browser-based login, the client stores a **session token** in the OS keyring (macOS Keychain, Linux SecretService, Windows Credential Locker)
+- The only file written to disk is `~/.config/extrasuite/profiles.json` (0600), which contains profile names and email addresses — no tokens
 - The session token authenticates the client to the ExtraSuite server only — it is never sent to Google APIs
 - Session tokens are stored as SHA-256 hashes in Firestore; the raw token never touches the database
-- Sessions can be listed and revoked at any time via `extrasuite auth sessions`
+- Sessions can be listed and revoked at any time via `extrasuite auth logout`
 
 **No private key material:**
 
@@ -162,9 +163,9 @@ ExtraSuite supports **domain-wide delegation** for user-specific APIs like Gmail
 
 **Secure token storage:**
 
-- The session token is stored with restrictive file permissions
-- Directory: owner read/write/execute only (0700)
-- Token file: owner read/write only (0600)
+- Session tokens are stored in the OS keyring (macOS Keychain, Linux SecretService, Windows Credential Locker) — nothing sensitive on disk
+- The only on-disk file is `~/.config/extrasuite/profiles.json` (0600), containing profile names and email addresses only
+- Access tokens are never written to disk; they are held in process memory for the duration of the command
 
 ### Server-Side Data
 
@@ -274,7 +275,7 @@ ExtraSuite guarantees the following:
 - ✅ Agents cannot access documents unless an employee explicitly shares them
 - ✅ Access is limited to the permission level chosen by the employee
 - ✅ All agent edits are attributable, auditable, and reversible using native Google Workspace tools
-- ✅ Google access tokens are short-lived (1 hour), generated on demand, and never stored client-side or server-side
+- ✅ Google access tokens are short-lived (1 hour), generated on demand, held only in process memory, and never stored client-side or server-side
 - ✅ The local session token (30 days) only authenticates against the ExtraSuite server — it has no Google API access on its own
 - ✅ Google access tokens are never exposed in browser URLs or history
 - ✅ Every token request is logged with the command type, context, and the agent's stated reason before any token is issued

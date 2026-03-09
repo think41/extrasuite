@@ -295,7 +295,7 @@ wheels = [
 
 [[package]]
 name = "extradoc"
-version = "0.3.0"
+version = "0.4.0"
 source = { editable = "../extradoc" }
 dependencies = [
     { name = "certifi" },
@@ -326,7 +326,7 @@ dev = [{ name = "pytest", specifier = ">=9.0.2" }]
 
 [[package]]
 name = "extraform"
-version = "0.2.1"
+version = "0.3.0"
 source = { editable = "../extraform" }
 dependencies = [
     { name = "certifi" },
@@ -367,7 +367,7 @@ provides-extras = ["dev"]
 
 [[package]]
 name = "extrasheet"
-version = "0.2.1"
+version = "0.3.0"
 source = { editable = "../extrasheet" }
 dependencies = [
     { name = "httpx" },
@@ -387,7 +387,7 @@ provides-extras = ["dev"]
 
 [[package]]
 name = "extraslide"
-version = "0.2.1"
+version = "0.2.2"
 source = { editable = "../extraslide" }
 dependencies = [
     { name = "httpx" },
@@ -409,7 +409,7 @@ provides-extras = ["dev"]
 
 [[package]]
 name = "extrasuite"
-version = "0.7.0"
+version = "0.8.0"
 source = { editable = "." }
 dependencies = [
     { name = "extradoc" },
@@ -417,6 +417,7 @@ dependencies = [
     { name = "extrascript" },
     { name = "extrasheet" },
     { name = "extraslide" },
+    { name = "keyring" },
     { name = "markdown" },
     { name = "tomli", marker = "python_full_version < '3.11'" },
 ]
@@ -442,6 +443,7 @@ requires-dist = [
     { name = "extrascript", editable = "../extrascript" },
     { name = "extrasheet", editable = "../extrasheet" },
     { name = "extraslide", editable = "../extraslide" },
+    { name = "keyring", specifier = ">=25.0" },
     { name = "markdown", specifier = ">=3.0" },
     { name = "tomli", marker = "python_full_version < '3.11'", specifier = ">=2.0" },
 ]

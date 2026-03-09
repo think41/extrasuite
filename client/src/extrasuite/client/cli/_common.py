@@ -200,6 +200,8 @@ def _auth_kwargs(args: Any) -> dict[str, Any]:
         kwargs["gateway_config_path"] = args.gateway
     if getattr(args, "service_account", None):
         kwargs["service_account_path"] = args.service_account
+    if getattr(args, "profile", None):
+        kwargs["profile"] = args.profile
     return kwargs
 
 

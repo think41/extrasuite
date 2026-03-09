@@ -27,7 +27,7 @@ import uuid
 from dataclasses import dataclass
 from datetime import datetime
 from pathlib import Path
-from typing import Any
+from typing import Any, Protocol
 
 # Try to use certifi for SSL certificates (common on macOS)
 try:
@@ -36,6 +36,21 @@ try:
     SSL_CONTEXT = ssl.create_default_context(cafile=certifi.where())
 except ImportError:
     SSL_CONTEXT = ssl.create_default_context()
+
+try:
+    import keyring as _keyring
+
+    _KEYRING_AVAILABLE = True
+except ImportError:
+    _KEYRING_AVAILABLE = False
+
+_KEYRING_SERVICE = "extrasuite"
+_DEFAULT_PROFILE = "default"
+_GOOGLE_SCOPE_PREFIX = "https://www.googleapis.com/auth/"
+
+# Client-side caps on returned token lifetimes
+_SA_TOKEN_CAP_SECONDS = 3600   # 60 min for service account tokens
+_DWD_TOKEN_CAP_SECONDS = 600   # 10 min for domain-wide delegation tokens
 
 
 @dataclass
@@ -93,20 +108,13 @@ class Credential:
         )
 
 
-# Token cache TTL constants
-SA_TOKEN_CACHE_SECONDS = 3600  # 60 min for service account tokens
-DWD_TOKEN_CACHE_SECONDS = 600  # 10 min for domain-wide delegation tokens
-
-_GOOGLE_SCOPE_PREFIX = "https://www.googleapis.com/auth/"
-
-
 def _parse_first_google_credential(
     response: dict[str, Any], cmd_type: str
 ) -> Credential:
     """Extract and normalise the first Google credential from a TokenResponse dict.
 
-    Caps expiry at the appropriate client-side TTL so the cache lifetime is
-    bounded regardless of what the server returns.
+    Caps expiry at the appropriate client-side TTL so the lifetime is bounded
+    regardless of what the server returns.
     """
     raw_creds: list[dict[str, Any]] = response.get("credentials", [])
     if not raw_creds:
@@ -127,10 +135,8 @@ def _parse_first_google_credential(
         raw_expires = 0.0
 
     kind = raw.get("kind", "bearer_sa")
-    cache_cap = (
-        DWD_TOKEN_CACHE_SECONDS if kind == "bearer_dwd" else SA_TOKEN_CACHE_SECONDS
-    )
-    expires_at = min(raw_expires, time.time() + cache_cap) if raw_expires else 0.0
+    cap = _DWD_TOKEN_CAP_SECONDS if kind == "bearer_dwd" else _SA_TOKEN_CAP_SECONDS
+    expires_at = min(raw_expires, time.time() + cap) if raw_expires else 0.0
 
     return Credential(
         provider=raw.get("provider", "google"),
@@ -181,12 +187,67 @@ class SessionToken:
         )
 
 
+class SessionStore(Protocol):
+    """Protocol for session token storage backends."""
+
+    def load(self, profile_name: str) -> SessionToken | None: ...
+    def save(self, profile_name: str, token: SessionToken) -> None: ...
+    def delete(self, profile_name: str) -> None: ...
+
+
+class KeyringSessionStore:
+    """Session token storage backed by the OS keyring."""
+
+    def load(self, profile_name: str) -> SessionToken | None:
+        raw = _keyring.get_password(_KEYRING_SERVICE, profile_name)
+        if not raw:
+            return None
+        try:
+            token = SessionToken.from_dict(json.loads(raw))
+            return token if token.is_valid() else None
+        except (json.JSONDecodeError, KeyError):
+            return None
+
+    def save(self, profile_name: str, token: SessionToken) -> None:
+        _keyring.set_password(_KEYRING_SERVICE, profile_name, json.dumps(token.to_dict()))
+
+    def delete(self, profile_name: str) -> None:
+        with contextlib.suppress(Exception):
+            _keyring.delete_password(_KEYRING_SERVICE, profile_name)
+
+
+class InMemorySessionStore:
+    """In-memory session token storage (for testing and non-persistent use)."""
+
+    def __init__(self) -> None:
+        self._tokens: dict[str, SessionToken] = {}
+
+    def load(self, profile_name: str) -> SessionToken | None:
+        token = self._tokens.get(profile_name)
+        if token and token.is_valid():
+            return token
+        return None
+
+    def save(self, profile_name: str, token: SessionToken) -> None:
+        self._tokens[profile_name] = token
+
+    def delete(self, profile_name: str) -> None:
+        self._tokens.pop(profile_name, None)
+
+
 class CredentialsManager:
     """Manages credentials for Google API access.
 
     Supports two authentication modes:
     1. ExtraSuite protocol - obtains short-lived tokens via the v2 session flow
     2. Service account file - uses credentials from a JSON key file
+
+    Session tokens are stored in the OS keyring (macOS Keychain, Linux
+    SecretService, Windows Credential Locker).  Access tokens are never
+    written to disk.
+
+    Profile metadata (name → email, active pointer) is kept in
+    ``~/.config/extrasuite/profiles.json`` (0600). No tokens in that file.
 
     Precedence order for configuration:
     1. Constructor parameters
@@ -198,14 +259,14 @@ class CredentialsManager:
         server_url: Base URL for the ExtraSuite server
             (e.g., "https://server.com").
         service_account_path: Path to service account JSON file (optional).
-        token_cache_path: Path to cache tokens. Defaults to ~/.config/extrasuite/token.json
-        gateway_config_path: Path to gateway.json. Defaults to ~/.config/extrasuite/gateway.json.
-            If explicitly set and file doesn't exist, raises FileNotFoundError.
+        gateway_config_path: Path to gateway.json. Defaults to
+            ~/.config/extrasuite/gateway.json.  If explicitly set and file
+            doesn't exist, raises FileNotFoundError.
+        profile: Profile name to use.  Defaults to the active profile in
+            profiles.json, or "default" if no active profile is set.
     """
 
-    CREDENTIALS_CACHE_DIR = Path.home() / ".config" / "extrasuite" / "credentials"
     GATEWAY_CONFIG_PATH = Path.home() / ".config" / "extrasuite" / "gateway.json"
-    SESSION_CACHE_PATH = Path.home() / ".config" / "extrasuite" / "session.json"
     DEFAULT_CALLBACK_TIMEOUT = 300  # 5 minutes for headless mode
 
     def __init__(
@@ -214,11 +275,16 @@ class CredentialsManager:
         service_account_path: str | Path | None = None,
         gateway_config_path: str | Path | None = None,
         headless: bool | None = None,
+        profile: str | None = None,
+        session_store: SessionStore | None = None,
     ) -> None:
         # Store explicit gateway path (used by _load_gateway_config)
         self._gateway_config_path = (
             Path(gateway_config_path) if gateway_config_path else None
         )
+
+        # Profile name override (None = use active from profiles.json)
+        self._profile_name = profile
 
         # Headless mode: no browser, print URL and prompt for code on stderr
         # Precedence: constructor param > EXTRASUITE_HEADLESS env var
@@ -258,6 +324,21 @@ class CredentialsManager:
         # ExtraSuite protocol takes precedence if both are configured
         self._use_extrasuite = has_extrasuite
 
+        if session_store is not None:
+            self._session_store: SessionStore = session_store
+        elif self._use_extrasuite:
+            if not _KEYRING_AVAILABLE:
+                raise RuntimeError(
+                    "keyring package is required but is not installed.\n"
+                    "Install it with: pip install keyring"
+                )
+            self._session_store = KeyringSessionStore()
+        else:
+            self._session_store = InMemorySessionStore()
+
+        # Migrate legacy plain-text files from pre-keyring versions
+        self._migrate_legacy_files()
+
     @property
     def auth_mode(self) -> str:
         """Return the active authentication mode."""
@@ -280,16 +361,18 @@ class CredentialsManager:
 
         ``reason`` is agent-supplied user intent logged server-side for auditing.
 
-        For ExtraSuite mode: validates the session, POSTs to /api/auth/token,
-        caches the first Google credential by command type.
+        For ExtraSuite mode: validates the session, POSTs to /api/auth/token and
+        returns the credential.  Access tokens are never written to disk.
 
         For service account file mode: generates a token directly from the SA key.
-        Only meaningful for SA-backed command types; DWD is not supported in this mode.
+        Only meaningful for SA-backed command types; DWD is not supported in this
+        mode.
 
         Args:
             command: Dict representation of a typed Command (must include ``type``).
             reason: Agent-supplied user intent (logged for auditing).
-            force_refresh: If True, bypass the cache and re-exchange.
+            force_refresh: Accepted for API compatibility; has no effect since
+                access tokens are no longer cached.
 
         Returns:
             A Credential object with ``token``, ``kind``, ``service_account_email``, etc.
@@ -301,18 +384,205 @@ class CredentialsManager:
                 command=command,
                 cmd_type=cmd_type,
                 reason=reason,
-                force_refresh=force_refresh,
             )
         else:
-            return self._get_service_account_credential(
-                cmd_type=cmd_type, force_refresh=force_refresh
-            )
+            return self._get_service_account_credential()
 
-    def _credential_cache_path(self, cmd_type: str) -> Path:
-        """Return the cache file path for a given command type."""
-        # Sanitise cmd_type so it's safe as a filename (dots are fine, slashes aren't)
-        safe = cmd_type.replace("/", "_")
-        return self.CREDENTIALS_CACHE_DIR / f"{safe}.json"
+    # =========================================================================
+    # Profile helpers
+    # =========================================================================
+
+    def _profiles_path(self) -> Path:
+        return Path.home() / ".config" / "extrasuite" / "profiles.json"
+
+    def _load_profiles(self) -> dict[str, Any]:
+        """Read profiles.json; return empty structure if absent or invalid."""
+        path = self._profiles_path()
+        if not path.exists():
+            return {"profiles": {}, "active": None}
+        try:
+            return json.loads(path.read_text())
+        except (json.JSONDecodeError, OSError):
+            return {"profiles": {}, "active": None}
+
+    def _save_profiles(self, data: dict[str, Any]) -> None:
+        """Write profiles.json with 0600 permissions."""
+        self._write_secure_json(self._profiles_path(), data)
+
+    def _resolve_profile(self) -> str:
+        """Return the profile name to use for this operation."""
+        if self._profile_name:
+            return self._profile_name
+        data = self._load_profiles()
+        active = data.get("active")
+        return active if active else _DEFAULT_PROFILE
+
+    # =========================================================================
+    # Session Token Methods (keyring-backed)
+    # =========================================================================
+
+    def _load_session_token(self, profile_name: str | None = None) -> SessionToken | None:
+        """Load session token for the given profile."""
+        name = profile_name if profile_name is not None else self._resolve_profile()
+        return self._session_store.load(name)
+
+    def _save_session_token(self, token: SessionToken, profile_name: str) -> None:
+        """Save session token and update profile email in profiles.json."""
+        self._session_store.save(profile_name, token)
+        data = self._load_profiles()
+        data.setdefault("profiles", {})[profile_name] = token.email
+        self._save_profiles(data)
+
+    def _revoke_server_side(self, raw_token: str) -> None:
+        """Revoke a session token on the server.  Best-effort; logs warning on failure."""
+        if not self._server_base_url:
+            return
+        try:
+            token_hash = hashlib.sha256(raw_token.encode()).hexdigest()
+            revoke_url = f"{self._server_base_url}/api/admin/sessions/{token_hash}"
+            req = urllib.request.Request(
+                revoke_url,
+                headers={"Authorization": f"Bearer {raw_token}"},
+                method="DELETE",
+            )
+            try:
+                urllib.request.urlopen(req, timeout=10, context=SSL_CONTEXT)
+            except Exception as e:
+                print(
+                    f"Warning: server-side session revocation failed ({e}).\n"
+                    "Local credentials cleared, but your session may still be active on the server.",
+                    file=sys.stderr,
+                )
+        except Exception:
+            pass
+
+    def _delete_session_token(self, profile_name: str) -> None:
+        """Remove the session token for a profile from storage."""
+        self._session_store.delete(profile_name)
+
+    def _migrate_legacy_files(self) -> None:
+        """Delete legacy plain-text session/credential files from pre-keyring versions."""
+        legacy_session = Path.home() / ".config" / "extrasuite" / "session.json"
+        legacy_creds_dir = Path.home() / ".config" / "extrasuite" / "credentials"
+        with contextlib.suppress(Exception):
+            legacy_session.unlink(missing_ok=True)
+        if legacy_creds_dir.exists():
+            for path in legacy_creds_dir.glob("*.json"):
+                with contextlib.suppress(Exception):
+                    path.unlink(missing_ok=True)
+            with contextlib.suppress(Exception):
+                legacy_creds_dir.rmdir()
+
+    # =========================================================================
+    # Public auth commands
+    # =========================================================================
+
+    def login(self, *, force: bool = False, profile: str | None = None) -> SessionToken:
+        """Log in and obtain a 30-day session token.
+
+        If a valid session already exists and force=False, returns it immediately.
+
+        If force=True, revokes any existing session server-side before issuing a
+        new one.  This is the correct way to rotate credentials if a session may
+        be compromised.
+
+        Note: This call collects device fingerprint information (MAC address,
+        hostname, OS, platform) that is sent to the ExtraSuite server for audit.
+
+        Args:
+            force: If True, always create a new session even if one exists.
+            profile: Profile name to log in to.  Defaults to the active profile,
+                or "default" if none is set.
+
+        Returns:
+            A valid SessionToken.
+        """
+        profile_name = profile if profile is not None else self._resolve_profile()
+        if force:
+            existing = self._load_session_token(profile_name)
+            if existing:
+                self._revoke_server_side(existing.raw_token)
+            self._delete_session_token(profile_name)
+        session = self._get_or_create_session_token(force=force, profile_name=profile_name)
+        # Set this profile as active
+        data = self._load_profiles()
+        data["active"] = profile_name
+        self._save_profiles(data)
+        return session
+
+    def logout(self, *, profile: str | None = None) -> None:
+        """Revoke the session server-side and remove it from the OS keyring.
+
+        Args:
+            profile: Profile to log out.  Defaults to the active profile.
+        """
+        profile_name = profile if profile is not None else self._resolve_profile()
+        session = self._load_session_token(profile_name)
+        if session:
+            self._revoke_server_side(session.raw_token)
+        self._delete_session_token(profile_name)
+        data = self._load_profiles()
+        data.get("profiles", {}).pop(profile_name, None)
+        if data.get("active") == profile_name:
+            data["active"] = None
+        self._save_profiles(data)
+
+    def activate(self, profile_name: str) -> None:
+        """Set the active profile (no network call).
+
+        Args:
+            profile_name: Name of an existing profile to activate.
+
+        Raises:
+            ValueError: If the profile is not found in profiles.json.
+        """
+        data = self._load_profiles()
+        if profile_name not in data.get("profiles", {}):
+            raise ValueError(
+                f"Profile '{profile_name}' not found. "
+                f"Run: extrasuite auth login --profile {profile_name}"
+            )
+        data["active"] = profile_name
+        self._save_profiles(data)
+
+    def status(self) -> dict[str, Any]:
+        """Return current authentication status.
+
+        Returns:
+            Dict with keys:
+            - profiles: mapping of profile name → {email, active, expires_at,
+              days_remaining} or {email, active=False, expired=True}
+            - active: name of the active profile, or None
+        """
+        if not self._use_extrasuite:
+            return {"profiles": {}, "active": None}
+
+        data = self._load_profiles()
+        profiles: dict[str, Any] = data.get("profiles", {})
+        active = data.get("active")
+
+        result: dict[str, Any] = {"profiles": {}, "active": active}
+        for name, email in profiles.items():
+            session = self._load_session_token(name)
+            if session:
+                remaining = int(session.expires_at - time.time())
+                result["profiles"][name] = {
+                    "email": email,
+                    "active": True,
+                    "expires_at": session.expires_at,
+                    "days_remaining": remaining // 86400,
+                }
+            else:
+                result["profiles"][name] = {
+                    "email": email,
+                    "active": False,
+                    "expired": True,
+                }
+        return result
+
+    # =========================================================================
+    # Credential exchange (no disk caching)
+    # =========================================================================
 
     def _get_extrasuite_credential(
         self,
@@ -320,34 +590,22 @@ class CredentialsManager:
         command: dict[str, Any],
         cmd_type: str,
         reason: str,
-        force_refresh: bool,
     ) -> Credential:
-        """Get credential via ExtraSuite server (v2 session flow)."""
-        cache_path = self._credential_cache_path(cmd_type)
-        if not force_refresh:
-            cached = self._load_cached_credential(cache_path)
-            if cached and cached.is_valid():
-                return cached
+        """Get credential via ExtraSuite server (v2 session flow).
 
+        Always fetches fresh — access tokens are never written to disk.
+        """
         session = self._get_or_create_session_token()
         result = self._exchange_session_for_credential(
             session, command=command, reason=reason
         )
-        # result["credentials"] is a list; pick the first Google credential
-        cred = _parse_first_google_credential(result, cmd_type)
-        self._save_credential(cache_path, cred)
-        return cred
+        return _parse_first_google_credential(result, cmd_type)
 
-    def _get_service_account_credential(
-        self, *, cmd_type: str, force_refresh: bool
-    ) -> Credential:
-        """Get credential from a service account JSON key file."""
-        cache_path = self._credential_cache_path(cmd_type)
-        if not force_refresh:
-            cached = self._load_cached_credential(cache_path)
-            if cached and cached.is_valid():
-                return cached
+    def _get_service_account_credential(self) -> Credential:
+        """Get credential from a service account JSON key file.
 
+        Generates a fresh token on every call — no disk caching.
+        """
         try:
             from google.auth.transport.requests import (  # type: ignore[import-not-found]
                 Request,
@@ -373,7 +631,7 @@ class CredentialsManager:
         )
         credentials.refresh(Request())
 
-        cred = Credential(
+        return Credential(
             provider="google",
             kind="bearer_sa",
             token=credentials.token,
@@ -381,35 +639,6 @@ class CredentialsManager:
             scopes=[],
             metadata={"service_account_email": credentials.service_account_email},
         )
-        self._save_credential(cache_path, cred)
-        return cred
-
-    def _load_cached_credential(self, cache_path: Path) -> Credential | None:
-        """Load a cached credential if it exists."""
-        if not cache_path.exists():
-            return None
-        try:
-            data = json.loads(cache_path.read_text())
-            return Credential.from_dict(data)
-        except (json.JSONDecodeError, KeyError):
-            return None
-
-    def _write_secure_json(self, path: Path, data: dict[str, Any]) -> None:
-        """Write JSON atomically with 0600 permissions from the start (no chmod race)."""
-        path.parent.mkdir(parents=True, exist_ok=True)
-        path.parent.chmod(stat.S_IRWXU)
-        temp_path = path.with_suffix(".tmp")
-        content = json.dumps(data, indent=2).encode()
-        fd = os.open(str(temp_path), os.O_WRONLY | os.O_CREAT | os.O_TRUNC, 0o600)
-        try:
-            os.write(fd, content)
-        finally:
-            os.close(fd)
-        temp_path.rename(path)
-
-    def _save_credential(self, cache_path: Path, cred: Credential) -> None:
-        """Save credential to cache file with secure permissions."""
-        self._write_secure_json(cache_path, cred.to_dict())
 
     def _load_gateway_config(self) -> dict[str, str] | None:
         """Load endpoint URLs from gateway.json if it exists.
@@ -445,7 +674,7 @@ class CredentialsManager:
             return None
 
     # =========================================================================
-    # Session Token Methods (v2 Protocol)
+    # Session Token Creation (v2 Protocol)
     # =========================================================================
 
     @staticmethod
@@ -458,150 +687,23 @@ class CredentialsManager:
             "device_platform": platform.platform(),
         }
 
-    def _load_session_token(self) -> SessionToken | None:
-        """Load cached session token if it exists and is still valid."""
-        if not self.SESSION_CACHE_PATH.exists():
-            return None
-        try:
-            data = json.loads(self.SESSION_CACHE_PATH.read_text())
-            token = SessionToken.from_dict(data)
-            if token.is_valid():
-                return token
-            return None
-        except (json.JSONDecodeError, KeyError):
-            return None
-
-    def _save_session_token(self, token: SessionToken) -> None:
-        """Save session token to cache file with secure permissions."""
-        self._write_secure_json(self.SESSION_CACHE_PATH, token.to_dict())
-
-    def _revoke_and_clear_session(self) -> None:
-        """Revoke the current session server-side and clear the local session cache.
-
-        Best-effort: prints a warning to stderr if the server call fails, but always
-        removes the local cache file so the caller can proceed to issue a new session.
-        """
-        if not self.SESSION_CACHE_PATH.exists() or not self._server_base_url:
-            return
-        try:
-            data = json.loads(self.SESSION_CACHE_PATH.read_text())
-            raw_token = data.get("raw_token", "")
-            if raw_token:
-                token_hash = hashlib.sha256(raw_token.encode()).hexdigest()
-                revoke_url = f"{self._server_base_url}/api/admin/sessions/{token_hash}"
-                req = urllib.request.Request(
-                    revoke_url,
-                    headers={"Authorization": f"Bearer {raw_token}"},
-                    method="DELETE",
-                )
-                try:
-                    urllib.request.urlopen(req, timeout=10, context=SSL_CONTEXT)
-                except Exception as e:
-                    print(
-                        f"Warning: server-side session revocation failed ({e}).\n"
-                        "Local credentials cleared, but your session may still be active on the server.",
-                        file=sys.stderr,
-                    )
-        except Exception:
-            pass
-        with contextlib.suppress(Exception):
-            self.SESSION_CACHE_PATH.unlink(missing_ok=True)
-
-    def login(self, *, force: bool = False) -> SessionToken:
-        """Log in and obtain a 30-day session token.
-
-        If a valid session already exists and force=False, returns it immediately
-        (headless — no browser required).
-
-        If force=True, revokes any existing session server-side before issuing a new
-        one. This is the correct way to rotate credentials if a session may be
-        compromised.
-
-        Note: This call collects device fingerprint information (MAC address, hostname,
-        OS, platform) that is sent to the ExtraSuite server for audit purposes.
-
-        Args:
-            force: If True, always create a new session even if one exists.
-
-        Returns:
-            A valid SessionToken.
-        """
-        if force:
-            self._revoke_and_clear_session()
-            # Clear short-lived credential caches so the new session starts fully fresh.
-            cred_dir = self.CREDENTIALS_CACHE_DIR
-            if cred_dir.exists():
-                for path in cred_dir.glob("*.json"):
-                    with contextlib.suppress(Exception):
-                        path.unlink(missing_ok=True)
-        return self._get_or_create_session_token(force=force)
-
-    def logout(self) -> None:
-        """Revoke the session token server-side and clear all local credential caches.
-
-        Clears:
-        - Session token (~/.config/extrasuite/session.json)
-        - All cached credentials (~/.config/extrasuite/credentials/*.json)
-        """
-        self._revoke_and_clear_session()
-        cred_dir = self.CREDENTIALS_CACHE_DIR
-        if cred_dir.exists():
-            for path in cred_dir.glob("*.json"):
-                with contextlib.suppress(Exception):
-                    path.unlink(missing_ok=True)
-
-    def status(self) -> dict[str, Any]:
-        """Return current authentication status.
-
-        Returns:
-            Dict with keys:
-            - session: dict with {active, email, expires_at, days_remaining} or None
-            - credentials: dict mapping command_type → {cached, expires_at, kind}
-        """
-        result: dict[str, Any] = {
-            "session": None,
-            "credentials": {},
-        }
-
-        session = self._load_session_token()
-        if session:
-            remaining = int(session.expires_at - time.time())
-            result["session"] = {
-                "active": True,
-                "email": session.email,
-                "expires_at": session.expires_at,
-                "days_remaining": remaining // 86400,
-            }
-
-        cred_dir = self.CREDENTIALS_CACHE_DIR
-        if cred_dir.exists():
-            for cache_file in sorted(cred_dir.glob("*.json")):
-                cmd_type = cache_file.stem.replace("_", ".", 1)  # restore first dot
-                try:
-                    data = json.loads(cache_file.read_text())
-                    cred = Credential.from_dict(data)
-                    result["credentials"][cmd_type] = {
-                        "cached": cred.is_valid(),
-                        "expires_at": cred.expires_at,
-                        "kind": cred.kind,
-                    }
-                except Exception:
-                    result["credentials"][cmd_type] = {"cached": False, "invalid": True}
-
-        return result
-
-    def _get_or_create_session_token(self, force: bool = False) -> SessionToken:
+    def _get_or_create_session_token(
+        self, force: bool = False, profile_name: str | None = None
+    ) -> SessionToken:
         """Get an existing valid session token or create a new one.
 
-        If a valid session exists in the cache, returns it immediately (headless).
-        Otherwise initiates Phase 1: browser/headless OAuth flow to get an auth code,
-        then exchanges it for a 30-day session token.
+        If a valid session exists in the keyring, returns it immediately.
+        Otherwise initiates Phase 1: browser/headless OAuth flow to get an auth
+        code, then exchanges it for a 30-day session token.
 
         Args:
-            force: If True, always create a new session (for `auth login` command).
+            force: If True, always create a new session (skips cache check).
+            profile_name: Profile to load/store token for.  Defaults to
+                _resolve_profile().
         """
+        name = profile_name if profile_name is not None else self._resolve_profile()
         if not force:
-            cached = self._load_session_token()
+            cached = self._load_session_token(name)
             if cached:
                 return cached
 
@@ -649,7 +751,7 @@ class CredentialsManager:
             email=result["email"],
             expires_at=expires_at_dt.timestamp(),
         )
-        self._save_session_token(session)
+        self._save_session_token(session, name)
         return session
 
     def _run_browser_flow(self, port: int, auth_url: str, display_msg: str) -> str:
@@ -731,17 +833,25 @@ class CredentialsManager:
     def _run_browser_flow_for_session(self) -> str:
         """Run OAuth browser flow and return the auth code.
 
-        In headless mode: prints URL to stderr and reads code from stdin with timeout.
-        Otherwise: delegates to _run_browser_flow (HTTP callback + optional stdin).
-        """
-        port = self._find_free_port()
-        auth_url = f"{self._server_base_url}/api/token/auth?port={port}"
+        In headless mode: calls /api/token/auth (no port), which shows the auth
+        code on an HTML page instead of redirecting to localhost. Prints the URL
+        to stderr and reads the code from stdin — no local callback server needed.
 
+        Otherwise: starts a local HTTP callback server, opens the browser, and
+        waits for the redirect from the ExtraSuite server.
+        """
         if self._headless:
+            auth_url = f"{self._server_base_url}/api/token/auth"
             print(
-                f"\nOpen this URL to authenticate:\n\n  {auth_url}\n", file=sys.stderr
+                f"\nOpen this URL to authenticate:\n\n  {auth_url}\n",
+                file=sys.stderr,
             )
-            print("Paste the auth code here: ", end="", flush=True, file=sys.stderr)
+            print(
+                "After authenticating, copy the code shown on the page and paste it here: ",
+                end="",
+                flush=True,
+                file=sys.stderr,
+            )
             code_holder: list[str] = []
 
             def _read_code() -> None:
@@ -762,6 +872,8 @@ class CredentialsManager:
                 )
             return code_holder[0]
 
+        port = self._find_free_port()
+        auth_url = f"{self._server_base_url}/api/token/auth?port={port}"
         return self._run_browser_flow(port, auth_url, "Open this URL to authenticate:")
 
     def _exchange_session_for_credential(
@@ -895,3 +1007,16 @@ class CredentialsManager:
                 self.wfile.write(content.encode())
 
         return CallbackHandler
+
+    def _write_secure_json(self, path: Path, data: dict[str, Any]) -> None:
+        """Write JSON atomically with 0600 permissions from the start (no chmod race)."""
+        path.parent.mkdir(parents=True, exist_ok=True)
+        path.parent.chmod(stat.S_IRWXU)
+        temp_path = path.with_suffix(".tmp")
+        content = json.dumps(data, indent=2).encode()
+        fd = os.open(str(temp_path), os.O_WRONLY | os.O_CREAT | os.O_TRUNC, 0o600)
+        try:
+            os.write(fd, content)
+        finally:
+            os.close(fd)
+        temp_path.rename(path)

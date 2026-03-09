@@ -5,7 +5,7 @@ This module contains all HTTP endpoints. Business logic is delegated to:
 - Database: Credential storage and OAuth state management
 
 Endpoints:
-- GET  /api/token/auth             - Phase 1 browser entry point
+- GET  /api/token/auth             - Phase 1 browser entry point (port= for callback; omit for headless)
 - GET  /api/auth/callback          - OAuth callback
 - POST /api/auth/session/exchange  - Exchange auth code for 30-day session token
 - POST /api/auth/token             - Exchange session token for credential(s) via typed Command
@@ -109,29 +109,34 @@ async def logout(request: Request) -> dict:
 @limiter.limit("10/minute")
 async def start_token_auth(
     request: Request,
-    port: int = Query(..., description="CLI localhost callback port", ge=MIN_PORT, le=MAX_PORT),
     settings: Settings = Depends(get_settings),
     db: Database = Depends(get_database),
+    port: int | None = Query(None, description="CLI localhost callback port", ge=MIN_PORT, le=MAX_PORT),
 ) -> RedirectResponse | HTMLResponse:
     """Start the Phase 1 browser flow for CLI session establishment.
 
-    The CLI should call this with a port parameter for its localhost server.
-    Example: /api/token/auth?port=8085
+    With ?port=N (interactive): after OAuth, redirects to localhost:{port} where
+    the CLI's local callback server picks up the auth code.
+
+    Without port (headless): after OAuth, displays the auth code on an HTML page
+    so the user can copy-paste it into the CLI.
 
     Flow:
-    1. If user has valid browser session → generate auth code and redirect to CLI
+    1. If user has valid browser session → generate auth code and redirect/show immediately
     2. Otherwise → redirect to Google OAuth (callback handles token generation)
     """
-    cli_redirect = _build_cli_redirect_url(port)
+    headless = port is None
+    cli_redirect = "headless" if headless else _build_cli_redirect_url(port)  # type: ignore[arg-type]
 
-    # If user has a valid session, generate token directly
     email = request.session.get("email")
     if email:
+        if headless:
+            logger.info("Headless: session found, generating code", extra={"email": email})
+            return await _generate_auth_code_and_show_html(db, settings, email)
         logger.info("Session found, generating token", extra={"email": email, "cli_port": port})
         return await _generate_auth_code_and_redirect(db, settings, email, cli_redirect)
 
-    # No session - start OAuth flow
-    logger.info("No session, starting OAuth flow", extra={"cli_port": port})
+    logger.info("No session, starting OAuth flow", extra={"headless": headless, "cli_port": port})
     state = secrets.token_urlsafe(32)
     await db.save_state(state, cli_redirect)
 
@@ -237,9 +242,9 @@ async def google_callback(
     # Set session cookie so user doesn't need to re-authenticate
     request.session["email"] = user_email
 
-    # Check if this is a UI login (redirect is "/") vs CLI login
+    # Dispatch based on redirect target
     if cli_redirect == "/":
-        # Ensure service account exists for UI login (no auth code needed)
+        # UI login: ensure service account exists, redirect to home
         token_generator = TokenGenerator(database=db, settings=settings)
         try:
             sa_email = await token_generator.ensure_service_account(user_email)
@@ -254,6 +259,10 @@ async def google_callback(
             )
             # Continue to home page - user can retry later
         return RedirectResponse(url="/")
+
+    if cli_redirect == "headless":
+        # Headless CLI login: show auth code on page instead of redirecting
+        return await _generate_auth_code_and_show_html(db, settings, user_email)
 
     return await _generate_auth_code_and_redirect(db, settings, user_email, cli_redirect)
 
@@ -586,6 +595,84 @@ async def revoke_all_sessions(
 # =============================================================================
 # Private Helpers
 # =============================================================================
+
+
+async def _generate_auth_code_and_show_html(
+    db: Database, settings: Settings, email: str
+) -> HTMLResponse:
+    """Ensure service account exists and display the auth code on an HTML page.
+
+    Used by the headless flow: no localhost callback server is available, so the
+    code is shown directly so the user can copy and paste it into the CLI.
+    """
+    token_generator = TokenGenerator(database=db, settings=settings)
+
+    try:
+        service_account_email = await token_generator.ensure_service_account(email)
+    except Exception as e:
+        logger.exception("Service account setup failed (headless)", extra={"email": email, "error": str(e)})
+        return _cli_headless_error_response()
+
+    logger.info(
+        "Headless: service account ready",
+        extra={"email": email, "service_account": service_account_email},
+    )
+
+    auth_code = secrets.token_urlsafe(32)
+    await db.save_auth_code(auth_code, service_account_email, email)
+
+    return HTMLResponse(
+        content=f"""
+        <!DOCTYPE html>
+        <html>
+        <head>
+            <title>Authentication Successful</title>
+            <style>
+                body {{ font-family: sans-serif; max-width: 600px; margin: 60px auto; padding: 0 20px; }}
+                h1 {{ color: #1a73e8; }}
+                .code-box {{
+                    background: #f1f3f4; border-radius: 8px; padding: 16px 20px;
+                    font-family: monospace; font-size: 1.1em; letter-spacing: 0.5px;
+                    word-break: break-all; margin: 20px 0;
+                }}
+                .instructions {{ color: #555; }}
+            </style>
+        </head>
+        <body>
+            <h1>Authentication Successful</h1>
+            <p class="instructions">Copy the code below and paste it into your terminal:</p>
+            <div class="code-box" id="auth-code">{auth_code}</div>
+            <p class="instructions">You can close this window after copying the code.</p>
+            <script>
+                // Auto-select the code for easy copying
+                var el = document.getElementById('auth-code');
+                var range = document.createRange();
+                range.selectNodeContents(el);
+                window.getSelection().removeAllRanges();
+                window.getSelection().addRange(range);
+            </script>
+        </body>
+        </html>
+        """
+    )
+
+
+def _cli_headless_error_response() -> HTMLResponse:
+    """Return an HTML error page for the headless flow."""
+    return HTMLResponse(
+        content="""
+        <!DOCTYPE html>
+        <html>
+        <head><title>Authentication Error</title></head>
+        <body style="font-family: sans-serif; max-width: 600px; margin: 60px auto; padding: 0 20px;">
+            <h1 style="color: #d93025;">Authentication Error</h1>
+            <p>Authentication failed. Please close this window and try again.</p>
+            <p>If the problem persists, contact support.</p>
+        </body>
+        </html>
+        """,
+        status_code=400,
+    )
 
 
 def _build_cli_redirect_url(port: int) -> str:

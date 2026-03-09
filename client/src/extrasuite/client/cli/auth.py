@@ -1,4 +1,4 @@
-"""Auth CLI commands: login, logout, status."""
+"""Auth CLI commands: login, logout, status, activate."""
 
 from __future__ import annotations
 
@@ -15,17 +15,19 @@ def cmd_auth_login(args: Any) -> None:
     from extrasuite.client import CredentialsManager
 
     headless = getattr(args, "headless", False)
+    profile = getattr(args, "profile", None)
     manager = CredentialsManager(**_auth_kwargs(args), headless=headless)
 
-    # If a valid session already exists, warn before revoking it.
+    # Check if a valid session already exists for the target profile.
     info = manager.status()
-    if info.get("session") and info["session"].get("active"):
-        existing = info["session"]
-        expires_dt = datetime.fromtimestamp(existing["expires_at"], tz=timezone.utc)
+    resolved_profile = profile or info.get("active") or "default"
+    profile_info = info.get("profiles", {}).get(resolved_profile)
+    if profile_info and profile_info.get("active"):
+        expires_dt = datetime.fromtimestamp(profile_info["expires_at"], tz=timezone.utc)
         print(
-            f"Active session found for {existing['email']} "
-            f"(expires {expires_dt.strftime('%Y-%m-%d')}, "
-            f"{existing['days_remaining']}d remaining).",
+            f"Active session found for {profile_info['email']} "
+            f"(profile: {resolved_profile}, expires {expires_dt.strftime('%Y-%m-%d')}, "
+            f"{profile_info['days_remaining']}d remaining).",
             file=sys.stderr,
         )
         if sys.stdin.isatty():
@@ -38,18 +40,19 @@ def cmd_auth_login(args: Any) -> None:
         "Note: device fingerprint (MAC address, hostname, OS) will be sent to the server for audit.",
         file=sys.stderr,
     )
-    session = manager.login(force=True)
+    session = manager.login(force=True, profile=profile)
     expires_dt = datetime.fromtimestamp(session.expires_at, tz=timezone.utc)
-    print(f"Logged in as {session.email}.")
+    print(f"Logged in as {session.email} (profile: {resolved_profile}).")
     print(f"Session valid until {expires_dt.strftime('%Y-%m-%d %H:%M:%S')} UTC.")
 
 
 def cmd_auth_logout(args: Any) -> None:
-    """Revoke session token and clear cached credentials."""
+    """Revoke session token and remove it from the OS keyring."""
     from extrasuite.client import CredentialsManager
 
+    profile = getattr(args, "profile", None)
     manager = CredentialsManager(**_auth_kwargs(args))
-    manager.logout()
+    manager.logout(profile=profile)
     print("Logged out.")
 
 
@@ -62,27 +65,33 @@ def cmd_auth_status(args: Any) -> None:
     manager = CredentialsManager(**_auth_kwargs(args))
     info = manager.status()
 
-    session = info["session"]
-    if session:
-        expires_dt = datetime.fromtimestamp(session["expires_at"], tz=timezone.utc)
-        print(
-            f"Session: active (email={session['email']}, expires={expires_dt.strftime('%Y-%m-%d')} UTC, {session['days_remaining']}d remaining)"
-        )
-    else:
-        print("Session: not found or expired. Run: extrasuite auth login")
+    profiles = info.get("profiles", {})
+    active = info.get("active")
 
-    credentials = info["credentials"]
-    if not credentials:
-        print("Credentials: not cached")
+    if not profiles:
+        print("No profiles found. Run: extrasuite auth login")
         return
 
-    print("Credentials:")
-    for command_type, cred_info in sorted(credentials.items()):
-        if cred_info.get("invalid"):
-            print(f"  {command_type}: invalid cache")
-            continue
-        state = "cached" if cred_info.get("cached") else "expired"
-        expires_dt = datetime.fromtimestamp(cred_info["expires_at"], tz=timezone.utc)
-        print(
-            f"  {command_type}: {state} ({cred_info['kind']}, expires={expires_dt.strftime('%Y-%m-%d %H:%M:%S')} UTC)"
-        )
+    for name, pinfo in sorted(profiles.items()):
+        marker = "* " if name == active else "  "
+        if pinfo.get("active"):
+            expires_dt = datetime.fromtimestamp(pinfo["expires_at"], tz=timezone.utc)
+            print(
+                f"{marker}{name}: active (email={pinfo['email']}, "
+                f"expires={expires_dt.strftime('%Y-%m-%d')} UTC, "
+                f"{pinfo['days_remaining']}d remaining)"
+            )
+        else:
+            print(
+                f"{marker}{name}: expired or invalid (email={pinfo['email']}). "
+                f"Run: extrasuite auth login --profile {name}"
+            )
+
+
+def cmd_auth_activate(args: Any) -> None:
+    """Set the active profile."""
+    from extrasuite.client import CredentialsManager
+
+    manager = CredentialsManager(**_auth_kwargs(args))
+    manager.activate(args.profile_name)
+    print(f"Active profile set to '{args.profile_name}'.")
