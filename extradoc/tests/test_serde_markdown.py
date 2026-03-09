@@ -34,9 +34,22 @@ from extradoc.api_types._generated import (
     TextRun,
     TextStyle,
 )
+from extradoc.api_types._generated import (
+    NamedRange,
+    NamedRanges,
+    Range,
+    WeightedFontFamily,
+)
 from extradoc.api_types._generated import List as DocList, ListProperties
+from extradoc.reconcile._core import reindex_document
 from extradoc.serde import deserialize, serialize
 from extradoc.serde._from_markdown import markdown_to_document
+from extradoc.serde._special_elements import (
+    Blockquote,
+    Callout,
+    CodeBlock,
+    special_element_from_named_range,
+)
 from extradoc.serde._to_markdown import document_to_markdown
 
 
@@ -585,3 +598,731 @@ class TestMarkdownDiff:
         batches = reconcile(idx1, idx2)
         all_requests = [r for batch in batches for r in batch.requests]
         assert len(all_requests) == 0, f"Expected no ops, got: {all_requests}"
+
+# ---------------------------------------------------------------------------
+# Test 4: Special elements — push path (markdown → Document)
+# ---------------------------------------------------------------------------
+
+
+class TestSpecialElementsPush:
+    """Verify that special markdown syntax creates typed elements with named ranges."""
+
+    def _get_tables(self, doc: Document) -> list:
+        tab = (doc.tabs or [None])[0]
+        dt = tab.document_tab if tab else None
+        body = dt.body.content if dt and dt.body else []
+        return [se for se in body if se.table is not None]
+
+    def _get_named_ranges(self, doc: Document) -> dict:
+        tab = (doc.tabs or [None])[0]
+        dt = tab.document_tab if tab else None
+        return dt.named_ranges or {} if dt else {}
+
+    def test_code_fence_creates_table(self) -> None:
+        """```python code``` → 1×1 table with Courier New font."""
+        md = "```python\nprint('hello')\nx = 1\n```\n"
+        doc = markdown_to_document({"Tab_1": md})
+        tables = self._get_tables(doc)
+        assert len(tables) == 1
+        tbl = tables[0].table
+        assert tbl.rows == 1
+        assert tbl.columns == 1
+
+        # Check Courier New font in cell content
+        cell = tbl.table_rows[0].table_cells[0]
+        code_runs = [
+            pe.text_run
+            for se in (cell.content or [])
+            if se.paragraph
+            for pe in (se.paragraph.elements or [])
+            if pe.text_run
+            and pe.text_run.text_style
+            and pe.text_run.text_style.weighted_font_family
+            and pe.text_run.text_style.weighted_font_family.font_family == "Courier New"
+        ]
+        assert len(code_runs) > 0, "Expected Courier New runs in code block"
+
+    def test_code_fence_creates_named_range(self) -> None:
+        """```python code``` → named range extradoc:codeblock:python."""
+        md = "```python\nprint('hello')\n```\n"
+        doc = markdown_to_document({"Tab_1": md})
+        nr = self._get_named_ranges(doc)
+        assert "extradoc:codeblock:python" in nr
+        entries = nr["extradoc:codeblock:python"].named_ranges or []
+        assert len(entries) == 1
+        ranges = entries[0].ranges or []
+        assert len(ranges) == 1
+        assert ranges[0].start_index is not None
+        assert ranges[0].end_index is not None
+        assert ranges[0].end_index > ranges[0].start_index
+
+    def test_code_fence_no_language(self) -> None:
+        """``` code``` → named range extradoc:codeblock (no language suffix)."""
+        md = "```\nsome code\n```\n"
+        doc = markdown_to_document({"Tab_1": md})
+        nr = self._get_named_ranges(doc)
+        assert "extradoc:codeblock" in nr
+
+    def test_callout_creates_table(self) -> None:
+        """> [!WARNING]\\n> be careful → 1×1 table with amber background."""
+        md = "> [!WARNING]\n> Be careful here.\n"
+        doc = markdown_to_document({"Tab_1": md})
+        tables = self._get_tables(doc)
+        assert len(tables) == 1
+        tbl = tables[0].table
+        assert tbl.rows == 1 and tbl.columns == 1
+
+        # Check amber background
+        cell = tbl.table_rows[0].table_cells[0]
+        style = cell.table_cell_style
+        assert style is not None
+        assert style.background_color is not None
+
+    def test_callout_creates_named_range(self) -> None:
+        """> [!WARNING] → named range extradoc:callout:warning."""
+        md = "> [!WARNING]\n> Watch out!\n"
+        doc = markdown_to_document({"Tab_1": md})
+        nr = self._get_named_ranges(doc)
+        assert "extradoc:callout:warning" in nr
+
+    def test_blockquote_creates_table(self) -> None:
+        """> quoted text → 1×1 table."""
+        md = "> This is quoted text.\n"
+        doc = markdown_to_document({"Tab_1": md})
+        tables = self._get_tables(doc)
+        assert len(tables) == 1
+
+    def test_blockquote_creates_named_range(self) -> None:
+        """> text → named range extradoc:blockquote."""
+        md = "> A wise saying.\n"
+        doc = markdown_to_document({"Tab_1": md})
+        nr = self._get_named_ranges(doc)
+        assert "extradoc:blockquote" in nr
+
+    def test_multiple_same_type(self) -> None:
+        """Two code blocks → two named ranges under the same name, different IDs."""
+        md = "```python\nfirst\n```\n\n```python\nsecond\n```\n"
+        doc = markdown_to_document({"Tab_1": md})
+        nr = self._get_named_ranges(doc)
+        assert "extradoc:codeblock:python" in nr
+        entries = nr["extradoc:codeblock:python"].named_ranges or []
+        assert len(entries) == 2
+        # Different namedRangeIds
+        ids = {e.named_range_id for e in entries}
+        assert len(ids) == 2
+
+    def test_inline_code_push(self) -> None:
+        """`code` → TextRun with Courier New font."""
+        md = "Use `print()` here.\n"
+        doc = markdown_to_document({"Tab_1": md})
+        tab = (doc.tabs or [None])[0]
+        dt = tab.document_tab if tab else None
+        body = dt.body.content if dt and dt.body else []
+        code_runs = [
+            pe.text_run
+            for se in body
+            if se.paragraph
+            for pe in (se.paragraph.elements or [])
+            if pe.text_run
+            and pe.text_run.text_style
+            and pe.text_run.text_style.weighted_font_family
+            and pe.text_run.text_style.weighted_font_family.font_family == "Courier New"
+        ]
+        assert len(code_runs) == 1
+        assert "print()" in (code_runs[0].content or "")
+
+
+# ---------------------------------------------------------------------------
+# Test 5: Special elements — pull path (Document → markdown)
+# ---------------------------------------------------------------------------
+
+
+def _make_doc_with_named_range_table(
+    nr_name: str,
+    cell_text: str = "some content",
+) -> Document:
+    """Build a Document with a 1×1 table and an extradoc:* named range covering it."""
+    cell_para = StructuralElement(
+        paragraph=Paragraph(
+            elements=[
+                ParagraphElement(text_run=TextRun(content=cell_text + "\n")),
+            ],
+            paragraph_style=ParagraphStyle(
+                named_style_type=ParagraphStyleNamedStyleType.NORMAL_TEXT
+            ),
+        )
+    )
+    table = Table(
+        rows=1,
+        columns=1,
+        table_rows=[
+            TableRow(
+                table_cells=[
+                    TableCell(
+                        content=[cell_para],
+                        table_cell_style=TableCellStyle(),
+                    )
+                ]
+            )
+        ],
+    )
+    doc = _make_doc([StructuralElement(table=table)])
+    # Reindex to get real indices
+    doc = reindex_document(doc)
+
+    # Find the table's start_index
+    tab = doc.tabs[0]  # type: ignore[index]
+    body = tab.document_tab.body.content  # type: ignore[union-attr]
+    table_se = next(se for se in body if se.table is not None)
+    si = table_se.start_index
+    ei = table_se.end_index
+
+    # Add named ranges to the DocumentTab
+    nr = NamedRanges(
+        name=nr_name,
+        named_ranges=[
+            NamedRange(
+                named_range_id="kix.test_nr_1",
+                name=nr_name,
+                ranges=[Range(start_index=si, end_index=ei)],
+            )
+        ],
+    )
+    tab.document_tab.named_ranges = {nr_name: nr}  # type: ignore[union-attr]
+    return doc
+
+
+class TestSpecialElementsPull:
+    """Verify that named ranges drive serialization on the pull path."""
+
+    def test_codeblock_pull(self) -> None:
+        """extradoc:codeblock:python named range → ```python\\ncode\\n```."""
+        doc = _make_doc_with_named_range_table(
+            "extradoc:codeblock:python", "print('hello')"
+        )
+        per_tab = document_to_markdown(doc)
+        md = per_tab["Tab_1"]["document.md"]
+        assert "```python" in md
+        assert "print('hello')" in md
+        assert "```" in md
+
+    def test_callout_warning_pull(self) -> None:
+        """extradoc:callout:warning → > [!WARNING]\\n> text."""
+        doc = _make_doc_with_named_range_table("extradoc:callout:warning", "Watch out!")
+        per_tab = document_to_markdown(doc)
+        md = per_tab["Tab_1"]["document.md"]
+        assert "> [!WARNING]" in md
+        assert "> Watch out!" in md
+
+    def test_blockquote_pull(self) -> None:
+        """extradoc:blockquote → > text."""
+        doc = _make_doc_with_named_range_table("extradoc:blockquote", "Wise words")
+        per_tab = document_to_markdown(doc)
+        md = per_tab["Tab_1"]["document.md"]
+        assert "> Wise words" in md
+
+    def test_no_named_range_is_regular_table(self) -> None:
+        """A 1×1 table WITHOUT a named range serializes as a regular GFM table."""
+        cell_para = StructuralElement(
+            paragraph=Paragraph(
+                elements=[ParagraphElement(text_run=TextRun(content="data\n"))],
+                paragraph_style=ParagraphStyle(
+                    named_style_type=ParagraphStyleNamedStyleType.NORMAL_TEXT
+                ),
+            )
+        )
+        table = Table(
+            rows=1,
+            columns=1,
+            table_rows=[
+                TableRow(
+                    table_cells=[
+                        TableCell(
+                            content=[cell_para],
+                            table_cell_style=TableCellStyle(),
+                        )
+                    ]
+                )
+            ],
+        )
+        doc = _make_doc([StructuralElement(table=table)])
+        per_tab = document_to_markdown(doc)
+        md = per_tab["Tab_1"]["document.md"]
+        # Should be GFM table, not code fence
+        assert "```" not in md
+        assert "> " not in md
+        assert "| data |" in md
+
+    def test_multiple_same_type_pull(self) -> None:
+        """Two extradoc:callout:warning named ranges → both pulled as > [!WARNING]."""
+        cell_para1 = StructuralElement(
+            paragraph=Paragraph(
+                elements=[ParagraphElement(text_run=TextRun(content="First warning\n"))],
+                paragraph_style=ParagraphStyle(
+                    named_style_type=ParagraphStyleNamedStyleType.NORMAL_TEXT
+                ),
+            )
+        )
+        cell_para2 = StructuralElement(
+            paragraph=Paragraph(
+                elements=[
+                    ParagraphElement(text_run=TextRun(content="Second warning\n"))
+                ],
+                paragraph_style=ParagraphStyle(
+                    named_style_type=ParagraphStyleNamedStyleType.NORMAL_TEXT
+                ),
+            )
+        )
+        t1 = Table(
+            rows=1,
+            columns=1,
+            table_rows=[
+                TableRow(
+                    table_cells=[
+                        TableCell(
+                            content=[cell_para1], table_cell_style=TableCellStyle()
+                        )
+                    ]
+                )
+            ],
+        )
+        t2 = Table(
+            rows=1,
+            columns=1,
+            table_rows=[
+                TableRow(
+                    table_cells=[
+                        TableCell(
+                            content=[cell_para2], table_cell_style=TableCellStyle()
+                        )
+                    ]
+                )
+            ],
+        )
+        doc = _make_doc(
+            [StructuralElement(table=t1), StructuralElement(table=t2)]
+        )
+        doc = reindex_document(doc)
+
+        tab = doc.tabs[0]  # type: ignore[index]
+        body = tab.document_tab.body.content  # type: ignore[union-attr]
+        table_ses = [se for se in body if se.table is not None]
+        assert len(table_ses) == 2
+
+        nr1 = NamedRange(
+            named_range_id="kix.nr1",
+            name="extradoc:callout:warning",
+            ranges=[
+                Range(
+                    start_index=table_ses[0].start_index,
+                    end_index=table_ses[0].end_index,
+                )
+            ],
+        )
+        nr2 = NamedRange(
+            named_range_id="kix.nr2",
+            name="extradoc:callout:warning",
+            ranges=[
+                Range(
+                    start_index=table_ses[1].start_index,
+                    end_index=table_ses[1].end_index,
+                )
+            ],
+        )
+        tab.document_tab.named_ranges = {  # type: ignore[union-attr]
+            "extradoc:callout:warning": NamedRanges(
+                name="extradoc:callout:warning",
+                named_ranges=[nr1, nr2],
+            )
+        }
+
+        per_tab = document_to_markdown(doc)
+        md = per_tab["Tab_1"]["document.md"]
+        assert md.count("> [!WARNING]") == 2
+        assert "First warning" in md
+        assert "Second warning" in md
+
+    def test_inline_code_pull(self) -> None:
+        """Courier New text run → `code` in markdown."""
+        ts = TextStyle.model_validate(
+            {
+                "weightedFontFamily": {"fontFamily": "Courier New"},
+                "fontSize": {"magnitude": 10, "unit": "PT"},
+            }
+        )
+        doc = _make_doc(
+            [
+                StructuralElement(
+                    paragraph=Paragraph(
+                        elements=[
+                            ParagraphElement(text_run=TextRun(content="Use ")),
+                            ParagraphElement(
+                                text_run=TextRun(content="print()", text_style=ts)
+                            ),
+                            ParagraphElement(text_run=TextRun(content=" here.\n")),
+                        ],
+                        paragraph_style=ParagraphStyle(
+                            named_style_type=ParagraphStyleNamedStyleType.NORMAL_TEXT
+                        ),
+                    )
+                )
+            ]
+        )
+        per_tab = document_to_markdown(doc)
+        md = per_tab["Tab_1"]["document.md"]
+        assert "`print()`" in md
+
+    def test_relative_url_fix(self) -> None:
+        """http://LICENSE (API-mangled relative URL) → LICENSE on pull."""
+        doc = _make_doc(
+            [
+                _make_para(
+                    "read the license",
+                    text_style=TextStyle(link=Link(url="http://LICENSE")),
+                )
+            ]
+        )
+        per_tab = document_to_markdown(doc)
+        md = per_tab["Tab_1"]["document.md"]
+        assert "[read the license](LICENSE)" in md
+        assert "http://LICENSE" not in md
+
+
+# ---------------------------------------------------------------------------
+# Test 6: Round-trip — markdown → Document → markdown for special elements
+# ---------------------------------------------------------------------------
+
+
+class TestSpecialElementsRoundTrip:
+    def test_code_fence_round_trip(self) -> None:
+        """Code fence survives markdown → Document → markdown."""
+        source = textwrap.dedent("""\
+            # Title
+
+            ```python
+            def hello():
+                print("hi")
+            ```
+
+            After the block.
+            """)
+        doc = markdown_to_document({"Tab_1": source})
+        per_tab = document_to_markdown(doc)
+        result = per_tab["Tab_1"]["document.md"]
+        assert "```python" in result
+        assert 'def hello():' in result
+        assert '    print("hi")' in result
+        assert "After the block." in result
+
+    def test_callout_round_trip(self) -> None:
+        """> [!WARNING] survives markdown → Document → markdown."""
+        source = textwrap.dedent("""\
+            # Guide
+
+            > [!WARNING]
+            > Do not delete this file.
+
+            Continue here.
+            """)
+        doc = markdown_to_document({"Tab_1": source})
+        per_tab = document_to_markdown(doc)
+        result = per_tab["Tab_1"]["document.md"]
+        assert "> [!WARNING]" in result
+        assert "Do not delete this file." in result
+
+    def test_blockquote_round_trip(self) -> None:
+        """> text survives markdown → Document → markdown."""
+        source = textwrap.dedent("""\
+            Intro paragraph.
+
+            > The greatest glory in living lies not in never falling.
+
+            End paragraph.
+            """)
+        doc = markdown_to_document({"Tab_1": source})
+        per_tab = document_to_markdown(doc)
+        result = per_tab["Tab_1"]["document.md"]
+        assert "> The greatest glory" in result
+
+    def test_inline_code_round_trip(self) -> None:
+        """`code` survives markdown → Document → markdown."""
+        source = "Use `print()` to display output.\n"
+        doc = markdown_to_document({"Tab_1": source})
+        per_tab = document_to_markdown(doc)
+        result = per_tab["Tab_1"]["document.md"]
+        assert "`print()`" in result
+
+    def test_mixed_content_round_trip(self) -> None:
+        """Mixed special and normal content round-trips correctly."""
+        source = textwrap.dedent("""\
+            # API Reference
+
+            Use the `get()` method.
+
+            ```bash
+            curl https://api.example.com/data
+            ```
+
+            > [!INFO]
+            > Requires authentication.
+
+            > See also the [docs](https://docs.example.com).
+
+            Normal paragraph after.
+            """)
+        doc = markdown_to_document({"Tab_1": source})
+        per_tab = document_to_markdown(doc)
+        result = per_tab["Tab_1"]["document.md"]
+        assert "`get()`" in result
+        assert "```bash" in result
+        assert "curl https://api.example.com/data" in result
+        assert "> [!INFO]" in result
+        assert "> See also the" in result
+        assert "Normal paragraph after." in result
+
+
+# ---------------------------------------------------------------------------
+# Test 7: Reconciler named-range diff
+# ---------------------------------------------------------------------------
+
+
+class TestNamedRangeDiff:
+    """Verify that the reconciler generates correct named range create/delete requests."""
+
+    def _reconcile_and_collect(self, base_md: str, desired_md: str) -> list:
+        from extradoc.reconcile._core import reconcile
+
+        base_doc = markdown_to_document({"Tab_1": base_md})
+        desired_doc = markdown_to_document({"Tab_1": desired_md})
+        base_idx = reindex_document(base_doc)
+        desired_idx = reindex_document(desired_doc)
+        batches = reconcile(base_idx, desired_idx)
+        return [r for batch in batches for r in (batch.requests or [])]
+
+    def test_new_code_block_creates_named_range(self) -> None:
+        """Adding a code fence to desired → createNamedRange in requests."""
+        base_md = "# Heading\n\nSome text.\n"
+        desired_md = "# Heading\n\nSome text.\n\n```python\nprint('hi')\n```\n"
+        all_reqs = self._reconcile_and_collect(base_md, desired_md)
+        create_nrs = [
+            r.create_named_range
+            for r in all_reqs
+            if r.create_named_range is not None
+        ]
+        assert any(
+            cnr.name == "extradoc:codeblock:python" for cnr in create_nrs
+        ), f"Expected createNamedRange for extradoc:codeblock:python, got: {create_nrs}"
+
+    def test_removed_code_block_deletes_named_range(self) -> None:
+        """Removing a code fence from desired → deleteNamedRange in requests."""
+        code_md = "# Heading\n\n```python\nprint('hi')\n```\n"
+        plain_md = "# Heading\n\nSome text.\n"
+
+        base_doc = markdown_to_document({"Tab_1": code_md})
+        desired_doc = markdown_to_document({"Tab_1": plain_md})
+        base_idx = reindex_document(base_doc)
+        desired_idx = reindex_document(desired_doc)
+
+        from extradoc.reconcile._core import reconcile
+
+        batches = reconcile(base_idx, desired_idx)
+        all_reqs = [r for batch in batches for r in (batch.requests or [])]
+        delete_nrs = [
+            r.delete_named_range
+            for r in all_reqs
+            if r.delete_named_range is not None
+        ]
+        assert len(delete_nrs) >= 1, f"Expected deleteNamedRange, got: {delete_nrs}"
+
+    def test_identical_code_block_no_named_range_ops(self) -> None:
+        """Unchanged code fence → no createNamedRange or deleteNamedRange."""
+        md = "# Heading\n\n```python\nprint('hi')\n```\n"
+        all_reqs = self._reconcile_and_collect(md, md)
+        create_nrs = [r for r in all_reqs if r.create_named_range is not None]
+        delete_nrs = [r for r in all_reqs if r.delete_named_range is not None]
+        assert len(create_nrs) == 0
+        assert len(delete_nrs) == 0
+
+    def test_new_callout_creates_named_range(self) -> None:
+        """Adding a callout → createNamedRange extradoc:callout:info."""
+        base_md = "# Docs\n\nText.\n"
+        desired_md = "# Docs\n\nText.\n\n> [!INFO]\n> Read carefully.\n"
+        all_reqs = self._reconcile_and_collect(base_md, desired_md)
+        create_nrs = [
+            r.create_named_range for r in all_reqs if r.create_named_range is not None
+        ]
+        assert any(
+            cnr.name == "extradoc:callout:info" for cnr in create_nrs
+        ), f"Expected createNamedRange for extradoc:callout:info, got: {create_nrs}"
+
+
+# ---------------------------------------------------------------------------
+# Test 8: diff() uses raw JSON as base when .raw/document.json is present
+# ---------------------------------------------------------------------------
+
+
+class TestDiffRawJsonBase:
+    """Verify that diff() uses .raw/document.json as the base document for
+    markdown-format folders, giving accurate real-API startIndex values for
+    deleteContentRange requests instead of mock-computed approximations.
+    """
+
+    def _setup_markdown_folder(
+        self,
+        tmp_path: Path,
+        md_content: str,
+        doc_id: str = "test-doc-id",
+    ) -> Path:
+        """Create a markdown folder structure (as pull-md would produce)."""
+        import zipfile
+
+        from extradoc.serde import serialize
+        from extradoc.serde._from_markdown import markdown_to_document
+
+        folder = tmp_path / doc_id
+        folder.mkdir()
+
+        doc = markdown_to_document(
+            {"Tab_1": md_content},
+            document_id=doc_id,
+            title="Test",
+            tab_ids={"Tab_1": "t.0"},
+        )
+        from extradoc.comments._types import DocumentWithComments, FileComments
+        bundle = DocumentWithComments(
+            document=doc,
+            comments=FileComments(file_id=doc_id),
+        )
+        serialize(bundle, folder, format="markdown")
+
+        # Create pristine zip
+        pristine_dir = folder / ".pristine"
+        pristine_dir.mkdir()
+        zip_path = pristine_dir / "document.zip"
+        with zipfile.ZipFile(zip_path, "w") as zf:
+            for p in sorted(folder.rglob("*")):
+                if p.is_file() and ".pristine" not in str(p) and ".raw" not in str(p):
+                    zf.write(p, p.relative_to(folder))
+
+        return folder
+
+    def test_uses_raw_json_base_for_deleteContentRange(
+        self, tmp_path: Path
+    ) -> None:
+        """deleteContentRange.startIndex must come from raw JSON, not mock reindex.
+
+        We inflate the raw JSON's table startIndex by 100 positions to make the
+        test deterministic: if diff() uses the raw JSON, deleteContentRange will
+        start at (inflated_cell_si); if it falls back to the mock, it will start
+        at the mock-computed (lower) cell_si.
+        """
+        import json
+
+        from extradoc.client import DocsClient
+        from extradoc.reconcile._core import reindex_document
+        from extradoc.serde._from_markdown import markdown_to_document
+
+        INFLATE = 100  # Simulated real-API offset
+
+        # Base markdown: callout with old text
+        base_md = textwrap.dedent("""\
+            # Heading
+
+            Some paragraph.
+
+            > [!WARNING]
+            > Original callout text here.
+
+            After callout.
+            """)
+
+        # Set up folder
+        folder = self._setup_markdown_folder(tmp_path, base_md, "test-raw-base")
+
+        # Build the "raw" API JSON: same doc but with all indices inflated by INFLATE.
+        # This simulates the real API placing the table 100 positions higher than mock.
+        raw_doc = markdown_to_document(
+            {"Tab_1": base_md},
+            document_id="test-raw-base",
+            title="Test",
+            tab_ids={"Tab_1": "t.0"},
+        )
+        raw_doc_reindexed = reindex_document(raw_doc)
+
+        # Serialize to JSON dict, then inflate all numeric index fields
+        raw_dict = raw_doc_reindexed.model_dump(by_alias=True, exclude_none=True)
+
+        def _inflate(obj: object) -> object:
+            if isinstance(obj, dict):
+                return {
+                    k: (_inflate(v) + INFLATE if k in ("startIndex", "endIndex") and isinstance(v, int) else _inflate(v))
+                    for k, v in obj.items()
+                }
+            if isinstance(obj, list):
+                return [_inflate(item) for item in obj]
+            return obj
+
+        inflated_dict = _inflate(raw_dict)
+
+        raw_dir = folder / ".raw"
+        raw_dir.mkdir()
+        (raw_dir / "document.json").write_text(
+            json.dumps(inflated_dict), encoding="utf-8"
+        )
+
+        # Edited markdown: change the callout text
+        edited_md = textwrap.dedent("""\
+            # Heading
+
+            Some paragraph.
+
+            > [!WARNING]
+            > New callout text, completely different.
+
+            After callout.
+            """)
+        (folder / "Tab_1" / "document.md").write_text(edited_md, encoding="utf-8")
+
+        # Run diff
+        client = DocsClient.__new__(DocsClient)
+        result = client.diff(str(folder))
+
+        all_reqs = [r for batch in result.batches for r in (batch.requests or [])]
+        delete_ranges = [
+            r.delete_content_range
+            for r in all_reqs
+            if r.delete_content_range is not None
+        ]
+
+        # Find the deleteContentRange that targets callout cell content.
+        # With raw JSON as base, all startIndex values should be >= INFLATE
+        # (since the raw JSON has every index inflated by INFLATE).
+        # With mock as base, the callout cell startIndex would be much smaller.
+        cell_deletes = [
+            d for d in delete_ranges
+            if d.range and (d.range.start_index or 0) >= INFLATE
+        ]
+        assert len(cell_deletes) >= 1, (
+            f"Expected deleteContentRange with startIndex >= {INFLATE} "
+            f"(from raw JSON), but got: {delete_ranges}"
+        )
+
+    def test_falls_back_to_mock_when_no_raw_json(self, tmp_path: Path) -> None:
+        """Without .raw/document.json, diff() uses mock-reindexed pristine."""
+        from extradoc.client import DocsClient
+
+        base_md = "# Heading\n\n> [!INFO]\n> Some info here.\n"
+        edited_md = "# Heading\n\n> [!INFO]\n> Updated info text.\n"
+
+        folder = self._setup_markdown_folder(tmp_path, base_md, "test-no-raw")
+        (folder / "Tab_1" / "document.md").write_text(edited_md, encoding="utf-8")
+
+        # No .raw/ directory — should use mock reindex fallback
+        client = DocsClient.__new__(DocsClient)
+        result = client.diff(str(folder))
+
+        # Should succeed without error
+        assert result.document_id == "test-no-raw"
+        # Should produce at least one batch with change requests
+        all_reqs = [r for batch in result.batches for r in (batch.requests or [])]
+        assert len(all_reqs) > 0, "Expected diff to produce requests for changed callout"

@@ -14,25 +14,37 @@ Supported:
   - Page breaks (<x-pagebreak/>)
   - Passthrough inline elements: <x-img>, <x-person>, <x-fn>, <x-chip>,
     <x-br/>, <x-colbreak/>, <x-date/>, <x-auto/>, <x-eq/>
+  - Fenced code blocks via extradoc:codeblock named range → ```lang\\ncode\\n```
+  - Callouts via extradoc:callout:* named range → > [!TYPE]\\n> text
+  - Blockquotes via extradoc:blockquote named range → > text
+  - Inline code (Courier New text run) → `code`
 """
 
 from __future__ import annotations
 
 import html as _html
+import urllib.parse
 from typing import TYPE_CHECKING, Any
 
+from extradoc.serde._special_elements import special_element_from_named_range
 from extradoc.serde._utils import optional_color_to_hex, sanitize_tab_name
 
 if TYPE_CHECKING:
     from extradoc.api_types._generated import (
         Document,
         DocumentTab,
+        NamedRanges,
         Paragraph,
         ParagraphElement,
         StructuralElement,
         Table,
         TextStyle,
     )
+
+# Monospace font families treated as inline code
+_MONOSPACE_FAMILIES = frozenset(
+    {"Courier New", "Courier", "Source Code Pro", "Roboto Mono", "Consolas"}
+)
 
 # Named style → heading prefix (TITLE/SUBTITLE are lossy on round-trip)
 _STYLE_TO_HEADING: dict[str, str] = {
@@ -77,8 +89,46 @@ def document_to_markdown(doc: Document) -> dict[str, dict[str, str]]:
 # ---------------------------------------------------------------------------
 
 
+def _build_named_range_index(doc_tab: DocumentTab) -> list[tuple[int, int, str]]:
+    """Build a sorted [(si, ei, name)] list from the tab's extradoc:* named ranges.
+
+    Iterates ALL NamedRange objects within each name group, so multiple ranges
+    with the same name (e.g. two callout:warning blocks) are both indexed.
+
+    Returns a list sorted by si so that _find_annotation can do a quick scan.
+    """
+    spans: list[tuple[int, int, str]] = []
+    for name, group in (doc_tab.named_ranges or {}).items():
+        if not name.startswith("extradoc:"):
+            continue
+        for nr in (group.named_ranges or []):
+            for r in (nr.ranges or []):
+                si = r.start_index
+                ei = r.end_index
+                if si is not None and ei is not None:
+                    spans.append((si, ei, name))
+    spans.sort(key=lambda t: t[0])
+    return spans
+
+
+def _find_annotation(
+    nr_spans: list[tuple[int, int, str]], table_si: int
+) -> str | None:
+    """Return the extradoc:* name whose span contains table_si, or None.
+
+    The real Google Docs API may assign table startIndex values that are a few
+    positions off from what our internal reindex computed, so we match by
+    containment: the named range [si, ei) must contain table_si.
+    """
+    for si, ei, name in nr_spans:
+        if si <= table_si < ei:
+            return name
+    return None
+
+
 def _serialize_body(doc_tab: DocumentTab, list_defs: dict[str, Any]) -> str:
     list_types = {lid: _detect_list_type(ld) for lid, ld in list_defs.items()}
+    nr_spans = _build_named_range_index(doc_tab)
 
     # Collect footnote text from footnote segments
     footnote_defs: dict[str, str] = {}
@@ -90,7 +140,7 @@ def _serialize_body(doc_tab: DocumentTab, list_defs: dict[str, Any]) -> str:
         footnote_defs[fn_id] = " ".join(p for p in parts if p)
 
     body_content = doc_tab.body.content if doc_tab.body else []
-    blocks = _serialize_content(body_content, list_types)
+    blocks = _serialize_content(body_content, list_types, nr_spans)
 
     # Append footnote definitions
     if footnote_defs:
@@ -102,11 +152,14 @@ def _serialize_body(doc_tab: DocumentTab, list_defs: dict[str, Any]) -> str:
 
 
 def _serialize_content(
-    content: list[StructuralElement], list_types: dict[str, str]
+    content: list[StructuralElement],
+    list_types: dict[str, str],
+    nr_spans: list[tuple[int, int, str]] | None = None,
 ) -> list[str]:
     """Serialize a list of StructuralElements to markdown lines."""
     lines: list[str] = []
     in_list = False
+    spans = nr_spans or []
 
     for se in content:
         if se.section_break is not None:
@@ -125,7 +178,13 @@ def _serialize_content(
                 in_list = False
             if lines:
                 lines.append("")
-            lines.append(_serialize_table(se.table))
+            # Check for extradoc:* named range annotation via containment check
+            annotation = _find_annotation(spans, se.start_index or 0)
+            if annotation:
+                elem = special_element_from_named_range(se.table, annotation)
+                lines.append(elem.to_markdown())
+            else:
+                lines.append(_serialize_table(se.table))
             continue
 
         if se.paragraph is not None:
@@ -269,18 +328,47 @@ def _serialize_inline_elem(pe: ParagraphElement) -> str:
     return ""
 
 
+def _is_monospace(style: Any) -> bool:
+    """Return True if the text style specifies a monospace font family."""
+    wff = style.weighted_font_family
+    return bool(wff and wff.font_family in _MONOSPACE_FAMILIES)
+
+
+def _normalize_url(url: str) -> str:
+    """Strip spurious http:// prepended by the Docs API to relative URLs.
+
+    The Docs API prepends http:// to scheme-less URLs (e.g. LICENSE → http://LICENSE).
+    Detect these by checking whether the netloc contains no dot — real HTTP hosts
+    always have a dot (example.com) or are localhost.
+    """
+    if not url.startswith("http://"):
+        return url
+    netloc = urllib.parse.urlparse(url).netloc
+    if "." not in netloc and netloc.lower() not in {"localhost"}:
+        return url[7:]  # strip "http://"
+    return url
+
+
 def _serialize_text_run(tr: Any) -> str:
     content = (tr.content or "").rstrip("\n")
     if not content:
         return ""
 
     style = tr.text_style
+
+    # Inline code: monospace font without a link → backtick notation.
+    # Checked before _style_has_attrs because a run that is ONLY monospace
+    # has no other style attrs and would otherwise fall through to _escape_md.
+    if style and _is_monospace(style) and not style.link:
+        return f"`{content}`"
+
     if not style or not _style_has_attrs(style):
         return _escape_md(content)
 
     link = style.link
     if link:
-        url = link.url or f"#{link.heading_id or link.bookmark_id or ''}"
+        raw_url = link.url or f"#{link.heading_id or link.bookmark_id or ''}"
+        url = _normalize_url(raw_url)
         # Underline is implied by markdown link syntax — skip it inside links
         inner = _apply_formatting(content, style, skip_underline=True)
         return f"[{inner}]({url})"

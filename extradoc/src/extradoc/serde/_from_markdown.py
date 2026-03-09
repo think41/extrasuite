@@ -16,6 +16,10 @@ Handled:
     <x-colbreak/>, <x-date/>, <x-auto/>, <x-eq/>
   - Footnote references [^id] and definitions [^id]: text
   - <!-- toc --> read-only marker
+  - Fenced code blocks (```lang ... ```) → 1×1 table + named range
+  - Callouts (> [!WARNING] ...) → 1×1 table + named range
+  - Blockquotes (> text) → 1×1 table + named range
+  - Inline code (`code`) → Courier New text run
 """
 
 from __future__ import annotations
@@ -25,16 +29,18 @@ import re
 from html.parser import HTMLParser
 from typing import Any
 
+from mistletoe.block_token import CodeFence
 from mistletoe.block_token import Document as MdDocument
 from mistletoe.block_token import Heading, HTMLBlock, ThematicBreak
 from mistletoe.block_token import List as MdList
 from mistletoe.block_token import Paragraph as MdParagraph
-from mistletoe.block_token import Table as MdTable
+from mistletoe.block_token import Quote, Table as MdTable
 from mistletoe.html_renderer import HtmlRenderer
 from mistletoe.span_token import (
     Emphasis,
     EscapeSequence,
     HTMLSpan,
+    InlineCode,
     LineBreak,
     RawText,
     Strikethrough,
@@ -76,7 +82,17 @@ from extradoc.api_types._generated import (
 from extradoc.api_types._generated import (
     Link as DocLink,
 )
+from extradoc.mock.reindex import reindex_and_normalize_all_tabs
+from extradoc.serde._special_elements import (
+    Blockquote,
+    Callout,
+    CodeBlock,
+    SpecialElement,
+)
 from extradoc.serde._utils import hex_to_optional_color
+
+# Callout detection regex: matches [!WARNING], [!INFO], etc.
+_CALLOUT_RE = re.compile(r"^\[!(WARNING|INFO|NOTE|DANGER|TIP)\]$", re.IGNORECASE)
 
 # Heading level → named style type
 _LEVEL_TO_NAMED_STYLE: dict[int, ParagraphStyleNamedStyleType] = {
@@ -177,10 +193,14 @@ def markdown_to_document(
 
 
 def _parse_tab(source: str, tab_title: str, folder: str, *, tab_id: str = "") -> Tab:
-    """Parse a single tab's markdown source into a Tab."""
+    """Parse a single tab's markdown source into a Tab.
 
+    If the source contains special elements (code blocks, callouts, blockquotes),
+    the returned Tab's DocumentTab will have named_ranges populated with correct
+    indices (obtained by running reindex internally).
+    """
     list_synth = _ListSynth()
-    body_content, footnotes = _parse_body(source, list_synth)
+    body_content, footnotes, special_positions = _parse_body(source, list_synth)
 
     # Build list definitions dict
     lists_d = list_synth.defs
@@ -195,14 +215,62 @@ def _parse_tab(source: str, tab_title: str, folder: str, *, tab_id: str = "") ->
     if lists_d:
         doc_tab_d["lists"] = lists_d
     if footnotes:
-        doc_tab_d["footnotes"] = {
-            fn_id: fn.model_dump(by_alias=True, exclude_none=True)
-            for fn_id, fn in footnotes.items()
-        }
+        doc_tab_d["footnotes"] = footnotes  # already plain dicts from _parse_body
 
-    tab_props = TabProperties(tab_id=tab_id or f"t.{folder}", title=tab_title)
+    actual_tab_id = tab_id or f"t.{folder}"
+    tab_props = TabProperties(tab_id=actual_tab_id, title=tab_title)
     doc_tab = DocumentTab.model_validate(doc_tab_d)
-    return Tab(tab_properties=tab_props, document_tab=doc_tab)
+    tab = Tab(tab_properties=tab_props, document_tab=doc_tab)
+
+    if not special_positions:
+        return tab
+
+    # Reindex the tab to assign real start/end indices, then embed named ranges.
+    temp_doc_dict: dict[str, Any] = {
+        "documentId": "",
+        "tabs": [tab.model_dump(by_alias=True, exclude_none=True)],
+    }
+    reindex_and_normalize_all_tabs(temp_doc_dict)
+
+    reindexed_tabs = temp_doc_dict.get("tabs") or []
+    reindexed_body: list[Any] = []
+    if reindexed_tabs:
+        reindexed_body = (
+            reindexed_tabs[0]
+            .get("documentTab", {})
+            .get("body", {})
+            .get("content", [])
+        )
+
+    # Build namedRanges dict from special positions + reindexed indices
+    named_ranges_d: dict[str, Any] = {}
+    for body_pos, nr_name in special_positions:
+        if body_pos < len(reindexed_body):
+            se_dict = reindexed_body[body_pos]
+            si = se_dict.get("startIndex")
+            ei = se_dict.get("endIndex")
+            if si is not None and ei is not None:
+                nr_entry = {
+                    "namedRangeId": f"kix.md_nr_{body_pos}",
+                    "name": nr_name,
+                    "ranges": [{"startIndex": si, "endIndex": ei}],
+                }
+                group = named_ranges_d.setdefault(
+                    nr_name, {"name": nr_name, "namedRanges": []}
+                )
+                group["namedRanges"].append(nr_entry)
+
+    if not named_ranges_d:
+        return tab
+
+    # Rebuild DocumentTab from the reindexed version so that body elements carry
+    # their startIndex — required by _build_named_range_index in _to_markdown.py.
+    reindexed_dt_dict = (
+        reindexed_tabs[0].get("documentTab", {}) if reindexed_tabs else {}
+    )
+    reindexed_dt_dict["namedRanges"] = named_ranges_d
+    new_dt = DocumentTab.model_validate(reindexed_dt_dict)
+    return Tab(tab_properties=tab_props, document_tab=new_dt)
 
 
 # ---------------------------------------------------------------------------
@@ -212,12 +280,14 @@ def _parse_tab(source: str, tab_title: str, folder: str, *, tab_id: str = "") ->
 
 def _parse_body(
     source: str, list_synth: _ListSynth
-) -> tuple[list[StructuralElement], dict[str, Any]]:
+) -> tuple[list[StructuralElement], dict[str, Any], list[tuple[int, str]]]:
     """Parse markdown source into body StructuralElements and footnotes.
 
     Returns:
-        (body_content, footnote_dict)
+        (body_content, footnote_dict, special_positions)
         body_content starts with a SectionBreak and ends with a trailing paragraph.
+        special_positions: list of (body_index, named_range_name) for each special
+        element (code block, callout, blockquote) inserted into the body.
     """
     # Extract footnote definitions before parsing (they live at the top level)
     fn_defs: dict[str, str] = {}
@@ -229,6 +299,7 @@ def _parse_body(
         md_doc = MdDocument(source)
 
     body: list[StructuralElement] = []
+    special_positions: list[tuple[int, str]] = []
 
     # Every body starts with a SectionBreak
     body.append(StructuralElement(section_break=SectionBreak()))
@@ -236,6 +307,18 @@ def _parse_body(
     for block in md_doc.children:
         if isinstance(block, Heading):
             body.append(_convert_heading(block))
+
+        elif isinstance(block, CodeFence):
+            body_pos = len(body)
+            elem = _parse_code_fence(block)
+            special_positions.append((body_pos, elem.named_range_name))
+            body.append(StructuralElement(table=elem.to_table()))
+
+        elif isinstance(block, Quote):
+            body_pos = len(body)
+            elem = _parse_quote(block)
+            special_positions.append((body_pos, elem.named_range_name))
+            body.append(StructuralElement(table=elem.to_table()))
 
         elif isinstance(block, MdParagraph):
             # Check if this is a footnote definition line — skip it
@@ -295,7 +378,74 @@ def _parse_body(
         }
         footnotes[fn_id] = fn_obj
 
-    return body, footnotes
+    return body, footnotes, special_positions
+
+
+# ---------------------------------------------------------------------------
+# Special element converters (code fence, quote)
+# ---------------------------------------------------------------------------
+
+
+def _parse_code_fence(block: Any) -> CodeBlock:
+    """Convert a mistletoe CodeFence token to a CodeBlock special element."""
+    language = (getattr(block, "language", "") or "").strip()
+    code_text = _raw_text(block)
+    # Remove trailing newline that mistletoe typically adds
+    if code_text.endswith("\n"):
+        code_text = code_text[:-1]
+    lines = code_text.split("\n")
+    return CodeBlock(language=language, lines=lines)
+
+
+def _block_to_lines(block: Any) -> list[str]:
+    """Extract text lines from a block token, splitting at LineBreak boundaries.
+
+    Each LineBreak token in the block's inline children produces a new line.
+    Useful for parsing quote paragraphs where all content is in one Paragraph.
+    """
+    lines: list[str] = []
+    current: list[str] = []
+
+    for token in getattr(block, "children", None) or []:
+        if isinstance(token, LineBreak):
+            lines.append("".join(current).strip())
+            current = []
+        elif getattr(token, "children", None):
+            # Recurse for styled spans (Strong, Emphasis, etc.)
+            current.append(_raw_text(token))
+        elif hasattr(token, "content"):
+            current.append(str(token.content))
+
+    if current:
+        lines.append("".join(current).strip())
+
+    return [line for line in lines if line]
+
+
+def _parse_quote(block: Any) -> SpecialElement:
+    """Convert a mistletoe Quote token to a Callout or Blockquote special element."""
+    children = list(block.children or [])
+    if not children:
+        return Blockquote(lines=[])
+
+    # Collect all text lines (splitting at LineBreak boundaries within paragraphs)
+    all_lines: list[str] = []
+    for child in children:
+        all_lines.extend(_block_to_lines(child))
+
+    if not all_lines:
+        return Blockquote(lines=[])
+
+    # Check if first line is a callout type indicator: [!WARNING] etc.
+    m = _CALLOUT_RE.match(all_lines[0])
+    if m:
+        variant_str = m.group(1).lower()
+        variant = variant_str if variant_str in ("warning", "info", "note", "danger", "tip") else "info"  # type: ignore[assignment]
+        body_lines = [line for line in all_lines[1:] if line]
+        return Callout(variant=variant, lines=body_lines)  # type: ignore[arg-type]
+
+    # Plain blockquote
+    return Blockquote(lines=all_lines)
 
 
 def _raw_text(block: Any) -> str:
@@ -663,6 +813,20 @@ def _tokens_to_elements(tokens: list[Any], style: TextStyle) -> list[ParagraphEl
         elif isinstance(token, Strikethrough):
             new_style = style.model_copy(update={"strikethrough": True})
             result.extend(_tokens_to_elements(token.children or [], new_style))
+
+        elif isinstance(token, InlineCode):
+            # Inline code → Courier New 10pt text run
+            code_text = _raw_text(token)
+            ts = TextStyle.model_validate(
+                {
+                    "weightedFontFamily": {"fontFamily": "Courier New"},
+                    "fontSize": {"magnitude": 10, "unit": "PT"},
+                }
+            )
+            if code_text:
+                result.append(
+                    ParagraphElement(text_run=TextRun(content=code_text, text_style=ts))
+                )
 
         elif isinstance(token, MdLink):
             link_obj = DocLink(url=token.target)

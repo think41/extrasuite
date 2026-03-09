@@ -373,6 +373,13 @@ class _Reconciler:
                 if delete_req:
                     self._batches[current_batch].append(delete_req)
 
+        # Diff extradoc:* named ranges (only for resolved tab IDs to avoid
+        # DeferredID complexity; new-tab named ranges are handled post-creation).
+        if isinstance(tab_id, str) and tab_id:
+            nr_requests = _diff_named_ranges(base_tab, desired_tab, tab_id)
+            if nr_requests:
+                self._batches[current_batch].extend(nr_requests)
+
     def _reconcile_segment(
         self,
         base_seg: Segment,
@@ -553,8 +560,11 @@ def _get_tab_property_update(base_tab: Tab, desired_tab: Tab) -> dict[str, Any] 
     if not tab_id:
         return None
 
-    title_changed = base_props.title != desired_props.title
-    index_changed = base_props.index != desired_props.index
+    # Only treat a field as changed if desired specifies it (not None).
+    # When desired is None the field was not modelled (e.g. markdown serde never
+    # sets index), so we must not generate an update that would clear it.
+    title_changed = desired_props.title is not None and base_props.title != desired_props.title
+    index_changed = desired_props.index is not None and base_props.index != desired_props.index
 
     if not (title_changed or index_changed):
         return None
@@ -647,6 +657,81 @@ def _create_initial_segment(segment_type: type[Header] | type[Footer]) -> Segmen
     else:
         source = Footer.model_validate({"content": initial_content})
     return Segment(source=source)
+
+
+def _diff_named_ranges(
+    base_tab: Tab,
+    desired_tab: Tab,
+    tab_id: str,
+) -> list[dict[str, Any]]:
+    """Generate createNamedRange / deleteNamedRange requests for extradoc:* ranges.
+
+    Strategy: for each name group, compare the sorted (si, ei) pairs between base
+    and desired. If anything changed, delete ALL named ranges for that name
+    (deleteNamedRange by name, not by ID) and then create the full desired set.
+
+    Deleting by name avoids needing real named range IDs, which are not preserved
+    when the base document is deserialized from a markdown pristine (IDs are
+    synthetic kix.md_nr_* values that don't exist in the real document).
+    """
+    requests: list[dict[str, Any]] = []
+
+    base_dt = base_tab.document_tab
+    desired_dt = desired_tab.document_tab
+    if not base_dt or not desired_dt:
+        return requests
+
+    # base: name → sorted [(si, ei), ...]
+    base_by_name: dict[str, list[tuple[int, int]]] = {}
+    for name, group in (base_dt.named_ranges or {}).items():
+        if not name.startswith("extradoc:"):
+            continue
+        entries: list[tuple[int, int]] = []
+        for nr in (group.named_ranges or []):
+            for r in (nr.ranges or []):
+                si = r.start_index or 0
+                ei = r.end_index or 0
+                entries.append((si, ei))
+        entries.sort()
+        if entries:
+            base_by_name[name] = entries
+
+    # desired: name → sorted [(si, ei), ...]
+    desired_by_name: dict[str, list[tuple[int, int]]] = {}
+    for name, group in (desired_dt.named_ranges or {}).items():
+        if not name.startswith("extradoc:"):
+            continue
+        entries2: list[tuple[int, int]] = []
+        for nr in (group.named_ranges or []):
+            for r in (nr.ranges or []):
+                si = r.start_index or 0
+                ei = r.end_index or 0
+                entries2.append((si, ei))
+        entries2.sort()
+        if entries2:
+            desired_by_name[name] = entries2
+
+    all_names = set(base_by_name.keys()) | set(desired_by_name.keys())
+
+    for name in sorted(all_names):
+        base_entries = base_by_name.get(name, [])
+        desired_entries = desired_by_name.get(name, [])
+
+        if base_entries == desired_entries:
+            continue  # no change for this name group
+
+        # Delete ALL ranges for this name using name (avoids needing real IDs)
+        if base_entries:
+            requests.append({"deleteNamedRange": {"name": name}})
+
+        # Create the full desired set
+        for si, ei in desired_entries:
+            range_d: dict[str, Any] = {"startIndex": si, "endIndex": ei}
+            if tab_id:
+                range_d["tabId"] = tab_id
+            requests.append({"createNamedRange": {"name": name, "range": range_d}})
+
+    return requests
 
 
 def verify(
