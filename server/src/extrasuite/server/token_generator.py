@@ -84,6 +84,15 @@ class DelegationError(TokenGeneratorError):
         self.cause = cause
 
 
+class OAuthTokenError(TokenGeneratorError):
+    """Raised when exchanging an OAuth refresh token for an access token fails."""
+
+    def __init__(self, message: str, user_email: str, cause: Exception | None = None) -> None:
+        super().__init__(message)
+        self.user_email = user_email
+        self.cause = cause
+
+
 @dataclass
 class GeneratedToken:
     """Result of token generation."""
@@ -100,12 +109,16 @@ class DatabaseProtocol(Protocol):
 
     async def set_service_account_email(self, email: str, service_account_email: str) -> None: ...
 
+    async def set_refresh_token(self, email: str, encrypted: str, scopes: str) -> None: ...
+
 
 class SettingsProtocol(Protocol):
     """Protocol for settings needed by TokenGenerator."""
 
     google_cloud_project: str
     token_expiry_minutes: int
+    google_client_id: str
+    google_client_secret: str
 
     def get_domain_abbreviation(self, domain: str) -> str: ...
 
@@ -171,6 +184,7 @@ class TokenGenerator:
         settings: SettingsProtocol,
         iam_client: IAMAsyncClient | None = None,
         impersonated_credentials_class: type = impersonated_credentials.Credentials,
+        encryptor: Any = None,  # RefreshTokenEncryptor | None — avoid circular import
     ) -> None:
         """Initialize TokenGenerator.
 
@@ -181,12 +195,15 @@ class TokenGenerator:
                 If not provided, a real client will be created.
             impersonated_credentials_class: Class for creating impersonated credentials
                 (injectable for testing)
+            encryptor: RefreshTokenEncryptor instance required for OAuth mode.
+                If None, generate_oauth_token() will raise OAuthTokenError.
         """
         self._db = database
         self._settings = settings
         self._iam_client = iam_client if iam_client is not None else IAMAsyncClient()
         self._impersonated_credentials_class = impersonated_credentials_class
         self._admin_creds: Any = None
+        self._encryptor = encryptor  # RefreshTokenEncryptor | None
 
     @property
     def _project_id(self) -> str:
@@ -408,6 +425,141 @@ class TokenGenerator:
         expires_at = datetime.now(UTC) + timedelta(seconds=token_data.get("expires_in", 3600))
 
         return token_data["access_token"], expires_at
+
+    async def generate_oauth_token(
+        self, user_email: str, encrypted_token: str, scopes: list[str]
+    ) -> GeneratedToken:
+        """Exchange a stored encrypted refresh token for a scoped access token.
+
+        Args:
+            user_email: Authenticated user email (for audit/errors).
+            encrypted_token: AES-256-GCM encrypted refresh token from Firestore.
+            scopes: Minimum scope URLs for this command (subset of consented scopes).
+
+        Returns:
+            GeneratedToken with token, expires_at, and service_account_email="".
+
+        Raises:
+            OAuthTokenError: On missing encryptor, decryption failure,
+                invalid_grant (expired/revoked token), or network error.
+        """
+        if self._encryptor is None:
+            raise OAuthTokenError(
+                "OAuth encryptor not configured — server is not in OAuth mode",
+                user_email,
+            )
+
+        try:
+            plaintext_token = self._encryptor.decrypt(encrypted_token)
+        except ValueError as e:
+            raise OAuthTokenError(
+                f"Failed to decrypt refresh token for {user_email}: {e}",
+                user_email,
+                e,
+            ) from e
+
+        try:
+            token_data = await asyncio.to_thread(
+                self._do_oauth_exchange, user_email, plaintext_token, scopes
+            )
+        except OAuthTokenError:
+            raise
+        except Exception as e:
+            raise OAuthTokenError(
+                f"OAuth token exchange failed for {user_email}: {e}", user_email, e
+            ) from e
+
+        # Handle refresh token rotation: if Google issues a new refresh_token, store it.
+        new_refresh_token = token_data.get("refresh_token")
+        if new_refresh_token:
+            try:
+                new_encrypted = self._encryptor.encrypt(new_refresh_token)
+                await self._db.set_refresh_token(user_email, new_encrypted, " ".join(scopes))
+                logger.warning(
+                    "Google issued new refresh_token; updated in Firestore",
+                    extra={"user_email": user_email},
+                )
+            except Exception as e:
+                # Log but do not block the token response — the old token may still be valid
+                logger.error(
+                    "Failed to persist rotated refresh_token",
+                    extra={"user_email": user_email, "error": str(e)},
+                )
+
+        expires_at = datetime.now(UTC) + timedelta(seconds=token_data.get("expires_in", 3600))
+
+        logger.info(
+            "OAuth access token generated",
+            extra={"user_email": user_email, "scopes": scopes},
+        )
+
+        return GeneratedToken(
+            token=token_data["access_token"],
+            expires_at=expires_at,
+            service_account_email="",
+        )
+
+    def _do_oauth_exchange(
+        self, user_email: str, plaintext_token: str, scopes: list[str]
+    ) -> dict:
+        """Exchange refresh token for access token (blocking, runs in thread pool).
+
+        Args:
+            user_email: Used only for error messages.
+            plaintext_token: The decrypted refresh token.
+            scopes: Minimum OAuth scope URLs to request.
+
+        Returns:
+            Parsed JSON response from Google's token endpoint.
+
+        Raises:
+            OAuthTokenError: On invalid_grant or other Google errors.
+        """
+        import json as _json  # noqa: PLC0415 — local import to keep module-level clean
+
+        data = urllib.parse.urlencode(
+            {
+                "grant_type": "refresh_token",
+                "refresh_token": plaintext_token,
+                "scope": " ".join(scopes),
+                "client_id": self._settings.google_client_id,
+                "client_secret": self._settings.google_client_secret,
+            }
+        ).encode()
+
+        req = urllib.request.Request(
+            "https://oauth2.googleapis.com/token",
+            data=data,
+            headers={"Content-Type": "application/x-www-form-urlencoded"},
+            method="POST",
+        )
+
+        try:
+            with urllib.request.urlopen(req, timeout=30) as resp:
+                return _json.loads(resp.read().decode())
+        except urllib.error.HTTPError as e:
+            try:
+                error_body = _json.loads(e.read().decode())
+                error_code = error_body.get("error", "")
+            except Exception:
+                error_code = ""
+
+            if error_code == "invalid_grant":
+                raise OAuthTokenError(
+                    "OAuth credentials expired or revoked — "
+                    "run 'extrasuite auth login' to re-authenticate",
+                    user_email,
+                    e,
+                ) from e
+            raise OAuthTokenError(
+                f"Google token endpoint returned HTTP {e.code}: {error_code or str(e)}",
+                user_email,
+                e,
+            ) from e
+        except Exception as e:
+            raise OAuthTokenError(
+                f"Network error during OAuth token exchange: {e}", user_email, e
+            ) from e
 
     async def _get_or_create_service_account(
         self, user_email: str, user_name: str

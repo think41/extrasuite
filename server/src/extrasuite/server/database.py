@@ -50,7 +50,7 @@ import asyncio
 from datetime import UTC, datetime, timedelta
 
 from fastapi import Request
-from google.cloud.firestore_v1 import AsyncClient
+from google.cloud.firestore_v1 import DELETE_FIELD, AsyncClient
 from google.cloud.firestore_v1.async_transaction import async_transactional
 
 # OAuth state TTL (10 minutes)
@@ -263,6 +263,84 @@ class Database:
         )
 
     # =========================================================================
+    # OAuth Refresh Tokens (encrypted; only used when CREDENTIAL_MODE != sa+dwd)
+    # =========================================================================
+
+    async def get_encrypted_refresh_token(self, email: str) -> str | None:
+        """Get the encrypted refresh token for a user.
+
+        Returns the encrypted token string, or None if not set.
+        Decryption is the caller's responsibility.
+        """
+        doc_id = self._email_to_doc_id(email)
+        doc_ref = self._client.collection("users").document(doc_id)
+        doc = await asyncio.wait_for(doc_ref.get(), timeout=self._timeout)
+
+        if not doc.exists:
+            return None
+
+        data = doc.to_dict()
+        if data is None:
+            return None
+
+        return data.get("encrypted_refresh_token")
+
+    async def set_refresh_token(self, email: str, encrypted: str, scopes: str) -> None:
+        """Store (or update) the encrypted refresh token for a user.
+
+        Uses merge=True so that set_service_account_email fields are preserved.
+
+        Args:
+            email: User email.
+            encrypted: Encrypted refresh token (base64url string from RefreshTokenEncryptor).
+            scopes: Space-separated Google scope URLs consented to at login.
+        """
+        doc_id = self._email_to_doc_id(email)
+        doc_ref = self._client.collection("users").document(doc_id)
+
+        now = datetime.now(UTC)
+        await asyncio.wait_for(
+            doc_ref.set(
+                {
+                    "email": email,
+                    "encrypted_refresh_token": encrypted,
+                    "refresh_token_scopes": scopes,
+                    "refresh_token_updated_at": now,
+                },
+                merge=True,
+            ),
+            timeout=self._timeout,
+        )
+
+    async def delete_refresh_token(self, email: str) -> None:
+        """Remove the encrypted refresh token fields from the user document.
+
+        Does nothing (silently) if the document or fields don't exist.
+        """
+        doc_id = self._email_to_doc_id(email)
+        doc_ref = self._client.collection("users").document(doc_id)
+
+        doc = await asyncio.wait_for(doc_ref.get(), timeout=self._timeout)
+        if not doc.exists:
+            return
+
+        await asyncio.wait_for(
+            doc_ref.update(
+                {
+                    "encrypted_refresh_token": DELETE_FIELD,
+                    "refresh_token_scopes": DELETE_FIELD,
+                    "refresh_token_updated_at": DELETE_FIELD,
+                }
+            ),
+            timeout=self._timeout,
+        )
+
+    async def has_refresh_token(self, email: str) -> bool:
+        """Return True if the user has a stored (non-null) encrypted refresh token."""
+        token = await self.get_encrypted_refresh_token(email)
+        return bool(token)
+
+    # =========================================================================
     # Session Tokens (30-day long-lived tokens for headless agent access)
     # =========================================================================
 
@@ -453,12 +531,16 @@ class Database:
         command_context: dict,
         reason: str,
         ip: str,
+        credential_kind: str = "",
     ) -> None:
         """Log an access token request for audit and risk-modelling purposes.
 
         ``command_context`` is the serialised command fields (excluding ``type``),
         e.g. ``{"file_url": "...", "file_name": "..."}`` for a sheet.pull command
         or ``{"subject": "...", "recipients": [...]}`` for a gmail.compose command.
+
+        ``credential_kind`` records which auth mode was used (bearer_sa, bearer_dwd,
+        bearer_oauth) to support CISO-level audit of credential type distribution.
 
         Stored in access_logs collection with 30-day TTL for auto-cleanup.
         """
@@ -475,6 +557,7 @@ class Database:
                     "command_context": command_context,
                     "reason": reason,
                     "ip": ip,
+                    "credential_kind": credential_kind,
                     "timestamp": now,
                     "expires_at": expires_at,
                 }

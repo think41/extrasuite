@@ -31,15 +31,14 @@ from pydantic import BaseModel, Field
 from slowapi import Limiter
 from slowapi.util import get_remote_address
 
-from extrasuite.server.command_registry import _ALL_COMMAND_TYPES, Credential, resolve_credentials
+from extrasuite.server.command_registry import Credential
 from extrasuite.server.commands import Command
 from extrasuite.server.config import Settings, get_settings
+from extrasuite.server.credential_router import CommandCredentialRouter
 from extrasuite.server.database import Database, get_database
-from extrasuite.server.token_generator import TokenGenerator
 
-# Reduced OAuth scopes - only what we need to identify the user
-# We use server's ADC for SA impersonation, NOT user's OAuth credentials
-CLI_SCOPES = [
+# Base scopes always requested: identify the user via ID token
+_IDENTITY_SCOPES = [
     "openid",
     "https://www.googleapis.com/auth/userinfo.email",
 ]
@@ -52,6 +51,11 @@ MIN_PORT = 1024
 MAX_PORT = 65535
 
 router = APIRouter()
+
+
+def get_credential_router(request: Request) -> CommandCredentialRouter:
+    """FastAPI dependency to get the credential router from app.state."""
+    return request.app.state.credential_router
 
 # =============================================================================
 # Health Endpoints
@@ -132,20 +136,21 @@ async def start_token_auth(
     if email:
         if headless:
             logger.info("Headless: session found, generating code", extra={"email": email})
-            return await _generate_auth_code_and_show_html(db, settings, email)
+            return await _generate_auth_code_and_show_html(db, email)
         logger.info("Session found, generating token", extra={"email": email, "cli_port": port})
-        return await _generate_auth_code_and_redirect(db, settings, email, cli_redirect)
+        return await _generate_auth_code_and_redirect(db, email, cli_redirect)
 
     logger.info("No session, starting OAuth flow", extra={"headless": headless, "cli_port": port})
     state = secrets.token_urlsafe(32)
     await db.save_state(state, cli_redirect)
 
     flow = _create_oauth_flow(settings)
-    authorization_url, _ = flow.authorization_url(
-        access_type="offline",
-        state=state,
-        prompt="consent",
-    )
+    auth_kwargs: dict = {"state": state}
+    if settings.uses_oauth:
+        # OAuth mode: request offline access and workspace scopes at consent time
+        auth_kwargs["access_type"] = "offline"
+        auth_kwargs["prompt"] = "consent"
+    authorization_url, _ = flow.authorization_url(**auth_kwargs)
 
     return RedirectResponse(url=authorization_url)
 
@@ -174,11 +179,11 @@ async def start_ui_login(
     await db.save_state(state, "/")  # Use "/" to indicate UI flow
 
     flow = _create_oauth_flow(settings)
-    authorization_url, _ = flow.authorization_url(
-        access_type="offline",
-        state=state,
-        prompt="consent",
-    )
+    auth_kwargs: dict = {"state": state}
+    if settings.uses_oauth:
+        auth_kwargs["access_type"] = "offline"
+        auth_kwargs["prompt"] = "consent"
+    authorization_url, _ = flow.authorization_url(**auth_kwargs)
 
     return RedirectResponse(url=authorization_url)
 
@@ -191,6 +196,7 @@ async def google_callback(
     state: str,
     settings: Settings = Depends(get_settings),
     db: Database = Depends(get_database),
+    credential_router: CommandCredentialRouter = Depends(get_credential_router),
 ) -> RedirectResponse | HTMLResponse:
     """Handle Google OAuth callback for CLI flow.
 
@@ -242,29 +248,27 @@ async def google_callback(
     # Set session cookie so user doesn't need to re-authenticate
     request.session["email"] = user_email
 
+    # Notify all providers of the callback (OAuth mode: store refresh token; others: no-op)
+    try:
+        await credential_router.on_google_auth_callback(user_email, credentials)
+    except Exception as e:
+        logger.exception(
+            "Credential provider callback failed",
+            extra={"email": user_email, "error": str(e)},
+        )
+        return _cli_error_response(cli_redirect)
+
     # Dispatch based on redirect target
     if cli_redirect == "/":
-        # UI login: ensure service account exists, redirect to home
-        token_generator = TokenGenerator(database=db, settings=settings)
-        try:
-            sa_email = await token_generator.ensure_service_account(user_email)
-            logger.info(
-                "UI login complete, service account ready",
-                extra={"email": user_email, "service_account": sa_email},
-            )
-        except Exception as e:
-            logger.exception(
-                "Service account setup failed during UI login",
-                extra={"email": user_email, "error": str(e)},
-            )
-            # Continue to home page - user can retry later
+        # UI login: redirect home (SA provisioning happens at session establishment)
+        logger.info("UI login complete", extra={"email": user_email})
         return RedirectResponse(url="/")
 
     if cli_redirect == "headless":
         # Headless CLI login: show auth code on page instead of redirecting
-        return await _generate_auth_code_and_show_html(db, settings, user_email)
+        return await _generate_auth_code_and_show_html(db, user_email)
 
-    return await _generate_auth_code_and_redirect(db, settings, user_email, cli_redirect)
+    return await _generate_auth_code_and_redirect(db, user_email, cli_redirect)
 
 
 # =============================================================================
@@ -356,6 +360,7 @@ async def exchange_auth_code_for_session(
     body: SessionExchangeRequest,
     db: Database = Depends(get_database),
     settings: Settings = Depends(get_settings),
+    credential_router: CommandCredentialRouter = Depends(get_credential_router),
 ) -> SessionExchangeResponse:
     """Exchange a short-lived auth code for a 30-day session token (Phase 1).
 
@@ -376,18 +381,17 @@ async def exchange_auth_code_for_session(
     if not settings.is_email_domain_allowed(email):
         raise HTTPException(status_code=403, detail="Email domain not allowed")
 
-    # Ensure service account exists before issuing session — this is the provisioning boundary.
-    # After this point, get_service_account_email() for this user will always return a value,
-    # so downstream code (generate_delegated_token etc.) never receives None.
-    token_generator = TokenGenerator(database=db, settings=settings)
+    # Run session-establishment hooks (SA+DWD: provision service account; OAuth: no-op).
+    # After this point, get_service_account_email() will always return a non-None value
+    # for SA/DWD modes, so downstream delegation code never receives None.
     try:
-        await token_generator.ensure_service_account(email)
+        await credential_router.on_session_establishment(email)
     except Exception as e:
         logger.exception(
-            "Service account setup failed during session exchange",
+            "Session establishment hook failed",
             extra={"email": email, "error": str(e)},
         )
-        raise HTTPException(status_code=500, detail="Failed to provision service account") from e
+        raise HTTPException(status_code=500, detail="Failed to provision credentials") from e
 
     # Generate session token
     raw_token = secrets.token_urlsafe(32)
@@ -432,7 +436,7 @@ async def exchange_session_for_access_token(
     request: Request,
     body: TokenRequest,
     db: Database = Depends(get_database),
-    settings: Settings = Depends(get_settings),
+    credential_router: CommandCredentialRouter = Depends(get_credential_router),
 ) -> TokenResponse:
     """Exchange a session token for a short-lived access token (Phase 2).
 
@@ -449,16 +453,13 @@ async def exchange_session_for_access_token(
     token_hash = caller["token_hash"]
 
     cmd_type = body.command.type
-
-    # Reject unknown command types with an informative error
-    if cmd_type not in _ALL_COMMAND_TYPES:
-        raise HTTPException(
-            status_code=400,
-            detail=f"Unknown command type: {cmd_type!r}. Valid types: {sorted(_ALL_COMMAND_TYPES)}",
-        )
-
-    # Log access (best-effort) — store command context for risk modelling
     client_ip = _get_client_ip(request)
+
+    # Resolve credentials — routing, allowlist checks, and token generation
+    credentials = await credential_router.resolve(body.command, email)
+
+    # Log access after credential resolution so credential_kind is known
+    credential_kind = credentials[0].kind if credentials else ""
     try:
         await db.log_access_token_request(
             email=email,
@@ -467,17 +468,14 @@ async def exchange_session_for_access_token(
             command_context=body.command.model_dump(exclude={"type"}),
             reason=body.reason,
             ip=client_ip,
+            credential_kind=credential_kind,
         )
     except Exception as e:
         logger.warning("Failed to log access token request", extra={"error": str(e)})
 
-    # Resolve credentials — allowlist check and token generation
-    token_generator = TokenGenerator(database=db, settings=settings)
-    credentials = await resolve_credentials(body.command, email, token_generator, settings)
-
     logger.info(
         "Access token issued",
-        extra={"email": email, "command_type": cmd_type},
+        extra={"email": email, "command_type": cmd_type, "credential_kind": credential_kind},
     )
 
     return TokenResponse(credentials=credentials, command_type=cmd_type)
@@ -504,6 +502,30 @@ def _assert_session_authorized(
             status_code=403,
             detail=f"Not authorized to {action}",
         )
+
+
+@router.post("/auth/oauth/revoke")
+@limiter.limit("10/minute")
+async def revoke_oauth_token(
+    request: Request,
+    db: Database = Depends(get_database),
+    credential_router: CommandCredentialRouter = Depends(get_credential_router),
+) -> dict:
+    """Revoke the stored OAuth refresh token and delete it from Firestore.
+
+    Called by ``extrasuite auth logout`` in OAuth credential modes.
+    Google revocation invalidates all access tokens derived from this refresh token.
+    Network failure on revocation is logged but does NOT block the response —
+    the Firestore deletion still prevents future use from ExtraSuite's server.
+
+    Requires a valid session token in Authorization: Bearer header.
+    """
+    caller = await _validate_bearer_session(request, db)
+    email = caller["email"]
+
+    await credential_router.on_logout(email)
+    logger.info("OAuth token revoked on logout", extra={"email": email})
+    return {"status": "revoked"}
 
 
 @router.get("/admin/sessions")
@@ -598,28 +620,17 @@ async def revoke_all_sessions(
 
 
 async def _generate_auth_code_and_show_html(
-    db: Database, settings: Settings, email: str
+    db: Database, email: str
 ) -> HTMLResponse:
-    """Ensure service account exists and display the auth code on an HTML page.
+    """Generate an auth code and display it on an HTML page (headless flow).
 
-    Used by the headless flow: no localhost callback server is available, so the
-    code is shown directly so the user can copy and paste it into the CLI.
+    Service account provisioning is deferred to exchange_auth_code_for_session
+    via the credential router's on_session_establishment hook.
     """
-    token_generator = TokenGenerator(database=db, settings=settings)
-
-    try:
-        service_account_email = await token_generator.ensure_service_account(email)
-    except Exception as e:
-        logger.exception("Service account setup failed (headless)", extra={"email": email, "error": str(e)})
-        return _cli_headless_error_response()
-
-    logger.info(
-        "Headless: service account ready",
-        extra={"email": email, "service_account": service_account_email},
-    )
+    logger.info("Headless: generating auth code", extra={"email": email})
 
     auth_code = secrets.token_urlsafe(32)
-    await db.save_auth_code(auth_code, service_account_email, email)
+    await db.save_auth_code(auth_code, "", email)
 
     return HTMLResponse(
         content=f"""
@@ -681,12 +692,20 @@ def _build_cli_redirect_url(port: int) -> str:
 
 
 def _create_oauth_flow(settings: Settings) -> Flow:
-    """Create Google OAuth flow with CLI scopes."""
+    """Create Google OAuth flow.
+
+    In sa+dwd mode: only identity scopes (openid + email) are requested.
+    In sa+oauth or oauth mode: identity scopes + all configured workspace scopes.
+    """
     if not settings.google_client_id or not settings.google_client_secret:
         raise HTTPException(
             status_code=500,
             detail="Google OAuth not configured. Set GOOGLE_CLIENT_ID and GOOGLE_CLIENT_SECRET.",
         )
+
+    scopes = list(_IDENTITY_SCOPES)
+    if settings.uses_oauth:
+        scopes.extend(settings.get_oauth_scope_urls())
 
     client_config = {
         "web": {
@@ -700,37 +719,25 @@ def _create_oauth_flow(settings: Settings) -> Flow:
 
     flow = Flow.from_client_config(
         client_config,
-        scopes=CLI_SCOPES,
+        scopes=scopes,
         redirect_uri=settings.google_redirect_uri,
     )
     return flow
 
 
 async def _generate_auth_code_and_redirect(
-    db: Database, settings: Settings, email: str, cli_redirect: str
+    db: Database, email: str, cli_redirect: str
 ) -> RedirectResponse | HTMLResponse:
-    """Ensure service account exists and redirect to CLI with auth code.
+    """Generate an auth code and redirect to the CLI callback URL.
 
-    Creates the user's service account if needed and stores a short-lived auth code
-    for the Phase 1 browser flow. The CLI then exchanges that code for a long-lived
-    session token via POST /api/auth/session/exchange.
+    Service account provisioning is deferred to exchange_auth_code_for_session
+    via the credential router's on_session_establishment hook.
     """
-    token_generator = TokenGenerator(database=db, settings=settings)
+    logger.info("Generating auth code for CLI redirect", extra={"email": email})
 
-    try:
-        service_account_email = await token_generator.ensure_service_account(email)
-    except Exception as e:
-        logger.exception("Service account setup failed", extra={"email": email, "error": str(e)})
-        return _cli_error_response(cli_redirect)
-
-    logger.info(
-        "Service account ready",
-        extra={"email": email, "service_account": service_account_email},
-    )
-
-    # Generate auth code and store SA + user email for later token generation
+    # Generate auth code; SA provisioning happens later in on_session_establishment
     auth_code = secrets.token_urlsafe(32)
-    await db.save_auth_code(auth_code, service_account_email, email)
+    await db.save_auth_code(auth_code, "", email)
 
     # Redirect with auth code only
     params = {"code": auth_code}

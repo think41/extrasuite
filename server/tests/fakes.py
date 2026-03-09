@@ -29,6 +29,8 @@ class FakeDatabase:
         self.auth_codes: dict[str, dict[str, Any]] = {}
         self.session_tokens: dict[str, dict[str, Any]] = {}
         self.access_logs: list[dict[str, Any]] = []
+        # email -> {encrypted_token, scopes}
+        self._refresh_tokens: dict[str, dict[str, str]] = {}
         self._should_fail_get_sa: bool = False
         self._should_fail_set_sa: bool = False
 
@@ -167,6 +169,7 @@ class FakeDatabase:
         command_context: dict,
         reason: str,
         ip: str,
+        credential_kind: str = "",
     ) -> None:
         """Log an access token request."""
         self.access_logs.append(
@@ -177,8 +180,30 @@ class FakeDatabase:
                 "command_context": command_context,
                 "reason": reason,
                 "ip": ip,
+                "credential_kind": credential_kind,
                 "timestamp": datetime.now(UTC),
             }
+        )
+
+    async def get_encrypted_refresh_token(self, email: str) -> str | None:
+        """Get encrypted refresh token for a user."""
+        user_data = self._refresh_tokens.get(email)
+        if user_data is None:
+            return None
+        return user_data.get("encrypted_token")
+
+    async def set_refresh_token(self, email: str, encrypted: str, scopes: str) -> None:
+        """Store encrypted refresh token for a user."""
+        self._refresh_tokens[email] = {"encrypted_token": encrypted, "scopes": scopes}
+
+    async def delete_refresh_token(self, email: str) -> None:
+        """Remove refresh token for a user."""
+        self._refresh_tokens.pop(email, None)
+
+    async def has_refresh_token(self, email: str) -> bool:
+        """Return True if user has a stored refresh token."""
+        return email in self._refresh_tokens and bool(
+            self._refresh_tokens[email].get("encrypted_token")
         )
 
 
@@ -198,6 +223,11 @@ class FakeSettings:
         session_token_expiry_days: int = 30,
         admin_emails: list[str] | None = None,
         allowed_domains: list[str] | None = None,
+        credential_mode: str = "sa+dwd",
+        oauth_scopes: str = "",
+        oauth_token_encryption_key: str = "",
+        google_client_id: str = "test-client-id",
+        google_client_secret: str = "test-client-secret",
     ) -> None:
         _ = delegation_enabled
         self.google_cloud_project = google_cloud_project
@@ -207,6 +237,21 @@ class FakeSettings:
         self.session_token_expiry_days = session_token_expiry_days
         self._admin_emails = [e.lower() for e in (admin_emails or [])]
         self._allowed_domains = [d.lower() for d in (allowed_domains or [])]
+        self.credential_mode = credential_mode
+        self.oauth_scopes = oauth_scopes
+        self.oauth_token_encryption_key = oauth_token_encryption_key
+        self.google_client_id = google_client_id
+        self.google_client_secret = google_client_secret
+
+    @property
+    def uses_oauth(self) -> bool:
+        return self.credential_mode != "sa+dwd"
+
+    def get_oauth_scope_urls(self) -> list[str]:
+        if not self.oauth_scopes:
+            return []
+        prefix = "https://www.googleapis.com/auth/"
+        return [f"{prefix}{s.strip()}" for s in self.oauth_scopes.split(",") if s.strip()]
 
     def get_domain_abbreviation(self, domain: str) -> str:
         """Get abbreviation for a domain."""

@@ -12,14 +12,13 @@ The fixtures `client`, `fake_db`, and `fake_settings` come from conftest.py.
 import hashlib
 import secrets
 from datetime import UTC, datetime, timedelta
-from unittest.mock import AsyncMock, MagicMock, patch
+from unittest.mock import AsyncMock
 
 import httpx
-import pytest
+from fastapi import HTTPException
 
-from extrasuite.server.command_registry import _DWD_COMMAND_SCOPES, _SA_COMMAND_TYPES
-from extrasuite.server.token_generator import GeneratedToken
-from tests.conftest import make_test_app
+from extrasuite.server.command_registry import _DWD_COMMAND_SCOPES, _SA_COMMAND_TYPES, Credential
+from tests.conftest import make_mock_credential_router, make_test_app
 from tests.fakes import FakeDatabase, FakeSettings
 
 # ---------------------------------------------------------------------------
@@ -30,14 +29,6 @@ _SA_EMAIL = "user-abc@test-project.iam.gserviceaccount.com"
 _USER_EMAIL = "user@example.com"
 _ADMIN_EMAIL = "admin@example.com"
 _FAKE_TOKEN = "fake-access-token-xyz"
-
-
-def _fake_generated_token(sa_email: str = _SA_EMAIL) -> GeneratedToken:
-    return GeneratedToken(
-        token=_FAKE_TOKEN,
-        expires_at=datetime.now(UTC) + timedelta(hours=1),
-        service_account_email=sa_email,
-    )
 
 
 async def _make_session(db: FakeDatabase, email: str = _USER_EMAIL, expiry_days: int = 30) -> str:
@@ -59,16 +50,6 @@ def _bearer(raw_token: str) -> dict[str, str]:
 
 class TestSessionExchange:
     """Tests for POST /api/auth/session/exchange."""
-
-    @pytest.fixture(autouse=True)
-    def _patch_token_generator(self):
-        """Patch TokenGenerator so ensure_service_account is a no-op."""
-        with patch("extrasuite.server.api.TokenGenerator") as MockTG:
-            mock_tg = MagicMock()
-            mock_tg.ensure_service_account = AsyncMock(return_value=_SA_EMAIL)
-            MockTG.return_value = mock_tg
-            self._mock_tg = mock_tg
-            yield
 
     async def test_valid_sa_code_returns_session_token(
         self, client: httpx.AsyncClient, fake_db: FakeDatabase
@@ -106,30 +87,29 @@ class TestSessionExchange:
         )
         app = make_test_app(fake_db, restricted_settings)
 
-        with patch("extrasuite.server.api.TokenGenerator") as MockTG:
-            mock_tg = MagicMock()
-            mock_tg.ensure_service_account = AsyncMock(return_value=_SA_EMAIL)
-            MockTG.return_value = mock_tg
-
-            await fake_db.save_auth_code("code", _SA_EMAIL, "user@blocked.com")
-            async with httpx.AsyncClient(
-                transport=httpx.ASGITransport(app=app), base_url="http://test"
-            ) as restricted_client:
-                resp = await restricted_client.post(
-                    "/api/auth/session/exchange", json={"code": "code"}
-                )
+        await fake_db.save_auth_code("code", _SA_EMAIL, "user@blocked.com")
+        async with httpx.AsyncClient(
+            transport=httpx.ASGITransport(app=app), base_url="http://test"
+        ) as restricted_client:
+            resp = await restricted_client.post(
+                "/api/auth/session/exchange", json={"code": "code"}
+            )
         assert resp.status_code == 403
 
     async def test_sa_provisioning_failure_returns_500(
-        self, client: httpx.AsyncClient, fake_db: FakeDatabase
+        self, fake_db: FakeDatabase, fake_settings: FakeSettings
     ) -> None:
         """SA creation failure → 500."""
-        self._mock_tg.ensure_service_account = AsyncMock(
-            side_effect=RuntimeError("IAM quota exceeded")
+        failing_router = make_mock_credential_router(
+            session_establishment_error=RuntimeError("IAM quota exceeded")
         )
+        app = make_test_app(fake_db, fake_settings, failing_router)
         await fake_db.save_auth_code("code2", _SA_EMAIL, _USER_EMAIL)
 
-        resp = await client.post("/api/auth/session/exchange", json={"code": "code2"})
+        async with httpx.AsyncClient(
+            transport=httpx.ASGITransport(app=app), base_url="http://test"
+        ) as c:
+            resp = await c.post("/api/auth/session/exchange", json={"code": "code2"})
         assert resp.status_code == 500
 
     async def test_missing_user_email_in_auth_code_returns_400(
@@ -185,16 +165,6 @@ class TestSessionExchange:
 class TestAccessToken:
     """Tests for POST /api/auth/token."""
 
-    @pytest.fixture(autouse=True)
-    def _patch_token_generator(self):
-        with patch("extrasuite.server.api.TokenGenerator") as MockTG:
-            mock_tg = MagicMock()
-            mock_tg.generate_token = AsyncMock(return_value=_fake_generated_token())
-            mock_tg.generate_delegated_token = AsyncMock(return_value=_fake_generated_token())
-            MockTG.return_value = mock_tg
-            self._mock_tg = mock_tg
-            yield
-
     async def test_sa_command_returns_credentials(
         self, client: httpx.AsyncClient, fake_db: FakeDatabase
     ) -> None:
@@ -219,12 +189,11 @@ class TestAccessToken:
         assert cred["token"] == _FAKE_TOKEN
         assert cred["kind"] == "bearer_sa"
         assert cred["metadata"]["service_account_email"] == _SA_EMAIL
-        self._mock_tg.generate_token.assert_awaited_once_with(_USER_EMAIL)
 
     async def test_dwd_command_returns_credentials(
         self, client: httpx.AsyncClient, fake_db: FakeDatabase
     ) -> None:
-        """Valid session + DWD command → 200; generate_delegated_token called."""
+        """Valid session + DWD command → 200 with bearer_dwd credentials."""
         raw = await _make_session(fake_db)
         fake_db.users[_USER_EMAIL] = _SA_EMAIL
 
@@ -247,10 +216,7 @@ class TestAccessToken:
         assert data["command_type"] == "gmail.compose"
         cred = data["credentials"][0]
         assert cred["kind"] == "bearer_dwd"
-        self._mock_tg.generate_delegated_token.assert_awaited_once()
-        call_args = self._mock_tg.generate_delegated_token.call_args
-        assert call_args.args[0] == _USER_EMAIL
-        assert "https://www.googleapis.com/auth/gmail.compose" in call_args.args[1]
+        assert "https://www.googleapis.com/auth/gmail.compose" in cred["scopes"]
 
     async def test_access_request_is_logged(
         self, client: httpx.AsyncClient, fake_db: FakeDatabase
@@ -340,30 +306,50 @@ class TestAccessToken:
             # Only allow calendar; gmail.compose is blocked
             delegation_scopes=["https://www.googleapis.com/auth/calendar"],
         )
-        app = make_test_app(fake_db, restricted_settings)
 
-        with patch("extrasuite.server.api.TokenGenerator") as MockTG:
-            mock_tg = MagicMock()
-            mock_tg.generate_delegated_token = AsyncMock(return_value=_fake_generated_token())
-            MockTG.return_value = mock_tg
-
-            raw = await _make_session(fake_db)
-            async with httpx.AsyncClient(
-                transport=httpx.ASGITransport(app=app), base_url="http://test"
-            ) as restricted_client:
-                resp = await restricted_client.post(
-                    "/api/auth/token",
-                    json={
-                        "command": {
-                            "type": "gmail.compose",
-                            "subject": "",
-                            "recipients": [],
-                            "cc": [],
-                        },
-                        "reason": "test",
-                    },
-                    headers=_bearer(raw),
+        # The router enforces allowlist in resolve(); mock it to raise 403
+        async def _restricted_resolve(command, _email: str):
+            if command.type in _SA_COMMAND_TYPES:
+                return [
+                    Credential(
+                        provider="google",
+                        kind="bearer_sa",
+                        token=_FAKE_TOKEN,
+                        expires_at=(datetime.now(UTC) + timedelta(hours=1)).isoformat(),
+                        scopes=[],
+                        metadata={"service_account_email": _SA_EMAIL},
+                    )
+                ]
+            # DWD command: check if scope is in restricted list
+            gmail_scope = "https://www.googleapis.com/auth/gmail.compose"
+            if not restricted_settings.is_scope_allowed(gmail_scope):
+                raise HTTPException(
+                    403,
+                    detail="Scope(s) ['gmail.compose'] are not permitted by server configuration.",
                 )
+            raise HTTPException(400, "Unexpected command")
+
+        restricted_router = make_mock_credential_router()
+        restricted_router.resolve = AsyncMock(side_effect=_restricted_resolve)
+        app = make_test_app(fake_db, restricted_settings, restricted_router)
+
+        raw = await _make_session(fake_db)
+        async with httpx.AsyncClient(
+            transport=httpx.ASGITransport(app=app), base_url="http://test"
+        ) as restricted_client:
+            resp = await restricted_client.post(
+                "/api/auth/token",
+                json={
+                    "command": {
+                        "type": "gmail.compose",
+                        "subject": "",
+                        "recipients": [],
+                        "cc": [],
+                    },
+                    "reason": "test",
+                },
+                headers=_bearer(raw),
+            )
         assert resp.status_code == 403
         assert "gmail.compose" in resp.json()["detail"]
 
@@ -426,14 +412,8 @@ class TestAccessToken:
         assert resp.status_code == 200
         cred = resp.json()["credentials"][0]
         assert cred["kind"] == "bearer_dwd"
-        # Both scopes required for gmail.reply must be granted
+        # Both scopes required for gmail.reply must be in the response
         assert set(cred["scopes"]) == {
-            "https://www.googleapis.com/auth/gmail.readonly",
-            "https://www.googleapis.com/auth/gmail.compose",
-        }
-        call_args = self._mock_tg.generate_delegated_token.call_args
-        passed_scopes = set(call_args.args[1])
-        assert passed_scopes == {
             "https://www.googleapis.com/auth/gmail.readonly",
             "https://www.googleapis.com/auth/gmail.compose",
         }
@@ -715,13 +695,8 @@ class TestSessionTokenSecurity:
         self, client: httpx.AsyncClient, fake_db: FakeDatabase
     ) -> None:
         """The raw session token must never appear as a Firestore document ID."""
-        with patch("extrasuite.server.api.TokenGenerator") as MockTG:
-            mock_tg = MagicMock()
-            mock_tg.ensure_service_account = AsyncMock(return_value=_SA_EMAIL)
-            MockTG.return_value = mock_tg
-
-            await fake_db.save_auth_code("raw-check-code", _SA_EMAIL, _USER_EMAIL)
-            resp = await client.post("/api/auth/session/exchange", json={"code": "raw-check-code"})
+        await fake_db.save_auth_code("raw-check-code", _SA_EMAIL, _USER_EMAIL)
+        resp = await client.post("/api/auth/session/exchange", json={"code": "raw-check-code"})
 
         assert resp.status_code == 200
         raw_token = resp.json()["session_token"]

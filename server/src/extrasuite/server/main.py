@@ -15,8 +15,10 @@ from starlette.middleware.sessions import SessionMiddleware
 
 from extrasuite.server import api, skills
 from extrasuite.server.config import get_settings
+from extrasuite.server.credential_router import CommandCredentialRouter
 from extrasuite.server.database import Database
 from extrasuite.server.logging import configure_logging
+from extrasuite.server.token_generator import TokenGenerator
 
 
 async def unhandled_exception_handler(request: Request, exc: Exception) -> JSONResponse:
@@ -56,6 +58,23 @@ async def lifespan(app: FastAPI):
         database=settings.firestore_database,
     )
     app.state.database = database
+
+    # Build the credential router (once at startup; no mode checks at runtime)
+    encryptor = None
+    if settings.uses_oauth:
+        from extrasuite.server.crypto import RefreshTokenEncryptor  # noqa: PLC0415
+
+        encryptor = RefreshTokenEncryptor(settings.oauth_token_encryption_key)
+
+    token_generator = TokenGenerator(
+        database=database,
+        settings=settings,
+        encryptor=encryptor,
+    )
+    credential_router = CommandCredentialRouter.from_settings(
+        settings, token_generator, database, encryptor
+    )
+    app.state.credential_router = credential_router
 
     yield
 

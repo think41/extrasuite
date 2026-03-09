@@ -14,6 +14,21 @@ from pydantic_settings import BaseSettings, SettingsConfigDict
 
 _GOOGLE_SCOPE_PREFIX = "https://www.googleapis.com/auth/"
 
+# Full scope URLs for OAuth mode (SA commands routed through user's OAuth token)
+_OAUTH_SA_SCOPE_NAMES: dict[str, str] = {
+    "sheet.pull": "spreadsheets",
+    "sheet.push": "spreadsheets",
+    "sheet.batchupdate": "spreadsheets",
+    "doc.pull": "documents",
+    "doc.push": "documents",
+    "slide.pull": "presentations",
+    "slide.push": "presentations",
+    "form.pull": "forms.body",
+    "form.push": "forms.body",
+    "drive.ls": "drive.readonly",
+    "drive.search": "drive.readonly",
+}
+
 
 class Settings(BaseSettings):
     """Application settings loaded from environment variables.
@@ -126,6 +141,58 @@ class Settings(BaseSettings):
     # Env var: ADMIN_EMAILS=admin@example.com,ops@example.com
     admin_emails: str = ""
 
+    # Credential mode: controls how SA and DWD-class commands are authenticated.
+    # sa+dwd (default): SA for sheet/doc/slide/form; DWD for gmail/calendar/etc.
+    # sa+oauth: SA for sheet/doc/slide/form; user OAuth for gmail/calendar/etc.
+    # oauth: user OAuth for all commands (note: no agent attribution in Drive version history)
+    # Env var: CREDENTIAL_MODE=sa+dwd
+    credential_mode: Literal["sa+dwd", "sa+oauth", "oauth"] = "sa+dwd"
+
+    # OAuth scopes to request at consent time (comma-separated short scope names).
+    # Required when CREDENTIAL_MODE != sa+dwd.
+    # Example: spreadsheets,documents,presentations,forms.body,drive.readonly,gmail.compose,gmail.readonly,calendar,contacts.readonly,script.projects
+    # Env var: OAUTH_SCOPES
+    oauth_scopes: str = ""
+
+    # AES-256 encryption key for storing refresh tokens in Firestore (32-byte hex string).
+    # Required when CREDENTIAL_MODE != sa+dwd.
+    # Generate: python -c "import secrets; print(secrets.token_hex(32))"
+    # Production: load from Cloud Run secret --set-secrets OAUTH_TOKEN_ENCRYPTION_KEY=extrasuite-oauth-key:latest
+    # Env var: OAUTH_TOKEN_ENCRYPTION_KEY
+    oauth_token_encryption_key: str = ""
+
+    @property
+    def uses_oauth(self) -> bool:
+        """True when the server stores and uses OAuth refresh tokens."""
+        return self.credential_mode != "sa+dwd"
+
+    def get_oauth_scope_urls(self) -> list[str]:
+        """Resolve OAUTH_SCOPES short names to full Google scope URLs."""
+        if not self.oauth_scopes:
+            return []
+        scopes = [s.strip() for s in self.oauth_scopes.split(",") if s.strip()]
+        return [f"{_GOOGLE_SCOPE_PREFIX}{s}" for s in scopes]
+
+    def get_oauth_sa_scope_url(self, command_type: str) -> str:
+        """Return the full OAuth scope URL needed for a SA-class command in oauth mode.
+
+        Raises:
+            KeyError: If command_type is not a known SA command.
+        """
+        return f"{_GOOGLE_SCOPE_PREFIX}{_OAUTH_SA_SCOPE_NAMES[command_type]}"
+
+    def validate_oauth_config(self) -> None:
+        """Raise ValueError at startup if required OAuth vars are missing."""
+        if not self.uses_oauth:
+            return
+        errors = []
+        if not self.oauth_token_encryption_key:
+            errors.append("OAUTH_TOKEN_ENCRYPTION_KEY must be set when CREDENTIAL_MODE != sa+dwd")
+        if not self.oauth_scopes:
+            errors.append("OAUTH_SCOPES must be set when CREDENTIAL_MODE != sa+dwd")
+        if errors:
+            raise ValueError("OAuth configuration errors:\n  - " + "\n  - ".join(errors))
+
     def get_allowed_domains(self) -> list[str]:
         """Get list of allowed email domains.
 
@@ -225,6 +292,8 @@ class Settings(BaseSettings):
 
         if errors:
             raise ValueError("Configuration errors:\n  - " + "\n  - ".join(errors))
+
+        self.validate_oauth_config()
 
         return self
 
