@@ -1292,6 +1292,15 @@ def _style_reqs_for_added_paras(
                 prev_was_table = False
             had_non_para = True
             continue
+        # When table_size_extra=0 and the previous element was a table,
+        # insertTable's displaced \n sits between the table and this paragraph.
+        # The _process_trailing_adds_with_tables reversed loop inserts the
+        # paragraph's text with a leading \n (e.g. "\nHeading Text"), then
+        # insertTable displaces that leading \n to become the post-table \n
+        # separator.  This post-table \n is 1 char that \n is not absorbed by
+        # the paragraph's inserted text — the offset must skip it.
+        if table_size_extra == 0 and prev_was_table:
+            offset += 1
         prev_was_table = False
         para_text = _para_text(el)
         # insertPageBreak inserts 2 characters (pageBreak element + \n).
