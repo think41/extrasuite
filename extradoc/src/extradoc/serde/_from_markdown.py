@@ -72,6 +72,7 @@ from extradoc.api_types._generated import (
     StructuralElement,
     Tab,
     Table,
+    TableOfContents,
     TableCell,
     TableCellStyle,
     TableRow,
@@ -344,7 +345,9 @@ def _parse_body(
             if _X_PAGEBREAK_RE.match(raw):
                 body.append(_make_pagebreak_para())
             elif raw == "<!-- toc -->":
-                pass  # skip TOC marker
+                # Emit a synthetic tableOfContents element so the reconciler
+                # sees a MATCHED TOC (not DELETED) and generates no requests.
+                body.append(StructuralElement(table_of_contents=TableOfContents()))
             elif raw.lower().startswith("<table"):
                 body.append(_convert_html_table(raw))
             else:

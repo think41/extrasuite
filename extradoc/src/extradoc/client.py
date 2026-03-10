@@ -309,6 +309,15 @@ class DocsClient:
 # Helper functions
 # ---------------------------------------------------------------------------
 
+# Named styles that the markdown serializer renders as heading markers (# / ##)
+# and that parse back as HEADING_1 / HEADING_2.  Normalise the raw-JSON base
+# to use the same values so the reconciler doesn't generate spurious
+# updateParagraphStyle requests when neither style was intentionally changed.
+_MARKDOWN_STYLE_REMAP: dict[str, str] = {
+    "TITLE": "HEADING_1",
+    "SUBTITLE": "HEADING_2",
+}
+
 
 def _normalize_raw_base_para_styles(doc: Document) -> None:
     """Normalise the raw API JSON base document so it is consistent with the
@@ -331,6 +340,22 @@ def _normalize_raw_base_para_styles(doc: Document) -> None:
        sequences for unchanged callout/codeblock tables, causing insertTable
        requests to target invalid positions.
 
+    3. **Bare empty-paragraph removal** — The markdown serializer skips any
+       paragraph whose sole content is an unstyled ``\\n`` (they look identical
+       to trailing paragraphs).  The raw API document may have many such empty
+       paragraphs for spacing around TOC, HR, person chips, etc.  Since they
+       do not appear in the desired document, the reconciler would generate
+       spurious ``deleteContentRange`` requests for all of them.  Stripping
+       them from the base prevents this without changing any document content
+       (the real API document is unaffected — we only modify the in-memory
+       base used for diffing).
+
+    4. **TITLE / SUBTITLE → HEADING_1 / HEADING_2** — The markdown serializer
+       renders TITLE as ``#`` and SUBTITLE as ``##``, which parse back as
+       HEADING_1 and HEADING_2.  Normalising the base to use those same values
+       prevents spurious ``updateParagraphStyle namedStyleType`` requests while
+       preserving the original Google Docs style in the actual document.
+
     The structural content (tables, named ranges) and all index values are
     unchanged — the raw JSON is still used for accurate startIndex/endIndex
     values in deleteContentRange requests.
@@ -345,10 +370,12 @@ def _normalize_raw_base_para_styles(doc: Document) -> None:
         if dt.body and dt.body.content:
             # 1. Strip inter-table separator paragraphs
             dt.body.content = _strip_inter_table_separators(dt.body.content)
-            # 2. Normalise paragraph styles
+            # 2. Strip bare empty paragraphs (invisible in markdown)
+            dt.body.content = _strip_empty_body_paragraphs(dt.body.content)
+            # 3. Normalise paragraph styles (including TITLE/SUBTITLE mapping)
             for se in dt.body.content:
                 _normalize_structural_element_para_styles(se)
-            # 3. Ensure a trailing empty paragraph exists.
+            # 4. Ensure a trailing empty paragraph exists.
             # Some raw API documents omit the synthetic trailing paragraph and
             # instead have the last content paragraph's '\n' serve as the
             # terminator.  The markdown serde (_ensure_trailing_paragraph)
@@ -388,6 +415,48 @@ def _strip_inter_table_separators(
                     continue  # skip this inter-table separator
         out.append(se)
     return out
+
+
+def _is_bare_empty_paragraph(se: StructuralElement) -> bool:
+    """Return True if se is a bare unstyled '\\n'-only paragraph.
+
+    These are invisible in the markdown representation — _to_markdown.py
+    skips them as trailing paragraphs — so they must be stripped from the
+    base to avoid spurious deleteContentRange requests.
+    """
+    if se.paragraph is None:
+        return False
+    elements = se.paragraph.elements or []
+    if not elements:
+        return True
+    if len(elements) == 1:
+        tr = elements[0].text_run
+        if tr is not None and tr.content == "\n":
+            ts = tr.text_style
+            return ts is None or not any(
+                getattr(ts, f, None) for f in (
+                    "bold", "italic", "underline", "strikethrough",
+                    "link", "weighted_font_family", "foreground_color",
+                    "background_color", "font_size",
+                )
+            )
+    return False
+
+
+def _strip_empty_body_paragraphs(
+    content: list[StructuralElement],
+) -> list[StructuralElement]:
+    """Remove all bare empty paragraphs from body content.
+
+    The markdown serializer skips unstyled '\\n'-only paragraphs (treating
+    them as trailing paragraphs).  Any such paragraph in the base would
+    generate a spurious deleteContentRange in the diff.  Stripping them
+    from the base keeps it consistent with the desired document.
+
+    The trailing empty paragraph required by the Google Docs API is added
+    back by _ensure_base_trailing_paragraph after this call.
+    """
+    return [se for se in content if not _is_bare_empty_paragraph(se)]
 
 
 def _normalize_structural_element_para_styles(se: StructuralElement) -> None:
@@ -435,7 +504,12 @@ def _normalize_paragraph(para: Paragraph) -> None:
     """
     ps = para.paragraph_style
     if ps:
-        para.paragraph_style = ParagraphStyle(named_style_type=ps.named_style_type)
+        raw = ps.named_style_type
+        style_val = raw.value if hasattr(raw, "value") else (raw or "")
+        # TITLE/SUBTITLE → HEADING_1/HEADING_2: markdown renders them as #/##
+        # which parse back as HEADING_1/HEADING_2, so normalise the base too.
+        remapped = _MARKDOWN_STYLE_REMAP.get(style_val, style_val) or style_val
+        para.paragraph_style = ParagraphStyle(named_style_type=remapped)
 
     new_elements: list[ParagraphElement] = []
     for elem in para.elements or []:
