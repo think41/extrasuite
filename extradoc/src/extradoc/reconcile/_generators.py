@@ -870,6 +870,88 @@ def _process_slot_inner(
                 )
                 return del_reqs_inner + insert_reqs
 
+            # Sub-case: right_anchor is a table, no deletes, left_anchor is a
+            # real paragraph, adds are all paragraphs (no tables in adds).
+            #
+            # insertText at _el_start(right_anchor) is invalid — table startIndex
+            # is not inside any paragraph.  Fix: insert at left_anchor's trailing
+            # \n position (tbl_insert_idx = _el_end(left_anchor) - 1).
+            #
+            # To avoid merging the first inserted paragraph with left_anchor's
+            # text, prepend \n to the first paragraph in doc order (= last in the
+            # reversed loop).  The original \n of left_anchor then acts as the
+            # last paragraph's terminator, so strip its explicit trailing \n.
+            #
+            # Example — desired: Heading | Para1 | Para2 | TABLE (right anchor)
+            # Insert "\nPara1\nPara2" at T-1 (Heading's \n position):
+            #   "Heading" + "\n" + "Para1\n" + "Para2" + original-\n + TABLE
+            #   = Para "Heading", Para "Para1", Para "Para2", TABLE  ✓
+            has_tables_in_adds = any(
+                _is_table(ae.desired_element)
+                for ae in filtered
+                if ae.desired_element
+            )
+            if (
+                _is_table(right_anchor)
+                and not deletes
+                and left_anchor is not None
+                and not _is_section_break(left_anchor)
+                and not has_tables_in_adds
+            ):
+                tbl_insert_idx = _el_end(left_anchor) - 1
+                # Count non-empty paragraphs so we can detect "first in doc order
+                # = last in reversed".
+                n_non_empty = sum(
+                    1
+                    for ae in filtered
+                    if ae.desired_element
+                    and _is_paragraph(ae.desired_element)
+                    and _para_text(ae.desired_element)
+                )
+                para_count = 0
+                first_in_reversed = True
+                for ae in reversed(filtered):
+                    el = ae.desired_element
+                    assert el is not None
+                    if _is_paragraph(el):
+                        if _is_pagebreak_paragraph(el):
+                            first_in_reversed = False
+                            insert_reqs.append(
+                                _make_insert_page_break(tbl_insert_idx, tab_id)
+                            )
+                        else:
+                            text = _para_text(el)
+                            if not text:
+                                continue
+                            para_count += 1
+                            is_first_in_doc = para_count == n_non_empty
+                            if first_in_reversed:
+                                # Last para in doc order: left_anchor's \n is its
+                                # terminator, so strip its explicit trailing \n.
+                                text = text.rstrip("\n")
+                                first_in_reversed = False
+                            if is_first_in_doc:
+                                # First para in doc order: prepend \n to separate
+                                # from left_anchor's text.
+                                text = "\n" + text
+                            if text:
+                                insert_reqs.append(
+                                    _make_insert_text(
+                                        text, tbl_insert_idx, segment_id, tab_id
+                                    )
+                                )
+                insert_reqs.extend(
+                    _style_reqs_for_added_paras(
+                        filtered,
+                        tbl_insert_idx + 1,  # +1 for the leading \n prepended
+                        segment_id,
+                        tab_id,
+                        desired_lists,
+                        table_size_extra=0,
+                    )
+                )
+                return insert_reqs
+
             # Normal case: reversed insertion with spurious_pending for tables.
             spurious_pending = False
             for ae in reversed(filtered):
@@ -1134,6 +1216,7 @@ def _style_reqs_for_added_paras(
     para_records: list[tuple[int, int, StructuralElement, bool]] = []
     offset = first_para_actual_start
     had_non_para = False
+    prev_was_table = False
     for add in real_adds:
         el = add.desired_element
         if not el or not _is_paragraph(el):
@@ -1143,9 +1226,21 @@ def _style_reqs_for_added_paras(
                 # insertTable's separator \n stays as a separate character.
                 # Trailing gap (_process_trailing_adds_with_tables): table_size_extra=0
                 # because the separator \n is absorbed into the preceding run's text.
+                #
+                # Special case: when table_size_extra=0 and the previous element
+                # was also a table (consecutive tables with no paragraph between them),
+                # the reversed-loop's spurious_pending flag gets overwritten by the
+                # second table and cannot be absorbed. An extra \n character remains
+                # in the document body that is not represented in real_adds. Add +1.
+                if table_size_extra == 0 and prev_was_table:
+                    offset += 1
                 offset += _table_structural_size(el.table) + table_size_extra
+                prev_was_table = True
+            else:
+                prev_was_table = False
             had_non_para = True
             continue
+        prev_was_table = False
         para_text = _para_text(el)
         # insertPageBreak inserts 2 characters (pageBreak element + \n).
         # _para_text returns "\n" (length 1) — use 2 for correct tracking.
@@ -2513,10 +2608,21 @@ def _fake_empty_para(cell_start: int) -> StructuralElement:
 
     Used as the base when a cell is newly inserted (no prior API content).
     The trailing \\n is the cell-boundary marker that generate_requests must preserve.
+
+    The paragraphStyle is set to NORMAL_TEXT + LEFT_TO_RIGHT to match
+    _make_trailing_se() in _special_elements.py.  This prevents the MATCHED
+    comparison from generating a spurious updateParagraphStyle at cell_start
+    (wrong position after insertText operations shift the trailing \\n away).
     """
     return StructuralElement.model_validate(
         {
-            "paragraph": {"elements": [{"textRun": {"content": "\n"}}]},
+            "paragraph": {
+                "paragraphStyle": {
+                    "namedStyleType": "NORMAL_TEXT",
+                    "direction": "LEFT_TO_RIGHT",
+                },
+                "elements": [{"textRun": {"content": "\n"}}],
+            },
             "startIndex": cell_start,
             "endIndex": cell_start + 1,
         }
@@ -2571,14 +2677,46 @@ def _populate_cell_at(
     tab_id: TabID,
     desired_lists: dict[str, List] | None = None,
 ) -> list[dict[str, Any]]:
-    """Populate a newly-inserted empty cell (just \\n at cell_start) with desired content."""
-    return _reconcile_cell_content(
+    """Populate a newly-inserted empty cell (just \\n at cell_start) with desired content.
+
+    After all insertText operations, the trailing \\n has shifted from cell_start
+    to cell_start + total_content_length - 1.  An explicit updateParagraphStyle
+    is appended at that position to ensure NORMAL_TEXT is set on the trailing \\n,
+    even if the Google Docs API inherits a heading style from an adjacent body
+    element (which happens when the table is inserted before a heading paragraph).
+    """
+    reqs = _reconcile_cell_content(
         [_fake_empty_para(cell_start)],
         desired_cell.content or [],
         segment_id,
         tab_id,
         desired_lists,
     )
+
+    # Compute the total UTF-16 length of all cell paragraphs (including trailing \n).
+    # After insertText operations, the trailing \n sits at cell_start + total_len - 1.
+    total_len = sum(
+        utf16_len(pe.text_run.content or "")
+        for se in (desired_cell.content or [])
+        if se.paragraph
+        for pe in (se.paragraph.elements or [])
+        if pe.text_run and pe.text_run.content
+    )
+    if total_len > 1:
+        trailing_start = cell_start + total_len - 1
+        trailing_end = cell_start + total_len
+        reqs.append(
+            _make_update_paragraph_style(
+                trailing_start,
+                trailing_end,
+                {"direction": "LEFT_TO_RIGHT", "namedStyleType": "NORMAL_TEXT"},
+                ["direction", "namedStyleType"],
+                segment_id,
+                tab_id,
+            )
+        )
+
+    return reqs
 
 
 # ---------------------------------------------------------------------------
