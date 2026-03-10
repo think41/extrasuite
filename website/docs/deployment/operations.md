@@ -174,6 +174,39 @@ gcloud run services update-traffic extrasuite-server \
 
 ## Troubleshooting
 
+### "Scope not consented" or "insufficient_scope" Error (OAuth modes)
+
+**Symptom:** Agents receive a `403` or scope-related error when running commands like `sheet.pull` in `oauth` mode.
+
+**Cause:** Either `OAUTH_SCOPES` is missing the required scope, or the OAuth consent screen wasn't configured with that scope when the user last logged in.
+
+**Diagnosis:**
+
+```bash
+# Check current OAUTH_SCOPES setting
+gcloud run services describe extrasuite-server \
+  --region=asia-southeast1 \
+  --project=$PROJECT_ID \
+  --format="yaml(spec.template.spec.containers[0].env)"
+```
+
+**Common mistakes:**
+
+| Mode | Common mistake | Fix |
+|------|----------------|-----|
+| `oauth` | `OAUTH_SCOPES` missing `spreadsheets`, `documents`, etc. | In `oauth` mode, file operations also need OAuth scopes — see [Step 3](cloud-run.md#step-3-configure-google-oauth) |
+| `sa+oauth` | `OAUTH_SCOPES` includes `spreadsheets` etc. (unnecessary) | In `sa+oauth` mode, file ops use service accounts; only Gmail/Calendar scopes are needed |
+| Any | User logged in before scopes were added to the consent screen | User must re-run `extrasuite auth login` to re-consent to the new scopes |
+
+**Solution:**
+
+1. Update `OAUTH_SCOPES` in Cloud Run to include the missing scope
+2. Add the scope to the OAuth consent screen in [APIs & Services > OAuth consent screen](https://console.cloud.google.com/apis/credentials/consent)
+3. Redeploy the service
+4. Ask affected users to re-run `extrasuite auth login`
+
+---
+
 ### OAuth Consent Shows Too Many Permissions
 
 **Symptom:** Users see "See, edit, configure and delete your Google Cloud data" instead of just email access.
@@ -304,6 +337,31 @@ gcloud run services update extrasuite-server \
   --update-secrets="SECRET_KEY=extrasuite-secret-key:latest" \
   --project=$PROJECT_ID
 ```
+
+### Rotate `OAUTH_TOKEN_ENCRYPTION_KEY` (OAuth modes only)
+
+!!! warning "Breaking change: users must re-authenticate"
+    Changing `OAUTH_TOKEN_ENCRYPTION_KEY` makes all stored refresh tokens undecryptable. Every user will receive an error on their next command and must re-run `extrasuite auth login`.
+
+**Immediate rotation (break-glass):** Use when the key is compromised. All users re-authenticate over time.
+
+```bash
+# Generate a new key
+NEW_KEY=$(python -c "import secrets; print(secrets.token_hex(32))")
+
+# Store as a new secret version
+echo -n "$NEW_KEY" | gcloud secrets versions add extrasuite-oauth-key \
+  --data-file=- \
+  --project=$PROJECT_ID
+
+# Redeploy to pick up new version (all stored refresh tokens become invalid)
+gcloud run services update extrasuite-server \
+  --region=asia-southeast1 \
+  --update-secrets="OAUTH_TOKEN_ENCRYPTION_KEY=extrasuite-oauth-key:latest" \
+  --project=$PROJECT_ID
+```
+
+**Zero-downtime rotation:** Requires a migration script to re-encrypt all Firestore refresh tokens with the new key before switching. Contact support or open a GitHub issue if you need assistance.
 
 ### View Secret Versions
 

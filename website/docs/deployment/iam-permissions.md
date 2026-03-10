@@ -69,11 +69,12 @@ To grant any IAM role to a service account, you need `roles/resourcemanager.proj
 
 **Scope:** Secret-level binding (not project-level)
 
-**Why needed:** ExtraSuite reads three secrets at startup:
+**Why needed:** ExtraSuite reads secrets at startup:
 
-- `extrasuite-client-id` - OAuth Client ID
-- `extrasuite-client-secret` - OAuth Client Secret
-- `extrasuite-secret-key` - Session signing key
+- `extrasuite-client-id` — OAuth Client ID
+- `extrasuite-client-secret` — OAuth Client Secret
+- `extrasuite-secret-key` — Session signing key
+- `extrasuite-oauth-key` — AES-256 key for encrypting stored refresh tokens (`sa+oauth` and `oauth` modes only)
 
 **Security note:** This role is granted only on specific secrets, not all secrets in the project.
 

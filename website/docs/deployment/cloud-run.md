@@ -173,23 +173,51 @@ The consent screen is what users see when they log in to ExtraSuite.
 
         Click **Save and Continue** — no additional scopes needed. In `sa+dwd` mode, ExtraSuite only needs your email address at login. Gmail/Calendar access happens via server-side domain-wide delegation, not user consent.
 
-    === "`sa+oauth` or `oauth` mode"
+    === "`sa+oauth` mode"
 
-        Click **Add or Remove Scopes** and add the scopes your users will consent to. These must match what you'll set in `OAUTH_SCOPES` in Step 7.
+        Click **Add or Remove Scopes** and add the scopes your users will consent to. These must match `OAUTH_SCOPES` in Step 6.
 
-        Common scopes:
+        In `sa+oauth` mode, **file operations (Sheets, Docs, Slides, Forms)** still use per-user service accounts — those don't need OAuth scopes. You only need scopes for user-impersonating commands:
+
         | Short name | Full scope URL | Grants access to |
         |-----------|----------------|-----------------|
         | `gmail.compose` | `.../auth/gmail.compose` | Create and send email drafts |
         | `gmail.readonly` | `.../auth/gmail.readonly` | Read emails |
         | `calendar` | `.../auth/calendar` | Read and write calendar |
         | `contacts.readonly` | `.../auth/contacts.readonly` | Read contacts |
+        | `contacts.other.readonly` | `.../auth/contacts.other.readonly` | Read other contacts |
         | `script.projects` | `.../auth/script.projects` | Apps Script |
+        | `drive.file` | `.../auth/drive.file` | Create and share Drive files |
 
-        Full scope URLs: prefix with `https://www.googleapis.com/auth/`
+        Add only the scopes agents will actually use.
 
-        !!! warning "Sensitive scopes and Google verification"
-            Gmail and Calendar scopes are classified as **sensitive** by Google. If you chose **External** app type, your app must go through Google's [OAuth app verification](https://support.google.com/cloud/answer/9110914) process (typically 4-8 weeks) before you can have more than 100 users. **Use Internal app type to avoid this entirely.**
+    === "`oauth` mode"
+
+        Click **Add or Remove Scopes** and add the scopes your users will consent to. These must match `OAUTH_SCOPES` in Step 6.
+
+        In `oauth` mode, **all commands** use OAuth — no service accounts. You need scopes for both file operations and user-impersonating commands:
+
+        | Short name | Full scope URL | Grants access to |
+        |-----------|----------------|-----------------|
+        | `spreadsheets` | `.../auth/spreadsheets` | Read and write Google Sheets |
+        | `documents` | `.../auth/documents` | Read and write Google Docs |
+        | `presentations` | `.../auth/presentations` | Read and write Google Slides |
+        | `forms.body` | `.../auth/forms.body` | Read and write Google Forms |
+        | `drive.readonly` | `.../auth/drive.readonly` | List and search Drive files |
+        | `gmail.compose` | `.../auth/gmail.compose` | Create and send email drafts |
+        | `gmail.readonly` | `.../auth/gmail.readonly` | Read emails |
+        | `calendar` | `.../auth/calendar` | Read and write calendar |
+        | `contacts.readonly` | `.../auth/contacts.readonly` | Read contacts |
+        | `contacts.other.readonly` | `.../auth/contacts.other.readonly` | Read other contacts |
+        | `script.projects` | `.../auth/script.projects` | Apps Script |
+        | `drive.file` | `.../auth/drive.file` | Create and share Drive files |
+
+        Add only the scopes agents will actually use. Unused scopes increase the user-facing consent screen footprint and are a security risk.
+
+    **Scope name format:** Short names are the URL suffix after `https://www.googleapis.com/auth/`. For example, `spreadsheets` becomes `https://www.googleapis.com/auth/spreadsheets`.
+
+    !!! warning "Sensitive scopes and Google verification"
+        Gmail and Calendar scopes are classified as **sensitive** by Google. If you chose **External** app type, your app must go through Google's [OAuth app verification](https://support.google.com/cloud/answer/9110914) process (typically 4-8 weeks) before you can have more than 100 users. **Use Internal app type to avoid this entirely.**
 
 7. Click **Save and Continue** through Test Users and Summary.
 
@@ -370,7 +398,7 @@ ExtraSuite needs a service account to manage per-user agent accounts and issue a
       --set-env-vars="GOOGLE_CLOUD_PROJECT=$PROJECT_ID" \
       --set-env-vars="BASE_DOMAIN=placeholder.run.app" \
       --set-env-vars="CREDENTIAL_MODE=sa+oauth" \
-      --set-env-vars="OAUTH_SCOPES=gmail.compose,gmail.readonly,calendar" \
+      --set-env-vars="OAUTH_SCOPES=gmail.compose,gmail.readonly,calendar,contacts.readonly,script.projects" \
       --set-secrets="SECRET_KEY=extrasuite-secret-key:latest" \
       --set-secrets="GOOGLE_CLIENT_ID=extrasuite-client-id:latest" \
       --set-secrets="GOOGLE_CLIENT_SECRET=extrasuite-client-secret:latest" \
@@ -378,7 +406,7 @@ ExtraSuite needs a service account to manage per-user agent accounts and issue a
       --project=$PROJECT_ID
     ```
 
-    Adjust `OAUTH_SCOPES` to match what you configured in the OAuth consent screen (Step 3).
+    In `sa+oauth` mode, file operations (Sheets, Docs, Slides, Forms) use service accounts — only include scopes for Gmail/Calendar/etc. Adjust `OAUTH_SCOPES` to match what you configured in the OAuth consent screen (Step 3).
 
 === "oauth (gcloud CLI)"
 
@@ -391,13 +419,15 @@ ExtraSuite needs a service account to manage per-user agent accounts and issue a
       --set-env-vars="GOOGLE_CLOUD_PROJECT=$PROJECT_ID" \
       --set-env-vars="BASE_DOMAIN=placeholder.run.app" \
       --set-env-vars="CREDENTIAL_MODE=oauth" \
-      --set-env-vars="OAUTH_SCOPES=gmail.compose,gmail.readonly,calendar" \
+      --set-env-vars="OAUTH_SCOPES=spreadsheets,documents,presentations,forms.body,drive.readonly,gmail.compose,gmail.readonly,calendar,contacts.readonly,script.projects" \
       --set-secrets="SECRET_KEY=extrasuite-secret-key:latest" \
       --set-secrets="GOOGLE_CLIENT_ID=extrasuite-client-id:latest" \
       --set-secrets="GOOGLE_CLIENT_SECRET=extrasuite-client-secret:latest" \
       --set-secrets="OAUTH_TOKEN_ENCRYPTION_KEY=extrasuite-oauth-key:latest" \
       --project=$PROJECT_ID
     ```
+
+    In `oauth` mode, all commands use OAuth (no service accounts), so `OAUTH_SCOPES` must include both file operation scopes (`spreadsheets`, `documents`, etc.) and user-impersonating scopes. Adjust `OAUTH_SCOPES` to match what you configured in the OAuth consent screen (Step 3).
 
 === "Google Cloud Console"
 
@@ -410,7 +440,7 @@ ExtraSuite needs a service account to manage per-user agent accounts and issue a
        - `GOOGLE_CLOUD_PROJECT` = your project ID
        - `BASE_DOMAIN` = `placeholder.run.app` (update after deployment)
        - `CREDENTIAL_MODE` = `sa+dwd`, `sa+oauth`, or `oauth`
-       - `OAUTH_SCOPES` = (OAuth modes only) e.g. `gmail.compose,gmail.readonly,calendar`
+       - `OAUTH_SCOPES` = (OAuth modes only) — for `sa+oauth`: e.g. `gmail.compose,gmail.readonly,calendar`; for `oauth`: also add `spreadsheets,documents,presentations,forms.body,drive.readonly`. See Step 3 for the full scope table.
     7. Reference secrets:
        - `GOOGLE_CLIENT_ID` ← `extrasuite-client-id`
        - `GOOGLE_CLIENT_SECRET` ← `extrasuite-client-secret`

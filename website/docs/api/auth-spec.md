@@ -154,14 +154,24 @@ The authoritative command-to-credential mapping lives in:
 - `server/src/extrasuite/server/command_registry.py`
 - `server/src/extrasuite/server/commands.py`
 
-Reference categories (for `sa+dwd` mode):
+Command-to-credential mapping by mode:
 
-| Category | Credential kind | Notes |
-|---|---|---|
-| `sheet.*`, `doc.*`, `slide.*`, `form.*`, `drive.ls`, `drive.search` | `bearer_sa` | Access is limited to files shared with the per-user service account |
-| `gmail.*`, `calendar.*`, `contacts.*`, `script.*`, `drive.file.*` | `bearer_dwd` | Scopes are determined by the server's command registry |
+| Category | `sa+dwd` | `sa+oauth` | `oauth` |
+|---|---|---|---|
+| `sheet.*`, `doc.*`, `slide.*`, `form.*`, `drive.ls`, `drive.search` | `bearer_sa` (service account) | `bearer_sa` (service account) | `bearer_oauth` (user OAuth) |
+| `gmail.*`, `calendar.*`, `contacts.*`, `script.*`, `drive.file.*` | `bearer_dwd` (delegation) | `bearer_oauth` (user OAuth) | `bearer_oauth` (user OAuth) |
 
-In `sa+oauth` or `oauth` mode, `bearer_dwd` credentials become `bearer_oauth`.
+OAuth scopes used per command in `oauth` mode (SA-class commands):
+
+| Commands | OAuth scope |
+|---|---|
+| `sheet.*` | `https://www.googleapis.com/auth/spreadsheets` |
+| `doc.*` | `https://www.googleapis.com/auth/documents` |
+| `slide.*` | `https://www.googleapis.com/auth/presentations` |
+| `form.*` | `https://www.googleapis.com/auth/forms.body` |
+| `drive.ls`, `drive.search` | `https://www.googleapis.com/auth/drive.readonly` |
+
+DWD-class commands use the scopes defined in `command_registry.py` (gmail.compose, gmail.readonly, calendar, etc.). The authoritative mapping is in `server/src/extrasuite/server/command_registry.py`.
 
 ## Security Requirements
 
