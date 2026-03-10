@@ -313,6 +313,10 @@ def _is_table(se: StructuralElement) -> bool:
     return se.table is not None
 
 
+def _is_toc(se: StructuralElement) -> bool:
+    return se.table_of_contents is not None
+
+
 def _is_paragraph(se: StructuralElement) -> bool:
     return se.paragraph is not None
 
@@ -678,13 +682,24 @@ def _process_slot_inner(
 
     # --- INSERT ---
     filtered = _filter_trailing_empty_paras(adds) if adds else []
+    # Track the resolved insert_idx so the DELETE section can extend its range
+    # to cover any gap between delete_end and insert_idx (e.g. empty paragraphs
+    # stripped from the base by _normalize_raw_base_para_styles that still exist
+    # in the real document and must be deleted along with the old content).
+    _resolved_insert_idx: int | None = None
     if filtered:
         # Insertion point: right anchor's start (or its end for sectionbreaks,
         # since index 0 is invalid — insertText requires index >= 1).
         if _is_section_break(right_anchor):
             insert_idx = _el_end(right_anchor)  # = 1
+        elif _is_toc(right_anchor):
+            # The Google Docs API places insertText at TOC.startIndex inside the
+            # TOC element.  Insert one position earlier (into the preceding
+            # paragraph's trailing area) so content lands before the TOC.
+            insert_idx = _el_start(right_anchor) - 1
         else:
             insert_idx = _el_start(right_anchor)
+        _resolved_insert_idx = insert_idx
 
         # Special case: first doc-order add is a table, and left_anchor is a
         # real paragraph (not a sectionbreak).
@@ -729,6 +744,15 @@ def _process_slot_inner(
                 delete_end = _el_end(last_del_el)
                 if _is_table(right_anchor):
                     delete_end -= 1
+                # Extend delete to cover any gap (stripped empty paragraphs)
+                # between delete_end and insert_idx, same as the normal case.
+                if (
+                    not _is_table(right_anchor)
+                    and not _is_toc(right_anchor)
+                    and not _has_non_text_elements(right_anchor)
+                    and delete_end < insert_idx
+                ):
+                    delete_end = insert_idx
                 if delete_start < delete_end:
                     delete_reqs_inner.append(
                         _make_delete_range(delete_start, delete_end, segment_id, tab_id)
@@ -1028,6 +1052,24 @@ def _process_slot_inner(
         # Cannot delete the \n immediately before a table (API constraint)
         if _is_table(right_anchor):
             delete_end -= 1
+        # When there are adds, extend the delete range to cover any gap between
+        # delete_end and insert_idx.  This gap contains empty paragraphs that
+        # _normalize_raw_base_para_styles stripped from the base (e.g. the \n
+        # paragraph before a tableOfContents or after a read-only element) but
+        # that still exist in the real document.  Without this extension those
+        # stripped paragraphs remain in the real document after the push,
+        # leaving an unexpected blank line before the newly inserted content.
+        # (For table right_anchor we must not extend past insert_idx - 1 since
+        # the API forbids deleting the \n immediately before a table, but the
+        # -= 1 above already caps delete_end at that boundary.)
+        if (
+            _resolved_insert_idx is not None
+            and not _is_table(right_anchor)
+            and not _is_toc(right_anchor)
+            and not _has_non_text_elements(right_anchor)
+        ):
+            if delete_end < _resolved_insert_idx:
+                delete_end = _resolved_insert_idx
         if delete_start < delete_end:
             delete_reqs.append(
                 _make_delete_range(delete_start, delete_end, segment_id, tab_id)
