@@ -405,55 +405,83 @@ def _parse_code_fence(block: Any) -> CodeBlock:
     return CodeBlock(language=language, lines=lines)
 
 
-def _block_to_lines(block: Any) -> list[str]:
-    """Extract text lines from a block token, splitting at LineBreak boundaries.
+def _block_to_para_groups(block: Any) -> list[list[Any]]:
+    """Split a block's inline tokens at LineBreak boundaries.
 
-    Each LineBreak token in the block's inline children produces a new line.
-    Useful for parsing quote paragraphs where all content is in one Paragraph.
+    Each group (separated by LineBreak) will become a separate Paragraph in
+    the callout or blockquote table cell, preserving the one-visual-line =
+    one-paragraph mapping that the old _block_to_lines approach produced.
     """
-    lines: list[str] = []
-    current: list[str] = []
-
+    groups: list[list[Any]] = [[]]
     for token in getattr(block, "children", None) or []:
         if isinstance(token, LineBreak):
-            lines.append("".join(current).strip())
-            current = []
-        elif getattr(token, "children", None):
-            # Recurse for styled spans (Strong, Emphasis, etc.)
-            current.append(_raw_text(token))
-        elif hasattr(token, "content"):
-            current.append(str(token.content))
+            groups.append([])
+        else:
+            groups[-1].append(token)
+    return [g for g in groups if g]
 
-    if current:
-        lines.append("".join(current).strip())
 
-    return [line for line in lines if line]
+def _tokens_to_para(tokens: list[Any]) -> Paragraph | None:
+    """Convert a flat list of inline tokens to a Paragraph, or None if empty."""
+    elements = _tokens_to_elements(tokens, TextStyle())
+    if not elements:
+        return None
+    # Every paragraph in the Google Docs API must end with a "\n" text run.
+    elements.append(ParagraphElement(text_run=TextRun(content="\n")))
+    return Paragraph(
+        elements=elements,
+        paragraph_style=ParagraphStyle(
+            named_style_type=ParagraphStyleNamedStyleType.NORMAL_TEXT
+        ),
+    )
 
 
 def _parse_quote(block: Any) -> SpecialElement:
-    """Convert a mistletoe Quote token to a Callout or Blockquote special element."""
+    """Convert a mistletoe Quote token to a Callout or Blockquote special element.
+
+    Each visual line (separated by LineBreak within a paragraph, or by separate
+    MdParagraph children) becomes one Paragraph in the table cell, preserving
+    link styles, bold, italic, and other inline formatting.
+    """
     children = list(block.children or [])
     if not children:
-        return Blockquote(lines=[])
+        return Blockquote(paragraphs=[])
 
-    # Collect all text lines (splitting at LineBreak boundaries within paragraphs)
-    all_lines: list[str] = []
+    # Build a flat list of Paragraphs, splitting at LineBreak boundaries so
+    # that each visual line maps to one table-cell paragraph.
+    all_paras: list[Paragraph] = []
     for child in children:
-        all_lines.extend(_block_to_lines(child))
+        for group in _block_to_para_groups(child):
+            para = _tokens_to_para(group)
+            if para is not None:
+                all_paras.append(para)
 
-    if not all_lines:
-        return Blockquote(lines=[])
+    if not all_paras:
+        return Blockquote(paragraphs=[])
 
-    # Check if first line is a callout type indicator: [!WARNING] etc.
-    m = _CALLOUT_RE.match(all_lines[0])
+    # Check if the first paragraph is a callout type indicator: [!WARNING] etc.
+    first_text = "".join(
+        (pe.text_run.content or "")
+        for pe in (all_paras[0].elements or [])
+        if pe.text_run
+    ).strip()
+    m = _CALLOUT_RE.match(first_text)
     if m:
         variant_str = m.group(1).lower()
         variant = variant_str if variant_str in ("warning", "info", "note", "danger", "tip") else "info"  # type: ignore[assignment]
-        body_lines = [line for line in all_lines[1:] if line]
-        return Callout(variant=variant, lines=body_lines)  # type: ignore[arg-type]
+        # Keep only non-empty body paragraphs (mirrors old `if line` filter)
+        body_paras = [
+            p for p in all_paras[1:]
+            if any((pe.text_run and pe.text_run.content) for pe in (p.elements or []))
+        ]
+        return Callout(variant=variant, paragraphs=body_paras)  # type: ignore[arg-type]
 
-    # Plain blockquote
-    return Blockquote(lines=all_lines)
+    # Plain blockquote — keep all non-empty paragraphs
+    non_empty = [
+        p for p in all_paras
+        if any((pe.text_run and pe.text_run.content) for pe in (p.elements or []))
+    ]
+    return Blockquote(paragraphs=non_empty)
 
 
 def _raw_text(block: Any) -> str:
@@ -841,7 +869,13 @@ def _tokens_to_elements(tokens: list[Any], style: TextStyle) -> list[ParagraphEl
                 )
 
         elif isinstance(token, MdLink):
-            link_obj = DocLink(url=token.target)
+            target = token.target
+            if target.startswith("#heading:"):
+                link_obj = DocLink(heading_id=target[len("#heading:"):])
+            elif target.startswith("#bookmark:"):
+                link_obj = DocLink(bookmark_id=target[len("#bookmark:"):])
+            else:
+                link_obj = DocLink(url=target)
             new_style = style.model_copy(update={"link": link_obj})
             result.extend(_tokens_to_elements(token.children or [], new_style))
 

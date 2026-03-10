@@ -23,11 +23,21 @@ Supported:
 from __future__ import annotations
 
 import html as _html
-import urllib.parse
 from typing import TYPE_CHECKING, Any
 
 from extradoc.serde._special_elements import special_element_from_named_range
-from extradoc.serde._utils import optional_color_to_hex, sanitize_tab_name
+from extradoc.serde._utils import (
+    _apply_formatting,
+    _escape_md,
+    _is_monospace,
+    _MONOSPACE_FAMILIES,
+    _normalize_url,
+    _style_has_attrs,
+    _wrap_markers,
+    optional_color_to_hex,
+    sanitize_tab_name,
+    serialize_text_run,
+)
 
 if TYPE_CHECKING:
     from extradoc.api_types._generated import (
@@ -40,11 +50,6 @@ if TYPE_CHECKING:
         Table,
         TextStyle,
     )
-
-# Monospace font families treated as inline code
-_MONOSPACE_FAMILIES = frozenset(
-    {"Courier New", "Courier", "Source Code Pro", "Roboto Mono", "Consolas"}
-)
 
 # Named style → heading prefix (TITLE/SUBTITLE are lossy on round-trip)
 _STYLE_TO_HEADING: dict[str, str] = {
@@ -359,100 +364,7 @@ def _serialize_inline_elem(pe: ParagraphElement) -> str:
     return ""
 
 
-def _is_monospace(style: Any) -> bool:
-    """Return True if the text style specifies a monospace font family."""
-    wff = style.weighted_font_family
-    return bool(wff and wff.font_family in _MONOSPACE_FAMILIES)
-
-
-def _normalize_url(url: str) -> str:
-    """Strip spurious http:// prepended by the Docs API to relative URLs.
-
-    The Docs API prepends http:// to scheme-less URLs (e.g. LICENSE → http://LICENSE).
-    Detect these by checking whether the netloc contains no dot — real HTTP hosts
-    always have a dot (example.com) or are localhost.
-    """
-    if not url.startswith("http://"):
-        return url
-    netloc = urllib.parse.urlparse(url).netloc
-    if "." not in netloc and netloc.lower() not in {"localhost"}:
-        return url[7:]  # strip "http://"
-    return url
-
-
-def _serialize_text_run(tr: Any) -> str:
-    content = (tr.content or "").rstrip("\n").replace("\u000b", " ")
-    if not content:
-        return ""
-
-    style = tr.text_style
-
-    # Inline code: monospace font without a link → backtick notation.
-    # Checked before _style_has_attrs because a run that is ONLY monospace
-    # has no other style attrs and would otherwise fall through to _escape_md.
-    if style and _is_monospace(style) and not style.link:
-        return f"`{content}`"
-
-    if not style or not _style_has_attrs(style):
-        return _escape_md(content)
-
-    link = style.link
-    if link:
-        raw_url = link.url or f"#{link.heading_id or link.bookmark_id or ''}"
-        url = _normalize_url(raw_url)
-        # Underline is implied by markdown link syntax — skip it inside links
-        inner = _apply_formatting(content, style, skip_underline=True)
-        return f"[{inner}]({url})"
-
-    return _apply_formatting(content, style)
-
-
-def _apply_formatting(text: str, style: Any, *, skip_underline: bool = False) -> str:
-    result = _escape_md(text)
-    if style.strikethrough:
-        result = f"~~{result}~~"
-    if style.underline and not skip_underline:
-        result = f"<u>{result}</u>"
-    if style.bold and style.italic:
-        result = _wrap_markers(result, "***")
-    elif style.bold:
-        result = _wrap_markers(result, "**")
-    elif style.italic:
-        result = _wrap_markers(result, "*")
-    return result
-
-
-def _wrap_markers(text: str, marker: str) -> str:
-    """Wrap text with markdown bold/italic markers.
-
-    Moves leading/trailing whitespace outside the markers so that the result
-    is CommonMark-compliant.  For example, a bold run whose content is
-    ' Send Test ' would otherwise produce '** Send Test **', which most
-    parsers (including mistletoe) do NOT recognise as bold because the
-    delimiter run is followed/preceded by whitespace.  The correct form is
-    ' **Send Test** '.
-    """
-    stripped = text.strip()
-    if not stripped:
-        return text  # only whitespace — wrapping would produce invalid markup
-    leading = text[: len(text) - len(text.lstrip())]
-    trailing = text[len(text.rstrip()) :]
-    return f"{leading}{marker}{stripped}{marker}{trailing}"
-
-
-def _escape_md(text: str) -> str:
-    """Minimal markdown escaping to prevent unintended formatting."""
-    return text.replace("\\", "\\\\").replace("`", "\\`")
-
-
-def _style_has_attrs(style: TextStyle) -> bool:
-    return bool(
-        style.bold
-        or style.italic
-        or style.strikethrough
-        or style.underline
-        or style.link
-    )
+_serialize_text_run = serialize_text_run
 
 
 # ---------------------------------------------------------------------------

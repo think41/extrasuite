@@ -37,7 +37,7 @@ from extradoc.api_types._generated import (
     TextRun,
     TextStyle,
 )
-from extradoc.serde._utils import hex_to_optional_color, str_to_cell_border
+from extradoc.serde._utils import hex_to_optional_color, serialize_text_run, str_to_cell_border
 
 
 # ---------------------------------------------------------------------------
@@ -172,6 +172,36 @@ def _extract_cell_text_lines(table: Table) -> list[str]:
     return lines
 
 
+def _extract_cell_paragraphs(table: Table) -> list[Paragraph]:
+    """Extract paragraphs from the first cell of a 1×1 table.
+
+    Returns raw Paragraph objects (preserving link styles, bold, etc.) with
+    trailing empty paragraphs stripped.  Used by Callout and Blockquote so
+    that link information survives the pull→markdown round-trip.
+    """
+    rows = table.table_rows or []
+    if not rows:
+        return []
+    cells = rows[0].table_cells or []
+    if not cells:
+        return []
+    cell = cells[0]
+    paras: list[Paragraph] = [
+        se.paragraph for se in (cell.content or []) if se.paragraph is not None
+    ]
+    # Strip trailing empty paragraphs — the mandatory trailing cell paragraph
+    # may carry an inherited style that prevents the usual content=="\n" check.
+    while paras:
+        all_text = "".join(
+            (pe.text_run.content or "") for pe in (paras[-1].elements or []) if pe.text_run
+        ).strip()
+        if not all_text:
+            paras.pop()
+        else:
+            break
+    return paras
+
+
 # Monospace font style for code content
 def _code_text_style() -> TextStyle:
     return TextStyle.model_validate(
@@ -254,7 +284,7 @@ class Callout(SpecialElement):
     """A GitHub-style callout: > [!WARNING]\\n> text."""
 
     variant: Literal["warning", "info", "note", "danger", "tip"] = "info"
-    lines: list[str] = field(default_factory=list)
+    paragraphs: list[Paragraph] = field(default_factory=list)
 
     _BG: ClassVar[dict[str, str]] = {
         "warning": "#fff3cd",
@@ -270,13 +300,19 @@ class Callout(SpecialElement):
 
     def to_markdown(self) -> str:
         header = f"> [!{self.variant.upper()}]"
-        body = [f"> {line}" for line in self.lines]
+        body: list[str] = []
+        for para in self.paragraphs:
+            line = "".join(
+                serialize_text_run(pe.text_run)
+                for pe in (para.elements or [])
+                if pe.text_run is not None
+            )
+            body.append(f"> {line}")
         return "\n".join([header] + body)
 
     def to_table(self) -> Table:
         bg = self._BG.get(self.variant, "#d1ecf1")
-        paragraphs = [_build_para(line) for line in self.lines]
-        return _make_1x1_table(paragraphs, bg_hex=bg)
+        return _make_1x1_table(list(self.paragraphs), bg_hex=bg)
 
     @classmethod
     def from_table(cls, table: Table, named_range_name: str) -> "Callout":
@@ -285,8 +321,8 @@ class Callout(SpecialElement):
         variant: Literal["warning", "info", "note", "danger", "tip"] = (
             raw_variant if raw_variant in ("warning", "info", "note", "danger", "tip") else "info"
         )
-        lines = _extract_cell_text_lines(table)
-        return cls(variant=variant, lines=lines)
+        paragraphs = _extract_cell_paragraphs(table)
+        return cls(variant=variant, paragraphs=paragraphs)
 
 
 # ---------------------------------------------------------------------------
@@ -298,25 +334,32 @@ class Callout(SpecialElement):
 class Blockquote(SpecialElement):
     """A plain block quotation: > text."""
 
-    lines: list[str] = field(default_factory=list)
+    paragraphs: list[Paragraph] = field(default_factory=list)
 
     @property
     def named_range_name(self) -> str:
         return "extradoc:blockquote"
 
     def to_markdown(self) -> str:
-        return "\n".join(f"> {line}" for line in self.lines)
+        lines: list[str] = []
+        for para in self.paragraphs:
+            line = "".join(
+                serialize_text_run(pe.text_run)
+                for pe in (para.elements or [])
+                if pe.text_run is not None
+            )
+            lines.append(f"> {line}")
+        return "\n".join(lines)
 
     def to_table(self) -> Table:
-        paragraphs = [_build_para(line) for line in self.lines]
         return _make_1x1_table(
-            paragraphs, bg_hex="#f9f9f9", border_left="3.0,#888888,SOLID"
+            list(self.paragraphs), bg_hex="#f9f9f9", border_left="3.0,#888888,SOLID"
         )
 
     @classmethod
     def from_table(cls, table: Table, named_range_name: str) -> "Blockquote":
-        lines = _extract_cell_text_lines(table)
-        return cls(lines=lines)
+        paragraphs = _extract_cell_paragraphs(table)
+        return cls(paragraphs=paragraphs)
 
 
 # ---------------------------------------------------------------------------
