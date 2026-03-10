@@ -711,13 +711,39 @@ def _process_slot_inner(
             # Insert the first table at left_anchor's \n position.
             table_insert_idx = _el_end(left_anchor) - 1
 
+            # When there are deletes, they must run BEFORE insertTable.
+            # insertTable targets table_insert_idx (< delete range), so if insert
+            # ran first the delete would target table cells instead of old content.
+            #
+            # After DELETE [del_start, del_end], insert_idx (= del_end = right
+            # anchor's start) shifts left to del_start.  All remaining inserts
+            # that would normally target insert_idx must instead target del_start.
+            # The INFO table at table_insert_idx (< del_start) is unaffected.
+            delete_reqs_inner: list[dict[str, Any]] = []
+            effective_insert_idx = insert_idx  # may be adjusted below
+            if deletes:
+                first_del_el = deletes[0].base_element
+                last_del_el = deletes[-1].base_element
+                assert first_del_el is not None and last_del_el is not None
+                delete_start = _el_start(first_del_el)
+                delete_end = _el_end(last_del_el)
+                if _is_table(right_anchor):
+                    delete_end -= 1
+                if delete_start < delete_end:
+                    delete_reqs_inner.append(
+                        _make_delete_range(delete_start, delete_end, segment_id, tab_id)
+                    )
+                # After the delete, insert_idx (= delete_end before adjustment)
+                # has shifted to delete_start.
+                effective_insert_idx = delete_start
+
             # Process remaining elements (doc order [1:]) in reversed order.
             # Pure-table sequences: all remaining tables go at table_insert_idx
             # (left_anchor's \n), just like the first table.  This ensures
             # consecutive tables produce exactly one empty paragraph between
             # them (instead of two).
             # Mixed sequences (tables + paragraphs): tables fall back to
-            # insert_idx so that paragraphs can be inserted at insert_idx
+            # effective_insert_idx so that paragraphs can be inserted there
             # without hitting a table's start index.
             remaining_only_tables = all(
                 _is_table(ae.desired_element)
@@ -731,7 +757,7 @@ def _process_slot_inner(
                 if _is_table(el):
                     assert el.table is not None
                     table_pos = (
-                        table_insert_idx if remaining_only_tables else insert_idx
+                        table_insert_idx if remaining_only_tables else effective_insert_idx
                     )
                     insert_reqs.extend(
                         _generate_insert_table_with_content(
@@ -742,7 +768,7 @@ def _process_slot_inner(
                 elif _is_paragraph(el):
                     if _is_pagebreak_paragraph(el):
                         spurious_pending = False
-                        insert_reqs.append(_make_insert_page_break(insert_idx, tab_id))
+                        insert_reqs.append(_make_insert_page_break(effective_insert_idx, tab_id))
                     else:
                         text = _para_text(el)
                         if not text:
@@ -752,7 +778,7 @@ def _process_slot_inner(
                             spurious_pending = False
                         if text:
                             insert_reqs.append(
-                                _make_insert_text(text, insert_idx, segment_id, tab_id)
+                                _make_insert_text(text, effective_insert_idx, segment_id, tab_id)
                             )
             insert_reqs.extend(
                 _generate_insert_table_with_content(
@@ -778,22 +804,6 @@ def _process_slot_inner(
                 )
             )
 
-            # When there are deletes, they must run BEFORE insertTable.
-            # insertTable targets table_insert_idx (< delete range), so if insert
-            # ran first the delete would target table cells instead of old content.
-            delete_reqs_inner: list[dict[str, Any]] = []
-            if deletes:
-                first_del_el = deletes[0].base_element
-                last_del_el = deletes[-1].base_element
-                assert first_del_el is not None and last_del_el is not None
-                delete_start = _el_start(first_del_el)
-                delete_end = _el_end(last_del_el)
-                if _is_table(right_anchor):
-                    delete_end -= 1
-                if delete_start < delete_end:
-                    delete_reqs_inner.append(
-                        _make_delete_range(delete_start, delete_end, segment_id, tab_id)
-                    )
             return delete_reqs_inner + insert_reqs
         else:
             # Sub-case: right_anchor is a table and there are deletes.

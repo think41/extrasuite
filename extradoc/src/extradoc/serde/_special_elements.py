@@ -52,7 +52,6 @@ def _make_trailing_se() -> StructuralElement:
             "paragraph": {
                 "paragraphStyle": {
                     "namedStyleType": "NORMAL_TEXT",
-                    "direction": "LEFT_TO_RIGHT",
                 },
                 "elements": [{"textRun": {"content": "\n"}}],
             }

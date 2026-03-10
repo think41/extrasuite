@@ -350,7 +350,7 @@ def _normalize_url(url: str) -> str:
 
 
 def _serialize_text_run(tr: Any) -> str:
-    content = (tr.content or "").rstrip("\n")
+    content = (tr.content or "").rstrip("\n").replace("\u000b", " ")
     if not content:
         return ""
 

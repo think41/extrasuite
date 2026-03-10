@@ -14,7 +14,16 @@ from pathlib import Path
 from typing import TYPE_CHECKING
 
 import extradoc.serde as serde
-from extradoc.api_types._generated import Document, Paragraph, ParagraphStyle, StructuralElement
+from extradoc.api_types._generated import (
+    Document,
+    Paragraph,
+    ParagraphElement,
+    ParagraphStyle,
+    StructuralElement,
+    TableCell,
+    TextRun,
+    TextStyle,
+)
 from extradoc.comments._diff import diff_comments
 from extradoc.comments._from_raw import from_raw as comments_from_raw
 from extradoc.comments._types import (
@@ -23,6 +32,7 @@ from extradoc.comments._types import (
 )
 from extradoc.reconcile import reconcile, reindex_document, resolve_deferred_ids
 from extradoc.serde._models import IndexXml
+from extradoc.serde._utils import hex_to_optional_color, optional_color_to_hex
 
 if TYPE_CHECKING:
     from extradoc.api_types._generated import BatchUpdateDocumentRequest
@@ -338,6 +348,13 @@ def _normalize_raw_base_para_styles(doc: Document) -> None:
             # 2. Normalise paragraph styles
             for se in dt.body.content:
                 _normalize_structural_element_para_styles(se)
+            # 3. Ensure a trailing empty paragraph exists.
+            # Some raw API documents omit the synthetic trailing paragraph and
+            # instead have the last content paragraph's '\n' serve as the
+            # terminator.  The markdown serde (_ensure_trailing_paragraph)
+            # always adds an explicit trailing paragraph, so the base needs one
+            # too to avoid a spurious insertText "\n" at the end.
+            _ensure_base_trailing_paragraph(dt.body.content)
 
 
 def _strip_inter_table_separators(
@@ -380,21 +397,136 @@ def _normalize_structural_element_para_styles(se: StructuralElement) -> None:
     elif se.table:
         for row in se.table.table_rows or []:
             for cell in row.table_cells or []:
+                _normalize_table_cell_style(cell)
                 for cell_se in cell.content or []:
                     _normalize_structural_element_para_styles(cell_se)
 
 
-def _normalize_paragraph(para: Paragraph) -> None:
-    """Reduce paragraph style to only namedStyleType in-place.
+def _normalize_table_cell_style(cell: TableCell) -> None:
+    """Normalize table cell backgroundColor by round-tripping through hex.
 
-    The markdown serde only sets namedStyleType on paragraph styles.
-    All other fields in the raw API response are inherited/explicit values
-    that cannot be expressed in markdown and would cause spurious diffs.
+    The Google Docs API returns truncated float values for RGB colors
+    (e.g. 0.81960785) while our hex_to_rgb computes full Python float
+    precision (0.8196078431372549).  Round-tripping through hex normalizes
+    both representations to the same float values so the reconciler does
+    not generate spurious updateTableCellStyle backgroundColor requests.
+    """
+    style = cell.table_cell_style
+    if not style or not style.background_color:
+        return
+    hex_val = optional_color_to_hex(style.background_color)
+    if hex_val:
+        style.background_color = hex_to_optional_color(hex_val)
+
+
+def _normalize_paragraph(para: Paragraph) -> None:
+    """Reduce paragraph style and text run styles in-place for markdown consistency.
+
+    Two normalisations:
+
+    1. **Paragraph style reduction** — The markdown serde only sets
+       ``namedStyleType`` on paragraph styles.  All other fields are stripped.
+
+    2. **Text run normalisation** — Strip non-markdown text run style fields
+       (fontSize, foregroundColor, backgroundColor, etc.) that the markdown
+       serde cannot express.  Also replace U+000B (vertical tab / line break)
+       in run content with a plain space to match what mistletoe produces when
+       re-parsing the serialized markdown.
     """
     ps = para.paragraph_style
-    if not ps:
+    if ps:
+        para.paragraph_style = ParagraphStyle(named_style_type=ps.named_style_type)
+
+    new_elements: list[ParagraphElement] = []
+    for elem in para.elements or []:
+        tr = elem.text_run
+        if not tr:
+            new_elements.append(elem)
+            continue
+        # Replace vertical tab with a space so the base fingerprint matches
+        # what mistletoe produces when parsing the serialized markdown.
+        if tr.content and "\u000b" in tr.content:
+            tr.content = tr.content.replace("\u000b", " ")
+        content = tr.content or ""
+        # If a run embeds the paragraph-terminal '\n' in the middle of other
+        # text (e.g. "Recruit41 Playbook\n" as one bold run), split it into a
+        # styled text part and an unstyled '\n' part.  The markdown serde
+        # always produces a separate bare '\n' run, so splitting here keeps
+        # the run count equal and avoids falling into positional comparison.
+        if content.endswith("\n") and len(content) > 1:
+            text_part = content[:-1]
+            si = elem.start_index
+            ei = elem.end_index
+            text_end = (si + len(text_part)) if si is not None else None
+            text_elem = ParagraphElement(
+                text_run=TextRun(content=text_part, text_style=tr.text_style),
+                start_index=si,
+                end_index=text_end,
+            )
+            nl_elem = ParagraphElement(
+                text_run=TextRun(content="\n", text_style=None),
+                start_index=text_end,
+                end_index=ei,
+            )
+            new_elements.append(text_elem)
+            new_elements.append(nl_elem)
+            # Normalise the text part's style in-place below
+            tr = text_elem.text_run
+            assert tr is not None
+        else:
+            new_elements.append(elem)
+        # The trailing '\n' run always has no style in the markdown-serde
+        # desired document.  Strip all styles on '\n'-only runs.
+        if content == "\n":
+            tr.text_style = None
+            continue
+        # Strip non-markdown text run style fields from the base so that
+        # matched paragraphs don't generate spurious updateTextStyle requests.
+        if tr.text_style:
+            ts = tr.text_style
+            tr.text_style = TextStyle(
+                bold=ts.bold,
+                italic=ts.italic,
+                strikethrough=ts.strikethrough,
+                underline=ts.underline,
+                link=ts.link,
+                weighted_font_family=ts.weighted_font_family,
+            )
+    para.elements = new_elements
+
+
+def _ensure_base_trailing_paragraph(content: list[StructuralElement]) -> None:
+    """Add a synthetic trailing empty paragraph to the base if one is absent.
+
+    Some Google Docs API responses omit the required trailing empty paragraph,
+    relying on the last content paragraph's terminal '\\n' instead.  The
+    markdown serde (_ensure_trailing_paragraph) always adds an explicit empty
+    trailing paragraph.  Without this, the LCS alignment sees one extra
+    ADDED element in the desired, generating a spurious insertText "\\n".
+    """
+    if not content:
         return
-    para.paragraph_style = ParagraphStyle(named_style_type=ps.named_style_type)
+    last = content[-1]
+    if last.paragraph is None:
+        return  # Ends with a table or section break — leave as-is
+    elems = last.paragraph.elements or []
+    if len(elems) == 1:
+        tr = elems[0].text_run
+        if tr and tr.content == "\n":
+            return  # Already has a trailing empty paragraph
+
+    # Last paragraph is non-empty — add a synthetic trailing paragraph.
+    # Use the end_index of the last element as the start of the new paragraph.
+    ei = last.end_index
+    synthetic = StructuralElement(
+        paragraph=Paragraph(
+            paragraph_style=ParagraphStyle(named_style_type="NORMAL_TEXT"),
+            elements=[ParagraphElement(text_run=TextRun(content="\n"))],
+        ),
+        start_index=ei,
+        end_index=(ei + 1) if ei is not None else None,
+    )
+    content.append(synthetic)
 
 
 def _create_pristine_zip(folder: Path) -> Path:

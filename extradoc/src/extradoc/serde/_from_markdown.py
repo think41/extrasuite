@@ -788,7 +788,12 @@ def _tokens_to_elements(tokens: list[Any], style: TextStyle) -> list[ParagraphEl
         token = token_list[i]
 
         if isinstance(token, RawText):
-            text = token.content
+            # Strip U+000B (vertical tab / in-paragraph line break): mistletoe
+            # also emits a LineBreak(soft=True) for the same position, which
+            # will contribute a ' ' space run.  Keeping the vtab in the text
+            # run content would cause a fingerprint mismatch against the base
+            # (where vtabs are normalised to spaces in _normalize_paragraph).
+            text = token.content.replace("\u000b", "")
             if text:
                 result.append(_make_text_run(text, style))
 
