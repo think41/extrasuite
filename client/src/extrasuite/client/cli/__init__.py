@@ -609,7 +609,7 @@ def build_parser() -> Any:
         "pull-md",
         help="Download a document as markdown",
         parents=[auth_parent],
-        description="Pull a Google Doc and save it as markdown files (document.md per tab).",
+        description=_load_help("doc", "pull-md"),
         formatter_class=argparse.RawDescriptionHelpFormatter,
     )
     sp.add_argument("url", help="Document URL or ID")
@@ -641,7 +641,7 @@ def build_parser() -> Any:
         "push-md",
         help="Apply changes from a markdown folder",
         parents=[auth_parent],
-        description="Push changes from a markdown-format document folder. Format is auto-detected from index.xml.",
+        description=_load_help("doc", "push-md"),
         formatter_class=argparse.RawDescriptionHelpFormatter,
     )
     sp.add_argument("folder", help="Document folder path")

@@ -422,13 +422,19 @@ class TestMarkdownFileCycle:
 
         # Check files written
         assert (out / "index.xml").exists()
-        assert (out / "Tab_1" / "document.md").exists()
+        assert (out / "index.md").exists()
+        assert (out / "Tab_1.md").exists()
         # styles.xml should NOT be written for markdown format
         assert not (out / "Tab_1" / "styles.xml").exists()
 
         # Check index.xml records format
         index_text = (out / "index.xml").read_text()
         assert 'format="markdown"' in index_text
+
+        # Check index.md has heading with line number
+        index_md = (out / "index.md").read_text()
+        assert "Tab_1.md" in index_md
+        assert "# Overview" in index_md
 
         # Deserialize
         bundle = deserialize(out)
@@ -1281,7 +1287,7 @@ class TestDiffRawJsonBase:
 
             After callout.
             """)
-        (folder / "Tab_1" / "document.md").write_text(edited_md, encoding="utf-8")
+        (folder / "Tab_1.md").write_text(edited_md, encoding="utf-8")
 
         # Run diff
         client = DocsClient.__new__(DocsClient)
@@ -1315,7 +1321,7 @@ class TestDiffRawJsonBase:
         edited_md = "# Heading\n\n> [!INFO]\n> Updated info text.\n"
 
         folder = self._setup_markdown_folder(tmp_path, base_md, "test-no-raw")
-        (folder / "Tab_1" / "document.md").write_text(edited_md, encoding="utf-8")
+        (folder / "Tab_1.md").write_text(edited_md, encoding="utf-8")
 
         # No .raw/ directory — should use mock reindex fallback
         client = DocsClient.__new__(DocsClient)

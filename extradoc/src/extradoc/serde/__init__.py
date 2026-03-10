@@ -156,21 +156,19 @@ def serialize(
 
 def _serialize_markdown(bundle: DocumentWithComments, output_path: Path) -> list[Path]:
     """Write a Document to folder structure using markdown format."""
+    import re
+
     from ._to_markdown import document_to_markdown
+    from ._utils import sanitize_tab_name
 
     doc = bundle.document
     per_tab = document_to_markdown(doc)
 
     # Build index (same structure as XML, but format="markdown")
-    folder_map: dict[str, str] = {}
-    for folder in per_tab:
-        # We need tab_id → folder mapping; use tab index order
-        pass
     index = build_index(doc)
     index.format = "markdown"
     # Patch folder names into the index tabs
     tab_list = doc.tabs or []
-    from ._utils import sanitize_tab_name
     for i, idx_tab in enumerate(index.tabs):
         if i < len(tab_list):
             props = tab_list[i].tab_properties
@@ -180,17 +178,51 @@ def _serialize_markdown(bundle: DocumentWithComments, output_path: Path) -> list
     created: list[Path] = []
     output_path.mkdir(parents=True, exist_ok=True)
 
+    # Write per-tab .md files at root level (e.g. Tab_1.md, not Tab_1/document.md)
+    heading_re = re.compile(r"^(#{1,6})\s+.+$")
+    tab_toc: dict[str, list[tuple[int, str]]] = {}  # folder → [(lineno, heading_line)]
+
+    for folder, files in per_tab.items():
+        content = files.get("document.md", "")
+        tab_path = output_path / f"{folder}.md"
+        tab_path.write_text(content, encoding="utf-8")
+        created.append(tab_path)
+
+        # Scan for headings with line numbers for index.md
+        headings: list[tuple[int, str]] = []
+        for lineno, line in enumerate(content.splitlines(), 1):
+            if heading_re.match(line):
+                headings.append((lineno, line))
+        tab_toc[folder] = headings
+
+    # Write index.md — human-readable TOC with line numbers per tab
+    doc_title = doc.title or "Document"
+    md_lines: list[str] = [f"# {doc_title}", ""]
+    for idx_tab in index.all_tabs_flat():
+        md_lines.append(f"## {idx_tab.title}")
+        md_lines.append("")
+        md_lines.append(f"File: `{idx_tab.folder}.md`")
+        md_lines.append("")
+        headings = tab_toc.get(idx_tab.folder, [])
+        if headings:
+            md_lines.append("| Line | Heading |")
+            md_lines.append("|------|---------|")
+            for lineno, heading_line in headings:
+                # Escape pipe characters inside table cells
+                safe = heading_line.replace("|", "\\|")
+                md_lines.append(f"| {lineno} | {safe} |")
+        else:
+            md_lines.append("*(no headings)*")
+        md_lines.append("")
+
+    index_md_path = output_path / "index.md"
+    index_md_path.write_text("\n".join(md_lines), encoding="utf-8")
+    created.append(index_md_path)
+
+    # Write index.xml for format detection by deserialize (do not edit)
     index_path = output_path / "index.xml"
     index_path.write_text(index.to_xml_string(), encoding="utf-8")
     created.append(index_path)
-
-    for folder, files in per_tab.items():
-        tab_dir = output_path / folder
-        tab_dir.mkdir(parents=True, exist_ok=True)
-        for filename, content in files.items():
-            p = tab_dir / filename
-            p.write_text(content, encoding="utf-8")
-            created.append(p)
 
     # Write comments.xml (unchanged format)
     comments_path = output_path / "comments.xml"
@@ -273,8 +305,11 @@ def _deserialize_markdown(folder: Path, index: IndexXml) -> DocumentWithComments
     tab_content: dict[str, str] = {}
     tab_ids: dict[str, str] = {}
     for index_tab in index.all_tabs_flat():
-        tab_dir = folder / index_tab.folder
-        md_path = tab_dir / "document.md"
+        # New layout: <folder_stem>.md at root (e.g. Tab_1.md)
+        md_path = folder / f"{index_tab.folder}.md"
+        if not md_path.exists():
+            # Fallback: old layout <tab_folder>/document.md
+            md_path = folder / index_tab.folder / "document.md"
         source = md_path.read_text(encoding="utf-8") if md_path.exists() else ""
         tab_content[index_tab.folder] = source
         tab_ids[index_tab.folder] = index_tab.id

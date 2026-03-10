@@ -18,7 +18,9 @@ _HELP_COMMAND_FILES = frozenset(
     {
         "README.md",
         "pull.md",
+        "pull-md.md",
         "push.md",
+        "push-md.md",
         "diff.md",
         "create.md",
         "batchupdate.md",
