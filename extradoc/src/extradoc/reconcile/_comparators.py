@@ -269,6 +269,79 @@ def _strip_bullet_para_indent(obj: Any) -> Any:
     return obj
 
 
+def _consolidate_text_runs_in_para(elements: list[Any]) -> list[Any]:
+    """Merge adjacent text runs with identical textStyle.
+
+    The Google Docs API and the mock may merge adjacent same-style runs that
+    the deserialization code keeps separate (e.g. a trailing '\\n' run vs the
+    preceding same-style run).  Consolidating both sides before comparison
+    avoids spurious list-length mismatches.
+    """
+    result: list[Any] = []
+    for elem in elements:
+        if not isinstance(elem, dict) or "textRun" not in elem:
+            result.append(elem)
+            continue
+        tr = elem["textRun"]
+        content = tr.get("content") or ""
+        style = tr.get("textStyle")  # None or a dict
+        if result and isinstance(result[-1], dict) and "textRun" in result[-1]:
+            prev_tr = result[-1]["textRun"]
+            prev_style = prev_tr.get("textStyle")
+            if prev_style == style:
+                # Merge: concatenate content, keep (or omit) shared style
+                merged_tr: dict[str, Any] = {"content": (prev_tr.get("content") or "") + content}
+                if style is not None:
+                    merged_tr["textStyle"] = style
+                result[-1] = {"textRun": merged_tr}
+                continue
+        result.append(elem)
+    return result
+
+
+def _consolidate_text_runs(obj: Any) -> Any:
+    """Recursively consolidate adjacent same-style text runs inside paragraphs."""
+    if isinstance(obj, dict):
+        result: dict[str, Any] = {}
+        for k, v in obj.items():
+            if k == "elements" and isinstance(v, list):
+                result[k] = _consolidate_text_runs_in_para(
+                    [_consolidate_text_runs(e) for e in v]
+                )
+            else:
+                result[k] = _consolidate_text_runs(v)
+        return result
+    if isinstance(obj, list):
+        return [_consolidate_text_runs(item) for item in obj]
+    return obj
+
+
+def _strip_para_element_indices(obj: Any) -> Any:
+    """Strip startIndex/endIndex from paragraph elements.
+
+    These are recomputed by the mock/API and can differ from the desired
+    document's un-indexed representation, causing spurious diff noise.
+    Only strip from elements *within* paragraphs (not from structural
+    elements themselves, which need their indices for table annotation lookup).
+    """
+    if isinstance(obj, dict):
+        if "paragraph" in obj and isinstance(obj["paragraph"], dict):
+            para = dict(obj["paragraph"])
+            if "elements" in para and isinstance(para["elements"], list):
+                para["elements"] = [
+                    {k: v for k, v in e.items() if k not in ("startIndex", "endIndex")}
+                    if isinstance(e, dict)
+                    else e
+                    for e in para["elements"]
+                ]
+            obj = dict(obj)
+            obj["paragraph"] = para
+        return {k: _strip_para_element_indices(v) for k, v in obj.items()}
+    if isinstance(obj, list):
+        return [_strip_para_element_indices(item) for item in obj]
+    return obj
+
+
 def normalize_document(doc_dict: dict[str, Any]) -> dict[str, Any]:
     """Normalize a document dict for comparison.
 
@@ -279,6 +352,8 @@ def normalize_document(doc_dict: dict[str, Any]) -> dict[str, Any]:
     result = _normalize_text_styles(result)
     result = _strip_table_metadata(result)
     result = _strip_bullet_para_indent(result)
+    result = _strip_para_element_indices(result)
+    result = _consolidate_text_runs(result)
     return result
 
 

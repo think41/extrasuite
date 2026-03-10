@@ -164,6 +164,7 @@ def _serialize_content(
     """Serialize a list of StructuralElements to markdown lines."""
     lines: list[str] = []
     in_list = False
+    current_list_id: str | None = None
     spans = nr_spans or []
 
     for se in content:
@@ -173,6 +174,7 @@ def _serialize_content(
         if se.table_of_contents is not None:
             if in_list:
                 in_list = False
+                current_list_id = None
             if lines:
                 lines.append("")
             lines.append("<!-- toc -->")
@@ -181,6 +183,7 @@ def _serialize_content(
         if se.table is not None:
             if in_list:
                 in_list = False
+                current_list_id = None
             if lines:
                 lines.append("")
             # Check for extradoc:* named range annotation via containment check
@@ -211,6 +214,7 @@ def _serialize_content(
                 if pe.horizontal_rule is not None:
                     if in_list:
                         in_list = False
+                        current_list_id = None
                     if lines:
                         lines.append("")
                     lines.append("---")
@@ -218,6 +222,7 @@ def _serialize_content(
                 if pe.page_break is not None:
                     if in_list:
                         in_list = False
+                        current_list_id = None
                     if lines:
                         lines.append("")
                     lines.append("<x-pagebreak/>")
@@ -227,14 +232,17 @@ def _serialize_content(
                 if bullet:
                     line = _serialize_list_item(para, list_types)
                     if line is not None:
-                        if lines and not in_list:
+                        this_list_id = bullet.list_id
+                        if lines and (not in_list or this_list_id != current_list_id):
                             lines.append("")
                         lines.append(line)
                         in_list = True
+                        current_list_id = this_list_id
                     continue
                 else:
                     if in_list:
                         in_list = False
+                        current_list_id = None
                     block = _serialize_paragraph(para)
                     if block is not None:
                         if lines:
