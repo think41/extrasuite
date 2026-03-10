@@ -8,22 +8,15 @@ This module is the single source of truth for:
 - Server-side scope allowlist enforcement
 
 Extending to new providers:
-  Add a new branch in ``resolve_credentials`` that returns ``Credential`` objects
-  with a different ``provider`` value (e.g. ``"slack"``, ``"github"``).  The
-  ``TokenResponse.credentials`` list can contain tokens for multiple providers
+  Add a new command type to ``_SA_COMMAND_TYPES`` or ``_DWD_COMMAND_SCOPES`` and
+  the ``CommandCredentialRouter`` will route it correctly at runtime.
+  The ``TokenResponse.credentials`` list can contain tokens for multiple providers
   simultaneously if an operation needs them.
 """
 
 from __future__ import annotations
 
-from typing import TYPE_CHECKING, Any
-
-from fastapi import HTTPException
 from pydantic import BaseModel
-
-if TYPE_CHECKING:
-    from extrasuite.server.commands import Command
-    from extrasuite.server.token_generator import TokenGenerator
 
 _GOOGLE_SCOPE_PREFIX = "https://www.googleapis.com/auth/"
 
@@ -102,67 +95,3 @@ class Credential(BaseModel):
     expires_at: str  # ISO 8601; empty string if non-expiring
     scopes: list[str] = []  # OAuth scopes granted (empty for SA tokens)
     metadata: dict[str, str] = {}  # provider-specific extras (e.g. service_account_email)
-
-
-# ---------------------------------------------------------------------------
-# Core resolution function
-# ---------------------------------------------------------------------------
-
-
-async def resolve_credentials(
-    command: Command,
-    email: str,
-    token_generator: TokenGenerator,
-    settings: Any,  # Settings — passed as Any to avoid circular import
-) -> list[Credential]:
-    """Validate the command, check allowlists, and generate credential(s).
-
-    Returns a list because future commands may require tokens from multiple
-    providers simultaneously.
-
-    Raises:
-        ValueError: Unknown command type (should not happen if validation passed).
-        HTTPException(403): Scope not permitted by server configuration.
-        DelegationError: DWD token generation failed.
-    """
-    cmd_type = command.type
-
-    if cmd_type not in _ALL_COMMAND_TYPES:
-        raise ValueError(f"Unknown command type: {cmd_type!r}")
-
-    if cmd_type in _SA_COMMAND_TYPES:
-        result = await token_generator.generate_token(email)
-        return [
-            Credential(
-                provider="google",
-                kind="bearer_sa",
-                token=result.token,
-                expires_at=result.expires_at.isoformat(),
-                scopes=[],
-                metadata={"service_account_email": result.service_account_email},
-            )
-        ]
-
-    # DWD path
-    scopes = _DWD_COMMAND_SCOPES[cmd_type]
-
-    # Enforce server-side scope allowlist for each requested scope
-    disallowed = [s for s in scopes if not settings.is_scope_allowed(s)]
-    if disallowed:
-        short_names = [s.removeprefix(_GOOGLE_SCOPE_PREFIX) for s in disallowed]
-        raise HTTPException(
-            status_code=403,
-            detail=f"Scope(s) {short_names!r} are not permitted by server configuration.",
-        )
-
-    result = await token_generator.generate_delegated_token(email, scopes)
-    return [
-        Credential(
-            provider="google",
-            kind="bearer_dwd",
-            token=result.token,
-            expires_at=result.expires_at.isoformat(),
-            scopes=scopes,
-            metadata={"service_account_email": result.service_account_email},
-        )
-    ]

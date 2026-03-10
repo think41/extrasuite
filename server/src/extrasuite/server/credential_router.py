@@ -11,8 +11,10 @@ hooks relevant to its strategy.
 
 from __future__ import annotations
 
-from collections.abc import Callable
 from typing import TYPE_CHECKING, Any
+
+if TYPE_CHECKING:
+    from collections.abc import Callable
 
 from fastapi import HTTPException
 from loguru import logger

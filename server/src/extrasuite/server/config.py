@@ -101,9 +101,8 @@ class Settings(BaseSettings):
     # If empty, all domains are allowed
     allowed_email_domains: str = ""
 
-    # Domain abbreviations for service account naming (JSON format)
-    # Example: {"recruit41.com": "r41", "think41.com": "t41", "mindlap.dev": "mlap"}
-    # If domain not in map, falls back to 4-char hash of domain
+    # Domain abbreviations for service account naming (JSON format).
+    # If domain not in map, falls back to 4-char hash of domain.
     domain_abbreviations: str = ""
 
     # Delegation scope allowlist (short scope names, comma-separated, optional)

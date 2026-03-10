@@ -163,14 +163,6 @@ def create_app() -> FastAPI:
     async def terms():
         return FileResponse(static_dir / "terms.html", media_type="text/html")
 
-    @app.get("/security")
-    async def security():
-        return FileResponse(static_dir / "security.html", media_type="text/html")
-
-    @app.get("/faq")
-    async def faq():
-        return FileResponse(static_dir / "faq.html", media_type="text/html")
-
     @app.get("/robots.txt")
     async def robots():
         return FileResponse(static_dir / "robots.txt", media_type="text/plain")

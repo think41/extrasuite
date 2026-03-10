@@ -9,7 +9,7 @@ context that is:
 - Exactly scoped to what matters for that operation — nothing more
 
 The server resolves the command type to the required credential(s) via
-``command_registry.resolve_credentials()``.
+``CommandCredentialRouter.resolve()``.
 
 Usage::
 

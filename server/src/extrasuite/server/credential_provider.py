@@ -16,16 +16,17 @@ import urllib.error
 import urllib.parse
 import urllib.request
 from abc import ABC, abstractmethod
-from collections.abc import Callable
 from typing import TYPE_CHECKING, Any
+
+if TYPE_CHECKING:
+    from collections.abc import Callable
+
+    from extrasuite.server.crypto import RefreshTokenEncryptor
+    from extrasuite.server.token_generator import GeneratedToken, TokenGenerator
 
 from loguru import logger
 
 from extrasuite.server.database import RefreshTokenNotFound
-
-if TYPE_CHECKING:
-    from extrasuite.server.crypto import RefreshTokenEncryptor
-    from extrasuite.server.token_generator import GeneratedToken, TokenGenerator
 
 
 class CredentialProvider(ABC):
