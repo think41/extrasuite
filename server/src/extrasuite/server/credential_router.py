@@ -11,6 +11,7 @@ hooks relevant to its strategy.
 
 from __future__ import annotations
 
+from collections.abc import Callable
 from typing import TYPE_CHECKING, Any
 
 from fastapi import HTTPException
@@ -87,6 +88,8 @@ class CommandCredentialRouter:
         token_generator: TokenGenerator,
         database: Any,
         encryptor: RefreshTokenEncryptor | None,
+        *,
+        oauth_revoke_fn: Callable[[str], None] | None = None,
     ) -> CommandCredentialRouter:
         """Build the routing table from credential_mode. Called once in lifespan.
 
@@ -107,7 +110,9 @@ class CommandCredentialRouter:
         sa_provider = ServiceAccountProvider(token_generator)
         dwd_provider = DWDProvider(token_generator)
         oauth_provider = (
-            OAuthRefreshProvider(token_generator, database, encryptor)  # type: ignore[arg-type]
+            OAuthRefreshProvider(  # type: ignore[arg-type]
+                token_generator, database, encryptor, revoke_fn=oauth_revoke_fn
+            )
             if settings.uses_oauth
             else None
         )

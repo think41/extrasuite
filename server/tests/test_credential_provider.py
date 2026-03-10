@@ -188,15 +188,15 @@ class TestOAuthRefreshProvider:
     async def test_on_logout_revokes_and_deletes(self):
         db = FakeDatabase()
         encryptor = _make_encryptor()
-        provider = OAuthRefreshProvider(MagicMock(), db, encryptor)
+        mock_revoke = MagicMock()
+        provider = OAuthRefreshProvider(MagicMock(), db, encryptor, revoke_fn=mock_revoke)
 
         # Pre-store a token
         encrypted = encryptor.encrypt("refresh-token-to-revoke")
         await db.set_refresh_token("user@example.com", encrypted, "https://www.googleapis.com/auth/spreadsheets")
 
-        with patch("extrasuite.server.credential_provider._revoke_token_at_google") as mock_revoke:
-            await provider.on_logout("user@example.com")
-            mock_revoke.assert_called_once_with("refresh-token-to-revoke")
+        await provider.on_logout("user@example.com")
+        mock_revoke.assert_called_once_with("refresh-token-to-revoke")
 
         with pytest.raises(RefreshTokenNotFound):
             await db.get_refresh_token("user@example.com")

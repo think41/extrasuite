@@ -5,6 +5,8 @@ These fakes allow us to control the behavior of external dependencies
 """
 
 import hashlib
+import re
+from collections.abc import Callable
 from dataclasses import dataclass
 from datetime import UTC, datetime, timedelta
 from typing import Any
@@ -302,6 +304,10 @@ class FakeSettings:
         """Get list of admin email addresses."""
         return list(self._admin_emails)
 
+    def get_allowed_domains(self) -> list[str]:
+        """Get list of allowed email domains."""
+        return list(self._allowed_domains)
+
 
 class FakeImpersonatedCredentials:
     """Fake impersonated credentials for testing.
@@ -457,3 +463,221 @@ class FakeIAMAsyncClient:
         resource = request.resource
         self.iam_policies[resource] = request.policy
         return request.policy
+
+
+# =============================================================================
+# Fakes for Google OAuth flow (Gap 2)
+# =============================================================================
+
+
+class FakeGoogleCredentials:
+    """Fake credentials object returned by FakeGoogleOAuthFlow.fetch_token().
+
+    Mirrors the attributes that api.py reads from flow.credentials after fetch_token().
+    """
+
+    def __init__(
+        self,
+        refresh_token: str = "fake-refresh-token",
+        scopes: list[str] | None = None,
+    ) -> None:
+        self.refresh_token = refresh_token
+        self.id_token = "fake.id.token"
+        self.scopes = list(scopes or [])
+
+
+class FakeGoogleOAuthFlow:
+    """Fake google_auth_oauthlib.flow.Flow for testing.
+
+    Replaces the real Flow so api.py's callback logic can be exercised without
+    contacting Google's OAuth endpoints.
+    """
+
+    def __init__(
+        self,
+        user_email: str,
+        refresh_token: str = "fake-refresh-token",
+        scopes: list[str] | None = None,
+        *,
+        fetch_token_fails: bool = False,
+    ) -> None:
+        self._user_email = user_email
+        self._refresh_token = refresh_token
+        self._scopes = list(scopes or [])
+        self._fetch_token_fails = fetch_token_fails
+        self.credentials: FakeGoogleCredentials | None = None
+
+    def authorization_url(self, **kwargs: Any) -> tuple[str, str]:
+        state = str(kwargs.get("state", "fake-state"))
+        return f"https://fake-accounts.google.com/o/oauth2/auth?state={state}", state
+
+    def fetch_token(self, **kwargs: Any) -> None:  # noqa: ARG002
+        if self._fetch_token_fails:
+            from oauthlib.oauth2.rfc6749.errors import OAuth2Error  # noqa: PLC0415
+
+            raise OAuth2Error("Fake: token exchange failed")
+        self.credentials = FakeGoogleCredentials(
+            refresh_token=self._refresh_token,
+            scopes=self._scopes,
+        )
+
+
+class FakeGoogleAuthGateway:
+    """Fake GoogleAuthGateway for testing.
+
+    Replaces the real gateway injected into api.py endpoints so the full
+    OAuth callback flow can be tested without contacting Google.
+
+    Controllable failure modes:
+      fetch_token_fails=True  → flow.fetch_token() raises OAuth2Error
+      id_token_fails=True     → verify_id_token() raises ValueError
+    """
+
+    def __init__(
+        self,
+        user_email: str = "user@example.com",
+        refresh_token: str = "fake-refresh-token",
+        scopes: list[str] | None = None,
+        *,
+        fetch_token_fails: bool = False,
+        id_token_fails: bool = False,
+    ) -> None:
+        self.user_email = user_email
+        self.refresh_token = refresh_token
+        self.scopes = list(scopes or [])
+        self.fetch_token_fails = fetch_token_fails
+        self.id_token_fails = id_token_fails
+
+    def create_flow(self, settings: Any) -> FakeGoogleOAuthFlow:  # noqa: ARG002
+        return FakeGoogleOAuthFlow(
+            self.user_email,
+            refresh_token=self.refresh_token,
+            scopes=self.scopes,
+            fetch_token_fails=self.fetch_token_fails,
+        )
+
+    def verify_id_token(self, id_token_str: str, client_id: str) -> dict[str, Any]:  # noqa: ARG002
+        if self.id_token_fails:
+            raise ValueError("Fake: ID token verification failed")
+        return {
+            "email": self.user_email,
+            "email_verified": True,
+            "sub": "fake-sub-123",
+        }
+
+
+# =============================================================================
+# FakeTokenGenerator (Gap 1 + Gap 3)
+# =============================================================================
+
+
+class FakeTokenGenerator:
+    """Fake TokenGenerator for end-to-end API tests.
+
+    Does not call any Google APIs. For SA/DWD modes:
+    - ensure_service_account: derives a deterministic SA email, stores in FakeDatabase
+    - generate_token: looks up SA from DB, returns a canned token
+    - generate_delegated_token: raises DelegationError if SA not in DB (preserving the
+      real invariant), otherwise returns a canned DWD token
+
+    For OAuth mode:
+    - generate_oauth_token: decrypts the refresh token using the real AES-256-GCM
+      encryptor (exercising real crypto) then returns a canned access token without
+      calling Google's token endpoint
+    """
+
+    def __init__(
+        self,
+        database: FakeDatabase,
+        settings: FakeSettings,
+        *,
+        sa_token: str = "fake-sa-token",
+        dwd_token: str = "fake-dwd-token",
+        oauth_token: str = "fake-oauth-token",
+        encryptor: Any = None,  # RefreshTokenEncryptor | None
+    ) -> None:
+        self._db = database
+        self._settings = settings
+        self.sa_token = sa_token
+        self.dwd_token = dwd_token
+        self.oauth_token = oauth_token
+        self._encryptor = encryptor
+
+    def _derive_sa_email(self, email: str) -> str:
+        """Derive a deterministic SA email from a user email without an IAM call."""
+        domain = email.split("@")[-1] if "@" in email else "unknown"
+        abbrev = self._settings.get_domain_abbreviation(domain)
+        local = re.sub(r"[^a-z0-9]", "-", email.split("@")[0].lower())
+        local = re.sub(r"-+", "-", local).strip("-")[:20]
+        project = self._settings.google_cloud_project
+        return f"{local}-{abbrev}@{project}.iam.gserviceaccount.com"
+
+    async def ensure_service_account(self, email: str, user_name: str = "") -> str:  # noqa: ARG002
+        sa = await self._db.get_service_account_email(email)
+        if not sa:
+            sa = self._derive_sa_email(email)
+            await self._db.set_service_account_email(email, sa)
+        return sa
+
+    async def generate_token(self, email: str, user_name: str = "") -> Any:
+        from extrasuite.server.token_generator import GeneratedToken  # noqa: PLC0415
+
+        sa = await self.ensure_service_account(email, user_name)
+        return GeneratedToken(
+            token=self.sa_token,
+            expires_at=datetime.now(UTC) + timedelta(hours=1),
+            service_account_email=sa,
+        )
+
+    async def generate_delegated_token(self, email: str, scopes: list[str]) -> Any:  # noqa: ARG002
+        from extrasuite.server.token_generator import DelegationError, GeneratedToken  # noqa: PLC0415
+
+        sa = await self._db.get_service_account_email(email)
+        if not sa:
+            raise DelegationError(
+                f"Service account not found for {email}. "
+                "Session may have been issued without going through Phase 1.",
+                email,
+            )
+        return GeneratedToken(
+            token=self.dwd_token,
+            expires_at=datetime.now(UTC) + timedelta(hours=1),
+            service_account_email=sa,
+        )
+
+    async def generate_oauth_token(
+        self, email: str, encrypted_token: str, scopes: list[str]  # noqa: ARG002
+    ) -> Any:
+        from extrasuite.server.token_generator import GeneratedToken, OAuthTokenError  # noqa: PLC0415
+
+        if self._encryptor is None:
+            raise OAuthTokenError("OAuth encryptor not configured", email)
+        try:
+            # Decrypt to validate the token is well-formed (exercises real AES-256-GCM)
+            self._encryptor.decrypt(encrypted_token)
+        except ValueError as e:
+            raise OAuthTokenError(
+                f"Failed to decrypt refresh token for {email}: {e}", email, e
+            ) from e
+        return GeneratedToken(
+            token=self.oauth_token,
+            expires_at=datetime.now(UTC) + timedelta(hours=1),
+            service_account_email="",
+        )
+
+    async def close(self) -> None:
+        pass
+
+
+class FakeRevokeFn:
+    """Fake callable that records token revocation calls (replaces _revoke_token_at_google).
+
+    Inject via oauth_revoke_fn= in make_e2e_test_app() to assert that logout
+    triggers revocation with the correct plaintext refresh token.
+    """
+
+    def __init__(self) -> None:
+        self.revoked_tokens: list[str] = []
+
+    def __call__(self, token: str) -> None:
+        self.revoked_tokens.append(token)

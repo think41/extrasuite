@@ -69,6 +69,27 @@ def get_credential_router(request: Request) -> CommandCredentialRouter:
     """FastAPI dependency to get the credential router from app.state."""
     return request.app.state.credential_router
 
+
+class GoogleAuthGateway:
+    """Wraps Google OAuth flow creation and ID token verification.
+
+    Extracted as a class so tests can override it via FastAPI dependency injection
+    without patching module-level functions.
+    """
+
+    def create_flow(self, settings: Settings) -> Flow:
+        return _create_oauth_flow(settings)
+
+    def verify_id_token(self, id_token_str: str, client_id: str) -> dict:
+        return id_token.verify_oauth2_token(  # type: ignore[no-any-return]
+            id_token_str, google_requests.Request(), client_id
+        )
+
+
+def get_google_auth_gateway() -> GoogleAuthGateway:
+    """FastAPI dependency to get the Google auth gateway."""
+    return GoogleAuthGateway()
+
 # =============================================================================
 # Health Endpoints
 # =============================================================================
@@ -137,6 +158,7 @@ async def start_token_auth(
     settings: Settings = Depends(get_settings),
     db: Database = Depends(get_database),
     port: int | None = Query(None, description="CLI localhost callback port", ge=MIN_PORT, le=MAX_PORT),
+    google_auth: GoogleAuthGateway = Depends(get_google_auth_gateway),
 ) -> RedirectResponse | HTMLResponse:
     """Start the Phase 1 browser flow for CLI session establishment.
 
@@ -165,7 +187,7 @@ async def start_token_auth(
     state = secrets.token_urlsafe(32)
     await db.save_state(state, cli_redirect)
 
-    flow = _create_oauth_flow(settings)
+    flow = google_auth.create_flow(settings)
     auth_kwargs: dict = {"state": state}
     if settings.uses_oauth:
         # OAuth mode: request offline access and workspace scopes at consent time
@@ -182,6 +204,7 @@ async def start_ui_login(
     request: Request,
     settings: Settings = Depends(get_settings),
     db: Database = Depends(get_database),
+    google_auth: GoogleAuthGateway = Depends(get_google_auth_gateway),
 ) -> RedirectResponse:
     """Start OAuth flow for UI login.
 
@@ -199,7 +222,7 @@ async def start_ui_login(
     state = secrets.token_urlsafe(32)
     await db.save_state(state, "/")  # Use "/" to indicate UI flow
 
-    flow = _create_oauth_flow(settings)
+    flow = google_auth.create_flow(settings)
     auth_kwargs: dict = {"state": state}
     if settings.uses_oauth:
         auth_kwargs["access_type"] = "offline"
@@ -218,6 +241,7 @@ async def google_callback(
     settings: Settings = Depends(get_settings),
     db: Database = Depends(get_database),
     credential_router: CommandCredentialRouter = Depends(get_credential_router),
+    google_auth: GoogleAuthGateway = Depends(get_google_auth_gateway),
 ) -> RedirectResponse | HTMLResponse:
     """Handle Google OAuth callback for CLI flow.
 
@@ -235,7 +259,7 @@ async def google_callback(
     cli_redirect = str(state_data["redirect_url"])
 
     # Exchange code for tokens
-    flow = _create_oauth_flow(settings)
+    flow = google_auth.create_flow(settings)
     try:
         flow.fetch_token(code=code)
     except OAuth2Error as e:
@@ -245,9 +269,8 @@ async def google_callback(
     # Verify ID token
     credentials = flow.credentials
     try:
-        id_info = id_token.verify_oauth2_token(
+        id_info = google_auth.verify_id_token(
             credentials.id_token,  # type: ignore[union-attr]
-            google_requests.Request(),
             settings.google_client_id,
         )
     except ValueError as e:

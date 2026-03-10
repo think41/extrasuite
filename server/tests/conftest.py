@@ -7,6 +7,7 @@ and an async httpx client that hits it directly (no real network calls).
 import os
 from collections.abc import AsyncGenerator
 from datetime import UTC, datetime, timedelta
+from typing import Any
 from unittest.mock import AsyncMock, MagicMock
 
 import httpx
@@ -15,7 +16,7 @@ from fastapi import FastAPI
 from slowapi.errors import RateLimitExceeded
 from starlette.middleware.sessions import SessionMiddleware
 
-from tests.fakes import FakeDatabase, FakeSettings
+from tests.fakes import FakeDatabase, FakeGoogleAuthGateway, FakeSettings, FakeTokenGenerator
 
 # These env vars must be set before any extrasuite.server module is imported,
 # because main.py calls create_app() at module level which reads Settings.
@@ -27,7 +28,7 @@ os.environ.setdefault("GOOGLE_CLOUD_PROJECT", "test-project")
 # Deferred imports: these trigger main.py's module-level create_app() call,
 # so they must come after the env vars are set above.
 from extrasuite.server import api
-from extrasuite.server.api import get_credential_router
+from extrasuite.server.api import get_credential_router, get_google_auth_gateway
 from extrasuite.server.command_registry import (
     _DWD_COMMAND_SCOPES,
     _SA_COMMAND_TYPES,
@@ -138,6 +139,62 @@ def make_test_app(
     app.dependency_overrides[get_database] = lambda: db
     app.dependency_overrides[get_settings] = lambda: settings
     app.dependency_overrides[get_credential_router] = lambda: credential_router
+
+    return app
+
+
+def make_e2e_test_app(
+    db: FakeDatabase,
+    settings: FakeSettings,
+    auth_gateway: FakeGoogleAuthGateway | None = None,
+    encryptor: "Any | None" = None,
+    oauth_revoke_fn: "Any | None" = None,
+) -> FastAPI:
+    """Build a test app with the REAL CommandCredentialRouter and FakeTokenGenerator.
+
+    Unlike make_test_app() which mocks the credential router, this wires
+    FakeTokenGenerator into the real routing table so all three credential modes
+    (sa+dwd, sa+oauth, oauth) are exercised end-to-end.
+
+    Args:
+        db: In-memory fake database.
+        settings: Fake settings (credential_mode determines routing).
+        auth_gateway: Fake Google auth gateway for OAuth callback tests.
+            Defaults to FakeGoogleAuthGateway() if None.
+        encryptor: RefreshTokenEncryptor required when settings.uses_oauth.
+        oauth_revoke_fn: Injected into OAuthRefreshProvider.on_logout().
+            Use FakeRevokeFn() to assert revocation calls; None uses real Google revocation.
+    """
+    from extrasuite.server.credential_router import CommandCredentialRouter  # noqa: PLC0415
+    from extrasuite.server.main import (  # noqa: PLC0415
+        rate_limit_exceeded_handler,
+        unhandled_exception_handler,
+    )
+
+    if auth_gateway is None:
+        auth_gateway = FakeGoogleAuthGateway()
+
+    token_gen = FakeTokenGenerator(db, settings, encryptor=encryptor)
+    credential_router = CommandCredentialRouter.from_settings(
+        settings,  # type: ignore[arg-type]
+        token_gen,  # type: ignore[arg-type]
+        db,
+        encryptor,
+        oauth_revoke_fn=oauth_revoke_fn,
+    )
+
+    app = FastAPI()
+    app.state.limiter = api.limiter
+    app.state.credential_router = credential_router
+    app.add_exception_handler(Exception, unhandled_exception_handler)
+    app.add_exception_handler(RateLimitExceeded, rate_limit_exceeded_handler)
+    app.add_middleware(SessionMiddleware, secret_key="test-secret-key-for-testing-only")
+    app.include_router(api.router, prefix="/api")
+
+    app.dependency_overrides[get_database] = lambda: db
+    app.dependency_overrides[get_settings] = lambda: settings
+    app.dependency_overrides[get_credential_router] = lambda: credential_router
+    app.dependency_overrides[get_google_auth_gateway] = lambda: auth_gateway
 
     return app
 

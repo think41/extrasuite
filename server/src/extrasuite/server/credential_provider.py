@@ -16,6 +16,7 @@ import urllib.error
 import urllib.parse
 import urllib.request
 from abc import ABC, abstractmethod
+from collections.abc import Callable
 from typing import TYPE_CHECKING, Any
 
 from loguru import logger
@@ -142,10 +143,13 @@ class OAuthRefreshProvider(CredentialProvider):
         token_generator: TokenGenerator,
         database: Any,  # DatabaseProtocol — Any to avoid circular import
         encryptor: RefreshTokenEncryptor,
+        *,
+        revoke_fn: Callable[[str], None] | None = None,
     ) -> None:
         self._token_generator = token_generator
         self._db = database
         self._encryptor = encryptor
+        self._revoke_fn: Callable[[str], None] = revoke_fn or _revoke_token_at_google
 
     @property
     def needs_refresh_token(self) -> bool:
@@ -199,7 +203,7 @@ class OAuthRefreshProvider(CredentialProvider):
 
         try:
             plaintext = self._encryptor.decrypt(record.encrypted_token)
-            await asyncio.to_thread(_revoke_token_at_google, plaintext)
+            await asyncio.to_thread(self._revoke_fn, plaintext)
             logger.info("OAuth refresh token revoked at Google", extra={"email": email})
         except Exception as e:
             logger.warning(
