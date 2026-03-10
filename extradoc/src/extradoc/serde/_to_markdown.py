@@ -190,6 +190,14 @@ def _serialize_content(
         if se.paragraph is not None:
             para = se.paragraph
 
+            if _is_colored_empty_paragraph(para):
+                # Cannot represent color styling in markdown, but emit a
+                # placeholder so the reconciler does not delete the paragraph.
+                if lines:
+                    lines.append("")
+                lines.append("<!-- -->")
+                continue
+
             if _is_trailing_paragraph(para):
                 continue
 
@@ -241,6 +249,29 @@ def _is_trailing_paragraph(para: Paragraph) -> bool:
             ts = tr.text_style
             return ts is None or not _style_has_attrs(ts)
     return False
+
+
+def _is_colored_empty_paragraph(para: Paragraph) -> bool:
+    """Return True for empty paragraphs whose only styling is foreground/background color.
+
+    These cannot be represented in markdown but should not be silently deleted
+    on push.  They are emitted as <!-- --> placeholders so that the round-trip
+    preserves paragraph count and the reconciler does not generate spurious
+    deleteContentRange requests.
+    """
+    elements = para.elements or []
+    if len(elements) != 1:
+        return False
+    tr = elements[0].text_run
+    if tr is None or tr.content != "\n":
+        return False
+    ts = tr.text_style
+    if ts is None:
+        return False
+    # Must have some style set, but none that _style_has_attrs covers.
+    return not _style_has_attrs(ts) and (
+        ts.foreground_color is not None or ts.background_color is not None
+    )
 
 
 def _serialize_paragraph(para: Paragraph) -> str | None:
@@ -383,12 +414,30 @@ def _apply_formatting(text: str, style: Any, *, skip_underline: bool = False) ->
     if style.underline and not skip_underline:
         result = f"<u>{result}</u>"
     if style.bold and style.italic:
-        result = f"***{result}***"
+        result = _wrap_markers(result, "***")
     elif style.bold:
-        result = f"**{result}**"
+        result = _wrap_markers(result, "**")
     elif style.italic:
-        result = f"*{result}*"
+        result = _wrap_markers(result, "*")
     return result
+
+
+def _wrap_markers(text: str, marker: str) -> str:
+    """Wrap text with markdown bold/italic markers.
+
+    Moves leading/trailing whitespace outside the markers so that the result
+    is CommonMark-compliant.  For example, a bold run whose content is
+    ' Send Test ' would otherwise produce '** Send Test **', which most
+    parsers (including mistletoe) do NOT recognise as bold because the
+    delimiter run is followed/preceded by whitespace.  The correct form is
+    ' **Send Test** '.
+    """
+    stripped = text.strip()
+    if not stripped:
+        return text  # only whitespace — wrapping would produce invalid markup
+    leading = text[: len(text) - len(text.lstrip())]
+    trailing = text[len(text.rstrip()) :]
+    return f"{leading}{marker}{stripped}{marker}{trailing}"
 
 
 def _escape_md(text: str) -> str:

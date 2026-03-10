@@ -344,6 +344,11 @@ def _parse_body(
             # page break
             if _X_PAGEBREAK_RE.match(raw):
                 body.append(_make_pagebreak_para())
+            elif raw == "<!-- -->":
+                # Empty-paragraph placeholder emitted by _to_markdown for colored
+                # empty paragraphs that cannot be represented in markdown.
+                # Recreate as a plain empty paragraph to preserve structure.
+                body.append(_make_trailing_para())
             elif raw == "<!-- toc -->":
                 # Emit a synthetic tableOfContents element so the reconciler
                 # sees a MATCHED TOC (not DELETED) and generates no requests.

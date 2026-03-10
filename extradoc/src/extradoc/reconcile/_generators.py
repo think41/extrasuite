@@ -3094,12 +3094,13 @@ def _generate_text_style_updates(
         assert base_run is not None
         assert desired_run is not None
 
-        # Verify text match
+        # Verify text match — if runs have the same count but different
+        # boundaries (e.g., whitespace moved from inside a bold run to outside
+        # when serialising to markdown), fall back to positional comparison
+        # which aligns by character offset and handles boundary shifts cleanly.
         if base_run.content != desired_run.content:
-            raise ReconcileError(
-                f"Text content mismatch in matched paragraph run: "
-                f"{base_run.content!r} != {desired_run.content!r}. "
-                f"This indicates a bug in the upstream text alignment."
+            return _generate_text_style_updates_positional(
+                base_para, desired_para, para_start, segment_id, tab_id
             )
 
         # Compute style diff
