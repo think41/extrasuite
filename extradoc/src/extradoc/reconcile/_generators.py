@@ -321,6 +321,25 @@ def _is_paragraph(se: StructuralElement) -> bool:
     return se.paragraph is not None
 
 
+def _is_bare_newline_only_para(se: StructuralElement | None) -> bool:
+    """Return True if se is a paragraph whose sole element is a bare '\\n' text run.
+
+    After _strip_empty_body_paragraphs removes all real bare-newline paragraphs
+    from the base, the only remaining bare-newline paragraph is the synthetic
+    trailing paragraph added by _ensure_base_trailing_paragraph.  Checking this
+    in the DELETE section lets us cap delete_end before that sentinel to avoid
+    passing the segment-final '\\n' position to deleteContentRange (which the
+    API rejects with 400).
+    """
+    if se is None or se.paragraph is None:
+        return False
+    elems = se.paragraph.elements or []
+    if len(elems) != 1:
+        return False
+    tr = elems[0].text_run
+    return tr is not None and tr.content == "\n"
+
+
 def _is_pagebreak_paragraph(se: StructuralElement) -> bool:
     """Return True if the paragraph's only content is a single page_break element.
 
@@ -714,6 +733,63 @@ def _process_slot_inner(
             if filtered[0].desired_element
             else False
         )
+        # Special case: first doc-order add is a table, and left_anchor is a
+        # section break (or None — start of body with no preceding paragraph).
+        #
+        # The reversed-loop normal case inserts the first paragraph (e.g. a
+        # heading) at insert_idx BEFORE inserting the table.  The API then
+        # displaces the heading text to AFTER the table, but also inserts a
+        # new empty paragraph (the pre-table \n) that splits the heading
+        # paragraph — leaving an unwanted empty HEADING_1 before the heading
+        # text.
+        #
+        # Fix: insert tables and paragraphs in FORWARD (document) order.
+        # Each insertTable at pos creates a pre-table \n at pos; the next
+        # element goes at pos + 1 + _table_structural_size(table).
+        # This keeps the heading text in the correct position relative to the
+        # table.  The pre-table \n itself is unavoidable (the API forbids
+        # deleting \n immediately before a table), so it remains as a
+        # structural separator between the section break and the first table.
+        if (
+            first_add_is_table
+            and (left_anchor is None or _is_section_break(left_anchor))
+            and not deletes
+        ):
+            pos = insert_idx
+            for ae in filtered:
+                el = ae.desired_element
+                assert el is not None
+                if _is_table(el):
+                    assert el.table is not None
+                    insert_reqs.extend(
+                        _generate_insert_table_with_content(
+                            el.table, pos, segment_id, tab_id, desired_lists
+                        )
+                    )
+                    pos += 1 + _table_structural_size(el.table)
+                elif _is_paragraph(el):
+                    if _is_pagebreak_paragraph(el):
+                        insert_reqs.append(_make_insert_page_break(pos, tab_id))
+                        pos += 2
+                    else:
+                        text = _para_text(el)
+                        if text:
+                            insert_reqs.append(
+                                _make_insert_text(text, pos, segment_id, tab_id)
+                            )
+                            pos += utf16_len(text)
+            insert_reqs.extend(
+                _style_reqs_for_added_paras(
+                    filtered,
+                    insert_idx,
+                    segment_id,
+                    tab_id,
+                    desired_lists,
+                    table_size_extra=1,
+                )
+            )
+            return insert_reqs
+
         if (
             first_add_is_table
             and left_anchor is not None
@@ -762,26 +838,31 @@ def _process_slot_inner(
                 effective_insert_idx = delete_start
 
             # Process remaining elements (doc order [1:]) in reversed order.
-            # Pure-table sequences: all remaining tables go at table_insert_idx
-            # (left_anchor's \n), just like the first table.  This ensures
-            # consecutive tables produce exactly one empty paragraph between
-            # them (instead of two).
-            # Mixed sequences (tables + paragraphs): tables fall back to
+            # Tables that appear before the first paragraph in remaining_adds
+            # are "leading tables" — they should go to table_insert_idx, just
+            # like the first table.  This ensures consecutive tables produce
+            # exactly one empty paragraph between them (the displaced \n from
+            # the preceding insertTable) instead of two.
+            # Tables that appear at/after the first paragraph go to
             # effective_insert_idx so that paragraphs can be inserted there
             # without hitting a table's start index.
-            remaining_only_tables = all(
-                _is_table(ae.desired_element)
-                for ae in remaining_adds
-                if ae.desired_element is not None
+            first_para_idx = next(
+                (
+                    i
+                    for i, ae in enumerate(remaining_adds)
+                    if ae.desired_element is not None and _is_paragraph(ae.desired_element)
+                ),
+                len(remaining_adds),
             )
             spurious_pending = False
-            for ae in reversed(remaining_adds):
+            for i_rev, ae in enumerate(reversed(remaining_adds)):
+                i_doc = len(remaining_adds) - 1 - i_rev
                 el = ae.desired_element
                 assert el is not None
                 if _is_table(el):
                     assert el.table is not None
                     table_pos = (
-                        table_insert_idx if remaining_only_tables else effective_insert_idx
+                        table_insert_idx if i_doc < first_para_idx else effective_insert_idx
                     )
                     insert_reqs.extend(
                         _generate_insert_table_with_content(
@@ -1052,6 +1133,15 @@ def _process_slot_inner(
         # Cannot delete the \n immediately before a table (API constraint)
         if _is_table(right_anchor):
             delete_end -= 1
+        # When right_anchor is the synthetic trailing paragraph (the only bare
+        # '\n' paragraph remaining after _strip_empty_body_paragraphs), its
+        # startIndex equals the real document body's endIndex.  A delete range
+        # ending at or beyond that position would include the segment-final '\n',
+        # causing a 400 error.  Cap delete_end to anchor_start - 1.
+        if _is_bare_newline_only_para(right_anchor):
+            anchor_start = _el_start(right_anchor)
+            if delete_end >= anchor_start:
+                delete_end = anchor_start - 1
         # When there are adds, extend the delete range to cover any gap between
         # delete_end and insert_idx.  This gap contains empty paragraphs that
         # _normalize_raw_base_para_styles stripped from the base (e.g. the \n
@@ -1292,15 +1382,6 @@ def _style_reqs_for_added_paras(
                 prev_was_table = False
             had_non_para = True
             continue
-        # When table_size_extra=0 and the previous element was a table,
-        # insertTable's displaced \n sits between the table and this paragraph.
-        # The _process_trailing_adds_with_tables reversed loop inserts the
-        # paragraph's text with a leading \n (e.g. "\nHeading Text"), then
-        # insertTable displaces that leading \n to become the post-table \n
-        # separator.  This post-table \n is 1 char that \n is not absorbed by
-        # the paragraph's inserted text — the offset must skip it.
-        if table_size_extra == 0 and prev_was_table:
-            offset += 1
         prev_was_table = False
         para_text = _para_text(el)
         # insertPageBreak inserts 2 characters (pageBreak element + \n).

@@ -446,17 +446,29 @@ def _is_bare_empty_paragraph(se: StructuralElement) -> bool:
 def _strip_empty_body_paragraphs(
     content: list[StructuralElement],
 ) -> list[StructuralElement]:
-    """Remove all bare empty paragraphs from body content.
+    """Remove bare empty paragraphs that immediately precede a table.
 
-    The markdown serializer skips unstyled '\\n'-only paragraphs (treating
-    them as trailing paragraphs).  Any such paragraph in the base would
-    generate a spurious deleteContentRange in the diff.  Stripping them
-    from the base keeps it consistent with the desired document.
+    The Google Docs API automatically inserts a bare-\\n paragraph before
+    every insertTable call.  These pre-table paragraphs are invisible in the
+    markdown representation and cannot be deleted via deleteContentRange.
+    Stripping them from the base keeps it consistent with the desired
+    document and avoids spurious deleteContentRange requests.
+
+    Bare-\\n paragraphs that do NOT precede a table are left in place so that
+    the reconciler can generate delete requests for them.
 
     The trailing empty paragraph required by the Google Docs API is added
     back by _ensure_base_trailing_paragraph after this call.
     """
-    return [se for se in content if not _is_bare_empty_paragraph(se)]
+    result: list[StructuralElement] = []
+    n = len(content)
+    for i, se in enumerate(content):
+        if _is_bare_empty_paragraph(se):
+            next_is_table = i + 1 < n and content[i + 1].table is not None
+            if next_is_table:
+                continue
+        result.append(se)
+    return result
 
 
 def _normalize_structural_element_para_styles(se: StructuralElement) -> None:
