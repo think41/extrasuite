@@ -127,7 +127,7 @@ ROUND_TRIP_MD = textwrap.dedent("""\
     - First bullet point
     - Second bullet point
 
-    | Name | Value |
+    | **Name** | **Value** |
     | --- | --- |
     | Foo | 42 |
     | Bar | 99 |

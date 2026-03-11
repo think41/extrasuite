@@ -23,6 +23,7 @@ _HELP_COMMAND_FILES = frozenset(
         "push-md.md",
         "diff.md",
         "create.md",
+        "create-md.md",
         "batchupdate.md",
         "lint.md",
     }

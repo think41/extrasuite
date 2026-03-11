@@ -679,15 +679,20 @@ def _convert_list(
 
 
 def _convert_gfm_table(block: Any) -> StructuralElement:
-    """Convert a mistletoe GFM Table to a Google Docs Table."""
+    """Convert a mistletoe GFM Table to a Google Docs Table.
+
+    The header row gets bold text to distinguish it from data rows.
+    """
     all_rows: list[Any] = [block.header, *list(block.children)]
     n_cols = max((len(row.children) for row in all_rows), default=0)
 
     table_rows: list[TableRow] = []
-    for row in all_rows:
+    for row_idx, row in enumerate(all_rows):
+        is_header = row_idx == 0
         cells: list[TableCell] = []
         for cell in row.children:
-            inline_elements = _tokens_to_elements(list(cell.children), TextStyle())
+            base_style = TextStyle(bold=True) if is_header else TextStyle()
+            inline_elements = _tokens_to_elements(list(cell.children), base_style)
             inline_elements.append(ParagraphElement(text_run=TextRun(content="\n")))
             cell_para = StructuralElement(
                 paragraph=Paragraph(

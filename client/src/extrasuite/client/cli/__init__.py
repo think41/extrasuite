@@ -4,7 +4,7 @@ Usage:
     extrasuite drive    ls|search
     extrasuite sheet    pull|diff|push|create|batchUpdate|share
     extrasuite slide    pull|diff|push|create|share
-    extrasuite doc      pull|diff|push|create|share
+    extrasuite doc      pull|diff|push|create|create-md|share
     extrasuite form     pull|diff|push|create|share
     extrasuite script   pull|diff|push|create|lint|share
     extrasuite gmail    compose|edit-draft|reply|list|read
@@ -44,6 +44,7 @@ from extrasuite.client.cli.contacts import (
 )
 from extrasuite.client.cli.doc import (
     cmd_doc_create,
+    cmd_doc_create_md,
     cmd_doc_diff,
     cmd_doc_pull,
     cmd_doc_pull_md,
@@ -122,6 +123,7 @@ _COMMANDS: dict[tuple[str, str | None], Callable[..., Any]] = {
     ("doc", "push"): cmd_doc_push,
     ("doc", "push-md"): cmd_doc_push_md,
     ("doc", "create"): cmd_doc_create,
+    ("doc", "create-md"): cmd_doc_create_md,
     ("doc", "share"): cmd_doc_share,
     ("gmail", "compose"): cmd_gmail_compose,
     ("gmail", "edit-draft"): cmd_gmail_edit_draft,
@@ -660,6 +662,25 @@ def build_parser() -> Any:
         "--copy-from",
         metavar="URL",
         help="Copy an existing file instead of creating blank (must be a file extrasuite created)",
+    )
+
+    sp = doc_sub.add_parser(
+        "create-md",
+        help="Create a new document and initialize it from markdown files",
+        parents=[auth_parent],
+        description=_load_help("doc", "create-md"),
+        formatter_class=argparse.RawDescriptionHelpFormatter,
+    )
+    sp.add_argument("title", help="Document title")
+    sp.add_argument("output_dir", nargs="?", help="Output directory (default: .)")
+    sp.add_argument(
+        "--from",
+        dest="from_folder",
+        metavar="FOLDER",
+        help=(
+            "Folder of .md files to import. Each file becomes one tab; "
+            "files are mapped to tabs in alphabetical order."
+        ),
     )
 
     sp = doc_sub.add_parser(

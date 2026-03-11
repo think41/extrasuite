@@ -140,6 +140,105 @@ def cmd_doc_create(args: Any) -> None:
     _cmd_create("doc", args)
 
 
+def cmd_doc_create_md(args: Any) -> None:
+    """Create a new Google Doc and optionally initialize it from markdown files."""
+    import xml.etree.ElementTree as ET
+    from pathlib import Path
+
+    from extradoc import DocsClient, GoogleDocsTransport
+
+    from extrasuite.client import CredentialsManager
+    from extrasuite.client.cli._common import _auth_kwargs, _get_reason
+    from extrasuite.client.google_api import create_file_via_drive, share_file
+
+    manager = CredentialsManager(**_auth_kwargs(args))
+    reason = _get_reason(args, default="Create Google Doc with markdown content")
+    output_dir = Path(args.output_dir) if args.output_dir else Path()
+
+    # Step 1: Create doc and share with service account
+    dwd_cred = manager.get_credential(
+        command={"type": "drive.file.create", "file_name": args.title, "file_type": "doc"},
+        reason=reason,
+    )
+    sa_email = dwd_cred.service_account_email
+    if not sa_email:
+        raise RuntimeError("Could not determine service account email. Cannot share file.")
+
+    result = create_file_via_drive(
+        dwd_cred.token, args.title, "application/vnd.google-apps.document"
+    )
+    file_id = result["id"]
+    share_file(dwd_cred.token, file_id, sa_email)
+    url = f"https://docs.google.com/document/d/{file_id}"
+    doc_folder = output_dir / file_id
+
+    # Step 2: Pull in markdown format to create the local folder structure
+    sa_cred = manager.get_credential(
+        command={"type": "doc.pull", "file_url": url, "file_name": args.title},
+        reason=reason,
+    )
+
+    async def _pull(token: str) -> None:
+        transport = GoogleDocsTransport(token)
+        client = DocsClient(transport)
+        try:
+            await client.pull(file_id, output_dir, save_raw=True, format="markdown")
+        finally:
+            await transport.close()
+
+    asyncio.run(_pull(sa_cred.token))
+
+    # Step 3: Import user's markdown files if --from provided
+    if args.from_folder:
+        from_path = Path(args.from_folder)
+        user_files = sorted(f for f in from_path.glob("*.md"))
+
+        if user_files:
+            # Map user files onto existing tabs; extras become new tabs
+            index_path = doc_folder / "index.xml"
+            root = ET.parse(index_path).getroot()
+            existing_tab_folders = [t.get("folder", "") for t in root.findall(".//tab")]
+
+            for i, user_file in enumerate(user_files):
+                if i < len(existing_tab_folders):
+                    target = doc_folder / f"{existing_tab_folders[i]}.md"
+                else:
+                    target = doc_folder / user_file.name
+                target.write_text(user_file.read_text(encoding="utf-8"), encoding="utf-8")
+
+            # Step 4: Push changes
+            push_cred = manager.get_credential(
+                command={"type": "doc.push", "file_url": url, "file_name": args.title},
+                reason=reason,
+            )
+
+            async def _push() -> None:
+                transport = GoogleDocsTransport(push_cred.token)
+                client = DocsClient(transport)
+                try:
+                    push_result = await client.push(str(doc_folder), force=True)
+                    if not push_result.success:
+                        raise RuntimeError(f"Push failed: {push_result.message}")
+                finally:
+                    await transport.close()
+
+            asyncio.run(_push())
+
+            # Step 5: Re-pull to update pristine state with real tab IDs
+            repull_cred = manager.get_credential(
+                command={"type": "doc.pull", "file_url": url, "file_name": args.title},
+                reason=reason,
+            )
+            asyncio.run(_pull(repull_cred.token))
+
+    print(f"\nCreated document: {args.title}")
+    print(f"URL: {url}")
+    print(f"Local folder: {doc_folder}/")
+    print(f"Shared with: {sa_email}")
+    if args.from_folder:
+        print(f"Content imported from: {args.from_folder}")
+
+
 def cmd_doc_share(args: Any) -> None:
     """Share a Google Doc with trusted contacts."""
     _cmd_share("doc", args)

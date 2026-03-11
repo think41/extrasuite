@@ -294,6 +294,15 @@ class Callout(SpecialElement):
         "tip":     "#d4edda",
     }
 
+    # Left border accent color per variant (darker than bg for contrast)
+    _BORDER: ClassVar[dict[str, str]] = {
+        "warning": "#ffc107",
+        "info":    "#17a2b8",
+        "note":    "#17a2b8",
+        "danger":  "#dc3545",
+        "tip":     "#28a745",
+    }
+
     @property
     def named_range_name(self) -> str:
         return f"extradoc:callout:{self.variant}"
@@ -312,7 +321,12 @@ class Callout(SpecialElement):
 
     def to_table(self) -> Table:
         bg = self._BG.get(self.variant, "#d1ecf1")
-        return _make_1x1_table(list(self.paragraphs), bg_hex=bg)
+        border_color = self._BORDER.get(self.variant, "#17a2b8")
+        return _make_1x1_table(
+            list(self.paragraphs),
+            bg_hex=bg,
+            border_left=f"4.0,{border_color},SOLID",
+        )
 
     @classmethod
     def from_table(cls, table: Table, named_range_name: str) -> "Callout":

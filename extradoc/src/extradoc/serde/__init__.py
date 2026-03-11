@@ -304,6 +304,7 @@ def _deserialize_markdown(folder: Path, index: IndexXml) -> DocumentWithComments
 
     tab_content: dict[str, str] = {}
     tab_ids: dict[str, str] = {}
+    known_folders: set[str] = set()
     for index_tab in index.all_tabs_flat():
         # New layout: <folder_stem>.md at root (e.g. Tab_1.md)
         md_path = folder / f"{index_tab.folder}.md"
@@ -313,6 +314,18 @@ def _deserialize_markdown(folder: Path, index: IndexXml) -> DocumentWithComments
         source = md_path.read_text(encoding="utf-8") if md_path.exists() else ""
         tab_content[index_tab.folder] = source
         tab_ids[index_tab.folder] = index_tab.id
+        known_folders.add(index_tab.folder)
+
+    # Detect new .md files not tracked in index.xml — these become new tabs on push.
+    # Files are added after indexed tabs so they appear at the end of the document.
+    _READ_ONLY = {"index"}
+    for md_path in sorted(folder.glob("*.md")):
+        stem = md_path.stem
+        if stem in _READ_ONLY or stem in known_folders:
+            continue
+        tab_content[stem] = md_path.read_text(encoding="utf-8")
+        # No tab_ids entry → markdown_to_document assigns a synthetic ID →
+        # reconciler treats it as a new tab and emits addDocumentTab.
 
     document = markdown_to_document(
         tab_content,
