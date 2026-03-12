@@ -1,23 +1,19 @@
-Create a new Google Spreadsheet and share it with your service account.
+Create a new Google Spreadsheet, share it with your service account, and pull it locally.
 
 ## Usage
 
-  extrasuite sheet create <title>
+  extrasuite sheets create <title> [output_dir]
 
 ## Arguments
 
-  title    Title for the new spreadsheet
+  title       Title for the new spreadsheet
+  output_dir  Directory to pull the file into after creation (optional).
+              If omitted, creates <spreadsheet_id>/ in the current directory.
 
 ## Output
 
 Prints the spreadsheet URL and the service account email it was shared with.
-Also prints the pull command to start editing immediately.
-
-## Next Steps
-
-After creating, pull the spreadsheet to start editing:
-
-  extrasuite sheet pull <url>
+Then automatically pulls the spreadsheet into output_dir (or <spreadsheet_id>/).
 
 ## Notes
 

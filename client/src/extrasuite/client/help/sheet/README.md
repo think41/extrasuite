@@ -2,10 +2,10 @@ Google Sheets - edit spreadsheets via local TSV and JSON files.
 
 ## Workflow
 
-  extrasuite sheet pull <url> [output_dir]   Download spreadsheet
-  # Edit files in <output_dir>/<spreadsheet_id>/
-  extrasuite sheet push <folder>             Apply changes to Google Sheets
-  extrasuite sheet create <title>            Create a new spreadsheet
+  extrasuite sheets pull <url> [output_dir]   Download spreadsheet
+  # Edit files in <output_dir>/
+  extrasuite sheets push <folder>             Apply changes to Google Sheets
+  extrasuite sheets create <title>            Create a new spreadsheet
 
 After push, always re-pull before making more changes.
 
@@ -42,15 +42,15 @@ Optional files (only created when content exists):
 
 ## Commands
 
-  extrasuite sheet pull --help        Pull flags and folder layout details
-  extrasuite sheet push --help        Push flags
-  extrasuite sheet diff --help        Offline debugging tool (no auth needed)
-  extrasuite sheet create --help      Create a new spreadsheet
-  extrasuite sheet batchUpdate --help Execute raw API requests (sort, move, etc.)
+  extrasuite sheets pull --help        Pull flags and folder layout details
+  extrasuite sheets push --help        Push flags
+  extrasuite sheets diff --help        Offline debugging tool (no auth needed)
+  extrasuite sheets create --help      Create a new spreadsheet
+  extrasuite sheets batchUpdate --help Execute raw API requests (sort, move, etc.)
 
 ## Reference Docs (detailed)
 
-  extrasuite sheet help                    List available reference topics
-  extrasuite sheet help format-reference   Colors, borders, conditional formats, merges, rich text
-  extrasuite sheet help features-reference Charts, data validation, pivot tables, named ranges
-  extrasuite sheet help comments-reference Comments: add replies, resolve
+  extrasuite sheets help                    List available reference topics
+  extrasuite sheets help format-reference   Colors, borders, conditional formats, merges, rich text
+  extrasuite sheets help features-reference Charts, data validation, pivot tables, named ranges
+  extrasuite sheets help comments-reference Comments: add replies, resolve

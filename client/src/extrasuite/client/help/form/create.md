@@ -1,20 +1,16 @@
-Create a new Google Form and share it with your service account.
+Create a new Google Form, share it with your service account, and pull it locally.
 
 ## Usage
 
-  extrasuite form create <title>
+  extrasuite forms create <title> [output_dir]
 
 ## Arguments
 
-  title    Title for the new form
+  title       Title for the new form
+  output_dir  Directory to pull the file into after creation (optional).
+              If omitted, creates <form_id>/ in the current directory.
 
 ## Output
 
 Prints the form URL and the service account email it was shared with.
-Also prints the pull command to start editing immediately.
-
-## Next Steps
-
-After creating, pull the form to start editing:
-
-  extrasuite form pull <url>
+Then automatically pulls the form into output_dir (or <form_id>/).

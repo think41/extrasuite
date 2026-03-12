@@ -2,7 +2,7 @@ Apply local changes to Google Sheets.
 
 ## Usage
 
-  extrasuite sheet push <folder>
+  extrasuite sheets push <folder>
 
 ## Arguments
 
@@ -22,8 +22,8 @@ requests, and applies them to Google Sheets in a single API call.
 Always re-pull before making more changes. The .pristine/ snapshot is not
 auto-updated, so subsequent pushes would generate incorrect diffs.
 
-  extrasuite sheet push ./abc123
-  extrasuite sheet pull https://docs.google.com/spreadsheets/d/abc123 .
+  extrasuite sheets push ./abc123
+  extrasuite sheets pull https://docs.google.com/spreadsheets/d/abc123 .
 
 ## Validation
 
@@ -38,7 +38,7 @@ Push also applies changes to `comments.json` via the Drive API:
 - Resolve a comment: set `"resolved": true`
 - Creating new top-level comments is not supported
 
-See `extrasuite sheet help comments-reference` for format details and examples.
+See `extrasuite sheets help comments-reference` for format details and examples.
 
 ## Notes
 

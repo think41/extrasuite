@@ -2,15 +2,17 @@
 
 Usage:
     extrasuite drive    ls|search
-    extrasuite sheet    pull|diff|push|create|batchUpdate|share
-    extrasuite slide    pull|diff|push|create|share
-    extrasuite doc      pull|diff|push|create|share
-    extrasuite form     pull|diff|push|create|share
+    extrasuite sheets   pull|diff|push|create|batchUpdate|share
+    extrasuite slides   pull|diff|push|create|share
+    extrasuite docs     pull|diff|push|create|share
+    extrasuite forms    pull|diff|push|create|share
     extrasuite script   pull|diff|push|create|lint|share
     extrasuite gmail    compose|edit-draft|reply|list|read
     extrasuite calendar view|list|search|freebusy|create|update|delete|rsvp
     extrasuite contacts sync|search|touch
     extrasuite auth     login|logout|status
+
+Singular aliases (sheet, slide, doc, form) are also accepted.
 """
 
 from __future__ import annotations
@@ -94,35 +96,35 @@ from extrasuite.client.cli.slide import (
 _COMMANDS: dict[tuple[str, str | None], Callable[..., Any]] = {
     ("drive", "ls"): cmd_drive_ls,
     ("drive", "search"): cmd_drive_search,
-    ("sheet", "pull"): cmd_sheet_pull,
-    ("sheet", "diff"): cmd_sheet_diff,
-    ("sheet", "push"): cmd_sheet_push,
-    ("sheet", "create"): cmd_sheet_create,
-    ("sheet", "batchUpdate"): cmd_sheet_batchupdate,
-    ("sheet", "share"): cmd_sheet_share,
-    ("slide", "pull"): cmd_slide_pull,
-    ("slide", "diff"): cmd_slide_diff,
-    ("slide", "push"): cmd_slide_push,
-    ("slide", "create"): cmd_slide_create,
-    ("slide", "share"): cmd_slide_share,
-    ("form", "pull"): cmd_form_pull,
-    ("form", "diff"): cmd_form_diff,
-    ("form", "push"): cmd_form_push,
-    ("form", "create"): cmd_form_create,
-    ("form", "share"): cmd_form_share,
+    ("sheets", "pull"): cmd_sheet_pull,
+    ("sheets", "diff"): cmd_sheet_diff,
+    ("sheets", "push"): cmd_sheet_push,
+    ("sheets", "create"): cmd_sheet_create,
+    ("sheets", "batchUpdate"): cmd_sheet_batchupdate,
+    ("sheets", "share"): cmd_sheet_share,
+    ("slides", "pull"): cmd_slide_pull,
+    ("slides", "diff"): cmd_slide_diff,
+    ("slides", "push"): cmd_slide_push,
+    ("slides", "create"): cmd_slide_create,
+    ("slides", "share"): cmd_slide_share,
+    ("forms", "pull"): cmd_form_pull,
+    ("forms", "diff"): cmd_form_diff,
+    ("forms", "push"): cmd_form_push,
+    ("forms", "create"): cmd_form_create,
+    ("forms", "share"): cmd_form_share,
     ("script", "pull"): cmd_script_pull,
     ("script", "diff"): cmd_script_diff,
     ("script", "push"): cmd_script_push,
     ("script", "create"): cmd_script_create,
     ("script", "lint"): cmd_script_lint,
     ("script", "share"): cmd_script_share,
-    ("doc", "pull"): cmd_doc_pull,
-    ("doc", "pull-md"): cmd_doc_pull_md,
-    ("doc", "diff"): cmd_doc_diff,
-    ("doc", "push"): cmd_doc_push,
-    ("doc", "push-md"): cmd_doc_push_md,
-    ("doc", "create"): cmd_doc_create,
-    ("doc", "share"): cmd_doc_share,
+    ("docs", "pull"): cmd_doc_pull,
+    ("docs", "pull-md"): cmd_doc_pull_md,
+    ("docs", "diff"): cmd_doc_diff,
+    ("docs", "push"): cmd_doc_push,
+    ("docs", "push-md"): cmd_doc_push_md,
+    ("docs", "create"): cmd_doc_create,
+    ("docs", "share"): cmd_doc_share,
     ("gmail", "compose"): cmd_gmail_compose,
     ("gmail", "edit-draft"): cmd_gmail_edit_draft,
     ("gmail", "reply"): cmd_gmail_reply,
@@ -139,11 +141,11 @@ _COMMANDS: dict[tuple[str, str | None], Callable[..., Any]] = {
     ("contacts", "sync"): cmd_contacts_sync,
     ("contacts", "search"): cmd_contacts_search,
     ("contacts", "touch"): cmd_contacts_touch,
-    ("sheet", "help"): cmd_module_help,
-    ("slide", "help"): cmd_module_help,
-    ("form", "help"): cmd_module_help,
+    ("sheets", "help"): cmd_module_help,
+    ("slides", "help"): cmd_module_help,
+    ("forms", "help"): cmd_module_help,
     ("script", "help"): cmd_module_help,
-    ("doc", "help"): cmd_module_help,
+    ("docs", "help"): cmd_module_help,
     ("gmail", "help"): cmd_module_help,
     ("calendar", "help"): cmd_module_help,
     ("auth", "login"): cmd_auth_login,
@@ -244,11 +246,11 @@ def build_parser() -> Any:
         help="Page token for pagination (from previous output)",
     )
 
-    # --- sheet ---
+    # --- sheets ---
     sheet_parser = subparsers.add_parser(
-        "sheet",
+        "sheets",
         help="Google Sheets operations",
-        description=_load_help("sheet"),
+        description=_load_help("sheets"),
         formatter_class=argparse.RawDescriptionHelpFormatter,
     )
     sheet_sub = sheet_parser.add_subparsers(dest="subcommand")
@@ -257,7 +259,7 @@ def build_parser() -> Any:
         "pull",
         help="Download a spreadsheet",
         parents=[auth_parent],
-        description=_load_help("sheet", "pull"),
+        description=_load_help("sheets", "pull"),
         formatter_class=argparse.RawDescriptionHelpFormatter,
     )
     sp.add_argument("url", help="Spreadsheet URL or ID")
@@ -273,7 +275,7 @@ def build_parser() -> Any:
     sp = sheet_sub.add_parser(
         "diff",
         help="Offline debugging tool - show pending changes",
-        description=_load_help("sheet", "diff"),
+        description=_load_help("sheets", "diff"),
         formatter_class=argparse.RawDescriptionHelpFormatter,
     )
     sp.add_argument("folder", help="Spreadsheet folder path")
@@ -282,7 +284,7 @@ def build_parser() -> Any:
         "push",
         help="Apply changes",
         parents=[auth_parent],
-        description=_load_help("sheet", "push"),
+        description=_load_help("sheets", "push"),
         formatter_class=argparse.RawDescriptionHelpFormatter,
     )
     sp.add_argument("folder", help="Spreadsheet folder path")
@@ -292,7 +294,7 @@ def build_parser() -> Any:
         "batchUpdate",
         help="Advanced: execute raw batchUpdate requests (sort, move, etc.)",
         parents=[auth_parent],
-        description=_load_help("sheet", "batchupdate"),
+        description=_load_help("sheets", "batchupdate"),
         formatter_class=argparse.RawDescriptionHelpFormatter,
     )
     sp.add_argument("url", help="Spreadsheet URL or ID")
@@ -303,10 +305,11 @@ def build_parser() -> Any:
         "create",
         help="Create a new spreadsheet",
         parents=[auth_parent],
-        description=_load_help("sheet", "create"),
+        description=_load_help("sheets", "create"),
         formatter_class=argparse.RawDescriptionHelpFormatter,
     )
     sp.add_argument("title", help="Spreadsheet title")
+    sp.add_argument("output_dir", nargs="?", help="Directory to pull the file into after creation (default: creates <file_id>/ in current directory)")
     sp.add_argument(
         "--copy-from",
         metavar="URL",
@@ -317,7 +320,7 @@ def build_parser() -> Any:
         "share",
         help="Share a spreadsheet with trusted contacts",
         parents=[auth_parent],
-        description=_load_help("sheet", "share"),
+        description=_load_help("sheets", "share"),
         formatter_class=argparse.RawDescriptionHelpFormatter,
     )
     sp.add_argument("url", help="Spreadsheet URL or ID")
@@ -338,11 +341,11 @@ def build_parser() -> Any:
     )
     sp.add_argument("topic", nargs="?", help="Topic name (omit to list all)")
 
-    # --- slide ---
+    # --- slides ---
     slide_parser = subparsers.add_parser(
-        "slide",
+        "slides",
         help="Google Slides operations",
-        description=_load_help("slide"),
+        description=_load_help("slides"),
         formatter_class=argparse.RawDescriptionHelpFormatter,
     )
     slide_sub = slide_parser.add_subparsers(dest="subcommand")
@@ -351,7 +354,7 @@ def build_parser() -> Any:
         "pull",
         help="Download a presentation",
         parents=[auth_parent],
-        description=_load_help("slide", "pull"),
+        description=_load_help("slides", "pull"),
         formatter_class=argparse.RawDescriptionHelpFormatter,
     )
     sp.add_argument("url", help="Presentation URL or ID")
@@ -363,7 +366,7 @@ def build_parser() -> Any:
     sp = slide_sub.add_parser(
         "diff",
         help="Offline debugging tool - show pending changes",
-        description=_load_help("slide", "diff"),
+        description=_load_help("slides", "diff"),
         formatter_class=argparse.RawDescriptionHelpFormatter,
     )
     sp.add_argument("folder", help="Presentation folder path")
@@ -372,7 +375,7 @@ def build_parser() -> Any:
         "push",
         help="Apply changes",
         parents=[auth_parent],
-        description=_load_help("slide", "push"),
+        description=_load_help("slides", "push"),
         formatter_class=argparse.RawDescriptionHelpFormatter,
     )
     sp.add_argument("folder", help="Presentation folder path")
@@ -381,10 +384,11 @@ def build_parser() -> Any:
         "create",
         help="Create a new presentation",
         parents=[auth_parent],
-        description=_load_help("slide", "create"),
+        description=_load_help("slides", "create"),
         formatter_class=argparse.RawDescriptionHelpFormatter,
     )
     sp.add_argument("title", help="Presentation title")
+    sp.add_argument("output_dir", nargs="?", help="Directory to pull the file into after creation (default: creates <file_id>/ in current directory)")
     sp.add_argument(
         "--copy-from",
         metavar="URL",
@@ -395,7 +399,7 @@ def build_parser() -> Any:
         "share",
         help="Share a presentation with trusted contacts",
         parents=[auth_parent],
-        description=_load_help("sheet", "share"),
+        description=_load_help("slides", "share"),
         formatter_class=argparse.RawDescriptionHelpFormatter,
     )
     sp.add_argument("url", help="Presentation URL or ID")
@@ -416,11 +420,11 @@ def build_parser() -> Any:
     )
     sp.add_argument("topic", nargs="?", help="Topic name (omit to list all)")
 
-    # --- form ---
+    # --- forms ---
     form_parser = subparsers.add_parser(
-        "form",
+        "forms",
         help="Google Forms operations",
-        description=_load_help("form"),
+        description=_load_help("forms"),
         formatter_class=argparse.RawDescriptionHelpFormatter,
     )
     form_sub = form_parser.add_subparsers(dest="subcommand")
@@ -429,7 +433,7 @@ def build_parser() -> Any:
         "pull",
         help="Download a form",
         parents=[auth_parent],
-        description=_load_help("form", "pull"),
+        description=_load_help("forms", "pull"),
         formatter_class=argparse.RawDescriptionHelpFormatter,
     )
     sp.add_argument("url", help="Form URL or ID")
@@ -445,7 +449,7 @@ def build_parser() -> Any:
     sp = form_sub.add_parser(
         "diff",
         help="Offline debugging tool - show pending changes",
-        description=_load_help("form", "diff"),
+        description=_load_help("forms", "diff"),
         formatter_class=argparse.RawDescriptionHelpFormatter,
     )
     sp.add_argument("folder", help="Form folder path")
@@ -454,7 +458,7 @@ def build_parser() -> Any:
         "push",
         help="Apply changes",
         parents=[auth_parent],
-        description=_load_help("form", "push"),
+        description=_load_help("forms", "push"),
         formatter_class=argparse.RawDescriptionHelpFormatter,
     )
     sp.add_argument("folder", help="Form folder path")
@@ -464,10 +468,11 @@ def build_parser() -> Any:
         "create",
         help="Create a new form",
         parents=[auth_parent],
-        description=_load_help("form", "create"),
+        description=_load_help("forms", "create"),
         formatter_class=argparse.RawDescriptionHelpFormatter,
     )
     sp.add_argument("title", help="Form title")
+    sp.add_argument("output_dir", nargs="?", help="Directory to pull the file into after creation (default: creates <file_id>/ in current directory)")
     sp.add_argument(
         "--copy-from",
         metavar="URL",
@@ -478,7 +483,7 @@ def build_parser() -> Any:
         "share",
         help="Share a form with trusted contacts",
         parents=[auth_parent],
-        description=_load_help("sheet", "share"),
+        description=_load_help("forms", "share"),
         formatter_class=argparse.RawDescriptionHelpFormatter,
     )
     sp.add_argument("url", help="Form URL or ID")
@@ -583,11 +588,11 @@ def build_parser() -> Any:
     )
     sp.add_argument("topic", nargs="?", help="Topic name (omit to list all)")
 
-    # --- doc ---
+    # --- docs ---
     doc_parser = subparsers.add_parser(
-        "doc",
+        "docs",
         help="Google Docs operations",
-        description=_load_help("doc"),
+        description=_load_help("docs"),
         formatter_class=argparse.RawDescriptionHelpFormatter,
     )
     doc_sub = doc_parser.add_subparsers(dest="subcommand")
@@ -596,7 +601,7 @@ def build_parser() -> Any:
         "pull",
         help="Download a document",
         parents=[auth_parent],
-        description=_load_help("doc", "pull"),
+        description=_load_help("docs", "pull"),
         formatter_class=argparse.RawDescriptionHelpFormatter,
     )
     sp.add_argument("url", help="Document URL or ID")
@@ -609,7 +614,7 @@ def build_parser() -> Any:
         "pull-md",
         help="Download a document as markdown",
         parents=[auth_parent],
-        description=_load_help("doc", "pull-md"),
+        description=_load_help("docs", "pull-md"),
         formatter_class=argparse.RawDescriptionHelpFormatter,
     )
     sp.add_argument("url", help="Document URL or ID")
@@ -621,7 +626,7 @@ def build_parser() -> Any:
     sp = doc_sub.add_parser(
         "diff",
         help="Offline debugging tool - show pending changes",
-        description=_load_help("doc", "diff"),
+        description=_load_help("docs", "diff"),
         formatter_class=argparse.RawDescriptionHelpFormatter,
     )
     sp.add_argument("folder", help="Document folder path")
@@ -630,7 +635,7 @@ def build_parser() -> Any:
         "push",
         help="Apply changes",
         parents=[auth_parent],
-        description=_load_help("doc", "push"),
+        description=_load_help("docs", "push"),
         formatter_class=argparse.RawDescriptionHelpFormatter,
     )
     sp.add_argument("folder", help="Document folder path")
@@ -641,7 +646,7 @@ def build_parser() -> Any:
         "push-md",
         help="Apply changes from a markdown folder",
         parents=[auth_parent],
-        description=_load_help("doc", "push-md"),
+        description=_load_help("docs", "push-md"),
         formatter_class=argparse.RawDescriptionHelpFormatter,
     )
     sp.add_argument("folder", help="Document folder path")
@@ -652,10 +657,11 @@ def build_parser() -> Any:
         "create",
         help="Create a new document",
         parents=[auth_parent],
-        description=_load_help("doc", "create"),
+        description=_load_help("docs", "create"),
         formatter_class=argparse.RawDescriptionHelpFormatter,
     )
     sp.add_argument("title", help="Document title")
+    sp.add_argument("output_dir", nargs="?", help="Directory to pull the file into after creation (default: creates <file_id>/ in current directory)")
     sp.add_argument(
         "--copy-from",
         metavar="URL",
@@ -666,7 +672,7 @@ def build_parser() -> Any:
         "share",
         help="Share a document with trusted contacts",
         parents=[auth_parent],
-        description=_load_help("sheet", "share"),
+        description=_load_help("docs", "share"),
         formatter_class=argparse.RawDescriptionHelpFormatter,
     )
     sp.add_argument("url", help="Document URL or ID")
@@ -1042,6 +1048,11 @@ def build_parser() -> Any:
 
 def main() -> None:
     """Main entry point."""
+    # Rewrite singular command aliases to canonical plural forms
+    _SINGULAR_TO_PLURAL = {"doc": "docs", "sheet": "sheets", "slide": "slides", "form": "forms"}
+    if len(sys.argv) > 1 and sys.argv[1] in _SINGULAR_TO_PLURAL:
+        sys.argv = [sys.argv[0], _SINGULAR_TO_PLURAL[sys.argv[1]]] + sys.argv[2:]
+
     parser = build_parser()
     args = parser.parse_args()
 

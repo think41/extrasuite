@@ -2,12 +2,12 @@ Download a Google Doc in markdown format.
 
 ## Usage
 
-  extrasuite doc pull-md <url> [output_dir]
+  extrasuite docs pull-md <url> [output_dir]
 
 ## Arguments
 
   url           Document URL or ID
-  output_dir    Output directory (default: current directory)
+  output_dir    Output directory (optional)
 
 ## Flags
 
@@ -15,7 +15,10 @@ Download a Google Doc in markdown format.
 
 ## Output
 
-Creates <output_dir>/<document_id>/ with:
+If output_dir is given, files are created directly in output_dir.
+Otherwise, creates <document_id>/ in the current directory.
+
+The folder contains:
 
   index.md        Table of contents with line numbers for each heading per tab
   <Tab_Name>.md   One markdown file per tab (e.g. Tab_1.md, Introduction.md)
@@ -53,5 +56,5 @@ index.md is regenerated on each pull — your edits will be lost.
 
 ## Example
 
-  extrasuite doc pull-md https://docs.google.com/document/d/abc123
-  extrasuite doc pull-md https://docs.google.com/document/d/abc123 /tmp/docs
+  extrasuite docs pull-md https://docs.google.com/document/d/abc123
+  extrasuite docs pull-md https://docs.google.com/document/d/abc123 /tmp/docs

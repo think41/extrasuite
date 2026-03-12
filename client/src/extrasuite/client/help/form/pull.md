@@ -2,12 +2,12 @@ Download a Google Form to a local folder.
 
 ## Usage
 
-  extrasuite form pull <url> [output_dir]
+  extrasuite forms pull <url> [output_dir]
 
 ## Arguments
 
   url           Form URL or ID
-  output_dir    Output directory (default: current directory)
+  output_dir    Output directory (optional)
 
 ## Flags
 
@@ -17,7 +17,10 @@ Download a Google Form to a local folder.
 
 ## Output
 
-Creates <output_dir>/<form_id>/ with:
+If output_dir is given, files are created directly in output_dir.
+Otherwise, creates <form_id>/ in the current directory.
+
+The folder contains:
 
   form.json     Complete form definition: title, settings, all questions
   .pristine/    Snapshot for diff/push comparison - do not edit
@@ -27,5 +30,5 @@ When --responses is used, responses are included in the pull output.
 
 ## Example
 
-  extrasuite form pull https://docs.google.com/forms/d/abc123
-  extrasuite form pull https://docs.google.com/forms/d/abc123 --responses
+  extrasuite forms pull https://docs.google.com/forms/d/abc123
+  extrasuite forms pull https://docs.google.com/forms/d/abc123 --responses

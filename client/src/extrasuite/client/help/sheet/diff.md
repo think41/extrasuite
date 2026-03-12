@@ -2,7 +2,7 @@ Debugging tool only. Shows the batchUpdate requests push would send, without mak
 
 ## Usage
 
-  extrasuite sheet diff <folder>
+  extrasuite sheets diff <folder>
 
 ## Arguments
 

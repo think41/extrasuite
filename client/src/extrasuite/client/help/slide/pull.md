@@ -2,12 +2,12 @@ Download a Google Slides presentation to a local folder.
 
 ## Usage
 
-  extrasuite slide pull <url> [output_dir]
+  extrasuite slides pull <url> [output_dir]
 
 ## Arguments
 
   url           Presentation URL or ID
-  output_dir    Output directory (default: current directory)
+  output_dir    Output directory (optional)
 
 ## Flags
 
@@ -15,7 +15,10 @@ Download a Google Slides presentation to a local folder.
 
 ## Output
 
-Creates <output_dir>/<presentation_id>/ with:
+If output_dir is given, files are created directly in output_dir.
+Otherwise, creates <presentation_id>/ in the current directory.
+
+The folder contains:
 
   presentation.json   Presentation title, slide list, canvas dimensions
   styles.json         Theme colors and named font styles
@@ -35,10 +38,10 @@ representation of one slide's content.
 Start by reading presentation.json to understand the slide structure,
 then open the specific slide's content.sml to make changes.
 
-For SML syntax, see: extrasuite slide pull --help sml-reference
+For SML syntax, see: extrasuite slides pull --help sml-reference
 Or read sml-reference.md bundled at the same path as this help file.
 
 ## Example
 
-  extrasuite slide pull https://docs.google.com/presentation/d/abc123
-  extrasuite slide pull https://docs.google.com/presentation/d/abc123 /tmp/slides
+  extrasuite slides pull https://docs.google.com/presentation/d/abc123
+  extrasuite slides pull https://docs.google.com/presentation/d/abc123 /tmp/slides

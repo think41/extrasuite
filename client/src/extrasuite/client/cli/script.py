@@ -3,7 +3,9 @@
 from __future__ import annotations
 
 import asyncio
+import shutil
 import sys
+import tempfile
 from pathlib import Path
 from typing import Any
 
@@ -16,7 +18,7 @@ def cmd_script_pull(args: Any) -> None:
     from extrascript.client import parse_script_id
 
     script_id = parse_script_id(args.url)
-    output_dir = Path(args.output_dir) if args.output_dir else Path()
+    output_dir_arg = args.output_dir
     reason = _get_reason(args, default="Pull Apps Script project")
     cred = _get_credential(
         args,
@@ -24,20 +26,36 @@ def cmd_script_pull(args: Any) -> None:
         reason=reason,
     )
 
+    tmp_parent = None
+    if output_dir_arg:
+        tmp_parent = Path(tempfile.mkdtemp())
+        dest_dir = Path(output_dir_arg)
+    else:
+        dest_dir = Path() / script_id
+
     async def _run() -> None:
         transport = GoogleAppsScriptTransport(cred.token)
         client = ScriptClient(transport)
+        pull_parent = tmp_parent if tmp_parent else Path()
         try:
             await client.pull(
                 script_id,
-                output_dir,
+                pull_parent,
                 save_raw=not args.no_raw,
             )
-            print(f"Pulled script to {output_dir / script_id}/")
+            if tmp_parent is not None:
+                dest_dir.parent.mkdir(parents=True, exist_ok=True)
+                shutil.move(str(tmp_parent / script_id), str(dest_dir))
         finally:
             await transport.close()
 
-    asyncio.run(_run())
+    try:
+        asyncio.run(_run())
+    finally:
+        if tmp_parent is not None:
+            shutil.rmtree(tmp_parent, ignore_errors=True)
+
+    print(f"Pulled to {dest_dir}/")
 
 
 def cmd_script_diff(args: Any) -> None:

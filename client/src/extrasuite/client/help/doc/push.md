@@ -2,7 +2,7 @@ Apply local XML changes to Google Docs.
 
 ## Usage
 
-  extrasuite doc push <folder>
+  extrasuite docs push <folder>
 
 ## Arguments
 
@@ -24,8 +24,8 @@ Comment operations (new replies, resolves) are applied via the Drive API.
 Always re-pull before making more changes. The .pristine/ snapshot is not
 auto-updated, so subsequent pushes would generate incorrect diffs.
 
-  extrasuite doc push ./abc123
-  extrasuite doc pull https://docs.google.com/document/d/abc123 .
+  extrasuite docs push ./abc123
+  extrasuite docs pull https://docs.google.com/document/d/abc123 .
 
 ## Notes
 

@@ -2,10 +2,10 @@ Google Docs - edit documents via local XML files.
 
 ## Workflow
 
-  extrasuite doc pull <url> [output_dir]   Download document
+  extrasuite docs pull <url> [output_dir]   Download document
   # Edit document.xml (and optionally styles.xml, comments.xml)
-  extrasuite doc push <folder>             Apply changes to Google Docs
-  extrasuite doc create <title>            Create a new document
+  extrasuite docs push <folder>             Apply changes to Google Docs
+  extrasuite docs create <title>            Create a new document
 
 After push, always re-pull before making more changes.
 
@@ -122,14 +122,14 @@ read-only; to add new footnotes use the Google Docs UI.
 
 ## Commands
 
-  extrasuite doc pull --help          Pull flags and folder layout
-  extrasuite doc push --help          Push flags
-  extrasuite doc diff --help          Offline debugging tool (no auth needed)
-  extrasuite doc create --help        Create a new document
+  extrasuite docs pull --help          Pull flags and folder layout
+  extrasuite docs push --help          Push flags
+  extrasuite docs diff --help          Offline debugging tool (no auth needed)
+  extrasuite docs create --help        Create a new document
 
 ## Reference Docs (detailed)
 
-  extrasuite doc help                       List available reference topics
-  extrasuite doc help style-reference       Style properties, inheritance, cell styling
-  extrasuite doc help date-time             Date/time element attributes and formats
-  extrasuite doc help troubleshooting       Common errors, API limits, XML escaping
+  extrasuite docs help                       List available reference topics
+  extrasuite docs help style-reference       Style properties, inheritance, cell styling
+  extrasuite docs help date-time             Date/time element attributes and formats
+  extrasuite docs help troubleshooting       Common errors, API limits, XML escaping

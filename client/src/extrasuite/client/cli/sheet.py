@@ -3,7 +3,9 @@
 from __future__ import annotations
 
 import json
+import shutil
 import sys
+import tempfile
 from pathlib import Path
 from typing import Any
 
@@ -23,7 +25,7 @@ def cmd_sheet_pull(args: Any) -> None:
     from extrasheet import GoogleSheetsTransport, SheetsClient
 
     spreadsheet_id = _parse_spreadsheet_id(args.url)
-    output_dir = Path(args.output_dir) if args.output_dir else Path()
+    output_dir_arg = args.output_dir
     reason = _get_reason(args, default="Pulling Google Sheet")
     cred = _get_credential(
         args,
@@ -32,24 +34,43 @@ def cmd_sheet_pull(args: Any) -> None:
     )
     max_rows = 0 if args.no_limit else args.max_rows
 
+    tmp_parent = None
+    if output_dir_arg:
+        tmp_parent = Path(tempfile.mkdtemp())
+        dest_dir = Path(output_dir_arg)
+    else:
+        dest_dir = Path() / spreadsheet_id
+
+    sheet_count_holder: list[int] = []
+
     async def _run() -> None:
         transport = GoogleSheetsTransport(cred.token)
         client = SheetsClient(transport)
+        pull_parent = tmp_parent if tmp_parent else Path()
         try:
             files = await client.pull(
                 spreadsheet_id,
-                output_dir,
+                pull_parent,
                 max_rows=max_rows,
                 save_raw=not args.no_raw,
             )
-            sheet_count = sum(1 for f in files if f.name == "data.tsv")
-            print(
-                f"Pulled {sheet_count} sheet{'s' if sheet_count != 1 else ''} to {output_dir / spreadsheet_id}/"
-            )
+            sheet_count_holder.append(sum(1 for f in files if f.name == "data.tsv"))
+            if tmp_parent is not None:
+                dest_dir.parent.mkdir(parents=True, exist_ok=True)
+                shutil.move(str(tmp_parent / spreadsheet_id), str(dest_dir))
         finally:
             await transport.close()
 
-    asyncio.run(_run())
+    try:
+        asyncio.run(_run())
+    finally:
+        if tmp_parent is not None:
+            shutil.rmtree(tmp_parent, ignore_errors=True)
+
+    sheet_count = sheet_count_holder[0] if sheet_count_holder else 0
+    print(
+        f"Pulled {sheet_count} sheet{'s' if sheet_count != 1 else ''} to {dest_dir}/"
+    )
 
 
 def cmd_sheet_diff(args: Any) -> None:
@@ -168,8 +189,53 @@ def cmd_sheet_batchupdate(args: Any) -> None:
 
 
 def cmd_sheet_create(args: Any) -> None:
-    """Create a new Google Sheet."""
-    _cmd_create("sheet", args)
+    """Create a new Google Sheet and pull it locally."""
+    import asyncio
+
+    from extrasheet import GoogleSheetsTransport, SheetsClient
+
+    file_id, url = _cmd_create("sheet", args)
+
+    output_dir_arg = getattr(args, "output_dir", None)
+    tmp_parent = None
+    if output_dir_arg:
+        tmp_parent = Path(tempfile.mkdtemp())
+        dest_dir = Path(output_dir_arg)
+    else:
+        dest_dir = Path() / file_id
+
+    reason = _get_reason(args, default="Pulling newly created Google Sheet")
+    cred = _get_credential(
+        args,
+        command={"type": "sheet.pull", "file_url": url, "file_name": args.title},
+        reason=reason,
+    )
+
+    sheet_count_holder: list[int] = []
+
+    async def _run() -> None:
+        transport = GoogleSheetsTransport(cred.token)
+        client = SheetsClient(transport)
+        pull_parent = tmp_parent if tmp_parent else Path()
+        try:
+            files = await client.pull(file_id, pull_parent, save_raw=True)
+            sheet_count_holder.append(sum(1 for f in files if f.name == "data.tsv"))
+            if tmp_parent is not None:
+                dest_dir.parent.mkdir(parents=True, exist_ok=True)
+                shutil.move(str(tmp_parent / file_id), str(dest_dir))
+        finally:
+            await transport.close()
+
+    try:
+        asyncio.run(_run())
+    finally:
+        if tmp_parent is not None:
+            shutil.rmtree(tmp_parent, ignore_errors=True)
+
+    sheet_count = sheet_count_holder[0] if sheet_count_holder else 0
+    print(
+        f"Pulled {sheet_count} sheet{'s' if sheet_count != 1 else ''} to {dest_dir}/"
+    )
 
 
 def cmd_sheet_share(args: Any) -> None:

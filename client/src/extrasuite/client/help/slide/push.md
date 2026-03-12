@@ -2,7 +2,7 @@ Apply local SML changes to Google Slides.
 
 ## Usage
 
-  extrasuite slide push <folder>
+  extrasuite slides push <folder>
 
 ## Arguments
 
@@ -18,8 +18,8 @@ batchUpdate requests, and applies them to Google Slides in a single API call.
 Always re-pull before making more changes. The .pristine/ snapshot is not
 auto-updated, so subsequent pushes would generate incorrect diffs.
 
-  extrasuite slide push ./abc123
-  extrasuite slide pull https://docs.google.com/presentation/d/abc123 .
+  extrasuite slides push ./abc123
+  extrasuite slides pull https://docs.google.com/presentation/d/abc123 .
 
 ## Notes
 
