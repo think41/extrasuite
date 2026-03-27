@@ -2,6 +2,24 @@
 
 All notable changes to the extrasuite client library will be documented in this file.
 
+## [0.8.1] - 2026-03-27
+
+### Added
+
+- **`trust_all` option for Gmail** — power users can set `trust_all = true` in `[trusted_contacts]` of `~/.config/extrasuite/settings.toml` to allow reading email from any sender. Preserves security model (agent cannot modify the file).
+
+### Fixed
+
+- Keyring-based session storage now correctly supports multiple profiles.
+- Headless auth displays the auth code on the page instead of redirecting to localhost.
+- Fixed stale keyring install hint in auth docs.
+- Corrected whitelist setup help doc (was referencing old `gmail_whitelist.json` format; now correctly documents `settings.toml`).
+
+### Changed
+
+- Reduced duplication in pull/push command help files.
+- Updated minimum dependency versions: `extrasheet>=0.3.1`, `extraslide>=0.2.3`, `extraform>=0.3.1`, `extradoc>=0.4.1`.
+
 ## [0.8.0] - 2026-02-26
 
 ### Added

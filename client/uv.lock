@@ -295,7 +295,7 @@ wheels = [
 
 [[package]]
 name = "extradoc"
-version = "0.4.0"
+version = "0.4.1"
 source = { editable = "../extradoc" }
 dependencies = [
     { name = "certifi" },
@@ -326,7 +326,7 @@ dev = [{ name = "pytest", specifier = ">=9.0.2" }]
 
 [[package]]
 name = "extraform"
-version = "0.3.0"
+version = "0.3.1"
 source = { editable = "../extraform" }
 dependencies = [
     { name = "certifi" },
@@ -367,7 +367,7 @@ provides-extras = ["dev"]
 
 [[package]]
 name = "extrasheet"
-version = "0.3.0"
+version = "0.3.1"
 source = { editable = "../extrasheet" }
 dependencies = [
     { name = "httpx" },
@@ -387,7 +387,7 @@ provides-extras = ["dev"]
 
 [[package]]
 name = "extraslide"
-version = "0.2.2"
+version = "0.2.3"
 source = { editable = "../extraslide" }
 dependencies = [
     { name = "httpx" },
@@ -409,7 +409,7 @@ provides-extras = ["dev"]
 
 [[package]]
 name = "extrasuite"
-version = "0.8.0"
+version = "0.8.1"
 source = { editable = "." }
 dependencies = [
     { name = "extradoc" },
