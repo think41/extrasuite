@@ -36,6 +36,9 @@ class TrustedContacts:
     emails: list[str] = field(default_factory=list)
     # The authenticated user's own domain — always trusted, not persisted.
     user_domain: str = ""
+    # When True, all senders are trusted regardless of domains/emails lists.
+    # Set via trust_all = true in [trusted_contacts] section of settings.toml.
+    allow_all: bool = False
 
     def is_trusted(self, sender_raw: str) -> bool:
         """Return True if sender_raw matches a trusted domain or email.
@@ -43,7 +46,12 @@ class TrustedContacts:
         sender_raw may be a bare address or RFC 5322 formatted
         ("Display Name <addr@domain.com>"). The authenticated user's own domain
         is always trusted regardless of the settings file contents.
+
+        If allow_all is True, every sender is trusted.
         """
+        if self.allow_all:
+            return True
+
         _, addr = email.utils.parseaddr(sender_raw)
         addr = addr.lower().strip()
         if not addr:
@@ -81,6 +89,7 @@ def load_trusted_contacts(path: Path = _SETTINGS_PATH) -> TrustedContacts:
         return TrustedContacts(
             domains=[str(d) for d in section.get("domains", [])],
             emails=[str(e) for e in section.get("emails", [])],
+            allow_all=bool(section.get("trust_all", False)),
         )
     except Exception:
         return TrustedContacts()

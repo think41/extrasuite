@@ -71,6 +71,19 @@ class TestTrustedContactsIsTrusted:
         tc = TrustedContacts(domains=[], emails=[], user_domain="MyCompany.COM")
         assert tc.is_trusted("Alice@mycompany.com") is True
 
+    def test_allow_all_trusts_any_sender(self) -> None:
+        tc = TrustedContacts(allow_all=True)
+        assert tc.is_trusted("anyone@anydomain.com") is True
+
+    def test_allow_all_trusts_empty_sender(self) -> None:
+        # allow_all short-circuits before addr parsing
+        tc = TrustedContacts(allow_all=True)
+        assert tc.is_trusted("") is True
+
+    def test_allow_all_false_by_default(self) -> None:
+        tc = TrustedContacts()
+        assert tc.allow_all is False
+
 
 # ---------------------------------------------------------------------------
 # load_trusted_contacts
@@ -114,3 +127,15 @@ class TestLoadTrustedContacts:
         tc = load_trusted_contacts(path)
         assert tc.domains == ["x.com"]
         assert tc.emails == []
+
+    def test_trust_all_true_sets_allow_all(self, tmp_path: Path) -> None:
+        path = tmp_path / "settings.toml"
+        path.write_text("[trusted_contacts]\ntrust_all = true\n", encoding="utf-8")
+        tc = load_trusted_contacts(path)
+        assert tc.allow_all is True
+
+    def test_trust_all_absent_defaults_false(self, tmp_path: Path) -> None:
+        path = tmp_path / "settings.toml"
+        path.write_text('[trusted_contacts]\ndomains = ["a.com"]\n', encoding="utf-8")
+        tc = load_trusted_contacts(path)
+        assert tc.allow_all is False

@@ -9,20 +9,19 @@ only reads full email content from known, trusted senders.
 For non-whitelisted senders, only metadata (from, date, subject) is shown.
 The body and attachments are always redacted.
 
-## Whitelist File
+## Settings File
 
-Location: ~/.config/extrasuite/gmail_whitelist.json
+Location: ~/.config/extrasuite/settings.toml
 
 This file is managed by you (the human) — no CLI command can modify it.
 That's intentional: an agent cannot trick itself into adding new domains.
 
 ## Format
 
-```json
-{
-  "domains": ["yourcompany.com", "trusted-vendor.com"],
-  "emails": ["personal@gmail.com", "alerts@pagerduty.com"]
-}
+```toml
+[trusted_contacts]
+domains = ["yourcompany.com", "trusted-vendor.com"]
+emails  = ["personal@gmail.com", "alerts@pagerduty.com"]
 ```
 
 - **domains**: All email addresses at this domain are trusted.
@@ -33,24 +32,29 @@ That's intentional: an agent cannot trick itself into adding new domains.
 
 Matching is case-insensitive.
 
+## Trusting All Senders (Power Users)
+
+If you want the agent to read email from any sender, add `trust_all = true`:
+
+```toml
+[trusted_contacts]
+trust_all = true
+```
+
+**Security warning**: With `trust_all = true`, the agent will read email bodies
+from any sender — including potential attackers. Only use this if you understand
+the prompt injection risk and have other mitigations in place (e.g. a sandboxed
+agent with limited ability to act on instructions).
+
 ## Creating the File
 
   mkdir -p ~/.config/extrasuite
-  cat > ~/.config/extrasuite/gmail_whitelist.json << 'EOF'
-  {
-    "domains": ["yourcompany.com"],
-    "emails": []
-  }
+  cat > ~/.config/extrasuite/settings.toml << 'EOF'
+  [trusted_contacts]
+  domains = ["yourcompany.com"]
+  emails  = []
   EOF
-  chmod 600 ~/.config/extrasuite/gmail_whitelist.json
-
-Or run `extrasuite gmail list` once — if the file doesn't exist, a starter
-template is NOT automatically created. You must create it yourself.
-
-## No Wildcard Domains
-
-The whitelist does not support wildcards (`*`). List each domain explicitly.
-This is intentional — a broad whitelist defeats the purpose.
+  chmod 600 ~/.config/extrasuite/settings.toml
 
 ## Security Notes
 
