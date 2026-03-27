@@ -2,6 +2,15 @@
 
 All notable changes to the extradoc library will be documented in this file.
 
+## [0.4.1] - 2026-03-27
+
+### Changed
+
+- Removed stale auth guidance from package docs (auth is handled by `extrasuite` client).
+- Cleaned up stale test assets.
+- Fixed ruff formatting in `serde/__init__.py`.
+- Added XPath metadata to index headings to support progressive disclosure workflows.
+
 ## [0.4.0] - 2026-03-04
 
 ### Added
