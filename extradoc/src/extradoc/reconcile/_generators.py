@@ -313,8 +313,31 @@ def _is_table(se: StructuralElement) -> bool:
     return se.table is not None
 
 
+def _is_toc(se: StructuralElement) -> bool:
+    return se.table_of_contents is not None
+
+
 def _is_paragraph(se: StructuralElement) -> bool:
     return se.paragraph is not None
+
+
+def _is_bare_newline_only_para(se: StructuralElement | None) -> bool:
+    """Return True if se is a paragraph whose sole element is a bare '\\n' text run.
+
+    After _strip_empty_body_paragraphs removes all real bare-newline paragraphs
+    from the base, the only remaining bare-newline paragraph is the synthetic
+    trailing paragraph added by _ensure_base_trailing_paragraph.  Checking this
+    in the DELETE section lets us cap delete_end before that sentinel to avoid
+    passing the segment-final '\\n' position to deleteContentRange (which the
+    API rejects with 400).
+    """
+    if se is None or se.paragraph is None:
+        return False
+    elems = se.paragraph.elements or []
+    if len(elems) != 1:
+        return False
+    tr = elems[0].text_run
+    return tr is not None and tr.content == "\n"
 
 
 def _is_pagebreak_paragraph(se: StructuralElement) -> bool:
@@ -678,13 +701,24 @@ def _process_slot_inner(
 
     # --- INSERT ---
     filtered = _filter_trailing_empty_paras(adds) if adds else []
+    # Track the resolved insert_idx so the DELETE section can extend its range
+    # to cover any gap between delete_end and insert_idx (e.g. empty paragraphs
+    # stripped from the base by _normalize_raw_base_para_styles that still exist
+    # in the real document and must be deleted along with the old content).
+    _resolved_insert_idx: int | None = None
     if filtered:
         # Insertion point: right anchor's start (or its end for sectionbreaks,
         # since index 0 is invalid — insertText requires index >= 1).
         if _is_section_break(right_anchor):
             insert_idx = _el_end(right_anchor)  # = 1
+        elif _is_toc(right_anchor):
+            # The Google Docs API places insertText at TOC.startIndex inside the
+            # TOC element.  Insert one position earlier (into the preceding
+            # paragraph's trailing area) so content lands before the TOC.
+            insert_idx = _el_start(right_anchor) - 1
         else:
             insert_idx = _el_start(right_anchor)
+        _resolved_insert_idx = insert_idx
 
         # Special case: first doc-order add is a table, and left_anchor is a
         # real paragraph (not a sectionbreak).
@@ -699,6 +733,63 @@ def _process_slot_inner(
             if filtered[0].desired_element
             else False
         )
+        # Special case: first doc-order add is a table, and left_anchor is a
+        # section break (or None — start of body with no preceding paragraph).
+        #
+        # The reversed-loop normal case inserts the first paragraph (e.g. a
+        # heading) at insert_idx BEFORE inserting the table.  The API then
+        # displaces the heading text to AFTER the table, but also inserts a
+        # new empty paragraph (the pre-table \n) that splits the heading
+        # paragraph — leaving an unwanted empty HEADING_1 before the heading
+        # text.
+        #
+        # Fix: insert tables and paragraphs in FORWARD (document) order.
+        # Each insertTable at pos creates a pre-table \n at pos; the next
+        # element goes at pos + 1 + _table_structural_size(table).
+        # This keeps the heading text in the correct position relative to the
+        # table.  The pre-table \n itself is unavoidable (the API forbids
+        # deleting \n immediately before a table), so it remains as a
+        # structural separator between the section break and the first table.
+        if (
+            first_add_is_table
+            and (left_anchor is None or _is_section_break(left_anchor))
+            and not deletes
+        ):
+            pos = insert_idx
+            for ae in filtered:
+                el = ae.desired_element
+                assert el is not None
+                if _is_table(el):
+                    assert el.table is not None
+                    insert_reqs.extend(
+                        _generate_insert_table_with_content(
+                            el.table, pos, segment_id, tab_id, desired_lists
+                        )
+                    )
+                    pos += 1 + _table_structural_size(el.table)
+                elif _is_paragraph(el):
+                    if _is_pagebreak_paragraph(el):
+                        insert_reqs.append(_make_insert_page_break(pos, tab_id))
+                        pos += 2
+                    else:
+                        text = _para_text(el)
+                        if text:
+                            insert_reqs.append(
+                                _make_insert_text(text, pos, segment_id, tab_id)
+                            )
+                            pos += utf16_len(text)
+            insert_reqs.extend(
+                _style_reqs_for_added_paras(
+                    filtered,
+                    insert_idx,
+                    segment_id,
+                    tab_id,
+                    desired_lists,
+                    table_size_extra=1,
+                )
+            )
+            return insert_reqs
+
         if (
             first_add_is_table
             and left_anchor is not None
@@ -711,27 +802,67 @@ def _process_slot_inner(
             # Insert the first table at left_anchor's \n position.
             table_insert_idx = _el_end(left_anchor) - 1
 
+            # When there are deletes, they must run BEFORE insertTable.
+            # insertTable targets table_insert_idx (< delete range), so if insert
+            # ran first the delete would target table cells instead of old content.
+            #
+            # After DELETE [del_start, del_end], insert_idx (= del_end = right
+            # anchor's start) shifts left to del_start.  All remaining inserts
+            # that would normally target insert_idx must instead target del_start.
+            # The INFO table at table_insert_idx (< del_start) is unaffected.
+            delete_reqs_inner: list[dict[str, Any]] = []
+            effective_insert_idx = insert_idx  # may be adjusted below
+            if deletes:
+                first_del_el = deletes[0].base_element
+                last_del_el = deletes[-1].base_element
+                assert first_del_el is not None and last_del_el is not None
+                delete_start = _el_start(first_del_el)
+                delete_end = _el_end(last_del_el)
+                if _is_table(right_anchor):
+                    delete_end -= 1
+                # Extend delete to cover any gap (stripped empty paragraphs)
+                # between delete_end and insert_idx, same as the normal case.
+                if (
+                    not _is_table(right_anchor)
+                    and not _is_toc(right_anchor)
+                    and not _has_non_text_elements(right_anchor)
+                    and delete_end < insert_idx
+                ):
+                    delete_end = insert_idx
+                if delete_start < delete_end:
+                    delete_reqs_inner.append(
+                        _make_delete_range(delete_start, delete_end, segment_id, tab_id)
+                    )
+                # After the delete, insert_idx (= delete_end before adjustment)
+                # has shifted to delete_start.
+                effective_insert_idx = delete_start
+
             # Process remaining elements (doc order [1:]) in reversed order.
-            # Pure-table sequences: all remaining tables go at table_insert_idx
-            # (left_anchor's \n), just like the first table.  This ensures
-            # consecutive tables produce exactly one empty paragraph between
-            # them (instead of two).
-            # Mixed sequences (tables + paragraphs): tables fall back to
-            # insert_idx so that paragraphs can be inserted at insert_idx
+            # Tables that appear before the first paragraph in remaining_adds
+            # are "leading tables" — they should go to table_insert_idx, just
+            # like the first table.  This ensures consecutive tables produce
+            # exactly one empty paragraph between them (the displaced \n from
+            # the preceding insertTable) instead of two.
+            # Tables that appear at/after the first paragraph go to
+            # effective_insert_idx so that paragraphs can be inserted there
             # without hitting a table's start index.
-            remaining_only_tables = all(
-                _is_table(ae.desired_element)
-                for ae in remaining_adds
-                if ae.desired_element is not None
+            first_para_idx = next(
+                (
+                    i
+                    for i, ae in enumerate(remaining_adds)
+                    if ae.desired_element is not None and _is_paragraph(ae.desired_element)
+                ),
+                len(remaining_adds),
             )
             spurious_pending = False
-            for ae in reversed(remaining_adds):
+            for i_rev, ae in enumerate(reversed(remaining_adds)):
+                i_doc = len(remaining_adds) - 1 - i_rev
                 el = ae.desired_element
                 assert el is not None
                 if _is_table(el):
                     assert el.table is not None
                     table_pos = (
-                        table_insert_idx if remaining_only_tables else insert_idx
+                        table_insert_idx if i_doc < first_para_idx else effective_insert_idx
                     )
                     insert_reqs.extend(
                         _generate_insert_table_with_content(
@@ -742,7 +873,7 @@ def _process_slot_inner(
                 elif _is_paragraph(el):
                     if _is_pagebreak_paragraph(el):
                         spurious_pending = False
-                        insert_reqs.append(_make_insert_page_break(insert_idx, tab_id))
+                        insert_reqs.append(_make_insert_page_break(effective_insert_idx, tab_id))
                     else:
                         text = _para_text(el)
                         if not text:
@@ -752,7 +883,7 @@ def _process_slot_inner(
                             spurious_pending = False
                         if text:
                             insert_reqs.append(
-                                _make_insert_text(text, insert_idx, segment_id, tab_id)
+                                _make_insert_text(text, effective_insert_idx, segment_id, tab_id)
                             )
             insert_reqs.extend(
                 _generate_insert_table_with_content(
@@ -778,22 +909,6 @@ def _process_slot_inner(
                 )
             )
 
-            # When there are deletes, they must run BEFORE insertTable.
-            # insertTable targets table_insert_idx (< delete range), so if insert
-            # ran first the delete would target table cells instead of old content.
-            delete_reqs_inner: list[dict[str, Any]] = []
-            if deletes:
-                first_del_el = deletes[0].base_element
-                last_del_el = deletes[-1].base_element
-                assert first_del_el is not None and last_del_el is not None
-                delete_start = _el_start(first_del_el)
-                delete_end = _el_end(last_del_el)
-                if _is_table(right_anchor):
-                    delete_end -= 1
-                if delete_start < delete_end:
-                    delete_reqs_inner.append(
-                        _make_delete_range(delete_start, delete_end, segment_id, tab_id)
-                    )
             return delete_reqs_inner + insert_reqs
         else:
             # Sub-case: right_anchor is a table and there are deletes.
@@ -870,6 +985,88 @@ def _process_slot_inner(
                 )
                 return del_reqs_inner + insert_reqs
 
+            # Sub-case: right_anchor is a table, no deletes, left_anchor is a
+            # real paragraph, adds are all paragraphs (no tables in adds).
+            #
+            # insertText at _el_start(right_anchor) is invalid — table startIndex
+            # is not inside any paragraph.  Fix: insert at left_anchor's trailing
+            # \n position (tbl_insert_idx = _el_end(left_anchor) - 1).
+            #
+            # To avoid merging the first inserted paragraph with left_anchor's
+            # text, prepend \n to the first paragraph in doc order (= last in the
+            # reversed loop).  The original \n of left_anchor then acts as the
+            # last paragraph's terminator, so strip its explicit trailing \n.
+            #
+            # Example — desired: Heading | Para1 | Para2 | TABLE (right anchor)
+            # Insert "\nPara1\nPara2" at T-1 (Heading's \n position):
+            #   "Heading" + "\n" + "Para1\n" + "Para2" + original-\n + TABLE
+            #   = Para "Heading", Para "Para1", Para "Para2", TABLE  ✓
+            has_tables_in_adds = any(
+                _is_table(ae.desired_element)
+                for ae in filtered
+                if ae.desired_element
+            )
+            if (
+                _is_table(right_anchor)
+                and not deletes
+                and left_anchor is not None
+                and not _is_section_break(left_anchor)
+                and not has_tables_in_adds
+            ):
+                tbl_insert_idx = _el_end(left_anchor) - 1
+                # Count non-empty paragraphs so we can detect "first in doc order
+                # = last in reversed".
+                n_non_empty = sum(
+                    1
+                    for ae in filtered
+                    if ae.desired_element
+                    and _is_paragraph(ae.desired_element)
+                    and _para_text(ae.desired_element)
+                )
+                para_count = 0
+                first_in_reversed = True
+                for ae in reversed(filtered):
+                    el = ae.desired_element
+                    assert el is not None
+                    if _is_paragraph(el):
+                        if _is_pagebreak_paragraph(el):
+                            first_in_reversed = False
+                            insert_reqs.append(
+                                _make_insert_page_break(tbl_insert_idx, tab_id)
+                            )
+                        else:
+                            text = _para_text(el)
+                            if not text:
+                                continue
+                            para_count += 1
+                            is_first_in_doc = para_count == n_non_empty
+                            if first_in_reversed:
+                                # Last para in doc order: left_anchor's \n is its
+                                # terminator, so strip its explicit trailing \n.
+                                text = text.rstrip("\n")
+                                first_in_reversed = False
+                            if is_first_in_doc:
+                                # First para in doc order: prepend \n to separate
+                                # from left_anchor's text.
+                                text = "\n" + text
+                            if text:
+                                insert_reqs.append(
+                                    _make_insert_text(
+                                        text, tbl_insert_idx, segment_id, tab_id
+                                    )
+                                )
+                insert_reqs.extend(
+                    _style_reqs_for_added_paras(
+                        filtered,
+                        tbl_insert_idx + 1,  # +1 for the leading \n prepended
+                        segment_id,
+                        tab_id,
+                        desired_lists,
+                        table_size_extra=0,
+                    )
+                )
+                return insert_reqs
+
             # Normal case: reversed insertion with spurious_pending for tables.
             spurious_pending = False
             for ae in reversed(filtered):
@@ -904,6 +1101,15 @@ def _process_slot_inner(
             # Style requests for added paragraphs.
             # table_size_extra=0: the spurious \n is absorbed by the preceding
             # paragraph, so the table's position immediately follows that paragraph.
+            # right_anchor_has_bullet: if the insert point is at the start of a
+            # bullet paragraph, added non-bullet paragraphs inherit the bullet and
+            # need deleteParagraphBullets to clear it.
+            _right_anchor_has_bullet = (
+                right_anchor is not None
+                and not _is_section_break(right_anchor)
+                and right_anchor.paragraph is not None
+                and right_anchor.paragraph.bullet is not None
+            )
             insert_reqs.extend(
                 _style_reqs_for_added_paras(
                     filtered,
@@ -912,6 +1118,7 @@ def _process_slot_inner(
                     tab_id,
                     desired_lists,
                     table_size_extra=0,
+                    right_anchor_has_bullet=_right_anchor_has_bullet,
                 )
             )
 
@@ -926,6 +1133,33 @@ def _process_slot_inner(
         # Cannot delete the \n immediately before a table (API constraint)
         if _is_table(right_anchor):
             delete_end -= 1
+        # When right_anchor is the synthetic trailing paragraph (the only bare
+        # '\n' paragraph remaining after _strip_empty_body_paragraphs), its
+        # startIndex equals the real document body's endIndex.  A delete range
+        # ending at or beyond that position would include the segment-final '\n',
+        # causing a 400 error.  Cap delete_end to anchor_start - 1.
+        if _is_bare_newline_only_para(right_anchor):
+            anchor_start = _el_start(right_anchor)
+            if delete_end >= anchor_start:
+                delete_end = anchor_start - 1
+        # When there are adds, extend the delete range to cover any gap between
+        # delete_end and insert_idx.  This gap contains empty paragraphs that
+        # _normalize_raw_base_para_styles stripped from the base (e.g. the \n
+        # paragraph before a tableOfContents or after a read-only element) but
+        # that still exist in the real document.  Without this extension those
+        # stripped paragraphs remain in the real document after the push,
+        # leaving an unexpected blank line before the newly inserted content.
+        # (For table right_anchor we must not extend past insert_idx - 1 since
+        # the API forbids deleting the \n immediately before a table, but the
+        # -= 1 above already caps delete_end at that boundary.)
+        if (
+            _resolved_insert_idx is not None
+            and not _is_table(right_anchor)
+            and not _is_toc(right_anchor)
+            and not _has_non_text_elements(right_anchor)
+        ):
+            if delete_end < _resolved_insert_idx:
+                delete_end = _resolved_insert_idx
         if delete_start < delete_end:
             delete_reqs.append(
                 _make_delete_range(delete_start, delete_end, segment_id, tab_id)
@@ -1089,6 +1323,7 @@ def _style_reqs_for_added_paras(
     desired_lists: dict[str, List] | None,
     table_size_extra: int = 1,
     is_trailing_gap: bool = False,
+    right_anchor_has_bullet: bool = False,
 ) -> list[dict[str, Any]]:
     """Generate style requests for ADDED paragraphs using actual positions.
 
@@ -1109,6 +1344,11 @@ def _style_reqs_for_added_paras(
     (endIndex must be strictly less than segment end).  Setting is_trailing_gap=True
     decrements the last paragraph's actual_end by 1 to produce a valid range.
 
+    right_anchor_has_bullet: True when the insertion point is at the start of a
+    bullet paragraph.  In this case, insertText causes the new paragraphs to
+    inherit the bullet style.  Non-bullet added paragraphs need an explicit
+    deleteParagraphBullets to clear the inherited bullet.
+
     Results are sorted right-to-left so they are safe to interleave with gap ops.
     """
     # --- Phase 1: compute actual positions and record inter-element gaps ---
@@ -1118,6 +1358,7 @@ def _style_reqs_for_added_paras(
     para_records: list[tuple[int, int, StructuralElement, bool]] = []
     offset = first_para_actual_start
     had_non_para = False
+    prev_was_table = False
     for add in real_adds:
         el = add.desired_element
         if not el or not _is_paragraph(el):
@@ -1127,9 +1368,21 @@ def _style_reqs_for_added_paras(
                 # insertTable's separator \n stays as a separate character.
                 # Trailing gap (_process_trailing_adds_with_tables): table_size_extra=0
                 # because the separator \n is absorbed into the preceding run's text.
+                #
+                # Special case: when table_size_extra=0 and the previous element
+                # was also a table (consecutive tables with no paragraph between them),
+                # the reversed-loop's spurious_pending flag gets overwritten by the
+                # second table and cannot be absorbed. An extra \n character remains
+                # in the document body that is not represented in real_adds. Add +1.
+                if table_size_extra == 0 and prev_was_table:
+                    offset += 1
                 offset += _table_structural_size(el.table) + table_size_extra
+                prev_was_table = True
+            else:
+                prev_was_table = False
             had_non_para = True
             continue
+        prev_was_table = False
         para_text = _para_text(el)
         # insertPageBreak inserts 2 characters (pageBreak element + \n).
         # _para_text returns "\n" (length 1) — use 2 for correct tracking.
@@ -1212,10 +1465,20 @@ def _style_reqs_for_added_paras(
 
             i = j
         else:
-            # Non-list paragraph: generate all style reqs normally
+            # Non-list paragraph: generate all style reqs normally.
+            # If inserted into a bullet context (right_anchor_has_bullet), the
+            # paragraph inherits bullet styling from the split point — prepend
+            # deleteParagraphBullets to explicitly clear it.
             reqs = _generate_style_for_added_paragraph(
                 el, actual_start, actual_end, segment_id, tab_id, desired_lists
             )
+            if right_anchor_has_bullet:
+                reqs = [
+                    _make_delete_paragraph_bullets(
+                        actual_start, actual_end, segment_id, tab_id
+                    ),
+                    *reqs,
+                ]
             if reqs:
                 style_ops.append((actual_start, reqs))
             i += 1
@@ -2487,10 +2750,21 @@ def _fake_empty_para(cell_start: int) -> StructuralElement:
 
     Used as the base when a cell is newly inserted (no prior API content).
     The trailing \\n is the cell-boundary marker that generate_requests must preserve.
+
+    The paragraphStyle is set to NORMAL_TEXT + LEFT_TO_RIGHT to match
+    _make_trailing_se() in _special_elements.py.  This prevents the MATCHED
+    comparison from generating a spurious updateParagraphStyle at cell_start
+    (wrong position after insertText operations shift the trailing \\n away).
     """
     return StructuralElement.model_validate(
         {
-            "paragraph": {"elements": [{"textRun": {"content": "\n"}}]},
+            "paragraph": {
+                "paragraphStyle": {
+                    "namedStyleType": "NORMAL_TEXT",
+                    "direction": "LEFT_TO_RIGHT",
+                },
+                "elements": [{"textRun": {"content": "\n"}}],
+            },
             "startIndex": cell_start,
             "endIndex": cell_start + 1,
         }
@@ -2545,14 +2819,46 @@ def _populate_cell_at(
     tab_id: TabID,
     desired_lists: dict[str, List] | None = None,
 ) -> list[dict[str, Any]]:
-    """Populate a newly-inserted empty cell (just \\n at cell_start) with desired content."""
-    return _reconcile_cell_content(
+    """Populate a newly-inserted empty cell (just \\n at cell_start) with desired content.
+
+    After all insertText operations, the trailing \\n has shifted from cell_start
+    to cell_start + total_content_length - 1.  An explicit updateParagraphStyle
+    is appended at that position to ensure NORMAL_TEXT is set on the trailing \\n,
+    even if the Google Docs API inherits a heading style from an adjacent body
+    element (which happens when the table is inserted before a heading paragraph).
+    """
+    reqs = _reconcile_cell_content(
         [_fake_empty_para(cell_start)],
         desired_cell.content or [],
         segment_id,
         tab_id,
         desired_lists,
     )
+
+    # Compute the total UTF-16 length of all cell paragraphs (including trailing \n).
+    # After insertText operations, the trailing \n sits at cell_start + total_len - 1.
+    total_len = sum(
+        utf16_len(pe.text_run.content or "")
+        for se in (desired_cell.content or [])
+        if se.paragraph
+        for pe in (se.paragraph.elements or [])
+        if pe.text_run and pe.text_run.content
+    )
+    if total_len > 1:
+        trailing_start = cell_start + total_len - 1
+        trailing_end = cell_start + total_len
+        reqs.append(
+            _make_update_paragraph_style(
+                trailing_start,
+                trailing_end,
+                {"direction": "LEFT_TO_RIGHT", "namedStyleType": "NORMAL_TEXT"},
+                ["direction", "namedStyleType"],
+                segment_id,
+                tab_id,
+            )
+        )
+
+    return reqs
 
 
 # ---------------------------------------------------------------------------
@@ -2878,12 +3184,13 @@ def _generate_text_style_updates(
         assert base_run is not None
         assert desired_run is not None
 
-        # Verify text match
+        # Verify text match — if runs have the same count but different
+        # boundaries (e.g., whitespace moved from inside a bold run to outside
+        # when serialising to markdown), fall back to positional comparison
+        # which aligns by character offset and handles boundary shifts cleanly.
         if base_run.content != desired_run.content:
-            raise ReconcileError(
-                f"Text content mismatch in matched paragraph run: "
-                f"{base_run.content!r} != {desired_run.content!r}. "
-                f"This indicates a bug in the upstream text alignment."
+            return _generate_text_style_updates_positional(
+                base_para, desired_para, para_start, segment_id, tab_id
             )
 
         # Compute style diff

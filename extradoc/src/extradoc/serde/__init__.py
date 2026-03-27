@@ -1,15 +1,15 @@
-"""Serde module: Document ↔ folder of XML files.
+"""Serde module: Document ↔ folder of files (XML or markdown).
 
 Public API:
-    serialize(bundle, output_path) → list[Path]   — DocumentWithComments → folder
-    deserialize(folder) → DocumentWithComments     — folder → DocumentWithComments
+    serialize(bundle, output_path, format='xml') → list[Path]
+    deserialize(folder) → DocumentWithComments   — auto-detects format from index.xml
     from_document(doc) → (IndexXml, dict[folder, TabFiles])
     to_document(tabs, document_id) → Document
 """
 
 from __future__ import annotations
 
-from typing import TYPE_CHECKING, TypeVar
+from typing import TYPE_CHECKING, Literal, TypeVar
 
 from extradoc.api_types._generated import Document
 from extradoc.comments._inject import inject_comment_refs, strip_comment_refs
@@ -79,7 +79,11 @@ def to_document(
     return tabs_to_document(tabs, document_id=document_id, title=title)
 
 
-def serialize(bundle: DocumentWithComments | Document, output_path: Path) -> list[Path]:
+def serialize(
+    bundle: DocumentWithComments | Document,
+    output_path: Path,
+    format: Literal["xml", "markdown"] = "xml",
+) -> list[Path]:
     """Write DocumentWithComments (or plain Document) to folder structure.
 
     When passed a plain Document, creates an empty FileComments and serializes
@@ -89,6 +93,7 @@ def serialize(bundle: DocumentWithComments | Document, output_path: Path) -> lis
     Args:
         bundle: The DocumentWithComments (or plain Document) to serialize
         output_path: Root directory to write into
+        format: Output format — "xml" (default) or "markdown"
 
     Returns:
         List of created file paths
@@ -99,6 +104,9 @@ def serialize(bundle: DocumentWithComments | Document, output_path: Path) -> lis
             document=bundle,
             comments=FileComments(file_id=bundle.document_id or ""),
         )
+
+    if format == "markdown":
+        return _serialize_markdown(bundle, output_path)
 
     index, tabs = from_document(bundle.document)
     created: list[Path] = []
@@ -148,9 +156,88 @@ def serialize(bundle: DocumentWithComments | Document, output_path: Path) -> lis
     return created
 
 
+def _serialize_markdown(bundle: DocumentWithComments, output_path: Path) -> list[Path]:
+    """Write a Document to folder structure using markdown format."""
+    import re
+
+    from ._to_markdown import document_to_markdown
+    from ._utils import sanitize_tab_name
+
+    doc = bundle.document
+    per_tab = document_to_markdown(doc)
+
+    # Build index (same structure as XML, but format="markdown")
+    index = build_index(doc)
+    index.format = "markdown"
+    # Patch folder names into the index tabs
+    tab_list = doc.tabs or []
+    for i, idx_tab in enumerate(index.tabs):
+        if i < len(tab_list):
+            props = tab_list[i].tab_properties
+            title = (props.title or "Tab 1") if props else "Tab 1"
+            idx_tab.folder = sanitize_tab_name(title)
+
+    created: list[Path] = []
+    output_path.mkdir(parents=True, exist_ok=True)
+
+    # Write per-tab .md files at root level (e.g. Tab_1.md, not Tab_1/document.md)
+    heading_re = re.compile(r"^(#{1,6})\s+.+$")
+    tab_toc: dict[str, list[tuple[int, str]]] = {}  # folder → [(lineno, heading_line)]
+
+    for folder, files in per_tab.items():
+        content = files.get("document.md", "")
+        tab_path = output_path / f"{folder}.md"
+        tab_path.write_text(content, encoding="utf-8")
+        created.append(tab_path)
+
+        # Scan for headings with line numbers for index.md
+        headings: list[tuple[int, str]] = []
+        for lineno, line in enumerate(content.splitlines(), 1):
+            if heading_re.match(line):
+                headings.append((lineno, line))
+        tab_toc[folder] = headings
+
+    # Write index.md — human-readable TOC with line numbers per tab
+    doc_title = doc.title or "Document"
+    md_lines: list[str] = [f"# {doc_title}", ""]
+    for idx_tab in index.all_tabs_flat():
+        md_lines.append(f"## {idx_tab.title}")
+        md_lines.append("")
+        md_lines.append(f"File: `{idx_tab.folder}.md`")
+        md_lines.append("")
+        headings = tab_toc.get(idx_tab.folder, [])
+        if headings:
+            md_lines.append("| Line | Heading |")
+            md_lines.append("|------|---------|")
+            for lineno, heading_line in headings:
+                # Escape pipe characters inside table cells
+                safe = heading_line.replace("|", "\\|")
+                md_lines.append(f"| {lineno} | {safe} |")
+        else:
+            md_lines.append("*(no headings)*")
+        md_lines.append("")
+
+    index_md_path = output_path / "index.md"
+    index_md_path.write_text("\n".join(md_lines), encoding="utf-8")
+    created.append(index_md_path)
+
+    # Write index.xml for format detection by deserialize (do not edit)
+    index_path = output_path / "index.xml"
+    index_path.write_text(index.to_xml_string(), encoding="utf-8")
+    created.append(index_path)
+
+    # Write comments.xml (unchanged format)
+    comments_path = output_path / "comments.xml"
+    comments_path.write_text(comments_to_xml(bundle.comments), encoding="utf-8")
+    created.append(comments_path)
+
+    return created
+
+
 def deserialize(folder: Path) -> DocumentWithComments:
     """Read folder structure back into a DocumentWithComments.
 
+    Auto-detects format from index.xml (format="markdown" or default "xml").
     Strips <comment-ref> tags from each tab's document.xml before parsing.
     Reads comments.xml if present.
 
@@ -162,6 +249,9 @@ def deserialize(folder: Path) -> DocumentWithComments:
     """
     index_path = folder / "index.xml"
     index = IndexXml.from_xml_string(index_path.read_text(encoding="utf-8"))
+
+    if index.format == "markdown":
+        return _deserialize_markdown(folder, index)
 
     tabs: dict[str, TabFiles] = {}
     for index_tab in index.all_tabs_flat():
@@ -201,6 +291,52 @@ def deserialize(folder: Path) -> DocumentWithComments:
     )
 
     # Read comments.xml
+    comments_path = folder / "comments.xml"
+    if comments_path.exists():
+        file_comments = comments_from_xml(comments_path.read_text(encoding="utf-8"))
+    else:
+        file_comments = FileComments(file_id=index.id)
+
+    return DocumentWithComments(document=document, comments=file_comments)
+
+
+def _deserialize_markdown(folder: Path, index: IndexXml) -> DocumentWithComments:
+    """Read a markdown-format folder into a DocumentWithComments."""
+    from ._from_markdown import markdown_to_document
+
+    tab_content: dict[str, str] = {}
+    tab_ids: dict[str, str] = {}
+    known_folders: set[str] = set()
+    for index_tab in index.all_tabs_flat():
+        # New layout: <folder_stem>.md at root (e.g. Tab_1.md)
+        md_path = folder / f"{index_tab.folder}.md"
+        if not md_path.exists():
+            # Fallback: old layout <tab_folder>/document.md
+            md_path = folder / index_tab.folder / "document.md"
+        source = md_path.read_text(encoding="utf-8") if md_path.exists() else ""
+        tab_content[index_tab.folder] = source
+        tab_ids[index_tab.folder] = index_tab.id
+        known_folders.add(index_tab.folder)
+
+    # Detect new .md files not tracked in index.xml — these become new tabs on push.
+    # Files are added after indexed tabs so they appear at the end of the document.
+    _READ_ONLY = {"index"}
+    for md_path in sorted(folder.glob("*.md")):
+        stem = md_path.stem
+        if stem in _READ_ONLY or stem in known_folders:
+            continue
+        tab_content[stem] = md_path.read_text(encoding="utf-8")
+        # No tab_ids entry → markdown_to_document assigns a synthetic ID →
+        # reconciler treats it as a new tab and emits addDocumentTab.
+
+    document = markdown_to_document(
+        tab_content,
+        document_id=index.id,
+        title=index.title,
+        revision_id=index.revision,
+        tab_ids=tab_ids,
+    )
+
     comments_path = folder / "comments.xml"
     if comments_path.exists():
         file_comments = comments_from_xml(comments_path.read_text(encoding="utf-8"))

@@ -2,7 +2,7 @@ Debugging tool only. Shows the API operations push would send, without making an
 
 ## Usage
 
-  extrasuite form diff <folder>
+  extrasuite forms diff <folder>
 
 ## Arguments
 

@@ -2,10 +2,10 @@ Google Slides - edit presentations via SML (Slide Markup Language) files.
 
 ## Workflow
 
-  extrasuite slide pull <url> [output_dir]   Download presentation
+  extrasuite slides pull <url> [output_dir]   Download presentation
   # Edit slides/<nn>/content.sml files
-  extrasuite slide push <folder>             Apply changes to Google Slides
-  extrasuite slide create <title>            Create a new presentation
+  extrasuite slides push <folder>             Apply changes to Google Slides
+  extrasuite slides create <title>            Create a new presentation
 
 See `extrasuite slide pull --help` for directory layout, SML key rules, and examples (self-contained).
 
@@ -29,13 +29,13 @@ Tailwind-inspired classes for styling. See `extrasuite slide help sml-reference`
 
 ## Commands
 
-  extrasuite slide pull --help     Pull flags, folder layout, and key rules
-  extrasuite slide push --help     Push flags
-  extrasuite slide diff --help     Offline debugging tool (no auth needed)
-  extrasuite slide create --help   Create a new presentation
-  extrasuite slide share --help    Share with trusted contacts
+  extrasuite slides pull --help     Pull flags, folder layout, and key rules
+  extrasuite slides push --help     Push flags
+  extrasuite slides diff --help     Offline debugging tool (no auth needed)
+  extrasuite slides create --help   Create a new presentation
+  extrasuite slides share --help    Share with trusted contacts
 
 ## Reference Docs (detailed)
 
-  extrasuite slide help                  List available reference topics
-  extrasuite slide help sml-reference    SML elements, classes, and editing patterns
+  extrasuite slides help                  List available reference topics
+  extrasuite slides help sml-reference    SML elements, classes, and editing patterns

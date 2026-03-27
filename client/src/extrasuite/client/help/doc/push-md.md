@@ -1,12 +1,12 @@
-Apply local XML changes to Google Docs.
+Apply local markdown changes to Google Docs.
 
 ## Usage
 
-  extrasuite docs push <folder>
+  extrasuite docs push-md <folder>
 
 ## Arguments
 
-  folder    Path to the document folder (created by pull)
+  folder    Path to the document folder (created by pull-md)
 
 ## Flags
 
@@ -15,7 +15,7 @@ Apply local XML changes to Google Docs.
 
 ## How It Works
 
-Compares current document.xml against .pristine/ snapshot, generates
+Compares current <Tab_Name>.md files against .pristine/ snapshot, generates
 batchUpdate requests, and applies them to Google Docs in a single API call.
 Comment operations (new replies, resolves) are applied via the Drive API.
 
@@ -24,11 +24,11 @@ Comment operations (new replies, resolves) are applied via the Drive API.
 Always re-pull before making more changes. The .pristine/ snapshot is not
 auto-updated, so subsequent pushes would generate incorrect diffs.
 
-  extrasuite docs push ./abc123
-  extrasuite docs pull https://docs.google.com/document/d/abc123 .
+  extrasuite docs push-md ./abc123
+  extrasuite docs pull-md https://docs.google.com/document/d/abc123 .
 
 ## Notes
 
-- If push fails with an XML validation error, fix document.xml first
-- If push produces unexpected results, use diff to inspect the generated requests
+- push-md and push are interchangeable: both auto-detect format from index.xml
+- If push fails, use diff to inspect the generated batchUpdate requests
 - Table changes are the most common source of push failures (see troubleshooting.md)

@@ -2,12 +2,12 @@ Download a Google Sheet to a local folder.
 
 ## Usage
 
-  extrasuite sheet pull <url> [output_dir]
+  extrasuite sheets pull <url> [output_dir]
 
 ## Arguments
 
   url           Spreadsheet URL or ID
-  output_dir    Output directory (default: current directory)
+  output_dir    Output directory (optional)
 
 ## Flags
 
@@ -17,7 +17,10 @@ Download a Google Sheet to a local folder.
 
 ## Output
 
-Creates <output_dir>/<spreadsheet_id>/ with:
+If output_dir is given, files are created directly in output_dir.
+Otherwise, creates <spreadsheet_id>/ in the current directory.
+
+The folder contains:
 
   spreadsheet.json          Spreadsheet metadata, sheet list, previews, truncation hints
   theme.json                Default format and theme metadata (if present)
@@ -61,5 +64,5 @@ Creates <output_dir>/<spreadsheet_id>/ with:
 
 ## Example
 
-  extrasuite sheet pull https://docs.google.com/spreadsheets/d/abc123
-  extrasuite sheet pull https://docs.google.com/spreadsheets/d/abc123 /tmp/sheets
+  extrasuite sheets pull https://docs.google.com/spreadsheets/d/abc123
+  extrasuite sheets pull https://docs.google.com/spreadsheets/d/abc123 /tmp/sheets

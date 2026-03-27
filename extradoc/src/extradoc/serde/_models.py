@@ -58,6 +58,7 @@ class IndexXml:
     id: str
     title: str
     revision: str | None = None
+    format: str = "xml"  # "xml" or "markdown"
     tabs: list[IndexTab] = field(default_factory=list)
 
     def to_element(self) -> Element:
@@ -66,6 +67,8 @@ class IndexXml:
         root.set("title", self.title)
         if self.revision:
             root.set("revision", self.revision)
+        if self.format != "xml":
+            root.set("format", self.format)
         for tab in self.tabs:
             _index_tab_to_element(tab, root)
         return root
@@ -82,6 +85,7 @@ class IndexXml:
             id=root.get("id", ""),
             title=root.get("title", ""),
             revision=root.get("revision"),
+            format=root.get("format", "xml"),
             tabs=tabs,
         )
 

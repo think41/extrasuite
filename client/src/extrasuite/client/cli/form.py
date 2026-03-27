@@ -4,7 +4,9 @@ from __future__ import annotations
 
 import asyncio
 import json
+import shutil
 import sys
+import tempfile
 from pathlib import Path
 from typing import Any
 
@@ -22,7 +24,7 @@ def cmd_form_pull(args: Any) -> None:
     from extraform import FormsClient, GoogleFormsTransport
 
     form_id = _parse_form_id(args.url)
-    output_dir = Path(args.output_dir) if args.output_dir else Path()
+    output_dir_arg = args.output_dir
     reason = _get_reason(args, default="Pulling Google Form")
     cred = _get_credential(
         args,
@@ -30,22 +32,38 @@ def cmd_form_pull(args: Any) -> None:
         reason=reason,
     )
 
+    tmp_parent = None
+    if output_dir_arg:
+        tmp_parent = Path(tempfile.mkdtemp())
+        dest_dir = Path(output_dir_arg)
+    else:
+        dest_dir = Path() / form_id
+
     async def _run() -> None:
         transport = GoogleFormsTransport(cred.token)
         client = FormsClient(transport)
+        pull_parent = tmp_parent if tmp_parent else Path()
         try:
             await client.pull(
                 form_id,
-                output_dir,
+                pull_parent,
                 include_responses=args.responses,
                 max_responses=args.max_responses,
                 save_raw=not args.no_raw,
             )
-            print(f"Pulled form to {output_dir / form_id}/")
+            if tmp_parent is not None:
+                dest_dir.parent.mkdir(parents=True, exist_ok=True)
+                shutil.move(str(tmp_parent / form_id), str(dest_dir))
         finally:
             await transport.close()
 
-    asyncio.run(_run())
+    try:
+        asyncio.run(_run())
+    finally:
+        if tmp_parent is not None:
+            shutil.rmtree(tmp_parent, ignore_errors=True)
+
+    print(f"Pulled to {dest_dir}/")
 
 
 def cmd_form_diff(args: Any) -> None:
@@ -86,8 +104,45 @@ def cmd_form_push(args: Any) -> None:
 
 
 def cmd_form_create(args: Any) -> None:
-    """Create a new Google Form."""
-    _cmd_create("form", args)
+    """Create a new Google Form and pull it locally."""
+    from extraform import FormsClient, GoogleFormsTransport
+
+    file_id, url = _cmd_create("form", args)
+
+    output_dir_arg = getattr(args, "output_dir", None)
+    tmp_parent = None
+    if output_dir_arg:
+        tmp_parent = Path(tempfile.mkdtemp())
+        dest_dir = Path(output_dir_arg)
+    else:
+        dest_dir = Path() / file_id
+
+    reason = _get_reason(args, default="Pulling newly created Google Form")
+    cred = _get_credential(
+        args,
+        command={"type": "form.pull", "file_url": url, "file_name": args.title},
+        reason=reason,
+    )
+
+    async def _run() -> None:
+        transport = GoogleFormsTransport(cred.token)
+        client = FormsClient(transport)
+        pull_parent = tmp_parent if tmp_parent else Path()
+        try:
+            await client.pull(file_id, pull_parent, save_raw=True)
+            if tmp_parent is not None:
+                dest_dir.parent.mkdir(parents=True, exist_ok=True)
+                shutil.move(str(tmp_parent / file_id), str(dest_dir))
+        finally:
+            await transport.close()
+
+    try:
+        asyncio.run(_run())
+    finally:
+        if tmp_parent is not None:
+            shutil.rmtree(tmp_parent, ignore_errors=True)
+
+    print(f"Pulled to {dest_dir}/")
 
 
 def cmd_form_share(args: Any) -> None:

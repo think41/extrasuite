@@ -2,12 +2,12 @@ Download a Google Doc to a local folder.
 
 ## Usage
 
-  extrasuite doc pull <url> [output_dir]
+  extrasuite docs pull <url> [output_dir]
 
 ## Arguments
 
   url           Document URL or ID
-  output_dir    Output directory (default: current directory)
+  output_dir    Output directory (optional)
 
 ## Flags
 
@@ -15,7 +15,10 @@ Download a Google Doc to a local folder.
 
 ## Output
 
-Creates <output_dir>/<document_id>/ with:
+If output_dir is given, files are created directly in output_dir.
+Otherwise, creates <document_id>/ in the current directory.
+
+The folder contains:
 
   index.xml       Document outline, tab mapping, and heading XPaths into document.xml
   comments.xml    Comments and replies
@@ -56,5 +59,5 @@ comments cannot be added via the API.
 
 ## Example
 
-  extrasuite doc pull https://docs.google.com/document/d/abc123
-  extrasuite doc pull https://docs.google.com/document/d/abc123 /tmp/docs
+  extrasuite docs pull https://docs.google.com/document/d/abc123
+  extrasuite docs pull https://docs.google.com/document/d/abc123 /tmp/docs

@@ -2,7 +2,7 @@ Apply local changes to Google Forms.
 
 ## Usage
 
-  extrasuite form push <folder>
+  extrasuite forms push <folder>
 
 ## Arguments
 

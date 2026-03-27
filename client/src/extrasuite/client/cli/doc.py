@@ -4,7 +4,9 @@ from __future__ import annotations
 
 import asyncio
 import json
+import shutil
 import sys
+import tempfile
 from pathlib import Path
 from typing import Any
 
@@ -22,7 +24,8 @@ def cmd_doc_pull(args: Any) -> None:
     from extradoc import DocsClient, GoogleDocsTransport
 
     document_id = _parse_document_id(args.url)
-    output_dir = Path(args.output_dir) if args.output_dir else Path()
+    output_dir_arg = args.output_dir
+
     reason = _get_reason(args, default="Pulling Google Doc")
     cred = _get_credential(
         args,
@@ -30,20 +33,36 @@ def cmd_doc_pull(args: Any) -> None:
         reason=reason,
     )
 
+    tmp_parent = None
+    if output_dir_arg:
+        tmp_parent = Path(tempfile.mkdtemp())
+        dest_dir = Path(output_dir_arg)
+    else:
+        dest_dir = Path() / document_id
+
     async def _run() -> None:
         transport = GoogleDocsTransport(cred.token)
         client = DocsClient(transport)
+        pull_parent = tmp_parent if tmp_parent else Path()
         try:
             await client.pull(
                 document_id,
-                output_dir,
+                pull_parent,
                 save_raw=not args.no_raw,
             )
-            print(f"Pulled document to {output_dir / document_id}/")
+            if tmp_parent is not None:
+                dest_dir.parent.mkdir(parents=True, exist_ok=True)
+                shutil.move(str(tmp_parent / document_id), str(dest_dir))
         finally:
             await transport.close()
 
-    asyncio.run(_run())
+    try:
+        asyncio.run(_run())
+    finally:
+        if tmp_parent is not None:
+            shutil.rmtree(tmp_parent, ignore_errors=True)
+
+    print(f"Pulled to {dest_dir}/")
 
 
 def cmd_doc_diff(args: Any) -> None:
@@ -99,9 +118,99 @@ def cmd_doc_push(args: Any) -> None:
     asyncio.run(_run())
 
 
+def cmd_doc_pull_md(args: Any) -> None:
+    """Pull a Google Doc in markdown format."""
+    from extradoc import DocsClient, GoogleDocsTransport
+
+    document_id = _parse_document_id(args.url)
+    output_dir_arg = args.output_dir
+
+    reason = _get_reason(args, default="Pulling Google Doc as markdown")
+    cred = _get_credential(
+        args,
+        command={"type": "doc.pull", "file_url": args.url, "file_name": ""},
+        reason=reason,
+    )
+
+    tmp_parent = None
+    if output_dir_arg:
+        tmp_parent = Path(tempfile.mkdtemp())
+        dest_dir = Path(output_dir_arg)
+    else:
+        dest_dir = Path() / document_id
+
+    async def _run() -> None:
+        transport = GoogleDocsTransport(cred.token)
+        client = DocsClient(transport)
+        pull_parent = tmp_parent if tmp_parent else Path()
+        try:
+            await client.pull(
+                document_id,
+                pull_parent,
+                save_raw=not args.no_raw,
+                format="markdown",
+            )
+            if tmp_parent is not None:
+                dest_dir.parent.mkdir(parents=True, exist_ok=True)
+                shutil.move(str(tmp_parent / document_id), str(dest_dir))
+        finally:
+            await transport.close()
+
+    try:
+        asyncio.run(_run())
+    finally:
+        if tmp_parent is not None:
+            shutil.rmtree(tmp_parent, ignore_errors=True)
+
+    print(f"Pulled to {dest_dir}/")
+
+
+def cmd_doc_push_md(args: Any) -> None:
+    """Push changes to a Google Doc (markdown format, auto-detected)."""
+    # Format is auto-detected from index.xml; push logic is identical to XML.
+    cmd_doc_push(args)
+
+
 def cmd_doc_create(args: Any) -> None:
-    """Create a new Google Doc."""
-    _cmd_create("doc", args)
+    """Create a new Google Doc and pull it locally."""
+    from extradoc import DocsClient, GoogleDocsTransport
+
+    file_id, url = _cmd_create("doc", args)
+
+    output_dir_arg = getattr(args, "output_dir", None)
+    tmp_parent = None
+    if output_dir_arg:
+        tmp_parent = Path(tempfile.mkdtemp())
+        dest_dir = Path(output_dir_arg)
+    else:
+        dest_dir = Path() / file_id
+
+    reason = _get_reason(args, default="Pulling newly created Google Doc")
+    cred = _get_credential(
+        args,
+        command={"type": "doc.pull", "file_url": url, "file_name": args.title},
+        reason=reason,
+    )
+
+    async def _run() -> None:
+        transport = GoogleDocsTransport(cred.token)
+        client = DocsClient(transport)
+        pull_parent = tmp_parent if tmp_parent else Path()
+        try:
+            await client.pull(file_id, pull_parent, save_raw=True)
+            if tmp_parent is not None:
+                dest_dir.parent.mkdir(parents=True, exist_ok=True)
+                shutil.move(str(tmp_parent / file_id), str(dest_dir))
+        finally:
+            await transport.close()
+
+    try:
+        asyncio.run(_run())
+    finally:
+        if tmp_parent is not None:
+            shutil.rmtree(tmp_parent, ignore_errors=True)
+
+    print(f"Pulled to {dest_dir}/")
 
 
 def cmd_doc_share(args: Any) -> None:

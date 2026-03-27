@@ -13,12 +13,22 @@ if TYPE_CHECKING:
 
 _HELP_DIR = Path(__file__).parent.parent / "help"
 
+# Maps plural CLI names (used in subparser/dispatch) to help directory names
+_HELP_MODULE_MAP: dict[str, str] = {
+    "docs": "doc",
+    "sheets": "sheet",
+    "slides": "slide",
+    "forms": "form",
+}
+
 # Files served by --help; everything else in the module dir is a reference doc.
 _HELP_COMMAND_FILES = frozenset(
     {
         "README.md",
         "pull.md",
+        "pull-md.md",
         "push.md",
+        "push-md.md",
         "diff.md",
         "create.md",
         "batchupdate.md",
@@ -31,10 +41,12 @@ def _load_help(module: str | None = None, command: str | None = None) -> str:
     """Load help text from bundled markdown files."""
     if module is None:
         path = _HELP_DIR / "README.md"
-    elif command is None:
-        path = _HELP_DIR / module / "README.md"
     else:
-        path = _HELP_DIR / module / f"{command}.md"
+        module_dir = _HELP_MODULE_MAP.get(module, module)
+        if command is None:
+            path = _HELP_DIR / module_dir / "README.md"
+        else:
+            path = _HELP_DIR / module_dir / f"{command}.md"
     try:
         return path.read_text("utf-8").strip()
     except FileNotFoundError:
@@ -95,7 +107,8 @@ def _resolve_help_path(module_dir: Path, topic_parts: list[str]) -> Path | None:
 def cmd_module_help(args: Any) -> None:
     """Show reference documentation for a module."""
     module = args.command
-    module_dir = _HELP_DIR / module
+    module_dir_name = _HELP_MODULE_MAP.get(module, module)
+    module_dir = _HELP_DIR / module_dir_name
     topic_parts = list(getattr(args, "topic_parts", []) or [])
 
     # Backward compatibility for callers still passing a single `topic`.
@@ -304,8 +317,11 @@ _FILE_URL_PATTERNS: dict[str, str] = {
 }
 
 
-def _cmd_create(file_type: str, args: Any) -> None:
-    """Create a Google file and share it with the service account."""
+def _cmd_create(file_type: str, args: Any) -> tuple[str, str]:
+    """Create a Google file and share it with the service account.
+
+    Returns (file_id, url).
+    """
     from extrasuite.client import CredentialsManager
     from extrasuite.client.google_api import create_file_via_drive, share_file
 
@@ -351,4 +367,4 @@ def _cmd_create(file_type: str, args: Any) -> None:
     print(f"\nCreated {file_type}: {args.title}")
     print(f"URL: {url}")
     print(f"Shared with: {sa_email}")
-    print(f"\nTo edit, run: extrasuite {file_type} pull {url}")
+    return file_id, url

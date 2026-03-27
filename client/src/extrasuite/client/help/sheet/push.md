@@ -2,7 +2,7 @@ Apply local changes to Google Sheets.
 
 ## Usage
 
-  extrasuite sheet push <folder>
+  extrasuite sheets push <folder>
 
 ## Arguments
 
@@ -54,6 +54,8 @@ Push supports these `comments.json` operations:
 
   Add a reply     Add a reply object without an `id`
   Resolve         Set `"resolved": true`
+
+See `extrasuite sheets help comments-reference` for format details and examples.
 
 Not supported:
 

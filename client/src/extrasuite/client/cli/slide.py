@@ -4,6 +4,8 @@ from __future__ import annotations
 
 import asyncio
 import json
+import shutil
+import tempfile
 from pathlib import Path
 from typing import Any
 
@@ -21,7 +23,7 @@ def cmd_slide_pull(args: Any) -> None:
     from extraslide import GoogleSlidesTransport, SlidesClient
 
     presentation_id = _parse_presentation_id(args.url)
-    output_dir = Path(args.output_dir) if args.output_dir else Path()
+    output_dir_arg = args.output_dir
     reason = _get_reason(args, default="Pulling Google Slides")
     cred = _get_credential(
         args,
@@ -29,23 +31,44 @@ def cmd_slide_pull(args: Any) -> None:
         reason=reason,
     )
 
+    tmp_parent = None
+    if output_dir_arg:
+        tmp_parent = Path(tempfile.mkdtemp())
+        dest_dir = Path(output_dir_arg)
+    else:
+        dest_dir = Path() / presentation_id
+
+    slide_count_holder: list[int] = []
+
     async def _run() -> None:
         transport = GoogleSlidesTransport(cred.token)
         client = SlidesClient(transport)
+        pull_parent = tmp_parent if tmp_parent else Path()
         try:
             files = await client.pull(
                 presentation_id,
-                output_dir,
+                pull_parent,
                 save_raw=not args.no_raw,
             )
-            slide_count = sum(1 for f in files if f.name == "content.sml")
-            print(
-                f"Pulled {slide_count} slide{'s' if slide_count != 1 else ''} to {output_dir / presentation_id}/"
+            slide_count_holder.append(
+                sum(1 for f in files if f.name == "content.sml")
             )
+            if tmp_parent is not None:
+                dest_dir.parent.mkdir(parents=True, exist_ok=True)
+                shutil.move(str(tmp_parent / presentation_id), str(dest_dir))
         finally:
             await transport.close()
 
-    asyncio.run(_run())
+    try:
+        asyncio.run(_run())
+    finally:
+        if tmp_parent is not None:
+            shutil.rmtree(tmp_parent, ignore_errors=True)
+
+    slide_count = slide_count_holder[0] if slide_count_holder else 0
+    print(
+        f"Pulled {slide_count} slide{'s' if slide_count != 1 else ''} to {dest_dir}/"
+    )
 
 
 def cmd_slide_diff(args: Any) -> None:
@@ -88,8 +111,53 @@ def cmd_slide_push(args: Any) -> None:
 
 
 def cmd_slide_create(args: Any) -> None:
-    """Create a new Google Slides presentation."""
-    _cmd_create("slide", args)
+    """Create a new Google Slides presentation and pull it locally."""
+    from extraslide import GoogleSlidesTransport, SlidesClient
+
+    file_id, url = _cmd_create("slide", args)
+
+    output_dir_arg = getattr(args, "output_dir", None)
+    tmp_parent = None
+    if output_dir_arg:
+        tmp_parent = Path(tempfile.mkdtemp())
+        dest_dir = Path(output_dir_arg)
+    else:
+        dest_dir = Path() / file_id
+
+    reason = _get_reason(args, default="Pulling newly created Google Slides presentation")
+    cred = _get_credential(
+        args,
+        command={"type": "slide.pull", "file_url": url, "file_name": args.title},
+        reason=reason,
+    )
+
+    slide_count_holder: list[int] = []
+
+    async def _run() -> None:
+        transport = GoogleSlidesTransport(cred.token)
+        client = SlidesClient(transport)
+        pull_parent = tmp_parent if tmp_parent else Path()
+        try:
+            files = await client.pull(file_id, pull_parent, save_raw=True)
+            slide_count_holder.append(
+                sum(1 for f in files if f.name == "content.sml")
+            )
+            if tmp_parent is not None:
+                dest_dir.parent.mkdir(parents=True, exist_ok=True)
+                shutil.move(str(tmp_parent / file_id), str(dest_dir))
+        finally:
+            await transport.close()
+
+    try:
+        asyncio.run(_run())
+    finally:
+        if tmp_parent is not None:
+            shutil.rmtree(tmp_parent, ignore_errors=True)
+
+    slide_count = slide_count_holder[0] if slide_count_holder else 0
+    print(
+        f"Pulled {slide_count} slide{'s' if slide_count != 1 else ''} to {dest_dir}/"
+    )
 
 
 def cmd_slide_share(args: Any) -> None:

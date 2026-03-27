@@ -2,17 +2,17 @@ ExtraSuite - edit Google Workspace files with AI agents using a local pull-edit-
 
 ## Modules
 
-  sheet      Google Sheets (spreadsheets, formulas, charts)
-  slide      Google Slides (presentations, SML markup)
-  doc        Google Docs (documents, XML markup)
-  form       Google Forms (surveys, quizzes)
+  sheets     Google Sheets (spreadsheets, formulas, charts)
+  slides     Google Slides (presentations, SML markup)
+  docs       Google Docs (documents, XML markup)
+  forms      Google Forms (surveys, quizzes)
   script     Google Apps Script (standalone and bound scripts)
   gmail      Gmail (compose drafts, read and reply to emails)
   calendar   Google Calendar (view, search, create, and manage events)
   drive      Google Drive (browse and search files)
   contacts   Google Contacts (sync and search for email addresses)
 
-## Core Workflow (sheet, slide, doc, form, script)
+## Core Workflow (sheets, slides, docs, forms, script)
 
   extrasuite <module> pull <url> [output_dir]    # Convert google workspace file to local files inside <output_dir>/<file-id>
   # Edit files inside <output_dir>/<file-id>

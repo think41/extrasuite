@@ -128,16 +128,16 @@ extrasuite auth activate <profile>           # Set the active profile
 
 ```bash
 # Using gateway.json for authentication
-extrasuite sheet pull --gateway /path/to/gateway.json <url>
+extrasuite sheets pull --gateway /path/to/gateway.json <url>
 
 # Using service account (bypasses session flow entirely)
-extrasuite sheet pull --service-account /path/to/sa.json <url>
+extrasuite sheets pull --service-account /path/to/sa.json <url>
 
 # Default: uses env vars or ~/.config/extrasuite/gateway.json
-extrasuite sheet pull <url>
+extrasuite sheets pull <url>
 
 # Offline commands (no auth needed)
-extrasuite sheet diff <folder>
+extrasuite sheets diff <folder>
 extrasuite script lint <folder>
 ```
 

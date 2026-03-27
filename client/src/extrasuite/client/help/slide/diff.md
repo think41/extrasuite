@@ -2,7 +2,7 @@ Debugging tool only. Shows the batchUpdate requests push would send, without mak
 
 ## Usage
 
-  extrasuite slide diff <folder>
+  extrasuite slides diff <folder>
 
 ## Arguments
 

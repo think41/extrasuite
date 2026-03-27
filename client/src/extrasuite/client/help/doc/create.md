@@ -1,20 +1,16 @@
-Create a new Google Doc and share it with your service account.
+Create a new Google Doc, share it with your service account, and pull it locally.
 
 ## Usage
 
-  extrasuite doc create <title>
+  extrasuite docs create <title> [output_dir]
 
 ## Arguments
 
-  title    Title for the new document
+  title       Title for the new document
+  output_dir  Directory to pull the file into after creation (optional).
+              If omitted, creates <document_id>/ in the current directory.
 
 ## Output
 
 Prints the document URL and the service account email it was shared with.
-Also prints the pull command to start editing immediately.
-
-## Next Steps
-
-After creating, pull the document to start editing:
-
-  extrasuite doc pull <url>
+Then automatically pulls the document into output_dir (or <document_id>/).

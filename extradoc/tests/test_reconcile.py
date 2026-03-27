@@ -3302,20 +3302,28 @@ def _make_paragraph(text: str, bold: bool | None = None) -> Paragraph:
 
 
 class TestTextRunMismatchRaisesError:
-    """Verify that _generate_text_style_updates raises ReconcileError on text mismatch.
+    """Verify _generate_text_style_updates handles run-boundary mismatches gracefully.
 
-    This guard should never fire in normal operation (matched paragraphs always
-    have the same text), but raising instead of silently returning [] surfaces
-    upstream alignment bugs immediately.
+    Run text content can differ when whitespace moves between runs during
+    markdown serialisation (e.g. ' **Send Test** ' → leading/trailing spaces
+    shift from the bold run to adjacent plain runs).  In practice, matched
+    paragraphs always have the same total text (same LCS fingerprint), so
+    a per-run content mismatch means only the run boundaries shifted.
+    The function must fall back to positional comparison rather than raising.
     """
 
-    def test_different_text_same_run_count_raises(self):
-        """Mismatched run text in a matched paragraph raises ReconcileError."""
+    def test_different_text_same_run_count_falls_back_to_positional(self):
+        """Mismatched run text falls back to positional comparison, not error."""
+        # Simulate base: "Hello" (bold=False) vs desired: "World" (bold=True).
+        # In production this can't happen for truly different paragraphs
+        # (LCS would never match them), but the positional fallback handles
+        # it without crashing regardless.
         base = _make_paragraph("Hello\n", bold=False)
         desired = _make_paragraph("World\n", bold=True)
 
-        with pytest.raises(ReconcileError, match="mismatch"):
-            _generate_text_style_updates(base, desired, 1, None, None)
+        # Should not raise — falls back to positional
+        result = _generate_text_style_updates(base, desired, 1, None, None)
+        assert isinstance(result, list)
 
     def test_matching_text_does_not_raise(self):
         """Same text, different style — no error, returns style requests."""

@@ -50,10 +50,10 @@ def handle_create_named_range(
         document_tab["namedRanges"] = {}
 
     if name not in document_tab["namedRanges"]:
-        document_tab["namedRanges"][name] = {"namedRanges": []}
+        document_tab["namedRanges"][name] = {"name": name, "namedRanges": []}
 
     document_tab["namedRanges"][name]["namedRanges"].append(
-        {"namedRangeId": named_range_id, "ranges": [range_obj]}
+        {"name": name, "namedRangeId": named_range_id, "ranges": [range_obj]}
     )
 
     return {"createNamedRange": {"namedRangeId": named_range_id}}

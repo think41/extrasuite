@@ -2,10 +2,11 @@ Google Sheets - edit spreadsheets via local TSV and JSON files.
 
 ## Workflow
 
-  extrasuite sheet pull <url> [output_dir]   # Downloads to <output_dir>/<spreadsheet_id>/
-  # Edit files in <output_dir>/<spreadsheet_id>/
-  extrasuite sheet diff <folder>             # Preview changes (no API calls)
-  extrasuite sheet push <folder>             # Apply changes
+  extrasuite sheets pull <url> [output_dir]   Download spreadsheet
+  # Edit files in <output_dir>/
+  extrasuite sheets diff <folder>             Preview changes (no API calls)
+  extrasuite sheets push <folder>             Apply changes to Google Sheets
+  extrasuite sheets create <title>            Create a new spreadsheet
 
 See `extrasuite sheet pull --help` for directory layout, flags, and key rules (self-contained).
 
@@ -41,18 +42,18 @@ Currently informational only on push:
 
 ## Commands
 
-  extrasuite sheet pull --help        Pull flags, folder layout, and key rules
-  extrasuite sheet diff --help        Preview requests and comment ops
-  extrasuite sheet push --help        Apply local changes
-  extrasuite sheet create --help      Create a new spreadsheet
-  extrasuite sheet share --help       Share with trusted contacts
-  extrasuite sheet batchUpdate --help Execute raw API requests directly
+  extrasuite sheets pull --help        Pull flags, folder layout, and key rules
+  extrasuite sheets diff --help        Preview requests and comment ops
+  extrasuite sheets push --help        Apply local changes
+  extrasuite sheets create --help      Create a new spreadsheet
+  extrasuite sheets share --help       Share with trusted contacts
+  extrasuite sheets batchUpdate --help Execute raw API requests directly
 
 ## Reference Docs
 
-  extrasuite sheet help                    List available reference topics
-  extrasuite sheet help formulas           All Google Sheets formulas, grouped by category
-  extrasuite sheet help formulas <name>    Syntax, summary, and official docs for one formula
-  extrasuite sheet help format-reference    format.json and dimension.json details
-  extrasuite sheet help features-reference  charts, filters, pivot tables, tables, named ranges
-  extrasuite sheet help comments-reference  comments.json format and limits
+  extrasuite sheets help                    List available reference topics
+  extrasuite sheets help formulas           All Google Sheets formulas, grouped by category
+  extrasuite sheets help formulas <name>    Syntax, summary, and official docs for one formula
+  extrasuite sheets help format-reference    format.json and dimension.json details
+  extrasuite sheets help features-reference  charts, filters, pivot tables, tables, named ranges
+  extrasuite sheets help comments-reference  comments.json format and limits

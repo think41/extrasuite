@@ -1,20 +1,16 @@
-Create a new Google Slides presentation and share it with your service account.
+Create a new Google Slides presentation, share it with your service account, and pull it locally.
 
 ## Usage
 
-  extrasuite slide create <title>
+  extrasuite slides create <title> [output_dir]
 
 ## Arguments
 
-  title    Title for the new presentation
+  title       Title for the new presentation
+  output_dir  Directory to pull the file into after creation (optional).
+              If omitted, creates <presentation_id>/ in the current directory.
 
 ## Output
 
 Prints the presentation URL and the service account email it was shared with.
-Also prints the pull command to start editing immediately.
-
-## Next Steps
-
-After creating, pull the presentation to start editing:
-
-  extrasuite slide pull <url>
+Then automatically pulls the presentation into output_dir (or <presentation_id>/).
