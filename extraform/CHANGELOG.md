@@ -2,6 +2,12 @@
 
 All notable changes to the extraform library will be documented in this file.
 
+## [0.3.1] - 2026-03-27
+
+### Changed
+
+- Removed stale auth guidance from package docs (auth is handled by `extrasuite` client).
+
 ## [0.3.0] - 2026-03-04
 
 ### Added
