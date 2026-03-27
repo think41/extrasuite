@@ -6,6 +6,8 @@ Accept, decline, or mark tentative for a calendar event you've been invited to.
 
 ## Flags
 
+  --reason TEXT  State the user's intent that led to this command (required). Also -r or -m.
+
   EVENT_ID            Event ID (from `calendar view` or `calendar search`)
   --response          Your response: accept, decline, or tentative (required)
   --comment TEXT      Optional message to include with your response
@@ -20,7 +22,7 @@ Accept, decline, or mark tentative for a calendar event you've been invited to.
 ## Examples
 
   # Accept an invite
-  extrasuite calendar rsvp abc123xyz --response accept
+  extrasuite calendar rsvp abc123xyz --response accept --reason "state the user's intent that led to this command"
 
   # Decline with a reason
   extrasuite calendar rsvp abc123xyz --response decline --comment "I have a conflict - will send a delegate"

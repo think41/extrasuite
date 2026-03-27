@@ -11,6 +11,8 @@ Download a Google Apps Script project to a local folder.
 
 ## Flags
 
+  --reason TEXT  State the user's intent that led to this command (required). Also -r or -m.
+
   --no-raw      Skip saving raw API responses (.raw/ folder)
 
 ## Output
@@ -25,4 +27,4 @@ Creates <output_dir>/<script_id>/ with:
 
 ## Example
 
-  extrasuite script pull https://script.google.com/d/abc123/edit
+  extrasuite script pull https://script.google.com/d/abc123/edit --reason "state the user's intent that led to this command"

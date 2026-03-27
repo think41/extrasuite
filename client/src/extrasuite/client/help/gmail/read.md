@@ -43,6 +43,8 @@ See `extrasuite gmail help whitelist-setup` for details.
 
 ## Options
 
+  --reason TEXT  State the user's intent that led to this command (required). Also -r or -m.
+
   --json    Output as JSON
 
 ## Whitelist Setup
@@ -52,7 +54,7 @@ See `extrasuite gmail help whitelist-setup` for configuration instructions.
 ## Examples
 
   # Read a message
-  extrasuite gmail read msg_abc123
+  extrasuite gmail read msg_abc123 --reason "state the user's intent that led to this command"
 
   # Read in JSON format
   extrasuite gmail read msg_abc123 --json

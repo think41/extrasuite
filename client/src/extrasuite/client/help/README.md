@@ -14,9 +14,12 @@ ExtraSuite - edit Google Workspace files with AI agents using a local pull-edit-
 
 ## Core Workflow (sheet, slide, doc, form, script)
 
-  extrasuite <module> pull <url> [output_dir]    # Convert google workspace file to local files inside <output_dir>/<file-id>
+  extrasuite <module> pull <url> --reason "state the user's intent that led to this command"
   # Edit files inside <output_dir>/<file-id>
-  extrasuite <module> push <folder>  # Identify changes made and apply them to the google workspace file
+  extrasuite <module> push <folder> --reason "state the user's intent that led to this command"
+
+--reason (also -r or -m) is required on every command that contacts the server.
+Omitting it exits immediately with an error.
 
 Make all changes locally and push once when done. Always re-pull before making further changes.
 

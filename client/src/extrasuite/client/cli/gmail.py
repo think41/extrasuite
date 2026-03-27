@@ -68,12 +68,11 @@ def cmd_gmail_compose(args: Any) -> None:
     """Save an email draft from a markdown file with front matter."""
     from extrasuite.client.google_api import create_gmail_draft
 
+    reason = _get_reason(args)
     attach = getattr(args, "attach", None)
     to, subject, body, cc, bcc, attachments = _parse_email_file_args(
         Path(args.file), cli_attachments=attach
     )
-
-    reason = _get_reason(args, default="Save email draft")
     cred = _get_credential(
         args,
         command={
@@ -102,12 +101,11 @@ def cmd_gmail_edit_draft(args: Any) -> None:
     """Update an existing Gmail draft from a markdown file with front matter."""
     from extrasuite.client.google_api import update_gmail_draft
 
+    reason = _get_reason(args)
     attach = getattr(args, "attach", None)
     to, subject, body, cc, bcc, attachments = _parse_email_file_args(
         Path(args.file), cli_attachments=attach
     )
-
-    reason = _get_reason(args, default="Edit email draft")
     cred = _get_credential(
         args,
         command={
@@ -141,6 +139,9 @@ def cmd_gmail_reply(args: Any) -> None:
         parse_email_file,
     )
 
+    # gmail.reply maps to [gmail.readonly + gmail.compose] on the server —
+    # a single request returns a token valid for both scopes.
+    reason = _get_reason(args)
     file_path = Path(args.file)
     if not file_path.exists():
         print(f"Error: File not found: {file_path}", file=sys.stderr)
@@ -158,10 +159,6 @@ def cmd_gmail_reply(args: Any) -> None:
                 print(f"Error: Attachment not found: {p}", file=sys.stderr)
                 sys.exit(1)
             attachments.append(p)
-
-    # gmail.reply maps to [gmail.readonly + gmail.compose] on the server —
-    # a single request returns a token valid for both scopes.
-    reason = _get_reason(args, default="Save reply draft")
     cred = _get_credential(
         args,
         command={
@@ -229,7 +226,7 @@ def cmd_gmail_list(args: Any) -> None:
     )
 
     query = getattr(args, "query", "") or ""
-    reason = _get_reason(args, default="List Gmail threads")
+    reason = _get_reason(args)
     cred = _get_credential(
         args,
         command={
@@ -286,7 +283,7 @@ def cmd_gmail_read(args: Any) -> None:
         get_thread,
     )
 
-    reason = _get_reason(args, default="Read Gmail thread")
+    reason = _get_reason(args)
     cred = _get_credential(
         args,
         command={"type": "gmail.read", "thread_id": args.thread_id},

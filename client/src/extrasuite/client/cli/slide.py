@@ -22,7 +22,7 @@ def cmd_slide_pull(args: Any) -> None:
 
     presentation_id = _parse_presentation_id(args.url)
     output_dir = Path(args.output_dir) if args.output_dir else Path()
-    reason = _get_reason(args, default="Pulling Google Slides")
+    reason = _get_reason(args)
     cred = _get_credential(
         args,
         command={"type": "slide.pull", "file_url": args.url, "file_name": ""},
@@ -67,7 +67,7 @@ def cmd_slide_push(args: Any) -> None:
     """Push changes to a Google Slides presentation."""
     from extraslide import GoogleSlidesTransport, SlidesClient
 
-    reason = _get_reason(args, default="Pushing changes to Google Slides")
+    reason = _get_reason(args)
     cred = _get_credential(
         args,
         command={"type": "slide.push", "file_url": "", "file_name": ""},

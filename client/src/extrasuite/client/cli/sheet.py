@@ -24,7 +24,7 @@ def cmd_sheet_pull(args: Any) -> None:
 
     spreadsheet_id = _parse_spreadsheet_id(args.url)
     output_dir = Path(args.output_dir) if args.output_dir else Path()
-    reason = _get_reason(args, default="Pulling Google Sheet")
+    reason = _get_reason(args)
     cred = _get_credential(
         args,
         command={"type": "sheet.pull", "file_url": args.url, "file_name": ""},
@@ -96,7 +96,7 @@ def cmd_sheet_push(args: Any) -> None:
 
     from extrasheet import GoogleSheetsTransport, SheetsClient
 
-    reason = _get_reason(args, default="Pushing changes to Google Sheet")
+    reason = _get_reason(args)
     cred = _get_credential(
         args,
         command={"type": "sheet.push", "file_url": "", "file_name": ""},
@@ -125,6 +125,7 @@ def cmd_sheet_batchupdate(args: Any) -> None:
 
     from extrasheet import GoogleSheetsTransport
 
+    reason = _get_reason(args)
     spreadsheet_id = _parse_spreadsheet_id(args.url)
     requests_path = Path(args.requests_file)
     if not requests_path.exists():
@@ -141,8 +142,6 @@ def cmd_sheet_batchupdate(args: Any) -> None:
             "Error: Expected a list of requests or {requests: [...]}", file=sys.stderr
         )
         sys.exit(1)
-
-    reason = _get_reason(args, default="Executing batchUpdate on Google Sheet")
     cred = _get_credential(
         args,
         command={

@@ -11,6 +11,8 @@ Download a Google Slides presentation to a local folder.
 
 ## Flags
 
+  --reason TEXT  State the user's intent that led to this command (required). Also -r or -m.
+
   --no-raw      Skip saving raw API responses (.raw/ folder)
 
 ## Output
@@ -47,5 +49,5 @@ For SML syntax, see: extrasuite slide help sml-reference
 
 ## Example
 
-  extrasuite slide pull https://docs.google.com/presentation/d/abc123
+  extrasuite slide pull https://docs.google.com/presentation/d/abc123 --reason "state the user's intent that led to this command"
   extrasuite slide pull https://docs.google.com/presentation/d/abc123 /tmp/slides

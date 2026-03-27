@@ -8,6 +8,8 @@ Search Google Calendar events by title, description, or attendee email.
 
 ## Flags
 
+  --reason TEXT  State the user's intent that led to this command (required). Also -r or -m.
+
   --query TEXT        Search text matched against title and description
   --attendee EMAIL    Filter to events that include this attendee's email
   --from DATE         Start of search range (default: today)
@@ -26,7 +28,7 @@ attendees, and conferencing links.
 ## Examples
 
   # Find all meetings mentioning "Acme"
-  extrasuite calendar search --query "Acme"
+  extrasuite calendar search --query "Acme" --reason "state the user's intent that led to this command"
 
   # Find all meetings with a specific colleague
   extrasuite calendar search --attendee alice@example.com

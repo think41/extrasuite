@@ -9,6 +9,8 @@ access to view the other person's actual events.
 
 ## Flags
 
+  --reason TEXT  State the user's intent that led to this command (required). Also -r or -m.
+
   --attendees EMAIL   One or more email addresses (space-separated)
   --when RANGE        Time range to check (default: next-week)
 
@@ -28,7 +30,7 @@ and excluded from the common free slots calculation.
 ## Examples
 
   # Find when Alice and Bob are both free next week
-  extrasuite calendar freebusy --attendees alice@example.com bob@example.com
+  extrasuite calendar freebusy --attendees alice@example.com bob@example.com --reason "state the user's intent that led to this command"
 
   # Check a larger group for this week
   extrasuite calendar freebusy --attendees a@co.com b@co.com c@co.com --when this-week
