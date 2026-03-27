@@ -2,6 +2,12 @@
 
 All notable changes to the extraslide library will be documented in this file.
 
+## [0.2.3] - 2026-03-27
+
+### Changed
+
+- Removed stale auth guidance from package docs (auth is handled by `extrasuite` client).
+
 ## [0.2.2] - 2026-03-04
 
 ### Changed
