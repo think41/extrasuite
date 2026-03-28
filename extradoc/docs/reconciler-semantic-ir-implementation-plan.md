@@ -907,7 +907,11 @@ Deliverable:
 6. make `v2` the default active reconciler once markdown/XML workflow parity is
    established and the remaining unsupported boundaries are either implemented
    or documented as true transport limits
-7. remove the legacy reconciler path only after:
+7. preserve markdown-authored structure on inserted paragraph slices by carrying
+   paragraph role plus inline span styles through semantic edits and lowering
+8. support mixed-section slice edits where a list block is inserted or deleted
+   beside existing paragraph content, instead of silently dropping the change
+9. remove the legacy reconciler path only after:
    1. markdown workflow parity is established
    2. XML workflow parity is established
    3. the feature matrix is explicit for any residual transport-broken cases
@@ -924,6 +928,10 @@ Tests:
 6. pulled markdown folder edits can be diffed under both versions
 7. CLI help/docs mention that `v2` is default and `v1` remains available as a
    fallback during the migration period
+8. `pull-md` -> edit inserted heading/link markdown -> `push-md` -> `pull-md`
+   preserves heading markers and inline links
+9. `pull-md` -> insert list beside existing paragraph content -> `push-md`
+   produces deterministic list creation requests under `v2`
 
 Commit value:
 

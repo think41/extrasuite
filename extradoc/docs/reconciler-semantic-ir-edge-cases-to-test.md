@@ -15,6 +15,7 @@ Each entry captures:
 | Scenario | Historical Evidence | Required Invariant |
 |---|---|---|
 | Insert first visible content into an otherwise empty tab body | commit `dae13d5`; `extradoc/src/extradoc/reconcile/_generators.py` empty-doc handling | The first body section is structural. Lowering must insert at the first legal position inside that section, never at index `0`. |
+| Insert first markdown heading/link content into an otherwise empty tab body | live `reconcile_v2` markdown workflow verification | Paragraph-slice semantic edits must retain paragraph role and inline span styles, not just plain text, or inserted markdown structure is lost on re-pull. |
 | Delete or replace all visible content in a story | `extradoc/docs/googledocs/rules-behavior.md`; `DeleteContentRangeRequest.md` | Final story newline is a sentinel. No delete range may consume it. |
 | Delete across text containing emoji / surrogate pairs | `extradoc/tests/test_mock_api.py` UTF-16/surrogate tests; `extradoc/tests/test_reconcile.py` UTF-16 tests | Semantic text diff may operate on graphemes, but lowering must emit UTF-16 ranges that never split a surrogate pair. |
 | Insert before a table, TOC, or section break | commits `8daf08e`, `bc50de3`; `rules-behavior.md` | Structural block starts are not text insertion points. Lowering must target a legal carrier paragraph or `endOfSegmentLocation`, never the structural start marker. |
@@ -54,6 +55,7 @@ Each entry captures:
 | Add multiple consecutive list items as one semantic list | commit `7cbaa9c`; `extradoc/tests/test_reconcile.py` list batching tests | List continuity is a semantic run, not one request per paragraph. |
 | Append list items where lowering needs the new item content, not only the count | live confidence-sprint fixtures | Semantic edits must carry appended list fragments so lowering can emit `insertText` and bullet requests deterministically. |
 | Insert paragraph between two list runs | `extradoc/tests/test_reconcile.py` list batching tests | Split/merge behavior must be explicit in list space, not inferred from `listId`. |
+| Insert a new list block beside existing paragraph content in one section | live `reconcile_v2` markdown workflow verification | Section diff must have a mixed-block slice planner; once a section contains both paragraphs and lists, unmatched list slices must still lower semantically instead of disappearing. |
 | Relevel list items | `extradoc/docs/googledocs/lists.md` | Releveling is a transport choreography (`deleteParagraphBullets` + tabs + recreate bullets) planned from semantic list levels. |
 | Relevel one existing list item on a live doc | live `reconcile_v2` replay fixture | List fingerprints and semantic equality must include item nesting levels, or the section-topology fast path will erase real list diffs. |
 | Full-paragraph style update in list context | `rules-behavior.md`; implementation plan Task 5 | Bullet styling side effects are part of planning, not post-hoc verifier suppression. |

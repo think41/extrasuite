@@ -9,10 +9,12 @@ from extradoc.reconcile_v2.diff import (
     AppendListItemsEdit,
     CreateFootnoteEdit,
     CreateSectionAttachmentEdit,
+    DeleteListBlockEdit,
     DeleteSectionAttachmentEdit,
     DeleteSectionEdit,
     DeleteTableColumnEdit,
     DeleteTableRowEdit,
+    InsertListBlockEdit,
     InsertSectionEdit,
     InsertTableColumnEdit,
     InsertTableRowEdit,
@@ -30,6 +32,7 @@ from extradoc.reconcile_v2.diff import (
     UpdateTableRowStyleEdit,
 )
 from extradoc.reconcile_v2.errors import UnsupportedSpikeError
+from extradoc.reconcile_v2.ir import ParagraphIR, TextSpanIR
 from extradoc.reconcile_v2.layout import (
     BodyLayout,
     ListLocation,
@@ -64,6 +67,7 @@ from extradoc.reconcile_v2.requests import (
     make_update_table_cell_style,
     make_update_table_column_properties,
     make_update_table_row_style,
+    make_update_text_style,
 )
 
 if TYPE_CHECKING:
@@ -95,6 +99,50 @@ def lower_document_edits(
                     end_index=paragraph.end_index,
                     tab_id=edit.tab_id,
                     role=edit.after_role,
+                )
+            )
+        elif isinstance(edit, InsertListBlockEdit):
+            story = story_layouts[f"{edit.tab_id}:body"]
+            insert_index, prefix_newline, suffix_newline = paragraph_insertion_site(
+                story,
+                section_index=edit.section_index,
+                block_index=edit.block_index,
+            )
+            list_text = "\n".join(
+                ("\t" * item.level) + item.text for item in edit.items
+            )
+            if list_text:
+                if prefix_newline:
+                    list_text = f"\n{list_text}"
+                if suffix_newline:
+                    list_text = f"{list_text}\n"
+                requests.append(
+                    make_insert_text(
+                        index=insert_index,
+                        tab_id=edit.tab_id,
+                        text=list_text,
+                    )
+                )
+                bullet_start, bullet_end = _inserted_list_range(
+                    start_index=insert_index,
+                    items=edit.items,
+                    prefix_newline=prefix_newline,
+                )
+                requests.append(
+                    make_create_paragraph_bullets(
+                        start_index=bullet_start,
+                        end_index=bullet_end,
+                        tab_id=edit.tab_id,
+                        bullet_preset=bullet_preset_for_kind(edit.list_kind),
+                    )
+                )
+        elif isinstance(edit, DeleteListBlockEdit):
+            list_location = _list_at(layout, edit.section_index, edit.block_index)
+            requests.append(
+                make_delete_content_range(
+                    start_index=list_location.start_index,
+                    end_index=list_location.end_index,
+                    tab_id=edit.tab_id,
                 )
             )
         elif isinstance(edit, AppendListItemsEdit):
@@ -223,6 +271,8 @@ def lower_document_edits(
         elif isinstance(edit, ReplaceParagraphSliceEdit):
             story = story_layouts[edit.story_id]
             inserted_text = "\n".join(fragment.text for fragment in edit.inserted_paragraphs)
+            prefix_newline = False
+            suffix_newline = False
             if edit.delete_block_count > 0:
                 paragraphs = paragraph_slice(
                     story,
@@ -259,6 +309,29 @@ def lower_document_edits(
                         tab_id=story.route.tab_id,
                         segment_id=story.route.segment_id,
                         text=inserted_text,
+                    )
+                )
+                paragraph_locations = _inserted_paragraph_locations(
+                    start_index=delete_start,
+                    paragraphs=tuple(
+                        fragment.paragraph for fragment in edit.inserted_paragraphs
+                    ),
+                    prefix_newline=prefix_newline,
+                )
+                for paragraph, (paragraph_start, paragraph_end) in paragraph_locations:
+                    if paragraph.role != "NORMAL_TEXT":
+                        requests.append(
+                            make_update_paragraph_role(
+                                start_index=paragraph_start,
+                                end_index=paragraph_end,
+                                tab_id=story.route.tab_id,
+                                role=paragraph.role,
+                            )
+                        )
+                requests.extend(
+                    _lower_inserted_text_styles(
+                        route=story.route,
+                        paragraph_locations=paragraph_locations,
                     )
                 )
         elif isinstance(edit, InsertTableRowEdit):
@@ -466,6 +539,103 @@ def _table_at(layout: BodyLayout, section_index: int, block_index: int) -> Table
     if not isinstance(block, TableLocation):
         raise TypeError(f"Expected table at section {section_index} block {block_index}")
     return block
+
+
+def _inserted_paragraph_locations(
+    *,
+    start_index: int,
+    paragraphs: tuple[ParagraphIR, ...],
+    prefix_newline: bool,
+) -> tuple[tuple[ParagraphIR, tuple[int, int]], ...]:
+    cursor = start_index + (1 if prefix_newline else 0)
+    locations: list[tuple[ParagraphIR, tuple[int, int]]] = []
+    for paragraph in paragraphs:
+        text_end = cursor + utf16_len(_paragraph_text(paragraph))
+        paragraph_end = text_end + 1
+        locations.append((paragraph, (cursor, paragraph_end)))
+        cursor = paragraph_end
+    return tuple(locations)
+
+
+def _inserted_list_range(
+    *,
+    start_index: int,
+    items: tuple[Any, ...],
+    prefix_newline: bool,
+) -> tuple[int, int]:
+    cursor = start_index + (1 if prefix_newline else 0)
+    range_start = cursor
+    range_end = cursor
+    for item in items:
+        item_text = ("\t" * item.level) + item.text
+        range_end = cursor + utf16_len(item_text) + 1
+        cursor = range_end
+    return range_start, range_end
+
+
+def _lower_inserted_text_styles(
+    *,
+    route: Any,
+    paragraph_locations: tuple[tuple[ParagraphIR, tuple[int, int]], ...],
+) -> list[dict[str, Any]]:
+    requests: list[dict[str, Any]] = []
+    for paragraph, (paragraph_start, _paragraph_end) in paragraph_locations:
+        cursor = paragraph_start
+        style_ranges: list[tuple[int, int, dict[str, Any], tuple[str, ...]]] = []
+        pending_range: tuple[int, int, dict[str, Any], tuple[str, ...]] | None = None
+        for inline in paragraph.inlines:
+            if not isinstance(inline, TextSpanIR):
+                if pending_range is not None:
+                    style_ranges.append(pending_range)
+                    pending_range = None
+                continue
+            run_len = utf16_len(inline.text)
+            run_start = cursor
+            run_end = cursor + run_len
+            cursor = run_end
+            style_dict, fields = _text_style_delta(inline.explicit_text_style)
+            if not fields:
+                if pending_range is not None:
+                    style_ranges.append(pending_range)
+                    pending_range = None
+                continue
+            if (
+                pending_range is not None
+                and pending_range[1] == run_start
+                and pending_range[2] == style_dict
+                and pending_range[3] == fields
+            ):
+                pending_range = (pending_range[0], run_end, style_dict, fields)
+            else:
+                if pending_range is not None:
+                    style_ranges.append(pending_range)
+                pending_range = (run_start, run_end, style_dict, fields)
+        if pending_range is not None:
+            style_ranges.append(pending_range)
+        for start_index, end_index, style_dict, fields in reversed(style_ranges):
+            requests.append(
+                make_update_text_style(
+                    start_index=start_index,
+                    end_index=end_index,
+                    tab_id=route.tab_id,
+                    segment_id=route.segment_id,
+                    text_style=style_dict,
+                    fields=fields,
+                )
+            )
+    return requests
+
+
+def _text_style_delta(style: dict[str, Any]) -> tuple[dict[str, Any], tuple[str, ...]]:
+    fields = tuple(sorted(key for key, value in style.items() if value is not None))
+    return {key: style[key] for key in fields}, fields
+
+
+def _paragraph_text(paragraph: ParagraphIR) -> str:
+    return "".join(
+        inline.text for inline in paragraph.inlines if isinstance(inline, TextSpanIR)
+    )
+
 
 def _table_cell_text_start(story_layouts: dict[str, Any], story_id: str) -> int:
     story = story_layouts.get(story_id)

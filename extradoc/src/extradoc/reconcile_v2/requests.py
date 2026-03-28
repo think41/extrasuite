@@ -105,6 +105,31 @@ def make_update_paragraph_role(
     }
 
 
+def make_update_text_style(
+    *,
+    start_index: int,
+    end_index: int,
+    tab_id: Any,
+    text_style: dict[str, Any],
+    fields: tuple[str, ...] | list[str],
+    segment_id: str | None = None,
+) -> dict[str, Any]:
+    range_: dict[str, Any] = {
+        "startIndex": start_index,
+        "endIndex": end_index,
+        "tabId": tab_id,
+    }
+    if segment_id:
+        range_["segmentId"] = segment_id
+    return {
+        "updateTextStyle": {
+            "range": range_,
+            "textStyle": text_style,
+            "fields": ",".join(fields),
+        }
+    }
+
+
 def make_update_section_attachment(
     *,
     start_index: int,

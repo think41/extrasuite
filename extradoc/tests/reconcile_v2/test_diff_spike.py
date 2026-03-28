@@ -7,11 +7,14 @@ from pathlib import Path
 import pytest
 
 from extradoc.api_types._generated import Document
+from extradoc.reconcile import reindex_document
 from extradoc.reconcile_v2.diff import (
     AppendListItemsEdit,
+    DeleteListBlockEdit,
     DeleteSectionEdit,
     DeleteTableColumnEdit,
     DeleteTableRowEdit,
+    InsertListBlockEdit,
     InsertSectionEdit,
     InsertTableColumnEdit,
     InsertTableRowEdit,
@@ -30,6 +33,7 @@ from extradoc.reconcile_v2.diff import (
     summarize_semantic_edits,
 )
 from extradoc.reconcile_v2.errors import UnsupportedSpikeError
+from extradoc.serde._from_markdown import markdown_to_document
 
 from .helpers import load_fixture_pair as load_fixture_pair_shared
 
@@ -187,6 +191,60 @@ def test_list_relevel_fixture_emits_relevel_edit() -> None:
     assert edits[0].after_levels == (0, 1)
     assert summarize_semantic_edits(edits) == [
         "tab t.0: section 0 list 0 relevel 1 item(s) in BULLETED"
+    ]
+
+
+def test_mixed_section_list_insert_emits_list_block_insert() -> None:
+    base = reindex_document(
+        markdown_to_document(
+            {"Tab_1": "Intro\n"},
+            document_id="mixed-list-insert",
+            title="Mixed List Insert",
+            tab_ids={"Tab_1": "t.0"},
+        )
+    )
+    desired = reindex_document(
+        markdown_to_document(
+            {"Tab_1": "Intro\n\n- one\n- two\n"},
+            document_id="mixed-list-insert",
+            title="Mixed List Insert",
+            tab_ids={"Tab_1": "t.0"},
+        )
+    )
+
+    edits = diff_documents(base, desired)
+
+    assert len(edits) == 1
+    assert isinstance(edits[0], InsertListBlockEdit)
+    assert summarize_semantic_edits(edits) == [
+        "tab t.0: section 0 insert BULLETED list at block 1 with 2 item(s)"
+    ]
+
+
+def test_mixed_section_list_delete_emits_list_block_delete() -> None:
+    base = reindex_document(
+        markdown_to_document(
+            {"Tab_1": "Intro\n\n- one\n- two\n"},
+            document_id="mixed-list-delete",
+            title="Mixed List Delete",
+            tab_ids={"Tab_1": "t.0"},
+        )
+    )
+    desired = reindex_document(
+        markdown_to_document(
+            {"Tab_1": "Intro\n"},
+            document_id="mixed-list-delete",
+            title="Mixed List Delete",
+            tab_ids={"Tab_1": "t.0"},
+        )
+    )
+
+    edits = diff_documents(base, desired)
+
+    assert len(edits) == 1
+    assert isinstance(edits[0], DeleteListBlockEdit)
+    assert summarize_semantic_edits(edits) == [
+        "tab t.0: section 0 delete list at block 1"
     ]
 
 

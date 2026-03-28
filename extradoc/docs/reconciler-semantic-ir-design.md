@@ -317,6 +317,13 @@ This is the elegant design direction. Body text, header text, and table-cell
 text are not separate feature families. They are story-local text edits over
 the same recursive model.
 
+Live markdown workflow verification added two constraints:
+
+1. paragraph fragments must retain paragraph role plus inline span styles, not
+   just plain text, or inserted headings and links collapse on round-trip
+2. insertion-only paragraph slices and replacement paragraph slices are
+   different lowering cases and need distinct anchor handling
+
 ### 4. End-of-story and end-of-paragraph newlines are structural
 
 Every story has a terminal newline requirement. That newline is not modeled as
@@ -748,6 +755,15 @@ Consequence:
 List continuity is now explicit. Appending a single list item to an existing
 list is a list-item insertion, not a paragraph insertion plus a hopeful bullet
 request.
+
+Live markdown workflow verification added one more requirement:
+
+1. once a section contains mixed block kinds, section diff still needs a
+   slice-level planner; otherwise simple "paragraph plus inserted list" edits
+   disappear because the paragraph-only fast path no longer applies
+2. the right semantic shape is still structural: paragraph-slice edits for
+   unmatched paragraph runs, and first-class list-block insert/delete edits for
+   unmatched list runs
 
 ### Table diff
 

@@ -6,12 +6,14 @@ from pathlib import Path
 import pytest
 
 from extradoc.api_types._generated import Document
+from extradoc.reconcile import reindex_document
 from extradoc.reconcile_v2.api import (
     canonical_document_signature,
     canonicalize_transport_document,
     lower_semantic_diff,
 )
 from extradoc.reconcile_v2.errors import UnsupportedSpikeError
+from extradoc.serde._from_markdown import markdown_to_document
 
 from .helpers import load_expected_lowered_requests
 
@@ -594,6 +596,111 @@ def test_lower_semantic_diff_for_current_fixture_slice() -> None:
     for name, expected in cases.items():
         base, desired = _load_fixture_pair(name)
         assert lower_semantic_diff(base, desired) == expected
+
+
+def test_lower_semantic_diff_preserves_inserted_heading_and_link_styles() -> None:
+    base = reindex_document(
+        markdown_to_document(
+            {"Tab_1": ""},
+            document_id="style-insert",
+            title="Style Insert",
+            tab_ids={"Tab_1": "t.0"},
+        )
+    )
+    desired = reindex_document(
+        markdown_to_document(
+            {"Tab_1": "# Delivery Plan\n\nSee [spec](https://example.com).\n"},
+            document_id="style-insert",
+            title="Style Insert",
+            tab_ids={"Tab_1": "t.0"},
+        )
+    )
+
+    requests = lower_semantic_diff(base, desired)
+
+    assert requests == [
+        {
+            "insertText": {
+                "location": {"index": 1, "tabId": "t.0"},
+                "text": "Delivery Plan\nSee spec.",
+            }
+        },
+        {
+            "updateParagraphStyle": {
+                "range": {"startIndex": 1, "endIndex": 15, "tabId": "t.0"},
+                "paragraphStyle": {"namedStyleType": "HEADING_1"},
+                "fields": "namedStyleType",
+            }
+        },
+        {
+            "updateTextStyle": {
+                "range": {"startIndex": 19, "endIndex": 23, "tabId": "t.0"},
+                "textStyle": {"link": {"url": "https://example.com"}},
+                "fields": "link",
+            }
+        },
+    ]
+
+
+def test_lower_semantic_diff_supports_mixed_section_list_insert() -> None:
+    base = reindex_document(
+        markdown_to_document(
+            {"Tab_1": "Intro\n"},
+            document_id="mixed-list-insert",
+            title="Mixed List Insert",
+            tab_ids={"Tab_1": "t.0"},
+        )
+    )
+    desired = reindex_document(
+        markdown_to_document(
+            {"Tab_1": "Intro\n\n- one\n- two\n"},
+            document_id="mixed-list-insert",
+            title="Mixed List Insert",
+            tab_ids={"Tab_1": "t.0"},
+        )
+    )
+
+    assert lower_semantic_diff(base, desired) == [
+        {
+            "insertText": {
+                "location": {"index": 7, "tabId": "t.0"},
+                "text": "one\ntwo\n",
+            }
+        },
+        {
+            "createParagraphBullets": {
+                "range": {"startIndex": 7, "endIndex": 15, "tabId": "t.0"},
+                "bulletPreset": "BULLET_DISC_CIRCLE_SQUARE",
+            }
+        },
+    ]
+
+
+def test_lower_semantic_diff_supports_mixed_section_list_delete() -> None:
+    base = reindex_document(
+        markdown_to_document(
+            {"Tab_1": "Intro\n\n- one\n- two\n"},
+            document_id="mixed-list-delete",
+            title="Mixed List Delete",
+            tab_ids={"Tab_1": "t.0"},
+        )
+    )
+    desired = reindex_document(
+        markdown_to_document(
+            {"Tab_1": "Intro\n"},
+            document_id="mixed-list-delete",
+            title="Mixed List Delete",
+            tab_ids={"Tab_1": "t.0"},
+        )
+    )
+
+    assert lower_semantic_diff(base, desired) == [
+        {
+            "deleteContentRange": {
+                "range": {"startIndex": 7, "endIndex": 15, "tabId": "t.0"}
+            }
+        }
+    ]
 
     header_base, header_desired = _load_fixture_pair("header_text_replace")
     header_requests = lower_semantic_diff(header_base, header_desired)

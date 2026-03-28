@@ -263,6 +263,78 @@ def test_diff_v2_detects_first_markdown_content_in_empty_doc(
     assert result.batches
 
 
+def test_diff_v2_preserves_inserted_markdown_heading_and_link_styles(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    folder = _setup_markdown_folder(
+        tmp_path,
+        doc_id="test-v2-rich-first-push",
+        md_content="",
+    )
+    (folder / "Tab_1.md").write_text(
+        "# Delivery Plan\n\nSee [spec](https://example.com).\n",
+        encoding="utf-8",
+    )
+
+    raw_doc = markdown_to_document(
+        {"Tab_1": ""},
+        document_id="test-v2-rich-first-push",
+        title="Test",
+        tab_ids={"Tab_1": "t.0"},
+    )
+    raw_dir = folder / ".raw"
+    raw_dir.mkdir()
+    (raw_dir / "document.json").write_text(
+        reindex_document(raw_doc).model_dump_json(by_alias=True, exclude_none=True),
+        encoding="utf-8",
+    )
+
+    monkeypatch.delenv(RECONCILER_ENV_VAR, raising=False)
+
+    client = DocsClient.__new__(DocsClient)
+    result = client.diff(str(folder))
+
+    requests = [request for batch in result.batches for request in batch.requests]
+    assert result.reconciler_version == "v2"
+    assert any(request.update_paragraph_style for request in requests)
+    assert any(request.update_text_style for request in requests)
+
+
+def test_diff_v2_detects_list_insert_beside_existing_paragraph(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    folder = _setup_markdown_folder(
+        tmp_path,
+        doc_id="test-v2-list-insert",
+        md_content="Intro\n",
+    )
+    (folder / "Tab_1.md").write_text("Intro\n\n- one\n- two\n", encoding="utf-8")
+
+    raw_doc = markdown_to_document(
+        {"Tab_1": "Intro\n"},
+        document_id="test-v2-list-insert",
+        title="Test",
+        tab_ids={"Tab_1": "t.0"},
+    )
+    raw_dir = folder / ".raw"
+    raw_dir.mkdir()
+    (raw_dir / "document.json").write_text(
+        reindex_document(raw_doc).model_dump_json(by_alias=True, exclude_none=True),
+        encoding="utf-8",
+    )
+
+    monkeypatch.delenv(RECONCILER_ENV_VAR, raising=False)
+
+    client = DocsClient.__new__(DocsClient)
+    result = client.diff(str(folder))
+
+    requests = [request for batch in result.batches for request in batch.requests]
+    assert result.reconciler_version == "v2"
+    assert any(request.create_paragraph_bullets for request in requests)
+
+
 @pytest.mark.asyncio
 async def test_push_uses_v1_batch_execution(
     monkeypatch: pytest.MonkeyPatch,
