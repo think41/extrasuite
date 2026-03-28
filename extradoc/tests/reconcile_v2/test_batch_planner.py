@@ -1,7 +1,7 @@
 from __future__ import annotations
 
-from extradoc.api_types._generated import Document
-from extradoc.reconcile_v2.api import lower_semantic_diff_batches
+from extradoc.api_types._generated import BatchUpdateDocumentRequest, Document
+from extradoc.reconcile_v2.api import lower_semantic_diff_batches, reconcile
 
 from .helpers import (
     load_expected_lowered_batches,
@@ -46,6 +46,17 @@ def test_create_tab_batches_ignore_desired_new_tab_transport_indices() -> None:
         base,
         desired_without_indices,
     ) == load_expected_lowered_batches("create_tab_table_write")
+
+
+def test_reconcile_returns_batch_update_models() -> None:
+    base, desired = load_fixture_pair("create_tab_table_write")
+
+    batches = reconcile(base, desired)
+
+    assert all(isinstance(batch, BatchUpdateDocumentRequest) for batch in batches)
+    assert [batch.model_dump(by_alias=True, exclude_none=True)["requests"] for batch in batches] == (
+        load_expected_lowered_batches("create_tab_table_write")
+    )
 
 
 def _strip_indices(elements: list[dict]) -> None:

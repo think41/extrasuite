@@ -4,6 +4,7 @@ from __future__ import annotations
 
 from typing import TYPE_CHECKING
 
+from extradoc.api_types._generated import BatchUpdateDocumentRequest
 from extradoc.reconcile_v2.batches import lower_document_batches
 from extradoc.reconcile_v2.canonical import canonical_signature, canonicalize_document
 from extradoc.reconcile_v2.diff import diff_documents
@@ -12,7 +13,7 @@ from extradoc.reconcile_v2.parse import parse_document
 from extradoc.reconcile_v2.testing import summarize_document_ir
 
 if TYPE_CHECKING:
-    from extradoc.api_types._generated import BatchUpdateDocumentRequest, Document
+    from extradoc.api_types._generated import Document
     from extradoc.reconcile_v2.canonical import CanonicalDocumentSignature
     from extradoc.reconcile_v2.diff import SemanticEdit
     from extradoc.reconcile_v2.ir import DocumentIR
@@ -57,9 +58,14 @@ def lower_semantic_diff_batches(
 
 
 def reconcile(base: Document, desired: Document) -> list[BatchUpdateDocumentRequest]:
-    """Return a batchUpdate plan transforming ``base`` into ``desired``.
+    """Return one or more batchUpdate plans transforming ``base`` into ``desired``.
 
-    This entrypoint is intentionally a stub until the new reconciler is
-    implemented task-by-task under ``reconcile_v2``.
+    The semantic reconciler can require multiple request batches when later
+    batches depend on response-derived IDs such as newly created tab IDs.
+    Callers should execute the returned batches sequentially, resolving any
+    deferred placeholders between batches.
     """
-    raise NotImplementedError("extradoc.reconcile_v2 is not implemented yet")
+    return [
+        BatchUpdateDocumentRequest.model_validate({"requests": batch})
+        for batch in lower_document_batches(base, desired)
+    ]
