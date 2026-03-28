@@ -14,6 +14,7 @@ from extradoc.reconcile_v2.diff import (
     InsertTableColumnEdit,
     InsertTableRowEdit,
     MergeTableCellsEdit,
+    RelevelListItemsEdit,
     ReplaceListSpecEdit,
     ReplaceNamedRangesEdit,
     ReplaceParagraphSliceEdit,
@@ -116,6 +117,45 @@ def lower_document_edits(base: Document, edits: list[SemanticEdit]) -> list[dict
                     end_index=list_location.end_index,
                     tab_id=edit.tab_id,
                     bullet_preset=bullet_preset_for_kind(edit.after_kind),
+                )
+            )
+        elif isinstance(edit, RelevelListItemsEdit):
+            list_location = _list_at(layout, edit.section_index, edit.block_index)
+            requests.append(
+                make_delete_paragraph_bullets(
+                    start_index=list_location.start_index,
+                    end_index=list_location.end_index,
+                    tab_id=edit.tab_id,
+                )
+            )
+            cumulative_after_levels = 0
+            for item_index, item_location in enumerate(list_location.items):
+                before_level = edit.before_levels[item_index]
+                after_level = edit.after_levels[item_index]
+                current_index = item_location.start_index + cumulative_after_levels
+                if after_level > before_level:
+                    requests.append(
+                        make_insert_text(
+                            index=current_index,
+                            tab_id=edit.tab_id,
+                            text="\t" * (after_level - before_level),
+                        )
+                    )
+                elif after_level < before_level:
+                    requests.append(
+                        make_delete_content_range(
+                            start_index=current_index,
+                            end_index=current_index + (before_level - after_level),
+                            tab_id=edit.tab_id,
+                        )
+                    )
+                cumulative_after_levels += after_level
+            requests.append(
+                make_create_paragraph_bullets(
+                    start_index=list_location.start_index,
+                    end_index=list_location.end_index + sum(edit.after_levels),
+                    tab_id=edit.tab_id,
+                    bullet_preset=bullet_preset_for_kind(edit.list_kind),
                 )
             )
         elif isinstance(edit, InsertSectionEdit):

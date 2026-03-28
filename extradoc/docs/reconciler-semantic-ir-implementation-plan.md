@@ -72,6 +72,50 @@ Every task below must:
 2. add direct contract tests,
 3. be cleanly committable.
 
+## Fixture Capture Standard
+
+Confidence sprints are only valid if they leave behind reusable transport
+fixtures and repeatable assertions. Ad hoc live probing without durable capture
+does not count as progress.
+
+For every new supported scenario, the default standard is:
+
+1. capture a tiny purpose-built live Docs fixture pair
+2. store `base.json` and `desired.json` under
+   `tests/reconcile_v2/fixtures/<name>/`
+3. store a human-readable `base.summary.txt` and `desired.summary.txt`
+4. store any setup choreography needed to recreate the base state, such as
+   `base.md`, `base.setup.requests.json`, or `base.header.txt`
+5. if recreating the base state requires sequential setup batches or
+   response-derived IDs, store `base.setup.batches.json` with explicit
+   placeholders that the replay harness resolves from prior batch responses
+6. store the transport mutation used to create the desired state as
+   `desired.requests.json`
+7. store the expected lowered request sequence adjacent to the fixture as a
+   fixture artifact rather than only as an inline test constant
+8. add an offline exact-request assertion
+9. add an explicit semantic diff assertion
+10. add a live replay case through the shared replay harness when the scenario is
+   in the supported slice
+
+For every new unsupported scenario, the default standard is:
+
+1. capture the same `base.json` / `desired.json` pair
+2. store the transport probe used to demonstrate the target behavior
+3. add an explicit rejection assertion with the expected error text
+4. document the unsupported boundary in the design and edge-case docs
+
+The reusable harness for this work lives in:
+
+1. `extradoc/scripts/capture_reconcile_v2_fixtures.py`
+2. `extradoc/scripts/replay_reconcile_v2_fixtures.py`
+3. `extradoc/tests/reconcile_v2/test_diff_spike.py`
+4. `extradoc/tests/reconcile_v2/test_canonical_and_lower_spike.py`
+5. `extradoc/tests/reconcile_v2/helpers.py`
+
+If a sprint cannot meet this standard, it should first improve the harness
+before expanding feature scope.
+
 ## Module Layout
 
 Initial module layout:

@@ -55,6 +55,7 @@ Each entry captures:
 | Append list items where lowering needs the new item content, not only the count | live confidence-sprint fixtures | Semantic edits must carry appended list fragments so lowering can emit `insertText` and bullet requests deterministically. |
 | Insert paragraph between two list runs | `extradoc/tests/test_reconcile.py` list batching tests | Split/merge behavior must be explicit in list space, not inferred from `listId`. |
 | Relevel list items | `extradoc/docs/googledocs/lists.md` | Releveling is a transport choreography (`deleteParagraphBullets` + tabs + recreate bullets) planned from semantic list levels. |
+| Relevel one existing list item on a live doc | live `reconcile_v2` replay fixture | List fingerprints and semantic equality must include item nesting levels, or the section-topology fast path will erase real list diffs. |
 | Full-paragraph style update in list context | `rules-behavior.md`; implementation plan Task 5 | Bullet styling side effects are part of planning, not post-hoc verifier suppression. |
 | Paragraph style inheritance bleed across inserted blocks | commit `365c44e`; `extradoc/src/extradoc/client.py` raw-base normalization comments | Effective style must be resolved separately from explicit style, and lowering must clear/restore explicit deltas deterministically. |
 | Heading-to-normal change with no visible formatting delta | long-running style normalization pain point | Semantic equality must include paragraph role/style intent, not only current effective rendering. |
@@ -80,6 +81,7 @@ Each entry captures:
 | New tab with header/footer in a document that already has tabs | `client/EXTRADOC_BUGS.md` BUG-8 | Lowering must consult a transport capability matrix and explicitly reject semantically-valid but API-broken transforms. |
 | Tab hierarchy and child tabs | `tabs.md`; design goal | Reconciler must preserve tree topology, not flatten tabs into a list. |
 | Requests without `tabId` silently hit first tab | `tabs.md`; multiple historical tab bugs | Lowering must treat `tabId` as mandatory transport routing except where the API explicitly forbids it. |
+| Replay a second-tab edit onto a fresh live doc whose generated second-tab `tabId` differs from the captured fixture | live `reconcile_v2` replay fixture | Tab matching must use structural tab position/topology, not captured transport `tabId`, while lowering still emits the live base tab ID. |
 
 ## Anchored Extras And Semantic Metadata
 
@@ -98,6 +100,7 @@ Each entry captures:
 |---|---|---|
 | Body edits combined with header/footer edits in the same batch | `client/EXTRADOC_BUGS.md` BUG-9 | Ordering must be modeled per coordinate partition and per dependency, not as one flat append-only batch. |
 | Multiple batches using `requiredRevisionId` | `WriteControl.md`; `extradoc/tests/test_mock_api.py` revision tests | Executor must carry forward the revision returned by each successful batch before sending the next batch. |
+| Base-state recreation requires sequential setup batches with response-derived IDs | live `reconcile_v2` multi-tab fixture harness | Replay infrastructure must support response-derived placeholder resolution between setup batches instead of assuming one flat setup request list. |
 | Comparator strips semantic list / attachment / table metadata | `extradoc/src/extradoc/reconcile/_comparators.py`; historical gap docs | `reconcile_v2` verification must compare semantic IR, not transport JSON after aggressive normalization. |
 | Request sequence looks plausible but final document is wrong | long history of comparator and mock workarounds | Exact-plan tests are necessary but insufficient; convergence tests against semantic IR remain mandatory. |
 
@@ -126,3 +129,5 @@ The first durable fixture set for `reconcile_v2` should include:
 19. Live transport fixtures for text replace, paragraph split, table-cell text replace, existing-header text replace, and named-range add with replay verification against semantic diff convergence.
 20. Live transport fixtures for table row/column insert-delete, merge/unmerge, pinned-header rows, row style, column properties, cell style, and inserted-row/column content with replay verification against canonical IR.
 21. Explicit unsupported fixtures for combined row+column table structural edits and column edits through merged regions.
+22. Live transport fixture for list relevel with exact lowered requests and replay verification.
+23. Live multi-tab text-edit fixture whose replay proves structural tab matching and explicit `tabId` routing.

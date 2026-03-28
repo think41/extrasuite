@@ -16,6 +16,7 @@ from extradoc.reconcile_v2.diff import (
     InsertTableColumnEdit,
     InsertTableRowEdit,
     MergeTableCellsEdit,
+    RelevelListItemsEdit,
     ReplaceListSpecEdit,
     ReplaceNamedRangesEdit,
     ReplaceParagraphSliceEdit,
@@ -29,6 +30,8 @@ from extradoc.reconcile_v2.diff import (
     summarize_semantic_edits,
 )
 from extradoc.reconcile_v2.errors import UnsupportedSpikeError
+
+from .helpers import load_fixture_pair as load_fixture_pair_shared
 
 FIXTURES_ROOT = Path(__file__).resolve().parent / "fixtures"
 
@@ -96,6 +99,20 @@ def test_list_kind_change_fixture_emits_list_spec_replace() -> None:
     ]
 
 
+def test_list_relevel_fixture_emits_relevel_edit() -> None:
+    base, desired = load_fixture_pair_shared("list_relevel")
+
+    edits = diff_documents(base, desired)
+
+    assert len(edits) == 1
+    assert isinstance(edits[0], RelevelListItemsEdit)
+    assert edits[0].before_levels == (0, 0)
+    assert edits[0].after_levels == (0, 1)
+    assert summarize_semantic_edits(edits) == [
+        "tab t.0: section 0 list 0 relevel 1 item(s) in BULLETED"
+    ]
+
+
 def test_text_replace_fixture_emits_story_text_replace() -> None:
     base, desired = _load_fixture_pair("text_replace")
 
@@ -106,6 +123,20 @@ def test_text_replace_fixture_emits_story_text_replace() -> None:
     assert edits[0].story_id == "t.0:body"
     assert summarize_semantic_edits(edits) == [
         "tab t.0: story t.0:body replace 1 paragraph block(s) at 0 with 1 paragraph(s)"
+    ]
+
+
+def test_multitab_text_replace_fixture_emits_edit_only_for_second_tab() -> None:
+    base, desired = load_fixture_pair_shared("multitab_text_replace")
+
+    edits = diff_documents(base, desired)
+
+    assert len(edits) == 1
+    assert isinstance(edits[0], ReplaceParagraphSliceEdit)
+    assert edits[0].tab_id != "t.0"
+    assert edits[0].story_id == f"{edits[0].tab_id}:body"
+    assert summarize_semantic_edits(edits) == [
+        f"tab {edits[0].tab_id}: story {edits[0].story_id} replace 1 paragraph block(s) at 0 with 1 paragraph(s)"
     ]
 
 

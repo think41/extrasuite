@@ -44,8 +44,11 @@ class MarkdownScenario:
     name: str
     title: str
     description: str
-    base_md: str
-    desired_md: str
+    base_md: str | None = None
+    desired_md: str | None = None
+    base_tabs: dict[str, str] | None = None
+    desired_tabs: dict[str, str] | None = None
+    expected_lowered_requests: tuple[dict, ...] = ()
 
 
 @dataclass(frozen=True, slots=True)
@@ -74,6 +77,21 @@ class NamedRangeScenario:
     base_md: str
     range_name: str
     target_text: str
+
+
+@dataclass(frozen=True, slots=True)
+class RequestScenario:
+    name: str
+    title: str
+    description: str
+    base_md: str
+    desired_requests: tuple[dict, ...] = ()
+    base_setup_requests: tuple[dict, ...] = ()
+    base_setup_builder: Callable[[dict], list[dict]] | None = None
+    base_setup_procedure: Callable[[_RawDocsClient, str, dict], list[list[dict]]] | None = None
+    desired_request_builder: Callable[[dict], list[dict]] | None = None
+    expected_lowered_requests: tuple[dict, ...] = ()
+    expected_lowered_builder: Callable[[dict], list[dict]] | None = None
 
 
 @dataclass(frozen=True, slots=True)
@@ -123,6 +141,74 @@ MARKDOWN_SCENARIOS = (
         description="Replace the text inside a simple one-column table cell.",
         base_md="| col |\n| --- |\n| alpha |\n",
         desired_md="| col |\n| --- |\n| omega |\n",
+    ),
+)
+
+REQUEST_SCENARIOS = (
+    RequestScenario(
+        name="list_relevel",
+        title="Confidence Sprint Fixture List Relevel",
+        description="Increase the nesting level of one existing list item without changing list text or kind.",
+        base_md="- one\n- two\n",
+        desired_requests=(
+            {
+                "deleteParagraphBullets": {
+                    "range": {"startIndex": 1, "endIndex": 9, "tabId": "t.0"}
+                }
+            },
+            {
+                "insertText": {
+                    "location": {"index": 5, "tabId": "t.0"},
+                    "text": "\t",
+                }
+            },
+            {
+                "createParagraphBullets": {
+                    "range": {"startIndex": 1, "endIndex": 10, "tabId": "t.0"},
+                    "bulletPreset": "BULLET_DISC_CIRCLE_SQUARE",
+                }
+            },
+        ),
+        expected_lowered_requests=(
+            {
+                "deleteParagraphBullets": {
+                    "range": {"startIndex": 1, "endIndex": 9, "tabId": "t.0"}
+                }
+            },
+            {
+                "insertText": {
+                    "location": {"index": 5, "tabId": "t.0"},
+                    "text": "\t",
+                }
+            },
+            {
+                "createParagraphBullets": {
+                    "range": {"startIndex": 1, "endIndex": 10, "tabId": "t.0"},
+                    "bulletPreset": "BULLET_DISC_CIRCLE_SQUARE",
+                }
+            },
+        ),
+    ),
+    RequestScenario(
+        name="multitab_text_replace",
+        title="Confidence Sprint Fixture Multi-Tab Text Replace",
+        description="Replace text in the second tab while leaving the first tab unchanged.",
+        base_md="alpha first tab\n",
+        base_setup_procedure=lambda raw_client, document_id, base_raw: _setup_multitab_base_state(
+            raw_client,
+            document_id,
+            base_raw,
+        ),
+        desired_request_builder=lambda base_raw: _build_multitab_text_replace_requests(
+            base_raw,
+            tab_id=_find_second_tab_id(base_raw),
+            desired_text="omega second tab",
+        ),
+        expected_lowered_builder=lambda base_raw: _build_multitab_text_replace_requests(
+            base_raw,
+            tab_id=_find_second_tab_id(base_raw),
+            desired_text="omega second tab",
+        ),
     ),
 )
 
@@ -643,6 +729,15 @@ def main() -> None:
                 raw_client=raw_client,
             )
             time.sleep(args.pause_seconds)
+        for scenario in REQUEST_SCENARIOS:
+            if selected and scenario.name not in selected:
+                continue
+            _capture_request_scenario(
+                scenario=scenario,
+                fixtures_root=args.fixtures_root,
+                raw_client=raw_client,
+            )
+            time.sleep(args.pause_seconds)
         if not selected or SECTION_SCENARIO.name in selected:
             _capture_section_scenario(
                 scenario=SECTION_SCENARIO,
@@ -692,15 +787,21 @@ def _capture_markdown_scenario(
 
         base_folder = tmp / "base"
         _pull_md(doc_url, base_folder)
-        (base_folder / "Tab_1.md").write_text(scenario.base_md, encoding="utf-8")
+        _write_markdown_tabs(base_folder, _base_tabs_for_markdown_scenario(scenario))
         _push_md(base_folder)
         base_raw = raw_client.get_document_raw(doc_id)
 
         desired_folder = tmp / "desired"
         _pull_md(doc_url, desired_folder)
-        (desired_folder / "Tab_1.md").write_text(scenario.desired_md, encoding="utf-8")
+        _write_markdown_tabs(desired_folder, _desired_tabs_for_markdown_scenario(scenario))
         _push_md(desired_folder)
         desired_raw = raw_client.get_document_raw(doc_id)
+
+    extra_files = _markdown_scenario_extra_files(scenario)
+    if scenario.expected_lowered_requests:
+        extra_files["expected.lowered.json"] = (
+            json.dumps(list(scenario.expected_lowered_requests), indent=2) + "\n"
+        )
 
     _write_fixture_pair(
         fixture_dir=fixtures_root / scenario.name,
@@ -709,11 +810,117 @@ def _capture_markdown_scenario(
         doc_url=doc_url,
         base_raw=base_raw,
         desired_raw=desired_raw,
-        extra_files={
-            "base.md": scenario.base_md,
-            "desired.md": scenario.desired_md,
-        },
+        extra_files=extra_files,
     )
+
+
+def _capture_request_scenario(
+    *,
+    scenario: RequestScenario,
+    fixtures_root: Path,
+    raw_client: _RawDocsClient,
+) -> None:
+    print(f"[capture] {scenario.name}")
+    doc_url = _create_empty_doc(scenario.title)
+    doc_id = _extract_document_id(doc_url)
+
+    with tempfile.TemporaryDirectory(prefix=f"reconcile-v2-{scenario.name}-") as tmpdir:
+        tmp = Path(tmpdir)
+
+        base_folder = tmp / "base"
+        _pull_md(doc_url, base_folder)
+        (base_folder / "Tab_1.md").write_text(scenario.base_md, encoding="utf-8")
+        _push_md(base_folder)
+        base_raw = raw_client.get_document_raw(doc_id)
+
+        base_setup_requests = list(scenario.base_setup_requests)
+        base_setup_batches: list[list[dict]] = []
+        if scenario.base_setup_procedure is not None:
+            base_setup_batches = scenario.base_setup_procedure(
+                raw_client,
+                doc_id,
+                base_raw,
+            )
+            base_raw = raw_client.get_document_raw(doc_id)
+        if scenario.base_setup_builder is not None:
+            base_setup_requests = scenario.base_setup_builder(base_raw)
+        if base_setup_requests:
+            raw_client.batch_update(doc_id, base_setup_requests)
+            base_raw = raw_client.get_document_raw(doc_id)
+
+        desired_requests = list(scenario.desired_requests)
+        if scenario.desired_request_builder is not None:
+            desired_requests = scenario.desired_request_builder(base_raw)
+        raw_client.batch_update(doc_id, desired_requests)
+        desired_raw = raw_client.get_document_raw(doc_id)
+
+    extra_files = {
+        "base.md": scenario.base_md,
+        "desired.requests.json": json.dumps(desired_requests, indent=2) + "\n",
+    }
+    if base_setup_batches:
+        extra_files["base.setup.batches.json"] = (
+            json.dumps(base_setup_batches, indent=2) + "\n"
+        )
+    if base_setup_requests:
+        extra_files["base.setup.requests.json"] = (
+            json.dumps(base_setup_requests, indent=2) + "\n"
+        )
+    expected_lowered = list(scenario.expected_lowered_requests)
+    if scenario.expected_lowered_builder is not None:
+        expected_lowered = scenario.expected_lowered_builder(base_raw)
+    if expected_lowered:
+        extra_files["expected.lowered.json"] = (
+            json.dumps(expected_lowered, indent=2) + "\n"
+        )
+
+    _write_fixture_pair(
+        fixture_dir=fixtures_root / scenario.name,
+        description=scenario.description,
+        workflow="pull-md/push-md + direct batchUpdate",
+        doc_url=doc_url,
+        base_raw=base_raw,
+        desired_raw=desired_raw,
+        extra_files=extra_files,
+    )
+
+
+def _base_tabs_for_markdown_scenario(scenario: MarkdownScenario) -> dict[str, str]:
+    if scenario.base_tabs is not None:
+        return scenario.base_tabs
+    if scenario.base_md is None:
+        raise ValueError(f"Markdown scenario {scenario.name} is missing base content")
+    return {"Tab_1.md": scenario.base_md}
+
+
+def _desired_tabs_for_markdown_scenario(scenario: MarkdownScenario) -> dict[str, str]:
+    if scenario.desired_tabs is not None:
+        return scenario.desired_tabs
+    if scenario.desired_md is None:
+        raise ValueError(f"Markdown scenario {scenario.name} is missing desired content")
+    return {"Tab_1.md": scenario.desired_md}
+
+
+def _markdown_scenario_extra_files(scenario: MarkdownScenario) -> dict[str, str]:
+    extra_files: dict[str, str] = {}
+    if scenario.base_tabs is None and scenario.base_md is not None:
+        extra_files["base.md"] = scenario.base_md
+    else:
+        extra_files["base.tabs.json"] = (
+            json.dumps(_base_tabs_for_markdown_scenario(scenario), indent=2) + "\n"
+        )
+    if scenario.desired_tabs is None and scenario.desired_md is not None:
+        extra_files["desired.md"] = scenario.desired_md
+    else:
+        extra_files["desired.tabs.json"] = (
+            json.dumps(_desired_tabs_for_markdown_scenario(scenario), indent=2) + "\n"
+        )
+    return extra_files
+
+
+def _write_markdown_tabs(folder: Path, tabs: dict[str, str]) -> None:
+    for filename, content in tabs.items():
+        (folder / filename).write_text(content, encoding="utf-8")
 
 
 def _capture_section_scenario(
@@ -1035,6 +1242,92 @@ def _build_named_range_add_requests(
     raise RuntimeError(f"Could not locate target text {target_text!r} for named range")
 
 
+def _setup_multitab_base_state(
+    raw_client: _RawDocsClient,
+    document_id: str,
+    base_raw: dict,  # noqa: ARG001
+) -> list[list[dict]]:
+    batch_0 = [
+        {
+            "addDocumentTab": {
+                "tabProperties": {
+                    "title": "Second Tab",
+                    "index": 1,
+                }
+            }
+        }
+    ]
+    response = raw_client.batch_update(document_id, batch_0)
+    tab_properties = response["replies"][0]["addDocumentTab"]["tabProperties"]
+    tab_id = tab_properties["tabId"]
+    batch_2_actual = [
+        {
+            "insertText": {
+                "location": {"index": 1, "tabId": tab_id},
+                "text": "bravo second tab",
+            }
+        }
+    ]
+    raw_client.batch_update(document_id, batch_2_actual)
+    batch_2_template = [
+        {
+            "insertText": {
+                "location": {"index": 1, "tabId": "__LAST_ADDED_TAB_ID__"},
+                "text": "bravo second tab",
+            }
+        }
+    ]
+    return [batch_0, batch_2_template]
+
+
+def _build_multitab_text_replace_requests(
+    base_raw: dict,
+    *,
+    tab_id: str,
+    desired_text: str,
+) -> list[dict]:
+    content = _tab_body_content(base_raw, tab_id)
+    paragraphs = [
+        element
+        for element in content
+        if "paragraph" in element and _visible_paragraph_text(element["paragraph"])
+    ]
+    if len(paragraphs) != 1:
+        raise RuntimeError("Multi-tab text scenario expects one visible paragraph in the target tab")
+    paragraph = paragraphs[0]
+    start_index = paragraph["startIndex"]
+    end_index = paragraph["endIndex"] - 1
+    requests: list[dict] = []
+    if end_index > start_index:
+        requests.append(
+            {
+                "deleteContentRange": {
+                    "range": {
+                        "startIndex": start_index,
+                        "endIndex": end_index,
+                        "tabId": tab_id,
+                    }
+                }
+            }
+        )
+    requests.append(
+        {
+            "insertText": {
+                "location": {"index": start_index, "tabId": tab_id},
+                "text": desired_text,
+            }
+        }
+    )
+    return requests
+
+
+def _find_second_tab_id(base_raw: dict) -> str:
+    tabs = base_raw.get("tabs", [])
+    if len(tabs) < 2:
+        raise RuntimeError("Expected captured base fixture to contain at least two tabs")
+    return tabs[1]["tabProperties"]["tabId"]
+
+
 def _build_table_middle_row_insert_with_cell_edit_requests(base_raw: dict) -> list[dict]:
     start_index, end_index = _table_cell_text_range(base_raw, row_index=2, column_index=0)
     return [
@@ -1133,6 +1426,13 @@ def _table_cell_text_range(base_raw: dict, *, row_index: int, column_index: int)
     start_index = paragraph["elements"][0]["startIndex"]
     end_index = paragraph["elements"][-1]["endIndex"] - 1
     return start_index, end_index
+
+
+def _tab_body_content(base_raw: dict, tab_id: str) -> list[dict]:
+    for tab in base_raw.get("tabs", []):
+        if tab.get("tabProperties", {}).get("tabId") == tab_id:
+            return tab.get("documentTab", {}).get("body", {}).get("content", [])
+    raise RuntimeError(f"Could not find tab {tab_id!r} in captured fixture")
 
 
 def _visible_paragraph_text(paragraph: dict) -> str:

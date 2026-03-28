@@ -13,6 +13,8 @@ from extradoc.reconcile_v2.api import (
 )
 from extradoc.reconcile_v2.errors import UnsupportedSpikeError
 
+from .helpers import load_expected_lowered_requests
+
 FIXTURES_ROOT = Path(__file__).resolve().parent / "fixtures"
 
 
@@ -88,6 +90,8 @@ def test_lower_semantic_diff_for_current_fixture_slice() -> None:
                 }
             },
         ],
+        "list_relevel": load_expected_lowered_requests("list_relevel"),
+        "multitab_text_replace": load_expected_lowered_requests("multitab_text_replace"),
         "text_replace": [
             {
                 "deleteContentRange": {

@@ -87,13 +87,17 @@ class Transport(ABC):
 
     @abstractmethod
     async def batch_update(
-        self, document_id: str, requests: list[dict[str, Any]]
+        self,
+        document_id: str,
+        requests: list[dict[str, Any]],
+        write_control: dict[str, Any] | None = None,
     ) -> dict[str, Any]:
         """Apply batchUpdate requests to a document.
 
         Args:
             document_id: The document identifier
             requests: List of batchUpdate request objects
+            write_control: Optional Docs API writeControl payload
 
         Returns:
             API response containing replies for each request
@@ -232,11 +236,16 @@ class GoogleDocsTransport(Transport):
         )
 
     async def batch_update(
-        self, document_id: str, requests: list[dict[str, Any]]
+        self,
+        document_id: str,
+        requests: list[dict[str, Any]],
+        write_control: dict[str, Any] | None = None,
     ) -> dict[str, Any]:
         """Apply batchUpdate requests to Google Docs API."""
         url = f"{API_BASE}/{document_id}:batchUpdate"
         body = {"requests": requests}
+        if write_control is not None:
+            body["writeControl"] = write_control
         return await self._post_request(url, body)
 
     async def list_comments(self, file_id: str) -> list[dict[str, Any]]:
@@ -405,6 +414,7 @@ class LocalFileTransport(Transport):
         self,
         document_id: str,  # noqa: ARG002
         requests: list[dict[str, Any]],
+        write_control: dict[str, Any] | None = None,  # noqa: ARG002
     ) -> dict[str, Any]:
         """Mock batch_update for testing - returns empty replies."""
         return {"replies": [{}] * len(requests)}

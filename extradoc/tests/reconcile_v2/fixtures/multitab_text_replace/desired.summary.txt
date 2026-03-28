@@ -1,0 +1,12 @@
+revision=AIxLkSvuoB16lEivuhr_9ISsC8CkuZSrO4BwhO-YJSwXkIG0VCRD5ZElImyamuxC-AZyU2WqOV1Het5tXAKaEzVceMZeJaiEHDjFZohc-Rw5Tig
+tabs=2
+tab 't.0' title='Tab 1' index=0 children=0
+  body sections=1 blocks=2
+  resources headers=0 footers=0 footnotes=0
+  named_ranges=0
+  body block kinds={'paragraph': 2}
+tab 't.r8zvhulsrb79' title='Second Tab' index=1 children=0
+  body sections=1 blocks=1
+  resources headers=0 footers=0 footnotes=0
+  named_ranges=0
+  body block kinds={'paragraph': 1}

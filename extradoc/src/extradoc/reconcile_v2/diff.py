@@ -82,6 +82,16 @@ class ReplaceListSpecEdit:
     after_kind: str
 
 
+@dataclass(slots=True)
+class RelevelListItemsEdit:
+    tab_id: str
+    section_index: int
+    block_index: int
+    list_kind: str
+    before_levels: tuple[int, ...]
+    after_levels: tuple[int, ...]
+
+
 @dataclass(frozen=True, slots=True)
 class ParagraphFragment:
     role: str
@@ -223,6 +233,7 @@ SemanticEdit = (
     | UpdateParagraphRoleEdit
     | AppendListItemsEdit
     | ReplaceListSpecEdit
+    | RelevelListItemsEdit
     | ReplaceParagraphSliceEdit
     | ReplaceNamedRangesEdit
     | InsertTableRowEdit
@@ -248,9 +259,9 @@ def diff_document_irs(base: DocumentIR, desired: DocumentIR) -> list[SemanticEdi
     base = canonicalize_document_ir(base)
     desired = canonicalize_document_ir(desired)
     edits: list[SemanticEdit] = []
-    desired_tabs = {tab.id: tab for tab in desired.tabs}
-    for base_tab in base.tabs:
-        desired_tab = desired_tabs.get(base_tab.id)
+    desired_tabs = _tabs_by_path(desired.tabs)
+    for path, base_tab in _walk_tabs(base.tabs):
+        desired_tab = desired_tabs.get(path)
         if desired_tab is None:
             continue
         edits.extend(_diff_tab(base_tab, desired_tab))
@@ -286,6 +297,15 @@ def summarize_semantic_edits(edits: Iterable[SemanticEdit]) -> list[str]:
             lines.append(
                 f"tab {edit.tab_id}: section {edit.section_index} list {edit.block_index} "
                 f"kind {edit.before_kind} -> {edit.after_kind}"
+            )
+        elif isinstance(edit, RelevelListItemsEdit):
+            changed = sum(
+                before != after
+                for before, after in zip(edit.before_levels, edit.after_levels, strict=True)
+            )
+            lines.append(
+                f"tab {edit.tab_id}: section {edit.section_index} list {edit.block_index} "
+                f"relevel {changed} item(s) in {edit.list_kind}"
             )
         elif isinstance(edit, ReplaceParagraphSliceEdit):
             lines.append(
@@ -422,6 +442,22 @@ def _diff_tab(base: TabIR, desired: TabIR) -> list[SemanticEdit]:
     return edits
 
 
+def _tabs_by_path(tabs: list[TabIR]) -> dict[tuple[int, ...], TabIR]:
+    return dict(_walk_tabs(tabs))
+
+
+def _walk_tabs(
+    tabs: list[TabIR],
+    prefix: tuple[int, ...] = (),
+) -> list[tuple[tuple[int, ...], TabIR]]:
+    pairs: list[tuple[tuple[int, ...], TabIR]] = []
+    for index, tab in enumerate(tabs):
+        path = (*prefix, index)
+        pairs.append((path, tab))
+        pairs.extend(_walk_tabs(tab.child_tabs, path))
+    return pairs
+
+
 def _diff_section_boundaries(
     *,
     tab_id: str,
@@ -529,6 +565,20 @@ def _diff_section_blocks(
                             )
                             for item in desired_block.items[len(base_items) :]
                         ),
+                    )
+                )
+                continue
+            base_levels = tuple(item.level for item in base_block.items)
+            desired_levels = tuple(item.level for item in desired_block.items)
+            if base_items == desired_items and base_levels != desired_levels:
+                edits.append(
+                    RelevelListItemsEdit(
+                        tab_id=tab_id,
+                        section_index=section_index,
+                        block_index=block_index,
+                        list_kind=desired_block.spec.kind,
+                        before_levels=base_levels,
+                        after_levels=desired_levels,
                     )
                 )
     return edits
@@ -1011,7 +1061,9 @@ def _block_fingerprints(blocks: list[BlockIR]) -> list[str]:
         if isinstance(block, ParagraphIR):
             fingerprints.append(f"P:{block.role}:{_paragraph_text(block)}")
         elif isinstance(block, ListIR):
-            items = "|".join(_paragraph_text(item.paragraph) for item in block.items)
+            items = "|".join(
+                f"{item.level}:{_paragraph_text(item.paragraph)}" for item in block.items
+            )
             fingerprints.append(f"L:{block.spec.kind}:{items}")
         else:
             fingerprints.append(type(block).__name__)

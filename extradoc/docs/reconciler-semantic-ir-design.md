@@ -415,6 +415,9 @@ Consequences:
 2. bullet creation tab removal and paragraph merges are modeled in one place.
 3. later requests in the same batch are resolved against the post-effect
    transport state, not against guessed arithmetic.
+4. multi-batch execution is part of the design, not an outer-shell concern:
+   `requiredRevisionId` handoff and response-derived setup IDs belong to the
+   executor/harness layer.
 
 ### 11. Structural separators are typed, not uniformly protected
 
@@ -827,6 +830,11 @@ stateful hacks.
 If the target context requires a transport form that the Docs backend does not
 honor or rejects, lowering must reject the edit explicitly. That is a transport
 capability failure, not a reason to fall back to document-global heuristics.
+
+Tabs need the same identity split as shared headers. Live replay of a second-tab
+fixture showed that transport `tabId` is not a stable semantic matching key
+across fresh documents. Diff must therefore match tabs by structural path in the
+tab tree, while lowering still emits requests against the live base tab ID.
 
 ## Lowering Phase
 

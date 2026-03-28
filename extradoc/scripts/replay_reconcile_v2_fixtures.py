@@ -10,6 +10,7 @@ the captured desired fixture.
 from __future__ import annotations
 
 import argparse
+import copy
 import json
 import re
 import subprocess
@@ -64,6 +65,7 @@ def main() -> None:
     fixture_names = [
         "text_replace",
         "paragraph_split",
+        "list_relevel",
         "table_cell_text_replace",
         "table_row_insert",
         "table_row_delete",
@@ -83,6 +85,7 @@ def main() -> None:
         "table_row_style_min_height",
         "table_column_properties_width",
         "table_cell_style_background",
+        "multitab_text_replace",
         "header_text_replace",
         "named_range_add",
     ]
@@ -137,6 +140,13 @@ async def _setup_base_state(
             _push_md(workdir)
 
     base_setup_requests = fixture_dir / "base.setup.requests.json"
+    base_setup_batches = fixture_dir / "base.setup.batches.json"
+    if base_setup_batches.exists():
+        last_response: dict | None = None
+        for batch in json.loads(base_setup_batches.read_text(encoding="utf-8")):
+            resolved_batch = _resolve_setup_placeholders(batch, last_response)
+            last_response = await client.batch_update(doc_id, resolved_batch)
+
     if base_setup_requests.exists():
         await client.batch_update(
             doc_id,
@@ -192,6 +202,37 @@ def _run(cmd: list[str]) -> subprocess.CompletedProcess[str]:
             f"stderr:\n{result.stderr}"
         )
     return result
+
+
+def _resolve_setup_placeholders(batch: list[dict], response: dict | None) -> list[dict]:
+    resolved = copy.deepcopy(batch)
+    last_added_tab_id = None
+    if isinstance(response, dict):
+        replies = response.get("replies")
+        if isinstance(replies, list):
+            for reply in replies:
+                add_document_tab = reply.get("addDocumentTab") if isinstance(reply, dict) else None
+                tab_properties = (
+                    add_document_tab.get("tabProperties")
+                    if isinstance(add_document_tab, dict)
+                    else None
+                )
+                tab_id = tab_properties.get("tabId") if isinstance(tab_properties, dict) else None
+                if isinstance(tab_id, str):
+                    last_added_tab_id = tab_id
+    if last_added_tab_id is None:
+        return resolved
+
+    def replace(value: object) -> object:
+        if isinstance(value, str) and value == "__LAST_ADDED_TAB_ID__":
+            return last_added_tab_id
+        if isinstance(value, list):
+            return [replace(item) for item in value]
+        if isinstance(value, dict):
+            return {key: replace(item) for key, item in value.items()}
+        return value
+
+    return replace(resolved)
 
 
 if __name__ == "__main__":
