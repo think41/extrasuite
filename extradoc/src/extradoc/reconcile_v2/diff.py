@@ -1424,9 +1424,15 @@ def _named_range_signature(ranges: tuple[AnchorRangeIR, ...]) -> tuple[tuple[str
 def _position_signature(position: PositionIR) -> str:
     path = position.path
     return (
-        f"{position.story_id}|{path.section_index}|{path.block_index}|{path.node_path}|"
+        f"{_story_identity_signature(position.story_id)}|"
+        f"{path.section_index}|{path.block_index}|{path.node_path}|"
         f"{path.inline_index}|{path.text_offset_utf16}|{path.edge}"
     )
+
+
+def _story_identity_signature(story_id: str) -> str:
+    _, _, suffix = story_id.partition(":")
+    return suffix or story_id
 
 
 def _table_row_signatures(table: TableIR) -> tuple[tuple[str, ...], ...]:

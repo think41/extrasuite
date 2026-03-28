@@ -407,6 +407,10 @@ Consequences:
    story-local anchor moves coupled with paragraph-text edits, provided lowering
    stages content mutations first and recreates named ranges against the
    post-edit story layout.
+5. Semantic annotation comparison cannot key on transport tab IDs. For matched
+   body and table-cell stories, anchor identity must be relative to the logical
+   story route, so replay on a fresh document with different generated tab IDs
+   still converges.
 
 ### 10. Lowering uses a transport shadow state
 
@@ -850,6 +854,18 @@ Tabs need the same identity split as shared headers. Live replay of a second-tab
 fixture showed that transport `tabId` is not a stable semantic matching key
 across fresh documents. Diff must therefore match tabs by structural path in the
 tab tree, while lowering still emits requests against the live base tab ID.
+
+The proven tab slice now includes:
+
+1. top-level tab creation with immediate body population
+2. child-tab creation using deferred parent tab IDs
+3. named-range creation inside a newly created tab without any valid desired-side
+   transport `tabId`
+
+The remaining explicit tab boundary is header/footer creation on a newly added
+tab in a document that already has tabs. The live Docs transport still
+mis-targets that path to the first tab, so the reconciler must reject it
+explicitly.
 
 ## Lowering Phase
 

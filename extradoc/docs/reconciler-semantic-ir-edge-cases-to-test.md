@@ -82,6 +82,7 @@ Each entry captures:
 | Attempt to retarget a section to an existing header/footer via `updateSectionStyle.defaultHeaderId` / `defaultFooterId` | live confidence-sprint replay | The reconciler must not assume generic header/footer reassignment is legal; Docs rejects this transport path. |
 | New tab with header/footer in a document that already has tabs | `client/EXTRADOC_BUGS.md` BUG-8 | Lowering must consult a transport capability matrix and explicitly reject semantically-valid but API-broken transforms. |
 | Tab hierarchy and child tabs | `tabs.md`; design goal | Reconciler must preserve tree topology, not flatten tabs into a list. |
+| Create a new parent tab, then a child tab beneath it, then populate both in one logical cycle | live `reconcile_v2` replay fixture | Deferred response placeholders must be able to route both parent creation and child creation without relying on any desired-side tab IDs. |
 | Requests without `tabId` silently hit first tab | `tabs.md`; multiple historical tab bugs | Lowering must treat `tabId` as mandatory transport routing except where the API explicitly forbids it. |
 | Replay a second-tab edit onto a fresh live doc whose generated second-tab `tabId` differs from the captured fixture | live `reconcile_v2` replay fixture | Tab matching must use structural tab position/topology, not captured transport `tabId`, while lowering still emits the live base tab ID. |
 
@@ -94,6 +95,7 @@ Each entry captures:
 | Named-range-only add/delete replay on unchanged body text | live confidence-sprint replay | Annotation lowering must resolve from the same story-local coordinate model as content edits. |
 | Annotation anchor survives block split or merge | historical index-drift failures | Anchored annotations must follow logical positions in story space, not stale block IDs or UTF-16 offsets. |
 | New tab with named ranges | `_core.py` comment about deferred complexity | Anchored annotations must lower after any ID-producing story/tab creation they depend on. |
+| Replay a newly created tab whose captured desired `tabId` differs from the live generated `tabId`, but whose named ranges should still converge | live `reconcile_v2` replay fixture | Anchor identity for matched new-tab stories must not depend on transport tab IDs. |
 | Named-range add/delete when desired carries no `namedRangeId` | live `reconcile_v2` stable annotation fixtures | Semantic annotation identity comes from `(name, anchors)`, not transport-generated named range IDs. |
 | Named-range anchor move coupled with story content edit | live `reconcile_v2` replay fixture | Lowering must stage story content edits first, then delete/recreate named ranges from the post-edit story layout. |
 | Raw API indices differ from mock-reindexed indices around special tables | commit `365c44e`; `client.py` raw-base comments | Lowering must derive coordinates from real base transport layout or an exact transport shadow, never from approximate reindexing. |
