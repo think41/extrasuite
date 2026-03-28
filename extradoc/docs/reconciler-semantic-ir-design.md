@@ -63,10 +63,21 @@ The design assumes the following Google Docs API facts.
 5. `CreateParagraphBulletsRequest` operates on existing paragraphs. If the
    preceding paragraph is in a compatible list, inserted paragraphs may join
    that list.
-6. `CreateHeaderRequest` and `CreateFooterRequest` may be document-scoped or
+6. `CreateHeaderRequest` and `CreateFooterRequest` are typed
+   (`DEFAULT`, `FIRST_PAGE`, `EVEN_PAGE`) and may be document-scoped or
    section-scoped via `sectionBreakLocation`.
-7. `batchUpdate` is sequential and revision-sensitive. Exact convergence
+7. Most write requests default to the first tab when `tabId` is omitted.
+   Correct lowering therefore requires explicit tab routing wherever the API
+   surface permits it.
+8. `batchUpdate` is sequential and revision-sensitive. Exact convergence
    requires `WriteControl.requiredRevisionId`.
+9. When `requiredRevisionId` is used across multiple `batchUpdate` calls, each
+   later batch must use the revision returned by the previous successful
+   response, not the original base revision.
+10. A documented request form is not automatically a usable transport capability
+    in every context. If the only transport form that can realize a semantic
+    edit is rejected by the Docs backend in that target context, lowering must
+    reject the edit explicitly.
 
 These constraints are not edge cases. They define the legal edit surface.
 
@@ -79,8 +90,12 @@ These constraints are not edge cases. They define the legal edit surface.
 5. Table cells must use the same recursive content model as body/header/footer.
 6. Shared header/footer semantics must be explicit in the IR.
 7. All raw indices must be produced by a dedicated layout/lowering phase.
-8. Effective style and explicit style must be modeled separately.
-9. Request generation must be deterministic.
+8. Style environment and anchored annotations must be modeled explicitly.
+9. Effective style and explicit style must be modeled separately.
+10. Lowering must simulate transport side effects in a shadow layout state.
+11. Transport canonicalization must be explicit and deterministic.
+12. Semantic capability and transport capability must be modeled separately.
+13. Request generation must be deterministic.
 
 ## Canonical Semantic IR
 
@@ -95,22 +110,41 @@ TabIR
   title: str
   index: int
   icon_emoji: str | None
+  style_env: StyleEnvironmentIR
   body: ContainerIR(kind=BODY)
-  sections: list[SectionIR]
   segment_catalog: SegmentCatalogIR
+  annotations: AnnotationCatalogIR
   child_tabs: list[TabIR]
 
-SectionIR
+SectionBreakIR
   id: SectionId
-  start_break: SectionBreakIR
   style: SectionStyleIR
-  header_ref: SegmentRef | None
-  footer_ref: SegmentRef | None
+  header_refs: dict[HeaderFooterSlotIR, SegmentRef]
+  footer_refs: dict[HeaderFooterSlotIR, SegmentRef]
+
+StyleEnvironmentIR
+  document_style: DocumentStyleIR
+  named_styles: NamedStylesIR
+  list_catalog: ListCatalogIR
 
 SegmentCatalogIR
   headers: dict[SegmentRef, ContainerIR(kind=HEADER)]
   footers: dict[SegmentRef, ContainerIR(kind=FOOTER)]
   footnotes: dict[SegmentRef, ContainerIR(kind=FOOTNOTE)]
+
+AnnotationCatalogIR
+  named_ranges: dict[AnnotationName, list[AnchorRangeIR]]
+  inline_objects: dict[ObjectRef, OpaqueObjectIR]
+  positioned_objects: dict[ObjectRef, OpaqueObjectIR]
+
+AnchorRangeIR
+  start: AnchorPointIR
+  end: AnchorPointIR
+
+AnchorPointIR
+  block_id: BlockId
+  inline_path: InlinePath | None
+  edge: BEFORE | AFTER | INTERIOR
 
 ContainerIR
   id: ContainerId
@@ -225,16 +259,90 @@ Consequences:
 3. Page-break legality in cells becomes a simple capability failure instead of a
    `segment_id is None` accident.
 
-### 5. Section attachments are explicit edges
+### 5. Section state lives on the section-break block that owns it
 
-Header/footer semantics are represented in `SectionIR.header_ref` and
-`SectionIR.footer_ref`.
+Header/footer semantics are represented on `SectionBreakIR` itself, not in a
+duplicate section side table.
 
 Consequences:
 
-1. Shared segment semantics are part of the model.
-2. Default header/footer reuse is explicit.
-3. Section-scoped and document-scoped behavior are represented cleanly.
+1. The mandatory initial section break is explicit semantic state in the body.
+2. Attachment edits stay anchored to the body position that owns them.
+3. Lowering can resolve `sectionBreakLocation` from the same node it edits.
+
+### 6. Header/footer slots are typed
+
+Headers and footers are not singular edges. Google Docs distinguishes
+`DEFAULT`, `FIRST_PAGE`, and `EVEN_PAGE` slots, with document-style flags that
+activate them.
+
+Consequences:
+
+1. The IR can represent the real attachment graph instead of collapsing it.
+2. First-page and even-page behavior is not lost during semantic comparison.
+3. Lowering can reject only the transport paths that are unsupported, rather
+   than rejecting all non-default header/footer edits.
+
+### 7. Style environment is explicit
+
+Effective style depends on more than the paragraph or text run itself. It
+depends on the tab's named styles, document style, and list-level properties.
+
+Consequences:
+
+1. Effective-style comparison has an explicit source of truth.
+2. Named-style and list-style inheritance do not leak in from transport-only
+   code paths.
+3. Raw-vs-derived style differences can be normalized semantically instead of
+   with verifier hacks.
+
+### 8. Anchored annotations are first-class semantic state
+
+Per-tab named ranges are not incidental transport metadata in this project.
+They carry semantics for markdown special elements and other higher-level
+features.
+
+Consequences:
+
+1. Semantic equality can detect annotation-only changes.
+2. Named ranges can be diffed using anchor points in semantic space instead of
+   stale UTF-16 offsets.
+3. Annotation lowering can be ordered after the content mutations it depends on.
+
+### 9. Lowering uses a transport shadow state
+
+Lowering does not merely resolve static coordinates. It simulates the transport
+side effects of the requests it emits.
+
+Consequences:
+
+1. `insertTable`-introduced separators are accounted for deterministically.
+2. bullet creation tab removal and paragraph merges are modeled in one place.
+3. later requests in the same batch are resolved against the post-effect
+   transport state, not against guessed arithmetic.
+
+### 10. Structural separators are typed, not uniformly protected
+
+`eos` is always protected. `eop` is structural, but some paragraph separators
+are consumable during an explicit paragraph merge/delete, while others are
+protected because they guard a `Table`, `TableOfContents`, or `SectionBreak`.
+
+Consequences:
+
+1. paragraph deletion is modeled as structure, not as forbidden string surgery
+2. "newline before table/TOC/section break" becomes a first-class boundary rule
+3. legal paragraph merges can be expressed without reintroducing newline hacks
+
+### 11. Transport canonicalization is a phase, not an accident
+
+The parser must normalize transport representations that are semantically
+equivalent but structurally different in raw JSON.
+
+Consequences:
+
+1. run-splitting differences do not force positional fallbacks
+2. missing synthetic trailing paragraphs do not cause spurious adds
+3. numeric/style default drift is normalized before diff
 
 ## Capability Model
 
@@ -243,7 +351,7 @@ BODY
   text: yes
   table: yes
   page_break: yes
-  section_break: yes
+  section_break: topology-aware
 
 HEADER
   text: yes
@@ -273,6 +381,26 @@ TABLE_CELL
 Legality is always checked against `ContainerIR.capabilities`, never inferred
 from transport fields.
 
+Container capabilities describe semantic container-local legality. They are not
+an unconditional promise that every transport request shape is currently usable.
+
+## Transport Capability Matrix
+
+The reconciler distinguishes:
+
+1. semantic capability: the edit is meaningful in the IR
+2. transport capability: the Docs API can realize it in this target context
+
+Rules:
+
+1. section topology is parsed and preserved explicitly, but section-break
+   insertion/deletion is unsupported until a dedicated legality-preserving
+   lowering path exists
+2. header/footer attachment edits are supported only where the transport layer
+   exposes a working targetable request form for the relevant tab/section
+3. if the only documented request shape is rejected by the backend in the
+   target context, lowering returns `UnsupportedEdit` rather than guessing
+
 ## Canonicalization
 
 The parser converts `Document` transport JSON into canonical `DocumentIR`.
@@ -286,9 +414,19 @@ The parser converts `Document` transport JSON into canonical `DocumentIR`.
 5. Derive `ListSpecIR` from effective list properties, not raw `listId`.
 6. Represent tab hierarchy explicitly rather than flattening tabs.
 7. Represent sections explicitly and attach header/footer references to them.
-8. Preserve shared segment references if multiple sections resolve to the same
+8. Preserve typed header/footer slot attachments (`DEFAULT`, `FIRST_PAGE`,
+   `EVEN_PAGE`) rather than collapsing them to a single ref.
+9. Preserve shared segment references if multiple sections resolve to the same
    header/footer object.
-9. Represent TOC and other read-only structures as `read_only` blocks.
+10. Parse per-tab style environment explicitly (`documentStyle`, `namedStyles`,
+    lists).
+11. Parse named ranges as anchored semantic annotations.
+12. Represent TOC and other read-only structures as `read_only` blocks.
+13. Canonicalize equivalent text-run segmentations into the same inline stream.
+14. Normalize soft line break encodings and other transport-only text variants.
+15. Normalize absent-versus-synthetic trailing paragraphs into the same
+    container-end representation.
+16. Normalize API-defaulted style fields and numeric precision before diff.
 
 ### Canonical list spec
 
@@ -310,6 +448,19 @@ ListLevelSpecIR
 
 Transport `listId` is excluded.
 
+### Transport normalization rules
+
+Canonicalization must also erase non-semantic transport variance:
+
+1. embedded newline run splitting versus single-run storage
+2. vertical-tab or equivalent in-paragraph soft-break encodings
+3. missing but implied trailing empty paragraph representations
+4. API-defaulted paragraph/table-cell style fields
+5. float precision drift in color/style payloads
+
+If base and desired are semantically equal after these normalizations,
+`reconcile(base, desired)` must be `[]`.
+
 ## Style Semantics
 
 Google Docs style behavior is inheritance-based and range-based, not purely
@@ -325,8 +476,9 @@ Rules:
 
 1. parse transport into explicit styles only
 2. compute effective styles through a style resolver
-3. perform semantic comparison on effective style
-4. emit only explicit deltas during lowering
+3. resolve effective style against `TabIR.style_env`
+4. perform semantic comparison on effective style
+5. emit only explicit deltas during lowering
 
 Consequences:
 
@@ -368,6 +520,27 @@ Consequences:
 2. index shifts caused by bullet creation are planned, not incidental
 3. releveling can be implemented without corrupting surrounding text ranges
 
+## Anchored Annotation Semantics
+
+Google Docs named ranges and similar anchored extras are semantic metadata over
+document content, not part of the block tree itself.
+
+Rules:
+
+1. annotations are anchored to semantic positions, not stored as raw UTF-16
+   offsets in the canonical IR
+2. annotation diff happens after block/inline alignment, over anchor points in
+   semantic space
+3. lowering resolves annotation anchors only after content/layout state for the
+   target batch is known
+
+Consequences:
+
+1. named-range-only edits are visible to semantic diff
+2. markdown special-element annotations survive content edits without stale
+   index arithmetic
+3. annotation comparison no longer depends on server-generated IDs
+
 ## Diff Phase
 
 The diff phase computes semantic edits over the IR. It does not emit requests or
@@ -379,9 +552,10 @@ indices.
 Edit =
     UpdateTabProperties
   | EditContainer(container_id, ContainerEditProgram)
-  | UpdateSectionAttachment(section_id, header_ref/footer_ref changes)
-  | CreateSharedSegment
-  | DeleteSharedSegment
+  | UpdateSectionAttachment(section_id, header/footer slot changes)
+  | EditAnchoredAnnotations(tab_id, AnnotationEditProgram)
+  | CreateResource(resource_kind, resource_ref)
+  | DeleteResource(resource_kind, resource_ref)
   | UnsupportedEdit(reason)
 ```
 
@@ -416,6 +590,23 @@ Algorithm:
 5. Treat footnote references and inline object refs as atomic inline nodes.
 
 UTF-16 conversion happens only during lowering.
+
+### Inline producer edits
+
+Some inline nodes introduce new server-assigned IDs and dependent containers.
+`FootnoteRefIR` insertion is the key case.
+
+Rule:
+
+1. inserting a `FootnoteRefIR` is lowered as:
+   1. create the inline producer at a legal body insertion point
+   2. bind the returned ID to the referenced footnote container
+   3. reconcile the footnote container in a dependent batch
+
+Consequence:
+
+1. footnote support fits the same semantic/lowering split as new tabs and new
+   shared segments.
 
 ### List diff
 
@@ -477,15 +668,20 @@ Lowering rule:
 
 ### Section and shared segment diff
 
-Body content diff and section attachment diff are separate.
+Section breaks are first-class body blocks whose payload includes section style
+and attachment state.
 
 1. Diff body blocks including `SectionBreakIR`.
-2. Diff section styles.
-3. Diff header/footer attachment graph.
-4. Diff referenced header/footer contents exactly once per shared segment.
+2. Diff section style and attachment fields on matched `SectionBreakIR` nodes.
+3. Diff referenced header/footer contents exactly once per shared segment.
+4. Reject attachment creates whose target topology is not transport-verified.
 
 This eliminates the need for document-wide "find first default header/footer"
 stateful hacks.
+
+If the target context requires a transport form that the Docs backend does not
+honor or rejects, lowering must reject the edit explicitly. That is a transport
+capability failure, not a reason to fall back to document-global heuristics.
 
 ## Lowering Phase
 
@@ -503,7 +699,8 @@ Lowering is the only phase allowed to know:
 ### Layout state
 
 `LayoutState` is maintained per `(tab_id, segment_id or container_ref)` and
-tracks legal insertion/deletion coordinates.
+tracks legal insertion/deletion coordinates plus the transport side effects of
+already-planned requests.
 
 It resolves:
 
@@ -512,6 +709,7 @@ It resolves:
 3. container end positions
 4. table start positions
 5. section break attachment locations
+6. annotation anchor positions in the current shadow transport state
 
 No code outside the lowering layer may construct raw Docs indices.
 
@@ -531,14 +729,19 @@ LegalPoint =
 
 ### Lowering invariants
 
-1. No delete range may include `eop` or `eos`.
-2. No text insertion may target a table start.
-3. No page break may be lowered outside `BODY`.
-4. No table may be lowered into `FOOTNOTE` or `TABLE_CELL`.
-5. Every request using IDs created earlier is topologically ordered after the
+1. No delete range may include `eos`.
+2. A protected structural separator may never be deleted in isolation.
+3. An interior paragraph separator may be consumed only by an explicit
+   paragraph-merge or block-delete lowering rule.
+4. No text insertion may target a table start.
+5. No page break may be lowered outside `BODY`.
+6. No table may be lowered into `FOOTNOTE` or `TABLE_CELL`.
+7. Every request using IDs created earlier is topologically ordered after the
    producer request.
-6. Within a coordinate partition, mutations are emitted in descending resolved
+8. Within a coordinate partition, mutations are emitted in descending resolved
    position order unless a request dependency requires otherwise.
+9. `LayoutState` is updated after every emitted request side effect that changes
+   legal positions inside the current batch.
 
 ## Range legality
 
@@ -547,15 +750,18 @@ Docs boundary rules.
 
 Rules:
 
-1. delete ranges must exclude `eop` / `eos`
-2. text-style and paragraph-style ranges must never extend past the final legal
+1. text-style, paragraph-style, and bullet ranges must exclude `eop` / `eos`
+2. delete ranges may cross paragraph boundaries only when planned as structural
+   boundary deletes that preserve container legality
+3. delete ranges must exclude `eos` and any protected structural separator
+4. text-style and paragraph-style ranges must never extend past the final legal
    content position of the target container
-3. bullet ranges must never terminate at or beyond the terminal container
+5. bullet ranges must never terminate at or beyond the terminal container
    sentinel
-4. when the Docs API extends a style range to include adjacent newlines, the
+6. when the Docs API extends a style range to include adjacent newlines, the
    planner must cap the requested range so that the effective applied range
    remains legal
-5. if a full-paragraph text-style update would also style a list bullet, that
+7. if a full-paragraph text-style update would also style a list bullet, that
    side effect must be treated as part of planning rather than as verification
    noise
 
@@ -579,6 +785,9 @@ For matched paragraphs:
 
 Because `eop` is structural, the planner never deletes the last paragraph
 newline.
+
+Interior paragraph separators are consumed only by structural paragraph edits,
+never by paragraph-local text diff.
 
 ### Block insertion
 
@@ -626,13 +835,18 @@ Consequences:
 
 ### Deletion
 
-All deletes are lowered from semantic spans that exclude `eop` and `eos`.
+All deletes are lowered from semantic spans that exclude `eos`.
+
+Plain text diff never consumes `eop`. An interior paragraph separator may be
+consumed only by an explicit structural paragraph/list delete or merge.
 
 The planner computes the maximal legal delete range under Docs constraints:
 
 1. never delete final container sentinel
-2. never delete only the newline protecting a table or section break
-3. if a semantic delete would violate these rules, rewrite as a legal
+2. never delete only the separator protecting a table, TOC, or section break
+3. consume interior paragraph separators only when the semantic edit is an
+   explicit paragraph merge/delete
+4. if a semantic delete would violate these rules, rewrite as a legal
    combination of:
    1. structural delete
    2. sibling merge
@@ -654,13 +868,19 @@ Lowering no longer guesses based on paragraph-local bullet fields alone.
 Section attachment edits are lowered using:
 
 1. `CreateHeaderRequest` / `CreateFooterRequest` with
-   `sectionBreakLocation` when a new section-scoped segment must be created
+   typed slots and `sectionBreakLocation` when a new section-scoped segment must
+   be created
 2. content edits against the referenced segment
 3. `UpdateSectionStyleRequest` only when actual section style fields must be
    updated
 
 Shared segments are created once and referenced by the section graph in the
 semantic model.
+
+Lowering must also consult a transport capability matrix. If the live Docs API
+cannot reliably realize a semantically-valid attachment transform for the target
+tab/section/slot combination, the reconciler must reject that transform
+explicitly instead of misrouting it to another tab or section.
 
 ## Determinism
 
@@ -680,7 +900,9 @@ convenience.
 
 ## Batching and ID Dependencies
 
-Use sequential batches only for ID-producing operations.
+Use sequential batches only for producer-consumer dependencies.
+
+The dependency graph is batch-relative, never global.
 
 Batch layer 0:
 
@@ -692,10 +914,18 @@ Batch layer 0:
 Batch layer N+1:
 
 1. requests that reference IDs created in batch N
+2. dependent container edits that populate newly created resources
 
 All other operations stay in the earliest dependency-valid batch.
 
-Every batch uses `WriteControl.requiredRevisionId`.
+Execution rule:
+
+1. batch 0 uses `base.revision_id`
+2. batch `N+1` uses the `requiredRevisionId` returned by the response to batch
+   `N`
+
+The planner computes dependency layers. The executor advances revision control
+between layers.
 
 ## Unsupported Operations
 
@@ -709,14 +939,19 @@ Examples:
 3. nested tables if Docs API does not represent them safely in target context
 4. unsupported opaque block mutation
 5. section attachment transforms lacking a legal section break target
+6. header/footer creation paths that require a Docs API transport route known to
+   mis-target or fail for the target tab/section/slot
+7. section-break topology edits without dedicated lowering support
+8. sidecar resource mutations outside the supported surface
 
 Failure mode must be `UnsupportedEdit(reason)` at semantic phase or
 `LoweringError(reason)` at lowering phase, never a best-effort invalid request.
 
 ## Correctness Guarantees
 
-For all supported edits, under `requiredRevisionId == base.revisionId`, the
-system guarantees:
+For all supported edits, under execution that starts from
+`requiredRevisionId == base.revisionId` and advances the required revision after
+each successful batch, the system guarantees:
 
 1. every emitted request is structurally legal by construction
 2. no request deletes a final newline sentinel
@@ -726,21 +961,30 @@ system guarantees:
 6. body/header/footer/footnote/table-cell recursion uses one algorithm with
    different capability sets
 7. shared header/footer semantics are preserved through explicit section
-   attachments
+   attachments for supported attachment transforms
 8. tab hierarchy is preserved rather than flattened away
+9. semantic annotations such as named ranges are preserved through anchored
+   comparison and lowering
 
 ## Test Contract
 
-All reconciler tests should follow one contract:
+All reconciler tests belong to one of two allowed classes:
 
-1. `base Document`
-2. `desired Document`
-3. parse -> diff -> lower
-4. execute requests
-5. parse actual result back into `DocumentIR`
-6. compare semantic IR equality
+1. exact-plan contract tests:
+   1. `base Document`
+   2. `desired Document`
+   3. parse -> diff -> lower
+   4. normalize requests
+   5. assert exact batch equality
+2. convergence tests:
+   1. `base Document`
+   2. `desired Document`
+   3. parse -> diff -> lower
+   4. execute requests
+   5. parse actual result back into `DocumentIR`
+   6. compare semantic IR equality
 
-Raw transport JSON equality is not the oracle.
+Raw transport JSON equality is never the oracle.
 
 ### Mandatory test classes
 
@@ -748,10 +992,19 @@ Raw transport JSON equality is not the oracle.
 2. append/prepend/split/merge of list runs
 3. paragraph text mutation without block replacement
 4. mixed paragraph/table/pagebreak insertion around structural boundaries
-5. section-scoped header/footer creation and reuse
+5. safe header/footer creation, shared-segment reuse, and explicit rejection of
+   unsupported attachment routes
 6. recursive cell content edits
-7. idempotence: `reconcile(x, x) == []`
-8. convergence: after apply, reparsed actual IR equals desired IR
+7. footnote reference creation plus dependent footnote content population
+8. annotation-only diffs and annotation shifts after content edits
+9. raw-transport fixtures whose real API indices differ from mock reindexing
+10. typed header/footer slot behavior (`DEFAULT`, `FIRST_PAGE`, `EVEN_PAGE`)
+11. idempotence: `reconcile(x, x) == []`
+12. convergence: after apply, reparsed actual IR equals desired IR
+13. multi-batch revision handoff using returned `requiredRevisionId`
+14. transport normalization fixtures: run splitting, soft line breaks, missing
+    trailing paragraph, numeric style normalization
+15. explicit unsupported transport-capability failures
 
 ### Comparator rule
 
@@ -762,6 +1015,9 @@ It must not ignore:
 1. `lists`
 2. list continuity
 3. shared segment attachment graph
+4. typed header/footer slot attachments
+5. anchored annotations such as named ranges
+6. supported sidecar resource catalogs
 
 Transport-generated IDs may be canonicalized, but semantic identity must be
 preserved.
@@ -823,9 +1079,11 @@ The ideas are sound. The current shape is too transport-coupled.
 The correct architecture is:
 
 1. canonical recursive semantic IR with implicit structural sentinels
-2. first-class lists and explicit section attachment graph
-3. typed semantic diff independent of Docs transport coordinates
-4. legality-preserving lowering phase that alone understands Docs request rules
+2. typed structural separators with explicit protected-versus-consumable roles
+3. first-class lists plus explicit section and resource graphs
+4. typed semantic diff independent of Docs transport coordinates
+5. a deterministic canonicalization pass for transport variance
+6. legality-preserving lowering phase that alone understands Docs request rules
 
 This is the architecture that makes newline compensation unnecessary and turns
 today's structural bugs into invalid states that the system cannot express.

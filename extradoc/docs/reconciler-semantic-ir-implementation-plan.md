@@ -9,9 +9,13 @@ This plan implements the new reconciler in-tree under:
 The existing `extradoc.reconcile` package remains untouched until `reconcile_v2`
 is production-ready.
 
+Initial production scope preserves existing section-break topology. Section-break
+insertion/deletion remains explicitly unsupported until a dedicated lowering
+task exists.
+
 ## Testing Policy
 
-For `reconcile_v2`, every reconciler test follows the same contract:
+For `reconcile_v2`, the primary contract test follows this shape:
 
 1. construct `base: Document`
 2. construct `desired: Document`
@@ -19,12 +23,14 @@ For `reconcile_v2`, every reconciler test follows the same contract:
 4. normalize the returned batches into plain request dicts
 5. assert exact equality with expected batches
 
-The oracle is the request sequence, not the mock.
+For lowering-focused tasks, the oracle is the request sequence.
 
-The mock may still be used in a small number of transport-level tests, but it is
-not the primary correctness oracle for `reconcile_v2`.
+But exact-plan assertions are not sufficient by themselves. Historical bugs in
+this project frequently produced plausible-looking request sequences that were
+still wrong after transport side effects, verifier normalization, or real-API
+index differences.
 
-There is one additional allowed test class:
+`reconcile_v2` therefore allows two additional test classes:
 
 1. small lowering legality tests
 2. no mock
@@ -34,8 +40,18 @@ There is one additional allowed test class:
    3. explicit unsupported-edit rejection
    4. field-mask and request normalization
 
-These exist to validate lowering invariants that are smaller than a full
-`base + desired -> exact plan` contract test.
+and:
+
+1. semantic convergence tests
+2. execute the emitted batches against the mock or a transport fixture
+3. reparse the result into IR
+4. assert semantic IR equality with `desired`
+
+These exist to validate:
+
+1. lowering invariants that are smaller than a full contract test
+2. transport-side-effect behavior that exact-plan assertions alone do not prove
+3. raw-transport fixtures where real API indices differ from mock reindexing
 
 Canonical helper shape:
 
@@ -69,6 +85,9 @@ extradoc/src/extradoc/reconcile_v2/
   layout.py
   lower.py
   requests.py
+  styles.py
+  annotations.py
+  executor.py
   testing.py
   errors.py
   tabs.py
@@ -129,6 +148,53 @@ Commit value:
 1. makes illegal states explicit
 2. freezes the semantic model before algorithms begin
 
+### Task 1A: Add style environment, typed header/footer slots, and anchored annotation IR
+
+Deliverable:
+
+1. extend `TabIR` with explicit style environment (`documentStyle`,
+   `namedStyles`, list catalog)
+2. represent section attachment state on `SectionBreakIR` rather than in a
+   duplicate side table
+3. represent section attachments as typed header/footer slot maps rather than
+   singular refs
+4. add anchored annotation IR for named ranges
+5. parse inline/positioned object catalogs as explicit opaque semantic state
+
+Tests:
+
+1. opening section break parses as a first-class block carrying section state
+2. first-page and even-page header/footer slots parse distinctly
+3. named-range anchors survive canonicalization independent of server IDs
+4. effective-style resolution has explicit access to tab style environment
+5. inline object references resolve against parsed object catalogs
+
+Commit value:
+
+1. closes the main semantic-model gaps before algorithm work begins
+
+### Task 1B: Encode protected versus consumable structural separators
+
+Deliverable:
+
+1. classify container-final sentinels, paragraph separators, and
+   structure-protecting separators explicitly in `ir.py`
+2. encode which separators are always protected versus consumable by explicit
+   paragraph merge/delete edits
+3. expose this classification to `layout.py` and `lower.py`
+
+Tests:
+
+1. middle paragraph separator is consumable by structural paragraph delete
+2. separator before table is protected
+3. separator before TOC is protected
+4. separator before section break is protected
+
+Commit value:
+
+1. replaces a major historical off-by-one/delete-range bug class with an
+   explicit model boundary
+
 ### Task 2: Implement parser for body-only paragraphs
 
 Deliverable:
@@ -136,7 +202,7 @@ Deliverable:
 1. parse Docs `Document` into `DocumentIR`
 2. support:
    1. tabs
-   2. body
+   2. body with mandatory opening `SectionBreakIR`
    3. plain paragraphs
 3. strip paragraph-final newline into `eop`
 4. strip container-final newline into `eos`
@@ -145,13 +211,36 @@ Tests:
 
 1. identical one-paragraph docs -> `[]`
 2. append paragraph -> exact `insertText`
-3. delete paragraph -> exact `deleteContentRange`
+3. delete paragraph via structural boundary delete -> exact `deleteContentRange`
 4. replace paragraph text -> exact in-paragraph text edit sequence
 
 Commit value:
 
 1. proves that newline sentinels can be removed from semantic content
 2. gets the first real end-to-end request generation working
+
+### Task 2A: Canonicalize transport variance before diff
+
+Deliverable:
+
+1. normalize equivalent text-run segmentations into one inline representation
+2. normalize soft line break encodings used by the raw API
+3. normalize missing-versus-synthetic trailing paragraphs into one container-end
+   model
+4. normalize API-defaulted style fields and numeric precision that should not
+   trigger semantic diffs
+
+Tests:
+
+1. embedded-newline run splitting does not produce a diff
+2. vertical-tab soft break normalizes to the chosen semantic form
+3. missing trailing paragraph in raw transport does not cause a spurious append
+4. table-cell color float precision drift does not produce a style update
+
+Commit value:
+
+1. addresses the recurring spurious-diff class at the parser boundary instead
+   of in verifier hacks
 
 ### Task 3: Introduce legal points and layout state for body paragraphs
 
@@ -165,7 +254,8 @@ Tests:
 
 1. insertion before first paragraph
 2. insertion after last paragraph
-3. delete middle paragraph without touching final container newline
+3. delete middle paragraph via boundary delete without touching final container
+   newline
 4. end-of-segment location resolves immediately before the terminal sentinel
 
 Commit value:
@@ -192,6 +282,50 @@ Commit value:
 
 1. makes append-at-end a first-class lowering primitive
 2. avoids synthetic paragraph tricks when the Docs API exposes a direct form
+
+### Task 3B: Make `LayoutState` a transport shadow state
+
+Deliverable:
+
+1. evolve `LayoutState` from static point resolution into a stateful shadow of
+   transport layout
+2. teach it to account for request side effects such as:
+   1. `insertTable` separator displacement
+   2. paragraph merges from deletes
+   3. leading-tab removal during bullet creation
+3. forbid request emitters from re-deriving positions outside this state
+
+Tests:
+
+1. paragraph after inserted table receives styles at the correct position
+2. consecutive tables remain index-stable
+3. list creation with leading tabs updates subsequent positions correctly
+
+Commit value:
+
+1. addresses the recurring off-by-one regression class at the architectural
+   level rather than per-feature patches
+
+### Task 3C: Enforce protected-boundary delete legality
+
+Deliverable:
+
+1. teach `LayoutState` and lowering to distinguish protected separators from
+   consumable paragraph separators
+2. lower paragraph deletes/merges only through explicit structural edit paths
+3. reject delete plans that would isolate the separator before a table, TOC, or
+   section break
+
+Tests:
+
+1. delete middle paragraph merges surrounding paragraphs legally
+2. delete paragraph before table preserves the protecting separator
+3. edit near TOC does not insert into or delete through the TOC boundary
+4. replace paragraphs before a section break preserves section topology
+
+Commit value:
+
+1. turns a long history of delete-range special cases into one legality layer
 
 ### Task 4: Implement paragraph semantic diff
 
@@ -252,6 +386,25 @@ Commit value:
 
 1. closes the main architectural hole around formatting bleed
 
+### Task 5B: Implement anchored annotation diff and lowering
+
+Deliverable:
+
+1. parse named ranges into anchored annotation IR
+2. diff annotations independently of block content
+3. lower create/delete/update of supported named-range annotations from anchor
+   points resolved by `LayoutState`
+
+Tests:
+
+1. annotation-only diff emits named-range requests
+2. content edit plus annotation shift lowers against post-edit anchor positions
+3. docs differing only by server-generated named-range IDs compare equal
+
+Commit value:
+
+1. preserves semantic metadata currently relied on by markdown special elements
+
 ### Task 6: Lift page break into semantic block and enforce capability checks
 
 Deliverable:
@@ -269,6 +422,25 @@ Tests:
 Commit value:
 
 1. closes one known legality hole by construction
+
+### Task 6A: Implement footnote reference diff and dependent footnote creation
+
+Deliverable:
+
+1. treat `FootnoteRefIR` as an id-producing inline edit
+2. lower footnote insertion via `CreateFootnoteRequest`
+3. reconcile created footnote containers in a dependent batch
+4. handle footnote deletion through reference deletion semantics
+
+Tests:
+
+1. insert footnote reference in body -> exact two-layer batch plan
+2. populate created footnote content in dependent batch
+3. reject footnote insertion in header/footer/footnote
+
+Commit value:
+
+1. closes a long-standing unsupported inline producer path cleanly
 
 ### Task 7: Introduce first-class `ListIR` and list canonicalization
 
@@ -462,22 +634,24 @@ Commit value:
 
 1. matches and exceeds the current reconciler's effective table support surface
 
-### Task 14: Parse sections and shared header/footer graph
+### Task 14: Parse sections, style environment, and the shared header/footer graph
 
 Deliverable:
 
 1. parse body section partition
 2. parse section styles
-3. represent header/footer attachments explicitly
-4. represent shared header/footer segments explicitly
-5. parse tab hierarchy (`parentTabId`, child tabs)
+3. parse tab style environment (`documentStyle`, `namedStyles`, lists)
+4. represent typed header/footer slot attachments explicitly
+5. represent shared header/footer segments explicitly
+6. parse tab hierarchy (`parentTabId`, child tabs)
 
 Tests:
 
 1. single-section doc with default header
-2. multi-section doc with distinct section attachments
+2. multi-section doc with distinct typed slot attachments
 3. two sections sharing same header segment
-4. nested tab tree parses with stable parent/child relationships
+4. first-page/even-page slot parsing is preserved
+5. nested tab tree parses with stable parent/child relationships
 
 Commit value:
 
@@ -493,7 +667,9 @@ Deliverable:
    `CreateFooterRequest.sectionBreakLocation` when creating new scoped segments
 3. lower content edits against the shared segment container
 4. support multi-batch deferred IDs
-5. use `UpdateSectionStyleRequest` only for actual section style updates
+5. support typed slots (`DEFAULT`, `FIRST_PAGE`, `EVEN_PAGE`)
+6. enforce an explicit transport capability matrix for attachment operations
+7. use `UpdateSectionStyleRequest` only for actual section style updates
 
 Tests:
 
@@ -501,6 +677,11 @@ Tests:
 2. modify existing header content
 3. attach existing shared header to another section
 4. create footer and populate in dependent batch
+5. first-page or even-page attachment lowers distinctly from default
+6. new tab with a new header/footer in an existing multi-tab document yields an
+   explicit unsupported error, not a best-effort request
+7. transport-broken create path yields explicit unsupported error, not a
+   best-effort request
 
 Commit value:
 
@@ -519,8 +700,10 @@ Tests:
 
 1. rename tab only
 2. add tab with body content
-3. add tab with body plus header
-4. add child tab under parent tab
+3. add tab with body plus unsupported header/footer create path -> explicit
+   error
+4. add tab with body content plus anchored annotations
+5. add child tab under parent tab
 
 Commit value:
 
@@ -531,13 +714,17 @@ Commit value:
 Deliverable:
 
 1. wire `requiredRevisionId`
-2. finalize `reconcile_v2.reconcile`
-3. expose stable public API without replacing `extradoc.reconcile`
+2. advance revision IDs between executed dependency layers using the previous
+   response's `writeControl.requiredRevisionId`
+3. finalize `reconcile_v2.reconcile`
+4. expose stable public API without replacing `extradoc.reconcile`
 
 Tests:
 
 1. all prior contract tests run through public entrypoint
 2. batch ordering test with deferred IDs
+3. multi-batch execution uses returned revision IDs rather than reusing the
+   base revision
 
 Commit value:
 
@@ -550,15 +737,19 @@ Deliverable:
 1. implement `parse(actual_transport) -> actual_ir`
 2. implement semantic equality for IR
 3. remove list-identity erasure from `reconcile_v2` tests
+4. compare supported sidecar resource catalogs explicitly
 
 Tests:
 
 1. docs differing only by transport `listId` but same semantic list -> equal
 2. docs with split vs merged list runs -> not equal
 3. docs with different section attachments -> not equal
-4. docs with different merge topology -> not equal
-5. docs with different effective style but same explicit style source graph ->
+4. docs with different typed header/footer slot attachments -> not equal
+5. docs with different named-range anchors -> not equal
+6. docs with different merge topology -> not equal
+7. docs with different effective style but same explicit style source graph ->
    equal or not equal according to effective styling, not transport runs
+8. docs with different supported object catalogs -> not equal
 
 Commit value:
 
@@ -570,12 +761,15 @@ Deliverable:
 
 1. optional harness that runs both old and new reconciler on selected fixtures
 2. record old/new request sequences for review
-3. no caller migration yet
+3. include raw-transport fixtures captured from real pulls where mock reindexing
+   historically diverged
+4. no caller migration yet
 
 Tests:
 
 1. selected regression fixtures produce valid `reconcile_v2` plans
 2. known old bugs are covered by exact-plan tests
+3. known transport-layout bugs are covered by semantic convergence tests
 
 Commit value:
 
@@ -616,9 +810,11 @@ Recommended order is exactly the numbered task order above.
 The first usable milestone is after Task 8:
 
 1. body paragraphs
-2. page breaks
-3. lists
-4. exact-plan contract tests
+2. transport canonicalization
+3. protected-boundary legality
+4. page breaks
+5. lists
+6. exact-plan contract tests
 
 That milestone already covers the major newline and list-attachment pain points
 without requiring tables or headers to be complete.
