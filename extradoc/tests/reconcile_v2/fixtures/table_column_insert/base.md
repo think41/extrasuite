@@ -1,3 +1,3 @@
-| **col** |  |
+| **left** | **right** |
 | --- | --- |
-| omega |  |
+| alpha | bravo |

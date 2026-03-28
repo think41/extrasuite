@@ -633,8 +633,10 @@ Commit value:
 
 Deliverable:
 
-1. row alignment
-2. column alignment
+1. exact-first row alignment with similarity fallback for mixed structural +
+   content cases
+2. exact-first column alignment with similarity fallback for mixed structural +
+   content cases
 3. row/column insert/delete lowering
 4. cell style lowering
 5. deterministic table request ordering
@@ -647,12 +649,17 @@ Tests:
 4. delete column
 5. change table cell style only
 6. replay end-row/end-column operations from a fresh live 2x2 fixture
+7. replay middle-row/middle-column operations from fresh live fixtures
+8. replay one mixed "matched cell edit + row insert" fixture and assert content
+   edit lowers before the structural request
 
 Commit value:
 
 1. completes supported table editing
 2. proves that table structural edits can be lowered from table-relative
    coordinates rather than ad hoc body indices
+3. proves the alignment layer can keep matched cell edits alive across a
+   structural row/column shift
 
 ### Task 13A: Implement full table feature support
 
@@ -674,6 +681,8 @@ Tests:
 5. update column properties only
 6. row/column edit adjacent to merged region remains valid
 7. merge/unmerge replay ignores covered-cell paragraph-style transport noise
+8. row insert directly below a merged region replays without invalidating merge
+   topology
 
 Commit value:
 

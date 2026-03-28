@@ -71,6 +71,12 @@ def main() -> None:
         "table_column_delete",
         "table_merge_cells",
         "table_unmerge_cells",
+        "table_middle_row_insert",
+        "table_middle_row_delete",
+        "table_middle_column_insert",
+        "table_middle_column_delete",
+        "table_middle_row_insert_with_cell_edit",
+        "table_row_insert_below_merged",
         "header_text_replace",
         "named_range_add",
     ]

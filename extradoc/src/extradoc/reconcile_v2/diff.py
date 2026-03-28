@@ -10,7 +10,7 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 from itertools import accumulate
-from typing import TYPE_CHECKING
+from typing import TYPE_CHECKING, TypeVar
 
 from extradoc.reconcile_v2.canonical import canonicalize_document_ir
 from extradoc.reconcile_v2.ir import (
@@ -26,7 +26,7 @@ from extradoc.reconcile_v2.ir import (
 from extradoc.reconcile_v2.parse import parse_document
 
 if TYPE_CHECKING:
-    from collections.abc import Iterable
+    from collections.abc import Callable, Iterable
 
     from extradoc.api_types._generated import Document
     from extradoc.reconcile_v2.ir import (
@@ -34,6 +34,9 @@ if TYPE_CHECKING:
         DocumentIR,
         TabIR,
     )
+
+
+T = TypeVar("T")
 
 
 @dataclass(slots=True)
@@ -162,6 +165,14 @@ class UnmergeTableCellsEdit:
 class ListItemFragment:
     level: int
     text: str
+
+
+@dataclass(frozen=True, slots=True)
+class TableComparisonPlan:
+    structural_edit: SemanticEdit | None
+    row_pairs: tuple[tuple[int, int], ...]
+    column_pairs: tuple[tuple[int, int], ...]
+    recurse_cells: bool = True
 
 
 SemanticEdit = (
@@ -516,130 +527,189 @@ def _diff_section_tables(
         ):
             if not isinstance(base_block, TableIR) or not isinstance(desired_block, TableIR):
                 continue
-            structural_edit = _diff_table_structure(
+            plan = _plan_table_comparison(
                 tab_id=tab_id,
                 section_index=section_index,
                 block_index=block_index,
                 base_table=base_block,
                 desired_table=desired_block,
             )
-            if structural_edit is not None:
-                edits.append(structural_edit)
+            if plan is None:
                 continue
-            if len(base_block.rows) != len(desired_block.rows):
-                continue
-            for row_index, (base_row, desired_row) in enumerate(
-                zip(base_block.rows, desired_block.rows, strict=False)
-            ):
-                if len(base_row.cells) != len(desired_row.cells):
-                    continue
-                for column_index, (base_cell, desired_cell) in enumerate(
-                    zip(base_row.cells, desired_row.cells, strict=False)
-                ):
-                    edit = _diff_story_paragraph_slice(
-                        tab_id=tab_id,
-                        story_id=(
-                            f"{tab_id}:body:table:{block_index}:r{row_index}:c{column_index}"
-                        ),
-                        section_index=None,
-                        base_blocks=base_cell.content.blocks,
-                        desired_blocks=desired_cell.content.blocks,
-                    )
-                    if edit is not None:
-                        edits.append(edit)
+            if plan.recurse_cells:
+                for base_row_index, desired_row_index in plan.row_pairs:
+                    base_row = base_block.rows[base_row_index]
+                    desired_row = desired_block.rows[desired_row_index]
+                    for base_column_index, desired_column_index in plan.column_pairs:
+                        if (
+                            base_column_index >= len(base_row.cells)
+                            or desired_column_index >= len(desired_row.cells)
+                        ):
+                            continue
+                        base_cell = base_row.cells[base_column_index]
+                        desired_cell = desired_row.cells[desired_column_index]
+                        edit = _diff_story_paragraph_slice(
+                            tab_id=tab_id,
+                            story_id=(
+                                f"{tab_id}:body:table:{block_index}:r{base_row_index}:c{base_column_index}"
+                            ),
+                            section_index=None,
+                            base_blocks=base_cell.content.blocks,
+                            desired_blocks=desired_cell.content.blocks,
+                        )
+                        if edit is not None:
+                            edits.append(edit)
+            if plan.structural_edit is not None:
+                edits.append(plan.structural_edit)
     return edits
 
 
-def _diff_table_structure(
+def _plan_table_comparison(
     *,
     tab_id: str,
     section_index: int,
     block_index: int,
     base_table: TableIR,
     desired_table: TableIR,
-) -> SemanticEdit | None:
+) -> TableComparisonPlan | None:
     base_row_count = len(base_table.rows)
     desired_row_count = len(desired_table.rows)
     base_column_count = max((len(row.cells) for row in base_table.rows), default=0)
     desired_column_count = max((len(row.cells) for row in desired_table.rows), default=0)
+    shared_row_pairs = tuple((index, index) for index in range(min(base_row_count, desired_row_count)))
+    shared_column_pairs = tuple(
+        (index, index) for index in range(min(base_column_count, desired_column_count))
+    )
 
-    if (
-        desired_row_count == base_row_count + 1
-        and desired_column_count == base_column_count
-        and _table_row_signatures(base_table) == _table_row_signatures(desired_table)[:base_row_count]
-    ):
-        return InsertTableRowEdit(
-            tab_id=tab_id,
-            section_index=section_index,
-            block_index=block_index,
-            row_index=base_row_count - 1,
-            insert_below=True,
+    row_insert_index = _best_single_insertion_index(
+        _table_row_signatures(base_table),
+        _table_row_signatures(desired_table),
+        similarity=_signature_tuple_similarity,
+    )
+    if desired_row_count == base_row_count + 1 and desired_column_count == base_column_count and row_insert_index is not None:
+        return TableComparisonPlan(
+            structural_edit=InsertTableRowEdit(
+                tab_id=tab_id,
+                section_index=section_index,
+                block_index=block_index,
+                row_index=max(0, row_insert_index - 1),
+                insert_below=row_insert_index > 0,
+            ),
+            row_pairs=tuple(
+                (index, index if index < row_insert_index else index + 1)
+                for index in range(base_row_count)
+            ),
+            column_pairs=tuple((index, index) for index in range(base_column_count)),
         )
 
-    if (
-        base_row_count == desired_row_count + 1
-        and base_column_count == desired_column_count
-        and _table_row_signatures(base_table)[:desired_row_count]
-        == _table_row_signatures(desired_table)
-    ):
-        return DeleteTableRowEdit(
-            tab_id=tab_id,
-            section_index=section_index,
-            block_index=block_index,
-            row_index=base_row_count - 1,
+    row_delete_index = _best_single_deletion_index(
+        _table_row_signatures(base_table),
+        _table_row_signatures(desired_table),
+        similarity=_signature_tuple_similarity,
+    )
+    if base_row_count == desired_row_count + 1 and base_column_count == desired_column_count and row_delete_index is not None:
+        return TableComparisonPlan(
+            structural_edit=DeleteTableRowEdit(
+                tab_id=tab_id,
+                section_index=section_index,
+                block_index=block_index,
+                row_index=row_delete_index,
+            ),
+            row_pairs=tuple(
+                (index, index if index < row_delete_index else index - 1)
+                for index in range(base_row_count)
+                if index != row_delete_index
+            ),
+            column_pairs=tuple((index, index) for index in range(desired_column_count)),
         )
 
-    if (
-        desired_column_count == base_column_count + 1
-        and desired_row_count == base_row_count
-        and _table_column_append_matches(base_table, desired_table)
-    ):
-        return InsertTableColumnEdit(
-            tab_id=tab_id,
-            section_index=section_index,
-            block_index=block_index,
-            column_index=base_column_count - 1,
-            insert_right=True,
+    column_insert_index = _best_single_insertion_index(
+        _table_column_signatures(base_table),
+        _table_column_signatures(desired_table),
+        similarity=_signature_tuple_similarity,
+    )
+    if desired_column_count == base_column_count + 1 and desired_row_count == base_row_count and column_insert_index is not None:
+        return TableComparisonPlan(
+            structural_edit=InsertTableColumnEdit(
+                tab_id=tab_id,
+                section_index=section_index,
+                block_index=block_index,
+                column_index=max(0, column_insert_index - 1),
+                insert_right=column_insert_index > 0,
+            ),
+            row_pairs=tuple((index, index) for index in range(base_row_count)),
+            column_pairs=tuple(
+                (index, index if index < column_insert_index else index + 1)
+                for index in range(base_column_count)
+            ),
         )
 
-    if (
-        base_column_count == desired_column_count + 1
-        and desired_row_count == base_row_count
-        and _table_column_delete_matches(base_table, desired_table)
-    ):
-        return DeleteTableColumnEdit(
-            tab_id=tab_id,
-            section_index=section_index,
-            block_index=block_index,
-            column_index=base_column_count - 1,
+    column_delete_index = _best_single_deletion_index(
+        _table_column_signatures(base_table),
+        _table_column_signatures(desired_table),
+        similarity=_signature_tuple_similarity,
+    )
+    if base_column_count == desired_column_count + 1 and desired_row_count == base_row_count and column_delete_index is not None:
+        return TableComparisonPlan(
+            structural_edit=DeleteTableColumnEdit(
+                tab_id=tab_id,
+                section_index=section_index,
+                block_index=block_index,
+                column_index=column_delete_index,
+            ),
+            row_pairs=tuple((index, index) for index in range(base_row_count)),
+            column_pairs=tuple(
+                (index, index if index < column_delete_index else index - 1)
+                for index in range(base_column_count)
+                if index != column_delete_index
+            ),
         )
 
     merge_change = _table_merge_change(base_table, desired_table)
     if merge_change is None:
-        return None
+        return TableComparisonPlan(
+            structural_edit=None,
+            row_pairs=shared_row_pairs,
+            column_pairs=shared_column_pairs,
+        )
 
     row_index, column_index, before_span, after_span = merge_change
     if before_span == (1, 1) and after_span != (1, 1):
-        return MergeTableCellsEdit(
-            tab_id=tab_id,
-            section_index=section_index,
-            block_index=block_index,
-            row_index=row_index,
-            column_index=column_index,
-            row_span=after_span[0],
-            column_span=after_span[1],
+        return TableComparisonPlan(
+            structural_edit=MergeTableCellsEdit(
+                tab_id=tab_id,
+                section_index=section_index,
+                block_index=block_index,
+                row_index=row_index,
+                column_index=column_index,
+                row_span=after_span[0],
+                column_span=after_span[1],
+            ),
+            row_pairs=shared_row_pairs,
+            column_pairs=shared_column_pairs,
+            recurse_cells=False,
         )
     if before_span != (1, 1) and after_span == (1, 1):
-        return UnmergeTableCellsEdit(
-            tab_id=tab_id,
-            section_index=section_index,
-            block_index=block_index,
-            row_index=row_index,
-            column_index=column_index,
-            row_span=before_span[0],
-            column_span=before_span[1],
+        return TableComparisonPlan(
+            structural_edit=UnmergeTableCellsEdit(
+                tab_id=tab_id,
+                section_index=section_index,
+                block_index=block_index,
+                row_index=row_index,
+                column_index=column_index,
+                row_span=before_span[0],
+                column_span=before_span[1],
+            ),
+            row_pairs=shared_row_pairs,
+            column_pairs=shared_column_pairs,
+            recurse_cells=False,
         )
-    return None
+    return TableComparisonPlan(
+        structural_edit=None,
+        row_pairs=shared_row_pairs,
+        column_pairs=shared_column_pairs,
+        recurse_cells=False,
+    )
 
 
 def _diff_story_paragraph_slice(
@@ -798,26 +868,93 @@ def _table_cell_signature(cell: object) -> str:
     return f"{cell.row_span}:{cell.column_span}:{'|'.join(texts)}"
 
 
-def _table_column_append_matches(base_table: TableIR, desired_table: TableIR) -> bool:
-    for base_row, desired_row in zip(base_table.rows, desired_table.rows, strict=False):
-        if len(desired_row.cells) != len(base_row.cells) + 1:
-            return False
-        if tuple(_table_cell_signature(cell) for cell in desired_row.cells[: len(base_row.cells)]) != tuple(
-            _table_cell_signature(cell) for cell in base_row.cells
-        ):
-            return False
-    return True
+def _table_column_signatures(table: TableIR) -> tuple[tuple[str, ...], ...]:
+    if not table.rows:
+        return ()
+    max_columns = max(len(row.cells) for row in table.rows)
+    return tuple(
+        tuple(
+            _table_cell_signature(row.cells[column_index])
+            for row in table.rows
+            if column_index < len(row.cells)
+        )
+        for column_index in range(max_columns)
+    )
 
 
-def _table_column_delete_matches(base_table: TableIR, desired_table: TableIR) -> bool:
-    for base_row, desired_row in zip(base_table.rows, desired_table.rows, strict=False):
-        if len(base_row.cells) != len(desired_row.cells) + 1:
-            return False
-        if tuple(_table_cell_signature(cell) for cell in base_row.cells[: len(desired_row.cells)]) != tuple(
-            _table_cell_signature(cell) for cell in desired_row.cells
-        ):
-            return False
-    return True
+def _best_single_insertion_index(
+    base: tuple[T, ...],
+    desired: tuple[T, ...],
+    *,
+    similarity: Callable[[T, T], int],
+) -> int | None:
+    if len(desired) != len(base) + 1:
+        return None
+    exact_index = _exact_single_insertion_index(base, desired)
+    if exact_index is not None:
+        return exact_index
+    best_index: int | None = None
+    best_score: int | None = None
+    for insert_index in range(len(desired)):
+        score = 0
+        for base_index, base_item in enumerate(base):
+            desired_index = base_index if base_index < insert_index else base_index + 1
+            score += similarity(base_item, desired[desired_index])
+        if best_score is None or score > best_score:
+            best_index = insert_index
+            best_score = score
+    return best_index
+
+
+def _best_single_deletion_index(
+    base: tuple[T, ...],
+    desired: tuple[T, ...],
+    *,
+    similarity: Callable[[T, T], int],
+) -> int | None:
+    if len(base) != len(desired) + 1:
+        return None
+    exact_index = _exact_single_deletion_index(base, desired)
+    if exact_index is not None:
+        return exact_index
+    best_index: int | None = None
+    best_score: int | None = None
+    for delete_index in range(len(base)):
+        score = 0
+        for base_index, base_item in enumerate(base):
+            if base_index == delete_index:
+                continue
+            desired_index = base_index if base_index < delete_index else base_index - 1
+            score += similarity(base_item, desired[desired_index])
+        if best_score is None or score > best_score:
+            best_index = delete_index
+            best_score = score
+    return best_index
+
+
+def _signature_tuple_similarity(left: tuple[str, ...], right: tuple[str, ...]) -> int:
+    score = sum(left_item == right_item for left_item, right_item in zip(left, right, strict=False))
+    if len(left) == len(right):
+        return score
+    return score - abs(len(left) - len(right))
+
+
+def _exact_single_insertion_index(base: tuple[T, ...], desired: tuple[T, ...]) -> int | None:
+    if len(desired) != len(base) + 1:
+        return None
+    for insert_index in range(len(desired)):
+        if desired[:insert_index] == base[:insert_index] and desired[insert_index + 1 :] == base[insert_index:]:
+            return insert_index
+    return None
+
+
+def _exact_single_deletion_index(base: tuple[T, ...], desired: tuple[T, ...]) -> int | None:
+    if len(base) != len(desired) + 1:
+        return None
+    for delete_index in range(len(base)):
+        if base[:delete_index] == desired[:delete_index] and base[delete_index + 1 :] == desired[delete_index:]:
+            return delete_index
+    return None
 
 
 def _table_merge_change(

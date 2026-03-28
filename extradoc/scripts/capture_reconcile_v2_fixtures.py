@@ -20,14 +20,19 @@ import shutil
 import subprocess
 import tempfile
 import time
+from collections.abc import Callable
 from dataclasses import dataclass
 from pathlib import Path
+from typing import TYPE_CHECKING
 
 from extrasuite.client import CredentialsManager
 
 from extradoc import GoogleDocsTransport
 from extradoc.api_types._generated import Document
 from extradoc.reconcile_v2.api import summarize_document
+
+if TYPE_CHECKING:
+    from collections.abc import Callable
 
 REPO_ROOT = Path(__file__).resolve().parents[2]
 EXTRASUITE = REPO_ROOT / "extrasuite"
@@ -77,8 +82,10 @@ class TableScenario:
     title: str
     description: str
     base_md: str
-    desired_requests: tuple[dict, ...]
+    desired_requests: tuple[dict, ...] = ()
     base_setup_requests: tuple[dict, ...] = ()
+    base_setup_builder: Callable[[dict], list[dict]] | None = None
+    desired_request_builder: Callable[[dict], list[dict]] | None = None
 
 
 MARKDOWN_SCENARIOS = (
@@ -145,8 +152,154 @@ NAMED_RANGE_SCENARIO = NamedRangeScenario(
 )
 
 TABLE_BASE_MD = "| **col** |  |\n| --- | --- |\n| omega |  |\n"
+TABLE_TRAILING_COLUMN_MD = "| **left** | **right** |\n| --- | --- |\n| alpha | bravo |\n"
+TABLE_MIDDLE_ROW_MD = (
+    "| **left** | **right** |\n"
+    "| --- | --- |\n"
+    "| alpha | bravo |\n"
+    "| charlie | delta |\n"
+)
+TABLE_MIDDLE_COLUMN_MD = (
+    "| **one** | **two** | **three** |\n"
+    "| --- | --- | --- |\n"
+    "| alpha | bravo | charlie |\n"
+)
 
 TABLE_SCENARIOS = (
+    TableScenario(
+        name="table_middle_row_insert",
+        title="Confidence Sprint Fixture Table Middle Row Insert",
+        description="Insert one empty row between two existing data rows in a 3x2 table.",
+        base_md=TABLE_MIDDLE_ROW_MD,
+        desired_requests=(
+            {
+                "insertTableRow": {
+                    "tableCellLocation": {
+                        "tableStartLocation": {"index": 2, "tabId": "t.0"},
+                        "rowIndex": 1,
+                        "columnIndex": 0,
+                    },
+                    "insertBelow": True,
+                }
+            },
+        ),
+    ),
+    TableScenario(
+        name="table_middle_row_delete",
+        title="Confidence Sprint Fixture Table Middle Row Delete",
+        description="Delete one empty middle row from a 4x2 table.",
+        base_md=TABLE_MIDDLE_ROW_MD,
+        base_setup_requests=(
+            {
+                "insertTableRow": {
+                    "tableCellLocation": {
+                        "tableStartLocation": {"index": 2, "tabId": "t.0"},
+                        "rowIndex": 1,
+                        "columnIndex": 0,
+                    },
+                    "insertBelow": True,
+                }
+            },
+        ),
+        desired_requests=(
+            {
+                "deleteTableRow": {
+                    "tableCellLocation": {
+                        "tableStartLocation": {"index": 2, "tabId": "t.0"},
+                        "rowIndex": 2,
+                        "columnIndex": 0,
+                    }
+                }
+            },
+        ),
+    ),
+    TableScenario(
+        name="table_middle_column_insert",
+        title="Confidence Sprint Fixture Table Middle Column Insert",
+        description="Insert one empty column between existing columns in a 2x3 table.",
+        base_md=TABLE_MIDDLE_COLUMN_MD,
+        desired_requests=(
+            {
+                "insertTableColumn": {
+                    "tableCellLocation": {
+                        "tableStartLocation": {"index": 2, "tabId": "t.0"},
+                        "rowIndex": 0,
+                        "columnIndex": 1,
+                    },
+                    "insertRight": True,
+                }
+            },
+        ),
+    ),
+    TableScenario(
+        name="table_middle_column_delete",
+        title="Confidence Sprint Fixture Table Middle Column Delete",
+        description="Delete one empty middle column from a 2x4 table.",
+        base_md=TABLE_MIDDLE_COLUMN_MD,
+        base_setup_requests=(
+            {
+                "insertTableColumn": {
+                    "tableCellLocation": {
+                        "tableStartLocation": {"index": 2, "tabId": "t.0"},
+                        "rowIndex": 0,
+                        "columnIndex": 1,
+                    },
+                    "insertRight": True,
+                }
+            },
+        ),
+        desired_requests=(
+            {
+                "deleteTableColumn": {
+                    "tableCellLocation": {
+                        "tableStartLocation": {"index": 2, "tabId": "t.0"},
+                        "rowIndex": 0,
+                        "columnIndex": 2,
+                    }
+                }
+            },
+        ),
+    ),
+    TableScenario(
+        name="table_middle_row_insert_with_cell_edit",
+        title="Confidence Sprint Fixture Table Middle Row Insert With Cell Edit",
+        description="Insert one middle row and also edit a later matched cell in the same table.",
+        base_md=TABLE_MIDDLE_ROW_MD,
+        desired_request_builder=lambda base_raw: _build_table_middle_row_insert_with_cell_edit_requests(base_raw),
+    ),
+    TableScenario(
+        name="table_row_insert_below_merged",
+        title="Confidence Sprint Fixture Table Row Insert Below Merged",
+        description="Insert one row directly below an existing merged top row.",
+        base_md=TABLE_BASE_MD,
+        base_setup_requests=(
+            {
+                "mergeTableCells": {
+                    "tableRange": {
+                        "tableCellLocation": {
+                            "tableStartLocation": {"index": 2, "tabId": "t.0"},
+                            "rowIndex": 0,
+                            "columnIndex": 0,
+                        },
+                        "rowSpan": 1,
+                        "columnSpan": 2,
+                    }
+                }
+            },
+        ),
+        desired_requests=(
+            {
+                "insertTableRow": {
+                    "tableCellLocation": {
+                        "tableStartLocation": {"index": 2, "tabId": "t.0"},
+                        "rowIndex": 0,
+                        "columnIndex": 0,
+                    },
+                    "insertBelow": True,
+                }
+            },
+        ),
+    ),
     TableScenario(
         name="table_row_insert",
         title="Confidence Sprint Fixture Table Row Insert",
@@ -198,7 +351,7 @@ TABLE_SCENARIOS = (
         name="table_column_insert",
         title="Confidence Sprint Fixture Table Column Insert",
         description="Insert one empty column at the end of a 2x2 table.",
-        base_md=TABLE_BASE_MD,
+        base_md=TABLE_TRAILING_COLUMN_MD,
         desired_requests=(
             {
                 "insertTableColumn": {
@@ -216,7 +369,7 @@ TABLE_SCENARIOS = (
         name="table_column_delete",
         title="Confidence Sprint Fixture Table Column Delete",
         description="Delete the final empty column from a 2x3 table.",
-        base_md=TABLE_BASE_MD,
+        base_md=TABLE_TRAILING_COLUMN_MD,
         base_setup_requests=(
             {
                 "insertTableColumn": {
@@ -562,20 +715,26 @@ def _capture_table_scenario(
         (base_folder / "Tab_1.md").write_text(scenario.base_md, encoding="utf-8")
         _push_md(base_folder)
 
-        if scenario.base_setup_requests:
-            raw_client.batch_update(doc_id, list(scenario.base_setup_requests))
+        base_setup_requests = list(scenario.base_setup_requests)
+        if scenario.base_setup_builder is not None:
+            base_setup_requests = scenario.base_setup_builder(raw_client.get_document_raw(doc_id))
+        if base_setup_requests:
+            raw_client.batch_update(doc_id, base_setup_requests)
         base_raw = raw_client.get_document_raw(doc_id)
 
-        raw_client.batch_update(doc_id, list(scenario.desired_requests))
+        desired_requests = list(scenario.desired_requests)
+        if scenario.desired_request_builder is not None:
+            desired_requests = scenario.desired_request_builder(base_raw)
+        raw_client.batch_update(doc_id, desired_requests)
         desired_raw = raw_client.get_document_raw(doc_id)
 
     extra_files = {
         "base.md": scenario.base_md,
-        "desired.requests.json": json.dumps(scenario.desired_requests, indent=2) + "\n",
+        "desired.requests.json": json.dumps(desired_requests, indent=2) + "\n",
     }
-    if scenario.base_setup_requests:
+    if base_setup_requests:
         extra_files["base.setup.requests.json"] = (
-            json.dumps(scenario.base_setup_requests, indent=2) + "\n"
+            json.dumps(base_setup_requests, indent=2) + "\n"
         )
 
     _write_fixture_pair(
@@ -721,6 +880,56 @@ def _build_named_range_add_requests(
             }
         ]
     raise RuntimeError(f"Could not locate target text {target_text!r} for named range")
+
+
+def _build_table_middle_row_insert_with_cell_edit_requests(base_raw: dict) -> list[dict]:
+    start_index, end_index = _table_cell_text_range(base_raw, row_index=2, column_index=0)
+    return [
+        {
+            "deleteContentRange": {
+                "range": {
+                    "startIndex": start_index,
+                    "endIndex": end_index,
+                    "tabId": "t.0",
+                }
+            }
+        },
+        {
+            "insertText": {
+                "location": {
+                    "index": start_index,
+                    "tabId": "t.0",
+                },
+                "text": "omega",
+            }
+        },
+        {
+            "insertTableRow": {
+                "tableCellLocation": {
+                    "tableStartLocation": {"index": 2, "tabId": "t.0"},
+                    "rowIndex": 1,
+                    "columnIndex": 0,
+                },
+                "insertBelow": True,
+            }
+        },
+    ]
+
+
+def _table_cell_text_range(base_raw: dict, *, row_index: int, column_index: int) -> tuple[int, int]:
+    table = next(
+        element["table"]
+        for element in base_raw["tabs"][0]["documentTab"]["body"]["content"]
+        if "table" in element
+    )
+    cell = table["tableRows"][row_index]["tableCells"][column_index]
+    paragraphs = [element["paragraph"] for element in cell["content"] if "paragraph" in element]
+    if len(paragraphs) != 1:
+        raise RuntimeError("Expected one paragraph in target table cell")
+    paragraph = paragraphs[0]
+    start_index = paragraph["elements"][0]["startIndex"]
+    end_index = paragraph["elements"][-1]["endIndex"] - 1
+    return start_index, end_index
 
 
 def _visible_paragraph_text(paragraph: dict) -> str:

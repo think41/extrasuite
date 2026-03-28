@@ -305,7 +305,7 @@ The confidence sprint now has live fixture replays for:
 3. table-cell text replacement
 4. existing-header text replacement
 
-All four reduce cleanly to the same semantic operation:
+The first four reduce cleanly to the same semantic operation:
 
 ```text
 replace paragraph slice in story S
@@ -739,10 +739,12 @@ request.
 2. Diff pinned header row count.
 3. Diff column properties.
 4. Diff merge topology.
-5. Align rows by weighted row similarity.
-6. Align columns by weighted column similarity.
+5. Align rows by exact match first, then weighted row similarity as a fallback
+   when a structural row edit coexists with matched-row content edits.
+6. Align columns by exact match first, then weighted column similarity under the
+   same rule.
 7. Emit structural row/column edits semantically.
-8. Recurse into each cell story.
+8. Recurse into each matched cell story using the structural alignment map.
 9. Diff cell style independently.
 
 Tables are recursive structural containers, not string fingerprints.
@@ -754,6 +756,12 @@ Observed transport fact from live replay:
 2. merge/unmerge changes can leave transport-visible covered cells and
    paragraph-style noise behind; semantic diff must key on canonical merge
    topology and cell stories, not incidental covered-cell paragraph styles
+3. when a matched cell edit shares a batch with a row/column insert or delete,
+   the matched-cell edit must lower before the structural shift so base-story
+   coordinates stay valid
+4. fixture design matters: table fixtures must avoid semantically ambiguous
+   duplicate empty columns or rows when the goal is to prove a specific
+   structural coordinate choice
 
 ### Full table support
 
@@ -785,6 +793,8 @@ Lowering rule:
    request ordering
 4. covered cells produced by transport merge/unmerge are canonicalization
    artifacts, not semantic sibling cells
+5. matched-cell content edits in rows/columns that will shift must be emitted
+   before the row/column structural request
 
 ### Section and shared story diff
 

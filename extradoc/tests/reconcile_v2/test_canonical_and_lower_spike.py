@@ -144,7 +144,30 @@ def test_lower_semantic_diff_for_current_fixture_slice() -> None:
                 }
             }
         ],
+        "table_middle_row_insert": [
+            {
+                "insertTableRow": {
+                    "tableCellLocation": {
+                        "tableStartLocation": {"index": 2, "tabId": "t.0"},
+                        "rowIndex": 1,
+                        "columnIndex": 0,
+                    },
+                    "insertBelow": True,
+                }
+            }
+        ],
         "table_row_delete": [
+            {
+                "deleteTableRow": {
+                    "tableCellLocation": {
+                        "tableStartLocation": {"index": 2, "tabId": "t.0"},
+                        "rowIndex": 2,
+                        "columnIndex": 0,
+                    }
+                }
+            }
+        ],
+        "table_middle_row_delete": [
             {
                 "deleteTableRow": {
                     "tableCellLocation": {
@@ -167,7 +190,30 @@ def test_lower_semantic_diff_for_current_fixture_slice() -> None:
                 }
             }
         ],
+        "table_middle_column_insert": [
+            {
+                "insertTableColumn": {
+                    "tableCellLocation": {
+                        "tableStartLocation": {"index": 2, "tabId": "t.0"},
+                        "rowIndex": 0,
+                        "columnIndex": 1,
+                    },
+                    "insertRight": True,
+                }
+            }
+        ],
         "table_column_delete": [
+            {
+                "deleteTableColumn": {
+                    "tableCellLocation": {
+                        "tableStartLocation": {"index": 2, "tabId": "t.0"},
+                        "rowIndex": 0,
+                        "columnIndex": 2,
+                    }
+                }
+            }
+        ],
+        "table_middle_column_delete": [
             {
                 "deleteTableColumn": {
                     "tableCellLocation": {
@@ -205,6 +251,41 @@ def test_lower_semantic_diff_for_current_fixture_slice() -> None:
                         "rowSpan": 1,
                         "columnSpan": 2,
                     }
+                }
+            }
+        ],
+        "table_middle_row_insert_with_cell_edit": [
+            {
+                "deleteContentRange": {
+                    "range": {"startIndex": 34, "endIndex": 41, "tabId": "t.0"}
+                }
+            },
+            {
+                "insertText": {
+                    "location": {"index": 34, "tabId": "t.0"},
+                    "text": "omega",
+                }
+            },
+            {
+                "insertTableRow": {
+                    "tableCellLocation": {
+                        "tableStartLocation": {"index": 2, "tabId": "t.0"},
+                        "rowIndex": 1,
+                        "columnIndex": 0,
+                    },
+                    "insertBelow": True,
+                }
+            },
+        ],
+        "table_row_insert_below_merged": [
+            {
+                "insertTableRow": {
+                    "tableCellLocation": {
+                        "tableStartLocation": {"index": 2, "tabId": "t.0"},
+                        "rowIndex": 0,
+                        "columnIndex": 0,
+                    },
+                    "insertBelow": True,
                 }
             }
         ],

@@ -194,8 +194,32 @@ def test_table_row_insert_fixture_emits_structural_row_insert() -> None:
     ]
 
 
+def test_table_middle_row_insert_fixture_emits_structural_middle_row_insert() -> None:
+    base, desired = _load_fixture_pair("table_middle_row_insert")
+
+    edits = diff_documents(base, desired)
+
+    assert len(edits) == 1
+    assert isinstance(edits[0], InsertTableRowEdit)
+    assert summarize_semantic_edits(edits) == [
+        "tab t.0: section 0 table 1 insert row below 1"
+    ]
+
+
 def test_table_row_delete_fixture_emits_structural_row_delete() -> None:
     base, desired = _load_fixture_pair("table_row_delete")
+
+    edits = diff_documents(base, desired)
+
+    assert len(edits) == 1
+    assert isinstance(edits[0], DeleteTableRowEdit)
+    assert summarize_semantic_edits(edits) == [
+        "tab t.0: section 0 table 1 delete row 2"
+    ]
+
+
+def test_table_middle_row_delete_fixture_emits_structural_middle_row_delete() -> None:
+    base, desired = _load_fixture_pair("table_middle_row_delete")
 
     edits = diff_documents(base, desired)
 
@@ -218,8 +242,32 @@ def test_table_column_insert_fixture_emits_structural_column_insert() -> None:
     ]
 
 
+def test_table_middle_column_insert_fixture_emits_structural_middle_column_insert() -> None:
+    base, desired = _load_fixture_pair("table_middle_column_insert")
+
+    edits = diff_documents(base, desired)
+
+    assert len(edits) == 1
+    assert isinstance(edits[0], InsertTableColumnEdit)
+    assert summarize_semantic_edits(edits) == [
+        "tab t.0: section 0 table 1 insert column right of 1"
+    ]
+
+
 def test_table_column_delete_fixture_emits_structural_column_delete() -> None:
     base, desired = _load_fixture_pair("table_column_delete")
+
+    edits = diff_documents(base, desired)
+
+    assert len(edits) == 1
+    assert isinstance(edits[0], DeleteTableColumnEdit)
+    assert summarize_semantic_edits(edits) == [
+        "tab t.0: section 0 table 1 delete column 2"
+    ]
+
+
+def test_table_middle_column_delete_fixture_emits_structural_middle_column_delete() -> None:
+    base, desired = _load_fixture_pair("table_middle_column_delete")
 
     edits = diff_documents(base, desired)
 
@@ -251,6 +299,33 @@ def test_table_unmerge_cells_fixture_emits_unmerge_edit() -> None:
     assert isinstance(edits[0], UnmergeTableCellsEdit)
     assert summarize_semantic_edits(edits) == [
         "tab t.0: section 0 table 1 unmerge cells r0 c0 span 1x2"
+    ]
+
+
+def test_table_middle_row_insert_with_cell_edit_emits_text_replace_then_row_insert() -> None:
+    base, desired = _load_fixture_pair("table_middle_row_insert_with_cell_edit")
+
+    edits = diff_documents(base, desired)
+
+    assert len(edits) == 2
+    assert isinstance(edits[0], ReplaceParagraphSliceEdit)
+    assert isinstance(edits[1], InsertTableRowEdit)
+    assert edits[0].story_id == "t.0:body:table:1:r2:c0"
+    assert summarize_semantic_edits(edits) == [
+        "tab t.0: story t.0:body:table:1:r2:c0 replace 1 paragraph block(s) at 0 with 1 paragraph(s)",
+        "tab t.0: section 0 table 1 insert row below 1",
+    ]
+
+
+def test_table_row_insert_below_merged_fixture_emits_structural_insert() -> None:
+    base, desired = _load_fixture_pair("table_row_insert_below_merged")
+
+    edits = diff_documents(base, desired)
+
+    assert len(edits) == 1
+    assert isinstance(edits[0], InsertTableRowEdit)
+    assert summarize_semantic_edits(edits) == [
+        "tab t.0: section 0 table 1 insert row below 0"
     ]
 
 
