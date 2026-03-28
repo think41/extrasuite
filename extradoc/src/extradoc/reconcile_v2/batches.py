@@ -4,6 +4,7 @@ from __future__ import annotations
 
 from typing import TYPE_CHECKING, Any
 
+from extradoc.indexer import utf16_len
 from extradoc.reconcile_v2.canonical import canonicalize_document
 from extradoc.reconcile_v2.diff import (
     CreateFootnoteEdit,
@@ -11,7 +12,13 @@ from extradoc.reconcile_v2.diff import (
     diff_documents,
 )
 from extradoc.reconcile_v2.errors import UnsupportedSpikeError
-from extradoc.reconcile_v2.ir import ParagraphIR, TabIR, TableIR, TextSpanIR
+from extradoc.reconcile_v2.ir import (
+    ParagraphIR,
+    PositionEdge,
+    TabIR,
+    TableIR,
+    TextSpanIR,
+)
 from extradoc.reconcile_v2.layout import ParagraphLocation, build_body_layout
 from extradoc.reconcile_v2.lower import lower_document_edits
 from extradoc.reconcile_v2.requests import (
@@ -19,6 +26,7 @@ from extradoc.reconcile_v2.requests import (
     make_create_footer,
     make_create_footnote,
     make_create_header,
+    make_create_named_range,
     make_insert_table,
     make_insert_text_in_story,
     make_update_section_attachment,
@@ -208,48 +216,59 @@ def _plan_new_tab_batches(
     base_ir = canonicalize_document(base)
     desired_ir = canonicalize_document(desired)
 
-    base_paths = {path for path, _ in _walk_tabs(base_ir.tabs)}
+    base_tabs_by_path = dict(_walk_tabs(base_ir.tabs))
     new_tabs = [
         (path, tab)
         for path, tab in _walk_tabs(desired_ir.tabs)
-        if path not in base_paths
+        if path not in base_tabs_by_path
     ]
     if not new_tabs:
         return []
 
-    creation_batch: list[dict[str, Any]] = []
-    population_batches: list[list[dict[str, Any]]] = []
+    batches: list[list[dict[str, Any]]] = []
+    created_tab_refs: dict[tuple[int, ...], dict[str, object]] = {}
+    population_batch: list[dict[str, Any]] = []
     for path, tab in new_tabs:
-        if len(path) != 1:
+        if tab.resource_graph.headers or tab.resource_graph.footers:
             raise UnsupportedSpikeError(
-                "reconcile_v2 multi-batch spike currently supports only top-level tab creation"
+                "reconcile_v2 cannot safely create headers/footers on a newly added tab "
+                "in a document that already has tabs; the Docs API misroutes createHeader/"
+                "createFooter to the first tab"
             )
-        if tab.parent_tab_id is not None:
+        if tab.resource_graph.footnotes:
             raise UnsupportedSpikeError(
-                "reconcile_v2 multi-batch spike does not yet support child-tab creation"
-            )
-        if tab.resource_graph.headers or tab.resource_graph.footers or tab.resource_graph.footnotes:
-            raise UnsupportedSpikeError(
-                "reconcile_v2 multi-batch spike does not yet support creating tabs with attached stories"
-            )
-        if any(tab.annotations.named_ranges.values()):
-            raise UnsupportedSpikeError(
-                "reconcile_v2 multi-batch spike does not yet support creating tabs with named ranges"
+                "reconcile_v2 multi-batch spike does not yet support creating tabs with footnotes"
             )
 
-        creation_request_index = len(creation_batch)
-        creation_batch.append(make_add_document_tab(title=tab.title, index=path[0]))
+        creation_batch_index = len(batches)
+        creation_batch = [
+            make_add_document_tab(
+                title=tab.title,
+                parent_tab_id=_parent_tab_reference(
+                    path=path,
+                    base_tabs_by_path=base_tabs_by_path,
+                    created_tab_refs=created_tab_refs,
+                ),
+                index=path[-1],
+                icon_emoji=tab.icon_emoji,
+            )
+        ]
+        batches.append(creation_batch)
         deferred_tab_id = _deferred_id(
-            placeholder=f"new-tab-{path[0]}",
-            batch_index=0,
-            request_index=creation_request_index,
+            placeholder=f"new-tab-{'-'.join(str(part) for part in path)}",
+            batch_index=creation_batch_index,
+            request_index=0,
             response_path="addDocumentTab.tabProperties.tabId",
         )
+        created_tab_refs[path] = deferred_tab_id
         population_requests = _lower_new_tab_body(tab, deferred_tab_id)
-        if population_requests:
-            population_batches.append(population_requests)
+        named_range_requests = _lower_new_tab_named_ranges(tab, deferred_tab_id)
+        population_batch.extend(population_requests)
+        population_batch.extend(named_range_requests)
 
-    return [creation_batch, *population_batches]
+    if population_batch:
+        batches.append(population_batch)
+    return batches
 
 
 def _lower_new_tab_body(tab: TabIR, deferred_tab_id: dict[str, object]) -> list[dict[str, Any]]:
@@ -268,6 +287,45 @@ def _lower_new_tab_body(tab: TabIR, deferred_tab_id: dict[str, object]) -> list[
         tab_id=deferred_tab_id,
         segment_id=None,
     )
+
+
+def _lower_new_tab_named_ranges(
+    tab: TabIR,
+    deferred_tab_id: dict[str, object],
+) -> list[dict[str, Any]]:
+    if not any(tab.annotations.named_ranges.values()):
+        return []
+    if len(tab.body.sections) != 1:
+        raise UnsupportedSpikeError(
+            "reconcile_v2 multi-batch spike supports new-tab named ranges only for "
+            "single-section body stories"
+        )
+    blocks = tab.body.sections[0].blocks
+    requests: list[dict[str, Any]] = []
+    for name, anchors in tab.annotations.named_ranges.items():
+        for anchor in anchors:
+            if anchor.start.story_id != tab.body.id or anchor.end.story_id != tab.body.id:
+                raise UnsupportedSpikeError(
+                    "reconcile_v2 multi-batch spike supports new-tab named ranges only "
+                    "in the body story"
+                )
+            requests.append(
+                make_create_named_range(
+                    name=name,
+                    start_index=_resolve_new_body_position(
+                        blocks,
+                        position=anchor.start,
+                        story_start_index=1,
+                    ),
+                    end_index=_resolve_new_body_position(
+                        blocks,
+                        position=anchor.end,
+                        story_start_index=1,
+                    ),
+                    tab_id=deferred_tab_id,
+                )
+            )
+    return requests
 
 
 def _lower_blocks_into_empty_story(
@@ -392,6 +450,46 @@ def _paragraph_text(paragraph: ParagraphIR) -> str:
     )
 
 
+def _resolve_new_body_position(
+    blocks: list[Any],
+    *,
+    position: Any,
+    story_start_index: int,
+) -> int:
+    path = position.path
+    if path.section_index not in (None, 0):
+        raise UnsupportedSpikeError(
+            "reconcile_v2 multi-batch spike supports new-tab named ranges only in section 0"
+        )
+    if path.node_path:
+        raise UnsupportedSpikeError(
+            "reconcile_v2 multi-batch spike supports new-tab named ranges only on "
+            "top-level body paragraphs"
+        )
+    current = story_start_index
+    for block_index, block in enumerate(blocks):
+        if not isinstance(block, ParagraphIR):
+            raise UnsupportedSpikeError(
+                "reconcile_v2 multi-batch spike supports new-tab named ranges only for "
+                "paragraph-only body stories"
+            )
+        text = _paragraph_text(block)
+        text_start = current
+        text_end = current + utf16_len(text)
+        if block_index == path.block_index:
+            if path.text_offset_utf16 is not None:
+                return text_start + path.text_offset_utf16
+            if path.edge == PositionEdge.BEFORE:
+                return text_start
+            if path.edge == PositionEdge.AFTER:
+                return text_end
+            return text_start
+        current = text_end + 1
+    raise UnsupportedSpikeError(
+        "reconcile_v2 could not resolve a new-tab named range anchor into the created story"
+    )
+
+
 def _deferred_id(
     *,
     placeholder: str,
@@ -459,3 +557,22 @@ def _walk_tabs(
         pairs.append((path, tab))
         pairs.extend(_walk_tabs(tab.child_tabs, path))
     return pairs
+
+
+def _parent_tab_reference(
+    *,
+    path: tuple[int, ...],
+    base_tabs_by_path: dict[tuple[int, ...], TabIR],
+    created_tab_refs: dict[tuple[int, ...], dict[str, object]],
+) -> str | dict[str, object] | None:
+    if len(path) == 1:
+        return None
+    parent_path = path[:-1]
+    if parent_path in created_tab_refs:
+        return created_tab_refs[parent_path]
+    parent = base_tabs_by_path.get(parent_path)
+    if parent is None:
+        raise UnsupportedSpikeError(
+            f"Could not resolve parent tab for new tab at path {path!r}"
+        )
+    return parent.id

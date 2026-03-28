@@ -1,7 +1,10 @@
 from __future__ import annotations
 
+import pytest
+
 from extradoc.api_types._generated import BatchUpdateDocumentRequest, Document
 from extradoc.reconcile_v2.api import lower_semantic_diff_batches, reconcile
+from extradoc.reconcile_v2.errors import UnsupportedSpikeError
 
 from .helpers import (
     load_expected_lowered_batches,
@@ -22,6 +25,22 @@ def test_create_tab_nested_table_write_batches_match_fixture() -> None:
 
     assert lower_semantic_diff_batches(base, desired) == load_expected_lowered_batches(
         "create_tab_nested_table_write"
+    )
+
+
+def test_create_tab_named_range_write_batches_match_fixture() -> None:
+    base, desired = load_fixture_pair("create_tab_named_range_write")
+
+    assert lower_semantic_diff_batches(base, desired) == load_expected_lowered_batches(
+        "create_tab_named_range_write"
+    )
+
+
+def test_create_parent_child_tab_write_batches_match_fixture() -> None:
+    base, desired = load_fixture_pair("create_parent_child_tab_write")
+
+    assert lower_semantic_diff_batches(base, desired) == load_expected_lowered_batches(
+        "create_parent_child_tab_write"
     )
 
 
@@ -72,6 +91,29 @@ def test_create_tab_batches_ignore_desired_new_tab_transport_indices() -> None:
     ) == load_expected_lowered_batches("create_tab_table_write")
 
 
+def test_create_tab_named_range_batches_ignore_desired_future_tab_id() -> None:
+    base, desired = load_fixture_pair("create_tab_named_range_write")
+    desired_raw = desired.model_dump(by_alias=True, exclude_none=True)
+    desired_raw["tabs"][1]["tabProperties"]["tabId"] = "future.invalid.tab"
+    desired_future_id = Document.model_validate(desired_raw)
+
+    assert lower_semantic_diff_batches(base, desired_future_id) == load_expected_lowered_batches(
+        "create_tab_named_range_write"
+    )
+
+
+def test_create_parent_child_batches_ignore_desired_future_tab_ids() -> None:
+    base, desired = load_fixture_pair("create_parent_child_tab_write")
+    desired_raw = desired.model_dump(by_alias=True, exclude_none=True)
+    desired_raw["tabs"][1]["tabProperties"]["tabId"] = "future.parent.tab"
+    desired_raw["tabs"][1]["childTabs"][0]["tabProperties"]["tabId"] = "future.child.tab"
+    desired_future_id = Document.model_validate(desired_raw)
+
+    assert lower_semantic_diff_batches(base, desired_future_id) == load_expected_lowered_batches(
+        "create_parent_child_tab_write"
+    )
+
+
 def test_reconcile_returns_batch_update_models() -> None:
     base, desired = load_fixture_pair("create_tab_table_write")
 
@@ -81,6 +123,20 @@ def test_reconcile_returns_batch_update_models() -> None:
     assert [batch.model_dump(by_alias=True, exclude_none=True)["requests"] for batch in batches] == (
         load_expected_lowered_batches("create_tab_table_write")
     )
+
+
+def test_create_tab_with_footer_is_explicitly_unsupported() -> None:
+    base, desired = load_fixture_pair("create_tab_table_write")
+    _, footer_desired = load_fixture_pair("section_create_footer")
+    desired_raw = desired.model_dump(by_alias=True, exclude_none=True)
+    footer_raw = footer_desired.model_dump(by_alias=True, exclude_none=True)
+    desired_raw["tabs"][1]["documentTab"]["footers"] = footer_raw["tabs"][0]["documentTab"][
+        "footers"
+    ]
+    desired_with_footer = Document.model_validate(desired_raw)
+
+    with pytest.raises(UnsupportedSpikeError, match="cannot safely create headers/footers"):
+        lower_semantic_diff_batches(base, desired_with_footer)
 
 
 def _strip_indices(elements: list[dict]) -> None:

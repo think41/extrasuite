@@ -20,11 +20,17 @@ FOOTER_SLOT_FIELDS = {
 def make_add_document_tab(
     *,
     title: str,
+    parent_tab_id: Any | None = None,
     index: int | None = None,
+    icon_emoji: str | None = None,
 ) -> dict[str, Any]:
     tab_properties: dict[str, Any] = {"title": title}
+    if parent_tab_id is not None:
+        tab_properties["parentTabId"] = parent_tab_id
     if index is not None:
         tab_properties["index"] = index
+    if icon_emoji is not None:
+        tab_properties["iconEmoji"] = icon_emoji
     return {"addDocumentTab": {"tabProperties": tab_properties}}
 
 

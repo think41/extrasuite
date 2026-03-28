@@ -148,6 +148,67 @@ def _build_create_tab_nested_table_write_batches(_: dict) -> list[list[dict]]:
     )
 
 
+def _build_create_tab_named_range_write_batches(_: dict) -> list[list[dict]]:
+    return _build_add_tab_story_with_named_ranges_batches(
+        title="Ranged Tab",
+        index=1,
+        body_text="alpha bravo charlie",
+        named_ranges=(("spike:bravo", "bravo"),),
+    )
+
+
+def _build_create_parent_child_tab_write_batches(_: dict) -> list[list[dict]]:
+    parent_ref = {
+        "placeholder": "new-tab-1",
+        "batch_index": 0,
+        "request_index": 0,
+        "response_path": "addDocumentTab.tabProperties.tabId",
+    }
+    child_ref = {
+        "placeholder": "new-tab-1-0",
+        "batch_index": 1,
+        "request_index": 0,
+        "response_path": "addDocumentTab.tabProperties.tabId",
+    }
+    return [
+        [
+            {
+                "addDocumentTab": {
+                    "tabProperties": {
+                        "title": "Parent Tab",
+                        "index": 1,
+                    }
+                }
+            }
+        ],
+        [
+            {
+                "addDocumentTab": {
+                    "tabProperties": {
+                        "title": "Child Tab",
+                        "parentTabId": parent_ref,
+                        "index": 0,
+                    }
+                }
+            }
+        ],
+        [
+            {
+                "insertText": {
+                    "location": {"index": 1, "tabId": parent_ref},
+                    "text": "parent body",
+                }
+            },
+            {
+                "insertText": {
+                    "location": {"index": 1, "tabId": child_ref},
+                    "text": "child body",
+                }
+            },
+        ],
+    ]
+
+
 MARKDOWN_SCENARIOS = (
     MarkdownScenario(
         name="paragraph_to_heading",
@@ -307,6 +368,22 @@ REQUEST_SCENARIOS = (
         base_md="alpha first tab\n",
         desired_request_batches_builder=_build_create_tab_nested_table_write_batches,
         expected_lowered_batches_builder=_build_create_tab_nested_table_write_batches,
+    ),
+    RequestScenario(
+        name="create_tab_named_range_write",
+        title="Confidence Sprint Fixture Create Tab Named Range Write",
+        description="Create a new tab, write paragraph text into it, and create a named range over that new content in the same logical cycle.",
+        base_md="alpha first tab\n",
+        desired_request_batches_builder=_build_create_tab_named_range_write_batches,
+        expected_lowered_batches_builder=_build_create_tab_named_range_write_batches,
+    ),
+    RequestScenario(
+        name="create_parent_child_tab_write",
+        title="Confidence Sprint Fixture Create Parent Child Tab Write",
+        description="Create a new parent tab and a nested child tab, then populate content in both tabs in the same logical cycle.",
+        base_md="alpha first tab\n",
+        desired_request_batches_builder=_build_create_parent_child_tab_write_batches,
+        expected_lowered_batches_builder=_build_create_parent_child_tab_write_batches,
     ),
     RequestScenario(
         name="section_create_distinct_header",
@@ -1711,20 +1788,85 @@ def _build_add_tab_story_batches(
     title: str,
     index: int,
     body_spec: dict,
+    parent_tab_ref: dict[str, object] | None = None,
+    path_key: str | None = None,
 ) -> list[list[dict]]:
+    path_key = path_key or str(index)
     tab_ref = {
-        "placeholder": f"new-tab-{index}",
+        "placeholder": f"new-tab-{path_key}",
         "batch_index": 0,
         "request_index": 0,
         "response_path": "addDocumentTab.tabProperties.tabId",
     }
     return [
-        [{"addDocumentTab": {"tabProperties": {"title": title, "index": index}}}],
+        [
+            {
+                "addDocumentTab": {
+                    "tabProperties": {
+                        "title": title,
+                        "index": index,
+                        **({"parentTabId": parent_tab_ref} if parent_tab_ref else {}),
+                    }
+                }
+            }
+        ],
         _build_story_requests_from_spec(
             story_spec=body_spec,
             story_start_index=1,
             tab_ref=tab_ref,
         ),
+    ]
+
+
+def _build_add_tab_story_with_named_ranges_batches(
+    *,
+    title: str,
+    index: int,
+    body_text: str,
+    named_ranges: tuple[tuple[str, str], ...],
+    parent_tab_ref: dict[str, object] | None = None,
+    path_key: str | None = None,
+) -> list[list[dict]]:
+    path_key = path_key or str(index)
+    tab_ref = {
+        "placeholder": f"new-tab-{path_key}",
+        "batch_index": 0,
+        "request_index": 0,
+        "response_path": "addDocumentTab.tabProperties.tabId",
+    }
+    content_batch = _build_story_requests_from_spec(
+        story_spec=body_text,
+        story_start_index=1,
+        tab_ref=tab_ref,
+    )
+    for name, target_text in named_ranges:
+        start_index = body_text.index(target_text) + 1
+        end_index = start_index + len(target_text)
+        content_batch.append(
+            {
+                "createNamedRange": {
+                    "name": name,
+                    "range": {
+                        "startIndex": start_index,
+                        "endIndex": end_index,
+                        "tabId": tab_ref,
+                    },
+                }
+            }
+        )
+    return [
+        [
+            {
+                "addDocumentTab": {
+                    "tabProperties": {
+                        "title": title,
+                        "index": index,
+                        **({"parentTabId": parent_tab_ref} if parent_tab_ref else {}),
+                    }
+                }
+            }
+        ],
+        content_batch,
     ]
 
 

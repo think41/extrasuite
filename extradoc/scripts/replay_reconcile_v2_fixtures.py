@@ -100,6 +100,8 @@ def main() -> None:
         "multitab_text_replace",
         "create_tab_table_write",
         "create_tab_nested_table_write",
+        "create_tab_named_range_write",
+        "create_parent_child_tab_write",
         "header_text_replace",
         "section_create_distinct_header",
         "section_create_footer",
