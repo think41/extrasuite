@@ -1332,3 +1332,80 @@ class TestDiffRawJsonBase:
         # Should produce at least one batch with change requests
         all_reqs = [r for batch in result.batches for r in (batch.requests or [])]
         assert len(all_reqs) > 0, "Expected diff to produce requests for changed callout"
+
+    def test_heading_edit_with_consecutive_callouts_avoids_separator_insert(
+        self, tmp_path: Path
+    ) -> None:
+        """Editing an unrelated heading must not reinsert callout separators.
+
+        The raw Docs API stores a bare '\\n' paragraph between consecutive
+        callout tables. Markdown preserves that separator visually, so the raw
+        base normalizer must keep it. If it strips the separator, diff() later
+        emits an insertText '\\n' at the preceding table boundary, which the
+        real Google Docs API rejects with a 400 INVALID_ARGUMENT error.
+        """
+        import json
+
+        from extradoc.client import DocsClient
+
+        base_md = textwrap.dedent("""\
+            # Title
+
+            > [!WARNING]
+            > Warn 1.
+
+            > [!INFO]
+            > Info 2.
+
+            ## Tail
+
+            Tail paragraph.
+            """)
+        edited_md = textwrap.dedent("""\
+            # Title Updated
+
+            > [!WARNING]
+            > Warn 1.
+
+            > [!INFO]
+            > Info 2.
+
+            ## Tail
+
+            Tail paragraph.
+            """)
+
+        folder = self._setup_markdown_folder(tmp_path, base_md, "test-callout-separators")
+
+        raw_doc = markdown_to_document(
+            {"Tab_1": base_md},
+            document_id="test-callout-separators",
+            title="Test",
+            tab_ids={"Tab_1": "t.0"},
+        )
+        raw_dir = folder / ".raw"
+        raw_dir.mkdir()
+        (raw_dir / "document.json").write_text(
+            json.dumps(
+                reindex_document(raw_doc).model_dump(
+                    by_alias=True, exclude_none=True
+                )
+            ),
+            encoding="utf-8",
+        )
+
+        (folder / "Tab_1.md").write_text(edited_md, encoding="utf-8")
+
+        client = DocsClient.__new__(DocsClient)
+        result = client.diff(str(folder))
+
+        all_reqs = [r for batch in result.batches for r in (batch.requests or [])]
+        newline_inserts = [
+            r.insert_text
+            for r in all_reqs
+            if r.insert_text is not None and r.insert_text.text == "\n"
+        ]
+        assert not newline_inserts, (
+            "Diff should not emit bare separator insertText requests for "
+            f"consecutive callouts: {newline_inserts}"
+        )

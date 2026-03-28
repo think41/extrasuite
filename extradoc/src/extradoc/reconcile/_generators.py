@@ -1011,6 +1011,79 @@ def _process_slot_inner(
                 and not deletes
                 and left_anchor is not None
                 and not _is_section_break(left_anchor)
+                and has_tables_in_adds
+            ):
+                tbl_insert_idx = _el_end(left_anchor) - 1
+                n_non_empty = sum(
+                    1
+                    for ae in filtered
+                    if ae.desired_element
+                    and _is_paragraph(ae.desired_element)
+                    and _para_text(ae.desired_element)
+                )
+                para_count = 0
+                first_in_reversed = True
+                spurious_pending = False
+                for ae in reversed(filtered):
+                    el = ae.desired_element
+                    assert el is not None
+                    if _is_table(el):
+                        assert el.table is not None
+                        insert_reqs.extend(
+                            _generate_insert_table_with_content(
+                                el.table,
+                                tbl_insert_idx,
+                                segment_id,
+                                tab_id,
+                                desired_lists,
+                            )
+                        )
+                        spurious_pending = True
+                    elif _is_paragraph(el):
+                        if _is_pagebreak_paragraph(el):
+                            spurious_pending = False
+                            first_in_reversed = False
+                            insert_reqs.append(
+                                _make_insert_page_break(tbl_insert_idx, tab_id)
+                            )
+                        else:
+                            text = _para_text(el)
+                            if not text:
+                                continue
+                            para_count += 1
+                            is_first_in_doc = para_count == n_non_empty
+                            if spurious_pending:
+                                text = text.rstrip("\n")
+                                spurious_pending = False
+                                first_in_reversed = False
+                            elif first_in_reversed:
+                                text = text.rstrip("\n")
+                                first_in_reversed = False
+                            if is_first_in_doc:
+                                text = "\n" + text
+                            if text:
+                                insert_reqs.append(
+                                    _make_insert_text(
+                                        text, tbl_insert_idx, segment_id, tab_id
+                                    )
+                                )
+                insert_reqs.extend(
+                    _style_reqs_for_added_paras(
+                        filtered,
+                        tbl_insert_idx + 1,  # +1 for the leading \n prepended
+                        segment_id,
+                        tab_id,
+                        desired_lists,
+                        table_size_extra=0,
+                    )
+                )
+                return insert_reqs
+
+            if (
+                _is_table(right_anchor)
+                and not deletes
+                and left_anchor is not None
+                and not _is_section_break(left_anchor)
                 and not has_tables_in_adds
             ):
                 tbl_insert_idx = _el_end(left_anchor) - 1

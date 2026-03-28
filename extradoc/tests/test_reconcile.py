@@ -792,6 +792,23 @@ class TestReconcileTableEdgeCases:
         ok, diffs = verify(base, result, desired)
         assert ok, f"Diffs: {diffs}"
 
+    def test_add_para_then_table_before_existing_table_inner_slot(self):
+        """Add a paragraph + table immediately before an existing table.
+
+        right_anchor is a table, there are no deletes in the slot, and the adds
+        contain a paragraph followed by a table. The reconciler must insert via
+        the left anchor's trailing newline rather than calling insertTable at
+        right_anchor.startIndex, which the real Google Docs API rejects.
+        """
+        existing_table = _make_table([["Existing"]])
+        new_table = _make_table([["Inserted"]])
+        base = _make_doc_with_content("Para A", existing_table)
+        desired = _make_doc_with_content("Para A", "New Para", new_table, existing_table)
+        result = reconcile(base, desired)
+        assert len(result) == 1 and result[0].requests is not None
+        ok, diffs = verify(base, result, desired)
+        assert ok, f"Diffs: {diffs}"
+
     def test_replace_paragraph_with_table_inner_slot(self):
         """Replace Para B with a table while Para C remains as right anchor (T03).
 

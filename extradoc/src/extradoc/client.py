@@ -9,6 +9,7 @@ import json
 import logging
 import tempfile
 import zipfile
+from collections import defaultdict, deque
 from dataclasses import dataclass
 from pathlib import Path
 from typing import TYPE_CHECKING
@@ -35,7 +36,7 @@ from extradoc.serde._models import IndexXml
 from extradoc.serde._utils import hex_to_optional_color, optional_color_to_hex
 
 if TYPE_CHECKING:
-    from extradoc.api_types._generated import BatchUpdateDocumentRequest
+    from extradoc.api_types._generated import BatchUpdateDocumentRequest, NamedRanges
     from extradoc.transport import Transport
 
 logger = logging.getLogger(__name__)
@@ -182,7 +183,7 @@ class DocsClient:
                 # so it is consistent with the markdown-serde-derived desired document.
                 # Without this, the reconciler generates spurious updateParagraphStyle
                 # requests for every unchanged paragraph (e.g. lineSpacing, direction).
-                _normalize_raw_base_para_styles(base)
+                _normalize_raw_base_para_styles(base, base_bundle.document)
                 desired = reindex_document(desired_bundle.document)
                 batches = reconcile(base, desired)
                 comment_ops = diff_comments(
@@ -319,7 +320,10 @@ _MARKDOWN_STYLE_REMAP: dict[str, str] = {
 }
 
 
-def _normalize_raw_base_para_styles(doc: Document) -> None:
+def _normalize_raw_base_para_styles(
+    doc: Document,
+    markdown_reference: Document | None = None,
+) -> None:
     """Normalise the raw API JSON base document so it is consistent with the
     markdown-serde-derived desired document.
 
@@ -363,15 +367,34 @@ def _normalize_raw_base_para_styles(doc: Document) -> None:
     if not doc.tabs:
         return
 
+    reference_tabs: dict[str, list[StructuralElement]] = {}
+    if markdown_reference is not None:
+        for ref_tab in markdown_reference.tabs:
+            ref_tab_id = ref_tab.tab_properties.tab_id if ref_tab.tab_properties else None
+            ref_dt = ref_tab.document_tab
+            if ref_tab_id and ref_dt and ref_dt.body and ref_dt.body.content:
+                reference_tabs[ref_tab_id] = ref_dt.body.content
+
     for tab in doc.tabs:
         dt = tab.document_tab
         if not dt:
             continue
         if dt.body and dt.body.content:
+            tab_id = tab.tab_properties.tab_id if tab.tab_properties else None
+            preserve_after_table_starts = _preserved_separator_table_starts(
+                dt.body.content,
+                reference_tabs.get(tab_id, []),
+            )
             # 1. Strip inter-table separator paragraphs
-            dt.body.content = _strip_inter_table_separators(dt.body.content)
+            dt.body.content = _strip_inter_table_separators(
+                dt.body.content,
+                preserve_after_table_starts,
+            )
             # 2. Strip bare empty paragraphs (invisible in markdown)
-            dt.body.content = _strip_empty_body_paragraphs(dt.body.content)
+            dt.body.content = _strip_empty_body_paragraphs(
+                dt.body.content,
+                preserve_after_table_starts,
+            )
             # 3. Normalise paragraph styles (including TITLE/SUBTITLE mapping)
             for se in dt.body.content:
                 _normalize_structural_element_para_styles(se)
@@ -384,16 +407,75 @@ def _normalize_raw_base_para_styles(doc: Document) -> None:
             _ensure_base_trailing_paragraph(dt.body.content)
 
 
+def _table_text_fingerprint(se: StructuralElement) -> str | None:
+    """Return a stable plain-text fingerprint for a table element."""
+    if se.table is None:
+        return None
+
+    row_parts: list[str] = []
+    for row in se.table.table_rows or []:
+        cell_parts: list[str] = []
+        for cell in row.table_cells or []:
+            para_parts: list[str] = []
+            for cell_se in cell.content or []:
+                if cell_se.paragraph is None:
+                    continue
+                para_parts.append(
+                    "".join(
+                        pe.text_run.content or ""
+                        for pe in (cell_se.paragraph.elements or [])
+                        if pe.text_run
+                    )
+                )
+            cell_parts.append("\u241e".join(para_parts))
+        row_parts.append("\u241f".join(cell_parts))
+    return "\u241d".join(row_parts)
+
+
+def _preserved_separator_table_starts(
+    raw_content: list[StructuralElement],
+    reference_content: list[StructuralElement],
+) -> set[int]:
+    """Return raw table start indices whose following separator should remain.
+
+    The pristine markdown document is the authoritative source for whether a
+    blank paragraph after a given table is visible to users. We match raw tables
+    to pristine-markdown tables by plain-text fingerprint and preserve only the
+    separators that were present in that pristine markdown representation.
+    """
+    expected: dict[str, deque[bool]] = defaultdict(deque)
+    n = len(reference_content)
+    for i, se in enumerate(reference_content):
+        fingerprint = _table_text_fingerprint(se)
+        if fingerprint is None:
+            continue
+        keep_after = i + 1 < n and _is_bare_empty_paragraph(reference_content[i + 1])
+        expected[fingerprint].append(keep_after)
+
+    preserve: set[int] = set()
+    for se in raw_content:
+        fingerprint = _table_text_fingerprint(se)
+        if fingerprint is None or se.start_index is None:
+            continue
+        queue = expected.get(fingerprint)
+        if queue:
+            if queue.popleft():
+                preserve.add(se.start_index)
+    return preserve
+
+
 def _strip_inter_table_separators(
     content: list[StructuralElement],
+    preserve_after_table_starts: set[int],
 ) -> list[StructuralElement]:
     """Remove empty paragraphs that sit between two tables in the body.
 
     The real Google Docs API always inserts a trailing paragraph after every
     table, so consecutive tables are separated by an empty '\\n' paragraph.
-    The markdown serde doesn't produce these separator paragraphs.  To keep
-    the base consistent with the desired document, drop any paragraph whose
-    sole content is '\\n' when it is surrounded by tables.
+    Markdown does not preserve these separators uniformly: code-block tables
+    omit them, while callout and blockquote tables keep a visible blank
+    separator. To keep the raw base consistent with the markdown-deserialized
+    desired document, drop only the separators that are invisible in markdown.
     """
     out: list[StructuralElement] = []
     n = len(content)
@@ -412,6 +494,10 @@ def _strip_inter_table_separators(
                     i + 1 < n and content[i + 1].table is not None
                 )
                 if prev_is_table and next_is_table:
+                    prev_start = out[-1].start_index
+                    if prev_start is not None and prev_start in preserve_after_table_starts:
+                        out.append(se)
+                        continue
                     continue  # skip this inter-table separator
         out.append(se)
     return out
@@ -445,6 +531,7 @@ def _is_bare_empty_paragraph(se: StructuralElement) -> bool:
 
 def _strip_empty_body_paragraphs(
     content: list[StructuralElement],
+    preserve_after_table_starts: set[int],
 ) -> list[StructuralElement]:
     """Remove bare empty paragraphs that immediately precede a table.
 
@@ -466,6 +553,11 @@ def _strip_empty_body_paragraphs(
         if _is_bare_empty_paragraph(se):
             next_is_table = i + 1 < n and content[i + 1].table is not None
             if next_is_table:
+                prev_is_table = bool(result) and result[-1].table is not None
+                prev_start = result[-1].start_index if prev_is_table else None
+                if prev_start is not None and prev_start in preserve_after_table_starts:
+                    result.append(se)
+                    continue
                 continue
         result.append(se)
     return result
