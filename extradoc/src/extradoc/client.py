@@ -7,6 +7,7 @@ from __future__ import annotations
 
 import json
 import logging
+import os
 import tempfile
 import zipfile
 from collections import defaultdict, deque
@@ -31,15 +32,25 @@ from extradoc.comments._types import (
     CommentOperations,
     DocumentWithComments,
 )
-from extradoc.reconcile import reconcile, reindex_document, resolve_deferred_ids
+from extradoc.reconcile import (
+    reconcile as reconcile_v1,
+)
+from extradoc.reconcile import (
+    reindex_document,
+    resolve_deferred_ids,
+)
+from extradoc.reconcile_v2.api import reconcile as reconcile_v2
+from extradoc.reconcile_v2.executor import execute_request_batches
 from extradoc.serde._models import IndexXml
 from extradoc.serde._utils import hex_to_optional_color, optional_color_to_hex
 
 if TYPE_CHECKING:
-    from extradoc.api_types._generated import BatchUpdateDocumentRequest, NamedRanges
+    from extradoc.api_types._generated import BatchUpdateDocumentRequest
     from extradoc.transport import Transport
 
 logger = logging.getLogger(__name__)
+
+RECONCILER_ENV_VAR = "EXTRADOC_RECONCILER"
 
 # Directory / file constants
 RAW_DIR = ".raw"
@@ -66,6 +77,8 @@ class DiffResult:
     document_id: str
     batches: list[BatchUpdateDocumentRequest]
     comment_ops: CommentOperations
+    reconciler_version: str = "v1"
+    base_revision_id: str | None = None
 
 
 class DocsClient:
@@ -158,6 +171,7 @@ class DocsClient:
         """
         folder = Path(folder)
         document_id = _read_document_id(folder)
+        reconciler_version = _get_reconciler_version()
 
         with tempfile.TemporaryDirectory() as tmp:
             _extract_pristine_zip(folder, Path(tmp))
@@ -185,7 +199,11 @@ class DocsClient:
                 # requests for every unchanged paragraph (e.g. lineSpacing, direction).
                 _normalize_raw_base_para_styles(base, base_bundle.document)
                 desired = reindex_document(desired_bundle.document)
-                batches = reconcile(base, desired)
+                batches = _reconcile_documents(
+                    base,
+                    desired,
+                    reconciler_version=reconciler_version,
+                )
                 comment_ops = diff_comments(
                     base_bundle.comments, desired_bundle.comments
                 )
@@ -193,11 +211,17 @@ class DocsClient:
                     document_id=document_id,
                     batches=batches,
                     comment_ops=comment_ops,
+                    reconciler_version=reconciler_version,
+                    base_revision_id=base.revision_id,
                 )
 
         base = reindex_document(base_bundle.document)
         desired = reindex_document(desired_bundle.document)
-        batches = reconcile(base, desired)
+        batches = _reconcile_documents(
+            base,
+            desired,
+            reconciler_version=reconciler_version,
+        )
 
         comment_ops = diff_comments(base_bundle.comments, desired_bundle.comments)
 
@@ -205,6 +229,8 @@ class DocsClient:
             document_id=document_id,
             batches=batches,
             comment_ops=comment_ops,
+            reconciler_version=reconciler_version,
+            base_revision_id=base.revision_id,
         )
 
     async def push(self, folder: str | Path, *, force: bool = False) -> PushResult:
@@ -267,21 +293,10 @@ class DocsClient:
             edits_applied += 1
 
         # --- 2. Document batches (Docs API — reconcile output) ---
-        prior_responses: list[dict] = []  # type: ignore[type-arg]
-        changes_applied = 0
-
-        for i, batch in enumerate(result.batches):
-            if i > 0:
-                batch = resolve_deferred_ids(prior_responses, batch)
-            resp = await self._transport.batch_update(
-                result.document_id,
-                [
-                    r.model_dump(by_alias=True, exclude_none=True)
-                    for r in (batch.requests or [])
-                ],
-            )
-            prior_responses.append(resp)
-            changes_applied += len(batch.requests or [])
+        changes_applied = await _execute_document_batches(
+            self._transport,
+            result,
+        )
 
         # Build result message
         parts: list[str] = []
@@ -304,6 +319,65 @@ class DocsClient:
             replies_created=replies_created,
             comments_resolved=comments_resolved,
         )
+
+
+def _get_reconciler_version() -> str:
+    raw = os.getenv(RECONCILER_ENV_VAR, "v1").strip().lower()
+    if raw in {"", "v1", "legacy"}:
+        return "v1"
+    if raw in {"v2", "semantic-ir", "semantic_ir"}:
+        return "v2"
+    raise ValueError(
+        f"Unsupported {RECONCILER_ENV_VAR} value {raw!r}; expected v1 or v2"
+    )
+
+
+def _reconcile_documents(
+    base: Document,
+    desired: Document,
+    *,
+    reconciler_version: str,
+) -> list[BatchUpdateDocumentRequest]:
+    if reconciler_version == "v2":
+        return reconcile_v2(base, desired)
+    return reconcile_v1(base, desired)
+
+
+async def _execute_document_batches(
+    transport: Transport,
+    result: DiffResult,
+) -> int:
+    if result.reconciler_version == "v2":
+        request_batches = [
+            [
+                request.model_dump(by_alias=True, exclude_none=True)
+                for request in (batch.requests or [])
+            ]
+            for batch in result.batches
+        ]
+        await execute_request_batches(
+            transport,
+            document_id=result.document_id,
+            request_batches=request_batches,
+            initial_revision_id=result.base_revision_id,
+        )
+        return sum(len(batch) for batch in request_batches)
+
+    prior_responses: list[dict] = []  # type: ignore[type-arg]
+    changes_applied = 0
+    for i, batch in enumerate(result.batches):
+        if i > 0:
+            batch = resolve_deferred_ids(prior_responses, batch)
+        resp = await transport.batch_update(
+            result.document_id,
+            [
+                request.model_dump(by_alias=True, exclude_none=True)
+                for request in (batch.requests or [])
+            ],
+        )
+        prior_responses.append(resp)
+        changes_applied += len(batch.requests or [])
+    return changes_applied
 
 
 # ---------------------------------------------------------------------------
@@ -458,9 +532,8 @@ def _preserved_separator_table_starts(
         if fingerprint is None or se.start_index is None:
             continue
         queue = expected.get(fingerprint)
-        if queue:
-            if queue.popleft():
-                preserve.add(se.start_index)
+        if queue and queue.popleft():
+            preserve.add(se.start_index)
     return preserve
 
 
