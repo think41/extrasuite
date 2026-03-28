@@ -31,10 +31,13 @@ Each entry captures:
 | Consecutive tables in the same gap | commit `8daf08e` | Lowering must simulate post-table separator state so adjacent table inserts stay index-stable. |
 | Paragraph immediately after inserted table becomes styled incorrectly | commit `09b684f` | Layout state must include the displaced post-table separator when computing style ranges after table insertion. |
 | Edit cell content while deleting columns or rows | commit `40c6741` | Table diff ordering must respect position dependencies: content edits at old coordinates before structural row/column shifts. |
+| Insert or delete a trailing row in a simple table | live `reconcile_v2` table replay fixtures | Table structural edits should lower from `tableStartLocation + cell coordinates`, with no body-index hacks. |
+| Insert or delete a trailing column in a simple table | live `reconcile_v2` table replay fixtures | Column edits use the same table-relative coordinate model as row edits and remain stable after canonicalization. |
 | Multi-paragraph or styled table cell content | commit `c003257`; `extradoc/tests/test_reconcile.py` Issue 15 | Table cells recurse through the same story engine as body/header/footer, not a flattened string path. |
 | Table cell style changes | commit `cc61533`; `extradoc/tests/test_reconcile.py` Issue 17 | Cell style is first-class semantic table state, not comparator noise. |
 | Distinct tables with similar topology align correctly | commit `39d6768` Issue 16; `extradoc/tests/test_reconcile.py` fingerprint tests | Table matching cannot collapse to a constant fingerprint or plain-text shortcut. |
 | Row/column edits adjacent to merged cells | design goal in `reconciler-semantic-ir-design.md` | Merge topology is part of semantic table state and must survive structural edits. |
+| Merge then unmerge a rectangular cell region | live `reconcile_v2` table replay fixtures | Merge topology, not covered-cell paragraph-style noise, is the semantic source of truth. |
 
 ## Lists And Paragraph Styles
 

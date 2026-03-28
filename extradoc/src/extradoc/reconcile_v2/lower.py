@@ -8,17 +8,24 @@ from extradoc.indexer import utf16_len
 from extradoc.reconcile_v2.diff import (
     AppendListItemsEdit,
     DeleteSectionEdit,
+    DeleteTableColumnEdit,
+    DeleteTableRowEdit,
     InsertSectionEdit,
+    InsertTableColumnEdit,
+    InsertTableRowEdit,
+    MergeTableCellsEdit,
     ReplaceListSpecEdit,
     ReplaceNamedRangesEdit,
     ReplaceParagraphSliceEdit,
     SemanticEdit,
+    UnmergeTableCellsEdit,
     UpdateParagraphRoleEdit,
 )
 from extradoc.reconcile_v2.layout import (
     BodyLayout,
     ListLocation,
     ParagraphLocation,
+    TableLocation,
     build_body_layout,
     build_story_layouts,
     paragraph_slice,
@@ -31,9 +38,15 @@ from extradoc.reconcile_v2.requests import (
     make_delete_content_range,
     make_delete_named_range,
     make_delete_paragraph_bullets,
+    make_delete_table_column,
+    make_delete_table_row,
     make_insert_section_break,
+    make_insert_table_column,
+    make_insert_table_row,
     make_insert_text,
     make_insert_text_in_story,
+    make_merge_table_cells,
+    make_unmerge_table_cells,
     make_update_paragraph_role,
 )
 
@@ -173,6 +186,68 @@ def lower_document_edits(base: Document, edits: list[SemanticEdit]) -> list[dict
                         segment_id=start_route.segment_id,
                     )
                 )
+        elif isinstance(edit, InsertTableRowEdit):
+            table = _table_at(layout, edit.section_index, edit.block_index)
+            requests.append(
+                make_insert_table_row(
+                    table_start_index=table.start_index,
+                    row_index=edit.row_index,
+                    insert_below=edit.insert_below,
+                    tab_id=edit.tab_id,
+                )
+            )
+        elif isinstance(edit, DeleteTableRowEdit):
+            table = _table_at(layout, edit.section_index, edit.block_index)
+            requests.append(
+                make_delete_table_row(
+                    table_start_index=table.start_index,
+                    row_index=edit.row_index,
+                    tab_id=edit.tab_id,
+                )
+            )
+        elif isinstance(edit, InsertTableColumnEdit):
+            table = _table_at(layout, edit.section_index, edit.block_index)
+            requests.append(
+                make_insert_table_column(
+                    table_start_index=table.start_index,
+                    column_index=edit.column_index,
+                    insert_right=edit.insert_right,
+                    tab_id=edit.tab_id,
+                )
+            )
+        elif isinstance(edit, DeleteTableColumnEdit):
+            table = _table_at(layout, edit.section_index, edit.block_index)
+            requests.append(
+                make_delete_table_column(
+                    table_start_index=table.start_index,
+                    column_index=edit.column_index,
+                    tab_id=edit.tab_id,
+                )
+            )
+        elif isinstance(edit, MergeTableCellsEdit):
+            table = _table_at(layout, edit.section_index, edit.block_index)
+            requests.append(
+                make_merge_table_cells(
+                    table_start_index=table.start_index,
+                    row_index=edit.row_index,
+                    column_index=edit.column_index,
+                    row_span=edit.row_span,
+                    column_span=edit.column_span,
+                    tab_id=edit.tab_id,
+                )
+            )
+        elif isinstance(edit, UnmergeTableCellsEdit):
+            table = _table_at(layout, edit.section_index, edit.block_index)
+            requests.append(
+                make_unmerge_table_cells(
+                    table_start_index=table.start_index,
+                    row_index=edit.row_index,
+                    column_index=edit.column_index,
+                    row_span=edit.row_span,
+                    column_span=edit.column_span,
+                    tab_id=edit.tab_id,
+                )
+            )
     return requests
 
 
@@ -191,4 +266,11 @@ def _list_at(layout: BodyLayout, section_index: int, block_index: int) -> ListLo
     block = layout.sections[section_index].block_locations[block_index]
     if not isinstance(block, ListLocation):
         raise TypeError(f"Expected list at section {section_index} block {block_index}")
+    return block
+
+
+def _table_at(layout: BodyLayout, section_index: int, block_index: int) -> TableLocation:
+    block = layout.sections[section_index].block_locations[block_index]
+    if not isinstance(block, TableLocation):
+        raise TypeError(f"Expected table at section {section_index} block {block_index}")
     return block

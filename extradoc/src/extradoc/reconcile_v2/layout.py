@@ -36,6 +36,14 @@ class ListLocation:
 
 
 @dataclass(frozen=True, slots=True)
+class TableLocation:
+    start_index: int
+    end_index: int
+    row_count: int
+    column_count: int
+
+
+@dataclass(frozen=True, slots=True)
 class SectionBoundaryLocation:
     delete_start_index: int
     delete_end_index: int
@@ -45,7 +53,9 @@ class SectionBoundaryLocation:
 
 @dataclass(slots=True)
 class SectionLayout:
-    block_locations: list[ParagraphLocation | ListLocation] = field(default_factory=list)
+    block_locations: list[ParagraphLocation | ListLocation | TableLocation] = field(
+        default_factory=list
+    )
     incoming_boundary: SectionBoundaryLocation | None = None
 
 
@@ -137,6 +147,20 @@ def build_body_layout(document: Document, *, tab_id: str) -> BodyLayout:
             continue
 
         paragraph = element.get("paragraph")
+        table = element.get("table")
+        if table is not None:
+            flush_list()
+            pending_empty_para = None
+            current_section.block_locations.append(
+                TableLocation(
+                    start_index=element["startIndex"],
+                    end_index=element["endIndex"],
+                    row_count=table.get("rows", 0),
+                    column_count=table.get("columns", 0),
+                )
+            )
+            continue
+
         if paragraph is None:
             flush_list()
             pending_empty_para = None
@@ -167,9 +191,8 @@ def build_body_layout(document: Document, *, tab_id: str) -> BodyLayout:
         flush_list()
         if not visible_text.strip():
             pending_empty_para = (element["startIndex"], element["endIndex"])
-            continue
-
-        pending_empty_para = None
+        else:
+            pending_empty_para = None
         current_section.block_locations.append(
             ParagraphLocation(
                 start_index=element["startIndex"],

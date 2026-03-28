@@ -747,6 +747,14 @@ request.
 
 Tables are recursive structural containers, not string fingerprints.
 
+Observed transport fact from live replay:
+
+1. row/column structural edits lower cleanly from `tableStartLocation +
+   (rowIndex, columnIndex)` and do not require document-global raw indices
+2. merge/unmerge changes can leave transport-visible covered cells and
+   paragraph-style noise behind; semantic diff must key on canonical merge
+   topology and cell stories, not incidental covered-cell paragraph styles
+
 ### Full table support
 
 The reconciler must support the current exposed table feature surface rather than
@@ -775,6 +783,8 @@ Lowering rule:
 2. structural row/column edits must preserve merge invariants
 3. property updates must be emitted with deterministic field masks and stable
    request ordering
+4. covered cells produced by transport merge/unmerge are canonicalization
+   artifacts, not semantic sibling cells
 
 ### Section and shared story diff
 

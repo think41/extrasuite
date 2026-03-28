@@ -153,6 +153,126 @@ def make_create_named_range(
     return {"createNamedRange": {"name": name, "range": range_}}
 
 
+def make_insert_table_row(
+    *,
+    table_start_index: int,
+    row_index: int,
+    insert_below: bool,
+    tab_id: str,
+) -> dict[str, Any]:
+    return {
+        "insertTableRow": {
+            "tableCellLocation": {
+                "tableStartLocation": {"index": table_start_index, "tabId": tab_id},
+                "rowIndex": row_index,
+                "columnIndex": 0,
+            },
+            "insertBelow": insert_below,
+        }
+    }
+
+
+def make_delete_table_row(
+    *,
+    table_start_index: int,
+    row_index: int,
+    tab_id: str,
+) -> dict[str, Any]:
+    return {
+        "deleteTableRow": {
+            "tableCellLocation": {
+                "tableStartLocation": {"index": table_start_index, "tabId": tab_id},
+                "rowIndex": row_index,
+                "columnIndex": 0,
+            }
+        }
+    }
+
+
+def make_insert_table_column(
+    *,
+    table_start_index: int,
+    column_index: int,
+    insert_right: bool,
+    tab_id: str,
+) -> dict[str, Any]:
+    return {
+        "insertTableColumn": {
+            "tableCellLocation": {
+                "tableStartLocation": {"index": table_start_index, "tabId": tab_id},
+                "rowIndex": 0,
+                "columnIndex": column_index,
+            },
+            "insertRight": insert_right,
+        }
+    }
+
+
+def make_delete_table_column(
+    *,
+    table_start_index: int,
+    column_index: int,
+    tab_id: str,
+) -> dict[str, Any]:
+    return {
+        "deleteTableColumn": {
+            "tableCellLocation": {
+                "tableStartLocation": {"index": table_start_index, "tabId": tab_id},
+                "rowIndex": 0,
+                "columnIndex": column_index,
+            }
+        }
+    }
+
+
+def make_merge_table_cells(
+    *,
+    table_start_index: int,
+    row_index: int,
+    column_index: int,
+    row_span: int,
+    column_span: int,
+    tab_id: str,
+) -> dict[str, Any]:
+    return {
+        "mergeTableCells": {
+            "tableRange": {
+                "tableCellLocation": {
+                    "tableStartLocation": {"index": table_start_index, "tabId": tab_id},
+                    "rowIndex": row_index,
+                    "columnIndex": column_index,
+                },
+                "rowSpan": row_span,
+                "columnSpan": column_span,
+            }
+        }
+    }
+
+
+def make_unmerge_table_cells(
+    *,
+    table_start_index: int,
+    row_index: int,
+    column_index: int,
+    row_span: int,
+    column_span: int,
+    tab_id: str,
+) -> dict[str, Any]:
+    return {
+        "unmergeTableCells": {
+            "tableRange": {
+                "tableCellLocation": {
+                    "tableStartLocation": {"index": table_start_index, "tabId": tab_id},
+                    "rowIndex": row_index,
+                    "columnIndex": column_index,
+                },
+                "rowSpan": row_span,
+                "columnSpan": column_span,
+            }
+        }
+    }
+
+
 def bullet_preset_for_kind(kind: str) -> str:
     if kind == "NUMBERED":
         return "NUMBERED_DECIMAL_ALPHA_ROMAN"

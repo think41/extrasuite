@@ -102,6 +102,62 @@ class ReplaceNamedRangesEdit:
     desired_ranges: tuple[AnchorRangeIR, ...]
 
 
+@dataclass(slots=True)
+class InsertTableRowEdit:
+    tab_id: str
+    section_index: int
+    block_index: int
+    row_index: int
+    insert_below: bool
+
+
+@dataclass(slots=True)
+class DeleteTableRowEdit:
+    tab_id: str
+    section_index: int
+    block_index: int
+    row_index: int
+
+
+@dataclass(slots=True)
+class InsertTableColumnEdit:
+    tab_id: str
+    section_index: int
+    block_index: int
+    column_index: int
+    insert_right: bool
+
+
+@dataclass(slots=True)
+class DeleteTableColumnEdit:
+    tab_id: str
+    section_index: int
+    block_index: int
+    column_index: int
+
+
+@dataclass(slots=True)
+class MergeTableCellsEdit:
+    tab_id: str
+    section_index: int
+    block_index: int
+    row_index: int
+    column_index: int
+    row_span: int
+    column_span: int
+
+
+@dataclass(slots=True)
+class UnmergeTableCellsEdit:
+    tab_id: str
+    section_index: int
+    block_index: int
+    row_index: int
+    column_index: int
+    row_span: int
+    column_span: int
+
+
 @dataclass(frozen=True, slots=True)
 class ListItemFragment:
     level: int
@@ -116,6 +172,12 @@ SemanticEdit = (
     | ReplaceListSpecEdit
     | ReplaceParagraphSliceEdit
     | ReplaceNamedRangesEdit
+    | InsertTableRowEdit
+    | DeleteTableRowEdit
+    | InsertTableColumnEdit
+    | DeleteTableColumnEdit
+    | MergeTableCellsEdit
+    | UnmergeTableCellsEdit
 )
 
 
@@ -178,6 +240,38 @@ def summarize_semantic_edits(edits: Iterable[SemanticEdit]) -> list[str]:
             lines.append(
                 f"tab {edit.tab_id}: named range {edit.name} replace "
                 f"{edit.before_count} range(s) with {len(edit.desired_ranges)} range(s)"
+            )
+        elif isinstance(edit, InsertTableRowEdit):
+            lines.append(
+                f"tab {edit.tab_id}: section {edit.section_index} table {edit.block_index} "
+                f"insert row {'below' if edit.insert_below else 'above'} {edit.row_index}"
+            )
+        elif isinstance(edit, DeleteTableRowEdit):
+            lines.append(
+                f"tab {edit.tab_id}: section {edit.section_index} table {edit.block_index} "
+                f"delete row {edit.row_index}"
+            )
+        elif isinstance(edit, InsertTableColumnEdit):
+            lines.append(
+                f"tab {edit.tab_id}: section {edit.section_index} table {edit.block_index} "
+                f"insert column {'right of' if edit.insert_right else 'left of'} {edit.column_index}"
+            )
+        elif isinstance(edit, DeleteTableColumnEdit):
+            lines.append(
+                f"tab {edit.tab_id}: section {edit.section_index} table {edit.block_index} "
+                f"delete column {edit.column_index}"
+            )
+        elif isinstance(edit, MergeTableCellsEdit):
+            lines.append(
+                f"tab {edit.tab_id}: section {edit.section_index} table {edit.block_index} "
+                f"merge cells r{edit.row_index} c{edit.column_index} "
+                f"span {edit.row_span}x{edit.column_span}"
+            )
+        elif isinstance(edit, UnmergeTableCellsEdit):
+            lines.append(
+                f"tab {edit.tab_id}: section {edit.section_index} table {edit.block_index} "
+                f"unmerge cells r{edit.row_index} c{edit.column_index} "
+                f"span {edit.row_span}x{edit.column_span}"
             )
     return lines
 
@@ -414,13 +508,23 @@ def _diff_section_tables(
     desired_sections: list[SectionIR],
 ) -> list[SemanticEdit]:
     edits: list[SemanticEdit] = []
-    for _section_index, (base_section, desired_section) in enumerate(
+    for section_index, (base_section, desired_section) in enumerate(
         zip(base_sections, desired_sections, strict=False)
     ):
         for block_index, (base_block, desired_block) in enumerate(
             zip(base_section.blocks, desired_section.blocks, strict=False)
         ):
             if not isinstance(base_block, TableIR) or not isinstance(desired_block, TableIR):
+                continue
+            structural_edit = _diff_table_structure(
+                tab_id=tab_id,
+                section_index=section_index,
+                block_index=block_index,
+                base_table=base_block,
+                desired_table=desired_block,
+            )
+            if structural_edit is not None:
+                edits.append(structural_edit)
                 continue
             if len(base_block.rows) != len(desired_block.rows):
                 continue
@@ -444,6 +548,98 @@ def _diff_section_tables(
                     if edit is not None:
                         edits.append(edit)
     return edits
+
+
+def _diff_table_structure(
+    *,
+    tab_id: str,
+    section_index: int,
+    block_index: int,
+    base_table: TableIR,
+    desired_table: TableIR,
+) -> SemanticEdit | None:
+    base_row_count = len(base_table.rows)
+    desired_row_count = len(desired_table.rows)
+    base_column_count = max((len(row.cells) for row in base_table.rows), default=0)
+    desired_column_count = max((len(row.cells) for row in desired_table.rows), default=0)
+
+    if (
+        desired_row_count == base_row_count + 1
+        and desired_column_count == base_column_count
+        and _table_row_signatures(base_table) == _table_row_signatures(desired_table)[:base_row_count]
+    ):
+        return InsertTableRowEdit(
+            tab_id=tab_id,
+            section_index=section_index,
+            block_index=block_index,
+            row_index=base_row_count - 1,
+            insert_below=True,
+        )
+
+    if (
+        base_row_count == desired_row_count + 1
+        and base_column_count == desired_column_count
+        and _table_row_signatures(base_table)[:desired_row_count]
+        == _table_row_signatures(desired_table)
+    ):
+        return DeleteTableRowEdit(
+            tab_id=tab_id,
+            section_index=section_index,
+            block_index=block_index,
+            row_index=base_row_count - 1,
+        )
+
+    if (
+        desired_column_count == base_column_count + 1
+        and desired_row_count == base_row_count
+        and _table_column_append_matches(base_table, desired_table)
+    ):
+        return InsertTableColumnEdit(
+            tab_id=tab_id,
+            section_index=section_index,
+            block_index=block_index,
+            column_index=base_column_count - 1,
+            insert_right=True,
+        )
+
+    if (
+        base_column_count == desired_column_count + 1
+        and desired_row_count == base_row_count
+        and _table_column_delete_matches(base_table, desired_table)
+    ):
+        return DeleteTableColumnEdit(
+            tab_id=tab_id,
+            section_index=section_index,
+            block_index=block_index,
+            column_index=base_column_count - 1,
+        )
+
+    merge_change = _table_merge_change(base_table, desired_table)
+    if merge_change is None:
+        return None
+
+    row_index, column_index, before_span, after_span = merge_change
+    if before_span == (1, 1) and after_span != (1, 1):
+        return MergeTableCellsEdit(
+            tab_id=tab_id,
+            section_index=section_index,
+            block_index=block_index,
+            row_index=row_index,
+            column_index=column_index,
+            row_span=after_span[0],
+            column_span=after_span[1],
+        )
+    if before_span != (1, 1) and after_span == (1, 1):
+        return UnmergeTableCellsEdit(
+            tab_id=tab_id,
+            section_index=section_index,
+            block_index=block_index,
+            row_index=row_index,
+            column_index=column_index,
+            row_span=before_span[0],
+            column_span=before_span[1],
+        )
+    return None
 
 
 def _diff_story_paragraph_slice(
@@ -587,3 +783,63 @@ def _position_signature(position: PositionIR) -> str:
         f"{position.story_id}|{path.section_index}|{path.block_index}|{path.node_path}|"
         f"{path.inline_index}|{path.text_offset_utf16}|{path.edge}"
     )
+
+
+def _table_row_signatures(table: TableIR) -> tuple[tuple[str, ...], ...]:
+    return tuple(tuple(_table_cell_signature(cell) for cell in row.cells) for row in table.rows)
+
+
+def _table_cell_signature(cell: object) -> str:
+    texts = [
+        _paragraph_text(block)
+        for block in cell.content.blocks
+        if isinstance(block, ParagraphIR)
+    ]
+    return f"{cell.row_span}:{cell.column_span}:{'|'.join(texts)}"
+
+
+def _table_column_append_matches(base_table: TableIR, desired_table: TableIR) -> bool:
+    for base_row, desired_row in zip(base_table.rows, desired_table.rows, strict=False):
+        if len(desired_row.cells) != len(base_row.cells) + 1:
+            return False
+        if tuple(_table_cell_signature(cell) for cell in desired_row.cells[: len(base_row.cells)]) != tuple(
+            _table_cell_signature(cell) for cell in base_row.cells
+        ):
+            return False
+    return True
+
+
+def _table_column_delete_matches(base_table: TableIR, desired_table: TableIR) -> bool:
+    for base_row, desired_row in zip(base_table.rows, desired_table.rows, strict=False):
+        if len(base_row.cells) != len(desired_row.cells) + 1:
+            return False
+        if tuple(_table_cell_signature(cell) for cell in base_row.cells[: len(desired_row.cells)]) != tuple(
+            _table_cell_signature(cell) for cell in desired_row.cells
+        ):
+            return False
+    return True
+
+
+def _table_merge_change(
+    base_table: TableIR,
+    desired_table: TableIR,
+) -> tuple[int, int, tuple[int, int], tuple[int, int]] | None:
+    if len(base_table.rows) != len(desired_table.rows):
+        return None
+
+    changes: list[tuple[int, int, tuple[int, int], tuple[int, int]]] = []
+    for row_index, (base_row, desired_row) in enumerate(
+        zip(base_table.rows, desired_table.rows, strict=False)
+    ):
+        if len(base_row.cells) != len(desired_row.cells):
+            return None
+        for column_index, (base_cell, desired_cell) in enumerate(
+            zip(base_row.cells, desired_row.cells, strict=False)
+        ):
+            before_span = (base_cell.row_span, base_cell.column_span)
+            after_span = (desired_cell.row_span, desired_cell.column_span)
+            if before_span != after_span:
+                changes.append((row_index, column_index, before_span, after_span))
+    if len(changes) != 1:
+        return None
+    return changes[0]

@@ -71,6 +71,16 @@ class NamedRangeScenario:
     target_text: str
 
 
+@dataclass(frozen=True, slots=True)
+class TableScenario:
+    name: str
+    title: str
+    description: str
+    base_md: str
+    desired_requests: tuple[dict, ...]
+    base_setup_requests: tuple[dict, ...] = ()
+
+
 MARKDOWN_SCENARIOS = (
     MarkdownScenario(
         name="paragraph_to_heading",
@@ -134,6 +144,162 @@ NAMED_RANGE_SCENARIO = NamedRangeScenario(
     target_text="bravo",
 )
 
+TABLE_BASE_MD = "| **col** |  |\n| --- | --- |\n| omega |  |\n"
+
+TABLE_SCENARIOS = (
+    TableScenario(
+        name="table_row_insert",
+        title="Confidence Sprint Fixture Table Row Insert",
+        description="Insert one empty row at the end of a 2x2 table.",
+        base_md=TABLE_BASE_MD,
+        desired_requests=(
+            {
+                "insertTableRow": {
+                    "tableCellLocation": {
+                        "tableStartLocation": {"index": 2, "tabId": "t.0"},
+                        "rowIndex": 1,
+                        "columnIndex": 0,
+                    },
+                    "insertBelow": True,
+                }
+            },
+        ),
+    ),
+    TableScenario(
+        name="table_row_delete",
+        title="Confidence Sprint Fixture Table Row Delete",
+        description="Delete the final empty row from a 3x2 table.",
+        base_md=TABLE_BASE_MD,
+        base_setup_requests=(
+            {
+                "insertTableRow": {
+                    "tableCellLocation": {
+                        "tableStartLocation": {"index": 2, "tabId": "t.0"},
+                        "rowIndex": 1,
+                        "columnIndex": 0,
+                    },
+                    "insertBelow": True,
+                }
+            },
+        ),
+        desired_requests=(
+            {
+                "deleteTableRow": {
+                    "tableCellLocation": {
+                        "tableStartLocation": {"index": 2, "tabId": "t.0"},
+                        "rowIndex": 2,
+                        "columnIndex": 0,
+                    }
+                }
+            },
+        ),
+    ),
+    TableScenario(
+        name="table_column_insert",
+        title="Confidence Sprint Fixture Table Column Insert",
+        description="Insert one empty column at the end of a 2x2 table.",
+        base_md=TABLE_BASE_MD,
+        desired_requests=(
+            {
+                "insertTableColumn": {
+                    "tableCellLocation": {
+                        "tableStartLocation": {"index": 2, "tabId": "t.0"},
+                        "rowIndex": 0,
+                        "columnIndex": 1,
+                    },
+                    "insertRight": True,
+                }
+            },
+        ),
+    ),
+    TableScenario(
+        name="table_column_delete",
+        title="Confidence Sprint Fixture Table Column Delete",
+        description="Delete the final empty column from a 2x3 table.",
+        base_md=TABLE_BASE_MD,
+        base_setup_requests=(
+            {
+                "insertTableColumn": {
+                    "tableCellLocation": {
+                        "tableStartLocation": {"index": 2, "tabId": "t.0"},
+                        "rowIndex": 0,
+                        "columnIndex": 1,
+                    },
+                    "insertRight": True,
+                }
+            },
+        ),
+        desired_requests=(
+            {
+                "deleteTableColumn": {
+                    "tableCellLocation": {
+                        "tableStartLocation": {"index": 2, "tabId": "t.0"},
+                        "rowIndex": 0,
+                        "columnIndex": 2,
+                    }
+                }
+            },
+        ),
+    ),
+    TableScenario(
+        name="table_merge_cells",
+        title="Confidence Sprint Fixture Table Merge Cells",
+        description="Merge the first-row cells of a 2x2 table into a 1x2 span.",
+        base_md=TABLE_BASE_MD,
+        desired_requests=(
+            {
+                "mergeTableCells": {
+                    "tableRange": {
+                        "tableCellLocation": {
+                            "tableStartLocation": {"index": 2, "tabId": "t.0"},
+                            "rowIndex": 0,
+                            "columnIndex": 0,
+                        },
+                        "rowSpan": 1,
+                        "columnSpan": 2,
+                    }
+                }
+            },
+        ),
+    ),
+    TableScenario(
+        name="table_unmerge_cells",
+        title="Confidence Sprint Fixture Table Unmerge Cells",
+        description="Unmerge the first-row 1x2 span in a 2x2 table.",
+        base_md=TABLE_BASE_MD,
+        base_setup_requests=(
+            {
+                "mergeTableCells": {
+                    "tableRange": {
+                        "tableCellLocation": {
+                            "tableStartLocation": {"index": 2, "tabId": "t.0"},
+                            "rowIndex": 0,
+                            "columnIndex": 0,
+                        },
+                        "rowSpan": 1,
+                        "columnSpan": 2,
+                    }
+                }
+            },
+        ),
+        desired_requests=(
+            {
+                "unmergeTableCells": {
+                    "tableRange": {
+                        "tableCellLocation": {
+                            "tableStartLocation": {"index": 2, "tabId": "t.0"},
+                            "rowIndex": 0,
+                            "columnIndex": 0,
+                        },
+                        "rowSpan": 1,
+                        "columnSpan": 2,
+                    }
+                }
+            },
+        ),
+    ),
+)
+
 
 def main() -> None:
     parser = argparse.ArgumentParser(description=__doc__)
@@ -191,6 +357,16 @@ def main() -> None:
                 fixtures_root=args.fixtures_root,
                 raw_client=raw_client,
             )
+            time.sleep(args.pause_seconds)
+        for scenario in TABLE_SCENARIOS:
+            if selected and scenario.name not in selected:
+                continue
+            _capture_table_scenario(
+                scenario=scenario,
+                fixtures_root=args.fixtures_root,
+                raw_client=raw_client,
+            )
+            time.sleep(args.pause_seconds)
     finally:
         raw_client.close()
 
@@ -366,6 +542,50 @@ def _capture_named_range_scenario(
             "base.md": scenario.base_md,
             "desired.requests.json": json.dumps(requests, indent=2) + "\n",
         },
+    )
+
+
+def _capture_table_scenario(
+    *,
+    scenario: TableScenario,
+    fixtures_root: Path,
+    raw_client: _RawDocsClient,
+) -> None:
+    print(f"[capture] {scenario.name}")
+    doc_url = _create_empty_doc(scenario.title)
+    doc_id = _extract_document_id(doc_url)
+
+    with tempfile.TemporaryDirectory(prefix=f"reconcile-v2-{scenario.name}-") as tmpdir:
+        tmp = Path(tmpdir)
+        base_folder = tmp / "base"
+        _pull_md(doc_url, base_folder)
+        (base_folder / "Tab_1.md").write_text(scenario.base_md, encoding="utf-8")
+        _push_md(base_folder)
+
+        if scenario.base_setup_requests:
+            raw_client.batch_update(doc_id, list(scenario.base_setup_requests))
+        base_raw = raw_client.get_document_raw(doc_id)
+
+        raw_client.batch_update(doc_id, list(scenario.desired_requests))
+        desired_raw = raw_client.get_document_raw(doc_id)
+
+    extra_files = {
+        "base.md": scenario.base_md,
+        "desired.requests.json": json.dumps(scenario.desired_requests, indent=2) + "\n",
+    }
+    if scenario.base_setup_requests:
+        extra_files["base.setup.requests.json"] = (
+            json.dumps(scenario.base_setup_requests, indent=2) + "\n"
+        )
+
+    _write_fixture_pair(
+        fixture_dir=fixtures_root / scenario.name,
+        description=scenario.description,
+        workflow="pull-md/push-md + direct batchUpdate table edits",
+        doc_url=doc_url,
+        base_raw=base_raw,
+        desired_raw=desired_raw,
+        extra_files=extra_files,
     )
 
 

@@ -8,10 +8,16 @@ from extradoc.api_types._generated import Document
 from extradoc.reconcile_v2.diff import (
     AppendListItemsEdit,
     DeleteSectionEdit,
+    DeleteTableColumnEdit,
+    DeleteTableRowEdit,
     InsertSectionEdit,
+    InsertTableColumnEdit,
+    InsertTableRowEdit,
+    MergeTableCellsEdit,
     ReplaceListSpecEdit,
     ReplaceNamedRangesEdit,
     ReplaceParagraphSliceEdit,
+    UnmergeTableCellsEdit,
     UpdateParagraphRoleEdit,
     diff_documents,
     summarize_semantic_edits,
@@ -173,6 +179,78 @@ def test_named_range_add_fixture_emits_named_range_replace() -> None:
     assert edits[0].name == "spike:bravo"
     assert summarize_semantic_edits(edits) == [
         "tab t.0: named range spike:bravo replace 0 range(s) with 1 range(s)"
+    ]
+
+
+def test_table_row_insert_fixture_emits_structural_row_insert() -> None:
+    base, desired = _load_fixture_pair("table_row_insert")
+
+    edits = diff_documents(base, desired)
+
+    assert len(edits) == 1
+    assert isinstance(edits[0], InsertTableRowEdit)
+    assert summarize_semantic_edits(edits) == [
+        "tab t.0: section 0 table 1 insert row below 1"
+    ]
+
+
+def test_table_row_delete_fixture_emits_structural_row_delete() -> None:
+    base, desired = _load_fixture_pair("table_row_delete")
+
+    edits = diff_documents(base, desired)
+
+    assert len(edits) == 1
+    assert isinstance(edits[0], DeleteTableRowEdit)
+    assert summarize_semantic_edits(edits) == [
+        "tab t.0: section 0 table 1 delete row 2"
+    ]
+
+
+def test_table_column_insert_fixture_emits_structural_column_insert() -> None:
+    base, desired = _load_fixture_pair("table_column_insert")
+
+    edits = diff_documents(base, desired)
+
+    assert len(edits) == 1
+    assert isinstance(edits[0], InsertTableColumnEdit)
+    assert summarize_semantic_edits(edits) == [
+        "tab t.0: section 0 table 1 insert column right of 1"
+    ]
+
+
+def test_table_column_delete_fixture_emits_structural_column_delete() -> None:
+    base, desired = _load_fixture_pair("table_column_delete")
+
+    edits = diff_documents(base, desired)
+
+    assert len(edits) == 1
+    assert isinstance(edits[0], DeleteTableColumnEdit)
+    assert summarize_semantic_edits(edits) == [
+        "tab t.0: section 0 table 1 delete column 2"
+    ]
+
+
+def test_table_merge_cells_fixture_emits_merge_edit() -> None:
+    base, desired = _load_fixture_pair("table_merge_cells")
+
+    edits = diff_documents(base, desired)
+
+    assert len(edits) == 1
+    assert isinstance(edits[0], MergeTableCellsEdit)
+    assert summarize_semantic_edits(edits) == [
+        "tab t.0: section 0 table 1 merge cells r0 c0 span 1x2"
+    ]
+
+
+def test_table_unmerge_cells_fixture_emits_unmerge_edit() -> None:
+    base, desired = _load_fixture_pair("table_unmerge_cells")
+
+    edits = diff_documents(base, desired)
+
+    assert len(edits) == 1
+    assert isinstance(edits[0], UnmergeTableCellsEdit)
+    assert summarize_semantic_edits(edits) == [
+        "tab t.0: section 0 table 1 unmerge cells r0 c0 span 1x2"
     ]
 
 

@@ -65,6 +65,12 @@ def main() -> None:
         "text_replace",
         "paragraph_split",
         "table_cell_text_replace",
+        "table_row_insert",
+        "table_row_delete",
+        "table_column_insert",
+        "table_column_delete",
+        "table_merge_cells",
+        "table_unmerge_cells",
         "header_text_replace",
         "named_range_add",
     ]
@@ -117,6 +123,13 @@ async def _setup_base_state(
             _pull_md(doc_url, workdir)
             (workdir / "Tab_1.md").write_text(base_md.read_text(), encoding="utf-8")
             _push_md(workdir)
+
+    base_setup_requests = fixture_dir / "base.setup.requests.json"
+    if base_setup_requests.exists():
+        await client.batch_update(
+            doc_id,
+            json.loads(base_setup_requests.read_text(encoding="utf-8")),
+        )
 
     base_header = fixture_dir / "base.header.txt"
     if base_header.exists():

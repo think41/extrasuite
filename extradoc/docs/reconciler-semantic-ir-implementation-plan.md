@@ -646,10 +646,13 @@ Tests:
 3. add column
 4. delete column
 5. change table cell style only
+6. replay end-row/end-column operations from a fresh live 2x2 fixture
 
 Commit value:
 
 1. completes supported table editing
+2. proves that table structural edits can be lowered from table-relative
+   coordinates rather than ad hoc body indices
 
 ### Task 13A: Implement full table feature support
 
@@ -670,10 +673,12 @@ Tests:
 4. update row style only
 5. update column properties only
 6. row/column edit adjacent to merged region remains valid
+7. merge/unmerge replay ignores covered-cell paragraph-style transport noise
 
 Commit value:
 
 1. matches and exceeds the current reconciler's effective table support surface
+2. forces canonicalization to own merge/unmerge transport artifacts explicitly
 
 ### Task 14: Parse sections, style environment, and the shared header/footer story graph
 

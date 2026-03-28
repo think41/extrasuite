@@ -132,6 +132,82 @@ def test_lower_semantic_diff_for_current_fixture_slice() -> None:
                 }
             }
         ],
+        "table_row_insert": [
+            {
+                "insertTableRow": {
+                    "tableCellLocation": {
+                        "tableStartLocation": {"index": 2, "tabId": "t.0"},
+                        "rowIndex": 1,
+                        "columnIndex": 0,
+                    },
+                    "insertBelow": True,
+                }
+            }
+        ],
+        "table_row_delete": [
+            {
+                "deleteTableRow": {
+                    "tableCellLocation": {
+                        "tableStartLocation": {"index": 2, "tabId": "t.0"},
+                        "rowIndex": 2,
+                        "columnIndex": 0,
+                    }
+                }
+            }
+        ],
+        "table_column_insert": [
+            {
+                "insertTableColumn": {
+                    "tableCellLocation": {
+                        "tableStartLocation": {"index": 2, "tabId": "t.0"},
+                        "rowIndex": 0,
+                        "columnIndex": 1,
+                    },
+                    "insertRight": True,
+                }
+            }
+        ],
+        "table_column_delete": [
+            {
+                "deleteTableColumn": {
+                    "tableCellLocation": {
+                        "tableStartLocation": {"index": 2, "tabId": "t.0"},
+                        "rowIndex": 0,
+                        "columnIndex": 2,
+                    }
+                }
+            }
+        ],
+        "table_merge_cells": [
+            {
+                "mergeTableCells": {
+                    "tableRange": {
+                        "tableCellLocation": {
+                            "tableStartLocation": {"index": 2, "tabId": "t.0"},
+                            "rowIndex": 0,
+                            "columnIndex": 0,
+                        },
+                        "rowSpan": 1,
+                        "columnSpan": 2,
+                    }
+                }
+            }
+        ],
+        "table_unmerge_cells": [
+            {
+                "unmergeTableCells": {
+                    "tableRange": {
+                        "tableCellLocation": {
+                            "tableStartLocation": {"index": 2, "tabId": "t.0"},
+                            "rowIndex": 0,
+                            "columnIndex": 0,
+                        },
+                        "rowSpan": 1,
+                        "columnSpan": 2,
+                    }
+                }
+            }
+        ],
     }
 
     for name, expected in cases.items():
