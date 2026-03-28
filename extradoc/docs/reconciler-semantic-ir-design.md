@@ -411,6 +411,14 @@ Consequences:
 1. run-splitting differences do not force positional fallbacks
 2. missing synthetic trailing paragraphs do not cause spurious adds
 3. numeric/style default drift is normalized before diff
+4. section-break carrier paragraphs are erased in canonical IR rather than
+   leaking into semantic edits
+
+Canonicalization is therefore a dedicated pre-diff phase:
+
+1. parse transport JSON into semantic IR
+2. canonicalize transport-only carrier structure
+3. diff canonical semantic IR
 
 ## Capability Model
 
@@ -762,6 +770,10 @@ capability failure, not a reason to fall back to document-global heuristics.
 
 Lowering converts semantic edits into legal Docs API requests.
 
+Semantic edits must carry enough information to lower deterministically.
+Lowering should not rediscover intent by reparsing arbitrary desired-state
+subtrees.
+
 Lowering is the only phase allowed to know:
 
 1. UTF-16 request coordinates
@@ -817,6 +829,10 @@ coordinate system. It resolves to Docs coordinates only through `LayoutState`.
    position order unless a request dependency requires otherwise.
 9. `LayoutState` is updated after every emitted request side effect that changes
    legal positions inside the current batch.
+10. Section-boundary edits carry an explicit split/delete anchor, not only a
+    target section ordinal.
+11. Content-producing edits carry the semantic fragment they introduce or
+    transform, not only counts or transport hints.
 
 ## Range legality
 

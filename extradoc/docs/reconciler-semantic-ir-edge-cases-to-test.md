@@ -20,6 +20,7 @@ Each entry captures:
 | Insert before a table, TOC, or section break | commits `8daf08e`, `bc50de3`; `rules-behavior.md` | Structural block starts are not text insertion points. Lowering must target a legal carrier paragraph or `endOfSegmentLocation`, never the structural start marker. |
 | Delete newline immediately before a table / TOC / section break | `DeleteContentRangeRequest.md`; commit `bc50de3` | Protected separator newlines are structural barriers. Deletes must either remove the full structural element or stop before the barrier. |
 | Insert before a TOC without mutating the TOC | commit `bc50de3`; `extradoc/tests/test_reconcile.py` TOC tests | TOC is read-only and boundary-sensitive. Reconciler may insert before it, but never inside it and never normalize its content away. |
+| Raw section-break carrier paragraphs appear/disappear around equivalent semantic sections | live confidence-sprint fixtures | Canonicalization must erase transport-only carrier paragraphs before diff so section topology edits stay semantic. |
 
 ## Tables And Layout Side Effects
 
@@ -41,6 +42,7 @@ Each entry captures:
 |---|---|---|
 | Append list items at end of segment | `client/EXTRADOC_BUGS.md` BUG-4; commit `4ba973b` | Bullet/style ranges must end strictly before the terminal sentinel. |
 | Add multiple consecutive list items as one semantic list | commit `7cbaa9c`; `extradoc/tests/test_reconcile.py` list batching tests | List continuity is a semantic run, not one request per paragraph. |
+| Append list items where lowering needs the new item content, not only the count | live confidence-sprint fixtures | Semantic edits must carry appended list fragments so lowering can emit `insertText` and bullet requests deterministically. |
 | Insert paragraph between two list runs | `extradoc/tests/test_reconcile.py` list batching tests | Split/merge behavior must be explicit in list space, not inferred from `listId`. |
 | Relevel list items | `extradoc/docs/googledocs/lists.md` | Releveling is a transport choreography (`deleteParagraphBullets` + tabs + recreate bullets) planned from semantic list levels. |
 | Full-paragraph style update in list context | `rules-behavior.md`; implementation plan Task 5 | Bullet styling side effects are part of planning, not post-hoc verifier suppression. |
@@ -61,6 +63,7 @@ Each entry captures:
 | Scenario | Historical Evidence | Required Invariant |
 |---|---|---|
 | Multi-section document with section-specific header/footer attachments | commit `39d6768` Issue 18; `CreateHeaderRequest.md` / `CreateFooterRequest.md` | Section attachment graph is semantic state and must be represented explicitly. |
+| Insert a section boundary where lowering needs the exact split anchor | live confidence-sprint fixtures | Section-boundary semantic edits must carry the split location in semantic block space, not only the resulting section count. |
 | Shared header/footer reused across sections | current design intent; multi-section tests | Shared story identity must be separate from section attachment edges. |
 | Default vs first-page vs even-page header/footer slots | `DocumentStyle.md` | Header/footer attachments are typed slots, not a single `header_ref` / `footer_ref`. |
 | New tab with header/footer in a document that already has tabs | `client/EXTRADOC_BUGS.md` BUG-8 | Lowering must consult a transport capability matrix and explicitly reject semantically-valid but API-broken transforms. |
@@ -107,3 +110,4 @@ The first durable fixture set for `reconcile_v2` should include:
 15. Heading-role-only change with no effective formatting delta.
 16. Raw-transport fixture where mock reindexing would have produced different table coordinates.
 17. Multi-batch revision handoff using returned `requiredRevisionId`.
+18. Live transport fixtures for paragraph-role change, list append, list-kind change, section split, and section delete with replay verification against canonical IR.

@@ -12,12 +12,8 @@ from dataclasses import dataclass
 from itertools import accumulate
 from typing import TYPE_CHECKING
 
-from extradoc.reconcile_v2.ir import (
-    ListIR,
-    ParagraphIR,
-    SectionIR,
-    TextSpanIR,
-)
+from extradoc.reconcile_v2.canonical import canonicalize_document_ir
+from extradoc.reconcile_v2.ir import ListIR, ParagraphIR, SectionIR, TextSpanIR
 from extradoc.reconcile_v2.parse import parse_document
 
 if TYPE_CHECKING:
@@ -26,7 +22,6 @@ if TYPE_CHECKING:
     from extradoc.api_types._generated import Document
     from extradoc.reconcile_v2.ir import (
         BlockIR,
-        BodyStoryIR,
         DocumentIR,
         TabIR,
     )
@@ -35,8 +30,9 @@ if TYPE_CHECKING:
 @dataclass(slots=True)
 class InsertSectionEdit:
     tab_id: str
-    after_section_index: int
-    block_count: int
+    section_index: int
+    split_after_block_index: int
+    inserted_block_count: int
 
 
 @dataclass(slots=True)
@@ -61,8 +57,7 @@ class AppendListItemsEdit:
     section_index: int
     block_index: int
     list_kind: str
-    previous_count: int
-    new_count: int
+    appended_items: tuple[ListItemFragment, ...]
 
 
 @dataclass(slots=True)
@@ -72,6 +67,12 @@ class ReplaceListSpecEdit:
     block_index: int
     before_kind: str
     after_kind: str
+
+
+@dataclass(frozen=True, slots=True)
+class ListItemFragment:
+    level: int
+    text: str
 
 
 SemanticEdit = (
@@ -90,6 +91,8 @@ def diff_documents(base: Document, desired: Document) -> list[SemanticEdit]:
 
 def diff_document_irs(base: DocumentIR, desired: DocumentIR) -> list[SemanticEdit]:
     """Diff parsed IR values, normalizing away transport carrier paragraphs."""
+    base = canonicalize_document_ir(base)
+    desired = canonicalize_document_ir(desired)
     edits: list[SemanticEdit] = []
     desired_tabs = {tab.id: tab for tab in desired.tabs}
     for base_tab in base.tabs:
@@ -106,8 +109,9 @@ def summarize_semantic_edits(edits: Iterable[SemanticEdit]) -> list[str]:
     for edit in edits:
         if isinstance(edit, InsertSectionEdit):
             lines.append(
-                f"tab {edit.tab_id}: insert section after {edit.after_section_index} "
-                f"with {edit.block_count} block(s)"
+                f"tab {edit.tab_id}: split section {edit.section_index} "
+                f"after block {edit.split_after_block_index} and insert section "
+                f"with {edit.inserted_block_count} block(s)"
             )
         elif isinstance(edit, DeleteSectionEdit):
             lines.append(
@@ -122,7 +126,7 @@ def summarize_semantic_edits(edits: Iterable[SemanticEdit]) -> list[str]:
         elif isinstance(edit, AppendListItemsEdit):
             lines.append(
                 f"tab {edit.tab_id}: section {edit.section_index} list {edit.block_index} "
-                f"append {edit.new_count - edit.previous_count} item(s) to {edit.list_kind}"
+                f"append {len(edit.appended_items)} item(s) to {edit.list_kind}"
             )
         elif isinstance(edit, ReplaceListSpecEdit):
             lines.append(
@@ -133,8 +137,8 @@ def summarize_semantic_edits(edits: Iterable[SemanticEdit]) -> list[str]:
 
 
 def _diff_tab(base: TabIR, desired: TabIR) -> list[SemanticEdit]:
-    base_sections = _normalize_body(base.body)
-    desired_sections = _normalize_body(desired.body)
+    base_sections = base.body.sections
+    desired_sections = desired.body.sections
 
     base_flat = _flatten_section_fingerprints(base_sections)
     desired_flat = _flatten_section_fingerprints(desired_sections)
@@ -174,11 +178,16 @@ def _diff_section_boundaries(
 
     for section_index, boundary in enumerate(desired_counts[:-1], start=1):
         if boundary not in base_boundaries:
+            split_section_index, split_after_block_index = _locate_split_anchor(
+                base_sections,
+                boundary,
+            )
             edits.append(
                 InsertSectionEdit(
                     tab_id=tab_id,
-                    after_section_index=section_index - 1,
-                    block_count=len(desired_sections[section_index].blocks),
+                    section_index=split_section_index,
+                    split_after_block_index=split_after_block_index,
+                    inserted_block_count=len(desired_sections[section_index].blocks),
                 )
             )
     for section_index, boundary in enumerate(base_counts[:-1], start=1):
@@ -244,35 +253,16 @@ def _diff_section_blocks(
                         section_index=section_index,
                         block_index=block_index,
                         list_kind=desired_block.spec.kind,
-                        previous_count=len(base_items),
-                        new_count=len(desired_items),
+                        appended_items=tuple(
+                            ListItemFragment(
+                                level=item.level,
+                                text=_paragraph_text(item.paragraph),
+                            )
+                            for item in desired_block.items[len(base_items) :]
+                        ),
                     )
                 )
     return edits
-
-
-def _normalize_body(body: BodyStoryIR) -> list[SectionIR]:
-    return [
-        SectionIR(
-            id=section.id,
-            style=section.style,
-            attachments=section.attachments,
-            blocks=_strip_trailing_empty_paragraphs(section.blocks),
-            eos=section.eos,
-        )
-        for section in body.sections
-    ]
-
-
-def _strip_trailing_empty_paragraphs(blocks: list[BlockIR]) -> list[BlockIR]:
-    trimmed = list(blocks)
-    while trimmed and _is_semantic_empty_paragraph(trimmed[-1]):
-        trimmed.pop()
-    return trimmed
-
-
-def _is_semantic_empty_paragraph(block: BlockIR) -> bool:
-    return isinstance(block, ParagraphIR) and not _paragraph_text(block)
 
 
 def _section_boundaries(sections: list[SectionIR]) -> list[int]:
@@ -281,6 +271,16 @@ def _section_boundaries(sections: list[SectionIR]) -> list[int]:
 
 def _section_prefix_counts(sections: list[SectionIR]) -> list[int]:
     return list(accumulate(len(section.blocks) for section in sections))
+
+
+def _locate_split_anchor(sections: list[SectionIR], boundary: int) -> tuple[int, int]:
+    consumed = 0
+    for section_index, section in enumerate(sections):
+        next_consumed = consumed + len(section.blocks)
+        if boundary < next_consumed:
+            return section_index, boundary - consumed - 1
+        consumed = next_consumed
+    raise ValueError(f"Cannot locate section split anchor for boundary {boundary}")
 
 
 def _flatten_section_fingerprints(sections: list[SectionIR]) -> list[str]:

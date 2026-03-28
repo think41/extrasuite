@@ -180,6 +180,30 @@ Commit value:
 
 1. closes the main semantic-model gaps before algorithm work begins
 
+### Task 1C: Add explicit canonicalization and lowerable edit payloads
+
+Deliverable:
+
+1. add a canonicalization phase between parse and diff
+2. strip transport-only carrier paragraphs and equivalent transport noise there,
+   not inside ad hoc diff rules
+3. ensure semantic edits carry enough payload to lower deterministically
+   (`section split` anchor, appended list fragment, etc.)
+4. add canonical signatures/equivalence helpers for replay verification
+
+Tests:
+
+1. section-split transport fixtures canonicalize to two visible sections with no
+   carrier-paragraph noise
+2. section-delete desired fixture canonicalizes equal to the pre-split base
+3. semantic diff output for append/split edits contains the fragment or anchor
+   needed by lowering
+
+Commit value:
+
+1. separates transport cleanup from semantic algorithms
+2. proves the semantic edit layer is rich enough for lowering
+
 ### Task 1B: Encode protected versus consumable structural separators
 
 Deliverable:
