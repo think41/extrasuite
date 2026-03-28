@@ -13,8 +13,10 @@ from extradoc.reconcile_v2.diff import (
 )
 from extradoc.reconcile_v2.errors import UnsupportedSpikeError
 from extradoc.reconcile_v2.ir import (
+    FootnoteRefIR,
     ParagraphIR,
     PositionEdge,
+    StoryIR,
     TabIR,
     TableIR,
     TextSpanIR,
@@ -227,17 +229,12 @@ def _plan_new_tab_batches(
 
     batches: list[list[dict[str, Any]]] = []
     created_tab_refs: dict[tuple[int, ...], dict[str, object]] = {}
-    population_batch: list[dict[str, Any]] = []
     for path, tab in new_tabs:
         if tab.resource_graph.headers or tab.resource_graph.footers:
             raise UnsupportedSpikeError(
                 "reconcile_v2 cannot safely create headers/footers on a newly added tab "
                 "in a document that already has tabs; the Docs API misroutes createHeader/"
                 "createFooter to the first tab"
-            )
-        if tab.resource_graph.footnotes:
-            raise UnsupportedSpikeError(
-                "reconcile_v2 multi-batch spike does not yet support creating tabs with footnotes"
             )
 
         creation_batch_index = len(batches)
@@ -261,13 +258,35 @@ def _plan_new_tab_batches(
             response_path="addDocumentTab.tabProperties.tabId",
         )
         created_tab_refs[path] = deferred_tab_id
-        population_requests = _lower_new_tab_body(tab, deferred_tab_id)
-        named_range_requests = _lower_new_tab_named_ranges(tab, deferred_tab_id)
-        population_batch.extend(population_requests)
-        population_batch.extend(named_range_requests)
 
+    population_batch: list[dict[str, Any]] = []
+    footnote_population_batch: list[dict[str, Any]] = []
+    population_batch_index = len(batches)
+    for path, tab in new_tabs:
+        deferred_tab_id = created_tab_refs[path]
+        population_requests = _lower_new_tab_body(tab, deferred_tab_id)
+        population_batch.extend(population_requests)
+        if tab.resource_graph.footnotes and any(tab.annotations.named_ranges.values()):
+            raise UnsupportedSpikeError(
+                "reconcile_v2 multi-batch spike does not yet support creating a new tab "
+                "with both footnotes and named ranges in the same logical cycle"
+            )
+        population_batch.extend(
+            _lower_new_tab_named_ranges(tab, deferred_tab_id)
+        )
+        footnote_requests, footnote_population_requests = _lower_new_tab_footnotes(
+            tab,
+            deferred_tab_id,
+            placeholder_prefix="-".join(str(part) for part in path),
+            batch_index=population_batch_index,
+            request_index_offset=len(population_batch),
+        )
+        population_batch.extend(footnote_requests)
+        footnote_population_batch.extend(footnote_population_requests)
     if population_batch:
         batches.append(population_batch)
+    if footnote_population_batch:
+        batches.append(footnote_population_batch)
     return batches
 
 
@@ -326,6 +345,59 @@ def _lower_new_tab_named_ranges(
                 )
             )
     return requests
+
+
+def _lower_new_tab_footnotes(
+    tab: TabIR,
+    deferred_tab_id: dict[str, object],
+    *,
+    placeholder_prefix: str,
+    batch_index: int,
+    request_index_offset: int,
+) -> tuple[list[dict[str, Any]], list[dict[str, Any]]]:
+    if not tab.resource_graph.footnotes:
+        return [], []
+    if len(tab.body.sections) != 1:
+        raise UnsupportedSpikeError(
+            "reconcile_v2 multi-batch spike supports new-tab footnotes only for "
+            "single-section body stories"
+        )
+    blocks = tab.body.sections[0].blocks
+    if not all(isinstance(block, ParagraphIR) for block in blocks):
+        raise UnsupportedSpikeError(
+            "reconcile_v2 multi-batch spike supports new-tab footnotes only in "
+            "paragraph-only body stories"
+        )
+
+    create_requests: list[dict[str, Any]] = []
+    population_requests: list[dict[str, Any]] = []
+    anchors = sorted(
+        _new_tab_footnote_anchors(blocks, tab.resource_graph.footnotes),
+        key=lambda item: (item["index"], item["story"].id),
+        reverse=True,
+    )
+    for ordinal, anchor in enumerate(anchors):
+        create_requests.append(
+            make_create_footnote(
+                index=anchor["index"],
+                tab_id=deferred_tab_id,
+            )
+        )
+        deferred_footnote_id = _deferred_id(
+            placeholder=f"new-tab-footnote-{placeholder_prefix}-{ordinal}",
+            batch_index=batch_index,
+            request_index=request_index_offset + ordinal,
+            response_path="createFootnote.footnoteId",
+        )
+        population_requests.extend(
+            _lower_blocks_into_empty_story(
+                anchor["story"].blocks,
+                story_start_index=0,
+                tab_id=deferred_tab_id,
+                segment_id=deferred_footnote_id,
+            )
+        )
+    return create_requests, population_requests
 
 
 def _lower_blocks_into_empty_story(
@@ -448,6 +520,35 @@ def _paragraph_text(paragraph: ParagraphIR) -> str:
     return "".join(
         inline.text for inline in paragraph.inlines if isinstance(inline, TextSpanIR)
     )
+
+
+def _new_tab_footnote_anchors(
+    blocks: list[ParagraphIR],
+    footnotes: dict[str, StoryIR],
+) -> list[dict[str, Any]]:
+    anchors: list[dict[str, Any]] = []
+    current = 1
+    for block_index, block in enumerate(blocks):
+        paragraph_start = current
+        text_offset = 0
+        for inline in block.inlines:
+            if isinstance(inline, TextSpanIR):
+                text_offset += utf16_len(inline.text)
+            elif isinstance(inline, FootnoteRefIR):
+                story = footnotes.get(inline.ref)
+                if story is None:
+                    raise UnsupportedSpikeError(
+                        f"Missing desired footnote story for ref {inline.ref!r}"
+                    )
+                anchors.append(
+                    {
+                        "index": paragraph_start + text_offset,
+                        "story": story,
+                        "block_index": block_index,
+                    }
+                )
+        current = paragraph_start + utf16_len(_paragraph_text(block)) + 1
+    return anchors
 
 
 def _resolve_new_body_position(

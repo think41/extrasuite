@@ -1,0 +1,12 @@
+revision=AIxLkSuYBunxWXt2K_3qxWc_Bs-ZVL2JuygBLjpq4lrCTNs4aTILLn-Q9B9P71OP47rYCJKfQBq7mEvZERAmsi5UhQ
+tabs=2
+tab 't.0' title='Tab 1' index=0 children=0
+  body sections=1 blocks=2
+  resources headers=0 footers=0 footnotes=0
+  named_ranges=0
+  body block kinds={'paragraph': 2}
+tab 't.65lor0do73th' title='Footnote Tab' index=1 children=0
+  body sections=1 blocks=1
+  resources headers=0 footers=0 footnotes=1
+  named_ranges=0
+  body block kinds={'paragraph': 1}

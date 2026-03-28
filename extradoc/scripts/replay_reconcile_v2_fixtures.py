@@ -102,6 +102,7 @@ def main() -> None:
         "create_tab_nested_table_write",
         "create_tab_named_range_write",
         "create_parent_child_tab_write",
+        "create_tab_footnote_write",
         "header_text_replace",
         "section_create_distinct_header",
         "section_create_footer",

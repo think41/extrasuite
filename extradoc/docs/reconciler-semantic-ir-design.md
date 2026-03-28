@@ -861,6 +861,8 @@ The proven tab slice now includes:
 2. child-tab creation using deferred parent tab IDs
 3. named-range creation inside a newly created tab without any valid desired-side
    transport `tabId`
+4. footnote creation inside a newly created tab, with body population and
+   dependent footnote-segment population planned through the same batch model
 
 The remaining explicit tab boundary is header/footer creation on a newly added
 tab in a document that already has tabs. The live Docs transport still

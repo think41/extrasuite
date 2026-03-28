@@ -44,6 +44,14 @@ def test_create_parent_child_tab_write_batches_match_fixture() -> None:
     )
 
 
+def test_create_tab_footnote_write_batches_match_fixture() -> None:
+    base, desired = load_fixture_pair("create_tab_footnote_write")
+
+    assert lower_semantic_diff_batches(base, desired) == load_expected_lowered_batches(
+        "create_tab_footnote_write"
+    )
+
+
 def test_section_create_distinct_header_batches_match_fixture() -> None:
     base, desired = load_fixture_pair("section_create_distinct_header")
 
@@ -111,6 +119,30 @@ def test_create_parent_child_batches_ignore_desired_future_tab_ids() -> None:
 
     assert lower_semantic_diff_batches(base, desired_future_id) == load_expected_lowered_batches(
         "create_parent_child_tab_write"
+    )
+
+
+def test_create_tab_footnote_batches_ignore_desired_future_tab_and_footnote_ids() -> None:
+    base, desired = load_fixture_pair("create_tab_footnote_write")
+    desired_raw = desired.model_dump(by_alias=True, exclude_none=True)
+    desired_raw["tabs"][1]["tabProperties"]["tabId"] = "future.footnote.tab"
+    footnotes = desired_raw["tabs"][1]["documentTab"]["footnotes"]
+    footnote_id = next(iter(footnotes))
+    footnote = footnotes.pop(footnote_id)
+    footnote["footnoteId"] = "future.footnote.segment"
+    footnotes["future.footnote.segment"] = footnote
+    for element in desired_raw["tabs"][1]["documentTab"]["body"]["content"]:
+        paragraph = element.get("paragraph")
+        if not paragraph:
+            continue
+        for child in paragraph.get("elements", []):
+            footnote_ref = child.get("footnoteReference")
+            if footnote_ref:
+                footnote_ref["footnoteId"] = "future.footnote.segment"
+    desired_future_id = Document.model_validate(desired_raw)
+
+    assert lower_semantic_diff_batches(base, desired_future_id) == load_expected_lowered_batches(
+        "create_tab_footnote_write"
     )
 
 
