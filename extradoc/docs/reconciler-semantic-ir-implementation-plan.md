@@ -892,6 +892,41 @@ Commit value:
 
 1. creates a safe adoption path without replacing existing behavior
 
+### Task 20: Caller Cutover And Legacy Retirement
+
+Deliverable:
+
+1. route `DocsClient.diff()` / `push()` through a reconciler adapter that can
+   execute either legacy reconcile or `reconcile_v2`
+2. select reconciler version via `EXTRADOC_RECONCILER`
+3. keep `pull` / `pull-md` unchanged, because the cutover is push-side only
+4. ensure `diff`, `push`, and `push-md` work with either reconciler version
+5. add shadow-mode tooling or operational guidance to compare legacy and v2
+   plans on the same pulled folder before default cutover
+6. flip the default from `v1` to `v2` only after the remaining unsupported
+   boundaries are either implemented or documented as true transport limits
+7. remove the legacy reconciler path only after:
+   1. markdown workflow parity is established
+   2. XML workflow parity is established
+   3. the feature matrix is explicit for any residual transport-broken cases
+
+Tests:
+
+1. `DocsClient.diff()` returns legacy plans when `EXTRADOC_RECONCILER=v1`
+2. `DocsClient.diff()` returns `reconcile_v2` plans when
+   `EXTRADOC_RECONCILER=v2`
+3. `DocsClient.push()` executes legacy batches through legacy deferred-ID
+   resolution
+4. `DocsClient.push()` executes v2 batches through the v2 revision-aware
+   executor
+5. pulled markdown folder edits can be diffed under both versions
+6. CLI help/docs mention the env-var switch during the migration period
+
+Commit value:
+
+1. turns `reconcile_v2` from an isolated engine into the real production
+   migration target
+
 ## What To Reuse From Current Code
 
 ### Reuse as-is
