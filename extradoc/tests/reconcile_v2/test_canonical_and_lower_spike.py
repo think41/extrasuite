@@ -95,7 +95,12 @@ def _make_doc_with_toc(*, include_toc: bool) -> Document:
     )
 
 
-def _make_doc_with_named_range(*, text: str, range_name: str | None = None) -> Document:
+def _make_doc_with_named_range(
+    *,
+    text: str,
+    range_name: str | None = None,
+    target_text: str = "bravo",
+) -> Document:
     text_with_newline = text if text.endswith("\n") else f"{text}\n"
     raw: dict[str, object] = {
         "documentId": "named-range-test",
@@ -106,7 +111,6 @@ def _make_doc_with_named_range(*, text: str, range_name: str | None = None) -> D
                     "body": {
                         "content": [
                             {
-                                "startIndex": 0,
                                 "endIndex": 1,
                                 "sectionBreak": {
                                     "sectionStyle": {"columnSeparatorStyle": "NONE"}
@@ -132,8 +136,8 @@ def _make_doc_with_named_range(*, text: str, range_name: str | None = None) -> D
         ],
     }
     if range_name is not None:
-        start_index = text.index("bravo") + 1
-        end_index = start_index + len("bravo")
+        start_index = text.index(target_text) + 1
+        end_index = start_index + len(target_text)
         raw["tabs"][0]["documentTab"]["namedRanges"] = {
             range_name: {
                 "namedRanges": [
@@ -275,6 +279,26 @@ def test_lower_semantic_diff_for_current_fixture_slice() -> None:
             {
                 "deleteNamedRange": {"name": "spike:bravo"}
             }
+        ],
+        "named_range_move_with_text_edit": [
+            {
+                "deleteContentRange": {
+                    "range": {"startIndex": 1, "endIndex": 20, "tabId": "t.0"}
+                }
+            },
+            {
+                "insertText": {
+                    "location": {"index": 1, "tabId": "t.0"},
+                    "text": "alpha bravo charlie delta",
+                }
+            },
+            {"deleteNamedRange": {"name": "spike:target"}},
+            {
+                "createNamedRange": {
+                    "name": "spike:target",
+                    "range": {"startIndex": 21, "endIndex": 26, "tabId": "t.0"},
+                }
+            },
         ],
         "table_row_insert": [
             {
@@ -609,18 +633,38 @@ def test_lower_semantic_diff_named_range_add_ignores_desired_named_range_id() ->
     ]
 
 
-def test_lower_semantic_diff_rejects_named_range_anchor_moves_with_content_edits() -> None:
-    base = _make_doc_with_named_range(text="alpha bravo charlie", range_name=None)
+def test_lower_semantic_diff_stages_named_range_anchor_moves_after_content_edits() -> None:
+    base = _make_doc_with_named_range(
+        text="alpha bravo charlie",
+        range_name="spike:target",
+        target_text="bravo",
+    )
     desired = _make_doc_with_named_range(
-        text="alpha bravo delta",
-        range_name="spike:bravo",
+        text="alpha bravo charlie delta",
+        range_name="spike:target",
+        target_text="delta",
     )
 
-    with pytest.raises(
-        UnsupportedSpikeError,
-        match="moving anchors in the same cycle as story content edits",
-    ):
-        lower_semantic_diff(base, desired)
+    assert lower_semantic_diff(base, desired) == [
+        {
+            "deleteContentRange": {
+                "range": {"startIndex": 1, "endIndex": 20, "tabId": "t.0"}
+            }
+        },
+        {
+            "insertText": {
+                "location": {"index": 1, "tabId": "t.0"},
+                "text": "alpha bravo charlie delta",
+            }
+        },
+        {"deleteNamedRange": {"name": "spike:target"}},
+        {
+            "createNamedRange": {
+                "name": "spike:target",
+                "range": {"startIndex": 21, "endIndex": 26, "tabId": "t.0"},
+            }
+        },
+    ]
 
 
 def _load_fixture_pair(name: str) -> tuple[Document, Document]:

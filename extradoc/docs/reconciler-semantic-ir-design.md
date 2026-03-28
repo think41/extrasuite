@@ -403,9 +403,10 @@ Consequences:
 2. Named ranges can be diffed using anchor points in semantic space instead of
    stale UTF-16 offsets.
 3. Annotation lowering can be ordered after the content mutations it depends on.
-4. The currently proven slice is stable-content annotation add/delete. If a
-   named-range anchor must move in the same story cycle as content edits,
-   lowering must stage that dependency explicitly or reject the transform.
+4. The currently proven slice includes stable-content add/delete and
+   story-local anchor moves coupled with paragraph-text edits, provided lowering
+   stages content mutations first and recreates named ranges against the
+   post-edit story layout.
 
 ### 10. Lowering uses a transport shadow state
 
@@ -450,6 +451,9 @@ Consequences:
    pre-table carrier paragraph that `insertTable` introduces
 6. table-cell canonicalization is recursive: nested tables inherit the same
    carrier-paragraph cleanup rules as top-level tables
+7. newly created footnote segments canonicalize away the transport-owned
+   carrier space before the final newline, so footnote text diff does not treat
+   that bootstrap artifact as semantic content
 
 Canonicalization is therefore a dedicated pre-diff phase:
 
@@ -830,6 +834,10 @@ their styles and attachment state are part of the semantic document model.
 2. Diff section style and attachment fields on matched `SectionIR` nodes.
 3. Diff referenced header/footer contents exactly once per shared story.
 4. Reject attachment creates whose target topology is not transport-verified.
+5. Do not treat header/footer attachment retargeting as a generic section-style
+   field update. Live Docs replay showed `updateSectionStyle` rejects
+   `defaultHeaderId` / `defaultFooterId`, so supported attachment transforms are
+   create, continue, content-update-in-place, and delete.
 
 This eliminates the need for document-wide "find first default header/footer"
 stateful hacks.
@@ -1042,7 +1050,7 @@ Section attachment edits are lowered using:
    be created
 2. content edits against the referenced story
 3. `UpdateSectionStyleRequest` only when actual section style fields must be
-   updated
+   updated, not to retarget header/footer IDs
 
 Shared stories are created once and referenced by the section graph in the
 semantic model.

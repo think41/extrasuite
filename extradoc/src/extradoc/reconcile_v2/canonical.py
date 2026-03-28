@@ -6,7 +6,7 @@ import copy
 from dataclasses import dataclass
 from typing import TYPE_CHECKING
 
-from extradoc.reconcile_v2.ir import ListIR, ParagraphIR, TableIR, TextSpanIR
+from extradoc.reconcile_v2.ir import ListIR, ParagraphIR, StoryKind, TableIR, TextSpanIR
 from extradoc.reconcile_v2.parse import parse_document
 
 if TYPE_CHECKING:
@@ -31,6 +31,7 @@ def canonicalize_document_ir(document: DocumentIR) -> DocumentIR:
             story.blocks = _strip_transport_carrier_paragraphs(story.blocks)
         for story in tab.resource_graph.footnotes.values():
             story.blocks = _strip_transport_carrier_paragraphs(story.blocks)
+            _strip_footnote_carrier_space(story)
         for story in _iter_table_cell_stories(tab.body.sections):
             story.blocks = _strip_transport_carrier_paragraphs(story.blocks)
     return canonical
@@ -81,6 +82,20 @@ def _iter_table_cell_stories_from_block(block: BlockIR) -> list[StoryIR]:
             for nested_block in cell.content.blocks:
                 stories.extend(_iter_table_cell_stories_from_block(nested_block))
     return stories
+
+
+def _strip_footnote_carrier_space(story: StoryIR) -> None:
+    if story.kind != StoryKind.FOOTNOTE or not story.blocks:
+        return
+    last_block = story.blocks[-1]
+    if not isinstance(last_block, ParagraphIR):
+        return
+    if not last_block.inlines or not isinstance(last_block.inlines[-1], TextSpanIR):
+        return
+    last_span = last_block.inlines[-1]
+    if not last_span.text.endswith(" ") or last_span.text == " ":
+        return
+    last_span.text = last_span.text[:-1]
 
 
 @dataclass(frozen=True, slots=True)

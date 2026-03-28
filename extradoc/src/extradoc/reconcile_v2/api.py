@@ -46,7 +46,7 @@ def semantic_diff(base: Document, desired: Document) -> list[SemanticEdit]:
 
 def lower_semantic_diff(base: Document, desired: Document) -> list[dict[str, object]]:
     """Lower the supported semantic diff slice into raw request dicts."""
-    return lower_document_edits(base, semantic_diff(base, desired))
+    return lower_document_edits(base, semantic_diff(base, desired), desired=desired)
 
 
 def lower_semantic_diff_batches(

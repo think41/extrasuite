@@ -101,8 +101,12 @@ def main() -> None:
         "create_tab_table_write",
         "create_tab_nested_table_write",
         "header_text_replace",
+        "section_create_distinct_header",
+        "section_create_footer",
+        "footnote_create_write",
         "named_range_add",
         "named_range_delete",
+        "named_range_move_with_text_edit",
     ]
 
     import asyncio

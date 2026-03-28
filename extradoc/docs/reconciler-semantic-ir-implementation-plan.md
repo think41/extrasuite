@@ -780,13 +780,15 @@ Deliverable:
 4. support multi-batch deferred IDs
 5. support typed slots (`DEFAULT`, `FIRST_PAGE`, `EVEN_PAGE`)
 6. enforce an explicit transport capability matrix for attachment operations
-7. use `UpdateSectionStyleRequest` only for actual section style updates
+7. use `UpdateSectionStyleRequest` only for actual section style updates, not
+   header/footer retargeting; live replay showed `defaultHeaderId` /
+   `defaultFooterId` updates are rejected by Docs
 
 Tests:
 
 1. create header in single-section doc
 2. modify existing header content
-3. attach existing shared header to another section
+3. split a shared/default header into a new section-scoped header
 4. create footer and populate in dependent batch
 5. first-page or even-page attachment lowers distinctly from default
 6. new tab with a new header/footer in an existing multi-tab document yields an

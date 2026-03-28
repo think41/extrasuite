@@ -25,6 +25,30 @@ def test_create_tab_nested_table_write_batches_match_fixture() -> None:
     )
 
 
+def test_section_create_distinct_header_batches_match_fixture() -> None:
+    base, desired = load_fixture_pair("section_create_distinct_header")
+
+    assert lower_semantic_diff_batches(base, desired) == load_expected_lowered_batches(
+        "section_create_distinct_header"
+    )
+
+
+def test_section_create_footer_batches_match_fixture() -> None:
+    base, desired = load_fixture_pair("section_create_footer")
+
+    assert lower_semantic_diff_batches(base, desired) == load_expected_lowered_batches(
+        "section_create_footer"
+    )
+
+
+def test_footnote_create_write_batches_match_fixture() -> None:
+    base, desired = load_fixture_pair("footnote_create_write")
+
+    assert lower_semantic_diff_batches(base, desired) == load_expected_lowered_batches(
+        "footnote_create_write"
+    )
+
+
 def test_create_tab_batches_ignore_desired_future_tab_id() -> None:
     base, desired = load_fixture_pair("create_tab_table_write")
     desired_raw = desired.model_dump(by_alias=True, exclude_none=True)

@@ -12,10 +12,12 @@ from dataclasses import dataclass
 from itertools import accumulate
 from typing import TYPE_CHECKING, TypeVar
 
+from extradoc.indexer import utf16_len
 from extradoc.reconcile_v2.canonical import canonicalize_document_ir
 from extradoc.reconcile_v2.errors import UnsupportedSpikeError
 from extradoc.reconcile_v2.ir import (
     AnchorRangeIR,
+    FootnoteRefIR,
     ListIR,
     OpaqueBlockIR,
     ParagraphIR,
@@ -55,6 +57,33 @@ class DeleteSectionEdit:
     tab_id: str
     section_index: int
     block_count: int
+
+
+@dataclass(slots=True)
+class CreateSectionAttachmentEdit:
+    tab_id: str
+    section_index: int
+    attachment_kind: str
+    slot: str
+    desired_story: StoryIR
+
+
+@dataclass(slots=True)
+class DeleteSectionAttachmentEdit:
+    tab_id: str
+    section_index: int
+    attachment_kind: str
+    slot: str
+    story_id: str
+
+
+@dataclass(slots=True)
+class CreateFootnoteEdit:
+    tab_id: str
+    section_index: int
+    block_index: int
+    text_offset_utf16: int
+    desired_story: StoryIR
 
 
 @dataclass(slots=True)
@@ -232,6 +261,9 @@ class TableComparisonPlan:
 SemanticEdit = (
     InsertSectionEdit
     | DeleteSectionEdit
+    | CreateSectionAttachmentEdit
+    | DeleteSectionAttachmentEdit
+    | CreateFootnoteEdit
     | UpdateParagraphRoleEdit
     | AppendListItemsEdit
     | ReplaceListSpecEdit
@@ -284,6 +316,21 @@ def summarize_semantic_edits(edits: Iterable[SemanticEdit]) -> list[str]:
             lines.append(
                 f"tab {edit.tab_id}: delete section {edit.section_index} "
                 f"with {edit.block_count} block(s)"
+            )
+        elif isinstance(edit, CreateSectionAttachmentEdit):
+            lines.append(
+                f"tab {edit.tab_id}: section {edit.section_index} create "
+                f"{edit.attachment_kind[:-1]} {edit.slot}"
+            )
+        elif isinstance(edit, DeleteSectionAttachmentEdit):
+            lines.append(
+                f"tab {edit.tab_id}: section {edit.section_index} delete "
+                f"{edit.attachment_kind[:-1]} {edit.slot}"
+            )
+        elif isinstance(edit, CreateFootnoteEdit):
+            lines.append(
+                f"tab {edit.tab_id}: section {edit.section_index} block {edit.block_index} "
+                "insert footnote"
             )
         elif isinstance(edit, UpdateParagraphRoleEdit):
             lines.append(
@@ -392,6 +439,35 @@ def _diff_tab(base: TabIR, desired: TabIR) -> list[SemanticEdit]:
     edits: list[SemanticEdit] = []
     edits.extend(_diff_named_ranges(base, desired))
     edits.extend(
+        _diff_footnote_changes(
+            tab_id=base.id,
+            base_sections=base_sections,
+            desired_sections=desired_sections,
+            base_catalog=base.resource_graph.footnotes,
+            desired_catalog=desired.resource_graph.footnotes,
+        )
+    )
+    edits.extend(
+        _diff_section_attachment_changes(
+            tab_id=base.id,
+            base_sections=base_sections,
+            desired_sections=desired_sections,
+            base_catalog=base.resource_graph.headers,
+            desired_catalog=desired.resource_graph.headers,
+            attachment_kind="headers",
+        )
+    )
+    edits.extend(
+        _diff_section_attachment_changes(
+            tab_id=base.id,
+            base_sections=base_sections,
+            desired_sections=desired_sections,
+            base_catalog=base.resource_graph.footers,
+            desired_catalog=desired.resource_graph.footers,
+            attachment_kind="footers",
+        )
+    )
+    edits.extend(
         _diff_attached_story_catalog(
             base.id,
             base.body.sections,
@@ -409,6 +485,17 @@ def _diff_tab(base: TabIR, desired: TabIR) -> list[SemanticEdit]:
             base.resource_graph.footers,
             desired.resource_graph.footers,
             attachment_kind="footers",
+        )
+    )
+    edits.extend(
+        _diff_story_catalog(
+            base.id,
+            base.resource_graph.footnotes,
+            desired.resource_graph.footnotes,
+            pair_selector=_select_matching_footnote_story_pairs(
+                base_sections,
+                desired_sections,
+            ),
         )
     )
     edits.extend(
@@ -442,6 +529,68 @@ def _diff_tab(base: TabIR, desired: TabIR) -> list[SemanticEdit]:
                 desired_section=desired_section,
             )
         )
+    return edits
+
+
+def _diff_section_attachment_changes(
+    *,
+    tab_id: str,
+    base_sections: list[SectionIR],
+    desired_sections: list[SectionIR],
+    base_catalog: dict[str, StoryIR],
+    desired_catalog: dict[str, StoryIR],
+    attachment_kind: str,
+) -> list[SemanticEdit]:
+    edits: list[SemanticEdit] = []
+    base_ref_counts = _attachment_ref_counts(base_sections, attachment_kind)
+    for section_index, (base_section, desired_section) in enumerate(
+        zip(base_sections, desired_sections, strict=False)
+    ):
+        base_attachments = getattr(base_section.attachments, attachment_kind)
+        desired_attachments = getattr(desired_section.attachments, attachment_kind)
+        for slot in sorted(set(base_attachments) | set(desired_attachments)):
+            base_ref = base_attachments.get(slot)
+            desired_ref = desired_attachments.get(slot)
+            if base_ref == desired_ref:
+                continue
+            if desired_ref is not None:
+                desired_story = desired_catalog.get(desired_ref)
+                if desired_story is None:
+                    continue
+                if base_ref is not None:
+                    base_story = base_catalog.get(base_ref)
+                    if base_story is not None and _story_signature(base_story) == _story_signature(
+                        desired_story
+                    ):
+                        continue
+                if base_ref is not None and base_ref_counts.get(base_ref, 0) == 1:
+                    # Unique attachments can be updated in place by story-content diff.
+                    continue
+                edits.append(
+                    CreateSectionAttachmentEdit(
+                        tab_id=tab_id,
+                        section_index=section_index,
+                        attachment_kind=attachment_kind,
+                        slot=slot,
+                        desired_story=desired_story,
+                    )
+                )
+                continue
+            if base_ref is not None:
+                if base_ref_counts.get(base_ref, 0) > 1:
+                    raise UnsupportedSpikeError(
+                        "reconcile_v2 does not yet support deleting a shared "
+                        f"{attachment_kind[:-1]} attachment from only one section"
+                    )
+                edits.append(
+                    DeleteSectionAttachmentEdit(
+                        tab_id=tab_id,
+                        section_index=section_index,
+                        attachment_kind=attachment_kind,
+                        slot=slot,
+                        story_id=base_ref,
+                    )
+                )
     return edits
 
 
@@ -632,6 +781,75 @@ def _diff_section_blocks(
     return edits
 
 
+def _diff_footnote_changes(
+    *,
+    tab_id: str,
+    base_sections: list[SectionIR],
+    desired_sections: list[SectionIR],
+    base_catalog: dict[str, StoryIR],
+    desired_catalog: dict[str, StoryIR],
+) -> list[SemanticEdit]:
+    edits: list[SemanticEdit] = []
+    for section_index, (base_section, desired_section) in enumerate(
+        zip(base_sections, desired_sections, strict=False)
+    ):
+        for block_index, (base_block, desired_block) in enumerate(
+            zip(base_section.blocks, desired_section.blocks, strict=False)
+        ):
+            if not isinstance(base_block, ParagraphIR) or not isinstance(desired_block, ParagraphIR):
+                continue
+            if _paragraph_text(base_block) != _paragraph_text(desired_block):
+                continue
+            base_refs = [inline.ref for inline in base_block.inlines if isinstance(inline, FootnoteRefIR)]
+            desired_refs = [
+                inline.ref for inline in desired_block.inlines if isinstance(inline, FootnoteRefIR)
+            ]
+            if len(base_refs) == 0 and len(desired_refs) == 1:
+                desired_story = desired_catalog.get(desired_refs[0])
+                if desired_story is None:
+                    continue
+                edits.append(
+                    CreateFootnoteEdit(
+                        tab_id=tab_id,
+                        section_index=section_index,
+                        block_index=block_index,
+                        text_offset_utf16=_footnote_insertion_offset(desired_block),
+                        desired_story=desired_story,
+                    )
+                )
+                continue
+            if len(base_refs) != len(desired_refs):
+                raise UnsupportedSpikeError(
+                    "reconcile_v2 footnote spike supports only simple footnote creation "
+                    "or matched-story content edits"
+                )
+            for base_ref, desired_ref in zip(base_refs, desired_refs, strict=True):
+                if base_ref not in base_catalog or desired_ref not in desired_catalog:
+                    continue
+    return edits
+
+
+def _select_matching_footnote_story_pairs(
+    base_sections: list[SectionIR],
+    desired_sections: list[SectionIR],
+) -> tuple[tuple[str, str], ...]:
+    pairs: list[tuple[str, str]] = []
+    for base_section, desired_section in zip(base_sections, desired_sections, strict=False):
+        for base_block, desired_block in zip(base_section.blocks, desired_section.blocks, strict=False):
+            if not isinstance(base_block, ParagraphIR) or not isinstance(desired_block, ParagraphIR):
+                continue
+            if _paragraph_text(base_block) != _paragraph_text(desired_block):
+                continue
+            base_refs = [inline.ref for inline in base_block.inlines if isinstance(inline, FootnoteRefIR)]
+            desired_refs = [
+                inline.ref for inline in desired_block.inlines if isinstance(inline, FootnoteRefIR)
+            ]
+            if len(base_refs) != len(desired_refs):
+                continue
+            pairs.extend(zip(base_refs, desired_refs, strict=True))
+    return tuple(pairs)
+
+
 def _diff_attached_story_catalog(
     tab_id: str,
     base_sections: list[SectionIR],
@@ -647,14 +865,21 @@ def _diff_attached_story_catalog(
         base_attachments = getattr(base_section.attachments, attachment_kind)
         desired_attachments = getattr(desired_section.attachments, attachment_kind)
         for slot in sorted(set(base_attachments) & set(desired_attachments)):
-            story_pair = (base_attachments[slot], desired_attachments[slot])
+            base_ref = base_attachments[slot]
+            desired_ref = desired_attachments[slot]
+            base_story = base_catalog.get(base_ref)
+            desired_story = desired_catalog.get(desired_ref)
+            if base_story is None or desired_story is None:
+                continue
+            if base_ref != desired_ref and (
+                _story_signature(base_story) != _story_signature(desired_story)
+                and _attachment_ref_counts(base_sections, attachment_kind).get(base_ref, 0) > 1
+            ):
+                continue
+            story_pair = (base_ref, desired_ref)
             if story_pair in seen_pairs:
                 continue
             seen_pairs.add(story_pair)
-            base_story = base_catalog.get(story_pair[0])
-            desired_story = desired_catalog.get(story_pair[1])
-            if base_story is None or desired_story is None:
-                continue
             edit = _diff_story_paragraph_slice(
                 tab_id=tab_id,
                 story_id=base_story.id,
@@ -671,15 +896,24 @@ def _diff_story_catalog(
     tab_id: str,
     base_catalog: dict[str, StoryIR],
     desired_catalog: dict[str, StoryIR],
+    *,
+    pair_selector: tuple[tuple[str, str], ...] | None = None,
 ) -> list[SemanticEdit]:
     edits: list[SemanticEdit] = []
-    for story_ref in sorted(set(base_catalog) & set(desired_catalog)):
+    pairs = (
+        pair_selector
+        if pair_selector is not None
+        else tuple((story_ref, story_ref) for story_ref in sorted(set(base_catalog) & set(desired_catalog)))
+    )
+    for base_story_ref, desired_story_ref in pairs:
+        if base_story_ref not in base_catalog or desired_story_ref not in desired_catalog:
+            continue
         edit = _diff_story_paragraph_slice(
             tab_id=tab_id,
-            story_id=base_catalog[story_ref].id,
+            story_id=base_catalog[base_story_ref].id,
             section_index=None,
-            base_blocks=base_catalog[story_ref].blocks,
-            desired_blocks=desired_catalog[story_ref].blocks,
+            base_blocks=base_catalog[base_story_ref].blocks,
+            desired_blocks=desired_catalog[desired_story_ref].blocks,
         )
         if edit is not None:
             edits.append(edit)
@@ -1124,12 +1358,37 @@ def _paragraph_text(paragraph: ParagraphIR) -> str:
     )
 
 
+def _footnote_insertion_offset(paragraph: ParagraphIR) -> int:
+    offset = 0
+    for inline in paragraph.inlines:
+        if isinstance(inline, FootnoteRefIR):
+            return offset
+        if isinstance(inline, TextSpanIR):
+            offset += utf16_len(inline.text)
+    return offset
+
+
 def _all_paragraphs(blocks: list[BlockIR]) -> bool:
     return bool(blocks) and all(isinstance(block, ParagraphIR) for block in blocks)
 
 
 def _paragraph_signature(paragraph: ParagraphIR) -> tuple[str, str]:
     return paragraph.role, _paragraph_text(paragraph)
+
+
+def _story_signature(story: StoryIR) -> tuple[str, ...]:
+    return tuple(_block_fingerprints(story.blocks))
+
+
+def _attachment_ref_counts(
+    sections: list[SectionIR],
+    attachment_kind: str,
+) -> dict[str, int]:
+    counts: dict[str, int] = {}
+    for section in sections:
+        for story_id in getattr(section.attachments, attachment_kind).values():
+            counts[story_id] = counts.get(story_id, 0) + 1
+    return counts
 
 
 def _style_delta(

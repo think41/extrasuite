@@ -67,6 +67,7 @@ Each entry captures:
 | Insert page break in body | `client/EXTRADOC_BUGS.md` BUG-3; commit `eb29b63` | Page break is a semantic block lowered via `insertPageBreak`, not paragraph text. |
 | Insert page break in header/footer/footnote/table cell | `client/EXTRADOC_BUGS.md` BUG-3; `CreateFootnoteRequest.md` / `InsertSectionBreakRequest.md` capability rules | Container capabilities must reject unsupported block kinds before lowering. |
 | Insert footnote reference plus footnote content | `client/EXTRADOC_BUGS.md` BUG-2; `CreateFootnoteRequest.md` | Footnote refs are ID-producing inline edits: create reference first, then reconcile the footnote story in a dependent batch. |
+| Newly created footnote content includes a transport carrier space | live `reconcile_v2` replay fixture | Canonicalization must erase the bootstrap carrier space so semantic footnote text does not depend on transport initialization noise. |
 | Paragraph containing HR / inline object / footnote ref in an add gap | `extradoc/src/extradoc/reconcile/_generators.py` guards; `client/EXTRADOC_BUGS.md` | Non-text inline/block producers need first-class lowering or explicit unsupported rejection. They cannot fall through `insertText`. |
 
 ## Sections, Headers, Footers, And Tabs
@@ -78,6 +79,7 @@ Each entry captures:
 | Shared header/footer reused across sections | current design intent; multi-section tests | Shared story identity must be separate from section attachment edges. |
 | Existing header content replayed onto a fresh document with a different `headerId` | live confidence-sprint replay | Shared-story matching must use logical attachment slots, not captured transport IDs. |
 | Default vs first-page vs even-page header/footer slots | `DocumentStyle.md` | Header/footer attachments are typed slots, not a single `header_ref` / `footer_ref`. |
+| Attempt to retarget a section to an existing header/footer via `updateSectionStyle.defaultHeaderId` / `defaultFooterId` | live confidence-sprint replay | The reconciler must not assume generic header/footer reassignment is legal; Docs rejects this transport path. |
 | New tab with header/footer in a document that already has tabs | `client/EXTRADOC_BUGS.md` BUG-8 | Lowering must consult a transport capability matrix and explicitly reject semantically-valid but API-broken transforms. |
 | Tab hierarchy and child tabs | `tabs.md`; design goal | Reconciler must preserve tree topology, not flatten tabs into a list. |
 | Requests without `tabId` silently hit first tab | `tabs.md`; multiple historical tab bugs | Lowering must treat `tabId` as mandatory transport routing except where the API explicitly forbids it. |
@@ -93,7 +95,7 @@ Each entry captures:
 | Annotation anchor survives block split or merge | historical index-drift failures | Anchored annotations must follow logical positions in story space, not stale block IDs or UTF-16 offsets. |
 | New tab with named ranges | `_core.py` comment about deferred complexity | Anchored annotations must lower after any ID-producing story/tab creation they depend on. |
 | Named-range add/delete when desired carries no `namedRangeId` | live `reconcile_v2` stable annotation fixtures | Semantic annotation identity comes from `(name, anchors)`, not transport-generated named range IDs. |
-| Named-range anchor move coupled with story content edit | current `reconcile_v2` boundary | Until staged lowering exists, this must be an explicit unsupported error, not a best-effort mixed batch. |
+| Named-range anchor move coupled with story content edit | live `reconcile_v2` replay fixture | Lowering must stage story content edits first, then delete/recreate named ranges from the post-edit story layout. |
 | Raw API indices differ from mock-reindexed indices around special tables | commit `365c44e`; `client.py` raw-base comments | Lowering must derive coordinates from real base transport layout or an exact transport shadow, never from approximate reindexing. |
 
 ## Batching, Ordering, And Verification

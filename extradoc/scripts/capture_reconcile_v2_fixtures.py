@@ -270,6 +270,29 @@ REQUEST_SCENARIOS = (
         ),
     ),
     RequestScenario(
+        name="named_range_move_with_text_edit",
+        title="Confidence Sprint Fixture Named Range Move With Text Edit",
+        description="Edit body text and move a named range anchor in the same logical cycle.",
+        base_md="alpha bravo charlie\n",
+        base_setup_builder=lambda base_raw: _build_named_range_add_requests(
+            base_raw=base_raw,
+            name="spike:target",
+            target_text="bravo",
+        ),
+        desired_request_builder=lambda _base_raw: _build_named_range_move_with_text_edit_requests(
+            name="spike:target",
+            before_text="alpha bravo charlie",
+            after_text="alpha bravo charlie delta",
+            target_text="delta",
+        ),
+        expected_lowered_builder=lambda _base_raw: _build_named_range_move_with_text_edit_requests(
+            name="spike:target",
+            before_text="alpha bravo charlie",
+            after_text="alpha bravo charlie delta",
+            target_text="delta",
+        ),
+    ),
+    RequestScenario(
         name="create_tab_table_write",
         title="Confidence Sprint Fixture Create Tab Table Write",
         description="Create a new tab, insert a table into it, and populate cell text in the same logical cycle.",
@@ -284,6 +307,51 @@ REQUEST_SCENARIOS = (
         base_md="alpha first tab\n",
         desired_request_batches_builder=_build_create_tab_nested_table_write_batches,
         expected_lowered_batches_builder=_build_create_tab_nested_table_write_batches,
+    ),
+    RequestScenario(
+        name="section_create_distinct_header",
+        title="Confidence Sprint Fixture Section Create Distinct Header",
+        description="Create a distinct second-section header when the base document currently inherits the default shared header.",
+        base_md="First paragraph.\n\nSecond paragraph.\n",
+        base_setup_procedure=lambda raw_client, document_id, base_raw: _setup_section_base_with_default_header(
+            raw_client,
+            document_id,
+            base_raw,
+        ),
+        desired_request_batches_builder=lambda base_raw: _build_create_distinct_section_header_batches(
+            base_raw,
+            header_text="Second Section Header",
+        ),
+        expected_lowered_batches_builder=lambda base_raw: _build_create_distinct_section_header_batches(
+            base_raw,
+            header_text="Second Section Header",
+        ),
+    ),
+    RequestScenario(
+        name="section_create_footer",
+        title="Confidence Sprint Fixture Section Create Footer",
+        description="Create a default footer and populate its content in a dependent batch.",
+        base_md="Body paragraph.\n",
+        desired_request_batches_builder=lambda _base_raw: _build_create_footer_batches(
+            footer_text="Footer Alpha"
+        ),
+        expected_lowered_batches_builder=lambda _base_raw: _build_create_footer_batches(
+            footer_text="Footer Alpha"
+        ),
+    ),
+    RequestScenario(
+        name="footnote_create_write",
+        title="Confidence Sprint Fixture Footnote Create Write",
+        description="Create a footnote reference in body text and populate the new footnote segment in a dependent batch.",
+        base_md="Body paragraph.\n",
+        desired_request_batches_builder=lambda base_raw: _build_create_footnote_batches(
+            base_raw,
+            footnote_text="Footnote Alpha",
+        ),
+        expected_lowered_batches_builder=lambda base_raw: _build_create_footnote_batches(
+            base_raw,
+            footnote_text="Footnote Alpha",
+        ),
     ),
 )
 
@@ -1349,6 +1417,46 @@ def _build_named_range_add_requests(
     raise RuntimeError(f"Could not locate target text {target_text!r} for named range")
 
 
+def _build_named_range_move_with_text_edit_requests(
+    *,
+    name: str,
+    before_text: str,
+    after_text: str,
+    target_text: str,
+) -> list[dict]:
+    target_offset = after_text.index(target_text)
+    start_index = 1 + target_offset
+    end_index = start_index + len(target_text)
+    return [
+        {
+            "deleteContentRange": {
+                "range": {
+                    "startIndex": 1,
+                    "endIndex": 1 + len(before_text),
+                    "tabId": "t.0",
+                }
+            }
+        },
+        {
+            "insertText": {
+                "location": {"index": 1, "tabId": "t.0"},
+                "text": after_text,
+            }
+        },
+        {"deleteNamedRange": {"name": name}},
+        {
+            "createNamedRange": {
+                "name": name,
+                "range": {
+                    "startIndex": start_index,
+                    "endIndex": end_index,
+                    "tabId": "t.0",
+                },
+            }
+        },
+    ]
+
+
 def _setup_multitab_base_state(
     raw_client: _RawDocsClient,
     document_id: str,
@@ -1395,6 +1503,47 @@ def _setup_multitab_base_state(
     return [batch_0, batch_2_template]
 
 
+def _setup_section_base_with_default_header(
+    raw_client: _RawDocsClient,
+    document_id: str,
+    base_raw: dict,
+) -> list[list[dict]]:
+    batch_0 = _build_section_split_requests(base_raw)
+    raw_client.batch_update(document_id, batch_0)
+
+    batch_1 = [{"createHeader": {"type": "DEFAULT"}}]
+    response = raw_client.batch_update(document_id, batch_1)
+    header_id = response["replies"][0]["createHeader"]["headerId"]
+
+    batch_2_actual = [
+        {
+            "insertText": {
+                "location": {"segmentId": header_id, "index": 0},
+                "text": "Shared Header",
+            }
+        }
+    ]
+    raw_client.batch_update(document_id, batch_2_actual)
+
+    batch_2_template = [
+        {
+            "insertText": {
+                "location": {
+                    "segmentId": {
+                        "placeholder": "base-default-header",
+                        "batch_index": 1,
+                        "request_index": 0,
+                        "response_path": "createHeader.headerId",
+                    },
+                    "index": 0,
+                },
+                "text": "Shared Header",
+            }
+        }
+    ]
+    return [batch_0, batch_1, batch_2_template]
+
+
 def _build_multitab_text_replace_requests(
     base_raw: dict,
     *,
@@ -1434,6 +1583,127 @@ def _build_multitab_text_replace_requests(
         }
     )
     return requests
+
+
+def _build_create_distinct_section_header_batches(
+    base_raw: dict,
+    *,
+    header_text: str,
+) -> list[list[dict]]:
+    boundary = _find_internal_section_break(base_raw)
+    header_ref = {
+        "placeholder": "header-t.0-1-DEFAULT",
+        "batch_index": 0,
+        "request_index": 0,
+        "response_path": "createHeader.headerId",
+    }
+    return [
+        [
+            {
+                "createHeader": {
+                    "type": "DEFAULT",
+                    "sectionBreakLocation": {
+                        "index": boundary["startIndex"],
+                        "tabId": "t.0",
+                    },
+                }
+            }
+        ],
+        [
+            {
+                "insertText": {
+                    "location": {
+                        "tabId": "t.0",
+                        "segmentId": header_ref,
+                        "index": 0,
+                    },
+                    "text": header_text,
+                }
+            }
+        ],
+    ]
+
+
+def _build_create_footer_batches(*, footer_text: str) -> list[list[dict]]:
+    footer_ref = {
+        "placeholder": "footer-t.0-0-DEFAULT",
+        "batch_index": 0,
+        "request_index": 0,
+        "response_path": "createFooter.footerId",
+    }
+    return [
+        [{"createFooter": {"type": "DEFAULT"}}],
+        [
+            {
+                "insertText": {
+                    "location": {
+                        "tabId": "t.0",
+                        "segmentId": footer_ref,
+                        "index": 0,
+                    },
+                    "text": footer_text,
+                }
+            }
+        ],
+    ]
+
+
+def _build_create_footnote_batches(
+    base_raw: dict,
+    *,
+    footnote_text: str,
+) -> list[list[dict]]:
+    content = base_raw["tabs"][0]["documentTab"]["body"]["content"]
+    paragraphs = [
+        element
+        for element in content
+        if "paragraph" in element and _visible_paragraph_text(element["paragraph"])
+    ]
+    if len(paragraphs) != 1:
+        raise RuntimeError("Footnote create fixture expects exactly one visible paragraph")
+    paragraph = paragraphs[0]
+    insertion_index = paragraph["endIndex"] - 1
+    footnote_ref = {
+        "placeholder": "footnote-t.0-0-0",
+        "batch_index": 0,
+        "request_index": 0,
+        "response_path": "createFootnote.footnoteId",
+    }
+    return [
+        [
+            {
+                "createFootnote": {
+                    "location": {"index": insertion_index, "tabId": "t.0"}
+                }
+            }
+        ],
+        [
+            {
+                "insertText": {
+                    "location": {
+                        "tabId": "t.0",
+                        "segmentId": footnote_ref,
+                        "index": 0,
+                    },
+                    "text": footnote_text,
+                }
+            }
+        ],
+    ]
+
+
+def _find_internal_section_break(base_raw: dict) -> dict:
+    content = base_raw["tabs"][0]["documentTab"]["body"]["content"]
+    for element in content:
+        if "sectionBreak" not in element:
+            continue
+        if "startIndex" not in element:
+            continue
+        return {
+            "startIndex": element["startIndex"],
+            "endIndex": element["endIndex"],
+        }
+    raise RuntimeError("Expected an internal section break in base fixture")
 
 
 def _build_add_tab_story_batches(

@@ -7,6 +7,9 @@ from typing import TYPE_CHECKING, Any
 from extradoc.indexer import utf16_len
 from extradoc.reconcile_v2.diff import (
     AppendListItemsEdit,
+    CreateFootnoteEdit,
+    CreateSectionAttachmentEdit,
+    DeleteSectionAttachmentEdit,
     DeleteSectionEdit,
     DeleteTableColumnEdit,
     DeleteTableRowEdit,
@@ -42,6 +45,8 @@ from extradoc.reconcile_v2.requests import (
     make_create_named_range,
     make_create_paragraph_bullets,
     make_delete_content_range,
+    make_delete_footer,
+    make_delete_header,
     make_delete_named_range,
     make_delete_paragraph_bullets,
     make_delete_table_column,
@@ -64,13 +69,22 @@ if TYPE_CHECKING:
     from extradoc.api_types._generated import Document
 
 
-def lower_document_edits(base: Document, edits: list[SemanticEdit]) -> list[dict[str, Any]]:
+def lower_document_edits(
+    base: Document,
+    edits: list[SemanticEdit],
+    *,
+    desired: Document | None = None,
+) -> list[dict[str, Any]]:
     """Lower the supported semantic edits into batchUpdate request dicts."""
-    _validate_named_range_dependencies(edits)
     requests: list[dict[str, Any]] = []
     layouts: dict[str, BodyLayout] = {}
     story_layouts = build_story_layouts(base)
-    for edit in edits:
+    desired_story_layouts = build_story_layouts(desired) if desired is not None else None
+    content_edited_story_ids = {
+        edit.story_id for edit in edits if isinstance(edit, ReplaceParagraphSliceEdit)
+    }
+
+    for edit in [edit for edit in edits if not isinstance(edit, ReplaceNamedRangesEdit)]:
         layout = layouts.setdefault(edit.tab_id, build_body_layout(base, tab_id=edit.tab_id))
         if isinstance(edit, UpdateParagraphRoleEdit):
             paragraph = _paragraph_at(layout, edit.section_index, edit.block_index)
@@ -182,6 +196,29 @@ def lower_document_edits(base: Document, edits: list[SemanticEdit]) -> list[dict
                     tab_id=edit.tab_id,
                 )
             )
+        elif isinstance(edit, DeleteSectionAttachmentEdit):
+            if edit.attachment_kind == "headers":
+                requests.append(
+                    make_delete_header(header_id=edit.story_id, tab_id=edit.tab_id)
+                )
+            elif edit.attachment_kind == "footers":
+                requests.append(
+                    make_delete_footer(footer_id=edit.story_id, tab_id=edit.tab_id)
+                )
+            else:
+                raise UnsupportedSpikeError(
+                    f"Unsupported section attachment kind: {edit.attachment_kind}"
+                )
+        elif isinstance(edit, CreateSectionAttachmentEdit):
+            raise UnsupportedSpikeError(
+                "reconcile_v2 section attachment creation requires batch planning; "
+                "use lower_semantic_diff_batches() or reconcile()"
+            )
+        elif isinstance(edit, CreateFootnoteEdit):
+            raise UnsupportedSpikeError(
+                "reconcile_v2 footnote creation requires batch planning; "
+                "use lower_semantic_diff_batches() or reconcile()"
+            )
         elif isinstance(edit, ReplaceParagraphSliceEdit):
             story = story_layouts[edit.story_id]
             paragraphs = paragraph_slice(
@@ -209,31 +246,6 @@ def lower_document_edits(base: Document, edits: list[SemanticEdit]) -> list[dict
                         tab_id=story.route.tab_id,
                         segment_id=story.route.segment_id,
                         text=inserted_text,
-                    )
-                )
-        elif isinstance(edit, ReplaceNamedRangesEdit):
-            if edit.before_count:
-                requests.append(make_delete_named_range(name=edit.name))
-            for anchor in edit.desired_ranges:
-                start_route, start_index = resolve_position_to_index(
-                    story_layouts,
-                    anchor.start,
-                )
-                end_route, end_index = resolve_position_to_index(
-                    story_layouts,
-                    anchor.end,
-                )
-                if start_route != end_route:
-                    raise ValueError(
-                        f"Named range {edit.name} crosses routes in unsupported spike slice"
-                    )
-                requests.append(
-                    make_create_named_range(
-                        name=edit.name,
-                        start_index=start_index,
-                        end_index=end_index,
-                        tab_id=start_route.tab_id,
-                        segment_id=start_route.segment_id,
                     )
                 )
         elif isinstance(edit, InsertTableRowEdit):
@@ -380,6 +392,41 @@ def lower_document_edits(base: Document, edits: list[SemanticEdit]) -> list[dict
                     tab_id=edit.tab_id,
                 )
             )
+
+    for edit in [edit for edit in edits if isinstance(edit, ReplaceNamedRangesEdit)]:
+        if edit.before_count:
+            requests.append(make_delete_named_range(name=edit.name))
+        for anchor in edit.desired_ranges:
+            layout_source = story_layouts
+            if (
+                desired_story_layouts is not None
+                and (
+                    anchor.start.story_id in content_edited_story_ids
+                    or anchor.end.story_id in content_edited_story_ids
+                )
+            ):
+                layout_source = desired_story_layouts
+            start_route, start_index = resolve_position_to_index(
+                layout_source,
+                anchor.start,
+            )
+            end_route, end_index = resolve_position_to_index(
+                layout_source,
+                anchor.end,
+            )
+            if start_route != end_route:
+                raise ValueError(
+                    f"Named range {edit.name} crosses routes in unsupported spike slice"
+                )
+            requests.append(
+                make_create_named_range(
+                    name=edit.name,
+                    start_index=start_index,
+                    end_index=end_index,
+                    tab_id=start_route.tab_id,
+                    segment_id=start_route.segment_id,
+                )
+            )
     return requests
 
 
@@ -407,7 +454,6 @@ def _table_at(layout: BodyLayout, section_index: int, block_index: int) -> Table
         raise TypeError(f"Expected table at section {section_index} block {block_index}")
     return block
 
-
 def _table_cell_text_start(story_layouts: dict[str, Any], story_id: str) -> int:
     story = story_layouts.get(story_id)
     if story is None or not story.paragraphs:
@@ -415,25 +461,3 @@ def _table_cell_text_start(story_layouts: dict[str, Any], story_id: str) -> int:
             f"Could not resolve inserted table-cell anchor from story {story_id}"
         )
     return story.paragraphs[0].text_start_index
-
-
-def _validate_named_range_dependencies(edits: list[SemanticEdit]) -> None:
-    content_edited_story_ids = {
-        edit.story_id
-        for edit in edits
-        if isinstance(edit, ReplaceParagraphSliceEdit)
-    }
-    for edit in edits:
-        if not isinstance(edit, ReplaceNamedRangesEdit):
-            continue
-        anchor_story_ids = {
-            anchor.start.story_id
-            for anchor in edit.desired_ranges
-        } | {
-            anchor.end.story_id
-            for anchor in edit.desired_ranges
-        }
-        if anchor_story_ids & content_edited_story_ids:
-            raise UnsupportedSpikeError(
-                "reconcile_v2 named range spike does not yet support moving anchors in the same cycle as story content edits"
-            )

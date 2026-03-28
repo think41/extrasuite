@@ -4,6 +4,18 @@ from __future__ import annotations
 
 from typing import Any
 
+HEADER_SLOT_FIELDS = {
+    "DEFAULT": "defaultHeaderId",
+    "FIRST_PAGE": "firstPageHeaderId",
+    "EVEN_PAGE": "evenPageHeaderId",
+}
+
+FOOTER_SLOT_FIELDS = {
+    "DEFAULT": "defaultFooterId",
+    "FIRST_PAGE": "firstPageFooterId",
+    "EVEN_PAGE": "evenPageFooterId",
+}
+
 
 def make_add_document_tab(
     *,
@@ -14,6 +26,55 @@ def make_add_document_tab(
     if index is not None:
         tab_properties["index"] = index
     return {"addDocumentTab": {"tabProperties": tab_properties}}
+
+
+def make_create_header(
+    *,
+    header_type: str,
+    tab_id: str | None = None,
+    section_break_index: int | None = None,
+) -> dict[str, Any]:
+    payload: dict[str, Any] = {"type": header_type}
+    if section_break_index is not None:
+        location: dict[str, Any] = {"index": section_break_index}
+        if tab_id is not None:
+            location["tabId"] = tab_id
+        payload["sectionBreakLocation"] = location
+    return {"createHeader": payload}
+
+
+def make_create_footer(
+    *,
+    footer_type: str,
+    tab_id: str | None = None,
+    section_break_index: int | None = None,
+) -> dict[str, Any]:
+    payload: dict[str, Any] = {"type": footer_type}
+    if section_break_index is not None:
+        location: dict[str, Any] = {"index": section_break_index}
+        if tab_id is not None:
+            location["tabId"] = tab_id
+        payload["sectionBreakLocation"] = location
+    return {"createFooter": payload}
+
+
+def make_create_footnote(*, index: int, tab_id: str) -> dict[str, Any]:
+    return {
+        "createFootnote": {
+            "location": {
+                "index": index,
+                "tabId": tab_id,
+            }
+        }
+    }
+
+
+def make_delete_header(*, header_id: str, tab_id: str) -> dict[str, Any]:
+    return {"deleteHeader": {"headerId": header_id, "tabId": tab_id}}
+
+
+def make_delete_footer(*, footer_id: str, tab_id: str) -> dict[str, Any]:
+    return {"deleteFooter": {"footerId": footer_id, "tabId": tab_id}}
 
 
 def make_update_paragraph_role(
@@ -34,6 +95,36 @@ def make_update_paragraph_role(
                 "namedStyleType": role,
             },
             "fields": "namedStyleType",
+        }
+    }
+
+
+def make_update_section_attachment(
+    *,
+    start_index: int,
+    end_index: int,
+    tab_id: str,
+    attachment_kind: str,
+    slot: str,
+    attachment_id: Any,
+) -> dict[str, Any]:
+    if attachment_kind == "headers":
+        field_name = HEADER_SLOT_FIELDS[slot]
+    elif attachment_kind == "footers":
+        field_name = FOOTER_SLOT_FIELDS[slot]
+    else:
+        raise ValueError(f"Unsupported attachment kind: {attachment_kind}")
+    return {
+        "updateSectionStyle": {
+            "range": {
+                "startIndex": start_index,
+                "endIndex": end_index,
+                "tabId": tab_id,
+            },
+            "sectionStyle": {
+                field_name: attachment_id,
+            },
+            "fields": field_name,
         }
     }
 
@@ -125,7 +216,7 @@ def make_insert_text_in_story(
     *,
     index: int,
     tab_id: Any,
-    segment_id: str | None,
+    segment_id: Any,
     text: str,
 ) -> dict[str, Any]:
     location: dict[str, Any] = {
