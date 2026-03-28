@@ -167,6 +167,84 @@ TABLE_MIDDLE_COLUMN_MD = (
 
 TABLE_SCENARIOS = (
     TableScenario(
+        name="table_pin_header_rows",
+        title="Confidence Sprint Fixture Table Pin Header Rows",
+        description="Pin one header row on a multi-row table.",
+        base_md=TABLE_MIDDLE_ROW_MD,
+        desired_requests=(
+            {
+                "pinTableHeaderRows": {
+                    "tableStartLocation": {"index": 2, "tabId": "t.0"},
+                    "pinnedHeaderRowsCount": 1,
+                }
+            },
+        ),
+    ),
+    TableScenario(
+        name="table_row_style_min_height",
+        title="Confidence Sprint Fixture Table Row Style Min Height",
+        description="Update one table row to have a minimum height.",
+        base_md=TABLE_MIDDLE_ROW_MD,
+        desired_requests=(
+            {
+                "updateTableRowStyle": {
+                    "tableStartLocation": {"index": 2, "tabId": "t.0"},
+                    "rowIndices": [1],
+                    "tableRowStyle": {
+                        "minRowHeight": {"magnitude": 30, "unit": "PT"}
+                    },
+                    "fields": "minRowHeight",
+                }
+            },
+        ),
+    ),
+    TableScenario(
+        name="table_column_properties_width",
+        title="Confidence Sprint Fixture Table Column Properties Width",
+        description="Update one table column to a fixed width.",
+        base_md=TABLE_MIDDLE_COLUMN_MD,
+        desired_requests=(
+            {
+                "updateTableColumnProperties": {
+                    "tableStartLocation": {"index": 2, "tabId": "t.0"},
+                    "columnIndices": [1],
+                    "tableColumnProperties": {
+                        "widthType": "FIXED_WIDTH",
+                        "width": {"magnitude": 72, "unit": "PT"},
+                    },
+                    "fields": "widthType,width",
+                }
+            },
+        ),
+    ),
+    TableScenario(
+        name="table_cell_style_background",
+        title="Confidence Sprint Fixture Table Cell Style Background",
+        description="Update one table cell background color.",
+        base_md=TABLE_MIDDLE_ROW_MD,
+        desired_requests=(
+            {
+                "updateTableCellStyle": {
+                    "tableRange": {
+                        "tableCellLocation": {
+                            "tableStartLocation": {"index": 2, "tabId": "t.0"},
+                            "rowIndex": 1,
+                            "columnIndex": 1,
+                        },
+                        "rowSpan": 1,
+                        "columnSpan": 1,
+                    },
+                    "tableCellStyle": {
+                        "backgroundColor": {
+                            "color": {"rgbColor": {"red": 1.0}}
+                        }
+                    },
+                    "fields": "backgroundColor",
+                }
+            },
+        ),
+    ),
+    TableScenario(
         name="table_middle_row_insert",
         title="Confidence Sprint Fixture Table Middle Row Insert",
         description="Insert one empty row between two existing data rows in a 3x2 table.",
@@ -180,6 +258,34 @@ TABLE_SCENARIOS = (
                         "columnIndex": 0,
                     },
                     "insertBelow": True,
+                }
+            },
+        ),
+    ),
+    TableScenario(
+        name="table_row_and_column_insert",
+        title="Confidence Sprint Fixture Table Row And Column Insert",
+        description="Insert one row and one column in the same table diff.",
+        base_md=TABLE_MIDDLE_ROW_MD,
+        desired_requests=(
+            {
+                "insertTableRow": {
+                    "tableCellLocation": {
+                        "tableStartLocation": {"index": 2, "tabId": "t.0"},
+                        "rowIndex": 1,
+                        "columnIndex": 0,
+                    },
+                    "insertBelow": True,
+                }
+            },
+            {
+                "insertTableColumn": {
+                    "tableCellLocation": {
+                        "tableStartLocation": {"index": 2, "tabId": "t.0"},
+                        "rowIndex": 0,
+                        "columnIndex": 1,
+                    },
+                    "insertRight": True,
                 }
             },
         ),
@@ -232,6 +338,13 @@ TABLE_SCENARIOS = (
         ),
     ),
     TableScenario(
+        name="table_middle_column_insert_with_inserted_content",
+        title="Confidence Sprint Fixture Table Middle Column Insert With Inserted Content",
+        description="Insert one middle column and populate a cell in the newly inserted column.",
+        base_md=TABLE_MIDDLE_COLUMN_MD,
+        desired_request_builder=lambda base_raw: _build_table_middle_column_insert_with_inserted_content_requests(base_raw),
+    ),
+    TableScenario(
         name="table_middle_column_delete",
         title="Confidence Sprint Fixture Table Middle Column Delete",
         description="Delete one empty middle column from a 2x4 table.",
@@ -268,6 +381,13 @@ TABLE_SCENARIOS = (
         desired_request_builder=lambda base_raw: _build_table_middle_row_insert_with_cell_edit_requests(base_raw),
     ),
     TableScenario(
+        name="table_middle_row_insert_with_inserted_content",
+        title="Confidence Sprint Fixture Table Middle Row Insert With Inserted Content",
+        description="Insert one middle row and populate a cell in the newly inserted row.",
+        base_md=TABLE_MIDDLE_ROW_MD,
+        desired_request_builder=lambda base_raw: _build_table_middle_row_insert_with_inserted_content_requests(base_raw),
+    ),
+    TableScenario(
         name="table_row_insert_below_merged",
         title="Confidence Sprint Fixture Table Row Insert Below Merged",
         description="Insert one row directly below an existing merged top row.",
@@ -296,6 +416,39 @@ TABLE_SCENARIOS = (
                         "columnIndex": 0,
                     },
                     "insertBelow": True,
+                }
+            },
+        ),
+    ),
+    TableScenario(
+        name="table_column_insert_through_merged",
+        title="Confidence Sprint Fixture Table Column Insert Through Merged",
+        description="Insert one column through an existing merged top-row region.",
+        base_md=TABLE_BASE_MD,
+        base_setup_requests=(
+            {
+                "mergeTableCells": {
+                    "tableRange": {
+                        "tableCellLocation": {
+                            "tableStartLocation": {"index": 2, "tabId": "t.0"},
+                            "rowIndex": 0,
+                            "columnIndex": 0,
+                        },
+                        "rowSpan": 1,
+                        "columnSpan": 2,
+                    }
+                }
+            },
+        ),
+        desired_requests=(
+            {
+                "insertTableColumn": {
+                    "tableCellLocation": {
+                        "tableStartLocation": {"index": 2, "tabId": "t.0"},
+                        "rowIndex": 0,
+                        "columnIndex": 0,
+                    },
+                    "insertRight": True,
                 }
             },
         ),
@@ -911,6 +1064,56 @@ def _build_table_middle_row_insert_with_cell_edit_requests(base_raw: dict) -> li
                     "columnIndex": 0,
                 },
                 "insertBelow": True,
+            }
+        },
+    ]
+
+
+def _build_table_middle_row_insert_with_inserted_content_requests(base_raw: dict) -> list[dict]:
+    start_index, _ = _table_cell_text_range(base_raw, row_index=2, column_index=0)
+    return [
+        {
+            "insertTableRow": {
+                "tableCellLocation": {
+                    "tableStartLocation": {"index": 2, "tabId": "t.0"},
+                    "rowIndex": 1,
+                    "columnIndex": 0,
+                },
+                "insertBelow": True,
+            }
+        },
+        {
+            "insertText": {
+                "location": {
+                    "index": start_index,
+                    "tabId": "t.0",
+                },
+                "text": "NEW",
+            }
+        },
+    ]
+
+
+def _build_table_middle_column_insert_with_inserted_content_requests(base_raw: dict) -> list[dict]:
+    start_index, _ = _table_cell_text_range(base_raw, row_index=1, column_index=2)
+    return [
+        {
+            "insertTableColumn": {
+                "tableCellLocation": {
+                    "tableStartLocation": {"index": 2, "tabId": "t.0"},
+                    "rowIndex": 0,
+                    "columnIndex": 1,
+                },
+                "insertRight": True,
+            }
+        },
+        {
+            "insertText": {
+                "location": {
+                    "index": start_index + 2,
+                    "tabId": "t.0",
+                },
+                "text": "NEW",
             }
         },
     ]

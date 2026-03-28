@@ -13,6 +13,7 @@ from itertools import accumulate
 from typing import TYPE_CHECKING, TypeVar
 
 from extradoc.reconcile_v2.canonical import canonicalize_document_ir
+from extradoc.reconcile_v2.errors import UnsupportedSpikeError
 from extradoc.reconcile_v2.ir import (
     AnchorRangeIR,
     ListIR,
@@ -112,6 +113,7 @@ class InsertTableRowEdit:
     block_index: int
     row_index: int
     insert_below: bool
+    inserted_cells: tuple[str, ...] = ()
 
 
 @dataclass(slots=True)
@@ -129,6 +131,7 @@ class InsertTableColumnEdit:
     block_index: int
     column_index: int
     insert_right: bool
+    inserted_cells: tuple[str, ...] = ()
 
 
 @dataclass(slots=True)
@@ -161,6 +164,45 @@ class UnmergeTableCellsEdit:
     column_span: int
 
 
+@dataclass(slots=True)
+class UpdateTablePinnedHeaderRowsEdit:
+    tab_id: str
+    section_index: int
+    block_index: int
+    pinned_header_rows: int
+
+
+@dataclass(slots=True)
+class UpdateTableRowStyleEdit:
+    tab_id: str
+    section_index: int
+    block_index: int
+    row_index: int
+    style: dict[str, object]
+    fields: tuple[str, ...]
+
+
+@dataclass(slots=True)
+class UpdateTableColumnPropertiesEdit:
+    tab_id: str
+    section_index: int
+    block_index: int
+    column_index: int
+    properties: dict[str, object]
+    fields: tuple[str, ...]
+
+
+@dataclass(slots=True)
+class UpdateTableCellStyleEdit:
+    tab_id: str
+    section_index: int
+    block_index: int
+    row_index: int
+    column_index: int
+    style: dict[str, object]
+    fields: tuple[str, ...]
+
+
 @dataclass(frozen=True, slots=True)
 class ListItemFragment:
     level: int
@@ -189,6 +231,10 @@ SemanticEdit = (
     | DeleteTableColumnEdit
     | MergeTableCellsEdit
     | UnmergeTableCellsEdit
+    | UpdateTablePinnedHeaderRowsEdit
+    | UpdateTableRowStyleEdit
+    | UpdateTableColumnPropertiesEdit
+    | UpdateTableCellStyleEdit
 )
 
 
@@ -253,9 +299,14 @@ def summarize_semantic_edits(edits: Iterable[SemanticEdit]) -> list[str]:
                 f"{edit.before_count} range(s) with {len(edit.desired_ranges)} range(s)"
             )
         elif isinstance(edit, InsertTableRowEdit):
+            suffix = ""
+            if any(edit.inserted_cells):
+                suffix = (
+                    f" with {sum(bool(text) for text in edit.inserted_cells)} populated cell(s)"
+                )
             lines.append(
                 f"tab {edit.tab_id}: section {edit.section_index} table {edit.block_index} "
-                f"insert row {'below' if edit.insert_below else 'above'} {edit.row_index}"
+                f"insert row {'below' if edit.insert_below else 'above'} {edit.row_index}{suffix}"
             )
         elif isinstance(edit, DeleteTableRowEdit):
             lines.append(
@@ -263,9 +314,14 @@ def summarize_semantic_edits(edits: Iterable[SemanticEdit]) -> list[str]:
                 f"delete row {edit.row_index}"
             )
         elif isinstance(edit, InsertTableColumnEdit):
+            suffix = ""
+            if any(edit.inserted_cells):
+                suffix = (
+                    f" with {sum(bool(text) for text in edit.inserted_cells)} populated cell(s)"
+                )
             lines.append(
                 f"tab {edit.tab_id}: section {edit.section_index} table {edit.block_index} "
-                f"insert column {'right of' if edit.insert_right else 'left of'} {edit.column_index}"
+                f"insert column {'right of' if edit.insert_right else 'left of'} {edit.column_index}{suffix}"
             )
         elif isinstance(edit, DeleteTableColumnEdit):
             lines.append(
@@ -283,6 +339,26 @@ def summarize_semantic_edits(edits: Iterable[SemanticEdit]) -> list[str]:
                 f"tab {edit.tab_id}: section {edit.section_index} table {edit.block_index} "
                 f"unmerge cells r{edit.row_index} c{edit.column_index} "
                 f"span {edit.row_span}x{edit.column_span}"
+            )
+        elif isinstance(edit, UpdateTablePinnedHeaderRowsEdit):
+            lines.append(
+                f"tab {edit.tab_id}: section {edit.section_index} table {edit.block_index} "
+                f"pin header rows {edit.pinned_header_rows}"
+            )
+        elif isinstance(edit, UpdateTableRowStyleEdit):
+            lines.append(
+                f"tab {edit.tab_id}: section {edit.section_index} table {edit.block_index} "
+                f"update row {edit.row_index} style {','.join(edit.fields)}"
+            )
+        elif isinstance(edit, UpdateTableColumnPropertiesEdit):
+            lines.append(
+                f"tab {edit.tab_id}: section {edit.section_index} table {edit.block_index} "
+                f"update column {edit.column_index} properties {','.join(edit.fields)}"
+            )
+        elif isinstance(edit, UpdateTableCellStyleEdit):
+            lines.append(
+                f"tab {edit.tab_id}: section {edit.section_index} table {edit.block_index} "
+                f"update cell r{edit.row_index} c{edit.column_index} style {','.join(edit.fields)}"
             )
     return lines
 
@@ -536,6 +612,16 @@ def _diff_section_tables(
             )
             if plan is None:
                 continue
+            edits.extend(
+                _diff_table_properties(
+                    tab_id=tab_id,
+                    section_index=section_index,
+                    block_index=block_index,
+                    base_table=base_block,
+                    desired_table=desired_block,
+                    plan=plan,
+                )
+            )
             if plan.recurse_cells:
                 for base_row_index, desired_row_index in plan.row_pairs:
                     base_row = base_block.rows[base_row_index]
@@ -576,6 +662,20 @@ def _plan_table_comparison(
     desired_row_count = len(desired_table.rows)
     base_column_count = max((len(row.cells) for row in base_table.rows), default=0)
     desired_column_count = max((len(row.cells) for row in desired_table.rows), default=0)
+    if abs(desired_row_count - base_row_count) > 1 or abs(desired_column_count - base_column_count) > 1:
+        raise UnsupportedSpikeError(
+            "reconcile_v2 table spike supports at most one row or one column structural change"
+        )
+    if desired_row_count != base_row_count and desired_column_count != base_column_count:
+        raise UnsupportedSpikeError(
+            "reconcile_v2 table spike does not yet support multiple structural edits in one table diff"
+        )
+    if desired_column_count != base_column_count and (
+        _table_has_horizontal_merges(base_table) or _table_has_horizontal_merges(desired_table)
+    ):
+        raise UnsupportedSpikeError(
+            "reconcile_v2 table spike does not yet support column structural edits through merged regions"
+        )
     shared_row_pairs = tuple((index, index) for index in range(min(base_row_count, desired_row_count)))
     shared_column_pairs = tuple(
         (index, index) for index in range(min(base_column_count, desired_column_count))
@@ -587,6 +687,7 @@ def _plan_table_comparison(
         similarity=_signature_tuple_similarity,
     )
     if desired_row_count == base_row_count + 1 and desired_column_count == base_column_count and row_insert_index is not None:
+        inserted_cells = _inserted_row_cell_texts(desired_table, row_insert_index)
         return TableComparisonPlan(
             structural_edit=InsertTableRowEdit(
                 tab_id=tab_id,
@@ -594,6 +695,7 @@ def _plan_table_comparison(
                 block_index=block_index,
                 row_index=max(0, row_insert_index - 1),
                 insert_below=row_insert_index > 0,
+                inserted_cells=inserted_cells,
             ),
             row_pairs=tuple(
                 (index, index if index < row_insert_index else index + 1)
@@ -629,6 +731,7 @@ def _plan_table_comparison(
         similarity=_signature_tuple_similarity,
     )
     if desired_column_count == base_column_count + 1 and desired_row_count == base_row_count and column_insert_index is not None:
+        inserted_cells = _inserted_column_cell_texts(desired_table, column_insert_index)
         return TableComparisonPlan(
             structural_edit=InsertTableColumnEdit(
                 tab_id=tab_id,
@@ -636,6 +739,7 @@ def _plan_table_comparison(
                 block_index=block_index,
                 column_index=max(0, column_insert_index - 1),
                 insert_right=column_insert_index > 0,
+                inserted_cells=inserted_cells,
             ),
             row_pairs=tuple((index, index) for index in range(base_row_count)),
             column_pairs=tuple(
@@ -666,6 +770,10 @@ def _plan_table_comparison(
         )
 
     merge_change = _table_merge_change(base_table, desired_table)
+    if (desired_row_count != base_row_count or desired_column_count != base_column_count) and merge_change is not None:
+        raise UnsupportedSpikeError(
+            "reconcile_v2 table spike does not yet support structural edits intersecting merge-topology changes"
+        )
     if merge_change is None:
         return TableComparisonPlan(
             structural_edit=None,
@@ -710,6 +818,93 @@ def _plan_table_comparison(
         column_pairs=shared_column_pairs,
         recurse_cells=False,
     )
+
+
+def _diff_table_properties(
+    *,
+    tab_id: str,
+    section_index: int,
+    block_index: int,
+    base_table: TableIR,
+    desired_table: TableIR,
+    plan: TableComparisonPlan,
+) -> list[SemanticEdit]:
+    edits: list[SemanticEdit] = []
+    if base_table.pinned_header_rows != desired_table.pinned_header_rows:
+        edits.append(
+            UpdateTablePinnedHeaderRowsEdit(
+                tab_id=tab_id,
+                section_index=section_index,
+                block_index=block_index,
+                pinned_header_rows=desired_table.pinned_header_rows,
+            )
+        )
+
+    for base_row_index, desired_row_index in plan.row_pairs:
+        row_style, row_fields = _style_delta(
+            base_table.rows[base_row_index].style,
+            desired_table.rows[desired_row_index].style,
+        )
+        if row_fields:
+            edits.append(
+                UpdateTableRowStyleEdit(
+                    tab_id=tab_id,
+                    section_index=section_index,
+                    block_index=block_index,
+                    row_index=base_row_index,
+                    style=row_style,
+                    fields=row_fields,
+                )
+            )
+
+    for base_column_index, desired_column_index in plan.column_pairs:
+        if (
+            base_column_index >= len(base_table.column_properties)
+            or desired_column_index >= len(desired_table.column_properties)
+        ):
+            continue
+        properties, fields = _style_delta(
+            base_table.column_properties[base_column_index],
+            desired_table.column_properties[desired_column_index],
+        )
+        if fields:
+            edits.append(
+                UpdateTableColumnPropertiesEdit(
+                    tab_id=tab_id,
+                    section_index=section_index,
+                    block_index=block_index,
+                    column_index=base_column_index,
+                    properties=properties,
+                    fields=fields,
+                )
+            )
+
+    for base_row_index, desired_row_index in plan.row_pairs:
+        base_row = base_table.rows[base_row_index]
+        desired_row = desired_table.rows[desired_row_index]
+        for base_column_index, desired_column_index in plan.column_pairs:
+            if (
+                base_column_index >= len(base_row.cells)
+                or desired_column_index >= len(desired_row.cells)
+            ):
+                continue
+            style, fields = _style_delta(
+                _cell_style_payload(base_row.cells[base_column_index].style),
+                _cell_style_payload(desired_row.cells[desired_column_index].style),
+            )
+            if fields:
+                edits.append(
+                    UpdateTableCellStyleEdit(
+                        tab_id=tab_id,
+                        section_index=section_index,
+                        block_index=block_index,
+                        row_index=base_row_index,
+                        column_index=base_column_index,
+                        style=style,
+                        fields=fields,
+                    )
+                )
+    return edits
 
 
 def _diff_story_paragraph_slice(
@@ -837,6 +1032,26 @@ def _paragraph_signature(paragraph: ParagraphIR) -> tuple[str, str]:
     return paragraph.role, _paragraph_text(paragraph)
 
 
+def _style_delta(
+    base_style: dict[str, object],
+    desired_style: dict[str, object],
+) -> tuple[dict[str, object], tuple[str, ...]]:
+    fields = tuple(
+        key
+        for key in sorted(set(base_style) | set(desired_style))
+        if base_style.get(key) != desired_style.get(key)
+    )
+    return {key: desired_style[key] for key in fields if key in desired_style}, fields
+
+
+def _cell_style_payload(style: dict[str, object]) -> dict[str, object]:
+    return {
+        key: value
+        for key, value in style.items()
+        if key not in {"rowSpan", "columnSpan"}
+    }
+
+
 def _named_range_signature(ranges: tuple[AnchorRangeIR, ...]) -> tuple[tuple[str, str], ...]:
     return tuple(
         (
@@ -857,6 +1072,41 @@ def _position_signature(position: PositionIR) -> str:
 
 def _table_row_signatures(table: TableIR) -> tuple[tuple[str, ...], ...]:
     return tuple(tuple(_table_cell_signature(cell) for cell in row.cells) for row in table.rows)
+
+
+def _table_has_horizontal_merges(table: TableIR) -> bool:
+    return any(cell.column_span > 1 for row in table.rows for cell in row.cells)
+
+
+def _inserted_row_cell_texts(table: TableIR, row_index: int) -> tuple[str, ...]:
+    if row_index >= len(table.rows):
+        return ()
+    return tuple(_simple_cell_text(cell) for cell in table.rows[row_index].cells)
+
+
+def _inserted_column_cell_texts(table: TableIR, column_index: int) -> tuple[str, ...]:
+    texts: list[str] = []
+    for row in table.rows:
+        if column_index >= len(row.cells):
+            raise UnsupportedSpikeError(
+                "reconcile_v2 table spike requires rectangular inserted-column fixtures"
+            )
+        texts.append(_simple_cell_text(row.cells[column_index]))
+    return tuple(texts)
+
+
+def _simple_cell_text(cell: object) -> str:
+    if any(not isinstance(block, ParagraphIR) for block in cell.content.blocks):
+        raise UnsupportedSpikeError(
+            "reconcile_v2 table spike supports inserted row/column content only for paragraph-only cells"
+        )
+    if len(cell.content.blocks) > 1:
+        raise UnsupportedSpikeError(
+            "reconcile_v2 table spike supports inserted row/column content only for single-paragraph cells"
+        )
+    if not cell.content.blocks:
+        return ""
+    return _paragraph_text(cell.content.blocks[0])
 
 
 def _table_cell_signature(cell: object) -> str:

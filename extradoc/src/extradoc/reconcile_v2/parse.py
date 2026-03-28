@@ -584,6 +584,7 @@ def _parse_table(
     style_env: StyleEnvironmentIR,
 ) -> TableIR:
     rows: list[RowIR] = []
+    derived_pinned_header_rows = 0
     for row_index, row in enumerate(table.table_rows or []):
         cells: list[CellIR] = []
         for col_index, cell in enumerate(row.table_cells or []):
@@ -612,12 +613,18 @@ def _parse_table(
                     content=cell_story,
                 )
             )
-        rows.append(RowIR(style={}, cells=cells))
+        row_style = _as_dict(row.table_row_style)
+        if row_style.get("tableHeader") and row_index == derived_pinned_header_rows:
+            derived_pinned_header_rows += 1
+        row_style.pop("tableHeader", None)
+        rows.append(RowIR(style=row_style, cells=cells))
 
+    table_payload = _as_dict(table)
     table_style = _as_dict(table.table_style)
     return TableIR(
         style=table_style,
-        pinned_header_rows=0,
+        pinned_header_rows=table_payload.get("pinnedHeaderRowsCount")
+        or derived_pinned_header_rows,
         column_properties=list(table_style.get("tableColumnProperties", [])),
         merge_regions=[],
         rows=rows,
@@ -886,5 +893,5 @@ def _as_dict(model: Any) -> StylePayload:
     if isinstance(model, dict):
         return model
     if hasattr(model, "model_dump"):
-        return model.model_dump(by_alias=True, exclude_none=True)
+        return model.model_dump(by_alias=True, exclude_none=True, mode="json")
     return dict(model)

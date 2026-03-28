@@ -3,12 +3,15 @@ from __future__ import annotations
 import json
 from pathlib import Path
 
+import pytest
+
 from extradoc.api_types._generated import Document
 from extradoc.reconcile_v2.api import (
     canonical_document_signature,
     canonicalize_transport_document,
     lower_semantic_diff,
 )
+from extradoc.reconcile_v2.errors import UnsupportedSpikeError
 
 FIXTURES_ROOT = Path(__file__).resolve().parent / "fixtures"
 
@@ -277,6 +280,24 @@ def test_lower_semantic_diff_for_current_fixture_slice() -> None:
                 }
             },
         ],
+        "table_middle_row_insert_with_inserted_content": [
+            {
+                "insertTableRow": {
+                    "tableCellLocation": {
+                        "tableStartLocation": {"index": 2, "tabId": "t.0"},
+                        "rowIndex": 1,
+                        "columnIndex": 0,
+                    },
+                    "insertBelow": True,
+                }
+            },
+            {
+                "insertText": {
+                    "location": {"index": 34, "tabId": "t.0"},
+                    "text": "NEW",
+                }
+            },
+        ],
         "table_row_insert_below_merged": [
             {
                 "insertTableRow": {
@@ -286,6 +307,78 @@ def test_lower_semantic_diff_for_current_fixture_slice() -> None:
                         "columnIndex": 0,
                     },
                     "insertBelow": True,
+                }
+            }
+        ],
+        "table_middle_column_insert_with_inserted_content": [
+            {
+                "insertTableColumn": {
+                    "tableCellLocation": {
+                        "tableStartLocation": {"index": 2, "tabId": "t.0"},
+                        "rowIndex": 0,
+                        "columnIndex": 1,
+                    },
+                    "insertRight": True,
+                }
+            },
+            {
+                "insertText": {
+                    "location": {"index": 39, "tabId": "t.0"},
+                    "text": "NEW",
+                }
+            },
+        ],
+        "table_pin_header_rows": [
+            {
+                "pinTableHeaderRows": {
+                    "tableStartLocation": {"index": 2, "tabId": "t.0"},
+                    "pinnedHeaderRowsCount": 1,
+                }
+            }
+        ],
+        "table_row_style_min_height": [
+            {
+                "updateTableRowStyle": {
+                    "tableStartLocation": {"index": 2, "tabId": "t.0"},
+                    "rowIndices": [1],
+                    "tableRowStyle": {
+                        "minRowHeight": {"magnitude": 30.0, "unit": "PT"}
+                    },
+                    "fields": "minRowHeight",
+                }
+            }
+        ],
+        "table_column_properties_width": [
+            {
+                "updateTableColumnProperties": {
+                    "tableStartLocation": {"index": 2, "tabId": "t.0"},
+                    "columnIndices": [1],
+                    "tableColumnProperties": {
+                        "width": {"magnitude": 72.0, "unit": "PT"},
+                        "widthType": "FIXED_WIDTH",
+                    },
+                    "fields": "width,widthType",
+                }
+            }
+        ],
+        "table_cell_style_background": [
+            {
+                "updateTableCellStyle": {
+                    "tableRange": {
+                        "tableCellLocation": {
+                            "tableStartLocation": {"index": 2, "tabId": "t.0"},
+                            "rowIndex": 1,
+                            "columnIndex": 1,
+                        },
+                        "rowSpan": 1,
+                        "columnSpan": 1,
+                    },
+                    "tableCellStyle": {
+                        "backgroundColor": {
+                            "color": {"rgbColor": {"red": 1.0}}
+                        }
+                    },
+                    "fields": "backgroundColor",
                 }
             }
         ],
@@ -322,6 +415,26 @@ def test_lower_semantic_diff_for_current_fixture_slice() -> None:
             }
         },
     ]
+
+
+def test_lower_semantic_diff_rejects_multiple_table_structural_edits() -> None:
+    base, desired = _load_fixture_pair("table_row_and_column_insert")
+
+    with pytest.raises(
+        UnsupportedSpikeError,
+        match="multiple structural edits in one table diff",
+    ):
+        lower_semantic_diff(base, desired)
+
+
+def test_lower_semantic_diff_rejects_column_insert_through_merged_region() -> None:
+    base, desired = _load_fixture_pair("table_column_insert_through_merged")
+
+    with pytest.raises(
+        UnsupportedSpikeError,
+        match="column structural edits through merged regions",
+    ):
+        lower_semantic_diff(base, desired)
 
 
 def _load_fixture_pair(name: str) -> tuple[Document, Document]:

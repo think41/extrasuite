@@ -76,7 +76,13 @@ def main() -> None:
         "table_middle_column_insert",
         "table_middle_column_delete",
         "table_middle_row_insert_with_cell_edit",
+        "table_middle_row_insert_with_inserted_content",
+        "table_middle_column_insert_with_inserted_content",
         "table_row_insert_below_merged",
+        "table_pin_header_rows",
+        "table_row_style_min_height",
+        "table_column_properties_width",
+        "table_cell_style_background",
         "header_text_replace",
         "named_range_add",
     ]

@@ -4,6 +4,8 @@ import copy
 import json
 from pathlib import Path
 
+import pytest
+
 from extradoc.api_types._generated import Document
 from extradoc.reconcile_v2.diff import (
     AppendListItemsEdit,
@@ -19,9 +21,14 @@ from extradoc.reconcile_v2.diff import (
     ReplaceParagraphSliceEdit,
     UnmergeTableCellsEdit,
     UpdateParagraphRoleEdit,
+    UpdateTableCellStyleEdit,
+    UpdateTableColumnPropertiesEdit,
+    UpdateTablePinnedHeaderRowsEdit,
+    UpdateTableRowStyleEdit,
     diff_documents,
     summarize_semantic_edits,
 )
+from extradoc.reconcile_v2.errors import UnsupportedSpikeError
 
 FIXTURES_ROOT = Path(__file__).resolve().parent / "fixtures"
 
@@ -317,6 +324,19 @@ def test_table_middle_row_insert_with_cell_edit_emits_text_replace_then_row_inse
     ]
 
 
+def test_table_middle_row_insert_with_inserted_content_emits_populated_insert() -> None:
+    base, desired = _load_fixture_pair("table_middle_row_insert_with_inserted_content")
+
+    edits = diff_documents(base, desired)
+
+    assert len(edits) == 1
+    assert isinstance(edits[0], InsertTableRowEdit)
+    assert edits[0].inserted_cells == ("NEW", "")
+    assert summarize_semantic_edits(edits) == [
+        "tab t.0: section 0 table 1 insert row below 1 with 1 populated cell(s)"
+    ]
+
+
 def test_table_row_insert_below_merged_fixture_emits_structural_insert() -> None:
     base, desired = _load_fixture_pair("table_row_insert_below_merged")
 
@@ -327,6 +347,87 @@ def test_table_row_insert_below_merged_fixture_emits_structural_insert() -> None
     assert summarize_semantic_edits(edits) == [
         "tab t.0: section 0 table 1 insert row below 0"
     ]
+
+
+def test_table_middle_column_insert_with_inserted_content_emits_populated_insert() -> None:
+    base, desired = _load_fixture_pair("table_middle_column_insert_with_inserted_content")
+
+    edits = diff_documents(base, desired)
+
+    assert len(edits) == 1
+    assert isinstance(edits[0], InsertTableColumnEdit)
+    assert edits[0].inserted_cells == ("", "NEW")
+    assert summarize_semantic_edits(edits) == [
+        "tab t.0: section 0 table 1 insert column right of 1 with 1 populated cell(s)"
+    ]
+
+
+def test_table_pin_header_rows_fixture_emits_table_header_pin() -> None:
+    base, desired = _load_fixture_pair("table_pin_header_rows")
+
+    edits = diff_documents(base, desired)
+
+    assert len(edits) == 1
+    assert isinstance(edits[0], UpdateTablePinnedHeaderRowsEdit)
+    assert summarize_semantic_edits(edits) == [
+        "tab t.0: section 0 table 1 pin header rows 1"
+    ]
+
+
+def test_table_row_style_min_height_fixture_emits_row_style_update() -> None:
+    base, desired = _load_fixture_pair("table_row_style_min_height")
+
+    edits = diff_documents(base, desired)
+
+    assert len(edits) == 1
+    assert isinstance(edits[0], UpdateTableRowStyleEdit)
+    assert summarize_semantic_edits(edits) == [
+        "tab t.0: section 0 table 1 update row 1 style minRowHeight"
+    ]
+
+
+def test_table_column_properties_width_fixture_emits_column_property_update() -> None:
+    base, desired = _load_fixture_pair("table_column_properties_width")
+
+    edits = diff_documents(base, desired)
+
+    assert len(edits) == 1
+    assert isinstance(edits[0], UpdateTableColumnPropertiesEdit)
+    assert summarize_semantic_edits(edits) == [
+        "tab t.0: section 0 table 1 update column 1 properties width,widthType"
+    ]
+
+
+def test_table_cell_style_background_fixture_emits_cell_style_update() -> None:
+    base, desired = _load_fixture_pair("table_cell_style_background")
+
+    edits = diff_documents(base, desired)
+
+    assert len(edits) == 1
+    assert isinstance(edits[0], UpdateTableCellStyleEdit)
+    assert summarize_semantic_edits(edits) == [
+        "tab t.0: section 0 table 1 update cell r1 c1 style backgroundColor"
+    ]
+
+
+def test_table_row_and_column_insert_fixture_is_explicitly_unsupported() -> None:
+    base, desired = _load_fixture_pair("table_row_and_column_insert")
+
+    with pytest.raises(
+        UnsupportedSpikeError,
+        match="multiple structural edits in one table diff",
+    ):
+        diff_documents(base, desired)
+
+
+def test_table_column_insert_through_merged_fixture_is_explicitly_unsupported() -> None:
+    base, desired = _load_fixture_pair("table_column_insert_through_merged")
+
+    with pytest.raises(
+        UnsupportedSpikeError,
+        match="column structural edits through merged regions",
+    ):
+        diff_documents(base, desired)
 
 
 def _load_fixture_pair(name: str) -> tuple[Document, Document]:

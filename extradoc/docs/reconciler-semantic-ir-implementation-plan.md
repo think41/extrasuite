@@ -683,11 +683,19 @@ Tests:
 7. merge/unmerge replay ignores covered-cell paragraph-style transport noise
 8. row insert directly below a merged region replays without invalidating merge
    topology
+9. insert a middle row with inserted cell content and replay live
+10. insert a middle column with inserted cell content and replay live
+11. explicit unsupported error for combined row+column structural edit in one
+    table diff
+12. explicit unsupported error for column structural edit through an existing
+    horizontal merged region
 
 Commit value:
 
 1. matches and exceeds the current reconciler's effective table support surface
 2. forces canonicalization to own merge/unmerge transport artifacts explicitly
+3. makes the current unsupported table boundary explicit and testable instead of
+   leaving it as latent mis-lowering risk
 
 ### Task 14: Parse sections, style environment, and the shared header/footer story graph
 

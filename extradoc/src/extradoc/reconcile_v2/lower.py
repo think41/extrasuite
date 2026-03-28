@@ -20,7 +20,12 @@ from extradoc.reconcile_v2.diff import (
     SemanticEdit,
     UnmergeTableCellsEdit,
     UpdateParagraphRoleEdit,
+    UpdateTableCellStyleEdit,
+    UpdateTableColumnPropertiesEdit,
+    UpdateTablePinnedHeaderRowsEdit,
+    UpdateTableRowStyleEdit,
 )
+from extradoc.reconcile_v2.errors import UnsupportedSpikeError
 from extradoc.reconcile_v2.layout import (
     BodyLayout,
     ListLocation,
@@ -46,8 +51,12 @@ from extradoc.reconcile_v2.requests import (
     make_insert_text,
     make_insert_text_in_story,
     make_merge_table_cells,
+    make_pin_table_header_rows,
     make_unmerge_table_cells,
     make_update_paragraph_role,
+    make_update_table_cell_style,
+    make_update_table_column_properties,
+    make_update_table_row_style,
 )
 
 if TYPE_CHECKING:
@@ -196,6 +205,25 @@ def lower_document_edits(base: Document, edits: list[SemanticEdit]) -> list[dict
                     tab_id=edit.tab_id,
                 )
             )
+            if any(edit.inserted_cells):
+                insert_index = edit.row_index + 1 if edit.insert_below else edit.row_index
+                if insert_index >= table.row_count:
+                    raise UnsupportedSpikeError(
+                        "reconcile_v2 table spike supports inserted-row content only for non-terminal row inserts"
+                    )
+                anchor = _table_cell_text_start(
+                    story_layouts,
+                    f"{edit.tab_id}:body:table:{edit.block_index}:r{insert_index}:c0",
+                )
+                for column_index, text in enumerate(edit.inserted_cells):
+                    if text:
+                        requests.append(
+                            make_insert_text(
+                                index=anchor + (2 * column_index),
+                                tab_id=edit.tab_id,
+                                text=text,
+                            )
+                        )
         elif isinstance(edit, DeleteTableRowEdit):
             table = _table_at(layout, edit.section_index, edit.block_index)
             requests.append(
@@ -215,6 +243,26 @@ def lower_document_edits(base: Document, edits: list[SemanticEdit]) -> list[dict
                     tab_id=edit.tab_id,
                 )
             )
+            if any(edit.inserted_cells):
+                insert_index = edit.column_index + 1 if edit.insert_right else edit.column_index
+                if insert_index >= table.column_count:
+                    raise UnsupportedSpikeError(
+                        "reconcile_v2 table spike supports inserted-column content only for non-terminal column inserts"
+                    )
+                for row_index, text in enumerate(edit.inserted_cells):
+                    if not text:
+                        continue
+                    anchor = _table_cell_text_start(
+                        story_layouts,
+                        f"{edit.tab_id}:body:table:{edit.block_index}:r{row_index}:c{insert_index}",
+                    )
+                    requests.append(
+                        make_insert_text(
+                            index=anchor + (2 * row_index),
+                            tab_id=edit.tab_id,
+                            text=text,
+                        )
+                    )
         elif isinstance(edit, DeleteTableColumnEdit):
             table = _table_at(layout, edit.section_index, edit.block_index)
             requests.append(
@@ -248,6 +296,49 @@ def lower_document_edits(base: Document, edits: list[SemanticEdit]) -> list[dict
                     tab_id=edit.tab_id,
                 )
             )
+        elif isinstance(edit, UpdateTablePinnedHeaderRowsEdit):
+            table = _table_at(layout, edit.section_index, edit.block_index)
+            requests.append(
+                make_pin_table_header_rows(
+                    table_start_index=table.start_index,
+                    pinned_header_rows_count=edit.pinned_header_rows,
+                    tab_id=edit.tab_id,
+                )
+            )
+        elif isinstance(edit, UpdateTableRowStyleEdit):
+            table = _table_at(layout, edit.section_index, edit.block_index)
+            requests.append(
+                make_update_table_row_style(
+                    table_start_index=table.start_index,
+                    row_index=edit.row_index,
+                    style=edit.style,
+                    fields=edit.fields,
+                    tab_id=edit.tab_id,
+                )
+            )
+        elif isinstance(edit, UpdateTableColumnPropertiesEdit):
+            table = _table_at(layout, edit.section_index, edit.block_index)
+            requests.append(
+                make_update_table_column_properties(
+                    table_start_index=table.start_index,
+                    column_index=edit.column_index,
+                    properties=edit.properties,
+                    fields=edit.fields,
+                    tab_id=edit.tab_id,
+                )
+            )
+        elif isinstance(edit, UpdateTableCellStyleEdit):
+            table = _table_at(layout, edit.section_index, edit.block_index)
+            requests.append(
+                make_update_table_cell_style(
+                    table_start_index=table.start_index,
+                    row_index=edit.row_index,
+                    column_index=edit.column_index,
+                    style=edit.style,
+                    fields=edit.fields,
+                    tab_id=edit.tab_id,
+                )
+            )
     return requests
 
 
@@ -274,3 +365,12 @@ def _table_at(layout: BodyLayout, section_index: int, block_index: int) -> Table
     if not isinstance(block, TableLocation):
         raise TypeError(f"Expected table at section {section_index} block {block_index}")
     return block
+
+
+def _table_cell_text_start(story_layouts: dict[str, Any], story_id: str) -> int:
+    story = story_layouts.get(story_id)
+    if story is None or not story.paragraphs:
+        raise UnsupportedSpikeError(
+            f"Could not resolve inserted table-cell anchor from story {story_id}"
+        )
+    return story.paragraphs[0].text_start_index

@@ -762,6 +762,16 @@ Observed transport fact from live replay:
 4. fixture design matters: table fixtures must avoid semantically ambiguous
    duplicate empty columns or rows when the goal is to prove a specific
    structural coordinate choice
+5. pinned header rows may surface semantically through leading
+   `tableRowStyle.tableHeader = true` rows rather than an obvious table-level
+   `pinnedHeaderRowsCount` field, so parse/canonicalization must derive the
+   semantic count from row state
+6. inserted-row and inserted-column content can be lowered without body-index
+   arithmetic, but only if the semantic edit carries the inserted cell payload
+   explicitly
+7. some table transport shapes are still intentionally rejected in the spike:
+   multiple row/column structural edits in one diff, and column structural
+   edits through horizontally merged regions
 
 ### Full table support
 
@@ -795,6 +805,11 @@ Lowering rule:
    artifacts, not semantic sibling cells
 5. matched-cell content edits in rows/columns that will shift must be emitted
    before the row/column structural request
+6. inserted-row/column text must lower from table-local anchors computed after
+   the structural request, not from guessed document-global offsets
+7. when the semantic model cannot distinguish a safe unique lowering plan,
+   lowering must reject explicitly rather than synthesizing a best-effort table
+   patch
 
 ### Section and shared story diff
 
@@ -1200,6 +1215,7 @@ to structural alignment logic.
 2. table row/column alignment ideas
 3. request batching by dependency layer
 4. verify-via-mock pattern
+5. explicit unsupported rejection for ambiguous table transport shapes
 
 The ideas are sound. The current shape is too transport-coupled.
 

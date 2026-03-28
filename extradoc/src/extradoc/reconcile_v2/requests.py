@@ -273,6 +273,82 @@ def make_unmerge_table_cells(
     }
 
 
+def make_pin_table_header_rows(
+    *,
+    table_start_index: int,
+    pinned_header_rows_count: int,
+    tab_id: str,
+) -> dict[str, Any]:
+    return {
+        "pinTableHeaderRows": {
+            "tableStartLocation": {"index": table_start_index, "tabId": tab_id},
+            "pinnedHeaderRowsCount": pinned_header_rows_count,
+        }
+    }
+
+
+def make_update_table_row_style(
+    *,
+    table_start_index: int,
+    row_index: int,
+    style: dict[str, Any],
+    fields: tuple[str, ...],
+    tab_id: str,
+) -> dict[str, Any]:
+    return {
+        "updateTableRowStyle": {
+            "tableStartLocation": {"index": table_start_index, "tabId": tab_id},
+            "rowIndices": [row_index],
+            "tableRowStyle": style,
+            "fields": ",".join(fields),
+        }
+    }
+
+
+def make_update_table_column_properties(
+    *,
+    table_start_index: int,
+    column_index: int,
+    properties: dict[str, Any],
+    fields: tuple[str, ...],
+    tab_id: str,
+) -> dict[str, Any]:
+    return {
+        "updateTableColumnProperties": {
+            "tableStartLocation": {"index": table_start_index, "tabId": tab_id},
+            "columnIndices": [column_index],
+            "tableColumnProperties": properties,
+            "fields": ",".join(fields),
+        }
+    }
+
+
+def make_update_table_cell_style(
+    *,
+    table_start_index: int,
+    row_index: int,
+    column_index: int,
+    style: dict[str, Any],
+    fields: tuple[str, ...],
+    tab_id: str,
+) -> dict[str, Any]:
+    return {
+        "updateTableCellStyle": {
+            "tableRange": {
+                "tableCellLocation": {
+                    "tableStartLocation": {"index": table_start_index, "tabId": tab_id},
+                    "rowIndex": row_index,
+                    "columnIndex": column_index,
+                },
+                "rowSpan": 1,
+                "columnSpan": 1,
+            },
+            "tableCellStyle": style,
+            "fields": ",".join(fields),
+        }
+    }
+
+
 def bullet_preset_for_kind(kind: str) -> str:
     if kind == "NUMBERED":
         return "NUMBERED_DECIMAL_ALPHA_ROMAN"
