@@ -91,11 +91,15 @@ For every new supported scenario, the default standard is:
    placeholders that the replay harness resolves from prior batch responses
 6. store the transport mutation used to create the desired state as
    `desired.requests.json`
-7. store the expected lowered request sequence adjacent to the fixture as a
-   fixture artifact rather than only as an inline test constant
-8. add an offline exact-request assertion
-9. add an explicit semantic diff assertion
-10. add a live replay case through the shared replay harness when the scenario is
+7. store the expected lowered request artifact adjacent to the fixture rather
+   than only as an inline test constant:
+   `expected.lowered.json` for one batch, or
+   `expected.lowered.batches.json` for dependent multi-batch flows
+8. when setup or lowering depends on response-derived IDs, store deferred
+   placeholders in the fixture artifact rather than captured live IDs
+9. add an offline exact-request assertion
+10. add an explicit semantic diff assertion
+11. add a live replay case through the shared replay harness when the scenario is
    in the supported slice
 
 For every new unsupported scenario, the default standard is:
@@ -809,8 +813,12 @@ Tests:
 2. add tab with body content
 3. add tab with body plus unsupported header/footer create path -> explicit
    error
-4. add tab with body content plus anchored annotations
-5. add child tab under parent tab
+4. add tab with body content plus deferred response placeholder resolution
+5. add tab with body content plus anchored annotations
+6. add child tab under parent tab
+7. create tab + create table + populate cells in one logical cycle
+8. create tab + nested table creation inside a table cell with one more nested
+   level
 
 Commit value:
 

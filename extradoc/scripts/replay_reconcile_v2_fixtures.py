@@ -10,7 +10,6 @@ the captured desired fixture.
 from __future__ import annotations
 
 import argparse
-import copy
 import json
 import re
 import subprocess
@@ -21,7 +20,11 @@ from extrasuite.client import CredentialsManager
 
 from extradoc import GoogleDocsTransport
 from extradoc.api_types._generated import Document
-from extradoc.reconcile_v2.api import lower_semantic_diff, semantic_diff
+from extradoc.reconcile_v2.api import lower_semantic_diff_batches, semantic_diff
+from extradoc.reconcile_v2.executor import (
+    execute_request_batches,
+    resolve_deferred_placeholders,
+)
 
 REPO_ROOT = Path(__file__).resolve().parents[2]
 EXTRASUITE = REPO_ROOT / "extrasuite"
@@ -43,10 +46,19 @@ class RawDocsClient:
         finally:
             await transport.close()
 
-    async def batch_update(self, document_id: str, requests: list[dict]) -> dict:
+    async def batch_update(
+        self,
+        document_id: str,
+        requests: list[dict],
+        write_control: dict | None = None,
+    ) -> dict:
         transport = GoogleDocsTransport(self._cred.token)
         try:
-            return await transport.batch_update(document_id, requests)
+            return await transport.batch_update(
+                document_id,
+                requests,
+                write_control=write_control,
+            )
         finally:
             await transport.close()
 
@@ -86,8 +98,11 @@ def main() -> None:
         "table_column_properties_width",
         "table_cell_style_background",
         "multitab_text_replace",
+        "create_tab_table_write",
+        "create_tab_nested_table_write",
         "header_text_replace",
         "named_range_add",
+        "named_range_delete",
     ]
 
     import asyncio
@@ -114,8 +129,13 @@ async def _replay_fixture(name: str, client: RawDocsClient) -> None:
     if semantic_diff(live_base, base_fixture):
         raise RuntimeError(f"Live base for {name} did not converge to captured base fixture")
 
-    requests = lower_semantic_diff(live_base, desired_fixture)
-    await client.batch_update(doc_id, requests)
+    request_batches = lower_semantic_diff_batches(live_base, desired_fixture)
+    await execute_request_batches(
+        client,
+        document_id=doc_id,
+        request_batches=request_batches,
+        initial_revision_id=live_base.revision_id,
+    )
 
     live_after = Document.model_validate(await client.get_document_raw(doc_id))
     residual = semantic_diff(live_after, desired_fixture)
@@ -142,10 +162,10 @@ async def _setup_base_state(
     base_setup_requests = fixture_dir / "base.setup.requests.json"
     base_setup_batches = fixture_dir / "base.setup.batches.json"
     if base_setup_batches.exists():
-        last_response: dict | None = None
+        responses: list[dict] = []
         for batch in json.loads(base_setup_batches.read_text(encoding="utf-8")):
-            resolved_batch = _resolve_setup_placeholders(batch, last_response)
-            last_response = await client.batch_update(doc_id, resolved_batch)
+            resolved_batch = resolve_deferred_placeholders(responses, batch)
+            responses.append(await client.batch_update(doc_id, resolved_batch))
 
     if base_setup_requests.exists():
         await client.batch_update(
@@ -202,37 +222,6 @@ def _run(cmd: list[str]) -> subprocess.CompletedProcess[str]:
             f"stderr:\n{result.stderr}"
         )
     return result
-
-
-def _resolve_setup_placeholders(batch: list[dict], response: dict | None) -> list[dict]:
-    resolved = copy.deepcopy(batch)
-    last_added_tab_id = None
-    if isinstance(response, dict):
-        replies = response.get("replies")
-        if isinstance(replies, list):
-            for reply in replies:
-                add_document_tab = reply.get("addDocumentTab") if isinstance(reply, dict) else None
-                tab_properties = (
-                    add_document_tab.get("tabProperties")
-                    if isinstance(add_document_tab, dict)
-                    else None
-                )
-                tab_id = tab_properties.get("tabId") if isinstance(tab_properties, dict) else None
-                if isinstance(tab_id, str):
-                    last_added_tab_id = tab_id
-    if last_added_tab_id is None:
-        return resolved
-
-    def replace(value: object) -> object:
-        if isinstance(value, str) and value == "__LAST_ADDED_TAB_ID__":
-            return last_added_tab_id
-        if isinstance(value, list):
-            return [replace(item) for item in value]
-        if isinstance(value, dict):
-            return {key: replace(item) for key, item in value.items()}
-        return value
-
-    return replace(resolved)
 
 
 if __name__ == "__main__":

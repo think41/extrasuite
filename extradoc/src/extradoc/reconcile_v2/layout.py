@@ -126,7 +126,7 @@ def build_body_layout(document: Document, *, tab_id: str) -> BodyLayout:
             pending_list = []
             pending_list_id = None
 
-    for element in content:
+    for index, element in enumerate(content):
         if "sectionBreak" in element:
             flush_list()
             if element.get("startIndex") is None:
@@ -186,6 +186,15 @@ def build_body_layout(document: Document, *, tab_id: str) -> BodyLayout:
                 flush_list()
                 pending_list = [item]
                 pending_list_id = list_id
+            continue
+
+        if (
+            not current_section.block_locations
+            and not visible_text.strip()
+            and index + 1 < len(content)
+            and content[index + 1].get("table") is not None
+        ):
+            pending_empty_para = None
             continue
 
         flush_list()
@@ -336,6 +345,7 @@ def _collect_story_paragraphs(
         if "sectionBreak" in element and sectioned_body:
             if saw_initial_section_break:
                 section_index = 0 if section_index is None else section_index + 1
+                block_index = 0
             else:
                 saw_initial_section_break = True
             cursor = end_index
@@ -374,6 +384,21 @@ def _collect_story_paragraphs(
                     item_index += 1
                     i += 1
                 block_index += 1
+                continue
+
+            text = "".join(
+                child.get("textRun", {}).get("content", "")
+                for child in paragraph.get("elements", [])
+            )
+            visible_text = text[:-1] if text.endswith("\n") else text
+            if (
+                block_index == 0
+                and not visible_text.strip()
+                and i + 1 < len(elements)
+                and elements[i + 1].get("table") is not None
+            ):
+                cursor = end_index
+                i += 1
                 continue
 
             paragraphs.append(

@@ -36,6 +36,83 @@ from .helpers import load_fixture_pair as load_fixture_pair_shared
 FIXTURES_ROOT = Path(__file__).resolve().parent / "fixtures"
 
 
+def _make_doc_with_toc(*, include_toc: bool) -> Document:
+    content: list[dict[str, object]] = [
+        {
+            "startIndex": 0,
+            "endIndex": 1,
+            "sectionBreak": {"sectionStyle": {"columnSeparatorStyle": "NONE"}},
+        },
+        {
+            "startIndex": 1,
+            "endIndex": 7,
+            "paragraph": {
+                "elements": [
+                    {
+                        "startIndex": 1,
+                        "endIndex": 7,
+                        "textRun": {"content": "Title\n"},
+                    }
+                ],
+                "paragraphStyle": {"namedStyleType": "HEADING_1"},
+            },
+        },
+    ]
+    if include_toc:
+        content.append(
+            {
+                "startIndex": 7,
+                "endIndex": 10,
+                "tableOfContents": {
+                    "content": [
+                        {
+                            "startIndex": 8,
+                            "endIndex": 10,
+                            "paragraph": {
+                                "elements": [
+                                    {
+                                        "startIndex": 8,
+                                        "endIndex": 10,
+                                        "textRun": {"content": "\n"},
+                                    }
+                                ]
+                            },
+                        }
+                    ]
+                },
+            }
+        )
+        body_start = 10
+    else:
+        body_start = 7
+    content.append(
+        {
+            "startIndex": body_start,
+            "endIndex": body_start + 8,
+            "paragraph": {
+                "elements": [
+                    {
+                        "startIndex": body_start,
+                        "endIndex": body_start + 8,
+                        "textRun": {"content": "Body...\n"},
+                    }
+                ]
+            },
+        }
+    )
+    return Document.model_validate(
+        {
+            "documentId": "toc-test",
+            "tabs": [
+                {
+                    "tabProperties": {"tabId": "t.0", "title": "Tab 1", "index": 0},
+                    "documentTab": {"body": {"content": content}},
+                }
+            ],
+        }
+    )
+
+
 def test_paragraph_to_heading_fixture_emits_role_change() -> None:
     base, desired = _load_fixture_pair("paragraph_to_heading")
 
@@ -163,9 +240,9 @@ def test_table_cell_text_replace_fixture_emits_nested_story_replace() -> None:
 
     assert len(edits) == 1
     assert isinstance(edits[0], ReplaceParagraphSliceEdit)
-    assert edits[0].story_id == "t.0:body:table:1:r1:c0"
+    assert edits[0].story_id == "t.0:body:table:0:r1:c0"
     assert summarize_semantic_edits(edits) == [
-        "tab t.0: story t.0:body:table:1:r1:c0 replace 1 paragraph block(s) at 0 with 1 paragraph(s)"
+        "tab t.0: story t.0:body:table:0:r1:c0 replace 1 paragraph block(s) at 0 with 1 paragraph(s)"
     ]
 
 
@@ -220,6 +297,37 @@ def test_named_range_add_fixture_emits_named_range_replace() -> None:
     ]
 
 
+def test_named_range_delete_fixture_emits_named_range_replace() -> None:
+    base, desired = _load_fixture_pair("named_range_delete")
+
+    edits = diff_documents(base, desired)
+
+    assert len(edits) == 1
+    assert isinstance(edits[0], ReplaceNamedRangesEdit)
+    assert edits[0].name == "spike:bravo"
+    assert summarize_semantic_edits(edits) == [
+        "tab t.0: named range spike:bravo replace 1 range(s) with 0 range(s)"
+    ]
+
+
+def test_unchanged_toc_is_tolerated() -> None:
+    base = _make_doc_with_toc(include_toc=True)
+    desired = _make_doc_with_toc(include_toc=True)
+
+    assert diff_documents(base, desired) == []
+
+
+def test_toc_mismatch_is_explicitly_unsupported() -> None:
+    base = _make_doc_with_toc(include_toc=True)
+    desired = _make_doc_with_toc(include_toc=False)
+
+    with pytest.raises(
+        UnsupportedSpikeError,
+        match="read-only or opaque body blocks",
+    ):
+        diff_documents(base, desired)
+
+
 def test_table_row_insert_fixture_emits_structural_row_insert() -> None:
     base, desired = _load_fixture_pair("table_row_insert")
 
@@ -228,7 +336,7 @@ def test_table_row_insert_fixture_emits_structural_row_insert() -> None:
     assert len(edits) == 1
     assert isinstance(edits[0], InsertTableRowEdit)
     assert summarize_semantic_edits(edits) == [
-        "tab t.0: section 0 table 1 insert row below 1"
+        "tab t.0: section 0 table 0 insert row below 1"
     ]
 
 
@@ -240,7 +348,7 @@ def test_table_middle_row_insert_fixture_emits_structural_middle_row_insert() ->
     assert len(edits) == 1
     assert isinstance(edits[0], InsertTableRowEdit)
     assert summarize_semantic_edits(edits) == [
-        "tab t.0: section 0 table 1 insert row below 1"
+        "tab t.0: section 0 table 0 insert row below 1"
     ]
 
 
@@ -252,7 +360,7 @@ def test_table_row_delete_fixture_emits_structural_row_delete() -> None:
     assert len(edits) == 1
     assert isinstance(edits[0], DeleteTableRowEdit)
     assert summarize_semantic_edits(edits) == [
-        "tab t.0: section 0 table 1 delete row 2"
+        "tab t.0: section 0 table 0 delete row 2"
     ]
 
 
@@ -264,7 +372,7 @@ def test_table_middle_row_delete_fixture_emits_structural_middle_row_delete() ->
     assert len(edits) == 1
     assert isinstance(edits[0], DeleteTableRowEdit)
     assert summarize_semantic_edits(edits) == [
-        "tab t.0: section 0 table 1 delete row 2"
+        "tab t.0: section 0 table 0 delete row 2"
     ]
 
 
@@ -276,7 +384,7 @@ def test_table_column_insert_fixture_emits_structural_column_insert() -> None:
     assert len(edits) == 1
     assert isinstance(edits[0], InsertTableColumnEdit)
     assert summarize_semantic_edits(edits) == [
-        "tab t.0: section 0 table 1 insert column right of 1"
+        "tab t.0: section 0 table 0 insert column right of 1"
     ]
 
 
@@ -288,7 +396,7 @@ def test_table_middle_column_insert_fixture_emits_structural_middle_column_inser
     assert len(edits) == 1
     assert isinstance(edits[0], InsertTableColumnEdit)
     assert summarize_semantic_edits(edits) == [
-        "tab t.0: section 0 table 1 insert column right of 1"
+        "tab t.0: section 0 table 0 insert column right of 1"
     ]
 
 
@@ -300,7 +408,7 @@ def test_table_column_delete_fixture_emits_structural_column_delete() -> None:
     assert len(edits) == 1
     assert isinstance(edits[0], DeleteTableColumnEdit)
     assert summarize_semantic_edits(edits) == [
-        "tab t.0: section 0 table 1 delete column 2"
+        "tab t.0: section 0 table 0 delete column 2"
     ]
 
 
@@ -312,7 +420,7 @@ def test_table_middle_column_delete_fixture_emits_structural_middle_column_delet
     assert len(edits) == 1
     assert isinstance(edits[0], DeleteTableColumnEdit)
     assert summarize_semantic_edits(edits) == [
-        "tab t.0: section 0 table 1 delete column 2"
+        "tab t.0: section 0 table 0 delete column 2"
     ]
 
 
@@ -324,7 +432,7 @@ def test_table_merge_cells_fixture_emits_merge_edit() -> None:
     assert len(edits) == 1
     assert isinstance(edits[0], MergeTableCellsEdit)
     assert summarize_semantic_edits(edits) == [
-        "tab t.0: section 0 table 1 merge cells r0 c0 span 1x2"
+        "tab t.0: section 0 table 0 merge cells r0 c0 span 1x2"
     ]
 
 
@@ -336,7 +444,7 @@ def test_table_unmerge_cells_fixture_emits_unmerge_edit() -> None:
     assert len(edits) == 1
     assert isinstance(edits[0], UnmergeTableCellsEdit)
     assert summarize_semantic_edits(edits) == [
-        "tab t.0: section 0 table 1 unmerge cells r0 c0 span 1x2"
+        "tab t.0: section 0 table 0 unmerge cells r0 c0 span 1x2"
     ]
 
 
@@ -348,10 +456,10 @@ def test_table_middle_row_insert_with_cell_edit_emits_text_replace_then_row_inse
     assert len(edits) == 2
     assert isinstance(edits[0], ReplaceParagraphSliceEdit)
     assert isinstance(edits[1], InsertTableRowEdit)
-    assert edits[0].story_id == "t.0:body:table:1:r2:c0"
+    assert edits[0].story_id == "t.0:body:table:0:r2:c0"
     assert summarize_semantic_edits(edits) == [
-        "tab t.0: story t.0:body:table:1:r2:c0 replace 1 paragraph block(s) at 0 with 1 paragraph(s)",
-        "tab t.0: section 0 table 1 insert row below 1",
+        "tab t.0: story t.0:body:table:0:r2:c0 replace 1 paragraph block(s) at 0 with 1 paragraph(s)",
+        "tab t.0: section 0 table 0 insert row below 1",
     ]
 
 
@@ -364,7 +472,7 @@ def test_table_middle_row_insert_with_inserted_content_emits_populated_insert() 
     assert isinstance(edits[0], InsertTableRowEdit)
     assert edits[0].inserted_cells == ("NEW", "")
     assert summarize_semantic_edits(edits) == [
-        "tab t.0: section 0 table 1 insert row below 1 with 1 populated cell(s)"
+        "tab t.0: section 0 table 0 insert row below 1 with 1 populated cell(s)"
     ]
 
 
@@ -376,7 +484,7 @@ def test_table_row_insert_below_merged_fixture_emits_structural_insert() -> None
     assert len(edits) == 1
     assert isinstance(edits[0], InsertTableRowEdit)
     assert summarize_semantic_edits(edits) == [
-        "tab t.0: section 0 table 1 insert row below 0"
+        "tab t.0: section 0 table 0 insert row below 0"
     ]
 
 
@@ -389,7 +497,7 @@ def test_table_middle_column_insert_with_inserted_content_emits_populated_insert
     assert isinstance(edits[0], InsertTableColumnEdit)
     assert edits[0].inserted_cells == ("", "NEW")
     assert summarize_semantic_edits(edits) == [
-        "tab t.0: section 0 table 1 insert column right of 1 with 1 populated cell(s)"
+        "tab t.0: section 0 table 0 insert column right of 1 with 1 populated cell(s)"
     ]
 
 
@@ -401,7 +509,7 @@ def test_table_pin_header_rows_fixture_emits_table_header_pin() -> None:
     assert len(edits) == 1
     assert isinstance(edits[0], UpdateTablePinnedHeaderRowsEdit)
     assert summarize_semantic_edits(edits) == [
-        "tab t.0: section 0 table 1 pin header rows 1"
+        "tab t.0: section 0 table 0 pin header rows 1"
     ]
 
 
@@ -413,7 +521,7 @@ def test_table_row_style_min_height_fixture_emits_row_style_update() -> None:
     assert len(edits) == 1
     assert isinstance(edits[0], UpdateTableRowStyleEdit)
     assert summarize_semantic_edits(edits) == [
-        "tab t.0: section 0 table 1 update row 1 style minRowHeight"
+        "tab t.0: section 0 table 0 update row 1 style minRowHeight"
     ]
 
 
@@ -425,7 +533,7 @@ def test_table_column_properties_width_fixture_emits_column_property_update() ->
     assert len(edits) == 1
     assert isinstance(edits[0], UpdateTableColumnPropertiesEdit)
     assert summarize_semantic_edits(edits) == [
-        "tab t.0: section 0 table 1 update column 1 properties width,widthType"
+        "tab t.0: section 0 table 0 update column 1 properties width,widthType"
     ]
 
 
@@ -437,7 +545,7 @@ def test_table_cell_style_background_fixture_emits_cell_style_update() -> None:
     assert len(edits) == 1
     assert isinstance(edits[0], UpdateTableCellStyleEdit)
     assert summarize_semantic_edits(edits) == [
-        "tab t.0: section 0 table 1 update cell r1 c1 style backgroundColor"
+        "tab t.0: section 0 table 0 update cell r1 c1 style backgroundColor"
     ]
 
 

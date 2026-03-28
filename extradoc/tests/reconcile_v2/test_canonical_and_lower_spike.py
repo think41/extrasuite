@@ -18,6 +18,138 @@ from .helpers import load_expected_lowered_requests
 FIXTURES_ROOT = Path(__file__).resolve().parent / "fixtures"
 
 
+def _make_doc_with_toc(*, include_toc: bool) -> Document:
+    content: list[dict[str, object]] = [
+        {
+            "startIndex": 0,
+            "endIndex": 1,
+            "sectionBreak": {"sectionStyle": {"columnSeparatorStyle": "NONE"}},
+        },
+        {
+            "startIndex": 1,
+            "endIndex": 7,
+            "paragraph": {
+                "elements": [
+                    {
+                        "startIndex": 1,
+                        "endIndex": 7,
+                        "textRun": {"content": "Title\n"},
+                    }
+                ],
+                "paragraphStyle": {"namedStyleType": "HEADING_1"},
+            },
+        },
+    ]
+    if include_toc:
+        content.append(
+            {
+                "startIndex": 7,
+                "endIndex": 10,
+                "tableOfContents": {
+                    "content": [
+                        {
+                            "startIndex": 8,
+                            "endIndex": 10,
+                            "paragraph": {
+                                "elements": [
+                                    {
+                                        "startIndex": 8,
+                                        "endIndex": 10,
+                                        "textRun": {"content": "\n"},
+                                    }
+                                ]
+                            },
+                        }
+                    ]
+                },
+            }
+        )
+        body_start = 10
+    else:
+        body_start = 7
+    content.append(
+        {
+            "startIndex": body_start,
+            "endIndex": body_start + 8,
+            "paragraph": {
+                "elements": [
+                    {
+                        "startIndex": body_start,
+                        "endIndex": body_start + 8,
+                        "textRun": {"content": "Body...\n"},
+                    }
+                ]
+            },
+        }
+    )
+    return Document.model_validate(
+        {
+            "documentId": "toc-test",
+            "tabs": [
+                {
+                    "tabProperties": {"tabId": "t.0", "title": "Tab 1", "index": 0},
+                    "documentTab": {"body": {"content": content}},
+                }
+            ],
+        }
+    )
+
+
+def _make_doc_with_named_range(*, text: str, range_name: str | None = None) -> Document:
+    text_with_newline = text if text.endswith("\n") else f"{text}\n"
+    raw: dict[str, object] = {
+        "documentId": "named-range-test",
+        "tabs": [
+            {
+                "tabProperties": {"tabId": "t.0", "title": "Tab 1", "index": 0},
+                "documentTab": {
+                    "body": {
+                        "content": [
+                            {
+                                "startIndex": 0,
+                                "endIndex": 1,
+                                "sectionBreak": {
+                                    "sectionStyle": {"columnSeparatorStyle": "NONE"}
+                                },
+                            },
+                            {
+                                "startIndex": 1,
+                                "endIndex": 1 + len(text_with_newline),
+                                "paragraph": {
+                                    "elements": [
+                                        {
+                                            "startIndex": 1,
+                                            "endIndex": 1 + len(text_with_newline),
+                                            "textRun": {"content": text_with_newline},
+                                        }
+                                    ]
+                                },
+                            },
+                        ]
+                    }
+                },
+            }
+        ],
+    }
+    if range_name is not None:
+        start_index = text.index("bravo") + 1
+        end_index = start_index + len("bravo")
+        raw["tabs"][0]["documentTab"]["namedRanges"] = {
+            range_name: {
+                "namedRanges": [
+                    {
+                        "namedRangeId": "nr.synthetic",
+                        "name": range_name,
+                        "ranges": [
+                            {"startIndex": start_index, "endIndex": end_index}
+                        ],
+                    }
+                ]
+            }
+        }
+    return Document.model_validate(raw)
+
+
 def test_section_delete_matches_section_split_base_after_canonicalization() -> None:
     section_split_base, _ = _load_fixture_pair("section_split")
     _, section_delete_desired = _load_fixture_pair("section_delete")
@@ -137,6 +269,11 @@ def test_lower_semantic_diff_for_current_fixture_slice() -> None:
                     "name": "spike:bravo",
                     "range": {"startIndex": 7, "endIndex": 12, "tabId": "t.0"},
                 }
+            }
+        ],
+        "named_range_delete": [
+            {
+                "deleteNamedRange": {"name": "spike:bravo"}
             }
         ],
         "table_row_insert": [
@@ -437,6 +574,51 @@ def test_lower_semantic_diff_rejects_column_insert_through_merged_region() -> No
     with pytest.raises(
         UnsupportedSpikeError,
         match="column structural edits through merged regions",
+    ):
+        lower_semantic_diff(base, desired)
+
+
+def test_lower_semantic_diff_rejects_toc_mismatch() -> None:
+    base = _make_doc_with_toc(include_toc=True)
+    desired = _make_doc_with_toc(include_toc=False)
+
+    with pytest.raises(
+        UnsupportedSpikeError,
+        match="read-only or opaque body blocks",
+    ):
+        lower_semantic_diff(base, desired)
+
+
+def test_lower_semantic_diff_named_range_add_ignores_desired_named_range_id() -> None:
+    base, desired = _load_fixture_pair("named_range_add")
+    desired_raw = desired.model_dump(by_alias=True, exclude_none=True)
+    named_ranges = desired_raw["tabs"][0]["documentTab"]["namedRanges"]["spike:bravo"][
+        "namedRanges"
+    ]
+    for named_range in named_ranges:
+        named_range.pop("namedRangeId", None)
+    desired_without_ids = Document.model_validate(desired_raw)
+
+    assert lower_semantic_diff(base, desired_without_ids) == [
+        {
+            "createNamedRange": {
+                "name": "spike:bravo",
+                "range": {"startIndex": 7, "endIndex": 12, "tabId": "t.0"},
+            }
+        }
+    ]
+
+
+def test_lower_semantic_diff_rejects_named_range_anchor_moves_with_content_edits() -> None:
+    base = _make_doc_with_named_range(text="alpha bravo charlie", range_name=None)
+    desired = _make_doc_with_named_range(
+        text="alpha bravo delta",
+        range_name="spike:bravo",
+    )
+
+    with pytest.raises(
+        UnsupportedSpikeError,
+        match="moving anchors in the same cycle as story content edits",
     ):
         lower_semantic_diff(base, desired)
 

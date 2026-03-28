@@ -17,12 +17,14 @@ from extradoc.reconcile_v2.errors import UnsupportedSpikeError
 from extradoc.reconcile_v2.ir import (
     AnchorRangeIR,
     ListIR,
+    OpaqueBlockIR,
     ParagraphIR,
     PositionIR,
     SectionIR,
     StoryIR,
     TableIR,
     TextSpanIR,
+    TocIR,
 )
 from extradoc.reconcile_v2.parse import parse_document
 
@@ -386,6 +388,7 @@ def summarize_semantic_edits(edits: Iterable[SemanticEdit]) -> list[str]:
 def _diff_tab(base: TabIR, desired: TabIR) -> list[SemanticEdit]:
     base_sections = base.body.sections
     desired_sections = desired.body.sections
+    _ensure_read_only_blocks_unchanged(base_sections, desired_sections)
     edits: list[SemanticEdit] = []
     edits.extend(_diff_named_ranges(base, desired))
     edits.extend(
@@ -440,6 +443,51 @@ def _diff_tab(base: TabIR, desired: TabIR) -> list[SemanticEdit]:
             )
         )
     return edits
+
+
+def _ensure_read_only_blocks_unchanged(
+    base_sections: list[SectionIR],
+    desired_sections: list[SectionIR],
+) -> None:
+    max_sections = max(len(base_sections), len(desired_sections))
+    for section_index in range(max_sections):
+        base_blocks = (
+            base_sections[section_index].blocks if section_index < len(base_sections) else []
+        )
+        desired_blocks = (
+            desired_sections[section_index].blocks
+            if section_index < len(desired_sections)
+            else []
+        )
+        max_blocks = max(len(base_blocks), len(desired_blocks))
+        for block_index in range(max_blocks):
+            base_block = base_blocks[block_index] if block_index < len(base_blocks) else None
+            desired_block = (
+                desired_blocks[block_index] if block_index < len(desired_blocks) else None
+            )
+            if not _is_read_only_block(base_block) and not _is_read_only_block(desired_block):
+                continue
+            if type(base_block) is not type(desired_block):
+                raise UnsupportedSpikeError(
+                    "reconcile_v2 does not support editing read-only or opaque body blocks "
+                    f"at section {section_index} block {block_index}"
+                )
+            if (
+                isinstance(base_block, OpaqueBlockIR)
+                and isinstance(desired_block, OpaqueBlockIR)
+                and (
+                    base_block.kind != desired_block.kind
+                    or base_block.payload != desired_block.payload
+                )
+            ):
+                raise UnsupportedSpikeError(
+                    "reconcile_v2 does not support editing opaque body blocks "
+                    f"at section {section_index} block {block_index}"
+                )
+
+
+def _is_read_only_block(block: BlockIR | None) -> bool:
+    return isinstance(block, TocIR | OpaqueBlockIR)
 
 
 def _tabs_by_path(tabs: list[TabIR]) -> dict[tuple[int, ...], TabIR]:

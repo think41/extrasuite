@@ -92,6 +92,8 @@ Each entry captures:
 | Named-range-only add/delete replay on unchanged body text | live confidence-sprint replay | Annotation lowering must resolve from the same story-local coordinate model as content edits. |
 | Annotation anchor survives block split or merge | historical index-drift failures | Anchored annotations must follow logical positions in story space, not stale block IDs or UTF-16 offsets. |
 | New tab with named ranges | `_core.py` comment about deferred complexity | Anchored annotations must lower after any ID-producing story/tab creation they depend on. |
+| Named-range add/delete when desired carries no `namedRangeId` | live `reconcile_v2` stable annotation fixtures | Semantic annotation identity comes from `(name, anchors)`, not transport-generated named range IDs. |
+| Named-range anchor move coupled with story content edit | current `reconcile_v2` boundary | Until staged lowering exists, this must be an explicit unsupported error, not a best-effort mixed batch. |
 | Raw API indices differ from mock-reindexed indices around special tables | commit `365c44e`; `client.py` raw-base comments | Lowering must derive coordinates from real base transport layout or an exact transport shadow, never from approximate reindexing. |
 
 ## Batching, Ordering, And Verification
@@ -101,8 +103,17 @@ Each entry captures:
 | Body edits combined with header/footer edits in the same batch | `client/EXTRADOC_BUGS.md` BUG-9 | Ordering must be modeled per coordinate partition and per dependency, not as one flat append-only batch. |
 | Multiple batches using `requiredRevisionId` | `WriteControl.md`; `extradoc/tests/test_mock_api.py` revision tests | Executor must carry forward the revision returned by each successful batch before sending the next batch. |
 | Base-state recreation requires sequential setup batches with response-derived IDs | live `reconcile_v2` multi-tab fixture harness | Replay infrastructure must support response-derived placeholder resolution between setup batches instead of assuming one flat setup request list. |
+| Create new tab, then populate its content in later dependent batches without a captured `tabId` in desired | live `reconcile_v2` create-tab fixtures | Deferred response placeholders are part of the supported batch model, not ad hoc harness glue. |
 | Comparator strips semantic list / attachment / table metadata | `extradoc/src/extradoc/reconcile/_comparators.py`; historical gap docs | `reconcile_v2` verification must compare semantic IR, not transport JSON after aggressive normalization. |
 | Request sequence looks plausible but final document is wrong | long history of comparator and mock workarounds | Exact-plan tests are necessary but insufficient; convergence tests against semantic IR remain mandatory. |
+
+## Nested Tables
+
+| Scenario | Historical Evidence | Required Invariant |
+|---|---|---|
+| Create a nested table inside an empty outer-table cell | live `reconcile_v2` create-tab nested-table fixture | Empty-story lowering is recursive across body and table-cell stories; nested tables do not require a separate request model. |
+| Create one more nested level inside the nested table | live `reconcile_v2` create-tab nested-table fixture | Table recursion must be structural, not hard-coded to one nesting depth. |
+| Canonicalize nested table carrier paragraphs | live `reconcile_v2` nested-table replay plus unit tests | Table-cell canonicalization must recurse through nested table stories, not stop at one level. |
 
 ## Minimum Regression Fixture Set
 

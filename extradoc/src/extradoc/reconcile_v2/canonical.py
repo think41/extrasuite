@@ -46,6 +46,12 @@ def canonical_signature(document: DocumentIR) -> CanonicalDocumentSignature:
 
 def _strip_transport_carrier_paragraphs(blocks: list[BlockIR]) -> list[BlockIR]:
     trimmed = list(blocks)
+    while (
+        len(trimmed) >= 2
+        and _is_transport_carrier_paragraph(trimmed[0])
+        and isinstance(trimmed[1], TableIR)
+    ):
+        trimmed.pop(0)
     while trimmed and _is_transport_carrier_paragraph(trimmed[-1]):
         trimmed.pop()
     return trimmed
@@ -59,12 +65,21 @@ def _iter_table_cell_stories(sections: list[object]) -> list[StoryIR]:
     stories: list[StoryIR] = []
     for section in sections:
         for block in section.blocks:
-            if isinstance(block, TableIR):
-                for row in block.rows:
-                    for cell in row.cells:
-                        stories.append(cell.content)
-            elif isinstance(block, ListIR):
-                continue
+            stories.extend(_iter_table_cell_stories_from_block(block))
+    return stories
+
+
+def _iter_table_cell_stories_from_block(block: BlockIR) -> list[StoryIR]:
+    if isinstance(block, ListIR):
+        return []
+    if not isinstance(block, TableIR):
+        return []
+    stories: list[StoryIR] = []
+    for row in block.rows:
+        for cell in row.cells:
+            stories.append(cell.content)
+            for nested_block in cell.content.blocks:
+                stories.extend(_iter_table_cell_stories_from_block(nested_block))
     return stories
 
 

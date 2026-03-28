@@ -19,3 +19,8 @@ def load_fixture_pair(name: str) -> tuple[Document, Document]:
 def load_expected_lowered_requests(name: str) -> list[dict[str, Any]]:
     fixture_dir = FIXTURES_ROOT / name
     return json.loads((fixture_dir / "expected.lowered.json").read_text())
+
+
+def load_expected_lowered_batches(name: str) -> list[list[dict[str, Any]]]:
+    fixture_dir = FIXTURES_ROOT / name
+    return json.loads((fixture_dir / "expected.lowered.batches.json").read_text())

@@ -66,6 +66,7 @@ if TYPE_CHECKING:
 
 def lower_document_edits(base: Document, edits: list[SemanticEdit]) -> list[dict[str, Any]]:
     """Lower the supported semantic edits into batchUpdate request dicts."""
+    _validate_named_range_dependencies(edits)
     requests: list[dict[str, Any]] = []
     layouts: dict[str, BodyLayout] = {}
     story_layouts = build_story_layouts(base)
@@ -414,3 +415,25 @@ def _table_cell_text_start(story_layouts: dict[str, Any], story_id: str) -> int:
             f"Could not resolve inserted table-cell anchor from story {story_id}"
         )
     return story.paragraphs[0].text_start_index
+
+
+def _validate_named_range_dependencies(edits: list[SemanticEdit]) -> None:
+    content_edited_story_ids = {
+        edit.story_id
+        for edit in edits
+        if isinstance(edit, ReplaceParagraphSliceEdit)
+    }
+    for edit in edits:
+        if not isinstance(edit, ReplaceNamedRangesEdit):
+            continue
+        anchor_story_ids = {
+            anchor.start.story_id
+            for anchor in edit.desired_ranges
+        } | {
+            anchor.end.story_id
+            for anchor in edit.desired_ranges
+        }
+        if anchor_story_ids & content_edited_story_ids:
+            raise UnsupportedSpikeError(
+                "reconcile_v2 named range spike does not yet support moving anchors in the same cycle as story content edits"
+            )

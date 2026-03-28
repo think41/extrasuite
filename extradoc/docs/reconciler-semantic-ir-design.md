@@ -403,6 +403,9 @@ Consequences:
 2. Named ranges can be diffed using anchor points in semantic space instead of
    stale UTF-16 offsets.
 3. Annotation lowering can be ordered after the content mutations it depends on.
+4. The currently proven slice is stable-content annotation add/delete. If a
+   named-range anchor must move in the same story cycle as content edits,
+   lowering must stage that dependency explicitly or reject the transform.
 
 ### 10. Lowering uses a transport shadow state
 
@@ -443,6 +446,10 @@ Consequences:
 3. numeric/style default drift is normalized before diff
 4. section-break carrier paragraphs are erased in canonical IR rather than
    leaking into semantic edits
+5. a story that semantically starts with a table canonicalizes away the leading
+   pre-table carrier paragraph that `insertTable` introduces
+6. table-cell canonicalization is recursive: nested tables inherit the same
+   carrier-paragraph cleanup rules as top-level tables
 
 Canonicalization is therefore a dedicated pre-diff phase:
 
@@ -1078,6 +1085,8 @@ Batch layer N+1:
 
 1. requests that reference IDs created in batch N
 2. dependent story edits that populate newly created resources
+3. dependent batches may carry deferred response placeholders rather than
+   captured transport IDs; executor resolution is part of the batch model
 
 All other operations stay in the earliest dependency-valid batch.
 
@@ -1099,13 +1108,21 @@ Examples:
 
 1. mutation of read-only TOC contents
 2. page breaks inside non-body containers
-3. nested tables if Docs API does not represent them safely in target context
+3. nested table transforms outside the proven empty-cell creation slice
 4. unsupported opaque block mutation
 5. section attachment transforms lacking a legal section break target
 6. header/footer creation paths that require a Docs API transport route known to
    mis-target or fail for the target tab/section/slot
 7. section-break topology edits without dedicated lowering support
 8. sidecar resource mutations outside the supported surface
+
+Live confidence-sprint result:
+
+1. creating a nested table inside a newly inserted empty table cell is viable in
+   Google Docs transport and can be modeled recursively without special-case
+   request hacks
+2. recursive support does not remove the need to reject harder nested-table
+   transforms until they are replay-proven
 
 Failure mode must be `UnsupportedEdit(reason)` at semantic phase or
 `LoweringError(reason)` at lowering phase, never a best-effort invalid request.

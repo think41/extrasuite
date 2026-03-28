@@ -4,7 +4,10 @@ from typing import Any
 
 import pytest
 
-from extradoc.reconcile_v2.executor import execute_request_batches
+from extradoc.reconcile_v2.executor import (
+    execute_request_batches,
+    resolve_deferred_placeholders,
+)
 
 
 class FakeBatchTransport:
@@ -72,3 +75,42 @@ async def test_execute_request_batches_tolerates_missing_write_control_in_respon
         {"requiredRevisionId": "rev-1"},
     ]
     assert result.final_revision_id == "rev-2"
+
+
+def test_resolve_deferred_placeholders_replaces_response_derived_tab_id() -> None:
+    batch = [
+        {
+            "insertText": {
+                "location": {
+                    "index": 1,
+                    "tabId": {
+                        "placeholder": "new-tab",
+                        "batch_index": 0,
+                        "request_index": 0,
+                        "response_path": "addDocumentTab.tabProperties.tabId",
+                    },
+                },
+                "text": "hello",
+            }
+        }
+    ]
+
+    resolved = resolve_deferred_placeholders(
+        [
+            {
+                "replies": [
+                    {"addDocumentTab": {"tabProperties": {"tabId": "t.generated"}}}
+                ]
+            }
+        ],
+        batch,
+    )
+
+    assert resolved == [
+        {
+            "insertText": {
+                "location": {"index": 1, "tabId": "t.generated"},
+                "text": "hello",
+            }
+        }
+    ]

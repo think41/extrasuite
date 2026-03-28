@@ -5,6 +5,17 @@ from __future__ import annotations
 from typing import Any
 
 
+def make_add_document_tab(
+    *,
+    title: str,
+    index: int | None = None,
+) -> dict[str, Any]:
+    tab_properties: dict[str, Any] = {"title": title}
+    if index is not None:
+        tab_properties["index"] = index
+    return {"addDocumentTab": {"tabProperties": tab_properties}}
+
+
 def make_update_paragraph_role(
     *,
     start_index: int,
@@ -27,7 +38,7 @@ def make_update_paragraph_role(
     }
 
 
-def make_insert_text(*, index: int, tab_id: str, text: str) -> dict[str, Any]:
+def make_insert_text(*, index: int, tab_id: Any, text: str) -> dict[str, Any]:
     return make_insert_text_in_story(
         index=index,
         tab_id=tab_id,
@@ -93,7 +104,7 @@ def make_delete_content_range(
     *,
     start_index: int,
     end_index: int,
-    tab_id: str,
+    tab_id: Any,
     segment_id: str | None = None,
 ) -> dict[str, Any]:
     range_: dict[str, Any] = {
@@ -113,7 +124,7 @@ def make_delete_content_range(
 def make_insert_text_in_story(
     *,
     index: int,
-    tab_id: str,
+    tab_id: Any,
     segment_id: str | None,
     text: str,
 ) -> dict[str, Any]:
@@ -140,7 +151,7 @@ def make_create_named_range(
     name: str,
     start_index: int,
     end_index: int,
-    tab_id: str,
+    tab_id: Any,
     segment_id: str | None = None,
 ) -> dict[str, Any]:
     range_: dict[str, Any] = {
@@ -151,6 +162,31 @@ def make_create_named_range(
     if segment_id:
         range_["segmentId"] = segment_id
     return {"createNamedRange": {"name": name, "range": range_}}
+
+
+def make_insert_table(
+    *,
+    rows: int,
+    columns: int,
+    tab_id: Any,
+    index: int | None = None,
+    segment_id: str | None = None,
+    end_of_segment: bool = False,
+) -> dict[str, Any]:
+    payload: dict[str, Any] = {"rows": rows, "columns": columns}
+    if end_of_segment:
+        location: dict[str, Any] = {"tabId": tab_id}
+        if segment_id:
+            location["segmentId"] = segment_id
+        payload["endOfSegmentLocation"] = location
+    elif index is not None:
+        location = {"index": index, "tabId": tab_id}
+        if segment_id:
+            location["segmentId"] = segment_id
+        payload["location"] = location
+    else:
+        raise ValueError("insertTable requires either index or end_of_segment=True")
+    return {"insertTable": payload}
 
 
 def make_insert_table_row(

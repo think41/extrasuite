@@ -4,6 +4,7 @@ from __future__ import annotations
 
 from typing import TYPE_CHECKING
 
+from extradoc.reconcile_v2.batches import lower_document_batches
 from extradoc.reconcile_v2.canonical import canonical_signature, canonicalize_document
 from extradoc.reconcile_v2.diff import diff_documents
 from extradoc.reconcile_v2.lower import lower_document_edits
@@ -45,6 +46,14 @@ def semantic_diff(base: Document, desired: Document) -> list[SemanticEdit]:
 def lower_semantic_diff(base: Document, desired: Document) -> list[dict[str, object]]:
     """Lower the supported semantic diff slice into raw request dicts."""
     return lower_document_edits(base, semantic_diff(base, desired))
+
+
+def lower_semantic_diff_batches(
+    base: Document,
+    desired: Document,
+) -> list[list[dict[str, object]]]:
+    """Lower the supported semantic diff slice into one or more request batches."""
+    return lower_document_batches(base, desired)
 
 
 def reconcile(base: Document, desired: Document) -> list[BatchUpdateDocumentRequest]:

@@ -30,6 +30,7 @@ from extrasuite.client import CredentialsManager
 from extradoc import GoogleDocsTransport
 from extradoc.api_types._generated import Document
 from extradoc.reconcile_v2.api import summarize_document
+from extradoc.reconcile_v2.executor import resolve_deferred_placeholders
 
 if TYPE_CHECKING:
     from collections.abc import Callable
@@ -90,8 +91,12 @@ class RequestScenario:
     base_setup_builder: Callable[[dict], list[dict]] | None = None
     base_setup_procedure: Callable[[_RawDocsClient, str, dict], list[list[dict]]] | None = None
     desired_request_builder: Callable[[dict], list[dict]] | None = None
+    desired_request_batches: tuple[tuple[dict, ...], ...] = ()
+    desired_request_batches_builder: Callable[[dict], list[list[dict]]] | None = None
     expected_lowered_requests: tuple[dict, ...] = ()
     expected_lowered_builder: Callable[[dict], list[dict]] | None = None
+    expected_lowered_batches: tuple[tuple[dict, ...], ...] = ()
+    expected_lowered_batches_builder: Callable[[dict], list[list[dict]]] | None = None
 
 
 @dataclass(frozen=True, slots=True)
@@ -104,6 +109,43 @@ class TableScenario:
     base_setup_requests: tuple[dict, ...] = ()
     base_setup_builder: Callable[[dict], list[dict]] | None = None
     desired_request_builder: Callable[[dict], list[dict]] | None = None
+
+
+def _build_create_tab_table_write_batches(_: dict) -> list[list[dict]]:
+    return _build_add_tab_story_batches(
+        title="Second Tab",
+        index=1,
+        body_spec={
+            "table": [
+                ["top-left", "top-right"],
+                ["bottom-left", "bottom-right"],
+            ]
+        },
+    )
+
+
+def _build_create_tab_nested_table_write_batches(_: dict) -> list[list[dict]]:
+    return _build_add_tab_story_batches(
+        title="Nested Tab",
+        index=1,
+        body_spec={
+            "table": [
+                [
+                    "outer-top-left",
+                    "outer-top-right",
+                ],
+                [
+                    "outer-bottom-left",
+                    {
+                        "table": [
+                            ["inner-top"],
+                            [{"table": [["deepest"]]}],
+                        ]
+                    },
+                ],
+            ]
+        },
+    )
 
 
 MARKDOWN_SCENARIOS = (
@@ -209,6 +251,39 @@ REQUEST_SCENARIOS = (
             tab_id=_find_second_tab_id(base_raw),
             desired_text="omega second tab",
         ),
+    ),
+    RequestScenario(
+        name="named_range_delete",
+        title="Confidence Sprint Fixture Named Range Delete",
+        description="Delete an existing named range without changing story content.",
+        base_md="alpha bravo charlie\n",
+        base_setup_builder=lambda base_raw: _build_named_range_add_requests(
+            base_raw=base_raw,
+            name="spike:bravo",
+            target_text="bravo",
+        ),
+        desired_requests=(
+            {"deleteNamedRange": {"name": "spike:bravo"}},
+        ),
+        expected_lowered_requests=(
+            {"deleteNamedRange": {"name": "spike:bravo"}},
+        ),
+    ),
+    RequestScenario(
+        name="create_tab_table_write",
+        title="Confidence Sprint Fixture Create Tab Table Write",
+        description="Create a new tab, insert a table into it, and populate cell text in the same logical cycle.",
+        base_md="alpha first tab\n",
+        desired_request_batches_builder=_build_create_tab_table_write_batches,
+        expected_lowered_batches_builder=_build_create_tab_table_write_batches,
+    ),
+    RequestScenario(
+        name="create_tab_nested_table_write",
+        title="Confidence Sprint Fixture Create Tab Nested Table Write",
+        description="Create a new tab whose outer table contains a nested table, which itself contains another nested table.",
+        base_md="alpha first tab\n",
+        desired_request_batches_builder=_build_create_tab_nested_table_write_batches,
+        expected_lowered_batches_builder=_build_create_tab_nested_table_write_batches,
     ),
 )
 
@@ -849,15 +924,26 @@ def _capture_request_scenario(
             base_raw = raw_client.get_document_raw(doc_id)
 
         desired_requests = list(scenario.desired_requests)
+        desired_request_batches = [list(batch) for batch in scenario.desired_request_batches]
         if scenario.desired_request_builder is not None:
             desired_requests = scenario.desired_request_builder(base_raw)
-        raw_client.batch_update(doc_id, desired_requests)
+        if scenario.desired_request_batches_builder is not None:
+            desired_request_batches = scenario.desired_request_batches_builder(base_raw)
+        if desired_request_batches:
+            _execute_batches(raw_client, doc_id, desired_request_batches)
+        else:
+            raw_client.batch_update(doc_id, desired_requests)
         desired_raw = raw_client.get_document_raw(doc_id)
 
     extra_files = {
         "base.md": scenario.base_md,
-        "desired.requests.json": json.dumps(desired_requests, indent=2) + "\n",
     }
+    if desired_request_batches:
+        extra_files["desired.requests.batches.json"] = (
+            json.dumps(desired_request_batches, indent=2) + "\n"
+        )
+    else:
+        extra_files["desired.requests.json"] = json.dumps(desired_requests, indent=2) + "\n"
     if base_setup_batches:
         extra_files["base.setup.batches.json"] = (
             json.dumps(base_setup_batches, indent=2) + "\n"
@@ -867,9 +953,18 @@ def _capture_request_scenario(
             json.dumps(base_setup_requests, indent=2) + "\n"
         )
     expected_lowered = list(scenario.expected_lowered_requests)
+    expected_lowered_batches = [
+        list(batch) for batch in scenario.expected_lowered_batches
+    ]
     if scenario.expected_lowered_builder is not None:
         expected_lowered = scenario.expected_lowered_builder(base_raw)
-    if expected_lowered:
+    if scenario.expected_lowered_batches_builder is not None:
+        expected_lowered_batches = scenario.expected_lowered_batches_builder(base_raw)
+    if expected_lowered_batches:
+        extra_files["expected.lowered.batches.json"] = (
+            json.dumps(expected_lowered_batches, indent=2) + "\n"
+        )
+    elif expected_lowered:
         extra_files["expected.lowered.json"] = (
             json.dumps(expected_lowered, indent=2) + "\n"
         )
@@ -1158,6 +1253,18 @@ def _write_fixture_pair(
     )
 
 
+def _execute_batches(
+    raw_client: _RawDocsClient,
+    document_id: str,
+    request_batches: list[list[dict]],
+) -> list[dict]:
+    responses: list[dict] = []
+    for batch in request_batches:
+        resolved = resolve_deferred_placeholders(responses, batch)
+        responses.append(raw_client.batch_update(document_id, resolved))
+    return responses
+
+
 def _build_section_split_requests(base_raw: dict) -> list[dict]:
     content = base_raw["tabs"][0]["documentTab"]["body"]["content"]
     paragraph_starts = [
@@ -1272,7 +1379,15 @@ def _setup_multitab_base_state(
     batch_2_template = [
         {
             "insertText": {
-                "location": {"index": 1, "tabId": "__LAST_ADDED_TAB_ID__"},
+                "location": {
+                    "index": 1,
+                    "tabId": {
+                        "placeholder": "new-tab-1",
+                        "batch_index": 0,
+                        "request_index": 0,
+                        "response_path": "addDocumentTab.tabProperties.tabId",
+                    },
+                },
                 "text": "bravo second tab",
             }
         }
@@ -1318,6 +1433,80 @@ def _build_multitab_text_replace_requests(
             }
         }
     )
+    return requests
+
+
+def _build_add_tab_story_batches(
+    *,
+    title: str,
+    index: int,
+    body_spec: dict,
+) -> list[list[dict]]:
+    tab_ref = {
+        "placeholder": f"new-tab-{index}",
+        "batch_index": 0,
+        "request_index": 0,
+        "response_path": "addDocumentTab.tabProperties.tabId",
+    }
+    return [
+        [{"addDocumentTab": {"tabProperties": {"title": title, "index": index}}}],
+        _build_story_requests_from_spec(
+            story_spec=body_spec,
+            story_start_index=1,
+            tab_ref=tab_ref,
+        ),
+    ]
+
+
+def _build_story_requests_from_spec(
+    *,
+    story_spec: str | dict,
+    story_start_index: int,
+    tab_ref: dict[str, object],
+) -> list[dict]:
+    if isinstance(story_spec, str):
+        if not story_spec:
+            return []
+        return [
+            {
+                "insertText": {
+                    "location": {"index": story_start_index, "tabId": tab_ref},
+                    "text": story_spec,
+                }
+            }
+        ]
+    if "table" not in story_spec:
+        raise RuntimeError(f"Unsupported story spec: {story_spec!r}")
+    rows = story_spec["table"]
+    row_count = len(rows)
+    column_count = max((len(row) for row in rows), default=0)
+    requests: list[dict] = [
+        {
+            "insertTable": {
+                "rows": row_count,
+                "columns": column_count,
+                "location": {"index": story_start_index, "tabId": tab_ref},
+            }
+        }
+    ]
+    for row_index in range(row_count - 1, -1, -1):
+        row = rows[row_index]
+        if len(row) != column_count:
+            raise RuntimeError("Table story specs must be rectangular")
+        for column_index in range(column_count - 1, -1, -1):
+            cell_start = (
+                story_start_index
+                + 4
+                + row_index * (1 + 2 * column_count)
+                + 2 * column_index
+            )
+            requests.extend(
+                _build_story_requests_from_spec(
+                    story_spec=row[column_index],
+                    story_start_index=cell_start,
+                    tab_ref=tab_ref,
+                )
+            )
     return requests
 
 
