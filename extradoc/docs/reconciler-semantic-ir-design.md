@@ -764,6 +764,11 @@ Live markdown workflow verification added one more requirement:
 2. the right semantic shape is still structural: paragraph-slice edits for
    unmatched paragraph runs, and first-class list-block insert/delete edits for
    unmatched list runs
+3. lowering cannot treat a same-anchor mixed insert as unrelated single edits;
+   if several insert-only fragments target one empty body anchor, content
+   insertion and range-based styling must be coordinated as one grouped
+   operation, or later paragraph inserts will shift earlier bullet/style ranges
+   onto the wrong blocks
 
 ### Table diff
 

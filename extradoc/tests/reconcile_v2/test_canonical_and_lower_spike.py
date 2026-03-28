@@ -702,6 +702,264 @@ def test_lower_semantic_diff_supports_mixed_section_list_delete() -> None:
         }
     ]
 
+
+def test_lower_semantic_diff_supports_paragraph_list_replacement() -> None:
+    base = reindex_document(
+        markdown_to_document(
+            {"Tab_1": "Alpha\n"},
+            document_id="replace-paragraph-with-list",
+            title="Replace Paragraph With List",
+            tab_ids={"Tab_1": "t.0"},
+        )
+    )
+    desired = reindex_document(
+        markdown_to_document(
+            {"Tab_1": "- one\n- two\n"},
+            document_id="replace-paragraph-with-list",
+            title="Replace Paragraph With List",
+            tab_ids={"Tab_1": "t.0"},
+        )
+    )
+
+    assert lower_semantic_diff(base, desired) == [
+        {
+            "deleteContentRange": {
+                "range": {"startIndex": 1, "endIndex": 6, "tabId": "t.0"}
+            }
+        },
+        {
+            "insertText": {
+                "location": {"index": 1, "tabId": "t.0"},
+                "text": "one\ntwo\n",
+            }
+        },
+        {
+            "createParagraphBullets": {
+                "range": {"startIndex": 1, "endIndex": 9, "tabId": "t.0"},
+                "bulletPreset": "BULLET_DISC_CIRCLE_SQUARE",
+            }
+        },
+    ]
+
+
+def test_lower_semantic_diff_supports_table_insert_between_paragraphs() -> None:
+    base = reindex_document(
+        markdown_to_document(
+            {"Tab_1": "Alpha\n\nOmega\n"},
+            document_id="insert-table-between-paragraphs",
+            title="Insert Table Between Paragraphs",
+            tab_ids={"Tab_1": "t.0"},
+        )
+    )
+    desired = reindex_document(
+        markdown_to_document(
+            {"Tab_1": "Alpha\n\n```\ncode\n```\n\nOmega\n"},
+            document_id="insert-table-between-paragraphs",
+            title="Insert Table Between Paragraphs",
+            tab_ids={"Tab_1": "t.0"},
+        )
+    )
+
+    assert lower_semantic_diff(base, desired) == [
+        {
+            "insertTable": {
+                "rows": 1,
+                "columns": 1,
+                "location": {"index": 7, "tabId": "t.0"},
+            }
+        },
+        {
+            "insertText": {
+                "location": {"index": 11, "tabId": "t.0"},
+                "text": "code",
+            }
+        },
+        {
+            "updateTextStyle": {
+                "range": {"startIndex": 11, "endIndex": 15, "tabId": "t.0"},
+                "textStyle": {
+                    "fontSize": {"magnitude": 10.0, "unit": "PT"},
+                    "weightedFontFamily": {"fontFamily": "Courier New"},
+                },
+                "fields": "fontSize,weightedFontFamily",
+            }
+        },
+        {
+            "createNamedRange": {
+                "name": "extradoc:codeblock",
+                "range": {"startIndex": 7, "endIndex": 13, "tabId": "t.0"},
+            }
+        },
+    ]
+
+
+def test_lower_semantic_diff_supports_paragraph_table_replacement() -> None:
+    base = reindex_document(
+        markdown_to_document(
+            {"Tab_1": "Alpha\n"},
+            document_id="replace-paragraph-with-table",
+            title="Replace Paragraph With Table",
+            tab_ids={"Tab_1": "t.0"},
+        )
+    )
+    desired = reindex_document(
+        markdown_to_document(
+            {"Tab_1": "```\ncode\n```\n"},
+            document_id="replace-paragraph-with-table",
+            title="Replace Paragraph With Table",
+            tab_ids={"Tab_1": "t.0"},
+        )
+    )
+
+    assert lower_semantic_diff(base, desired) == [
+        {
+            "deleteContentRange": {
+                "range": {"startIndex": 1, "endIndex": 6, "tabId": "t.0"}
+            }
+        },
+        {
+            "insertTable": {
+                "rows": 1,
+                "columns": 1,
+                "location": {"index": 1, "tabId": "t.0"},
+            }
+        },
+        {
+            "insertText": {
+                "location": {"index": 5, "tabId": "t.0"},
+                "text": "code",
+            }
+        },
+        {
+            "updateTextStyle": {
+                "range": {"startIndex": 5, "endIndex": 9, "tabId": "t.0"},
+                "textStyle": {
+                    "fontSize": {"magnitude": 10.0, "unit": "PT"},
+                    "weightedFontFamily": {"fontFamily": "Courier New"},
+                },
+                "fields": "fontSize,weightedFontFamily",
+            }
+        },
+        {
+            "createNamedRange": {
+                "name": "extradoc:codeblock",
+                "range": {"startIndex": 1, "endIndex": 11, "tabId": "t.0"},
+            }
+        },
+    ]
+
+
+def test_lower_semantic_diff_supports_table_paragraph_replacement() -> None:
+    base = reindex_document(
+        markdown_to_document(
+            {"Tab_1": "```\ncode\n```\n"},
+            document_id="replace-table-with-paragraph",
+            title="Replace Table With Paragraph",
+            tab_ids={"Tab_1": "t.0"},
+        )
+    )
+    desired = reindex_document(
+        markdown_to_document(
+            {"Tab_1": "Alpha\n"},
+            document_id="replace-table-with-paragraph",
+            title="Replace Table With Paragraph",
+            tab_ids={"Tab_1": "t.0"},
+        )
+    )
+
+    assert lower_semantic_diff(base, desired) == [
+        {
+            "deleteContentRange": {
+                "range": {"startIndex": 1, "endIndex": 11, "tabId": "t.0"}
+            }
+        },
+        {
+            "insertText": {
+                "location": {"index": 1, "tabId": "t.0"},
+                "text": "Alpha\n",
+            }
+        },
+        {"deleteNamedRange": {"name": "extradoc:codeblock"}},
+    ]
+
+
+def test_lower_semantic_diff_supports_paragraph_insert_before_table() -> None:
+    base = reindex_document(
+        markdown_to_document(
+            {"Tab_1": "```\ncode\n```\n"},
+            document_id="insert-paragraph-before-table",
+            title="Insert Paragraph Before Table",
+            tab_ids={"Tab_1": "t.0"},
+        )
+    )
+    desired = reindex_document(
+        markdown_to_document(
+            {"Tab_1": "Lead\n\n```\ncode\n```\n"},
+            document_id="insert-paragraph-before-table",
+            title="Insert Paragraph Before Table",
+            tab_ids={"Tab_1": "t.0"},
+        )
+    )
+
+    assert lower_semantic_diff(base, desired) == [
+        {
+            "insertText": {
+                "location": {"index": 1, "tabId": "t.0"},
+                "text": "Lead\n",
+            }
+        },
+        {"deleteNamedRange": {"name": "extradoc:codeblock"}},
+        {
+            "createNamedRange": {
+                "name": "extradoc:codeblock",
+                "range": {"startIndex": 6, "endIndex": 16, "tabId": "t.0"},
+            }
+        },
+    ]
+
+
+def test_lower_semantic_diff_supports_empty_body_mixed_sequence() -> None:
+    base = reindex_document(
+        markdown_to_document(
+            {"Tab_1": ""},
+            document_id="mixed-empty-body-insert",
+            title="Mixed Empty Body Insert",
+            tab_ids={"Tab_1": "t.0"},
+        )
+    )
+    desired = reindex_document(
+        markdown_to_document(
+            {
+                "Tab_1": (
+                    "# Mixed Body QA\n\n"
+                    "Lead paragraph.\n\n"
+                    "- first bullet\n"
+                    "- second bullet\n\n"
+                    "```python\n"
+                    "print('hi')\n"
+                    "```\n\n"
+                    "Closing paragraph.\n"
+                )
+            },
+            document_id="mixed-empty-body-insert",
+            title="Mixed Empty Body Insert",
+            tab_ids={"Tab_1": "t.0"},
+        )
+    )
+
+    requests = lower_semantic_diff(base, desired)
+
+    assert requests[0]["insertText"]["location"]["index"] == 1
+    assert requests[0]["insertText"]["text"].startswith("Closing paragraph.")
+    assert any("insertTable" in request for request in requests)
+    assert any("createParagraphBullets" in request for request in requests)
+    assert any("updateParagraphStyle" in request for request in requests)
+    create_named_range = next(
+        request["createNamedRange"] for request in requests if "createNamedRange" in request
+    )
+    assert create_named_range["name"] == "extradoc:codeblock:python"
+    assert create_named_range["range"]["startIndex"] < create_named_range["range"]["endIndex"]
+
     header_base, header_desired = _load_fixture_pair("header_text_replace")
     header_requests = lower_semantic_diff(header_base, header_desired)
     header_id = next(

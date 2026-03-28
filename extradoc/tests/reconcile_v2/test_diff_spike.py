@@ -12,10 +12,12 @@ from extradoc.reconcile_v2.diff import (
     AppendListItemsEdit,
     DeleteListBlockEdit,
     DeleteSectionEdit,
+    DeleteTableBlockEdit,
     DeleteTableColumnEdit,
     DeleteTableRowEdit,
     InsertListBlockEdit,
     InsertSectionEdit,
+    InsertTableBlockEdit,
     InsertTableColumnEdit,
     InsertTableRowEdit,
     MergeTableCellsEdit,
@@ -245,6 +247,176 @@ def test_mixed_section_list_delete_emits_list_block_delete() -> None:
     assert isinstance(edits[0], DeleteListBlockEdit)
     assert summarize_semantic_edits(edits) == [
         "tab t.0: section 0 delete list at block 1"
+    ]
+
+
+def test_replace_paragraph_with_list_emits_delete_then_list_insert() -> None:
+    base = reindex_document(
+        markdown_to_document(
+            {"Tab_1": "Alpha\n"},
+            document_id="replace-paragraph-with-list",
+            title="Replace Paragraph With List",
+            tab_ids={"Tab_1": "t.0"},
+        )
+    )
+    desired = reindex_document(
+        markdown_to_document(
+            {"Tab_1": "- one\n- two\n"},
+            document_id="replace-paragraph-with-list",
+            title="Replace Paragraph With List",
+            tab_ids={"Tab_1": "t.0"},
+        )
+    )
+
+    edits = diff_documents(base, desired)
+
+    assert [type(edit) for edit in edits] == [ReplaceParagraphSliceEdit, InsertListBlockEdit]
+
+
+def test_replace_list_with_paragraph_emits_delete_then_paragraph_insert() -> None:
+    base = reindex_document(
+        markdown_to_document(
+            {"Tab_1": "- one\n- two\n"},
+            document_id="replace-list-with-paragraph",
+            title="Replace List With Paragraph",
+            tab_ids={"Tab_1": "t.0"},
+        )
+    )
+    desired = reindex_document(
+        markdown_to_document(
+            {"Tab_1": "Alpha\n"},
+            document_id="replace-list-with-paragraph",
+            title="Replace List With Paragraph",
+            tab_ids={"Tab_1": "t.0"},
+        )
+    )
+
+    edits = diff_documents(base, desired)
+
+    assert [type(edit) for edit in edits] == [DeleteListBlockEdit, ReplaceParagraphSliceEdit]
+
+
+def test_insert_table_between_paragraphs_emits_table_insert_and_named_range() -> None:
+    base = reindex_document(
+        markdown_to_document(
+            {"Tab_1": "Alpha\n\nOmega\n"},
+            document_id="insert-table-between-paragraphs",
+            title="Insert Table Between Paragraphs",
+            tab_ids={"Tab_1": "t.0"},
+        )
+    )
+    desired = reindex_document(
+        markdown_to_document(
+            {"Tab_1": "Alpha\n\n```\ncode\n```\n\nOmega\n"},
+            document_id="insert-table-between-paragraphs",
+            title="Insert Table Between Paragraphs",
+            tab_ids={"Tab_1": "t.0"},
+        )
+    )
+
+    edits = diff_documents(base, desired)
+
+    assert [type(edit) for edit in edits] == [ReplaceNamedRangesEdit, InsertTableBlockEdit]
+
+
+def test_replace_paragraph_with_table_emits_delete_insert_and_named_range() -> None:
+    base = reindex_document(
+        markdown_to_document(
+            {"Tab_1": "Alpha\n"},
+            document_id="replace-paragraph-with-table",
+            title="Replace Paragraph With Table",
+            tab_ids={"Tab_1": "t.0"},
+        )
+    )
+    desired = reindex_document(
+        markdown_to_document(
+            {"Tab_1": "```\ncode\n```\n"},
+            document_id="replace-paragraph-with-table",
+            title="Replace Paragraph With Table",
+            tab_ids={"Tab_1": "t.0"},
+        )
+    )
+
+    edits = diff_documents(base, desired)
+
+    assert [type(edit) for edit in edits] == [
+        ReplaceNamedRangesEdit,
+        ReplaceParagraphSliceEdit,
+        InsertTableBlockEdit,
+    ]
+
+
+def test_replace_table_with_paragraph_emits_delete_insert_and_named_range_delete() -> None:
+    base = reindex_document(
+        markdown_to_document(
+            {"Tab_1": "```\ncode\n```\n"},
+            document_id="replace-table-with-paragraph",
+            title="Replace Table With Paragraph",
+            tab_ids={"Tab_1": "t.0"},
+        )
+    )
+    desired = reindex_document(
+        markdown_to_document(
+            {"Tab_1": "Alpha\n"},
+            document_id="replace-table-with-paragraph",
+            title="Replace Table With Paragraph",
+            tab_ids={"Tab_1": "t.0"},
+        )
+    )
+
+    edits = diff_documents(base, desired)
+
+    assert [type(edit) for edit in edits] == [
+        ReplaceNamedRangesEdit,
+        DeleteTableBlockEdit,
+        ReplaceParagraphSliceEdit,
+    ]
+
+
+def test_insert_mixed_body_sequence_into_empty_section_emits_reverse_order_plan() -> None:
+    base = reindex_document(
+        markdown_to_document(
+            {"Tab_1": ""},
+            document_id="mixed-empty-body-insert",
+            title="Mixed Empty Body Insert",
+            tab_ids={"Tab_1": "t.0"},
+        )
+    )
+    desired = reindex_document(
+        markdown_to_document(
+            {
+                "Tab_1": (
+                    "# Mixed Body QA\n\n"
+                    "Lead paragraph.\n\n"
+                    "- first bullet\n"
+                    "- second bullet\n\n"
+                    "```python\n"
+                    "print('hi')\n"
+                    "```\n\n"
+                    "Closing paragraph.\n"
+                )
+            },
+            document_id="mixed-empty-body-insert",
+            title="Mixed Empty Body Insert",
+            tab_ids={"Tab_1": "t.0"},
+        )
+    )
+
+    edits = diff_documents(base, desired)
+
+    assert [type(edit) for edit in edits] == [
+        ReplaceNamedRangesEdit,
+        ReplaceParagraphSliceEdit,
+        InsertTableBlockEdit,
+        InsertListBlockEdit,
+        ReplaceParagraphSliceEdit,
+    ]
+    assert summarize_semantic_edits(edits) == [
+        "tab t.0: named range extradoc:codeblock:python replace 0 range(s) with 1 range(s)",
+        "tab t.0: story t.0:body replace 0 paragraph block(s) at 0 with 1 paragraph(s)",
+        "tab t.0: section 0 insert table at block 0",
+        "tab t.0: section 0 insert BULLETED list at block 0 with 2 item(s)",
+        "tab t.0: story t.0:body replace 0 paragraph block(s) at 0 with 2 paragraph(s)",
     ]
 
 

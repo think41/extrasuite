@@ -911,7 +911,10 @@ Deliverable:
    paragraph role plus inline span styles through semantic edits and lowering
 8. support mixed-section slice edits where a list block is inserted or deleted
    beside existing paragraph content, instead of silently dropping the change
-9. remove the legacy reconciler path only after:
+9. lower same-anchor mixed body inserts as one grouped block-sequence operation
+   so bullet/style ranges are computed against final coordinates rather than an
+   intermediate shifted state
+10. remove the legacy reconciler path only after:
    1. markdown workflow parity is established
    2. XML workflow parity is established
    3. the feature matrix is explicit for any residual transport-broken cases
@@ -932,6 +935,8 @@ Tests:
    preserves heading markers and inline links
 9. `pull-md` -> insert list beside existing paragraph content -> `push-md`
    produces deterministic list creation requests under `v2`
+10. `pull-md` on an empty doc -> insert heading + paragraph + list + code block
+    -> `push-md` -> `pull-md` round-trips without style or bullet drift
 
 Commit value:
 

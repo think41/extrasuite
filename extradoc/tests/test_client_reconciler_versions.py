@@ -335,6 +335,98 @@ def test_diff_v2_detects_list_insert_beside_existing_paragraph(
     assert any(request.create_paragraph_bullets for request in requests)
 
 
+def test_diff_v2_detects_table_insert_beside_existing_paragraphs(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    folder = _setup_markdown_folder(
+        tmp_path,
+        doc_id="test-v2-table-insert",
+        md_content="Alpha\n\nOmega\n",
+    )
+    (folder / "Tab_1.md").write_text(
+        "Alpha\n\n```\ncode\n```\n\nOmega\n",
+        encoding="utf-8",
+    )
+
+    raw_doc = markdown_to_document(
+        {"Tab_1": "Alpha\n\nOmega\n"},
+        document_id="test-v2-table-insert",
+        title="Test",
+        tab_ids={"Tab_1": "t.0"},
+    )
+    raw_dir = folder / ".raw"
+    raw_dir.mkdir()
+    (raw_dir / "document.json").write_text(
+        reindex_document(raw_doc).model_dump_json(by_alias=True, exclude_none=True),
+        encoding="utf-8",
+    )
+
+    monkeypatch.delenv(RECONCILER_ENV_VAR, raising=False)
+
+    client = DocsClient.__new__(DocsClient)
+    result = client.diff(str(folder))
+
+    requests = [request for batch in result.batches for request in batch.requests]
+    assert result.reconciler_version == "v2"
+    assert any(request.insert_table for request in requests)
+    assert any(request.create_named_range for request in requests)
+
+
+def test_diff_v2_detects_empty_doc_mixed_body_insert(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    folder = _setup_markdown_folder(
+        tmp_path,
+        doc_id="test-v2-mixed-empty-insert",
+        md_content="",
+    )
+    (folder / "Tab_1.md").write_text(
+        (
+            "# Mixed Body QA\n\n"
+            "Lead paragraph.\n\n"
+            "- first bullet\n"
+            "- second bullet\n\n"
+            "```python\n"
+            "print('hi')\n"
+            "```\n\n"
+            "Closing paragraph.\n"
+        ),
+        encoding="utf-8",
+    )
+
+    raw_doc = markdown_to_document(
+        {"Tab_1": ""},
+        document_id="test-v2-mixed-empty-insert",
+        title="Test",
+        tab_ids={"Tab_1": "t.0"},
+    )
+    raw_dir = folder / ".raw"
+    raw_dir.mkdir()
+    (raw_dir / "document.json").write_text(
+        reindex_document(raw_doc).model_dump_json(by_alias=True, exclude_none=True),
+        encoding="utf-8",
+    )
+
+    monkeypatch.delenv(RECONCILER_ENV_VAR, raising=False)
+
+    client = DocsClient.__new__(DocsClient)
+    result = client.diff(str(folder))
+
+    requests = [request for batch in result.batches for request in batch.requests]
+    assert result.reconciler_version == "v2"
+    assert any(request.insert_table for request in requests)
+    assert any(request.create_paragraph_bullets for request in requests)
+    assert any(request.update_paragraph_style for request in requests)
+    assert any(
+        request.create_named_range
+        and request.create_named_range.range.start_index
+        < request.create_named_range.range.end_index
+        for request in requests
+    )
+
+
 @pytest.mark.asyncio
 async def test_push_uses_v1_batch_execution(
     monkeypatch: pytest.MonkeyPatch,

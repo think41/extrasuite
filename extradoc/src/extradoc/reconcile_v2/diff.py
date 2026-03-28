@@ -163,6 +163,21 @@ class DeleteListBlockEdit:
 
 
 @dataclass(slots=True)
+class InsertTableBlockEdit:
+    tab_id: str
+    section_index: int
+    block_index: int
+    table: TableIR
+
+
+@dataclass(slots=True)
+class DeleteTableBlockEdit:
+    tab_id: str
+    section_index: int
+    block_index: int
+
+
+@dataclass(slots=True)
 class ReplaceNamedRangesEdit:
     tab_id: str
     name: str
@@ -294,6 +309,8 @@ SemanticEdit = (
     | ReplaceParagraphSliceEdit
     | InsertListBlockEdit
     | DeleteListBlockEdit
+    | InsertTableBlockEdit
+    | DeleteTableBlockEdit
     | ReplaceNamedRangesEdit
     | InsertTableRowEdit
     | DeleteTableRowEdit
@@ -395,6 +412,14 @@ def summarize_semantic_edits(edits: Iterable[SemanticEdit]) -> list[str]:
         elif isinstance(edit, DeleteListBlockEdit):
             lines.append(
                 f"tab {edit.tab_id}: section {edit.section_index} delete list at block {edit.block_index}"
+            )
+        elif isinstance(edit, InsertTableBlockEdit):
+            lines.append(
+                f"tab {edit.tab_id}: section {edit.section_index} insert table at block {edit.block_index}"
+            )
+        elif isinstance(edit, DeleteTableBlockEdit):
+            lines.append(
+                f"tab {edit.tab_id}: section {edit.section_index} delete table at block {edit.block_index}"
             )
         elif isinstance(edit, ReplaceNamedRangesEdit):
             lines.append(
@@ -752,8 +777,8 @@ def _diff_section_blocks(
         base_blocks=base_section.blocks,
         desired_blocks=desired_section.blocks,
     )
-    if block_slice is not None:
-        edits.append(block_slice)
+    if block_slice:
+        edits.extend(block_slice)
         return edits
 
     for block_index, (base_block, desired_block) in enumerate(
@@ -831,11 +856,11 @@ def _diff_section_block_slice(
     section_index: int,
     base_blocks: list[BlockIR],
     desired_blocks: list[BlockIR],
-) -> SemanticEdit | None:
+) -> list[SemanticEdit]:
     base_fingerprints = _block_fingerprints(base_blocks)
     desired_fingerprints = _block_fingerprints(desired_blocks)
     if base_fingerprints == desired_fingerprints:
-        return None
+        return []
 
     prefix = 0
     while (
@@ -855,8 +880,8 @@ def _diff_section_block_slice(
 
     delete_stop = len(base_blocks) - suffix
     insert_stop = len(desired_blocks) - suffix
-    base_slice = base_blocks[prefix:delete_stop]
-    desired_slice = desired_blocks[prefix:insert_stop]
+    base_slice = _normalize_structural_block_slice(base_blocks[prefix:delete_stop])
+    desired_slice = _normalize_structural_block_slice(desired_blocks[prefix:insert_stop])
 
     if _all_paragraphs(base_slice) and _all_paragraphs(desired_slice):
         if (
@@ -864,41 +889,179 @@ def _diff_section_block_slice(
             and [_paragraph_text(block) for block in base_slice]
             == [_paragraph_text(block) for block in desired_slice]
         ):
-            return None
-        return ReplaceParagraphSliceEdit(
-            tab_id=tab_id,
-            story_id=f"{tab_id}:body",
-            section_index=section_index,
-            start_block_index=prefix,
-            delete_block_count=max(0, delete_stop - prefix),
-            inserted_paragraphs=tuple(
-                ParagraphFragment(paragraph=block) for block in desired_slice
-            ),
-        )
+            return []
+        return [
+            ReplaceParagraphSliceEdit(
+                tab_id=tab_id,
+                story_id=f"{tab_id}:body",
+                section_index=section_index,
+                start_block_index=prefix,
+                delete_block_count=max(0, delete_stop - prefix),
+                inserted_paragraphs=tuple(
+                    ParagraphFragment(paragraph=block) for block in desired_slice
+                ),
+            )
+        ]
 
-    if len(base_slice) == 0 and len(desired_slice) == 1 and isinstance(desired_slice[0], ListIR):
-        return InsertListBlockEdit(
+    if (
+        len(base_slice) == len(desired_slice) == 1
+        and (
+            (isinstance(base_slice[0], ListIR) and isinstance(desired_slice[0], ListIR))
+            or (isinstance(base_slice[0], TableIR) and isinstance(desired_slice[0], TableIR))
+        )
+    ):
+        return []
+
+    return _plan_mixed_body_block_slice(
+        tab_id=tab_id,
+        section_index=section_index,
+        block_index=prefix,
+        base_slice=base_slice,
+        desired_slice=desired_slice,
+    )
+
+
+def _normalize_structural_block_slice(blocks: list[BlockIR]) -> list[BlockIR]:
+    normalized: list[BlockIR] = []
+    for block in blocks:
+        if _is_empty_paragraph_block(block) and normalized and isinstance(normalized[-1], TableIR):
+            continue
+        normalized.append(block)
+    return normalized
+
+
+def _plan_mixed_body_block_slice(
+    *,
+    tab_id: str,
+    section_index: int,
+    block_index: int,
+    base_slice: list[BlockIR],
+    desired_slice: list[BlockIR],
+) -> list[SemanticEdit]:
+    edits: list[SemanticEdit] = []
+    edits.extend(
+        _delete_body_block_sequence(
             tab_id=tab_id,
             section_index=section_index,
-            block_index=prefix,
-            list_kind=desired_slice[0].spec.kind,
-            items=tuple(
-                ListItemFragment(
-                    level=item.level,
-                    text=_paragraph_text(item.paragraph),
+            start_block_index=block_index,
+            blocks=base_slice,
+        )
+    )
+    edits.extend(
+        _insert_body_block_sequence(
+            tab_id=tab_id,
+            section_index=section_index,
+            block_index=block_index,
+            blocks=desired_slice,
+        )
+    )
+    return edits
+
+
+def _delete_body_block_sequence(
+    *,
+    tab_id: str,
+    section_index: int,
+    start_block_index: int,
+    blocks: list[BlockIR],
+) -> list[SemanticEdit]:
+    edits: list[SemanticEdit] = []
+    index = len(blocks) - 1
+    while index >= 0:
+        block = blocks[index]
+        if isinstance(block, ParagraphIR):
+            start = index
+            while start > 0 and isinstance(blocks[start - 1], ParagraphIR):
+                start -= 1
+            edits.append(
+                ReplaceParagraphSliceEdit(
+                    tab_id=tab_id,
+                    story_id=f"{tab_id}:body",
+                    section_index=section_index,
+                    start_block_index=start_block_index + start,
+                    delete_block_count=index - start + 1,
+                    inserted_paragraphs=(),
                 )
-                for item in desired_slice[0].items
-            ),
-        )
+            )
+            index = start - 1
+            continue
+        if isinstance(block, ListIR):
+            edits.append(
+                DeleteListBlockEdit(
+                    tab_id=tab_id,
+                    section_index=section_index,
+                    block_index=start_block_index + index,
+                )
+            )
+        elif isinstance(block, TableIR):
+            edits.append(
+                DeleteTableBlockEdit(
+                    tab_id=tab_id,
+                    section_index=section_index,
+                    block_index=start_block_index + index,
+                )
+            )
+        index -= 1
+    return edits
 
-    if len(base_slice) == 1 and isinstance(base_slice[0], ListIR) and len(desired_slice) == 0:
-        return DeleteListBlockEdit(
-            tab_id=tab_id,
-            section_index=section_index,
-            block_index=prefix,
-        )
 
-    return None
+def _insert_body_block_sequence(
+    *,
+    tab_id: str,
+    section_index: int,
+    block_index: int,
+    blocks: list[BlockIR],
+) -> list[SemanticEdit]:
+    edits: list[SemanticEdit] = []
+    index = len(blocks) - 1
+    while index >= 0:
+        block = blocks[index]
+        if isinstance(block, ParagraphIR):
+            start = index
+            while start > 0 and isinstance(blocks[start - 1], ParagraphIR):
+                start -= 1
+            edits.append(
+                ReplaceParagraphSliceEdit(
+                    tab_id=tab_id,
+                    story_id=f"{tab_id}:body",
+                    section_index=section_index,
+                    start_block_index=block_index,
+                    delete_block_count=0,
+                    inserted_paragraphs=tuple(
+                        ParagraphFragment(paragraph=paragraph)
+                        for paragraph in blocks[start : index + 1]
+                    ),
+                )
+            )
+            index = start - 1
+            continue
+        if isinstance(block, ListIR):
+            edits.append(
+                InsertListBlockEdit(
+                    tab_id=tab_id,
+                    section_index=section_index,
+                    block_index=block_index,
+                    list_kind=block.spec.kind,
+                    items=tuple(
+                        ListItemFragment(
+                            level=item.level,
+                            text=_paragraph_text(item.paragraph),
+                        )
+                        for item in block.items
+                    ),
+                )
+            )
+        elif isinstance(block, TableIR):
+            edits.append(
+                InsertTableBlockEdit(
+                    tab_id=tab_id,
+                    section_index=section_index,
+                    block_index=block_index,
+                    table=block,
+                )
+            )
+        index -= 1
+    return edits
 
 
 def _diff_footnote_changes(
@@ -1534,6 +1697,10 @@ def _paragraph_text(paragraph: ParagraphIR) -> str:
     return "".join(
         inline.text for inline in paragraph.inlines if isinstance(inline, TextSpanIR)
     )
+
+
+def _is_empty_paragraph_block(block: BlockIR) -> bool:
+    return isinstance(block, ParagraphIR) and _paragraph_text(block) == ""
 
 
 def _footnote_insertion_offset(paragraph: ParagraphIR) -> int:
