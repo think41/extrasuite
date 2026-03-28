@@ -84,6 +84,7 @@ Each entry captures:
 | Tab hierarchy and child tabs | `tabs.md`; design goal | Reconciler must preserve tree topology, not flatten tabs into a list. |
 | Create a new parent tab, then a child tab beneath it, then populate both in one logical cycle | live `reconcile_v2` replay fixture | Deferred response placeholders must be able to route both parent creation and child creation without relying on any desired-side tab IDs. |
 | Create a new tab, then insert a body footnote reference and populate the new footnote segment in the same logical cycle | live `reconcile_v2` replay fixture | Producer-consumer batching for new tabs and for new footnotes must compose cleanly rather than requiring separate ad hoc execution paths. |
+| Create a new tab, then insert a body footnote reference, populate the footnote, and add a named range over text that appears after the new footnote marker | live `reconcile_v2` replay fixture | Future-side anchors must resolve against the post-producer body layout, not the pre-footnote text-only layout. |
 | Requests without `tabId` silently hit first tab | `tabs.md`; multiple historical tab bugs | Lowering must treat `tabId` as mandatory transport routing except where the API explicitly forbids it. |
 | Replay a second-tab edit onto a fresh live doc whose generated second-tab `tabId` differs from the captured fixture | live `reconcile_v2` replay fixture | Tab matching must use structural tab position/topology, not captured transport `tabId`, while lowering still emits the live base tab ID. |
 

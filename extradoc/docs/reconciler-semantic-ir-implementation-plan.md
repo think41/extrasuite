@@ -820,6 +820,8 @@ Tests:
 7. create tab + create table + populate cells in one logical cycle
 8. create tab + nested table creation inside a table cell with one more nested
    level
+9. create tab + create footnote + populate footnote + create named range over
+   post-footnote body text in one logical cycle
 
 Commit value:
 

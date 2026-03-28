@@ -260,20 +260,12 @@ def _plan_new_tab_batches(
         created_tab_refs[path] = deferred_tab_id
 
     population_batch: list[dict[str, Any]] = []
-    footnote_population_batch: list[dict[str, Any]] = []
+    deferred_followup_batch: list[dict[str, Any]] = []
     population_batch_index = len(batches)
     for path, tab in new_tabs:
         deferred_tab_id = created_tab_refs[path]
         population_requests = _lower_new_tab_body(tab, deferred_tab_id)
         population_batch.extend(population_requests)
-        if tab.resource_graph.footnotes and any(tab.annotations.named_ranges.values()):
-            raise UnsupportedSpikeError(
-                "reconcile_v2 multi-batch spike does not yet support creating a new tab "
-                "with both footnotes and named ranges in the same logical cycle"
-            )
-        population_batch.extend(
-            _lower_new_tab_named_ranges(tab, deferred_tab_id)
-        )
         footnote_requests, footnote_population_requests = _lower_new_tab_footnotes(
             tab,
             deferred_tab_id,
@@ -282,11 +274,20 @@ def _plan_new_tab_batches(
             request_index_offset=len(population_batch),
         )
         population_batch.extend(footnote_requests)
-        footnote_population_batch.extend(footnote_population_requests)
+        named_range_requests = _lower_new_tab_named_ranges(
+            tab,
+            deferred_tab_id,
+            anchors_include_footnote_refs=bool(footnote_requests),
+        )
+        if footnote_requests:
+            deferred_followup_batch.extend(footnote_population_requests)
+            deferred_followup_batch.extend(named_range_requests)
+        else:
+            population_batch.extend(named_range_requests)
     if population_batch:
         batches.append(population_batch)
-    if footnote_population_batch:
-        batches.append(footnote_population_batch)
+    if deferred_followup_batch:
+        batches.append(deferred_followup_batch)
     return batches
 
 
@@ -311,6 +312,8 @@ def _lower_new_tab_body(tab: TabIR, deferred_tab_id: dict[str, object]) -> list[
 def _lower_new_tab_named_ranges(
     tab: TabIR,
     deferred_tab_id: dict[str, object],
+    *,
+    anchors_include_footnote_refs: bool = False,
 ) -> list[dict[str, Any]]:
     if not any(tab.annotations.named_ranges.values()):
         return []
@@ -335,11 +338,13 @@ def _lower_new_tab_named_ranges(
                         blocks,
                         position=anchor.start,
                         story_start_index=1,
+                        include_footnote_refs=anchors_include_footnote_refs,
                     ),
                     end_index=_resolve_new_body_position(
                         blocks,
                         position=anchor.end,
                         story_start_index=1,
+                        include_footnote_refs=anchors_include_footnote_refs,
                     ),
                     tab_id=deferred_tab_id,
                 )
@@ -556,6 +561,7 @@ def _resolve_new_body_position(
     *,
     position: Any,
     story_start_index: int,
+    include_footnote_refs: bool = False,
 ) -> int:
     path = position.path
     if path.section_index not in (None, 0):
@@ -574,20 +580,69 @@ def _resolve_new_body_position(
                 "reconcile_v2 multi-batch spike supports new-tab named ranges only for "
                 "paragraph-only body stories"
             )
-        text = _paragraph_text(block)
-        text_start = current
-        text_end = current + utf16_len(text)
+        paragraph_start = current
         if block_index == path.block_index:
-            if path.text_offset_utf16 is not None:
-                return text_start + path.text_offset_utf16
+            inline_start = paragraph_start
+            for inline_index, inline in enumerate(block.inlines):
+                inline_length = _new_body_inline_transport_length(
+                    inline,
+                    include_footnote_refs=include_footnote_refs,
+                )
+                if path.inline_index == inline_index:
+                    if path.text_offset_utf16 is not None:
+                        return inline_start + path.text_offset_utf16
+                    if path.edge == PositionEdge.BEFORE:
+                        return inline_start
+                    if path.edge == PositionEdge.AFTER:
+                        return inline_start + inline_length
+                    return inline_start
+                inline_start += inline_length
+            paragraph_end = paragraph_start + _new_body_paragraph_transport_length(
+                block,
+                include_footnote_refs=include_footnote_refs,
+            )
             if path.edge == PositionEdge.BEFORE:
-                return text_start
+                return paragraph_start
             if path.edge == PositionEdge.AFTER:
-                return text_end
-            return text_start
-        current = text_end + 1
+                return paragraph_end
+            if path.text_offset_utf16 is not None:
+                return paragraph_start + path.text_offset_utf16
+            return paragraph_start
+        current = paragraph_start + _new_body_paragraph_transport_length(
+            block,
+            include_footnote_refs=include_footnote_refs,
+        ) + 1
     raise UnsupportedSpikeError(
         "reconcile_v2 could not resolve a new-tab named range anchor into the created story"
+    )
+
+
+def _new_body_paragraph_transport_length(
+    paragraph: ParagraphIR,
+    *,
+    include_footnote_refs: bool,
+) -> int:
+    return sum(
+        _new_body_inline_transport_length(
+            inline,
+            include_footnote_refs=include_footnote_refs,
+        )
+        for inline in paragraph.inlines
+    )
+
+
+def _new_body_inline_transport_length(
+    inline: object,
+    *,
+    include_footnote_refs: bool,
+) -> int:
+    if isinstance(inline, TextSpanIR):
+        return utf16_len(inline.text)
+    if isinstance(inline, FootnoteRefIR):
+        return 1 if include_footnote_refs else 0
+    raise UnsupportedSpikeError(
+        "reconcile_v2 multi-batch spike supports new-tab named ranges only for "
+        "plain text plus footnote-reference paragraphs"
     )
 
 

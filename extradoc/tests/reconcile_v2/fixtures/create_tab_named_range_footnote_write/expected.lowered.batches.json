@@ -1,0 +1,78 @@
+[
+  [
+    {
+      "addDocumentTab": {
+        "tabProperties": {
+          "title": "Footnote Range Tab",
+          "index": 1
+        }
+      }
+    }
+  ],
+  [
+    {
+      "insertText": {
+        "location": {
+          "index": 1,
+          "tabId": {
+            "placeholder": "new-tab-1",
+            "batch_index": 0,
+            "request_index": 0,
+            "response_path": "addDocumentTab.tabProperties.tabId"
+          }
+        },
+        "text": "alpha omega"
+      }
+    },
+    {
+      "createFootnote": {
+        "location": {
+          "index": 6,
+          "tabId": {
+            "placeholder": "new-tab-1",
+            "batch_index": 0,
+            "request_index": 0,
+            "response_path": "addDocumentTab.tabProperties.tabId"
+          }
+        }
+      }
+    }
+  ],
+  [
+    {
+      "insertText": {
+        "location": {
+          "tabId": {
+            "placeholder": "new-tab-1",
+            "batch_index": 0,
+            "request_index": 0,
+            "response_path": "addDocumentTab.tabProperties.tabId"
+          },
+          "segmentId": {
+            "placeholder": "new-tab-footnote-1-0",
+            "batch_index": 1,
+            "request_index": 1,
+            "response_path": "createFootnote.footnoteId"
+          },
+          "index": 0
+        },
+        "text": "Footnote Alpha"
+      }
+    },
+    {
+      "createNamedRange": {
+        "name": "spike:omega",
+        "range": {
+          "startIndex": 8,
+          "endIndex": 13,
+          "tabId": {
+            "placeholder": "new-tab-1",
+            "batch_index": 0,
+            "request_index": 0,
+            "response_path": "addDocumentTab.tabProperties.tabId"
+          }
+        }
+      }
+    }
+  ]
+]

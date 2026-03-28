@@ -261,6 +261,68 @@ def _build_create_tab_footnote_write_batches(_: dict) -> list[list[dict]]:
     ]
 
 
+def _build_create_tab_named_range_footnote_write_batches(_: dict) -> list[list[dict]]:
+    tab_ref = {
+        "placeholder": "new-tab-1",
+        "batch_index": 0,
+        "request_index": 0,
+        "response_path": "addDocumentTab.tabProperties.tabId",
+    }
+    footnote_ref = {
+        "placeholder": "new-tab-footnote-1-0",
+        "batch_index": 1,
+        "request_index": 1,
+        "response_path": "createFootnote.footnoteId",
+    }
+    return [
+        [
+            {
+                "addDocumentTab": {
+                    "tabProperties": {
+                        "title": "Footnote Range Tab",
+                        "index": 1,
+                    }
+                }
+            }
+        ],
+        [
+            {
+                "insertText": {
+                    "location": {"index": 1, "tabId": tab_ref},
+                    "text": "alpha omega",
+                }
+            },
+            {
+                "createFootnote": {
+                    "location": {"index": 6, "tabId": tab_ref}
+                }
+            },
+        ],
+        [
+            {
+                "insertText": {
+                    "location": {
+                        "tabId": tab_ref,
+                        "segmentId": footnote_ref,
+                        "index": 0,
+                    },
+                    "text": "Footnote Alpha",
+                }
+            },
+            {
+                "createNamedRange": {
+                    "name": "spike:omega",
+                    "range": {
+                        "startIndex": 8,
+                        "endIndex": 13,
+                        "tabId": tab_ref,
+                    },
+                }
+            },
+        ],
+    ]
+
+
 MARKDOWN_SCENARIOS = (
     MarkdownScenario(
         name="paragraph_to_heading",
@@ -444,6 +506,14 @@ REQUEST_SCENARIOS = (
         base_md="alpha first tab\n",
         desired_request_batches_builder=_build_create_tab_footnote_write_batches,
         expected_lowered_batches_builder=_build_create_tab_footnote_write_batches,
+    ),
+    RequestScenario(
+        name="create_tab_named_range_footnote_write",
+        title="Confidence Sprint Fixture Create Tab Named Range Footnote Write",
+        description="Create a new tab, insert body text, create a footnote reference, populate the footnote, and add a named range over post-footnote body content in one logical cycle.",
+        base_md="alpha first tab\n",
+        desired_request_batches_builder=_build_create_tab_named_range_footnote_write_batches,
+        expected_lowered_batches_builder=_build_create_tab_named_range_footnote_write_batches,
     ),
     RequestScenario(
         name="section_create_distinct_header",
