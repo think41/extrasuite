@@ -30,5 +30,6 @@ auto-updated, so subsequent pushes would generate incorrect diffs.
 ## Notes
 
 - push-md and push are interchangeable: both auto-detect format from index.xml
+- Set `EXTRADOC_RECONCILER=v2` to route push through the new semantic-IR reconciler
 - If push fails, use diff to inspect the generated batchUpdate requests
 - Table changes are the most common source of push failures (see troubleshooting.md)

@@ -12,7 +12,10 @@ from extradoc.client import (
     _get_reconciler_version,
 )
 from extradoc.comments._types import CommentOperations
+from extradoc.reconcile import reindex_document
 from extradoc.reconcile_v2.executor import BatchExecutionResult
+from extradoc.serde import serialize
+from extradoc.serde._from_markdown import markdown_to_document
 
 
 class _FakeTransport:
@@ -99,6 +102,42 @@ def _diff_result_v2() -> DiffResult:
     )
 
 
+def _setup_markdown_folder(
+    tmp_path: Path,
+    *,
+    doc_id: str,
+    md_content: str,
+) -> Path:
+    import zipfile
+
+    from extradoc.comments._types import DocumentWithComments, FileComments
+
+    folder = tmp_path / doc_id
+    folder.mkdir()
+
+    doc = markdown_to_document(
+        {"Tab_1": md_content},
+        document_id=doc_id,
+        title="Test",
+        tab_ids={"Tab_1": "t.0"},
+    )
+    bundle = DocumentWithComments(
+        document=doc,
+        comments=FileComments(file_id=doc_id),
+    )
+    serialize(bundle, folder, format="markdown")
+
+    pristine_dir = folder / ".pristine"
+    pristine_dir.mkdir()
+    zip_path = pristine_dir / "document.zip"
+    with zipfile.ZipFile(zip_path, "w") as zf:
+        for path in sorted(folder.rglob("*")):
+            if path.is_file() and ".pristine" not in str(path) and ".raw" not in str(path):
+                zf.write(path, path.relative_to(folder))
+
+    return folder
+
+
 def test_get_reconciler_version_defaults_to_v1(monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.delenv(RECONCILER_ENV_VAR, raising=False)
     assert _get_reconciler_version() == "v1"
@@ -117,6 +156,42 @@ def test_get_reconciler_version_rejects_invalid_value(
     monkeypatch.setenv(RECONCILER_ENV_VAR, "broken")
     with pytest.raises(ValueError, match=RECONCILER_ENV_VAR):
         _get_reconciler_version()
+
+
+def test_diff_can_use_reconcile_v2_via_env_var(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    base_md = "alpha paragraph\n"
+    edited_md = "# alpha paragraph\n"
+
+    folder = _setup_markdown_folder(
+        tmp_path,
+        doc_id="test-v2-diff",
+        md_content=base_md,
+    )
+    (folder / "Tab_1.md").write_text(edited_md, encoding="utf-8")
+
+    raw_doc = markdown_to_document(
+        {"Tab_1": base_md},
+        document_id="test-v2-diff",
+        title="Test",
+        tab_ids={"Tab_1": "t.0"},
+    )
+    raw_dir = folder / ".raw"
+    raw_dir.mkdir()
+    (raw_dir / "document.json").write_text(
+        reindex_document(raw_doc).model_dump_json(by_alias=True, exclude_none=True),
+        encoding="utf-8",
+    )
+
+    monkeypatch.setenv(RECONCILER_ENV_VAR, "v2")
+
+    client = DocsClient.__new__(DocsClient)
+    result = client.diff(str(folder))
+
+    assert result.reconciler_version == "v2"
+    assert result.batches
 
 
 @pytest.mark.asyncio
