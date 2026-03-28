@@ -322,11 +322,11 @@ class DocsClient:
 
 
 def _get_reconciler_version() -> str:
-    raw = os.getenv(RECONCILER_ENV_VAR, "v1").strip().lower()
-    if raw in {"", "v1", "legacy"}:
-        return "v1"
-    if raw in {"v2", "semantic-ir", "semantic_ir"}:
+    raw = os.getenv(RECONCILER_ENV_VAR, "v2").strip().lower()
+    if raw in {"", "v2", "semantic-ir", "semantic_ir"}:
         return "v2"
+    if raw in {"v1", "legacy"}:
+        return "v1"
     raise ValueError(
         f"Unsupported {RECONCILER_ENV_VAR} value {raw!r}; expected v1 or v2"
     )

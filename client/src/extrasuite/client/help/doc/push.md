@@ -29,7 +29,8 @@ auto-updated, so subsequent pushes would generate incorrect diffs.
 
 ## Notes
 
-- Set `EXTRADOC_RECONCILER=v2` to route push through the new semantic-IR reconciler
+- Push uses the semantic-IR reconciler by default
+- Set `EXTRADOC_RECONCILER=v1` to fall back to the legacy reconciler
 - If push fails with an XML validation error, fix document.xml first
 - If push produces unexpected results, use diff to inspect the generated requests
 - Table changes are the most common source of push failures (see troubleshooting.md)

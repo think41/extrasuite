@@ -138,9 +138,9 @@ def _setup_markdown_folder(
     return folder
 
 
-def test_get_reconciler_version_defaults_to_v1(monkeypatch: pytest.MonkeyPatch) -> None:
+def test_get_reconciler_version_defaults_to_v2(monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.delenv(RECONCILER_ENV_VAR, raising=False)
-    assert _get_reconciler_version() == "v1"
+    assert _get_reconciler_version() == "v2"
 
 
 def test_get_reconciler_version_accepts_v2_aliases(
@@ -158,7 +158,7 @@ def test_get_reconciler_version_rejects_invalid_value(
         _get_reconciler_version()
 
 
-def test_diff_can_use_reconcile_v2_via_env_var(
+def test_diff_uses_reconcile_v2_by_default(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
@@ -185,12 +185,48 @@ def test_diff_can_use_reconcile_v2_via_env_var(
         encoding="utf-8",
     )
 
-    monkeypatch.setenv(RECONCILER_ENV_VAR, "v2")
+    monkeypatch.delenv(RECONCILER_ENV_VAR, raising=False)
 
     client = DocsClient.__new__(DocsClient)
     result = client.diff(str(folder))
 
     assert result.reconciler_version == "v2"
+    assert result.batches
+
+
+def test_diff_can_use_reconcile_v1_via_env_var(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    base_md = "alpha paragraph\n"
+    edited_md = "# alpha paragraph\n"
+
+    folder = _setup_markdown_folder(
+        tmp_path,
+        doc_id="test-v1-diff",
+        md_content=base_md,
+    )
+    (folder / "Tab_1.md").write_text(edited_md, encoding="utf-8")
+
+    raw_doc = markdown_to_document(
+        {"Tab_1": base_md},
+        document_id="test-v1-diff",
+        title="Test",
+        tab_ids={"Tab_1": "t.0"},
+    )
+    raw_dir = folder / ".raw"
+    raw_dir.mkdir()
+    (raw_dir / "document.json").write_text(
+        reindex_document(raw_doc).model_dump_json(by_alias=True, exclude_none=True),
+        encoding="utf-8",
+    )
+
+    monkeypatch.setenv(RECONCILER_ENV_VAR, "v1")
+
+    client = DocsClient.__new__(DocsClient)
+    result = client.diff(str(folder))
+
+    assert result.reconciler_version == "v1"
     assert result.batches
 
 

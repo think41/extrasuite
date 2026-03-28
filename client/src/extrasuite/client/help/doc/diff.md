@@ -10,4 +10,5 @@ Debugging tool only. Shows the batchUpdate requests push would send, without mak
 
 ## Notes
 
-- Set `EXTRADOC_RECONCILER=v2` to preview requests from the new semantic-IR reconciler
+- Diff previews semantic-IR reconciler requests by default
+- Set `EXTRADOC_RECONCILER=v1` to inspect legacy reconciler output instead
