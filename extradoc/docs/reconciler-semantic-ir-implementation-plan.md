@@ -733,8 +733,7 @@ Tests:
    topology
 9. insert a middle row with inserted cell content and replay live
 10. insert a middle column with inserted cell content and replay live
-11. explicit unsupported error for combined row+column structural edit in one
-    table diff
+11. replay a simple combined row+column structural edit in one unmerged table
 12. explicit unsupported error for column structural edit through an existing
     horizontal merged region
 

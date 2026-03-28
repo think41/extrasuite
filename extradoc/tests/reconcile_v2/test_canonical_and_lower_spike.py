@@ -547,6 +547,9 @@ def test_lower_semantic_diff_for_current_fixture_slice() -> None:
                 }
             }
         ],
+        "table_row_and_column_insert": load_expected_lowered_requests(
+            "table_row_and_column_insert"
+        ),
     }
 
     for name, expected in cases.items():
@@ -580,16 +583,6 @@ def test_lower_semantic_diff_for_current_fixture_slice() -> None:
             }
         },
     ]
-
-
-def test_lower_semantic_diff_rejects_multiple_table_structural_edits() -> None:
-    base, desired = _load_fixture_pair("table_row_and_column_insert")
-
-    with pytest.raises(
-        UnsupportedSpikeError,
-        match="multiple structural edits in one table diff",
-    ):
-        lower_semantic_diff(base, desired)
 
 
 def test_lower_semantic_diff_rejects_column_insert_through_merged_region() -> None:

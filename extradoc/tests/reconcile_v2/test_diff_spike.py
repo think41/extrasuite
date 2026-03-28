@@ -549,14 +549,15 @@ def test_table_cell_style_background_fixture_emits_cell_style_update() -> None:
     ]
 
 
-def test_table_row_and_column_insert_fixture_is_explicitly_unsupported() -> None:
+def test_table_row_and_column_insert_fixture_emits_two_structural_edits() -> None:
     base, desired = _load_fixture_pair("table_row_and_column_insert")
 
-    with pytest.raises(
-        UnsupportedSpikeError,
-        match="multiple structural edits in one table diff",
-    ):
-        diff_documents(base, desired)
+    edits = diff_documents(base, desired)
+
+    assert summarize_semantic_edits(edits) == [
+        "tab t.0: section 0 table 0 insert row below 1",
+        "tab t.0: section 0 table 0 insert column right of 1",
+    ]
 
 
 def test_table_column_insert_through_merged_fixture_is_explicitly_unsupported() -> None:

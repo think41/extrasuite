@@ -43,7 +43,7 @@ Each entry captures:
 | Table fixture uses duplicate empty columns while asserting a specific insert/delete coordinate | this sprint's fixture redesign | Confidence fixtures must make competing structural operations semantically distinguishable, or request-shape assertions become meaningless. |
 | Insert a middle row or column and populate the newly inserted cells in the same semantic edit | live `reconcile_v2` table replay fixtures | Structural table edits must carry inserted-cell payload explicitly so lowering can populate the new cells from table-local anchors after the structural request. |
 | Pin table header rows when the raw transport only marks leading rows with `tableRowStyle.tableHeader` | live `reconcile_v2` table replay fixtures | Canonical parse must derive semantic pinned-header count from leading header rows instead of relying on one raw table-level field. |
-| Combined row+column structural edit in one table diff | live `reconcile_v2` unsupported fixture | If the spike cannot derive one deterministic structural plan, it must reject explicitly instead of attempting a partial table transform. |
+| Combined row+column structural edit in one simple unmerged table diff | live `reconcile_v2` replay fixture | The planner must be able to emit a deterministic pair of structural edits without collapsing matched cell alignment or reintroducing raw-index hacks. |
 | Column structural edit through an existing horizontal merged region | live `reconcile_v2` unsupported fixture | Column edits that cut through merged topology must be explicitly unsupported until merge-aware column planning is transport-proven. |
 
 ## Lists And Paragraph Styles
@@ -144,6 +144,6 @@ The first durable fixture set for `reconcile_v2` should include:
 18. Live transport fixtures for paragraph-role change, list append, list-kind change, section split, and section delete with replay verification against canonical IR.
 19. Live transport fixtures for text replace, paragraph split, table-cell text replace, existing-header text replace, and named-range add with replay verification against semantic diff convergence.
 20. Live transport fixtures for table row/column insert-delete, merge/unmerge, pinned-header rows, row style, column properties, cell style, and inserted-row/column content with replay verification against canonical IR.
-21. Explicit unsupported fixtures for combined row+column table structural edits and column edits through merged regions.
+21. Live transport fixture for a simple combined row+column table structural edit, plus an explicit unsupported fixture for column edits through merged regions.
 22. Live transport fixture for list relevel with exact lowered requests and replay verification.
 23. Live multi-tab text-edit fixture whose replay proves structural tab matching and explicit `tabId` routing.

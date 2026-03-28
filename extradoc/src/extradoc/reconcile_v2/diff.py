@@ -252,9 +252,9 @@ class ListItemFragment:
 
 @dataclass(frozen=True, slots=True)
 class TableComparisonPlan:
-    structural_edit: SemanticEdit | None
     row_pairs: tuple[tuple[int, int], ...]
     column_pairs: tuple[tuple[int, int], ...]
+    structural_edits: tuple[SemanticEdit, ...] = ()
     recurse_cells: bool = True
 
 
@@ -977,8 +977,7 @@ def _diff_section_tables(
                         )
                         if edit is not None:
                             edits.append(edit)
-            if plan.structural_edit is not None:
-                edits.append(plan.structural_edit)
+            edits.extend(plan.structural_edits)
     return edits
 
 
@@ -998,10 +997,6 @@ def _plan_table_comparison(
         raise UnsupportedSpikeError(
             "reconcile_v2 table spike supports at most one row or one column structural change"
         )
-    if desired_row_count != base_row_count and desired_column_count != base_column_count:
-        raise UnsupportedSpikeError(
-            "reconcile_v2 table spike does not yet support multiple structural edits in one table diff"
-        )
     if desired_column_count != base_column_count and (
         _table_has_horizontal_merges(base_table) or _table_has_horizontal_merges(desired_table)
     ):
@@ -1013,15 +1008,112 @@ def _plan_table_comparison(
         (index, index) for index in range(min(base_column_count, desired_column_count))
     )
 
+    row_plan = _single_row_table_edit(
+        tab_id=tab_id,
+        section_index=section_index,
+        block_index=block_index,
+        base_table=base_table,
+        desired_table=desired_table,
+        base_row_count=base_row_count,
+        desired_row_count=desired_row_count,
+    )
+    column_plan = _single_column_table_edit(
+        tab_id=tab_id,
+        section_index=section_index,
+        block_index=block_index,
+        base_table=base_table,
+        desired_table=desired_table,
+        base_column_count=base_column_count,
+        desired_column_count=desired_column_count,
+    )
+    if row_plan is not None or column_plan is not None:
+        structural_edits: list[SemanticEdit] = []
+        row_pairs = shared_row_pairs
+        column_pairs = shared_column_pairs
+        if row_plan is not None:
+            structural_edits.append(row_plan[0])
+            row_pairs = row_plan[1]
+        if column_plan is not None:
+            structural_edits.append(column_plan[0])
+            column_pairs = column_plan[1]
+        return TableComparisonPlan(
+            row_pairs=row_pairs,
+            column_pairs=column_pairs,
+            structural_edits=tuple(structural_edits),
+        )
+
+    merge_change = _table_merge_change(base_table, desired_table)
+    if (desired_row_count != base_row_count or desired_column_count != base_column_count) and merge_change is not None:
+        raise UnsupportedSpikeError(
+            "reconcile_v2 table spike does not yet support structural edits intersecting merge-topology changes"
+        )
+    if merge_change is None:
+        return TableComparisonPlan(
+            row_pairs=shared_row_pairs,
+            column_pairs=shared_column_pairs,
+        )
+
+    row_index, column_index, before_span, after_span = merge_change
+    if before_span == (1, 1) and after_span != (1, 1):
+        return TableComparisonPlan(
+            row_pairs=shared_row_pairs,
+            column_pairs=shared_column_pairs,
+            structural_edits=(
+                MergeTableCellsEdit(
+                    tab_id=tab_id,
+                    section_index=section_index,
+                    block_index=block_index,
+                    row_index=row_index,
+                    column_index=column_index,
+                    row_span=after_span[0],
+                    column_span=after_span[1],
+                ),
+            ),
+            recurse_cells=False,
+        )
+    if before_span != (1, 1) and after_span == (1, 1):
+        return TableComparisonPlan(
+            row_pairs=shared_row_pairs,
+            column_pairs=shared_column_pairs,
+            structural_edits=(
+                UnmergeTableCellsEdit(
+                    tab_id=tab_id,
+                    section_index=section_index,
+                    block_index=block_index,
+                    row_index=row_index,
+                    column_index=column_index,
+                    row_span=before_span[0],
+                    column_span=before_span[1],
+                ),
+            ),
+            recurse_cells=False,
+        )
+    return TableComparisonPlan(
+        row_pairs=shared_row_pairs,
+        column_pairs=shared_column_pairs,
+        recurse_cells=False,
+    )
+
+
+def _single_row_table_edit(
+    *,
+    tab_id: str,
+    section_index: int,
+    block_index: int,
+    base_table: TableIR,
+    desired_table: TableIR,
+    base_row_count: int,
+    desired_row_count: int,
+) -> tuple[SemanticEdit, tuple[tuple[int, int], ...]] | None:
     row_insert_index = _best_single_insertion_index(
         _table_row_signatures(base_table),
         _table_row_signatures(desired_table),
         similarity=_signature_tuple_similarity,
     )
-    if desired_row_count == base_row_count + 1 and desired_column_count == base_column_count and row_insert_index is not None:
+    if row_insert_index is not None:
         inserted_cells = _inserted_row_cell_texts(desired_table, row_insert_index)
-        return TableComparisonPlan(
-            structural_edit=InsertTableRowEdit(
+        return (
+            InsertTableRowEdit(
                 tab_id=tab_id,
                 section_index=section_index,
                 block_index=block_index,
@@ -1029,43 +1121,56 @@ def _plan_table_comparison(
                 insert_below=row_insert_index > 0,
                 inserted_cells=inserted_cells,
             ),
-            row_pairs=tuple(
+            tuple(
                 (index, index if index < row_insert_index else index + 1)
                 for index in range(base_row_count)
             ),
-            column_pairs=tuple((index, index) for index in range(base_column_count)),
         )
-
     row_delete_index = _best_single_deletion_index(
         _table_row_signatures(base_table),
         _table_row_signatures(desired_table),
         similarity=_signature_tuple_similarity,
     )
-    if base_row_count == desired_row_count + 1 and base_column_count == desired_column_count and row_delete_index is not None:
-        return TableComparisonPlan(
-            structural_edit=DeleteTableRowEdit(
+    if row_delete_index is not None:
+        return (
+            DeleteTableRowEdit(
                 tab_id=tab_id,
                 section_index=section_index,
                 block_index=block_index,
                 row_index=row_delete_index,
             ),
-            row_pairs=tuple(
+            tuple(
                 (index, index if index < row_delete_index else index - 1)
                 for index in range(base_row_count)
                 if index != row_delete_index
             ),
-            column_pairs=tuple((index, index) for index in range(desired_column_count)),
         )
+    if desired_row_count != base_row_count:
+        raise UnsupportedSpikeError(
+            "reconcile_v2 table spike could not align the row structural edit"
+        )
+    return None
 
+
+def _single_column_table_edit(
+    *,
+    tab_id: str,
+    section_index: int,
+    block_index: int,
+    base_table: TableIR,
+    desired_table: TableIR,
+    base_column_count: int,
+    desired_column_count: int,
+) -> tuple[SemanticEdit, tuple[tuple[int, int], ...]] | None:
     column_insert_index = _best_single_insertion_index(
         _table_column_signatures(base_table),
         _table_column_signatures(desired_table),
         similarity=_signature_tuple_similarity,
     )
-    if desired_column_count == base_column_count + 1 and desired_row_count == base_row_count and column_insert_index is not None:
+    if column_insert_index is not None:
         inserted_cells = _inserted_column_cell_texts(desired_table, column_insert_index)
-        return TableComparisonPlan(
-            structural_edit=InsertTableColumnEdit(
+        return (
+            InsertTableColumnEdit(
                 tab_id=tab_id,
                 section_index=section_index,
                 block_index=block_index,
@@ -1073,8 +1178,7 @@ def _plan_table_comparison(
                 insert_right=column_insert_index > 0,
                 inserted_cells=inserted_cells,
             ),
-            row_pairs=tuple((index, index) for index in range(base_row_count)),
-            column_pairs=tuple(
+            tuple(
                 (index, index if index < column_insert_index else index + 1)
                 for index in range(base_column_count)
             ),
@@ -1085,71 +1189,25 @@ def _plan_table_comparison(
         _table_column_signatures(desired_table),
         similarity=_signature_tuple_similarity,
     )
-    if base_column_count == desired_column_count + 1 and desired_row_count == base_row_count and column_delete_index is not None:
-        return TableComparisonPlan(
-            structural_edit=DeleteTableColumnEdit(
+    if column_delete_index is not None:
+        return (
+            DeleteTableColumnEdit(
                 tab_id=tab_id,
                 section_index=section_index,
                 block_index=block_index,
                 column_index=column_delete_index,
             ),
-            row_pairs=tuple((index, index) for index in range(base_row_count)),
-            column_pairs=tuple(
+            tuple(
                 (index, index if index < column_delete_index else index - 1)
                 for index in range(base_column_count)
                 if index != column_delete_index
             ),
         )
-
-    merge_change = _table_merge_change(base_table, desired_table)
-    if (desired_row_count != base_row_count or desired_column_count != base_column_count) and merge_change is not None:
+    if desired_column_count != base_column_count:
         raise UnsupportedSpikeError(
-            "reconcile_v2 table spike does not yet support structural edits intersecting merge-topology changes"
+            "reconcile_v2 table spike could not align the column structural edit"
         )
-    if merge_change is None:
-        return TableComparisonPlan(
-            structural_edit=None,
-            row_pairs=shared_row_pairs,
-            column_pairs=shared_column_pairs,
-        )
-
-    row_index, column_index, before_span, after_span = merge_change
-    if before_span == (1, 1) and after_span != (1, 1):
-        return TableComparisonPlan(
-            structural_edit=MergeTableCellsEdit(
-                tab_id=tab_id,
-                section_index=section_index,
-                block_index=block_index,
-                row_index=row_index,
-                column_index=column_index,
-                row_span=after_span[0],
-                column_span=after_span[1],
-            ),
-            row_pairs=shared_row_pairs,
-            column_pairs=shared_column_pairs,
-            recurse_cells=False,
-        )
-    if before_span != (1, 1) and after_span == (1, 1):
-        return TableComparisonPlan(
-            structural_edit=UnmergeTableCellsEdit(
-                tab_id=tab_id,
-                section_index=section_index,
-                block_index=block_index,
-                row_index=row_index,
-                column_index=column_index,
-                row_span=before_span[0],
-                column_span=before_span[1],
-            ),
-            row_pairs=shared_row_pairs,
-            column_pairs=shared_column_pairs,
-            recurse_cells=False,
-        )
-    return TableComparisonPlan(
-        structural_edit=None,
-        row_pairs=shared_row_pairs,
-        column_pairs=shared_column_pairs,
-        recurse_cells=False,
-    )
+    return None
 
 
 def _diff_table_properties(
