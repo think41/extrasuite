@@ -1,4 +1,4 @@
-"""Doc CLI commands: pull, diff, push, create."""
+"""Doc CLI commands: pull, diff, push, create, and raw transport helpers."""
 
 from __future__ import annotations
 
@@ -213,6 +213,80 @@ def cmd_doc_create(args: Any) -> None:
     print(f"Pulled to {dest_dir}/")
 
 
+def cmd_doc_create_empty(args: Any) -> None:
+    """Create a blank Google Doc without pulling it locally."""
+    _cmd_create("doc", args)
+
+
+def cmd_doc_download_raw(args: Any) -> None:
+    """Download raw Google Docs transport JSON for a document."""
+    from extradoc import GoogleDocsTransport
+
+    document_id = _parse_document_id(args.url)
+    reason = _get_reason(args, default="Downloading raw Google Doc JSON")
+    cred = _get_credential(
+        args,
+        command={"type": "doc.pull", "file_url": args.url, "file_name": ""},
+        reason=reason,
+    )
+
+    async def _run() -> tuple[dict[str, Any], list[dict[str, Any]]]:
+        transport = GoogleDocsTransport(cred.token)
+        try:
+            document = await transport.get_document(document_id)
+            comments = (
+                await transport.list_comments(document_id) if args.comments else []
+            )
+            return document.raw, comments
+        finally:
+            await transport.close()
+
+    raw_document, raw_comments = asyncio.run(_run())
+    doc_path, comments_path = _resolve_raw_output_paths(
+        document_id=document_id,
+        output=getattr(args, "output", None),
+        include_comments=args.comments,
+    )
+    _write_json(doc_path, raw_document)
+    print(f"Wrote {doc_path}")
+    if comments_path is not None:
+        _write_json(comments_path, {"comments": raw_comments})
+        print(f"Wrote {comments_path}")
+
+
 def cmd_doc_share(args: Any) -> None:
     """Share a Google Doc with trusted contacts."""
     _cmd_share("doc", args)
+
+
+def _resolve_raw_output_paths(
+    *,
+    document_id: str,
+    output: str | None,
+    include_comments: bool,
+) -> tuple[Path, Path | None]:
+    if output is None:
+        doc_path = Path(f"{document_id}.json")
+    else:
+        candidate = Path(output)
+        if candidate.suffix.lower() == ".json":
+            doc_path = candidate
+        else:
+            candidate.mkdir(parents=True, exist_ok=True)
+            doc_path = candidate / "document.json"
+
+    comments_path: Path | None = None
+    if include_comments:
+        if doc_path.name == "document.json":
+            comments_path = doc_path.with_name("comments.json")
+        else:
+            comments_path = doc_path.with_name(f"{doc_path.stem}.comments.json")
+    return doc_path, comments_path
+
+
+def _write_json(path: Path, payload: dict[str, Any]) -> None:
+    path.parent.mkdir(parents=True, exist_ok=True)
+    path.write_text(
+        json.dumps(payload, indent=2, ensure_ascii=False),
+        encoding="utf-8",
+    )

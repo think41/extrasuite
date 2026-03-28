@@ -14,8 +14,8 @@ Each entry captures:
 
 | Scenario | Historical Evidence | Required Invariant |
 |---|---|---|
-| Insert first visible content into an otherwise empty tab body | commit `dae13d5`; `extradoc/src/extradoc/reconcile/_generators.py` empty-doc handling | The opening section break is structural. Lowering must insert after it, never at index `0`. |
-| Delete or replace all visible content in a container | `extradoc/docs/googledocs/rules-behavior.md`; `DeleteContentRangeRequest.md` | Final container newline is a sentinel. No delete range may consume it. |
+| Insert first visible content into an otherwise empty tab body | commit `dae13d5`; `extradoc/src/extradoc/reconcile/_generators.py` empty-doc handling | The first body section is structural. Lowering must insert at the first legal position inside that section, never at index `0`. |
+| Delete or replace all visible content in a story | `extradoc/docs/googledocs/rules-behavior.md`; `DeleteContentRangeRequest.md` | Final story newline is a sentinel. No delete range may consume it. |
 | Delete across text containing emoji / surrogate pairs | `extradoc/tests/test_mock_api.py` UTF-16/surrogate tests; `extradoc/tests/test_reconcile.py` UTF-16 tests | Semantic text diff may operate on graphemes, but lowering must emit UTF-16 ranges that never split a surrogate pair. |
 | Insert before a table, TOC, or section break | commits `8daf08e`, `bc50de3`; `rules-behavior.md` | Structural block starts are not text insertion points. Lowering must target a legal carrier paragraph or `endOfSegmentLocation`, never the structural start marker. |
 | Delete newline immediately before a table / TOC / section break | `DeleteContentRangeRequest.md`; commit `bc50de3` | Protected separator newlines are structural barriers. Deletes must either remove the full structural element or stop before the barrier. |
@@ -26,11 +26,11 @@ Each entry captures:
 | Scenario | Historical Evidence | Required Invariant |
 |---|---|---|
 | Insert table between paragraphs | `InsertTableRequest.md`; commits `a426414`, `8daf08e` | `insertTable` transport side effects belong to lowering state, not semantic content. |
-| Insert table immediately after section break | commit `8daf08e`; serde `CLAUDE.md` | Lowering must account for the carrier paragraph/newline that the API requires even when semantic content starts with a table. |
+| Insert table at the start of a section | commit `8daf08e`; serde `CLAUDE.md` | Lowering must account for the carrier paragraph/newline that the API requires even when semantic section content starts with a table. |
 | Consecutive tables in the same gap | commit `8daf08e` | Lowering must simulate post-table separator state so adjacent table inserts stay index-stable. |
 | Paragraph immediately after inserted table becomes styled incorrectly | commit `09b684f` | Layout state must include the displaced post-table separator when computing style ranges after table insertion. |
 | Edit cell content while deleting columns or rows | commit `40c6741` | Table diff ordering must respect position dependencies: content edits at old coordinates before structural row/column shifts. |
-| Multi-paragraph or styled table cell content | commit `c003257`; `extradoc/tests/test_reconcile.py` Issue 15 | Table cells recurse through the same container engine as body/header/footer, not a flattened string path. |
+| Multi-paragraph or styled table cell content | commit `c003257`; `extradoc/tests/test_reconcile.py` Issue 15 | Table cells recurse through the same story engine as body/header/footer, not a flattened string path. |
 | Table cell style changes | commit `cc61533`; `extradoc/tests/test_reconcile.py` Issue 17 | Cell style is first-class semantic table state, not comparator noise. |
 | Distinct tables with similar topology align correctly | commit `39d6768` Issue 16; `extradoc/tests/test_reconcile.py` fingerprint tests | Table matching cannot collapse to a constant fingerprint or plain-text shortcut. |
 | Row/column edits adjacent to merged cells | design goal in `reconciler-semantic-ir-design.md` | Merge topology is part of semantic table state and must survive structural edits. |
@@ -45,6 +45,7 @@ Each entry captures:
 | Relevel list items | `extradoc/docs/googledocs/lists.md` | Releveling is a transport choreography (`deleteParagraphBullets` + tabs + recreate bullets) planned from semantic list levels. |
 | Full-paragraph style update in list context | `rules-behavior.md`; implementation plan Task 5 | Bullet styling side effects are part of planning, not post-hoc verifier suppression. |
 | Paragraph style inheritance bleed across inserted blocks | commit `365c44e`; `extradoc/src/extradoc/client.py` raw-base normalization comments | Effective style must be resolved separately from explicit style, and lowering must clear/restore explicit deltas deterministically. |
+| Heading-to-normal change with no visible formatting delta | long-running style normalization pain point | Semantic equality must include paragraph role/style intent, not only current effective rendering. |
 
 ## Non-Text Inline / Block Elements
 
@@ -52,7 +53,7 @@ Each entry captures:
 |---|---|---|
 | Insert page break in body | `client/EXTRADOC_BUGS.md` BUG-3; commit `eb29b63` | Page break is a semantic block lowered via `insertPageBreak`, not paragraph text. |
 | Insert page break in header/footer/footnote/table cell | `client/EXTRADOC_BUGS.md` BUG-3; `CreateFootnoteRequest.md` / `InsertSectionBreakRequest.md` capability rules | Container capabilities must reject unsupported block kinds before lowering. |
-| Insert footnote reference plus footnote content | `client/EXTRADOC_BUGS.md` BUG-2; `CreateFootnoteRequest.md` | Footnote refs are ID-producing inline edits: create reference first, then reconcile footnote container in a dependent batch. |
+| Insert footnote reference plus footnote content | `client/EXTRADOC_BUGS.md` BUG-2; `CreateFootnoteRequest.md` | Footnote refs are ID-producing inline edits: create reference first, then reconcile the footnote story in a dependent batch. |
 | Paragraph containing HR / inline object / footnote ref in an add gap | `extradoc/src/extradoc/reconcile/_generators.py` guards; `client/EXTRADOC_BUGS.md` | Non-text inline/block producers need first-class lowering or explicit unsupported rejection. They cannot fall through `insertText`. |
 
 ## Sections, Headers, Footers, And Tabs
@@ -60,7 +61,7 @@ Each entry captures:
 | Scenario | Historical Evidence | Required Invariant |
 |---|---|---|
 | Multi-section document with section-specific header/footer attachments | commit `39d6768` Issue 18; `CreateHeaderRequest.md` / `CreateFooterRequest.md` | Section attachment graph is semantic state and must be represented explicitly. |
-| Shared header/footer reused across sections | current design intent; multi-section tests | Shared segment identity must be separate from section attachment edges. |
+| Shared header/footer reused across sections | current design intent; multi-section tests | Shared story identity must be separate from section attachment edges. |
 | Default vs first-page vs even-page header/footer slots | `DocumentStyle.md` | Header/footer attachments are typed slots, not a single `header_ref` / `footer_ref`. |
 | New tab with header/footer in a document that already has tabs | `client/EXTRADOC_BUGS.md` BUG-8 | Lowering must consult a transport capability matrix and explicitly reject semantically-valid but API-broken transforms. |
 | Tab hierarchy and child tabs | `tabs.md`; design goal | Reconciler must preserve tree topology, not flatten tabs into a list. |
@@ -72,7 +73,8 @@ Each entry captures:
 |---|---|---|
 | Markdown special tables whose meaning is carried by `extradoc:*` named ranges | `extradoc/tests/test_serde_markdown.py`; `extradoc/src/extradoc/reconcile/_core.py` named-range diff | Named ranges are semantic anchored annotations, not transport debris to ignore. |
 | Content unchanged but named-range annotation changed | current named-range diff path | Semantic equality must include annotation anchors; verifier must not collapse these docs as equal. |
-| New tab with named ranges | `_core.py` comment about deferred complexity | Anchored annotations must lower after any ID-producing container/tab creation they depend on. |
+| Annotation anchor survives block split or merge | historical index-drift failures | Anchored annotations must follow logical positions in story space, not stale block IDs or UTF-16 offsets. |
+| New tab with named ranges | `_core.py` comment about deferred complexity | Anchored annotations must lower after any ID-producing story/tab creation they depend on. |
 | Raw API indices differ from mock-reindexed indices around special tables | commit `365c44e`; `client.py` raw-base comments | Lowering must derive coordinates from real base transport layout or an exact transport shadow, never from approximate reindexing. |
 
 ## Batching, Ordering, And Verification
@@ -88,10 +90,10 @@ Each entry captures:
 
 The first durable fixture set for `reconcile_v2` should include:
 
-1. Empty body plus first insert after opening section break.
+1. Empty body plus first insert into the first section.
 2. Emoji edits at document start and end.
 3. Insert paragraph before table with concurrent deletes.
-4. Insert table between paragraphs, after section break, and adjacent to another table.
+4. Insert table between paragraphs, at section start, and adjacent to another table.
 5. Paragraph-after-table style application.
 6. List creation, continuation, split, merge, and end-of-segment append.
 7. Page break add in body and rejection in non-body containers.
@@ -99,8 +101,9 @@ The first durable fixture set for `reconcile_v2` should include:
 9. Multi-paragraph styled cell reconciliation plus row/column deletion.
 10. Merge/unmerge topology next to row/column edits.
 11. TOC read-only plus insert-before-TOC.
-12. Multi-section header/footer attachment graph including shared segments and typed slots.
+12. Multi-section header/footer attachment graph including shared stories and typed slots.
 13. Explicit rejection for new-tab header/footer creation on an existing multi-tab doc.
-14. Named-range-only diffs and named-range shifts after content edits.
-15. Raw-transport fixture where mock reindexing would have produced different table coordinates.
-16. Multi-batch revision handoff using returned `requiredRevisionId`.
+14. Named-range-only diffs and named-range shifts after content edits or block splits.
+15. Heading-role-only change with no effective formatting delta.
+16. Raw-transport fixture where mock reindexing would have produced different table coordinates.
+17. Multi-batch revision handoff using returned `requiredRevisionId`.

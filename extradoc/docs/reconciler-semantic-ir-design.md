@@ -91,11 +91,36 @@ These constraints are not edge cases. They define the legal edit surface.
 6. Shared header/footer semantics must be explicit in the IR.
 7. All raw indices must be produced by a dedicated layout/lowering phase.
 8. Style environment and anchored annotations must be modeled explicitly.
-9. Effective style and explicit style must be modeled separately.
+9. Semantic role, effective style, and explicit style must be modeled
+   separately.
 10. Lowering must simulate transport side effects in a shadow layout state.
 11. Transport canonicalization must be explicit and deterministic.
 12. Semantic capability and transport capability must be modeled separately.
 13. Request generation must be deterministic.
+
+## Architectural Review
+
+The proposal in this document is directionally correct, but after reviewing it
+against the Google Docs transport model and the known historical bug classes,
+four conceptual leaks still remain:
+
+1. The body is still too flat. Modeling `SectionBreakIR` as an ordinary body
+   block makes sections look like content instead of partitions over content.
+   That keeps the mandatory opening section break, section topology, and
+   attachment ownership in the same edit space as paragraphs and tables.
+2. Shared content still has split identity. Body content, header/footer
+   attachments, footnotes, and side catalogs are represented in different
+   shapes, so the model still has to translate between "where content lives"
+   and "how content is referenced".
+3. Annotations and lowering use different coordinate systems. `AnchorPointIR`
+   and `LegalPoint` are solving the same logical-position problem at different
+   layers, which risks another class of index/anchor drift bugs.
+4. Style comparison is still too rendering-centric. Effective style is
+   necessary, but it is not sufficient semantic identity by itself. Paragraph
+   role and style intent must survive comparison even when two paragraphs happen
+   to render the same today.
+
+The revised design below addresses those leaks directly.
 
 ## Canonical Semantic IR
 
@@ -111,58 +136,75 @@ TabIR
   index: int
   icon_emoji: str | None
   style_env: StyleEnvironmentIR
-  body: ContainerIR(kind=BODY)
-  segment_catalog: SegmentCatalogIR
+  body: BodyStoryIR
+  resource_graph: ResourceGraphIR
   annotations: AnnotationCatalogIR
   child_tabs: list[TabIR]
 
-SectionBreakIR
+BodyStoryIR
+  id: StoryId
+  kind: BODY
+  sections: list[SectionIR]
+
+SectionIR
   id: SectionId
   style: SectionStyleIR
-  header_refs: dict[HeaderFooterSlotIR, SegmentRef]
-  footer_refs: dict[HeaderFooterSlotIR, SegmentRef]
+  attachments: SectionAttachmentsIR
+  blocks: list[BlockIR]
+  eos: EndOfStorySentinel
+
+SectionAttachmentsIR
+  headers: dict[HeaderFooterSlotIR, StoryRef]
+  footers: dict[HeaderFooterSlotIR, StoryRef]
 
 StyleEnvironmentIR
   document_style: DocumentStyleIR
   named_styles: NamedStylesIR
   list_catalog: ListCatalogIR
 
-SegmentCatalogIR
-  headers: dict[SegmentRef, ContainerIR(kind=HEADER)]
-  footers: dict[SegmentRef, ContainerIR(kind=FOOTER)]
-  footnotes: dict[SegmentRef, ContainerIR(kind=FOOTNOTE)]
-
-AnnotationCatalogIR
-  named_ranges: dict[AnnotationName, list[AnchorRangeIR]]
+ResourceGraphIR
+  headers: dict[StoryRef, StoryIR(kind=HEADER)]
+  footers: dict[StoryRef, StoryIR(kind=FOOTER)]
+  footnotes: dict[StoryRef, StoryIR(kind=FOOTNOTE)]
   inline_objects: dict[ObjectRef, OpaqueObjectIR]
   positioned_objects: dict[ObjectRef, OpaqueObjectIR]
 
-AnchorRangeIR
-  start: AnchorPointIR
-  end: AnchorPointIR
-
-AnchorPointIR
-  block_id: BlockId
-  inline_path: InlinePath | None
-  edge: BEFORE | AFTER | INTERIOR
-
-ContainerIR
-  id: ContainerId
-  kind: BODY | HEADER | FOOTER | FOOTNOTE | TABLE_CELL
+StoryIR
+  id: StoryId
+  kind: HEADER | FOOTER | FOOTNOTE | TABLE_CELL
   capabilities: CapabilitySet
   blocks: list[BlockIR]
-  eos: EndOfContainerSentinel
+  eos: EndOfStorySentinel
+
+AnnotationCatalogIR
+  named_ranges: dict[AnnotationName, list[AnchorRangeIR]]
+
+AnchorRangeIR
+  start: PositionIR
+  end: PositionIR
+
+PositionIR
+  story_id: StoryId
+  path: FlowPathIR
+
+FlowPathIR
+  section_index: int | None
+  block_index: int
+  node_path: tuple[int, ...]
+  inline_path: InlinePath | None
+  text_offset_utf16: int | None
+  edge: BEFORE | AFTER | INTERIOR
 
 BlockIR =
     ParagraphIR
   | ListIR
   | TableIR
   | PageBreakIR
-  | SectionBreakIR
   | TocIR
   | OpaqueBlockIR
 
 ParagraphIR
+  role: ParagraphRoleIR
   explicit_style: ParagraphStyleIR
   inlines: list[InlineIR]
   eop: EndOfParagraphSentinel
@@ -191,7 +233,7 @@ CellIR
   row_span: int
   column_span: int
   merge_head: CellCoord | None
-  content: ContainerIR(kind=TABLE_CELL)
+  content: StoryIR(kind=TABLE_CELL)
 
 InlineIR =
     TextSpanIR(text, explicit_text_style)
@@ -203,31 +245,67 @@ InlineIR =
 
 ## Critical Modeling Decisions
 
-### 1. End-of-container newline is structural
+### 1. Body is a sectioned story, not a flat block list
 
-Every Google Docs container has a terminal newline requirement. That newline is
-not modeled as text. It is modeled as `ContainerIR.eos`.
+Google Docs represents section breaks as structural elements, but semantically a
+section is not "a block among other blocks". It is a partition of the body with
+its own style and attachment state.
+
+Consequences:
+
+1. The mandatory opening section break is no longer modeled as an editable body
+   block.
+2. Body diff first aligns `SectionIR` partitions, then diffs blocks within each
+   matched section.
+3. Section topology and section-local attachment ownership stop competing with
+   paragraph/table diff logic.
+
+### 2. Shared and ID-bearing content lives in a story graph
+
+Headers, footers, footnotes, and table-cell content are all stories. Some are
+shared and externally referenced, some are owned by a parent node, but they all
+have the same recursive content shape.
+
+Consequences:
+
+1. Header/footer attachment edges point to stories; they do not duplicate
+   content.
+2. Footnote references and header/footer attachments use the same identity model
+   for dependent content.
+3. The design stops translating between "segment semantics" and "container
+   semantics" as separate worlds.
+
+### 3. Logical positions are first-class and shared by annotations and lowering
+
+`PositionIR` is the one semantic coordinate system. Anchored annotations, diff
+edits, and lowering all start from the same story-local logical position model.
+
+Consequences:
+
+1. Annotation diff does not depend on a second anchor model.
+2. Lowering derives `LegalPoint` from `PositionIR` rather than inventing a
+   parallel coordinate scheme.
+3. The position model can represent anchors inside nested block-local
+   structures such as list items, not only top-level paragraphs.
+4. Block splits, merges, and table insertions no longer require separate
+   "annotation remap" logic.
+
+### 4. End-of-story and end-of-paragraph newlines are structural
+
+Every story has a terminal newline requirement. That newline is not modeled as
+text. It is modeled as `StoryIR.eos` or `SectionIR.eos`. Each paragraph owns an
+implicit `eop`.
 
 Consequences:
 
 1. Semantic diff can never "delete the last newline".
-2. Any attempt to remove all visible content from a container still leaves a
-   valid empty container.
-3. The lowering phase owns emission of legal delete ranges around `eos`.
+2. Text diff is independent of paragraph termination mechanics.
+3. Paragraph deletion and paragraph merge are structural edits, not string
+   edits.
 
 This directly eliminates the largest current whack-a-mole class.
 
-### 2. End-of-paragraph newline is structural
-
-Each `ParagraphIR` owns an implicit `eop`. Text spans exclude it.
-
-Consequences:
-
-1. Text diff is independent of paragraph termination mechanics.
-2. Paragraph deletion and paragraph merge are structural edits, not string edits.
-3. Lowering can protect `eop` when required by Docs request legality.
-
-### 3. List is a first-class block
+### 5. List is a first-class block
 
 Lists are represented as `ListIR`, not as `Paragraph.bullet`.
 
@@ -247,9 +325,9 @@ Consequences:
 2. Tests can verify list continuity semantically.
 3. Reconcile no longer relies on transport `listId` preservation.
 
-### 4. Table cell is a container
+### 6. Table cell is a story
 
-`TableCell` content is represented by `ContainerIR(kind=TABLE_CELL)`.
+`TableCell` content is represented by `StoryIR(kind=TABLE_CELL)`.
 
 Consequences:
 
@@ -259,18 +337,7 @@ Consequences:
 3. Page-break legality in cells becomes a simple capability failure instead of a
    `segment_id is None` accident.
 
-### 5. Section state lives on the section-break block that owns it
-
-Header/footer semantics are represented on `SectionBreakIR` itself, not in a
-duplicate section side table.
-
-Consequences:
-
-1. The mandatory initial section break is explicit semantic state in the body.
-2. Attachment edits stay anchored to the body position that owns them.
-3. Lowering can resolve `sectionBreakLocation` from the same node it edits.
-
-### 6. Header/footer slots are typed
+### 7. Header/footer slots are typed attachment edges
 
 Headers and footers are not singular edges. Google Docs distinguishes
 `DEFAULT`, `FIRST_PAGE`, and `EVEN_PAGE` slots, with document-style flags that
@@ -283,20 +350,21 @@ Consequences:
 3. Lowering can reject only the transport paths that are unsupported, rather
    than rejecting all non-default header/footer edits.
 
-### 7. Style environment is explicit
+### 8. Style semantics have three layers
 
 Effective style depends on more than the paragraph or text run itself. It
-depends on the tab's named styles, document style, and list-level properties.
+depends on paragraph role, the tab's named styles, document style, and
+list-level properties.
 
 Consequences:
 
-1. Effective-style comparison has an explicit source of truth.
-2. Named-style and list-style inheritance do not leak in from transport-only
-   code paths.
+1. The IR can preserve paragraph role or semantic style intent even when two
+   nodes happen to render identically.
+2. Effective-style comparison has an explicit source of truth.
 3. Raw-vs-derived style differences can be normalized semantically instead of
    with verifier hacks.
 
-### 8. Anchored annotations are first-class semantic state
+### 9. Anchored annotations are first-class semantic state
 
 Per-tab named ranges are not incidental transport metadata in this project.
 They carry semantics for markdown special elements and other higher-level
@@ -309,7 +377,7 @@ Consequences:
    stale UTF-16 offsets.
 3. Annotation lowering can be ordered after the content mutations it depends on.
 
-### 9. Lowering uses a transport shadow state
+### 10. Lowering uses a transport shadow state
 
 Lowering does not merely resolve static coordinates. It simulates the transport
 side effects of the requests it emits.
@@ -321,7 +389,7 @@ Consequences:
 3. later requests in the same batch are resolved against the post-effect
    transport state, not against guessed arithmetic.
 
-### 10. Structural separators are typed, not uniformly protected
+### 11. Structural separators are typed, not uniformly protected
 
 `eos` is always protected. `eop` is structural, but some paragraph separators
 are consumable during an explicit paragraph merge/delete, while others are
@@ -333,7 +401,7 @@ Consequences:
 2. "newline before table/TOC/section break" becomes a first-class boundary rule
 3. legal paragraph merges can be expressed without reintroducing newline hacks
 
-### 11. Transport canonicalization is a phase, not an accident
+### 12. Transport canonicalization is a phase, not an accident
 
 The parser must normalize transport representations that are semantically
 equivalent but structurally different in raw JSON.
@@ -378,10 +446,10 @@ TABLE_CELL
   section_break: no
 ```
 
-Legality is always checked against `ContainerIR.capabilities`, never inferred
+Legality is always checked against story/container capabilities, never inferred
 from transport fields.
 
-Container capabilities describe semantic container-local legality. They are not
+Story/container capabilities describe semantic locality. They are not
 an unconditional promise that every transport request shape is currently usable.
 
 ## Transport Capability Matrix
@@ -408,15 +476,16 @@ The parser converts `Document` transport JSON into canonical `DocumentIR`.
 ### Canonicalization rules
 
 1. Remove paragraph-final newline from text runs and store it as `eop`.
-2. Remove container-final newline from visible content and store it as `eos`.
+2. Remove story-final newline from visible content and store it as `eos`.
 3. Lift pure page-break paragraphs into `PageBreakIR`.
 4. Lift contiguous bullet paragraphs into `ListIR`.
 5. Derive `ListSpecIR` from effective list properties, not raw `listId`.
 6. Represent tab hierarchy explicitly rather than flattening tabs.
-7. Represent sections explicitly and attach header/footer references to them.
+7. Represent the body as ordered `SectionIR` partitions rather than a flat block
+   list containing section-break nodes.
 8. Preserve typed header/footer slot attachments (`DEFAULT`, `FIRST_PAGE`,
    `EVEN_PAGE`) rather than collapsing them to a single ref.
-9. Preserve shared segment references if multiple sections resolve to the same
+9. Preserve shared story references if multiple sections resolve to the same
    header/footer object.
 10. Parse per-tab style environment explicitly (`documentStyle`, `namedStyles`,
     lists).
@@ -425,7 +494,7 @@ The parser converts `Document` transport JSON into canonical `DocumentIR`.
 13. Canonicalize equivalent text-run segmentations into the same inline stream.
 14. Normalize soft line break encodings and other transport-only text variants.
 15. Normalize absent-versus-synthetic trailing paragraphs into the same
-    container-end representation.
+    story-end representation.
 16. Normalize API-defaulted style fields and numeric precision before diff.
 
 ### Canonical list spec
@@ -468,25 +537,29 @@ run-local.
 
 The IR therefore distinguishes:
 
-1. `explicit_style`: properties materially stored on the node/span
-2. `effective_style`: properties observed after inheritance from enclosing
-   paragraph, named style, list context, and editor defaults
+1. `semantic_role`: paragraph/list role that remains meaningful even if the
+   current effective formatting matches something else
+2. `explicit_style`: properties materially stored on the node/span
+3. `effective_style`: properties observed after inheritance from paragraph
+   role, named style, list context, and editor defaults
 
 Rules:
 
-1. parse transport into explicit styles only
+1. parse transport into semantic role plus explicit styles
 2. compute effective styles through a style resolver
 3. resolve effective style against `TabIR.style_env`
-4. perform semantic comparison on effective style
+4. perform semantic comparison on semantic role plus effective style
 5. emit only explicit deltas during lowering
 
 Consequences:
 
-1. removing bold from a span that inherits bold from a paragraph is modeled
+1. changing a heading to normal text still produces a semantic diff even if the
+   rendered style currently matches
+2. removing bold from a span that inherits bold from a paragraph is modeled
    correctly
-2. span-level formatting near paragraph boundaries does not accidentally bleed
+3. span-level formatting near paragraph boundaries does not accidentally bleed
    through inherited defaults
-3. list bullets affected by full-paragraph text-style updates are handled
+4. list bullets affected by full-paragraph text-style updates are handled
    intentionally rather than as an API surprise
 
 ## List Transport Semantics
@@ -551,18 +624,21 @@ indices.
 ```text
 Edit =
     UpdateTabProperties
-  | EditContainer(container_id, ContainerEditProgram)
-  | UpdateSectionAttachment(section_id, header/footer slot changes)
+  | EditBody(tab_id, BodyEditProgram)
+  | EditStory(story_id, StoryEditProgram)
+  | EditSection(section_id, SectionEditProgram)
   | EditAnchoredAnnotations(tab_id, AnnotationEditProgram)
   | CreateResource(resource_kind, resource_ref)
   | DeleteResource(resource_kind, resource_ref)
   | UnsupportedEdit(reason)
 ```
 
-### Container diff
+### Story and section diff
 
-`diff_container(base, desired)` uses typed weighted sequence alignment over
-`blocks`.
+`diff_body(base, desired)` first aligns `SectionIR` partitions. For matched
+sections it then calls `diff_story_blocks(base_section.blocks, desired_section.blocks)`.
+Non-body stories (`HEADER`, `FOOTER`, `FOOTNOTE`, `TABLE_CELL`) skip the
+section layer and diff their block lists directly.
 
 Two blocks may match only if they have compatible types:
 
@@ -570,9 +646,8 @@ Two blocks may match only if they have compatible types:
 2. list <-> list
 3. table <-> table
 4. pagebreak <-> pagebreak
-5. sectionbreak <-> sectionbreak
-6. toc <-> toc
-7. opaque <-> exact-same opaque payload
+5. toc <-> toc
+6. opaque <-> exact-same opaque payload
 
 This replaces transport-text LCS and avoids destructive block replacement for
 small text edits.
@@ -606,7 +681,7 @@ Rule:
 Consequence:
 
 1. footnote support fits the same semantic/lowering split as new tabs and new
-   shared segments.
+   shared stories.
 
 ### List diff
 
@@ -632,7 +707,7 @@ request.
 5. Align rows by weighted row similarity.
 6. Align columns by weighted column similarity.
 7. Emit structural row/column edits semantically.
-8. Recurse into each cell container.
+8. Recurse into each cell story.
 9. Diff cell style independently.
 
 Tables are recursive structural containers, not string fingerprints.
@@ -666,14 +741,14 @@ Lowering rule:
 3. property updates must be emitted with deterministic field masks and stable
    request ordering
 
-### Section and shared segment diff
+### Section and shared story diff
 
-Section breaks are first-class body blocks whose payload includes section style
-and attachment state.
+Sections are first-class body partitions. Their boundaries are structural, but
+their styles and attachment state are part of the semantic document model.
 
-1. Diff body blocks including `SectionBreakIR`.
-2. Diff section style and attachment fields on matched `SectionBreakIR` nodes.
-3. Diff referenced header/footer contents exactly once per shared segment.
+1. Diff body sections before diffing body blocks.
+2. Diff section style and attachment fields on matched `SectionIR` nodes.
+3. Diff referenced header/footer contents exactly once per shared story.
 4. Reject attachment creates whose target topology is not transport-verified.
 
 This eliminates the need for document-wide "find first default header/footer"
@@ -698,7 +773,7 @@ Lowering is the only phase allowed to know:
 
 ### Layout state
 
-`LayoutState` is maintained per `(tab_id, segment_id or container_ref)` and
+`LayoutState` is maintained per `(tab_id, story_id)` and
 tracks legal insertion/deletion coordinates plus the transport side effects of
 already-planned requests.
 
@@ -706,9 +781,9 @@ It resolves:
 
 1. paragraph interior positions
 2. paragraph end positions
-3. container end positions
+3. story end positions
 4. table start positions
-5. section break attachment locations
+5. section attachment locations
 6. annotation anchor positions in the current shadow transport state
 
 No code outside the lowering layer may construct raw Docs indices.
@@ -717,15 +792,15 @@ No code outside the lowering layer may construct raw Docs indices.
 
 ```text
 LegalPoint =
-    ParagraphInterior(paragraph_id, utf16_offset)
-  | ParagraphBoundaryBefore(block_id)
-  | ParagraphBoundaryAfter(block_id)
-  | EndOfContainer(container_id)
+    InteriorText(position, utf16_offset)
+  | BlockBoundary(position)
+  | EndOfStory(story_id)
   | TableStart(table_id)
-  | SectionBreakLocation(section_id)
+  | SectionStart(section_id)
 ```
 
-`LegalPoint` resolves to Docs coordinates only through `LayoutState`.
+`LegalPoint` is a lowering refinement of `PositionIR`, not a second semantic
+coordinate system. It resolves to Docs coordinates only through `LayoutState`.
 
 ### Lowering invariants
 
@@ -752,11 +827,11 @@ Rules:
 
 1. text-style, paragraph-style, and bullet ranges must exclude `eop` / `eos`
 2. delete ranges may cross paragraph boundaries only when planned as structural
-   boundary deletes that preserve container legality
+   boundary deletes that preserve story/container legality
 3. delete ranges must exclude `eos` and any protected structural separator
 4. text-style and paragraph-style ranges must never extend past the final legal
-   content position of the target container
-5. bullet ranges must never terminate at or beyond the terminal container
+   content position of the target story
+5. bullet ranges must never terminate at or beyond the terminal story
    sentinel
 6. when the Docs API extends a style range to include adjacent newlines, the
    planner must cap the requested range so that the effective applied range
@@ -821,7 +896,7 @@ Lowering must model `EndOfSegmentLocation` as a first-class target.
 Rules:
 
 1. `EndOfSegmentLocation` resolves to the position immediately before the
-   terminal container sentinel.
+   terminal story sentinel.
 2. It is valid for body, header, footer, and footnote operations whose Docs
    request form supports end-of-segment insertion.
 3. Lowering should prefer `endOfSegmentLocation` over synthetic carrier
@@ -842,7 +917,7 @@ consumed only by an explicit structural paragraph/list delete or merge.
 
 The planner computes the maximal legal delete range under Docs constraints:
 
-1. never delete final container sentinel
+1. never delete final story sentinel
 2. never delete only the separator protecting a table, TOC, or section break
 3. consume interior paragraph separators only when the semantic edit is an
    explicit paragraph merge/delete
@@ -868,13 +943,13 @@ Lowering no longer guesses based on paragraph-local bullet fields alone.
 Section attachment edits are lowered using:
 
 1. `CreateHeaderRequest` / `CreateFooterRequest` with
-   typed slots and `sectionBreakLocation` when a new section-scoped segment must
+   typed slots and `sectionBreakLocation` when a new section-scoped story must
    be created
-2. content edits against the referenced segment
+2. content edits against the referenced story
 3. `UpdateSectionStyleRequest` only when actual section style fields must be
    updated
 
-Shared segments are created once and referenced by the section graph in the
+Shared stories are created once and referenced by the section graph in the
 semantic model.
 
 Lowering must also consult a transport capability matrix. If the live Docs API
@@ -914,7 +989,7 @@ Batch layer 0:
 Batch layer N+1:
 
 1. requests that reference IDs created in batch N
-2. dependent container edits that populate newly created resources
+2. dependent story edits that populate newly created resources
 
 All other operations stay in the earliest dependency-valid batch.
 
@@ -988,11 +1063,11 @@ Raw transport JSON equality is never the oracle.
 
 ### Mandatory test classes
 
-1. container-end edits in body/header/footer/footnote/table-cell
+1. story-end edits in body/header/footer/footnote/table-cell
 2. append/prepend/split/merge of list runs
 3. paragraph text mutation without block replacement
 4. mixed paragraph/table/pagebreak insertion around structural boundaries
-5. safe header/footer creation, shared-segment reuse, and explicit rejection of
+5. safe header/footer creation, shared-story reuse, and explicit rejection of
    unsupported attachment routes
 6. recursive cell content edits
 7. footnote reference creation plus dependent footnote content population
@@ -1014,7 +1089,7 @@ It must not ignore:
 
 1. `lists`
 2. list continuity
-3. shared segment attachment graph
+3. shared story attachment graph
 4. typed header/footer slot attachments
 5. anchored annotations such as named ranges
 6. supported sidecar resource catalogs

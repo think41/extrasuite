@@ -129,19 +129,23 @@ Commit value:
 2. establishes the one true test pattern
 3. establishes the allowed lowering-legality micro-test shape
 
-### Task 1: Define IR types and capability model
+### Task 1: Define story/section IR, unified positions, and capability model
 
 Deliverable:
 
 1. implement immutable IR data structures in `ir.py`
-2. encode container kinds and capabilities
-3. encode implicit `eop` / `eos` sentinels as structural invariants
+2. encode body as ordered sections plus recursive stories for non-body content
+3. introduce one logical `PositionIR` model shared by annotations and lowering,
+   including nested block-local paths and explicit text offsets
+4. encode story/container kinds and capabilities
+5. encode implicit `eop` / `eos` sentinels as structural invariants
 
 Tests:
 
-1. body container advertises page-break capability
-2. table-cell container rejects page-break capability
+1. body story advertises page-break capability
+2. table-cell story rejects page-break capability
 3. paragraph text excludes paragraph terminator by construction
+4. body starts as a single empty section even before multi-section parsing lands
 
 Commit value:
 
@@ -154,16 +158,19 @@ Deliverable:
 
 1. extend `TabIR` with explicit style environment (`documentStyle`,
    `namedStyles`, list catalog)
-2. represent section attachment state on `SectionBreakIR` rather than in a
-   duplicate side table
-3. represent section attachments as typed header/footer slot maps rather than
+2. represent section attachment state on `SectionIR` rather than in a duplicate
+   side table
+3. represent shared headers/footers/footnotes as explicit story resources
+4. represent section attachments as typed header/footer slot maps rather than
    singular refs
-4. add anchored annotation IR for named ranges
-5. parse inline/positioned object catalogs as explicit opaque semantic state
+5. add anchored annotation IR for named ranges using the new logical position
+   model
+6. parse inline/positioned object catalogs as explicit opaque semantic state
 
 Tests:
 
-1. opening section break parses as a first-class block carrying section state
+1. first section parses as semantic section state rather than as an editable
+   body block
 2. first-page and even-page header/footer slots parse distinctly
 3. named-range anchors survive canonicalization independent of server IDs
 4. effective-style resolution has explicit access to tab style environment
@@ -177,7 +184,7 @@ Commit value:
 
 Deliverable:
 
-1. classify container-final sentinels, paragraph separators, and
+1. classify story-final sentinels, paragraph separators, and
    structure-protecting separators explicitly in `ir.py`
 2. encode which separators are always protected versus consumable by explicit
    paragraph merge/delete edits
@@ -202,10 +209,10 @@ Deliverable:
 1. parse Docs `Document` into `DocumentIR`
 2. support:
    1. tabs
-   2. body with mandatory opening `SectionBreakIR`
+   2. body as a single-section story
    3. plain paragraphs
 3. strip paragraph-final newline into `eop`
-4. strip container-final newline into `eos`
+4. strip story-final newline into `eos`
 
 Tests:
 
@@ -225,7 +232,7 @@ Deliverable:
 
 1. normalize equivalent text-run segmentations into one inline representation
 2. normalize soft line break encodings used by the raw API
-3. normalize missing-versus-synthetic trailing paragraphs into one container-end
+3. normalize missing-versus-synthetic trailing paragraphs into one story-end
    model
 4. normalize API-defaulted style fields and numeric precision that should not
    trigger semantic diffs
@@ -372,19 +379,22 @@ Commit value:
 
 Deliverable:
 
-1. parse explicit text/paragraph styles into IR
+1. parse paragraph semantic role plus explicit text/paragraph styles into IR
 2. implement effective-style resolver
-3. diff on effective style while lowering only explicit deltas
+3. diff on semantic role plus effective style while lowering only explicit
+   deltas
 
 Tests:
 
 1. inherited bold vs explicit bold compare correctly
 2. clearing a style to inherit from parent emits the correct field mask
 3. span formatting next to differently styled text does not bleed
+4. heading-to-normal change still diffs even if effective formatting matches
 
 Commit value:
 
-1. closes the main architectural hole around formatting bleed
+1. closes the main architectural hole around formatting bleed and false
+   equality from role erasure
 
 ### Task 5B: Implement anchored annotation diff and lowering
 
@@ -547,7 +557,7 @@ Tests:
 
 1. insert table at body end
 2. insert table between paragraphs
-3. insert table as first body block after section break
+3. insert table as first body block in the first section
 
 Commit value:
 
@@ -634,7 +644,7 @@ Commit value:
 
 1. matches and exceeds the current reconciler's effective table support surface
 
-### Task 14: Parse sections, style environment, and the shared header/footer graph
+### Task 14: Parse sections, style environment, and the shared header/footer story graph
 
 Deliverable:
 
@@ -642,14 +652,14 @@ Deliverable:
 2. parse section styles
 3. parse tab style environment (`documentStyle`, `namedStyles`, lists)
 4. represent typed header/footer slot attachments explicitly
-5. represent shared header/footer segments explicitly
+5. represent shared header/footer stories explicitly
 6. parse tab hierarchy (`parentTabId`, child tabs)
 
 Tests:
 
 1. single-section doc with default header
 2. multi-section doc with distinct typed slot attachments
-3. two sections sharing same header segment
+3. two sections sharing same header story
 4. first-page/even-page slot parsing is preserved
 5. nested tab tree parses with stable parent/child relationships
 
@@ -658,14 +668,14 @@ Commit value:
 1. replaces top-level header/footer hacks with explicit graph structure
 2. prevents accidental flattening of tab topology
 
-### Task 15: Lower header/footer creation, attachment, and content edits
+### Task 15: Lower header/footer creation, attachment, and story content edits
 
 Deliverable:
 
-1. create shared header/footer segments
+1. create shared header/footer stories
 2. attach them to sections using `CreateHeaderRequest` /
-   `CreateFooterRequest.sectionBreakLocation` when creating new scoped segments
-3. lower content edits against the shared segment container
+   `CreateFooterRequest.sectionBreakLocation` when creating new scoped stories
+3. lower content edits against the shared story
 4. support multi-batch deferred IDs
 5. support typed slots (`DEFAULT`, `FIRST_PAGE`, `EVEN_PAGE`)
 6. enforce an explicit transport capability matrix for attachment operations
@@ -685,7 +695,7 @@ Tests:
 
 Commit value:
 
-1. completes shared segment support
+1. completes shared-story support
 
 ### Task 16: Implement tab diff and tab creation
 
@@ -747,8 +757,8 @@ Tests:
 4. docs with different typed header/footer slot attachments -> not equal
 5. docs with different named-range anchors -> not equal
 6. docs with different merge topology -> not equal
-7. docs with different effective style but same explicit style source graph ->
-   equal or not equal according to effective styling, not transport runs
+7. docs with different semantic role but same current effective formatting ->
+   not equal
 8. docs with different supported object catalogs -> not equal
 
 Commit value:

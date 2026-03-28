@@ -47,7 +47,9 @@ from extrasuite.client.cli.contacts import (
 )
 from extrasuite.client.cli.doc import (
     cmd_doc_create,
+    cmd_doc_create_empty,
     cmd_doc_diff,
+    cmd_doc_download_raw,
     cmd_doc_pull,
     cmd_doc_pull_md,
     cmd_doc_push,
@@ -125,6 +127,8 @@ _COMMANDS: dict[tuple[str, str | None], Callable[..., Any]] = {
     ("docs", "push"): cmd_doc_push,
     ("docs", "push-md"): cmd_doc_push_md,
     ("docs", "create"): cmd_doc_create,
+    ("docs", "create-empty"): cmd_doc_create_empty,
+    ("docs", "download-raw"): cmd_doc_download_raw,
     ("docs", "share"): cmd_doc_share,
     ("gmail", "compose"): cmd_gmail_compose,
     ("gmail", "edit-draft"): cmd_gmail_edit_draft,
@@ -674,6 +678,35 @@ def build_parser() -> Any:
         "--copy-from",
         metavar="URL",
         help="Copy an existing file instead of creating blank (must be a file extrasuite created)",
+    )
+
+    sp = doc_sub.add_parser(
+        "create-empty",
+        help="Create a blank document without pulling it",
+        parents=[auth_parent],
+        formatter_class=argparse.RawDescriptionHelpFormatter,
+    )
+    sp.add_argument("title", help="Document title")
+
+    sp = doc_sub.add_parser(
+        "download-raw",
+        help="Download raw Docs API JSON",
+        parents=[auth_parent],
+        formatter_class=argparse.RawDescriptionHelpFormatter,
+    )
+    sp.add_argument("url", help="Document URL or ID")
+    sp.add_argument(
+        "output",
+        nargs="?",
+        help=(
+            "Output file or directory. Defaults to <document_id>.json. "
+            "If a directory is provided, writes document.json inside it."
+        ),
+    )
+    sp.add_argument(
+        "--comments",
+        action="store_true",
+        help="Also download Drive comments as a separate JSON file",
     )
 
     sp = doc_sub.add_parser(
