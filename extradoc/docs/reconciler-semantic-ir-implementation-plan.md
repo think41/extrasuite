@@ -190,6 +190,10 @@ Deliverable:
 3. ensure semantic edits carry enough payload to lower deterministically
    (`section split` anchor, appended list fragment, etc.)
 4. add canonical signatures/equivalence helpers for replay verification
+5. add one story-local layout resolver that can target body, existing
+   header/footer stories, table cells, and annotation anchors
+6. match shared stories through logical attachment slots rather than transport
+   story IDs
 
 Tests:
 
@@ -198,11 +202,14 @@ Tests:
 2. section-delete desired fixture canonicalizes equal to the pre-split base
 3. semantic diff output for append/split edits contains the fragment or anchor
    needed by lowering
+4. header-content diff still matches when replaying onto a fresh document whose
+   `headerId` differs from the captured fixture
 
 Commit value:
 
 1. separates transport cleanup from semantic algorithms
 2. proves the semantic edit layer is rich enough for lowering
+3. prevents shared-story replay from collapsing back into transport-ID hacks
 
 ### Task 1B: Encode protected versus consumable structural separators
 

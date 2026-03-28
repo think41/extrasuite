@@ -85,11 +85,86 @@ def test_lower_semantic_diff_for_current_fixture_slice() -> None:
                 }
             },
         ],
+        "text_replace": [
+            {
+                "deleteContentRange": {
+                    "range": {"startIndex": 1, "endIndex": 16, "tabId": "t.0"}
+                }
+            },
+            {
+                "insertText": {
+                    "location": {"index": 1, "tabId": "t.0"},
+                    "text": "omega paragraph",
+                }
+            },
+        ],
+        "paragraph_split": [
+            {
+                "deleteContentRange": {
+                    "range": {"startIndex": 1, "endIndex": 11, "tabId": "t.0"}
+                }
+            },
+            {
+                "insertText": {
+                    "location": {"index": 1, "tabId": "t.0"},
+                    "text": "alpha\nbeta",
+                }
+            },
+        ],
+        "table_cell_text_replace": [
+            {
+                "deleteContentRange": {
+                    "range": {"startIndex": 11, "endIndex": 16, "tabId": "t.0"}
+                }
+            },
+            {
+                "insertText": {
+                    "location": {"index": 11, "tabId": "t.0"},
+                    "text": "omega",
+                }
+            },
+        ],
+        "named_range_add": [
+            {
+                "createNamedRange": {
+                    "name": "spike:bravo",
+                    "range": {"startIndex": 7, "endIndex": 12, "tabId": "t.0"},
+                }
+            }
+        ],
     }
 
     for name, expected in cases.items():
         base, desired = _load_fixture_pair(name)
         assert lower_semantic_diff(base, desired) == expected
+
+    header_base, header_desired = _load_fixture_pair("header_text_replace")
+    header_requests = lower_semantic_diff(header_base, header_desired)
+    header_id = next(
+        iter(header_base.tabs[0].document_tab.headers)
+    )
+    assert header_requests == [
+        {
+            "deleteContentRange": {
+                "range": {
+                    "startIndex": 0,
+                    "endIndex": 12,
+                    "tabId": "t.0",
+                    "segmentId": header_id,
+                }
+            }
+        },
+        {
+            "insertText": {
+                "location": {
+                    "index": 0,
+                    "tabId": "t.0",
+                    "segmentId": header_id,
+                },
+                "text": "Header Omega",
+            }
+        },
+    ]
 
 
 def _load_fixture_pair(name: str) -> tuple[Document, Document]:

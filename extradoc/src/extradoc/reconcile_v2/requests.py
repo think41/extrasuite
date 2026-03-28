@@ -28,15 +28,12 @@ def make_update_paragraph_role(
 
 
 def make_insert_text(*, index: int, tab_id: str, text: str) -> dict[str, Any]:
-    return {
-        "insertText": {
-            "location": {
-                "index": index,
-                "tabId": tab_id,
-            },
-            "text": text,
-        }
-    }
+    return make_insert_text_in_story(
+        index=index,
+        tab_id=tab_id,
+        segment_id=None,
+        text=text,
+    )
 
 
 def make_create_paragraph_bullets(
@@ -97,16 +94,63 @@ def make_delete_content_range(
     start_index: int,
     end_index: int,
     tab_id: str,
+    segment_id: str | None = None,
 ) -> dict[str, Any]:
+    range_: dict[str, Any] = {
+        "startIndex": start_index,
+        "endIndex": end_index,
+        "tabId": tab_id,
+    }
+    if segment_id:
+        range_["segmentId"] = segment_id
     return {
         "deleteContentRange": {
-            "range": {
-                "startIndex": start_index,
-                "endIndex": end_index,
-                "tabId": tab_id,
-            }
+            "range": range_,
         }
     }
+
+
+def make_insert_text_in_story(
+    *,
+    index: int,
+    tab_id: str,
+    segment_id: str | None,
+    text: str,
+) -> dict[str, Any]:
+    location: dict[str, Any] = {
+        "index": index,
+        "tabId": tab_id,
+    }
+    if segment_id:
+        location["segmentId"] = segment_id
+    return {
+        "insertText": {
+            "location": location,
+            "text": text,
+        }
+    }
+
+
+def make_delete_named_range(*, name: str) -> dict[str, Any]:
+    return {"deleteNamedRange": {"name": name}}
+
+
+def make_create_named_range(
+    *,
+    name: str,
+    start_index: int,
+    end_index: int,
+    tab_id: str,
+    segment_id: str | None = None,
+) -> dict[str, Any]:
+    range_: dict[str, Any] = {
+        "startIndex": start_index,
+        "endIndex": end_index,
+        "tabId": tab_id,
+    }
+    if segment_id:
+        range_["segmentId"] = segment_id
+    return {"createNamedRange": {"name": name, "range": range_}}
 
 
 def bullet_preset_for_kind(kind: str) -> str:

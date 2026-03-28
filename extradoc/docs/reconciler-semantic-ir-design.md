@@ -274,6 +274,10 @@ Consequences:
    for dependent content.
 3. The design stops translating between "segment semantics" and "container
    semantics" as separate worlds.
+4. Shared stories must be matched through logical attachment edges or owned
+   container position, not by transport `headerId` / `footerId` / `footnoteId`.
+   Live replay against fresh Docs files proved that transport IDs are not
+   stable semantic matching keys.
 
 ### 3. Logical positions are first-class and shared by annotations and lowering
 
@@ -289,6 +293,29 @@ Consequences:
    structures such as list items, not only top-level paragraphs.
 4. Block splits, merges, and table insertions no longer require separate
    "annotation remap" logic.
+5. One story-local layout resolver can serve body paragraphs, shared
+   header/footer stories, table-cell stories, and anchored annotations.
+
+### 3A. Story-local paragraph slice replacement is the right text primitive
+
+The confidence sprint now has live fixture replays for:
+
+1. plain paragraph text replacement
+2. paragraph split via inserted paragraph boundary
+3. table-cell text replacement
+4. existing-header text replacement
+
+All four reduce cleanly to the same semantic operation:
+
+```text
+replace paragraph slice in story S
+  at block range [i, j)
+  with paragraph fragments P*
+```
+
+This is the elegant design direction. Body text, header text, and table-cell
+text are not separate feature families. They are story-local text edits over
+the same recursive model.
 
 ### 4. End-of-story and end-of-paragraph newlines are structural
 
@@ -833,6 +860,8 @@ coordinate system. It resolves to Docs coordinates only through `LayoutState`.
     target section ordinal.
 11. Content-producing edits carry the semantic fragment they introduce or
     transform, not only counts or transport hints.
+12. Shared-story edits are matched by logical attachment edges, not transport
+    story IDs.
 
 ## Range legality
 

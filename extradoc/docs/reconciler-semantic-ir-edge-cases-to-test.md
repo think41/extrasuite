@@ -65,6 +65,7 @@ Each entry captures:
 | Multi-section document with section-specific header/footer attachments | commit `39d6768` Issue 18; `CreateHeaderRequest.md` / `CreateFooterRequest.md` | Section attachment graph is semantic state and must be represented explicitly. |
 | Insert a section boundary where lowering needs the exact split anchor | live confidence-sprint fixtures | Section-boundary semantic edits must carry the split location in semantic block space, not only the resulting section count. |
 | Shared header/footer reused across sections | current design intent; multi-section tests | Shared story identity must be separate from section attachment edges. |
+| Existing header content replayed onto a fresh document with a different `headerId` | live confidence-sprint replay | Shared-story matching must use logical attachment slots, not captured transport IDs. |
 | Default vs first-page vs even-page header/footer slots | `DocumentStyle.md` | Header/footer attachments are typed slots, not a single `header_ref` / `footer_ref`. |
 | New tab with header/footer in a document that already has tabs | `client/EXTRADOC_BUGS.md` BUG-8 | Lowering must consult a transport capability matrix and explicitly reject semantically-valid but API-broken transforms. |
 | Tab hierarchy and child tabs | `tabs.md`; design goal | Reconciler must preserve tree topology, not flatten tabs into a list. |
@@ -76,6 +77,7 @@ Each entry captures:
 |---|---|---|
 | Markdown special tables whose meaning is carried by `extradoc:*` named ranges | `extradoc/tests/test_serde_markdown.py`; `extradoc/src/extradoc/reconcile/_core.py` named-range diff | Named ranges are semantic anchored annotations, not transport debris to ignore. |
 | Content unchanged but named-range annotation changed | current named-range diff path | Semantic equality must include annotation anchors; verifier must not collapse these docs as equal. |
+| Named-range-only add/delete replay on unchanged body text | live confidence-sprint replay | Annotation lowering must resolve from the same story-local coordinate model as content edits. |
 | Annotation anchor survives block split or merge | historical index-drift failures | Anchored annotations must follow logical positions in story space, not stale block IDs or UTF-16 offsets. |
 | New tab with named ranges | `_core.py` comment about deferred complexity | Anchored annotations must lower after any ID-producing story/tab creation they depend on. |
 | Raw API indices differ from mock-reindexed indices around special tables | commit `365c44e`; `client.py` raw-base comments | Lowering must derive coordinates from real base transport layout or an exact transport shadow, never from approximate reindexing. |
@@ -111,3 +113,4 @@ The first durable fixture set for `reconcile_v2` should include:
 16. Raw-transport fixture where mock reindexing would have produced different table coordinates.
 17. Multi-batch revision handoff using returned `requiredRevisionId`.
 18. Live transport fixtures for paragraph-role change, list append, list-kind change, section split, and section delete with replay verification against canonical IR.
+19. Live transport fixtures for text replace, paragraph split, table-cell text replace, existing-header text replace, and named-range add with replay verification against semantic diff convergence.

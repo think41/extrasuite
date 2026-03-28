@@ -13,7 +13,16 @@ from itertools import accumulate
 from typing import TYPE_CHECKING
 
 from extradoc.reconcile_v2.canonical import canonicalize_document_ir
-from extradoc.reconcile_v2.ir import ListIR, ParagraphIR, SectionIR, TextSpanIR
+from extradoc.reconcile_v2.ir import (
+    AnchorRangeIR,
+    ListIR,
+    ParagraphIR,
+    PositionIR,
+    SectionIR,
+    StoryIR,
+    TableIR,
+    TextSpanIR,
+)
 from extradoc.reconcile_v2.parse import parse_document
 
 if TYPE_CHECKING:
@@ -70,6 +79,30 @@ class ReplaceListSpecEdit:
 
 
 @dataclass(frozen=True, slots=True)
+class ParagraphFragment:
+    role: str
+    text: str
+
+
+@dataclass(slots=True)
+class ReplaceParagraphSliceEdit:
+    tab_id: str
+    story_id: str
+    section_index: int | None
+    start_block_index: int
+    delete_block_count: int
+    inserted_paragraphs: tuple[ParagraphFragment, ...]
+
+
+@dataclass(slots=True)
+class ReplaceNamedRangesEdit:
+    tab_id: str
+    name: str
+    before_count: int
+    desired_ranges: tuple[AnchorRangeIR, ...]
+
+
+@dataclass(frozen=True, slots=True)
 class ListItemFragment:
     level: int
     text: str
@@ -81,6 +114,8 @@ SemanticEdit = (
     | UpdateParagraphRoleEdit
     | AppendListItemsEdit
     | ReplaceListSpecEdit
+    | ReplaceParagraphSliceEdit
+    | ReplaceNamedRangesEdit
 )
 
 
@@ -133,23 +168,65 @@ def summarize_semantic_edits(edits: Iterable[SemanticEdit]) -> list[str]:
                 f"tab {edit.tab_id}: section {edit.section_index} list {edit.block_index} "
                 f"kind {edit.before_kind} -> {edit.after_kind}"
             )
+        elif isinstance(edit, ReplaceParagraphSliceEdit):
+            lines.append(
+                f"tab {edit.tab_id}: story {edit.story_id} replace "
+                f"{edit.delete_block_count} paragraph block(s) at {edit.start_block_index} "
+                f"with {len(edit.inserted_paragraphs)} paragraph(s)"
+            )
+        elif isinstance(edit, ReplaceNamedRangesEdit):
+            lines.append(
+                f"tab {edit.tab_id}: named range {edit.name} replace "
+                f"{edit.before_count} range(s) with {len(edit.desired_ranges)} range(s)"
+            )
     return lines
 
 
 def _diff_tab(base: TabIR, desired: TabIR) -> list[SemanticEdit]:
     base_sections = base.body.sections
     desired_sections = desired.body.sections
-
-    base_flat = _flatten_section_fingerprints(base_sections)
-    desired_flat = _flatten_section_fingerprints(desired_sections)
-    if base_flat == desired_flat:
-        return _diff_section_boundaries(
+    edits: list[SemanticEdit] = []
+    edits.extend(_diff_named_ranges(base, desired))
+    edits.extend(
+        _diff_attached_story_catalog(
+            base.id,
+            base.body.sections,
+            desired.body.sections,
+            base.resource_graph.headers,
+            desired.resource_graph.headers,
+            attachment_kind="headers",
+        )
+    )
+    edits.extend(
+        _diff_attached_story_catalog(
+            base.id,
+            base.body.sections,
+            desired.body.sections,
+            base.resource_graph.footers,
+            desired.resource_graph.footers,
+            attachment_kind="footers",
+        )
+    )
+    edits.extend(
+        _diff_section_tables(
             tab_id=base.id,
             base_sections=base_sections,
             desired_sections=desired_sections,
         )
+    )
 
-    edits: list[SemanticEdit] = []
+    base_flat = _flatten_section_fingerprints(base_sections)
+    desired_flat = _flatten_section_fingerprints(desired_sections)
+    if base_flat == desired_flat:
+        edits.extend(
+            _diff_section_boundaries(
+                tab_id=base.id,
+                base_sections=base_sections,
+                desired_sections=desired_sections,
+            )
+        )
+        return edits
+
     for section_index, (base_section, desired_section) in enumerate(
         zip(base_sections, desired_sections, strict=False)
     ):
@@ -210,6 +287,17 @@ def _diff_section_blocks(
     desired_section: SectionIR,
 ) -> list[SemanticEdit]:
     edits: list[SemanticEdit] = []
+    paragraph_slice = _diff_story_paragraph_slice(
+        tab_id=tab_id,
+        story_id=f"{tab_id}:body",
+        section_index=section_index,
+        base_blocks=base_section.blocks,
+        desired_blocks=desired_section.blocks,
+    )
+    if paragraph_slice is not None:
+        edits.append(paragraph_slice)
+        return edits
+
     for block_index, (base_block, desired_block) in enumerate(
         zip(base_section.blocks, desired_section.blocks, strict=False)
     ):
@@ -265,6 +353,175 @@ def _diff_section_blocks(
     return edits
 
 
+def _diff_attached_story_catalog(
+    tab_id: str,
+    base_sections: list[SectionIR],
+    desired_sections: list[SectionIR],
+    base_catalog: dict[str, StoryIR],
+    desired_catalog: dict[str, StoryIR],
+    *,
+    attachment_kind: str,
+) -> list[SemanticEdit]:
+    edits: list[SemanticEdit] = []
+    seen_pairs: set[tuple[str, str]] = set()
+    for base_section, desired_section in zip(base_sections, desired_sections, strict=False):
+        base_attachments = getattr(base_section.attachments, attachment_kind)
+        desired_attachments = getattr(desired_section.attachments, attachment_kind)
+        for slot in sorted(set(base_attachments) & set(desired_attachments)):
+            story_pair = (base_attachments[slot], desired_attachments[slot])
+            if story_pair in seen_pairs:
+                continue
+            seen_pairs.add(story_pair)
+            base_story = base_catalog.get(story_pair[0])
+            desired_story = desired_catalog.get(story_pair[1])
+            if base_story is None or desired_story is None:
+                continue
+            edit = _diff_story_paragraph_slice(
+                tab_id=tab_id,
+                story_id=base_story.id,
+                section_index=None,
+                base_blocks=base_story.blocks,
+                desired_blocks=desired_story.blocks,
+            )
+            if edit is not None:
+                edits.append(edit)
+    return edits
+
+
+def _diff_story_catalog(
+    tab_id: str,
+    base_catalog: dict[str, StoryIR],
+    desired_catalog: dict[str, StoryIR],
+) -> list[SemanticEdit]:
+    edits: list[SemanticEdit] = []
+    for story_ref in sorted(set(base_catalog) & set(desired_catalog)):
+        edit = _diff_story_paragraph_slice(
+            tab_id=tab_id,
+            story_id=base_catalog[story_ref].id,
+            section_index=None,
+            base_blocks=base_catalog[story_ref].blocks,
+            desired_blocks=desired_catalog[story_ref].blocks,
+        )
+        if edit is not None:
+            edits.append(edit)
+    return edits
+
+
+def _diff_section_tables(
+    *,
+    tab_id: str,
+    base_sections: list[SectionIR],
+    desired_sections: list[SectionIR],
+) -> list[SemanticEdit]:
+    edits: list[SemanticEdit] = []
+    for _section_index, (base_section, desired_section) in enumerate(
+        zip(base_sections, desired_sections, strict=False)
+    ):
+        for block_index, (base_block, desired_block) in enumerate(
+            zip(base_section.blocks, desired_section.blocks, strict=False)
+        ):
+            if not isinstance(base_block, TableIR) or not isinstance(desired_block, TableIR):
+                continue
+            if len(base_block.rows) != len(desired_block.rows):
+                continue
+            for row_index, (base_row, desired_row) in enumerate(
+                zip(base_block.rows, desired_block.rows, strict=False)
+            ):
+                if len(base_row.cells) != len(desired_row.cells):
+                    continue
+                for column_index, (base_cell, desired_cell) in enumerate(
+                    zip(base_row.cells, desired_row.cells, strict=False)
+                ):
+                    edit = _diff_story_paragraph_slice(
+                        tab_id=tab_id,
+                        story_id=(
+                            f"{tab_id}:body:table:{block_index}:r{row_index}:c{column_index}"
+                        ),
+                        section_index=None,
+                        base_blocks=base_cell.content.blocks,
+                        desired_blocks=desired_cell.content.blocks,
+                    )
+                    if edit is not None:
+                        edits.append(edit)
+    return edits
+
+
+def _diff_story_paragraph_slice(
+    *,
+    tab_id: str,
+    story_id: str,
+    section_index: int | None,
+    base_blocks: list[BlockIR],
+    desired_blocks: list[BlockIR],
+) -> ReplaceParagraphSliceEdit | None:
+    if not _all_paragraphs(base_blocks) or not _all_paragraphs(desired_blocks):
+        return None
+
+    if (
+        len(base_blocks) == len(desired_blocks)
+        and [_paragraph_text(block) for block in base_blocks]
+        == [_paragraph_text(block) for block in desired_blocks]
+    ):
+        return None
+
+    base_signatures = [_paragraph_signature(block) for block in base_blocks]
+    desired_signatures = [_paragraph_signature(block) for block in desired_blocks]
+    if base_signatures == desired_signatures:
+        return None
+
+    prefix = 0
+    while (
+        prefix < len(base_signatures)
+        and prefix < len(desired_signatures)
+        and base_signatures[prefix] == desired_signatures[prefix]
+    ):
+        prefix += 1
+
+    suffix = 0
+    while (
+        suffix < len(base_signatures) - prefix
+        and suffix < len(desired_signatures) - prefix
+        and base_signatures[-(suffix + 1)] == desired_signatures[-(suffix + 1)]
+    ):
+        suffix += 1
+
+    delete_stop = len(base_blocks) - suffix
+    insert_stop = len(desired_blocks) - suffix
+    if delete_stop <= prefix and insert_stop <= prefix:
+        return None
+
+    return ReplaceParagraphSliceEdit(
+        tab_id=tab_id,
+        story_id=story_id,
+        section_index=section_index,
+        start_block_index=prefix,
+        delete_block_count=max(0, delete_stop - prefix),
+        inserted_paragraphs=tuple(
+            ParagraphFragment(role=block.role, text=_paragraph_text(block))
+            for block in desired_blocks[prefix:insert_stop]
+        ),
+    )
+
+
+def _diff_named_ranges(base: TabIR, desired: TabIR) -> list[SemanticEdit]:
+    edits: list[SemanticEdit] = []
+    all_names = set(base.annotations.named_ranges) | set(desired.annotations.named_ranges)
+    for name in sorted(all_names):
+        base_ranges = tuple(base.annotations.named_ranges.get(name, []))
+        desired_ranges = tuple(desired.annotations.named_ranges.get(name, []))
+        if _named_range_signature(base_ranges) == _named_range_signature(desired_ranges):
+            continue
+        edits.append(
+            ReplaceNamedRangesEdit(
+                tab_id=base.id,
+                name=name,
+                before_count=len(base_ranges),
+                desired_ranges=desired_ranges,
+            )
+        )
+    return edits
+
+
 def _section_boundaries(sections: list[SectionIR]) -> list[int]:
     return _section_prefix_counts(sections)[:-1]
 
@@ -303,4 +560,30 @@ def _block_fingerprints(blocks: list[BlockIR]) -> list[str]:
 def _paragraph_text(paragraph: ParagraphIR) -> str:
     return "".join(
         inline.text for inline in paragraph.inlines if isinstance(inline, TextSpanIR)
+    )
+
+
+def _all_paragraphs(blocks: list[BlockIR]) -> bool:
+    return bool(blocks) and all(isinstance(block, ParagraphIR) for block in blocks)
+
+
+def _paragraph_signature(paragraph: ParagraphIR) -> tuple[str, str]:
+    return paragraph.role, _paragraph_text(paragraph)
+
+
+def _named_range_signature(ranges: tuple[AnchorRangeIR, ...]) -> tuple[tuple[str, str], ...]:
+    return tuple(
+        (
+            _position_signature(anchor.start),
+            _position_signature(anchor.end),
+        )
+        for anchor in ranges
+    )
+
+
+def _position_signature(position: PositionIR) -> str:
+    path = position.path
+    return (
+        f"{position.story_id}|{path.section_index}|{path.block_index}|{path.node_path}|"
+        f"{path.inline_index}|{path.text_offset_utf16}|{path.edge}"
     )

@@ -51,6 +51,26 @@ class BatchScenario:
     base_md: str
 
 
+@dataclass(frozen=True, slots=True)
+class HeaderScenario:
+    name: str
+    title: str
+    description: str
+    base_md: str
+    base_header_text: str
+    desired_header_text: str
+
+
+@dataclass(frozen=True, slots=True)
+class NamedRangeScenario:
+    name: str
+    title: str
+    description: str
+    base_md: str
+    range_name: str
+    target_text: str
+
+
 MARKDOWN_SCENARIOS = (
     MarkdownScenario(
         name="paragraph_to_heading",
@@ -66,6 +86,27 @@ MARKDOWN_SCENARIOS = (
         base_md="- one\n- two\n",
         desired_md="- one\n- two\n- three\n",
     ),
+    MarkdownScenario(
+        name="text_replace",
+        title="Confidence Sprint Fixture Text Replace",
+        description="Replace plain paragraph text without changing paragraph role.",
+        base_md="alpha paragraph\n",
+        desired_md="omega paragraph\n",
+    ),
+    MarkdownScenario(
+        name="paragraph_split",
+        title="Confidence Sprint Fixture Paragraph Split",
+        description="Split one normal paragraph into two normal paragraphs.",
+        base_md="alpha beta\n",
+        desired_md="alpha\n\nbeta\n",
+    ),
+    MarkdownScenario(
+        name="table_cell_text_replace",
+        title="Confidence Sprint Fixture Table Cell Text Replace",
+        description="Replace the text inside a simple one-column table cell.",
+        base_md="| col |\n| --- |\n| alpha |\n",
+        desired_md="| col |\n| --- |\n| omega |\n",
+    ),
 )
 
 SECTION_SCENARIO = BatchScenario(
@@ -73,6 +114,24 @@ SECTION_SCENARIO = BatchScenario(
     title="Confidence Sprint Fixture Section Split",
     description="Split one body section into two by inserting a section break before the second paragraph.",
     base_md="First paragraph.\n\nSecond paragraph.\n",
+)
+
+HEADER_SCENARIO = HeaderScenario(
+    name="header_text_replace",
+    title="Confidence Sprint Fixture Header Text Replace",
+    description="Replace text inside an existing default header story.",
+    base_md="Body paragraph.\n",
+    base_header_text="Header Alpha",
+    desired_header_text="Header Omega",
+)
+
+NAMED_RANGE_SCENARIO = NamedRangeScenario(
+    name="named_range_add",
+    title="Confidence Sprint Fixture Named Range Add",
+    description="Add a named range over body text without changing content.",
+    base_md="alpha bravo charlie\n",
+    range_name="spike:bravo",
+    target_text="bravo",
 )
 
 
@@ -115,6 +174,20 @@ def main() -> None:
         if not selected or SECTION_SCENARIO.name in selected:
             _capture_section_scenario(
                 scenario=SECTION_SCENARIO,
+                fixtures_root=args.fixtures_root,
+                raw_client=raw_client,
+            )
+            time.sleep(args.pause_seconds)
+        if not selected or HEADER_SCENARIO.name in selected:
+            _capture_header_scenario(
+                scenario=HEADER_SCENARIO,
+                fixtures_root=args.fixtures_root,
+                raw_client=raw_client,
+            )
+            time.sleep(args.pause_seconds)
+        if not selected or NAMED_RANGE_SCENARIO.name in selected:
+            _capture_named_range_scenario(
+                scenario=NAMED_RANGE_SCENARIO,
                 fixtures_root=args.fixtures_root,
                 raw_client=raw_client,
             )
@@ -198,6 +271,104 @@ def _capture_section_scenario(
     )
 
 
+def _capture_header_scenario(
+    *,
+    scenario: HeaderScenario,
+    fixtures_root: Path,
+    raw_client: _RawDocsClient,
+) -> None:
+    print(f"[capture] {scenario.name}")
+    doc_url = _create_empty_doc(scenario.title)
+    doc_id = _extract_document_id(doc_url)
+
+    with tempfile.TemporaryDirectory(prefix=f"reconcile-v2-{scenario.name}-") as tmpdir:
+        tmp = Path(tmpdir)
+        base_folder = tmp / "base"
+        _pull_md(doc_url, base_folder)
+        (base_folder / "Tab_1.md").write_text(scenario.base_md, encoding="utf-8")
+        _push_md(base_folder)
+
+        create_header_response = raw_client.batch_update(
+            doc_id,
+            [{"createHeader": {"type": "DEFAULT"}}],
+        )
+        header_id = create_header_response["replies"][0]["createHeader"]["headerId"]
+        raw_client.batch_update(
+            doc_id,
+            [
+                {
+                    "insertText": {
+                        "endOfSegmentLocation": {"segmentId": header_id},
+                        "text": scenario.base_header_text,
+                    }
+                }
+            ],
+        )
+        base_raw = raw_client.get_document_raw(doc_id)
+
+        requests = _build_header_text_replace_requests(
+            base_raw=base_raw,
+            desired_text=scenario.desired_header_text,
+        )
+        raw_client.batch_update(doc_id, requests)
+        desired_raw = raw_client.get_document_raw(doc_id)
+
+    _write_fixture_pair(
+        fixture_dir=fixtures_root / scenario.name,
+        description=scenario.description,
+        workflow="pull-md/push-md + direct batchUpdate header edits",
+        doc_url=doc_url,
+        base_raw=base_raw,
+        desired_raw=desired_raw,
+        extra_files={
+            "base.md": scenario.base_md,
+            "base.header.txt": scenario.base_header_text + "\n",
+            "desired.header.txt": scenario.desired_header_text + "\n",
+            "desired.requests.json": json.dumps(requests, indent=2) + "\n",
+        },
+    )
+
+
+def _capture_named_range_scenario(
+    *,
+    scenario: NamedRangeScenario,
+    fixtures_root: Path,
+    raw_client: _RawDocsClient,
+) -> None:
+    print(f"[capture] {scenario.name}")
+    doc_url = _create_empty_doc(scenario.title)
+    doc_id = _extract_document_id(doc_url)
+
+    with tempfile.TemporaryDirectory(prefix=f"reconcile-v2-{scenario.name}-") as tmpdir:
+        tmp = Path(tmpdir)
+        base_folder = tmp / "base"
+        _pull_md(doc_url, base_folder)
+        (base_folder / "Tab_1.md").write_text(scenario.base_md, encoding="utf-8")
+        _push_md(base_folder)
+        base_raw = raw_client.get_document_raw(doc_id)
+
+        requests = _build_named_range_add_requests(
+            base_raw=base_raw,
+            name=scenario.range_name,
+            target_text=scenario.target_text,
+        )
+        raw_client.batch_update(doc_id, requests)
+        desired_raw = raw_client.get_document_raw(doc_id)
+
+    _write_fixture_pair(
+        fixture_dir=fixtures_root / scenario.name,
+        description=scenario.description,
+        workflow="pull-md/push-md + direct batchUpdate named range",
+        doc_url=doc_url,
+        base_raw=base_raw,
+        desired_raw=desired_raw,
+        extra_files={
+            "base.md": scenario.base_md,
+            "desired.requests.json": json.dumps(requests, indent=2) + "\n",
+        },
+    )
+
+
 def _write_fixture_pair(
     *,
     fixture_dir: Path,
@@ -265,6 +436,71 @@ def _build_section_split_requests(base_raw: dict) -> list[dict]:
             }
         }
     ]
+
+
+def _build_header_text_replace_requests(
+    *,
+    base_raw: dict,
+    desired_text: str,
+) -> list[dict]:
+    headers = base_raw["tabs"][0]["documentTab"].get("headers", {})
+    if len(headers) != 1:
+        raise RuntimeError("Header text scenario expects exactly one header")
+    header_id, header = next(iter(headers.items()))
+    end_index = header["content"][0]["endIndex"]
+    text_end = end_index - 1
+    requests: list[dict] = []
+    if text_end > 0:
+        requests.append(
+            {
+                "deleteContentRange": {
+                    "range": {
+                        "segmentId": header_id,
+                        "startIndex": 0,
+                        "endIndex": text_end,
+                    }
+                }
+            }
+        )
+    requests.append(
+        {
+            "insertText": {
+                "location": {"segmentId": header_id, "index": 0},
+                "text": desired_text,
+            }
+        }
+    )
+    return requests
+
+
+def _build_named_range_add_requests(
+    *,
+    base_raw: dict,
+    name: str,
+    target_text: str,
+) -> list[dict]:
+    for element in base_raw["tabs"][0]["documentTab"]["body"]["content"]:
+        paragraph = element.get("paragraph")
+        if not paragraph:
+            continue
+        visible_text = _visible_paragraph_text(paragraph)
+        offset = visible_text.find(target_text)
+        if offset < 0:
+            continue
+        start_index = element["startIndex"] + offset
+        end_index = start_index + len(target_text)
+        return [
+            {
+                "createNamedRange": {
+                    "name": name,
+                    "range": {
+                        "startIndex": start_index,
+                        "endIndex": end_index,
+                    },
+                }
+            }
+        ]
+    raise RuntimeError(f"Could not locate target text {target_text!r} for named range")
 
 
 def _visible_paragraph_text(paragraph: dict) -> str:

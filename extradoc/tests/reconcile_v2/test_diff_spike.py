@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import copy
 import json
 from pathlib import Path
 
@@ -9,6 +10,8 @@ from extradoc.reconcile_v2.diff import (
     DeleteSectionEdit,
     InsertSectionEdit,
     ReplaceListSpecEdit,
+    ReplaceNamedRangesEdit,
+    ReplaceParagraphSliceEdit,
     UpdateParagraphRoleEdit,
     diff_documents,
     summarize_semantic_edits,
@@ -77,6 +80,99 @@ def test_list_kind_change_fixture_emits_list_spec_replace() -> None:
     assert isinstance(edits[0], ReplaceListSpecEdit)
     assert summarize_semantic_edits(edits) == [
         "tab t.0: section 0 list 0 kind BULLETED -> NUMBERED"
+    ]
+
+
+def test_text_replace_fixture_emits_story_text_replace() -> None:
+    base, desired = _load_fixture_pair("text_replace")
+
+    edits = diff_documents(base, desired)
+
+    assert len(edits) == 1
+    assert isinstance(edits[0], ReplaceParagraphSliceEdit)
+    assert edits[0].story_id == "t.0:body"
+    assert summarize_semantic_edits(edits) == [
+        "tab t.0: story t.0:body replace 1 paragraph block(s) at 0 with 1 paragraph(s)"
+    ]
+
+
+def test_paragraph_split_fixture_emits_paragraph_slice_replace() -> None:
+    base, desired = _load_fixture_pair("paragraph_split")
+
+    edits = diff_documents(base, desired)
+
+    assert len(edits) == 1
+    assert isinstance(edits[0], ReplaceParagraphSliceEdit)
+    assert [fragment.text for fragment in edits[0].inserted_paragraphs] == [
+        "alpha",
+        "beta",
+    ]
+    assert summarize_semantic_edits(edits) == [
+        "tab t.0: story t.0:body replace 1 paragraph block(s) at 0 with 2 paragraph(s)"
+    ]
+
+
+def test_table_cell_text_replace_fixture_emits_nested_story_replace() -> None:
+    base, desired = _load_fixture_pair("table_cell_text_replace")
+
+    edits = diff_documents(base, desired)
+
+    assert len(edits) == 1
+    assert isinstance(edits[0], ReplaceParagraphSliceEdit)
+    assert edits[0].story_id == "t.0:body:table:1:r1:c0"
+    assert summarize_semantic_edits(edits) == [
+        "tab t.0: story t.0:body:table:1:r1:c0 replace 1 paragraph block(s) at 0 with 1 paragraph(s)"
+    ]
+
+
+def test_header_text_replace_fixture_emits_segment_story_replace() -> None:
+    base, desired = _load_fixture_pair("header_text_replace")
+
+    edits = diff_documents(base, desired)
+
+    assert len(edits) == 1
+    assert isinstance(edits[0], ReplaceParagraphSliceEdit)
+    assert edits[0].story_id.startswith("t.0:header:")
+    assert summarize_semantic_edits(edits) == [
+        f"tab t.0: story {edits[0].story_id} replace 1 paragraph block(s) at 0 with 1 paragraph(s)"
+    ]
+
+
+def test_header_text_replace_matches_by_attachment_slot_not_transport_id() -> None:
+    base, desired = _load_fixture_pair("header_text_replace")
+    desired_raw = copy.deepcopy(desired.model_dump(by_alias=True, exclude_none=True))
+    old_header_id = next(iter(desired_raw["tabs"][0]["documentTab"]["headers"]))
+    new_header_id = "kix.synthetic-slot-match"
+    desired_raw["tabs"][0]["documentTab"]["headers"] = {
+        new_header_id: {
+            **desired_raw["tabs"][0]["documentTab"]["headers"][old_header_id],
+            "headerId": new_header_id,
+        }
+    }
+    desired_raw["tabs"][0]["documentTab"]["documentStyle"]["defaultHeaderId"] = (
+        new_header_id
+    )
+    desired_raw["tabs"][0]["documentTab"]["body"]["content"][0]["sectionBreak"][
+        "sectionStyle"
+    ]["defaultHeaderId"] = new_header_id
+    desired_with_new_id = Document.model_validate(desired_raw)
+
+    edits = diff_documents(base, desired_with_new_id)
+
+    assert len(edits) == 1
+    assert isinstance(edits[0], ReplaceParagraphSliceEdit)
+
+
+def test_named_range_add_fixture_emits_named_range_replace() -> None:
+    base, desired = _load_fixture_pair("named_range_add")
+
+    edits = diff_documents(base, desired)
+
+    assert len(edits) == 1
+    assert isinstance(edits[0], ReplaceNamedRangesEdit)
+    assert edits[0].name == "spike:bravo"
+    assert summarize_semantic_edits(edits) == [
+        "tab t.0: named range spike:bravo replace 0 range(s) with 1 range(s)"
     ]
 
 
