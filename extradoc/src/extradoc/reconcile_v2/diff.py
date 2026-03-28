@@ -1427,7 +1427,7 @@ def _footnote_insertion_offset(paragraph: ParagraphIR) -> int:
 
 
 def _all_paragraphs(blocks: list[BlockIR]) -> bool:
-    return bool(blocks) and all(isinstance(block, ParagraphIR) for block in blocks)
+    return all(isinstance(block, ParagraphIR) for block in blocks)
 
 
 def _paragraph_signature(paragraph: ParagraphIR) -> tuple[str, str]:

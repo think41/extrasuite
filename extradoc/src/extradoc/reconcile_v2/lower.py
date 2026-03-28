@@ -37,6 +37,7 @@ from extradoc.reconcile_v2.layout import (
     TableLocation,
     build_body_layout,
     build_story_layouts,
+    paragraph_insertion_site,
     paragraph_slice,
     resolve_position_to_index,
 )
@@ -221,24 +222,36 @@ def lower_document_edits(
             )
         elif isinstance(edit, ReplaceParagraphSliceEdit):
             story = story_layouts[edit.story_id]
-            paragraphs = paragraph_slice(
-                story,
-                section_index=edit.section_index,
-                start_block_index=edit.start_block_index,
-                delete_block_count=edit.delete_block_count,
-            )
-            delete_start = paragraphs[0].text_start_index
-            delete_end = paragraphs[-1].text_end_index
-            if delete_end > delete_start:
-                requests.append(
-                    make_delete_content_range(
-                        start_index=delete_start,
-                        end_index=delete_end,
-                        tab_id=story.route.tab_id,
-                        segment_id=story.route.segment_id,
-                    )
-                )
             inserted_text = "\n".join(fragment.text for fragment in edit.inserted_paragraphs)
+            if edit.delete_block_count > 0:
+                paragraphs = paragraph_slice(
+                    story,
+                    section_index=edit.section_index,
+                    start_block_index=edit.start_block_index,
+                    delete_block_count=edit.delete_block_count,
+                )
+                delete_start = paragraphs[0].text_start_index
+                delete_end = paragraphs[-1].text_end_index
+                if delete_end > delete_start:
+                    requests.append(
+                        make_delete_content_range(
+                            start_index=delete_start,
+                            end_index=delete_end,
+                            tab_id=story.route.tab_id,
+                            segment_id=story.route.segment_id,
+                        )
+                    )
+            else:
+                delete_start, prefix_newline, suffix_newline = paragraph_insertion_site(
+                    story,
+                    section_index=edit.section_index,
+                    block_index=edit.start_block_index,
+                )
+                if inserted_text:
+                    if prefix_newline:
+                        inserted_text = f"\n{inserted_text}"
+                    if suffix_newline:
+                        inserted_text = f"{inserted_text}\n"
             if inserted_text:
                 requests.append(
                     make_insert_text_in_story(

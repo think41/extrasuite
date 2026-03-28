@@ -154,6 +154,45 @@ def _make_doc_with_named_range(
     return Document.model_validate(raw)
 
 
+def _make_single_tab_doc(*, paragraphs: list[str]) -> Document:
+    content: list[dict[str, object]] = [
+        {
+            "endIndex": 1,
+            "sectionBreak": {"sectionStyle": {"columnSeparatorStyle": "NONE"}},
+        }
+    ]
+    cursor = 1
+    for paragraph_text in paragraphs or [""]:
+        text = f"{paragraph_text}\n"
+        content.append(
+            {
+                "startIndex": cursor,
+                "endIndex": cursor + len(text),
+                "paragraph": {
+                    "elements": [
+                        {
+                            "startIndex": cursor,
+                            "endIndex": cursor + len(text),
+                            "textRun": {"content": text},
+                        }
+                    ]
+                },
+            }
+        )
+        cursor += len(text)
+    return Document.model_validate(
+        {
+            "documentId": "paragraph-doc",
+            "tabs": [
+                {
+                    "tabProperties": {"tabId": "t.0", "title": "Tab 1", "index": 0},
+                    "documentTab": {"body": {"content": content}},
+                }
+            ],
+        }
+    )
+
+
 def test_section_delete_matches_section_split_base_after_canonicalization() -> None:
     section_split_base, _ = _load_fixture_pair("section_split")
     _, section_delete_desired = _load_fixture_pair("section_delete")
@@ -621,6 +660,36 @@ def test_lower_semantic_diff_named_range_add_ignores_desired_named_range_id() ->
             "createNamedRange": {
                 "name": "spike:bravo",
                 "range": {"startIndex": 7, "endIndex": 12, "tabId": "t.0"},
+            }
+        }
+    ]
+
+
+def test_lower_semantic_diff_supports_first_paragraph_insert_into_empty_body() -> None:
+    base = _make_single_tab_doc(paragraphs=[])
+    desired = _make_single_tab_doc(
+        paragraphs=["alpha paragraph", "beta paragraph"]
+    )
+
+    assert lower_semantic_diff(base, desired) == [
+        {
+            "insertText": {
+                "location": {"index": 1, "tabId": "t.0"},
+                "text": "alpha paragraph\nbeta paragraph",
+            }
+        }
+    ]
+
+
+def test_lower_semantic_diff_supports_zero_width_paragraph_insert_between_blocks() -> None:
+    base = _make_single_tab_doc(paragraphs=["alpha", "charlie"])
+    desired = _make_single_tab_doc(paragraphs=["alpha", "bravo", "charlie"])
+
+    assert lower_semantic_diff(base, desired) == [
+        {
+            "insertText": {
+                "location": {"index": 7, "tabId": "t.0"},
+                "text": "bravo\n",
             }
         }
     ]

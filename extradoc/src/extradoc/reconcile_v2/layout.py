@@ -287,6 +287,53 @@ def paragraph_slice(
     return paragraphs
 
 
+def paragraph_insertion_site(
+    story_layout: StoryLayout,
+    *,
+    section_index: int | None,
+    block_index: int,
+) -> tuple[int, bool, bool]:
+    """Return a transport insertion site for a zero-width paragraph edit.
+
+    Returns ``(index, prefix_newline, suffix_newline)`` where the boolean flags
+    indicate whether the inserted paragraph text should be prefixed/suffixed
+    with a newline to preserve paragraph boundaries at the insertion anchor.
+    """
+    section_paragraphs = tuple(
+        paragraph
+        for paragraph in story_layout.paragraphs
+        if paragraph.section_index == section_index and paragraph.node_path == ()
+    )
+    target = next(
+        (paragraph for paragraph in section_paragraphs if paragraph.block_index == block_index),
+        None,
+    )
+    if target is not None:
+        # Canonical empty stories still have one carrier paragraph in transport.
+        # Insert into that carrier directly and let its existing terminal newline
+        # terminate the inserted content.
+        if len(section_paragraphs) == 1 and target.text == "":
+            return target.text_start_index, False, False
+        return target.text_start_index, False, True
+
+    previous = None
+    for paragraph in section_paragraphs:
+        if paragraph.block_index < block_index:
+            previous = paragraph
+        else:
+            break
+    if previous is not None:
+        return previous.text_end_index, True, False
+
+    if story_layout.paragraphs:
+        first = story_layout.paragraphs[0]
+        return first.text_start_index, False, True
+
+    # New body stories start after the mandatory opening section break. Segment
+    # stories start at index 0.
+    return (1 if story_layout.route.segment_id is None else 0), False, False
+
+
 def resolve_position_to_index(
     story_layouts: dict[str, StoryLayout],
     position: PositionIR,

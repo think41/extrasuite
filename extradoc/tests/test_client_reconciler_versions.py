@@ -230,6 +230,39 @@ def test_diff_can_use_reconcile_v1_via_env_var(
     assert result.batches
 
 
+def test_diff_v2_detects_first_markdown_content_in_empty_doc(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    folder = _setup_markdown_folder(
+        tmp_path,
+        doc_id="test-v2-empty-first-push",
+        md_content="",
+    )
+    (folder / "Tab_1.md").write_text("alpha paragraph\n\nbeta paragraph\n", encoding="utf-8")
+
+    raw_doc = markdown_to_document(
+        {"Tab_1": ""},
+        document_id="test-v2-empty-first-push",
+        title="Test",
+        tab_ids={"Tab_1": "t.0"},
+    )
+    raw_dir = folder / ".raw"
+    raw_dir.mkdir()
+    (raw_dir / "document.json").write_text(
+        reindex_document(raw_doc).model_dump_json(by_alias=True, exclude_none=True),
+        encoding="utf-8",
+    )
+
+    monkeypatch.delenv(RECONCILER_ENV_VAR, raising=False)
+
+    client = DocsClient.__new__(DocsClient)
+    result = client.diff(str(folder))
+
+    assert result.reconciler_version == "v2"
+    assert result.batches
+
+
 @pytest.mark.asyncio
 async def test_push_uses_v1_batch_execution(
     monkeypatch: pytest.MonkeyPatch,
