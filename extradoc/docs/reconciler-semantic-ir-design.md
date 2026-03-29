@@ -883,6 +883,13 @@ Lowering consequence:
 2. insertion edits that target body boundaries near a read-only anchor must
    carry the raw anchor coordinate needed for lowering, not only the editable
    block index
+3. grouped same-anchor body inserts must not blindly reuse that raw anchor for
+   every fragment. Once lowering is operating against a shadow document, the
+   group anchor must default back to the canonical editable block boundary and
+   only fall through to the raw anchor when the target block is genuinely
+   read-only transport structure such as TOC/opaque content. Otherwise table
+   carrier paragraphs and other skipped raw blocks will cause the group to
+   drift earlier than intended.
 
 This eliminates the need for document-wide "find first default header/footer"
 stateful hacks.

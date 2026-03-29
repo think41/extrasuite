@@ -162,6 +162,7 @@ class DeleteListBlockEdit:
     tab_id: str
     section_index: int
     block_index: int
+    body_anchor_block_index: int | None = None
 
 
 @dataclass(slots=True)
@@ -178,6 +179,7 @@ class DeleteTableBlockEdit:
     tab_id: str
     section_index: int
     block_index: int
+    body_anchor_block_index: int | None = None
 
 
 @dataclass(slots=True)
@@ -560,17 +562,16 @@ def _diff_tab(base: TabIR, desired: TabIR) -> list[SemanticEdit]:
             ),
         )
     )
-    edits.extend(
-        _diff_section_tables(
-            tab_id=base.id,
-            base_sections=base_sections,
-            desired_sections=desired_sections,
-        )
+    table_edits = _diff_section_tables(
+        tab_id=base.id,
+        base_sections=base_sections,
+        desired_sections=desired_sections,
     )
 
     base_flat = _flatten_section_fingerprints(base_sections)
     desired_flat = _flatten_section_fingerprints(desired_sections)
     if base_flat == desired_flat:
+        edits.extend(table_edits)
         edits.extend(
             _diff_section_boundaries(
                 tab_id=base.id,
@@ -580,10 +581,11 @@ def _diff_tab(base: TabIR, desired: TabIR) -> list[SemanticEdit]:
         )
         return edits
 
+    block_edits: list[SemanticEdit] = []
     for section_index, (base_section, desired_section) in enumerate(
         zip(base_sections, desired_sections, strict=False)
     ):
-        edits.extend(
+        block_edits.extend(
             _diff_section_blocks(
                 tab_id=base.id,
                 section_index=section_index,
@@ -591,7 +593,90 @@ def _diff_tab(base: TabIR, desired: TabIR) -> list[SemanticEdit]:
                 desired_section=desired_section,
             )
         )
+    edits.extend(_filter_conflicting_table_edits(table_edits, block_edits))
+    edits.extend(block_edits)
     return edits
+
+
+def _filter_conflicting_table_edits(
+    table_edits: list[SemanticEdit],
+    body_edits: list[SemanticEdit],
+) -> list[SemanticEdit]:
+    deleted_ranges = _body_deleted_block_ranges(body_edits)
+    if not deleted_ranges:
+        return table_edits
+    filtered: list[SemanticEdit] = []
+    for edit in table_edits:
+        table_ref = _table_edit_reference(edit)
+        if table_ref is None:
+            filtered.append(edit)
+            continue
+        if any(
+            table_ref[0] == tab_id
+            and table_ref[1] == section_index
+            and start <= table_ref[2] <= end
+            for tab_id, section_index, start, end in deleted_ranges
+        ):
+            continue
+        filtered.append(edit)
+    return filtered
+
+
+def _body_deleted_block_ranges(
+    edits: list[SemanticEdit],
+) -> list[tuple[str, int, int, int]]:
+    deleted: list[tuple[str, int, int, int]] = []
+    for edit in edits:
+        if (
+            isinstance(edit, ReplaceParagraphSliceEdit)
+            and edit.story_id == f"{edit.tab_id}:body"
+            and edit.section_index is not None
+            and edit.delete_block_count > 0
+        ):
+            deleted.append(
+                (
+                    edit.tab_id,
+                    edit.section_index,
+                    edit.start_block_index,
+                    edit.start_block_index + edit.delete_block_count - 1,
+                )
+            )
+            continue
+        if isinstance(edit, DeleteListBlockEdit | DeleteTableBlockEdit):
+            deleted.append(
+                (edit.tab_id, edit.section_index, edit.block_index, edit.block_index)
+            )
+    return deleted
+
+
+def _table_edit_reference(edit: SemanticEdit) -> tuple[str, int, int] | None:
+    if isinstance(
+        edit,
+        InsertTableRowEdit
+        | DeleteTableRowEdit
+        | InsertTableColumnEdit
+        | DeleteTableColumnEdit
+        | MergeTableCellsEdit
+        | UnmergeTableCellsEdit
+        | UpdateTablePinnedHeaderRowsEdit
+        | UpdateTableRowStyleEdit
+        | UpdateTableColumnPropertiesEdit
+        | UpdateTableCellStyleEdit,
+    ):
+        return (edit.tab_id, edit.section_index, edit.block_index)
+    if isinstance(edit, ReplaceParagraphSliceEdit):
+        prefix = f"{edit.tab_id}:body:table:"
+        if not edit.story_id.startswith(prefix):
+            return None
+        block_part = edit.story_id[len(prefix) :].split(":", 1)[0]
+        if not block_part.isdigit():
+            return None
+        return (
+            edit.tab_id,
+            0 if edit.section_index is None else edit.section_index,
+            int(block_part),
+        )
+    return None
 
 
 def _diff_section_attachment_changes(
@@ -1030,6 +1115,7 @@ def _plan_mixed_body_block_slice(
             tab_id=tab_id,
             section_index=section_index,
             start_block_index=block_index,
+            raw_start_block_index=raw_block_index,
             blocks=base_slice,
         )
     )
@@ -1050,6 +1136,7 @@ def _delete_body_block_sequence(
     tab_id: str,
     section_index: int,
     start_block_index: int,
+    raw_start_block_index: int,
     blocks: list[BlockIR],
 ) -> list[SemanticEdit]:
     edits: list[SemanticEdit] = []
@@ -1068,6 +1155,7 @@ def _delete_body_block_sequence(
                     start_block_index=start_block_index + start,
                     delete_block_count=index - start + 1,
                     inserted_paragraphs=(),
+                    body_anchor_block_index=raw_start_block_index + start,
                 )
             )
             index = start - 1
@@ -1078,6 +1166,7 @@ def _delete_body_block_sequence(
                     tab_id=tab_id,
                     section_index=section_index,
                     block_index=start_block_index + index,
+                    body_anchor_block_index=raw_start_block_index + index,
                 )
             )
         elif isinstance(block, TableIR):
@@ -1086,6 +1175,7 @@ def _delete_body_block_sequence(
                     tab_id=tab_id,
                     section_index=section_index,
                     block_index=start_block_index + index,
+                    body_anchor_block_index=raw_start_block_index + index,
                 )
             )
         index -= 1

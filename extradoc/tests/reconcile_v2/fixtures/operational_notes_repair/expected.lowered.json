@@ -1,0 +1,325 @@
+[
+  {
+    "deleteContentRange": {
+      "range": {
+        "startIndex": 1912,
+        "endIndex": 2026,
+        "tabId": "t.0"
+      }
+    }
+  },
+  {
+    "insertText": {
+      "location": {
+        "index": 1912,
+        "tabId": "t.0"
+      },
+      "text": "from dataclasses import dataclass\n\n\n@dataclass\nclass SprintCheck:\n    name: str\n    passed: bool\n\n\nchecks = [\n    SprintCheck(\"headings\", True),\n    SprintCheck(\"tables\", True),\n    SprintCheck(\"callouts\", True),\n]"
+    }
+  },
+  {
+    "updateTextStyle": {
+      "range": {
+        "startIndex": 1912,
+        "endIndex": 1945,
+        "tabId": "t.0"
+      },
+      "textStyle": {
+        "fontSize": {
+          "magnitude": 10.0,
+          "unit": "PT"
+        },
+        "weightedFontFamily": {
+          "fontFamily": "Courier New"
+        }
+      },
+      "fields": "fontSize,weightedFontFamily"
+    }
+  },
+  {
+    "updateTextStyle": {
+      "range": {
+        "startIndex": 1948,
+        "endIndex": 1958,
+        "tabId": "t.0"
+      },
+      "textStyle": {
+        "fontSize": {
+          "magnitude": 10.0,
+          "unit": "PT"
+        },
+        "weightedFontFamily": {
+          "fontFamily": "Courier New"
+        }
+      },
+      "fields": "fontSize,weightedFontFamily"
+    }
+  },
+  {
+    "updateTextStyle": {
+      "range": {
+        "startIndex": 1959,
+        "endIndex": 1977,
+        "tabId": "t.0"
+      },
+      "textStyle": {
+        "fontSize": {
+          "magnitude": 10.0,
+          "unit": "PT"
+        },
+        "weightedFontFamily": {
+          "fontFamily": "Courier New"
+        }
+      },
+      "fields": "fontSize,weightedFontFamily"
+    }
+  },
+  {
+    "updateTextStyle": {
+      "range": {
+        "startIndex": 1978,
+        "endIndex": 1991,
+        "tabId": "t.0"
+      },
+      "textStyle": {
+        "fontSize": {
+          "magnitude": 10.0,
+          "unit": "PT"
+        },
+        "weightedFontFamily": {
+          "fontFamily": "Courier New"
+        }
+      },
+      "fields": "fontSize,weightedFontFamily"
+    }
+  },
+  {
+    "updateTextStyle": {
+      "range": {
+        "startIndex": 1992,
+        "endIndex": 2008,
+        "tabId": "t.0"
+      },
+      "textStyle": {
+        "fontSize": {
+          "magnitude": 10.0,
+          "unit": "PT"
+        },
+        "weightedFontFamily": {
+          "fontFamily": "Courier New"
+        }
+      },
+      "fields": "fontSize,weightedFontFamily"
+    }
+  },
+  {
+    "updateTextStyle": {
+      "range": {
+        "startIndex": 2011,
+        "endIndex": 2021,
+        "tabId": "t.0"
+      },
+      "textStyle": {
+        "fontSize": {
+          "magnitude": 10.0,
+          "unit": "PT"
+        },
+        "weightedFontFamily": {
+          "fontFamily": "Courier New"
+        }
+      },
+      "fields": "fontSize,weightedFontFamily"
+    }
+  },
+  {
+    "updateTextStyle": {
+      "range": {
+        "startIndex": 2022,
+        "endIndex": 2056,
+        "tabId": "t.0"
+      },
+      "textStyle": {
+        "fontSize": {
+          "magnitude": 10.0,
+          "unit": "PT"
+        },
+        "weightedFontFamily": {
+          "fontFamily": "Courier New"
+        }
+      },
+      "fields": "fontSize,weightedFontFamily"
+    }
+  },
+  {
+    "updateTextStyle": {
+      "range": {
+        "startIndex": 2057,
+        "endIndex": 2089,
+        "tabId": "t.0"
+      },
+      "textStyle": {
+        "fontSize": {
+          "magnitude": 10.0,
+          "unit": "PT"
+        },
+        "weightedFontFamily": {
+          "fontFamily": "Courier New"
+        }
+      },
+      "fields": "fontSize,weightedFontFamily"
+    }
+  },
+  {
+    "updateTextStyle": {
+      "range": {
+        "startIndex": 2090,
+        "endIndex": 2124,
+        "tabId": "t.0"
+      },
+      "textStyle": {
+        "fontSize": {
+          "magnitude": 10.0,
+          "unit": "PT"
+        },
+        "weightedFontFamily": {
+          "fontFamily": "Courier New"
+        }
+      },
+      "fields": "fontSize,weightedFontFamily"
+    }
+  },
+  {
+    "updateTextStyle": {
+      "range": {
+        "startIndex": 2125,
+        "endIndex": 2126,
+        "tabId": "t.0"
+      },
+      "textStyle": {
+        "fontSize": {
+          "magnitude": 10.0,
+          "unit": "PT"
+        },
+        "weightedFontFamily": {
+          "fontFamily": "Courier New"
+        }
+      },
+      "fields": "fontSize,weightedFontFamily"
+    }
+  },
+  {
+    "deleteContentRange": {
+      "range": {
+        "startIndex": 1549,
+        "endIndex": 1687,
+        "tabId": "t.0"
+      }
+    }
+  },
+  {
+    "deleteContentRange": {
+      "range": {
+        "startIndex": 1164,
+        "endIndex": 1549,
+        "tabId": "t.0"
+      }
+    }
+  },
+  {
+    "insertText": {
+      "location": {
+        "index": 1164,
+        "tabId": "t.0"
+      },
+      "text": "Prepare the empty document.\nPush one dense markdown document.\n\tValidate nested bullet handling.\n\tValidate nested numbering handling.\nRe-pull and inspect the generated markdown.\nConfirm heading structure.\nConfirm inline style structure.\n\tCheck links.\n\tCheck inline code.\nConfirm list structure.\n[x] Heading coverage\n[x] Inline style coverage\n[ ] Second-pass edits pending\n"
+    }
+  },
+  {
+    "insertText": {
+      "location": {
+        "index": 1164,
+        "tabId": "t.0"
+      },
+      "text": "Operational Notes\nThe reconciler should preserve ordinary prose like this paragraph while also supporting structural markdown features in the same document.\n"
+    }
+  },
+  {
+    "updateParagraphStyle": {
+      "range": {
+        "startIndex": 1321,
+        "endIndex": 1692,
+        "tabId": "t.0"
+      },
+      "paragraphStyle": {
+        "namedStyleType": "NORMAL_TEXT"
+      },
+      "fields": "namedStyleType"
+    }
+  },
+  {
+    "createParagraphBullets": {
+      "range": {
+        "startIndex": 1321,
+        "endIndex": 1692,
+        "tabId": "t.0"
+      },
+      "bulletPreset": "BULLET_DISC_CIRCLE_SQUARE"
+    }
+  },
+  {
+    "updateParagraphStyle": {
+      "range": {
+        "startIndex": 1182,
+        "endIndex": 1321,
+        "tabId": "t.0"
+      },
+      "paragraphStyle": {
+        "namedStyleType": "NORMAL_TEXT"
+      },
+      "fields": "namedStyleType"
+    }
+  },
+  {
+    "updateParagraphStyle": {
+      "range": {
+        "startIndex": 1164,
+        "endIndex": 1182,
+        "tabId": "t.0"
+      },
+      "paragraphStyle": {
+        "namedStyleType": "HEADING_2"
+      },
+      "fields": "namedStyleType"
+    }
+  },
+  {
+    "deleteNamedRange": {
+      "name": "extradoc:codeblock:json"
+    }
+  },
+  {
+    "createNamedRange": {
+      "name": "extradoc:codeblock:json",
+      "range": {
+        "startIndex": 1909,
+        "endIndex": 2033,
+        "tabId": "t.0"
+      }
+    }
+  },
+  {
+    "deleteNamedRange": {
+      "name": "extradoc:codeblock:python"
+    }
+  },
+  {
+    "createNamedRange": {
+      "name": "extradoc:codeblock:python",
+      "range": {
+        "startIndex": 1689,
+        "endIndex": 1909,
+        "tabId": "t.0"
+      }
+    }
+  }
+]

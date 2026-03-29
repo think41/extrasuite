@@ -103,7 +103,7 @@ def lower_document_edits(
             requests.extend(
                 _lower_body_insert_group(
                     base=base,
-                    layout=layout,
+                    prior_requests=requests,
                     edits=group,
                     desired=desired,
                 )
@@ -181,11 +181,24 @@ def lower_document_edits(
                 )
             )
         elif isinstance(edit, DeleteTableBlockEdit):
-            table_location = _table_at(layout, edit.section_index, edit.block_index)
+            if edit.body_anchor_block_index is not None:
+                table_range = _raw_body_block_range(
+                    base,
+                    tab_id=edit.tab_id,
+                    section_index=edit.section_index,
+                    raw_block_index=edit.body_anchor_block_index,
+                    expected_kind="table",
+                )
+                start_index = table_range["start"]
+                end_index = table_range["end"]
+            else:
+                table_location = _table_at(layout, edit.section_index, edit.block_index)
+                start_index = table_location.start_index
+                end_index = table_location.end_index
             requests.append(
                 make_delete_content_range(
-                    start_index=table_location.start_index,
-                    end_index=table_location.end_index,
+                    start_index=start_index,
+                    end_index=end_index,
                     tab_id=edit.tab_id,
                 )
             )
@@ -318,14 +331,33 @@ def lower_document_edits(
             prefix_newline = False
             suffix_newline = False
             if edit.delete_block_count > 0:
-                paragraphs = paragraph_slice(
-                    story,
-                    section_index=edit.section_index,
-                    start_block_index=edit.start_block_index,
-                    delete_block_count=edit.delete_block_count,
-                )
-                delete_start = paragraphs[0].text_start_index
-                delete_end = paragraphs[-1].text_end_index
+                if (
+                    story.route.segment_id is None
+                    and edit.section_index is not None
+                    and edit.story_id == f"{edit.tab_id}:body"
+                ):
+                    raw_start_block_index = (
+                        edit.body_anchor_block_index
+                        if edit.body_anchor_block_index is not None
+                        else edit.start_block_index
+                    )
+                    paragraphs = _body_paragraph_slice(
+                        layout,
+                        section_index=edit.section_index,
+                        start_block_index=raw_start_block_index,
+                        delete_block_count=edit.delete_block_count,
+                    )
+                    delete_start = paragraphs[0].text_start_index
+                    delete_end = paragraphs[-1].text_end_index
+                else:
+                    paragraphs = paragraph_slice(
+                        story,
+                        section_index=edit.section_index,
+                        start_block_index=edit.start_block_index,
+                        delete_block_count=edit.delete_block_count,
+                    )
+                    delete_start = paragraphs[0].text_start_index
+                    delete_end = paragraphs[-1].text_end_index
                 if delete_end > delete_start:
                     requests.append(
                         make_delete_content_range(
@@ -623,7 +655,7 @@ def _body_insert_group_end(edits: list[SemanticEdit], start_index: int) -> int:
 def _lower_body_insert_group(
     *,
     base: Document,
-    layout: BodyLayout,
+    prior_requests: list[dict[str, Any]],
     edits: list[SemanticEdit],
     desired: Document | None,
 ) -> list[dict[str, Any]]:
@@ -635,25 +667,35 @@ def _lower_body_insert_group(
             "reconcile_v2 body insert grouping requires desired document layouts"
         )
     tab_id, _section_index, _block_index, _raw_anchor_index = anchor
-    insert_index, prefix_newline, suffix_newline = _body_insert_site_for_edit(
-        base,
-        layout,
-        edits[0],
-    )
-    final_fragments = [_body_insert_fragment(edit) for edit in reversed(edits)]
+    desired_fragments = [_body_insert_fragment(edit) for edit in edits]
+    execution_fragments = list(reversed(desired_fragments))
     structural_requests: list[dict[str, Any]] = []
+    shadow = MockGoogleDocsAPI(base)
+    if prior_requests:
+        shadow._batch_update_raw(prior_requests)
 
-    for execution_index, fragment in enumerate(reversed(final_fragments)):
-        final_index = len(final_fragments) - 1 - execution_index
+    for execution_index, fragment in enumerate(execution_fragments):
+        current_doc = shadow.get()
+        current_layout = build_body_layout(current_doc, tab_id=tab_id)
+        insert_index, prefix_newline, suffix_newline = _body_insert_site_for_group_anchor(
+            document=current_doc,
+            layout=current_layout,
+            tab_id=tab_id,
+            section_index=anchor[1],
+            block_index=anchor[2],
+            raw_block_index=anchor[3],
+        )
+        final_index = len(execution_fragments) - 1 - execution_index
         needs_prefix = final_index == 0 and prefix_newline
-        needs_suffix = final_index < len(final_fragments) - 1 or suffix_newline
+        needs_suffix = final_index < len(execution_fragments) - 1 or suffix_newline
+        fragment_requests: list[dict[str, Any]] = []
         if fragment[0] == "paragraphs":
             text = "\n".join(_paragraph_text(paragraph) for paragraph in fragment[1])
             if needs_prefix:
                 text = f"\n{text}"
             if needs_suffix:
                 text = f"{text}\n"
-            structural_requests.append(
+            fragment_requests.append(
                 make_insert_text(
                     index=insert_index,
                     tab_id=tab_id,
@@ -669,7 +711,7 @@ def _lower_body_insert_group(
                 text = f"\n{text}"
             if needs_suffix:
                 text = f"{text}\n"
-            structural_requests.append(
+            fragment_requests.append(
                 make_insert_text(
                     index=insert_index,
                     tab_id=tab_id,
@@ -677,7 +719,7 @@ def _lower_body_insert_group(
                 )
             )
         elif fragment[0] == "table":
-            structural_requests.extend(
+            fragment_requests.extend(
                 _lower_blocks_into_fresh_story(
                     [fragment[1]],
                     story_start_index=insert_index,
@@ -687,20 +729,21 @@ def _lower_body_insert_group(
             )
         else:  # pragma: no cover
             raise AssertionError(fragment[0])
+        structural_requests.extend(fragment_requests)
+        shadow._batch_update_raw(fragment_requests)
 
-    shadow_blocks = _shadow_body_insert_blocks(
-        base=base,
-        tab_id=tab_id,
+    shadow_layout = build_body_layout(shadow.get(), tab_id=tab_id)
+    shadow_blocks = _shadow_inserted_blocks_from_layout(
+        shadow_layout=shadow_layout,
         section_index=anchor[1],
         block_index=anchor[2],
-        fragment_count=_body_insert_fragment_shadow_block_count(final_fragments),
-        structural_requests=structural_requests,
+        fragment_count=_body_insert_fragment_shadow_block_count(desired_fragments),
     )
     paragraph_style_locations: list[tuple[ParagraphIR, tuple[int, int]]] = []
     style_ops: list[tuple[int, dict[str, Any]]] = []
     shadow_index = 0
 
-    for fragment in final_fragments:
+    for fragment in desired_fragments:
         if fragment[0] == "paragraphs":
             for paragraph in fragment[1]:
                 block = shadow_blocks[shadow_index]
@@ -711,18 +754,17 @@ def _lower_body_insert_group(
                 paragraph_style_locations.append(
                     (paragraph, (block.start_index, block.end_index))
                 )
-                if paragraph.role != "NORMAL_TEXT":
-                    style_ops.append(
-                        (
-                            block.start_index,
-                            make_update_paragraph_role(
-                                start_index=block.start_index,
-                                end_index=block.end_index,
-                                tab_id=tab_id,
-                                role=paragraph.role,
-                            ),
-                        )
+                style_ops.append(
+                    (
+                        block.start_index,
+                        make_update_paragraph_role(
+                            start_index=block.start_index,
+                            end_index=block.end_index,
+                            tab_id=tab_id,
+                            role=paragraph.role,
+                        ),
                     )
+                )
                 shadow_index += 1
             continue
 
@@ -741,6 +783,17 @@ def _lower_body_insert_group(
                 )
             first_block = item_blocks[0]
             last_block = item_blocks[-1]
+            style_ops.append(
+                (
+                    first_block.start_index,
+                    make_update_paragraph_role(
+                        start_index=first_block.start_index,
+                        end_index=last_block.end_index,
+                        tab_id=tab_id,
+                        role="NORMAL_TEXT",
+                    ),
+                )
+            )
             style_ops.append(
                 (
                     first_block.start_index,
@@ -790,18 +843,13 @@ def _body_insert_fragment_shadow_block_count(
     return count
 
 
-def _shadow_body_insert_blocks(
+def _shadow_inserted_blocks_from_layout(
     *,
-    base: Document,
-    tab_id: str,
+    shadow_layout: BodyLayout,
     section_index: int,
     block_index: int,
     fragment_count: int,
-    structural_requests: list[dict[str, Any]],
 ) -> tuple[ParagraphLocation | ListLocation | TableLocation, ...]:
-    shadow = MockGoogleDocsAPI(base)
-    shadow._batch_update_raw(structural_requests)
-    shadow_layout = build_body_layout(shadow.get(), tab_id=tab_id)
     section_blocks = shadow_layout.sections[section_index].block_locations
     inserted_blocks = tuple(section_blocks[block_index : block_index + fragment_count])
     if len(inserted_blocks) != fragment_count:
@@ -824,6 +872,27 @@ def _body_insert_fragment(
     if isinstance(edit, InsertTableBlockEdit):
         return ("table", edit.table)
     raise TypeError(f"Unsupported body insert edit in grouped lowering: {type(edit).__name__}")
+
+
+def _body_paragraph_slice(
+    layout: BodyLayout,
+    *,
+    section_index: int,
+    start_block_index: int,
+    delete_block_count: int,
+) -> tuple[ParagraphLocation, ...]:
+    blocks = layout.sections[section_index].block_locations[
+        start_block_index : start_block_index + delete_block_count
+    ]
+    paragraphs = tuple(
+        block for block in blocks if isinstance(block, ParagraphLocation)
+    )
+    if len(paragraphs) != delete_block_count:
+        raise ValueError(
+            f"Could not resolve body paragraph slice section={section_index} "
+            f"start={start_block_index} count={delete_block_count}"
+        )
+    return paragraphs
 
 
 def _paragraph_at(
@@ -874,6 +943,34 @@ def _body_insert_site_for_edit(
     )
 
 
+def _body_insert_site_for_group_anchor(
+    *,
+    document: Document,
+    layout: BodyLayout,
+    tab_id: str,
+    section_index: int,
+    block_index: int,
+    raw_block_index: int | None,
+) -> tuple[int, bool, bool]:
+    if raw_block_index is not None:
+        sections = _raw_body_sections(document, tab_id=tab_id)
+        raw_blocks = sections[section_index]
+        if raw_block_index < len(raw_blocks):
+            raw_kind = raw_blocks[raw_block_index]["kind"]
+            if raw_kind in {"toc", "opaque"}:
+                return _raw_body_block_insertion_site(
+                    document,
+                    tab_id=tab_id,
+                    section_index=section_index,
+                    raw_block_index=raw_block_index,
+                )
+    return _body_block_insertion_site(
+        layout,
+        section_index=section_index,
+        block_index=block_index,
+    )
+
+
 def _body_block_insertion_site(
     layout: BodyLayout,
     *,
@@ -887,6 +984,13 @@ def _body_block_insertion_site(
             if len(blocks) == 1 and target.text == "":
                 return target.text_start_index, False, False
             return target.text_start_index, False, True
+        if block_index > 0 and isinstance(blocks[block_index - 1], ParagraphLocation):
+            previous = blocks[block_index - 1]
+            if previous.text == "":
+                return previous.text_start_index, False, False
+            return previous.text_end_index, True, False
+        if target.start_index > 1:
+            return target.start_index - 1, False, False
         return target.start_index, False, True
     if not blocks:
         return 1, False, False
@@ -911,7 +1015,15 @@ def _raw_body_block_insertion_site(
             if len(blocks) == 1 and target["text"] == "":
                 return int(target["text_start"]), False, False
             return int(target["text_start"]), False, True
-        return int(target["start"]), False, True
+        if raw_block_index > 0 and blocks[raw_block_index - 1]["kind"] == "paragraph":
+            previous = blocks[raw_block_index - 1]
+            if previous["text"] == "":
+                return int(previous["text_start"]), False, False
+            return int(previous["text_end"]), True, False
+        target_start = int(target["start"])
+        if target_start > 1:
+            return target_start - 1, False, False
+        return target_start, False, True
     if not blocks:
         return 1, False, False
     previous = blocks[raw_block_index - 1]
@@ -961,6 +1073,24 @@ def _raw_body_sections(document: Document, *, tab_id: str) -> list[list[dict[str
         else:
             sections[-1].append({"kind": "opaque", "start": start_index, "end": end_index})
     return sections
+
+
+def _raw_body_block_range(
+    document: Document,
+    *,
+    tab_id: str,
+    section_index: int,
+    raw_block_index: int,
+    expected_kind: str,
+) -> dict[str, int]:
+    sections = _raw_body_sections(document, tab_id=tab_id)
+    block = sections[section_index][raw_block_index]
+    if block["kind"] != expected_kind:
+        raise TypeError(
+            f"Expected raw body {expected_kind} at section {section_index} "
+            f"block {raw_block_index}, found {block['kind']}"
+        )
+    return {"start": int(block["start"]), "end": int(block["end"])}
 
 
 def _edited_story_ids(edits: list[SemanticEdit]) -> set[str]:

@@ -1,0 +1,4397 @@
+{
+  "documentId": "1A2Z3I6bnjPxqxccqHpEK_16Uo6nYjVbqezeQZkBb8cw",
+  "revisionId": "AIxLkSsXmrQzaU4iJ8_iqaKmwZORH-Z06KnFWShAxis8jcaPdbB7MC0ubO0o46c_euHwJt7m0ghw8O0FTXaavRsZJyCPPuZObz5TybF2eygwFQY",
+  "tabs": [
+    {
+      "documentTab": {
+        "body": {
+          "content": [
+            {
+              "endIndex": 1,
+              "sectionBreak": {
+                "sectionStyle": {
+                  "columnSeparatorStyle": "NONE",
+                  "contentDirection": "LEFT_TO_RIGHT",
+                  "sectionType": "CONTINUOUS"
+                }
+              }
+            },
+            {
+              "endIndex": 29,
+              "paragraph": {
+                "elements": [
+                  {
+                    "endIndex": 29,
+                    "startIndex": 1,
+                    "textRun": {
+                      "content": "V2 Markdown Stress Document\n",
+                      "textStyle": {}
+                    }
+                  }
+                ],
+                "paragraphStyle": {
+                  "headingId": "h.p7qzfwwmsi0h",
+                  "lineSpacing": 100.0,
+                  "namedStyleType": "HEADING_1"
+                }
+              },
+              "startIndex": 1
+            },
+            {
+              "endIndex": 127,
+              "paragraph": {
+                "elements": [
+                  {
+                    "endIndex": 60,
+                    "startIndex": 29,
+                    "textRun": {
+                      "content": "This document is an end-to-end ",
+                      "textStyle": {}
+                    }
+                  },
+                  {
+                    "endIndex": 67,
+                    "startIndex": 60,
+                    "textRun": {
+                      "content": "pull-md",
+                      "textStyle": {
+                        "fontSize": {
+                          "magnitude": 10.0,
+                          "unit": "PT"
+                        },
+                        "weightedFontFamily": {
+                          "fontFamily": "Courier New"
+                        }
+                      }
+                    }
+                  },
+                  {
+                    "endIndex": 70,
+                    "startIndex": 67,
+                    "textRun": {
+                      "content": " / ",
+                      "textStyle": {}
+                    }
+                  },
+                  {
+                    "endIndex": 77,
+                    "startIndex": 70,
+                    "textRun": {
+                      "content": "push-md",
+                      "textStyle": {
+                        "fontSize": {
+                          "magnitude": 10.0,
+                          "unit": "PT"
+                        },
+                        "weightedFontFamily": {
+                          "fontFamily": "Courier New"
+                        }
+                      }
+                    }
+                  },
+                  {
+                    "endIndex": 127,
+                    "startIndex": 77,
+                    "textRun": {
+                      "content": " verification run for the semantic-IR reconciler.\n",
+                      "textStyle": {}
+                    }
+                  }
+                ],
+                "paragraphStyle": {
+                  "lineSpacing": 100.0,
+                  "namedStyleType": "NORMAL_TEXT"
+                }
+              },
+              "startIndex": 29
+            },
+            {
+              "endIndex": 224,
+              "paragraph": {
+                "elements": [
+                  {
+                    "endIndex": 150,
+                    "startIndex": 127,
+                    "textRun": {
+                      "content": "It intentionally mixes ",
+                      "textStyle": {}
+                    }
+                  },
+                  {
+                    "endIndex": 154,
+                    "startIndex": 150,
+                    "textRun": {
+                      "content": "bold",
+                      "textStyle": {
+                        "bold": true
+                      }
+                    }
+                  },
+                  {
+                    "endIndex": 156,
+                    "startIndex": 154,
+                    "textRun": {
+                      "content": ", ",
+                      "textStyle": {}
+                    }
+                  },
+                  {
+                    "endIndex": 162,
+                    "startIndex": 156,
+                    "textRun": {
+                      "content": "italic",
+                      "textStyle": {
+                        "italic": true
+                      }
+                    }
+                  },
+                  {
+                    "endIndex": 164,
+                    "startIndex": 162,
+                    "textRun": {
+                      "content": ", ",
+                      "textStyle": {}
+                    }
+                  },
+                  {
+                    "endIndex": 177,
+                    "startIndex": 164,
+                    "textRun": {
+                      "content": "strikethrough",
+                      "textStyle": {
+                        "strikethrough": true
+                      }
+                    }
+                  },
+                  {
+                    "endIndex": 179,
+                    "startIndex": 177,
+                    "textRun": {
+                      "content": ", ",
+                      "textStyle": {}
+                    }
+                  },
+                  {
+                    "endIndex": 188,
+                    "startIndex": 179,
+                    "textRun": {
+                      "content": "underline",
+                      "textStyle": {
+                        "underline": true
+                      }
+                    }
+                  },
+                  {
+                    "endIndex": 190,
+                    "startIndex": 188,
+                    "textRun": {
+                      "content": ", ",
+                      "textStyle": {}
+                    }
+                  },
+                  {
+                    "endIndex": 201,
+                    "startIndex": 190,
+                    "textRun": {
+                      "content": "inline code",
+                      "textStyle": {
+                        "fontSize": {
+                          "magnitude": 10.0,
+                          "unit": "PT"
+                        },
+                        "weightedFontFamily": {
+                          "fontFamily": "Courier New"
+                        }
+                      }
+                    }
+                  },
+                  {
+                    "endIndex": 209,
+                    "startIndex": 201,
+                    "textRun": {
+                      "content": ", and a ",
+                      "textStyle": {}
+                    }
+                  },
+                  {
+                    "endIndex": 222,
+                    "startIndex": 209,
+                    "textRun": {
+                      "content": "Docs API link",
+                      "textStyle": {
+                        "foregroundColor": {
+                          "color": {
+                            "rgbColor": {
+                              "blue": 0.8,
+                              "green": 0.3333333333333333,
+                              "red": 0.06666666666666667
+                            }
+                          }
+                        },
+                        "link": {
+                          "url": "https://developers.google.com/docs/api/reference/rest"
+                        },
+                        "underline": true
+                      }
+                    }
+                  },
+                  {
+                    "endIndex": 224,
+                    "startIndex": 222,
+                    "textRun": {
+                      "content": ".\n",
+                      "textStyle": {}
+                    }
+                  }
+                ],
+                "paragraphStyle": {
+                  "lineSpacing": 100.0,
+                  "namedStyleType": "NORMAL_TEXT"
+                }
+              },
+              "startIndex": 127
+            },
+            {
+              "endIndex": 230,
+              "paragraph": {
+                "elements": [
+                  {
+                    "endIndex": 230,
+                    "startIndex": 224,
+                    "textRun": {
+                      "content": "Scope\n",
+                      "textStyle": {}
+                    }
+                  }
+                ],
+                "paragraphStyle": {
+                  "headingId": "h.y4n6oxug51ys",
+                  "lineSpacing": 100.0,
+                  "namedStyleType": "HEADING_2"
+                }
+              },
+              "startIndex": 224
+            },
+            {
+              "endIndex": 331,
+              "paragraph": {
+                "elements": [
+                  {
+                    "endIndex": 331,
+                    "startIndex": 230,
+                    "textRun": {
+                      "content": "We want one initial markdown-only push to create as many supported Google Docs features as possible.\n",
+                      "textStyle": {}
+                    }
+                  }
+                ],
+                "paragraphStyle": {
+                  "lineSpacing": 100.0,
+                  "namedStyleType": "NORMAL_TEXT"
+                }
+              },
+              "startIndex": 230
+            },
+            {
+              "endIndex": 346,
+              "paragraph": {
+                "elements": [
+                  {
+                    "endIndex": 346,
+                    "startIndex": 331,
+                    "textRun": {
+                      "content": "Feature Matrix\n",
+                      "textStyle": {}
+                    }
+                  }
+                ],
+                "paragraphStyle": {
+                  "headingId": "h.s7clxggvuvkr",
+                  "lineSpacing": 100.0,
+                  "namedStyleType": "HEADING_3"
+                }
+              },
+              "startIndex": 331
+            },
+            {
+              "endIndex": 347,
+              "paragraph": {
+                "elements": [
+                  {
+                    "endIndex": 347,
+                    "startIndex": 346,
+                    "textRun": {
+                      "content": "\n",
+                      "textStyle": {}
+                    }
+                  }
+                ],
+                "paragraphStyle": {
+                  "lineSpacing": 100.0,
+                  "namedStyleType": "NORMAL_TEXT"
+                }
+              },
+              "startIndex": 346
+            },
+            {
+              "endIndex": 693,
+              "startIndex": 347,
+              "table": {
+                "columns": 3,
+                "rows": 7,
+                "tableRows": [
+                  {
+                    "endIndex": 377,
+                    "startIndex": 348,
+                    "tableCells": [
+                      {
+                        "content": [
+                          {
+                            "endIndex": 358,
+                            "paragraph": {
+                              "elements": [
+                                {
+                                  "endIndex": 358,
+                                  "startIndex": 350,
+                                  "textRun": {
+                                    "content": "Feature\n",
+                                    "textStyle": {
+                                      "bold": true
+                                    }
+                                  }
+                                }
+                              ],
+                              "paragraphStyle": {
+                                "lineSpacing": 100.0,
+                                "namedStyleType": "NORMAL_TEXT"
+                              }
+                            },
+                            "startIndex": 350
+                          }
+                        ],
+                        "endIndex": 358,
+                        "startIndex": 349,
+                        "tableCellStyle": {
+                          "backgroundColor": {},
+                          "columnSpan": 1,
+                          "contentAlignment": "TOP",
+                          "paddingBottom": {
+                            "magnitude": 5.0,
+                            "unit": "PT"
+                          },
+                          "paddingLeft": {
+                            "magnitude": 5.0,
+                            "unit": "PT"
+                          },
+                          "paddingRight": {
+                            "magnitude": 5.0,
+                            "unit": "PT"
+                          },
+                          "paddingTop": {
+                            "magnitude": 5.0,
+                            "unit": "PT"
+                          },
+                          "rowSpan": 1
+                        }
+                      },
+                      {
+                        "content": [
+                          {
+                            "endIndex": 367,
+                            "paragraph": {
+                              "elements": [
+                                {
+                                  "endIndex": 367,
+                                  "startIndex": 359,
+                                  "textRun": {
+                                    "content": "Example\n",
+                                    "textStyle": {
+                                      "bold": true
+                                    }
+                                  }
+                                }
+                              ],
+                              "paragraphStyle": {
+                                "lineSpacing": 100.0,
+                                "namedStyleType": "NORMAL_TEXT"
+                              }
+                            },
+                            "startIndex": 359
+                          }
+                        ],
+                        "endIndex": 367,
+                        "startIndex": 358,
+                        "tableCellStyle": {
+                          "backgroundColor": {},
+                          "columnSpan": 1,
+                          "contentAlignment": "TOP",
+                          "paddingBottom": {
+                            "magnitude": 5.0,
+                            "unit": "PT"
+                          },
+                          "paddingLeft": {
+                            "magnitude": 5.0,
+                            "unit": "PT"
+                          },
+                          "paddingRight": {
+                            "magnitude": 5.0,
+                            "unit": "PT"
+                          },
+                          "paddingTop": {
+                            "magnitude": 5.0,
+                            "unit": "PT"
+                          },
+                          "rowSpan": 1
+                        }
+                      },
+                      {
+                        "content": [
+                          {
+                            "endIndex": 377,
+                            "paragraph": {
+                              "elements": [
+                                {
+                                  "endIndex": 377,
+                                  "startIndex": 368,
+                                  "textRun": {
+                                    "content": "Expected\n",
+                                    "textStyle": {
+                                      "bold": true
+                                    }
+                                  }
+                                }
+                              ],
+                              "paragraphStyle": {
+                                "lineSpacing": 100.0,
+                                "namedStyleType": "NORMAL_TEXT"
+                              }
+                            },
+                            "startIndex": 368
+                          }
+                        ],
+                        "endIndex": 377,
+                        "startIndex": 367,
+                        "tableCellStyle": {
+                          "backgroundColor": {},
+                          "columnSpan": 1,
+                          "contentAlignment": "TOP",
+                          "paddingBottom": {
+                            "magnitude": 5.0,
+                            "unit": "PT"
+                          },
+                          "paddingLeft": {
+                            "magnitude": 5.0,
+                            "unit": "PT"
+                          },
+                          "paddingRight": {
+                            "magnitude": 5.0,
+                            "unit": "PT"
+                          },
+                          "paddingTop": {
+                            "magnitude": 5.0,
+                            "unit": "PT"
+                          },
+                          "rowSpan": 1
+                        }
+                      }
+                    ],
+                    "tableRowStyle": {
+                      "minRowHeight": {
+                        "unit": "PT"
+                      }
+                    }
+                  },
+                  {
+                    "endIndex": 421,
+                    "startIndex": 377,
+                    "tableCells": [
+                      {
+                        "content": [
+                          {
+                            "endIndex": 387,
+                            "paragraph": {
+                              "elements": [
+                                {
+                                  "endIndex": 387,
+                                  "startIndex": 379,
+                                  "textRun": {
+                                    "content": "Heading\n",
+                                    "textStyle": {}
+                                  }
+                                }
+                              ],
+                              "paragraphStyle": {
+                                "lineSpacing": 100.0,
+                                "namedStyleType": "NORMAL_TEXT"
+                              }
+                            },
+                            "startIndex": 379
+                          }
+                        ],
+                        "endIndex": 387,
+                        "startIndex": 378,
+                        "tableCellStyle": {
+                          "backgroundColor": {},
+                          "columnSpan": 1,
+                          "contentAlignment": "TOP",
+                          "paddingBottom": {
+                            "magnitude": 5.0,
+                            "unit": "PT"
+                          },
+                          "paddingLeft": {
+                            "magnitude": 5.0,
+                            "unit": "PT"
+                          },
+                          "paddingRight": {
+                            "magnitude": 5.0,
+                            "unit": "PT"
+                          },
+                          "paddingTop": {
+                            "magnitude": 5.0,
+                            "unit": "PT"
+                          },
+                          "rowSpan": 1
+                        }
+                      },
+                      {
+                        "content": [
+                          {
+                            "endIndex": 397,
+                            "paragraph": {
+                              "elements": [
+                                {
+                                  "endIndex": 397,
+                                  "startIndex": 388,
+                                  "textRun": {
+                                    "content": "## Scope\n",
+                                    "textStyle": {
+                                      "fontSize": {
+                                        "magnitude": 10.0,
+                                        "unit": "PT"
+                                      },
+                                      "weightedFontFamily": {
+                                        "fontFamily": "Courier New"
+                                      }
+                                    }
+                                  }
+                                }
+                              ],
+                              "paragraphStyle": {
+                                "lineSpacing": 100.0,
+                                "namedStyleType": "NORMAL_TEXT"
+                              }
+                            },
+                            "startIndex": 388
+                          }
+                        ],
+                        "endIndex": 397,
+                        "startIndex": 387,
+                        "tableCellStyle": {
+                          "backgroundColor": {},
+                          "columnSpan": 1,
+                          "contentAlignment": "TOP",
+                          "paddingBottom": {
+                            "magnitude": 5.0,
+                            "unit": "PT"
+                          },
+                          "paddingLeft": {
+                            "magnitude": 5.0,
+                            "unit": "PT"
+                          },
+                          "paddingRight": {
+                            "magnitude": 5.0,
+                            "unit": "PT"
+                          },
+                          "paddingTop": {
+                            "magnitude": 5.0,
+                            "unit": "PT"
+                          },
+                          "rowSpan": 1
+                        }
+                      },
+                      {
+                        "content": [
+                          {
+                            "endIndex": 421,
+                            "paragraph": {
+                              "elements": [
+                                {
+                                  "endIndex": 421,
+                                  "startIndex": 398,
+                                  "textRun": {
+                                    "content": "Round-trips as heading\n",
+                                    "textStyle": {}
+                                  }
+                                }
+                              ],
+                              "paragraphStyle": {
+                                "lineSpacing": 100.0,
+                                "namedStyleType": "NORMAL_TEXT"
+                              }
+                            },
+                            "startIndex": 398
+                          }
+                        ],
+                        "endIndex": 421,
+                        "startIndex": 397,
+                        "tableCellStyle": {
+                          "backgroundColor": {},
+                          "columnSpan": 1,
+                          "contentAlignment": "TOP",
+                          "paddingBottom": {
+                            "magnitude": 5.0,
+                            "unit": "PT"
+                          },
+                          "paddingLeft": {
+                            "magnitude": 5.0,
+                            "unit": "PT"
+                          },
+                          "paddingRight": {
+                            "magnitude": 5.0,
+                            "unit": "PT"
+                          },
+                          "paddingTop": {
+                            "magnitude": 5.0,
+                            "unit": "PT"
+                          },
+                          "rowSpan": 1
+                        }
+                      }
+                    ],
+                    "tableRowStyle": {
+                      "minRowHeight": {
+                        "unit": "PT"
+                      }
+                    }
+                  },
+                  {
+                    "endIndex": 516,
+                    "startIndex": 421,
+                    "tableCells": [
+                      {
+                        "content": [
+                          {
+                            "endIndex": 428,
+                            "paragraph": {
+                              "elements": [
+                                {
+                                  "endIndex": 428,
+                                  "startIndex": 423,
+                                  "textRun": {
+                                    "content": "Link\n",
+                                    "textStyle": {}
+                                  }
+                                }
+                              ],
+                              "paragraphStyle": {
+                                "lineSpacing": 100.0,
+                                "namedStyleType": "NORMAL_TEXT"
+                              }
+                            },
+                            "startIndex": 423
+                          }
+                        ],
+                        "endIndex": 428,
+                        "startIndex": 422,
+                        "tableCellStyle": {
+                          "backgroundColor": {},
+                          "columnSpan": 1,
+                          "contentAlignment": "TOP",
+                          "paddingBottom": {
+                            "magnitude": 5.0,
+                            "unit": "PT"
+                          },
+                          "paddingLeft": {
+                            "magnitude": 5.0,
+                            "unit": "PT"
+                          },
+                          "paddingRight": {
+                            "magnitude": 5.0,
+                            "unit": "PT"
+                          },
+                          "paddingTop": {
+                            "magnitude": 5.0,
+                            "unit": "PT"
+                          },
+                          "rowSpan": 1
+                        }
+                      },
+                      {
+                        "content": [
+                          {
+                            "endIndex": 500,
+                            "paragraph": {
+                              "elements": [
+                                {
+                                  "endIndex": 500,
+                                  "startIndex": 429,
+                                  "textRun": {
+                                    "content": "[Docs API link](https://developers.google.com/docs/api/reference/rest)\n",
+                                    "textStyle": {
+                                      "fontSize": {
+                                        "magnitude": 10.0,
+                                        "unit": "PT"
+                                      },
+                                      "weightedFontFamily": {
+                                        "fontFamily": "Courier New"
+                                      }
+                                    }
+                                  }
+                                }
+                              ],
+                              "paragraphStyle": {
+                                "lineSpacing": 100.0,
+                                "namedStyleType": "NORMAL_TEXT"
+                              }
+                            },
+                            "startIndex": 429
+                          }
+                        ],
+                        "endIndex": 500,
+                        "startIndex": 428,
+                        "tableCellStyle": {
+                          "backgroundColor": {},
+                          "columnSpan": 1,
+                          "contentAlignment": "TOP",
+                          "paddingBottom": {
+                            "magnitude": 5.0,
+                            "unit": "PT"
+                          },
+                          "paddingLeft": {
+                            "magnitude": 5.0,
+                            "unit": "PT"
+                          },
+                          "paddingRight": {
+                            "magnitude": 5.0,
+                            "unit": "PT"
+                          },
+                          "paddingTop": {
+                            "magnitude": 5.0,
+                            "unit": "PT"
+                          },
+                          "rowSpan": 1
+                        }
+                      },
+                      {
+                        "content": [
+                          {
+                            "endIndex": 516,
+                            "paragraph": {
+                              "elements": [
+                                {
+                                  "endIndex": 516,
+                                  "startIndex": 501,
+                                  "textRun": {
+                                    "content": "Link preserved\n",
+                                    "textStyle": {}
+                                  }
+                                }
+                              ],
+                              "paragraphStyle": {
+                                "lineSpacing": 100.0,
+                                "namedStyleType": "NORMAL_TEXT"
+                              }
+                            },
+                            "startIndex": 501
+                          }
+                        ],
+                        "endIndex": 516,
+                        "startIndex": 500,
+                        "tableCellStyle": {
+                          "backgroundColor": {},
+                          "columnSpan": 1,
+                          "contentAlignment": "TOP",
+                          "paddingBottom": {
+                            "magnitude": 5.0,
+                            "unit": "PT"
+                          },
+                          "paddingLeft": {
+                            "magnitude": 5.0,
+                            "unit": "PT"
+                          },
+                          "paddingRight": {
+                            "magnitude": 5.0,
+                            "unit": "PT"
+                          },
+                          "paddingTop": {
+                            "magnitude": 5.0,
+                            "unit": "PT"
+                          },
+                          "rowSpan": 1
+                        }
+                      }
+                    ],
+                    "tableRowStyle": {
+                      "minRowHeight": {
+                        "unit": "PT"
+                      }
+                    }
+                  },
+                  {
+                    "endIndex": 563,
+                    "startIndex": 516,
+                    "tableCells": [
+                      {
+                        "content": [
+                          {
+                            "endIndex": 527,
+                            "paragraph": {
+                              "elements": [
+                                {
+                                  "endIndex": 527,
+                                  "startIndex": 518,
+                                  "textRun": {
+                                    "content": "Checkbox\n",
+                                    "textStyle": {}
+                                  }
+                                }
+                              ],
+                              "paragraphStyle": {
+                                "lineSpacing": 100.0,
+                                "namedStyleType": "NORMAL_TEXT"
+                              }
+                            },
+                            "startIndex": 518
+                          }
+                        ],
+                        "endIndex": 527,
+                        "startIndex": 517,
+                        "tableCellStyle": {
+                          "backgroundColor": {},
+                          "columnSpan": 1,
+                          "contentAlignment": "TOP",
+                          "paddingBottom": {
+                            "magnitude": 5.0,
+                            "unit": "PT"
+                          },
+                          "paddingLeft": {
+                            "magnitude": 5.0,
+                            "unit": "PT"
+                          },
+                          "paddingRight": {
+                            "magnitude": 5.0,
+                            "unit": "PT"
+                          },
+                          "paddingTop": {
+                            "magnitude": 5.0,
+                            "unit": "PT"
+                          },
+                          "rowSpan": 1
+                        }
+                      },
+                      {
+                        "content": [
+                          {
+                            "endIndex": 543,
+                            "paragraph": {
+                              "elements": [
+                                {
+                                  "endIndex": 543,
+                                  "startIndex": 528,
+                                  "textRun": {
+                                    "content": "- [x] Verified\n",
+                                    "textStyle": {
+                                      "fontSize": {
+                                        "magnitude": 10.0,
+                                        "unit": "PT"
+                                      },
+                                      "weightedFontFamily": {
+                                        "fontFamily": "Courier New"
+                                      }
+                                    }
+                                  }
+                                }
+                              ],
+                              "paragraphStyle": {
+                                "lineSpacing": 100.0,
+                                "namedStyleType": "NORMAL_TEXT"
+                              }
+                            },
+                            "startIndex": 528
+                          }
+                        ],
+                        "endIndex": 543,
+                        "startIndex": 527,
+                        "tableCellStyle": {
+                          "backgroundColor": {},
+                          "columnSpan": 1,
+                          "contentAlignment": "TOP",
+                          "paddingBottom": {
+                            "magnitude": 5.0,
+                            "unit": "PT"
+                          },
+                          "paddingLeft": {
+                            "magnitude": 5.0,
+                            "unit": "PT"
+                          },
+                          "paddingRight": {
+                            "magnitude": 5.0,
+                            "unit": "PT"
+                          },
+                          "paddingTop": {
+                            "magnitude": 5.0,
+                            "unit": "PT"
+                          },
+                          "rowSpan": 1
+                        }
+                      },
+                      {
+                        "content": [
+                          {
+                            "endIndex": 563,
+                            "paragraph": {
+                              "elements": [
+                                {
+                                  "endIndex": 563,
+                                  "startIndex": 544,
+                                  "textRun": {
+                                    "content": "Checkbox preserved\n",
+                                    "textStyle": {}
+                                  }
+                                }
+                              ],
+                              "paragraphStyle": {
+                                "lineSpacing": 100.0,
+                                "namedStyleType": "NORMAL_TEXT"
+                              }
+                            },
+                            "startIndex": 544
+                          }
+                        ],
+                        "endIndex": 563,
+                        "startIndex": 543,
+                        "tableCellStyle": {
+                          "backgroundColor": {},
+                          "columnSpan": 1,
+                          "contentAlignment": "TOP",
+                          "paddingBottom": {
+                            "magnitude": 5.0,
+                            "unit": "PT"
+                          },
+                          "paddingLeft": {
+                            "magnitude": 5.0,
+                            "unit": "PT"
+                          },
+                          "paddingRight": {
+                            "magnitude": 5.0,
+                            "unit": "PT"
+                          },
+                          "paddingTop": {
+                            "magnitude": 5.0,
+                            "unit": "PT"
+                          },
+                          "rowSpan": 1
+                        }
+                      }
+                    ],
+                    "tableRowStyle": {
+                      "minRowHeight": {
+                        "unit": "PT"
+                      }
+                    }
+                  },
+                  {
+                    "endIndex": 600,
+                    "startIndex": 563,
+                    "tableCells": [
+                      {
+                        "content": [
+                          {
+                            "endIndex": 571,
+                            "paragraph": {
+                              "elements": [
+                                {
+                                  "endIndex": 571,
+                                  "startIndex": 565,
+                                  "textRun": {
+                                    "content": "Table\n",
+                                    "textStyle": {}
+                                  }
+                                }
+                              ],
+                              "paragraphStyle": {
+                                "lineSpacing": 100.0,
+                                "namedStyleType": "NORMAL_TEXT"
+                              }
+                            },
+                            "startIndex": 565
+                          }
+                        ],
+                        "endIndex": 571,
+                        "startIndex": 564,
+                        "tableCellStyle": {
+                          "backgroundColor": {},
+                          "columnSpan": 1,
+                          "contentAlignment": "TOP",
+                          "paddingBottom": {
+                            "magnitude": 5.0,
+                            "unit": "PT"
+                          },
+                          "paddingLeft": {
+                            "magnitude": 5.0,
+                            "unit": "PT"
+                          },
+                          "paddingRight": {
+                            "magnitude": 5.0,
+                            "unit": "PT"
+                          },
+                          "paddingTop": {
+                            "magnitude": 5.0,
+                            "unit": "PT"
+                          },
+                          "rowSpan": 1
+                        }
+                      },
+                      {
+                        "content": [
+                          {
+                            "endIndex": 583,
+                            "paragraph": {
+                              "elements": [
+                                {
+                                  "endIndex": 583,
+                                  "startIndex": 572,
+                                  "textRun": {
+                                    "content": "pipe table\n",
+                                    "textStyle": {}
+                                  }
+                                }
+                              ],
+                              "paragraphStyle": {
+                                "lineSpacing": 100.0,
+                                "namedStyleType": "NORMAL_TEXT"
+                              }
+                            },
+                            "startIndex": 572
+                          }
+                        ],
+                        "endIndex": 583,
+                        "startIndex": 571,
+                        "tableCellStyle": {
+                          "backgroundColor": {},
+                          "columnSpan": 1,
+                          "contentAlignment": "TOP",
+                          "paddingBottom": {
+                            "magnitude": 5.0,
+                            "unit": "PT"
+                          },
+                          "paddingLeft": {
+                            "magnitude": 5.0,
+                            "unit": "PT"
+                          },
+                          "paddingRight": {
+                            "magnitude": 5.0,
+                            "unit": "PT"
+                          },
+                          "paddingTop": {
+                            "magnitude": 5.0,
+                            "unit": "PT"
+                          },
+                          "rowSpan": 1
+                        }
+                      },
+                      {
+                        "content": [
+                          {
+                            "endIndex": 600,
+                            "paragraph": {
+                              "elements": [
+                                {
+                                  "endIndex": 600,
+                                  "startIndex": 584,
+                                  "textRun": {
+                                    "content": "Table preserved\n",
+                                    "textStyle": {}
+                                  }
+                                }
+                              ],
+                              "paragraphStyle": {
+                                "lineSpacing": 100.0,
+                                "namedStyleType": "NORMAL_TEXT"
+                              }
+                            },
+                            "startIndex": 584
+                          }
+                        ],
+                        "endIndex": 600,
+                        "startIndex": 583,
+                        "tableCellStyle": {
+                          "backgroundColor": {},
+                          "columnSpan": 1,
+                          "contentAlignment": "TOP",
+                          "paddingBottom": {
+                            "magnitude": 5.0,
+                            "unit": "PT"
+                          },
+                          "paddingLeft": {
+                            "magnitude": 5.0,
+                            "unit": "PT"
+                          },
+                          "paddingRight": {
+                            "magnitude": 5.0,
+                            "unit": "PT"
+                          },
+                          "paddingTop": {
+                            "magnitude": 5.0,
+                            "unit": "PT"
+                          },
+                          "rowSpan": 1
+                        }
+                      }
+                    ],
+                    "tableRowStyle": {
+                      "minRowHeight": {
+                        "unit": "PT"
+                      }
+                    }
+                  },
+                  {
+                    "endIndex": 649,
+                    "startIndex": 600,
+                    "tableCells": [
+                      {
+                        "content": [
+                          {
+                            "endIndex": 613,
+                            "paragraph": {
+                              "elements": [
+                                {
+                                  "endIndex": 613,
+                                  "startIndex": 602,
+                                  "textRun": {
+                                    "content": "Code block\n",
+                                    "textStyle": {}
+                                  }
+                                }
+                              ],
+                              "paragraphStyle": {
+                                "lineSpacing": 100.0,
+                                "namedStyleType": "NORMAL_TEXT"
+                              }
+                            },
+                            "startIndex": 602
+                          }
+                        ],
+                        "endIndex": 613,
+                        "startIndex": 601,
+                        "tableCellStyle": {
+                          "backgroundColor": {},
+                          "columnSpan": 1,
+                          "contentAlignment": "TOP",
+                          "paddingBottom": {
+                            "magnitude": 5.0,
+                            "unit": "PT"
+                          },
+                          "paddingLeft": {
+                            "magnitude": 5.0,
+                            "unit": "PT"
+                          },
+                          "paddingRight": {
+                            "magnitude": 5.0,
+                            "unit": "PT"
+                          },
+                          "paddingTop": {
+                            "magnitude": 5.0,
+                            "unit": "PT"
+                          },
+                          "rowSpan": 1
+                        }
+                      },
+                      {
+                        "content": [
+                          {
+                            "endIndex": 627,
+                            "paragraph": {
+                              "elements": [
+                                {
+                                  "endIndex": 627,
+                                  "startIndex": 614,
+                                  "textRun": {
+                                    "content": "fenced block\n",
+                                    "textStyle": {}
+                                  }
+                                }
+                              ],
+                              "paragraphStyle": {
+                                "lineSpacing": 100.0,
+                                "namedStyleType": "NORMAL_TEXT"
+                              }
+                            },
+                            "startIndex": 614
+                          }
+                        ],
+                        "endIndex": 627,
+                        "startIndex": 613,
+                        "tableCellStyle": {
+                          "backgroundColor": {},
+                          "columnSpan": 1,
+                          "contentAlignment": "TOP",
+                          "paddingBottom": {
+                            "magnitude": 5.0,
+                            "unit": "PT"
+                          },
+                          "paddingLeft": {
+                            "magnitude": 5.0,
+                            "unit": "PT"
+                          },
+                          "paddingRight": {
+                            "magnitude": 5.0,
+                            "unit": "PT"
+                          },
+                          "paddingTop": {
+                            "magnitude": 5.0,
+                            "unit": "PT"
+                          },
+                          "rowSpan": 1
+                        }
+                      },
+                      {
+                        "content": [
+                          {
+                            "endIndex": 649,
+                            "paragraph": {
+                              "elements": [
+                                {
+                                  "endIndex": 649,
+                                  "startIndex": 628,
+                                  "textRun": {
+                                    "content": "Code block preserved\n",
+                                    "textStyle": {}
+                                  }
+                                }
+                              ],
+                              "paragraphStyle": {
+                                "lineSpacing": 100.0,
+                                "namedStyleType": "NORMAL_TEXT"
+                              }
+                            },
+                            "startIndex": 628
+                          }
+                        ],
+                        "endIndex": 649,
+                        "startIndex": 627,
+                        "tableCellStyle": {
+                          "backgroundColor": {},
+                          "columnSpan": 1,
+                          "contentAlignment": "TOP",
+                          "paddingBottom": {
+                            "magnitude": 5.0,
+                            "unit": "PT"
+                          },
+                          "paddingLeft": {
+                            "magnitude": 5.0,
+                            "unit": "PT"
+                          },
+                          "paddingRight": {
+                            "magnitude": 5.0,
+                            "unit": "PT"
+                          },
+                          "paddingTop": {
+                            "magnitude": 5.0,
+                            "unit": "PT"
+                          },
+                          "rowSpan": 1
+                        }
+                      }
+                    ],
+                    "tableRowStyle": {
+                      "minRowHeight": {
+                        "unit": "PT"
+                      }
+                    }
+                  },
+                  {
+                    "endIndex": 692,
+                    "startIndex": 649,
+                    "tableCells": [
+                      {
+                        "content": [
+                          {
+                            "endIndex": 659,
+                            "paragraph": {
+                              "elements": [
+                                {
+                                  "endIndex": 659,
+                                  "startIndex": 651,
+                                  "textRun": {
+                                    "content": "Callout\n",
+                                    "textStyle": {}
+                                  }
+                                }
+                              ],
+                              "paragraphStyle": {
+                                "lineSpacing": 100.0,
+                                "namedStyleType": "NORMAL_TEXT"
+                              }
+                            },
+                            "startIndex": 651
+                          }
+                        ],
+                        "endIndex": 659,
+                        "startIndex": 650,
+                        "tableCellStyle": {
+                          "backgroundColor": {},
+                          "columnSpan": 1,
+                          "contentAlignment": "TOP",
+                          "paddingBottom": {
+                            "magnitude": 5.0,
+                            "unit": "PT"
+                          },
+                          "paddingLeft": {
+                            "magnitude": 5.0,
+                            "unit": "PT"
+                          },
+                          "paddingRight": {
+                            "magnitude": 5.0,
+                            "unit": "PT"
+                          },
+                          "paddingTop": {
+                            "magnitude": 5.0,
+                            "unit": "PT"
+                          },
+                          "rowSpan": 1
+                        }
+                      },
+                      {
+                        "content": [
+                          {
+                            "endIndex": 673,
+                            "paragraph": {
+                              "elements": [
+                                {
+                                  "endIndex": 673,
+                                  "startIndex": 660,
+                                  "textRun": {
+                                    "content": "> [!WARNING]\n",
+                                    "textStyle": {
+                                      "fontSize": {
+                                        "magnitude": 10.0,
+                                        "unit": "PT"
+                                      },
+                                      "weightedFontFamily": {
+                                        "fontFamily": "Courier New"
+                                      }
+                                    }
+                                  }
+                                }
+                              ],
+                              "paragraphStyle": {
+                                "lineSpacing": 100.0,
+                                "namedStyleType": "NORMAL_TEXT"
+                              }
+                            },
+                            "startIndex": 660
+                          }
+                        ],
+                        "endIndex": 673,
+                        "startIndex": 659,
+                        "tableCellStyle": {
+                          "backgroundColor": {},
+                          "columnSpan": 1,
+                          "contentAlignment": "TOP",
+                          "paddingBottom": {
+                            "magnitude": 5.0,
+                            "unit": "PT"
+                          },
+                          "paddingLeft": {
+                            "magnitude": 5.0,
+                            "unit": "PT"
+                          },
+                          "paddingRight": {
+                            "magnitude": 5.0,
+                            "unit": "PT"
+                          },
+                          "paddingTop": {
+                            "magnitude": 5.0,
+                            "unit": "PT"
+                          },
+                          "rowSpan": 1
+                        }
+                      },
+                      {
+                        "content": [
+                          {
+                            "endIndex": 692,
+                            "paragraph": {
+                              "elements": [
+                                {
+                                  "endIndex": 692,
+                                  "startIndex": 674,
+                                  "textRun": {
+                                    "content": "Callout preserved\n",
+                                    "textStyle": {}
+                                  }
+                                }
+                              ],
+                              "paragraphStyle": {
+                                "lineSpacing": 100.0,
+                                "namedStyleType": "NORMAL_TEXT"
+                              }
+                            },
+                            "startIndex": 674
+                          }
+                        ],
+                        "endIndex": 692,
+                        "startIndex": 673,
+                        "tableCellStyle": {
+                          "backgroundColor": {},
+                          "columnSpan": 1,
+                          "contentAlignment": "TOP",
+                          "paddingBottom": {
+                            "magnitude": 5.0,
+                            "unit": "PT"
+                          },
+                          "paddingLeft": {
+                            "magnitude": 5.0,
+                            "unit": "PT"
+                          },
+                          "paddingRight": {
+                            "magnitude": 5.0,
+                            "unit": "PT"
+                          },
+                          "paddingTop": {
+                            "magnitude": 5.0,
+                            "unit": "PT"
+                          },
+                          "rowSpan": 1
+                        }
+                      }
+                    ],
+                    "tableRowStyle": {
+                      "minRowHeight": {
+                        "unit": "PT"
+                      }
+                    }
+                  }
+                ],
+                "tableStyle": {
+                  "tableColumnProperties": [
+                    {
+                      "widthType": "EVENLY_DISTRIBUTED"
+                    },
+                    {
+                      "widthType": "EVENLY_DISTRIBUTED"
+                    },
+                    {
+                      "widthType": "EVENLY_DISTRIBUTED"
+                    }
+                  ]
+                }
+              }
+            },
+            {
+              "endIndex": 703,
+              "paragraph": {
+                "elements": [
+                  {
+                    "endIndex": 703,
+                    "startIndex": 693,
+                    "textRun": {
+                      "content": "Narrative\n",
+                      "textStyle": {}
+                    }
+                  }
+                ],
+                "paragraphStyle": {
+                  "headingId": "h.eo6h3538bcps",
+                  "lineSpacing": 100.0,
+                  "namedStyleType": "HEADING_2"
+                }
+              },
+              "startIndex": 693
+            },
+            {
+              "endIndex": 888,
+              "paragraph": {
+                "elements": [
+                  {
+                    "endIndex": 888,
+                    "startIndex": 703,
+                    "textRun": {
+                      "content": "The goal is not just serialization. The goal is to prove that a future desired markdown document without live transport indices can still reconcile cleanly against the live Google Doc.\n",
+                      "textStyle": {}
+                    }
+                  }
+                ],
+                "paragraphStyle": {
+                  "lineSpacing": 100.0,
+                  "namedStyleType": "NORMAL_TEXT"
+                }
+              },
+              "startIndex": 703
+            },
+            {
+              "endIndex": 889,
+              "paragraph": {
+                "elements": [
+                  {
+                    "endIndex": 889,
+                    "startIndex": 888,
+                    "textRun": {
+                      "content": "\n",
+                      "textStyle": {}
+                    }
+                  }
+                ],
+                "paragraphStyle": {
+                  "lineSpacing": 100.0,
+                  "namedStyleType": "NORMAL_TEXT"
+                }
+              },
+              "startIndex": 888
+            },
+            {
+              "endIndex": 1022,
+              "startIndex": 889,
+              "table": {
+                "columns": 1,
+                "rows": 1,
+                "tableRows": [
+                  {
+                    "endIndex": 1021,
+                    "startIndex": 890,
+                    "tableCells": [
+                      {
+                        "content": [
+                          {
+                            "endIndex": 966,
+                            "paragraph": {
+                              "elements": [
+                                {
+                                  "endIndex": 966,
+                                  "startIndex": 892,
+                                  "textRun": {
+                                    "content": "This is a plain blockquote that should remain a blockquote after re-pull.\n",
+                                    "textStyle": {}
+                                  }
+                                }
+                              ],
+                              "paragraphStyle": {
+                                "lineSpacing": 100.0,
+                                "namedStyleType": "NORMAL_TEXT"
+                              }
+                            },
+                            "startIndex": 892
+                          },
+                          {
+                            "endIndex": 1021,
+                            "paragraph": {
+                              "elements": [
+                                {
+                                  "endIndex": 1021,
+                                  "startIndex": 966,
+                                  "textRun": {
+                                    "content": "It has two paragraphs to verify continuation handling.\n",
+                                    "textStyle": {}
+                                  }
+                                }
+                              ],
+                              "paragraphStyle": {
+                                "lineSpacing": 100.0,
+                                "namedStyleType": "NORMAL_TEXT"
+                              }
+                            },
+                            "startIndex": 966
+                          }
+                        ],
+                        "endIndex": 1021,
+                        "startIndex": 891,
+                        "tableCellStyle": {
+                          "backgroundColor": {},
+                          "columnSpan": 1,
+                          "contentAlignment": "TOP",
+                          "paddingBottom": {
+                            "magnitude": 5.0,
+                            "unit": "PT"
+                          },
+                          "paddingLeft": {
+                            "magnitude": 5.0,
+                            "unit": "PT"
+                          },
+                          "paddingRight": {
+                            "magnitude": 5.0,
+                            "unit": "PT"
+                          },
+                          "paddingTop": {
+                            "magnitude": 5.0,
+                            "unit": "PT"
+                          },
+                          "rowSpan": 1
+                        }
+                      }
+                    ],
+                    "tableRowStyle": {
+                      "minRowHeight": {
+                        "unit": "PT"
+                      }
+                    }
+                  }
+                ],
+                "tableStyle": {
+                  "tableColumnProperties": [
+                    {
+                      "widthType": "EVENLY_DISTRIBUTED"
+                    }
+                  ]
+                }
+              }
+            },
+            {
+              "endIndex": 1023,
+              "paragraph": {
+                "elements": [
+                  {
+                    "endIndex": 1023,
+                    "startIndex": 1022,
+                    "textRun": {
+                      "content": "\n",
+                      "textStyle": {}
+                    }
+                  }
+                ],
+                "paragraphStyle": {
+                  "lineSpacing": 100.0,
+                  "namedStyleType": "NORMAL_TEXT"
+                }
+              },
+              "startIndex": 1022
+            },
+            {
+              "endIndex": 1085,
+              "startIndex": 1023,
+              "table": {
+                "columns": 1,
+                "rows": 1,
+                "tableRows": [
+                  {
+                    "endIndex": 1084,
+                    "startIndex": 1024,
+                    "tableCells": [
+                      {
+                        "content": [
+                          {
+                            "endIndex": 1084,
+                            "paragraph": {
+                              "elements": [
+                                {
+                                  "endIndex": 1084,
+                                  "startIndex": 1026,
+                                  "textRun": {
+                                    "content": "The initial push creates the document shape in one cycle.\n",
+                                    "textStyle": {}
+                                  }
+                                }
+                              ],
+                              "paragraphStyle": {
+                                "lineSpacing": 100.0,
+                                "namedStyleType": "NORMAL_TEXT"
+                              }
+                            },
+                            "startIndex": 1026
+                          }
+                        ],
+                        "endIndex": 1084,
+                        "startIndex": 1025,
+                        "tableCellStyle": {
+                          "backgroundColor": {},
+                          "columnSpan": 1,
+                          "contentAlignment": "TOP",
+                          "paddingBottom": {
+                            "magnitude": 5.0,
+                            "unit": "PT"
+                          },
+                          "paddingLeft": {
+                            "magnitude": 5.0,
+                            "unit": "PT"
+                          },
+                          "paddingRight": {
+                            "magnitude": 5.0,
+                            "unit": "PT"
+                          },
+                          "paddingTop": {
+                            "magnitude": 5.0,
+                            "unit": "PT"
+                          },
+                          "rowSpan": 1
+                        }
+                      }
+                    ],
+                    "tableRowStyle": {
+                      "minRowHeight": {
+                        "unit": "PT"
+                      }
+                    }
+                  }
+                ],
+                "tableStyle": {
+                  "tableColumnProperties": [
+                    {
+                      "widthType": "EVENLY_DISTRIBUTED"
+                    }
+                  ]
+                }
+              }
+            },
+            {
+              "endIndex": 1086,
+              "paragraph": {
+                "elements": [
+                  {
+                    "endIndex": 1086,
+                    "startIndex": 1085,
+                    "textRun": {
+                      "content": "\n",
+                      "textStyle": {}
+                    }
+                  }
+                ],
+                "paragraphStyle": {
+                  "lineSpacing": 100.0,
+                  "namedStyleType": "NORMAL_TEXT"
+                }
+              },
+              "startIndex": 1085
+            },
+            {
+              "endIndex": 1158,
+              "startIndex": 1086,
+              "table": {
+                "columns": 1,
+                "rows": 1,
+                "tableRows": [
+                  {
+                    "endIndex": 1157,
+                    "startIndex": 1087,
+                    "tableCells": [
+                      {
+                        "content": [
+                          {
+                            "endIndex": 1157,
+                            "paragraph": {
+                              "elements": [
+                                {
+                                  "endIndex": 1157,
+                                  "startIndex": 1089,
+                                  "textRun": {
+                                    "content": "The follow-up push will make complex edits across most block types.\n",
+                                    "textStyle": {}
+                                  }
+                                }
+                              ],
+                              "paragraphStyle": {
+                                "lineSpacing": 100.0,
+                                "namedStyleType": "NORMAL_TEXT"
+                              }
+                            },
+                            "startIndex": 1089
+                          }
+                        ],
+                        "endIndex": 1157,
+                        "startIndex": 1088,
+                        "tableCellStyle": {
+                          "backgroundColor": {},
+                          "columnSpan": 1,
+                          "contentAlignment": "TOP",
+                          "paddingBottom": {
+                            "magnitude": 5.0,
+                            "unit": "PT"
+                          },
+                          "paddingLeft": {
+                            "magnitude": 5.0,
+                            "unit": "PT"
+                          },
+                          "paddingRight": {
+                            "magnitude": 5.0,
+                            "unit": "PT"
+                          },
+                          "paddingTop": {
+                            "magnitude": 5.0,
+                            "unit": "PT"
+                          },
+                          "rowSpan": 1
+                        }
+                      }
+                    ],
+                    "tableRowStyle": {
+                      "minRowHeight": {
+                        "unit": "PT"
+                      }
+                    }
+                  }
+                ],
+                "tableStyle": {
+                  "tableColumnProperties": [
+                    {
+                      "widthType": "EVENLY_DISTRIBUTED"
+                    }
+                  ]
+                }
+              }
+            },
+            {
+              "endIndex": 1164,
+              "paragraph": {
+                "elements": [
+                  {
+                    "endIndex": 1164,
+                    "startIndex": 1158,
+                    "textRun": {
+                      "content": "Tasks\n",
+                      "textStyle": {}
+                    }
+                  }
+                ],
+                "paragraphStyle": {
+                  "headingId": "h.rvxnd7qiq74r",
+                  "lineSpacing": 100.0,
+                  "namedStyleType": "HEADING_3"
+                }
+              },
+              "startIndex": 1158
+            },
+            {
+              "endIndex": 1192,
+              "paragraph": {
+                "bullet": {
+                  "listId": "kix.z6fbh771bmsn"
+                },
+                "elements": [
+                  {
+                    "endIndex": 1192,
+                    "startIndex": 1164,
+                    "textRun": {
+                      "content": "Prepare the empty document.\n",
+                      "textStyle": {}
+                    }
+                  }
+                ],
+                "paragraphStyle": {
+                  "lineSpacing": 100.0,
+                  "namedStyleType": "NORMAL_TEXT"
+                }
+              },
+              "startIndex": 1164
+            },
+            {
+              "endIndex": 1226,
+              "paragraph": {
+                "bullet": {
+                  "listId": "kix.z6fbh771bmsn"
+                },
+                "elements": [
+                  {
+                    "endIndex": 1226,
+                    "startIndex": 1192,
+                    "textRun": {
+                      "content": "Push one dense markdown document.\n",
+                      "textStyle": {}
+                    }
+                  }
+                ],
+                "paragraphStyle": {
+                  "lineSpacing": 100.0,
+                  "namedStyleType": "NORMAL_TEXT"
+                }
+              },
+              "startIndex": 1192
+            },
+            {
+              "endIndex": 1259,
+              "paragraph": {
+                "bullet": {
+                  "listId": "kix.z6fbh771bmsn",
+                  "nestingLevel": 1
+                },
+                "elements": [
+                  {
+                    "endIndex": 1259,
+                    "startIndex": 1226,
+                    "textRun": {
+                      "content": "Validate nested bullet handling.\n",
+                      "textStyle": {}
+                    }
+                  }
+                ],
+                "paragraphStyle": {
+                  "lineSpacing": 100.0,
+                  "namedStyleType": "NORMAL_TEXT"
+                }
+              },
+              "startIndex": 1226
+            },
+            {
+              "endIndex": 1295,
+              "paragraph": {
+                "bullet": {
+                  "listId": "kix.z6fbh771bmsn",
+                  "nestingLevel": 1
+                },
+                "elements": [
+                  {
+                    "endIndex": 1295,
+                    "startIndex": 1259,
+                    "textRun": {
+                      "content": "Validate nested numbering handling.\n",
+                      "textStyle": {}
+                    }
+                  }
+                ],
+                "paragraphStyle": {
+                  "lineSpacing": 100.0,
+                  "namedStyleType": "NORMAL_TEXT"
+                }
+              },
+              "startIndex": 1259
+            },
+            {
+              "endIndex": 1339,
+              "paragraph": {
+                "bullet": {
+                  "listId": "kix.z6fbh771bmsn"
+                },
+                "elements": [
+                  {
+                    "endIndex": 1339,
+                    "startIndex": 1295,
+                    "textRun": {
+                      "content": "Re-pull and inspect the generated markdown.\n",
+                      "textStyle": {}
+                    }
+                  }
+                ],
+                "paragraphStyle": {
+                  "lineSpacing": 100.0,
+                  "namedStyleType": "NORMAL_TEXT"
+                }
+              },
+              "startIndex": 1295
+            },
+            {
+              "endIndex": 1366,
+              "paragraph": {
+                "bullet": {
+                  "listId": "kix.z6fbh771bmsn"
+                },
+                "elements": [
+                  {
+                    "endIndex": 1366,
+                    "startIndex": 1339,
+                    "textRun": {
+                      "content": "Confirm heading structure.\n",
+                      "textStyle": {}
+                    }
+                  }
+                ],
+                "paragraphStyle": {
+                  "lineSpacing": 100.0,
+                  "namedStyleType": "NORMAL_TEXT"
+                }
+              },
+              "startIndex": 1339
+            },
+            {
+              "endIndex": 1398,
+              "paragraph": {
+                "bullet": {
+                  "listId": "kix.z6fbh771bmsn"
+                },
+                "elements": [
+                  {
+                    "endIndex": 1398,
+                    "startIndex": 1366,
+                    "textRun": {
+                      "content": "Confirm inline style structure.\n",
+                      "textStyle": {}
+                    }
+                  }
+                ],
+                "paragraphStyle": {
+                  "lineSpacing": 100.0,
+                  "namedStyleType": "NORMAL_TEXT"
+                }
+              },
+              "startIndex": 1366
+            },
+            {
+              "endIndex": 1411,
+              "paragraph": {
+                "bullet": {
+                  "listId": "kix.z6fbh771bmsn",
+                  "nestingLevel": 1
+                },
+                "elements": [
+                  {
+                    "endIndex": 1411,
+                    "startIndex": 1398,
+                    "textRun": {
+                      "content": "Check links.\n",
+                      "textStyle": {}
+                    }
+                  }
+                ],
+                "paragraphStyle": {
+                  "lineSpacing": 100.0,
+                  "namedStyleType": "NORMAL_TEXT"
+                }
+              },
+              "startIndex": 1398
+            },
+            {
+              "endIndex": 1430,
+              "paragraph": {
+                "bullet": {
+                  "listId": "kix.z6fbh771bmsn",
+                  "nestingLevel": 1
+                },
+                "elements": [
+                  {
+                    "endIndex": 1430,
+                    "startIndex": 1411,
+                    "textRun": {
+                      "content": "Check inline code.\n",
+                      "textStyle": {}
+                    }
+                  }
+                ],
+                "paragraphStyle": {
+                  "lineSpacing": 100.0,
+                  "namedStyleType": "NORMAL_TEXT"
+                }
+              },
+              "startIndex": 1411
+            },
+            {
+              "endIndex": 1454,
+              "paragraph": {
+                "bullet": {
+                  "listId": "kix.z6fbh771bmsn"
+                },
+                "elements": [
+                  {
+                    "endIndex": 1454,
+                    "startIndex": 1430,
+                    "textRun": {
+                      "content": "Confirm list structure.\n",
+                      "textStyle": {}
+                    }
+                  }
+                ],
+                "paragraphStyle": {
+                  "lineSpacing": 100.0,
+                  "namedStyleType": "NORMAL_TEXT"
+                }
+              },
+              "startIndex": 1430
+            },
+            {
+              "endIndex": 1475,
+              "paragraph": {
+                "bullet": {
+                  "listId": "kix.z6fbh771bmsn"
+                },
+                "elements": [
+                  {
+                    "endIndex": 1475,
+                    "startIndex": 1454,
+                    "textRun": {
+                      "content": "[x] Heading coverage\n",
+                      "textStyle": {}
+                    }
+                  }
+                ],
+                "paragraphStyle": {
+                  "lineSpacing": 100.0,
+                  "namedStyleType": "NORMAL_TEXT"
+                }
+              },
+              "startIndex": 1454
+            },
+            {
+              "endIndex": 1501,
+              "paragraph": {
+                "bullet": {
+                  "listId": "kix.z6fbh771bmsn"
+                },
+                "elements": [
+                  {
+                    "endIndex": 1501,
+                    "startIndex": 1475,
+                    "textRun": {
+                      "content": "[x] Inline style coverage\n",
+                      "textStyle": {}
+                    }
+                  }
+                ],
+                "paragraphStyle": {
+                  "lineSpacing": 100.0,
+                  "namedStyleType": "NORMAL_TEXT"
+                }
+              },
+              "startIndex": 1475
+            },
+            {
+              "endIndex": 1531,
+              "paragraph": {
+                "bullet": {
+                  "listId": "kix.z6fbh771bmsn"
+                },
+                "elements": [
+                  {
+                    "endIndex": 1531,
+                    "startIndex": 1501,
+                    "textRun": {
+                      "content": "[ ] Second-pass edits pending\n",
+                      "textStyle": {}
+                    }
+                  }
+                ],
+                "paragraphStyle": {
+                  "lineSpacing": 100.0,
+                  "namedStyleType": "NORMAL_TEXT"
+                }
+              },
+              "startIndex": 1501
+            },
+            {
+              "endIndex": 1549,
+              "paragraph": {
+                "bullet": {
+                  "listId": "kix.z6fbh771bmsn"
+                },
+                "elements": [
+                  {
+                    "endIndex": 1549,
+                    "startIndex": 1531,
+                    "textRun": {
+                      "content": "Operational Notes\n",
+                      "textStyle": {}
+                    }
+                  }
+                ],
+                "paragraphStyle": {
+                  "lineSpacing": 100.0,
+                  "namedStyleType": "NORMAL_TEXT"
+                }
+              },
+              "startIndex": 1531
+            },
+            {
+              "endIndex": 1688,
+              "paragraph": {
+                "elements": [
+                  {
+                    "endIndex": 1688,
+                    "startIndex": 1549,
+                    "textRun": {
+                      "content": "The reconciler should preserve ordinary prose like this paragraph while also supporting structural markdown features in the same document.\n",
+                      "textStyle": {}
+                    }
+                  }
+                ],
+                "paragraphStyle": {
+                  "headingId": "h.ilf1dnlcf1so",
+                  "lineSpacing": 100.0,
+                  "namedStyleType": "HEADING_2"
+                }
+              },
+              "startIndex": 1549
+            },
+            {
+              "endIndex": 1689,
+              "paragraph": {
+                "elements": [
+                  {
+                    "endIndex": 1689,
+                    "startIndex": 1688,
+                    "textRun": {
+                      "content": "\n",
+                      "textStyle": {}
+                    }
+                  }
+                ],
+                "paragraphStyle": {
+                  "lineSpacing": 100.0,
+                  "namedStyleType": "NORMAL_TEXT"
+                }
+              },
+              "startIndex": 1688
+            },
+            {
+              "endIndex": 1908,
+              "startIndex": 1689,
+              "table": {
+                "columns": 1,
+                "rows": 1,
+                "tableRows": [
+                  {
+                    "endIndex": 1907,
+                    "startIndex": 1690,
+                    "tableCells": [
+                      {
+                        "content": [
+                          {
+                            "endIndex": 1726,
+                            "paragraph": {
+                              "elements": [
+                                {
+                                  "endIndex": 1726,
+                                  "startIndex": 1692,
+                                  "textRun": {
+                                    "content": "from dataclasses import dataclass\n",
+                                    "textStyle": {
+                                      "fontSize": {
+                                        "magnitude": 10.0,
+                                        "unit": "PT"
+                                      },
+                                      "weightedFontFamily": {
+                                        "fontFamily": "Courier New"
+                                      }
+                                    }
+                                  }
+                                }
+                              ],
+                              "paragraphStyle": {
+                                "lineSpacing": 100.0,
+                                "namedStyleType": "NORMAL_TEXT"
+                              }
+                            },
+                            "startIndex": 1692
+                          },
+                          {
+                            "endIndex": 1727,
+                            "paragraph": {
+                              "elements": [
+                                {
+                                  "endIndex": 1727,
+                                  "startIndex": 1726,
+                                  "textRun": {
+                                    "content": "\n",
+                                    "textStyle": {}
+                                  }
+                                }
+                              ],
+                              "paragraphStyle": {
+                                "lineSpacing": 100.0,
+                                "namedStyleType": "NORMAL_TEXT"
+                              }
+                            },
+                            "startIndex": 1726
+                          },
+                          {
+                            "endIndex": 1728,
+                            "paragraph": {
+                              "elements": [
+                                {
+                                  "endIndex": 1728,
+                                  "startIndex": 1727,
+                                  "textRun": {
+                                    "content": "\n",
+                                    "textStyle": {}
+                                  }
+                                }
+                              ],
+                              "paragraphStyle": {
+                                "lineSpacing": 100.0,
+                                "namedStyleType": "NORMAL_TEXT"
+                              }
+                            },
+                            "startIndex": 1727
+                          },
+                          {
+                            "endIndex": 1739,
+                            "paragraph": {
+                              "elements": [
+                                {
+                                  "endIndex": 1739,
+                                  "startIndex": 1728,
+                                  "textRun": {
+                                    "content": "@dataclass\n",
+                                    "textStyle": {
+                                      "fontSize": {
+                                        "magnitude": 10.0,
+                                        "unit": "PT"
+                                      },
+                                      "weightedFontFamily": {
+                                        "fontFamily": "Courier New"
+                                      }
+                                    }
+                                  }
+                                }
+                              ],
+                              "paragraphStyle": {
+                                "lineSpacing": 100.0,
+                                "namedStyleType": "NORMAL_TEXT"
+                              }
+                            },
+                            "startIndex": 1728
+                          },
+                          {
+                            "endIndex": 1758,
+                            "paragraph": {
+                              "elements": [
+                                {
+                                  "endIndex": 1758,
+                                  "startIndex": 1739,
+                                  "textRun": {
+                                    "content": "class SprintCheck:\n",
+                                    "textStyle": {
+                                      "fontSize": {
+                                        "magnitude": 10.0,
+                                        "unit": "PT"
+                                      },
+                                      "weightedFontFamily": {
+                                        "fontFamily": "Courier New"
+                                      }
+                                    }
+                                  }
+                                }
+                              ],
+                              "paragraphStyle": {
+                                "lineSpacing": 100.0,
+                                "namedStyleType": "NORMAL_TEXT"
+                              }
+                            },
+                            "startIndex": 1739
+                          },
+                          {
+                            "endIndex": 1772,
+                            "paragraph": {
+                              "elements": [
+                                {
+                                  "endIndex": 1772,
+                                  "startIndex": 1758,
+                                  "textRun": {
+                                    "content": "    name: str\n",
+                                    "textStyle": {
+                                      "fontSize": {
+                                        "magnitude": 10.0,
+                                        "unit": "PT"
+                                      },
+                                      "weightedFontFamily": {
+                                        "fontFamily": "Courier New"
+                                      }
+                                    }
+                                  }
+                                }
+                              ],
+                              "paragraphStyle": {
+                                "lineSpacing": 100.0,
+                                "namedStyleType": "NORMAL_TEXT"
+                              }
+                            },
+                            "startIndex": 1758
+                          },
+                          {
+                            "endIndex": 1789,
+                            "paragraph": {
+                              "elements": [
+                                {
+                                  "endIndex": 1789,
+                                  "startIndex": 1772,
+                                  "textRun": {
+                                    "content": "    passed: bool\n",
+                                    "textStyle": {
+                                      "fontSize": {
+                                        "magnitude": 10.0,
+                                        "unit": "PT"
+                                      },
+                                      "weightedFontFamily": {
+                                        "fontFamily": "Courier New"
+                                      }
+                                    }
+                                  }
+                                }
+                              ],
+                              "paragraphStyle": {
+                                "lineSpacing": 100.0,
+                                "namedStyleType": "NORMAL_TEXT"
+                              }
+                            },
+                            "startIndex": 1772
+                          },
+                          {
+                            "endIndex": 1790,
+                            "paragraph": {
+                              "elements": [
+                                {
+                                  "endIndex": 1790,
+                                  "startIndex": 1789,
+                                  "textRun": {
+                                    "content": "\n",
+                                    "textStyle": {}
+                                  }
+                                }
+                              ],
+                              "paragraphStyle": {
+                                "lineSpacing": 100.0,
+                                "namedStyleType": "NORMAL_TEXT"
+                              }
+                            },
+                            "startIndex": 1789
+                          },
+                          {
+                            "endIndex": 1791,
+                            "paragraph": {
+                              "elements": [
+                                {
+                                  "endIndex": 1791,
+                                  "startIndex": 1790,
+                                  "textRun": {
+                                    "content": "\n",
+                                    "textStyle": {}
+                                  }
+                                }
+                              ],
+                              "paragraphStyle": {
+                                "lineSpacing": 100.0,
+                                "namedStyleType": "NORMAL_TEXT"
+                              }
+                            },
+                            "startIndex": 1790
+                          },
+                          {
+                            "endIndex": 1802,
+                            "paragraph": {
+                              "elements": [
+                                {
+                                  "endIndex": 1802,
+                                  "startIndex": 1791,
+                                  "textRun": {
+                                    "content": "checks = [\n",
+                                    "textStyle": {
+                                      "fontSize": {
+                                        "magnitude": 10.0,
+                                        "unit": "PT"
+                                      },
+                                      "weightedFontFamily": {
+                                        "fontFamily": "Courier New"
+                                      }
+                                    }
+                                  }
+                                }
+                              ],
+                              "paragraphStyle": {
+                                "lineSpacing": 100.0,
+                                "namedStyleType": "NORMAL_TEXT"
+                              }
+                            },
+                            "startIndex": 1791
+                          },
+                          {
+                            "endIndex": 1837,
+                            "paragraph": {
+                              "elements": [
+                                {
+                                  "endIndex": 1837,
+                                  "startIndex": 1802,
+                                  "textRun": {
+                                    "content": "    SprintCheck(\"headings\", True),\n",
+                                    "textStyle": {
+                                      "fontSize": {
+                                        "magnitude": 10.0,
+                                        "unit": "PT"
+                                      },
+                                      "weightedFontFamily": {
+                                        "fontFamily": "Courier New"
+                                      }
+                                    }
+                                  }
+                                }
+                              ],
+                              "paragraphStyle": {
+                                "lineSpacing": 100.0,
+                                "namedStyleType": "NORMAL_TEXT"
+                              }
+                            },
+                            "startIndex": 1802
+                          },
+                          {
+                            "endIndex": 1870,
+                            "paragraph": {
+                              "elements": [
+                                {
+                                  "endIndex": 1870,
+                                  "startIndex": 1837,
+                                  "textRun": {
+                                    "content": "    SprintCheck(\"tables\", True),\n",
+                                    "textStyle": {
+                                      "fontSize": {
+                                        "magnitude": 10.0,
+                                        "unit": "PT"
+                                      },
+                                      "weightedFontFamily": {
+                                        "fontFamily": "Courier New"
+                                      }
+                                    }
+                                  }
+                                }
+                              ],
+                              "paragraphStyle": {
+                                "lineSpacing": 100.0,
+                                "namedStyleType": "NORMAL_TEXT"
+                              }
+                            },
+                            "startIndex": 1837
+                          },
+                          {
+                            "endIndex": 1905,
+                            "paragraph": {
+                              "elements": [
+                                {
+                                  "endIndex": 1905,
+                                  "startIndex": 1870,
+                                  "textRun": {
+                                    "content": "    SprintCheck(\"callouts\", True),\n",
+                                    "textStyle": {
+                                      "fontSize": {
+                                        "magnitude": 10.0,
+                                        "unit": "PT"
+                                      },
+                                      "weightedFontFamily": {
+                                        "fontFamily": "Courier New"
+                                      }
+                                    }
+                                  }
+                                }
+                              ],
+                              "paragraphStyle": {
+                                "lineSpacing": 100.0,
+                                "namedStyleType": "NORMAL_TEXT"
+                              }
+                            },
+                            "startIndex": 1870
+                          },
+                          {
+                            "endIndex": 1907,
+                            "paragraph": {
+                              "elements": [
+                                {
+                                  "endIndex": 1907,
+                                  "startIndex": 1905,
+                                  "textRun": {
+                                    "content": "]\n",
+                                    "textStyle": {
+                                      "fontSize": {
+                                        "magnitude": 10.0,
+                                        "unit": "PT"
+                                      },
+                                      "weightedFontFamily": {
+                                        "fontFamily": "Courier New"
+                                      }
+                                    }
+                                  }
+                                }
+                              ],
+                              "paragraphStyle": {
+                                "lineSpacing": 100.0,
+                                "namedStyleType": "NORMAL_TEXT"
+                              }
+                            },
+                            "startIndex": 1905
+                          }
+                        ],
+                        "endIndex": 1907,
+                        "startIndex": 1691,
+                        "tableCellStyle": {
+                          "backgroundColor": {},
+                          "columnSpan": 1,
+                          "contentAlignment": "TOP",
+                          "paddingBottom": {
+                            "magnitude": 5.0,
+                            "unit": "PT"
+                          },
+                          "paddingLeft": {
+                            "magnitude": 5.0,
+                            "unit": "PT"
+                          },
+                          "paddingRight": {
+                            "magnitude": 5.0,
+                            "unit": "PT"
+                          },
+                          "paddingTop": {
+                            "magnitude": 5.0,
+                            "unit": "PT"
+                          },
+                          "rowSpan": 1
+                        }
+                      }
+                    ],
+                    "tableRowStyle": {
+                      "minRowHeight": {
+                        "unit": "PT"
+                      }
+                    }
+                  }
+                ],
+                "tableStyle": {
+                  "tableColumnProperties": [
+                    {
+                      "widthType": "EVENLY_DISTRIBUTED"
+                    }
+                  ]
+                }
+              }
+            },
+            {
+              "endIndex": 1909,
+              "paragraph": {
+                "elements": [
+                  {
+                    "endIndex": 1909,
+                    "startIndex": 1908,
+                    "textRun": {
+                      "content": "\n",
+                      "textStyle": {}
+                    }
+                  }
+                ],
+                "paragraphStyle": {
+                  "lineSpacing": 100.0,
+                  "namedStyleType": "NORMAL_TEXT"
+                }
+              },
+              "startIndex": 1908
+            },
+            {
+              "endIndex": 2028,
+              "startIndex": 1909,
+              "table": {
+                "columns": 1,
+                "rows": 1,
+                "tableRows": [
+                  {
+                    "endIndex": 2027,
+                    "startIndex": 1910,
+                    "tableCells": [
+                      {
+                        "content": [
+                          {
+                            "endIndex": 1914,
+                            "paragraph": {
+                              "elements": [
+                                {
+                                  "endIndex": 1914,
+                                  "startIndex": 1912,
+                                  "textRun": {
+                                    "content": "{\n",
+                                    "textStyle": {
+                                      "fontSize": {
+                                        "magnitude": 10.0,
+                                        "unit": "PT"
+                                      },
+                                      "weightedFontFamily": {
+                                        "fontFamily": "Courier New"
+                                      }
+                                    }
+                                  }
+                                }
+                              ],
+                              "paragraphStyle": {
+                                "lineSpacing": 100.0,
+                                "namedStyleType": "NORMAL_TEXT"
+                              }
+                            },
+                            "startIndex": 1912
+                          },
+                          {
+                            "endIndex": 1941,
+                            "paragraph": {
+                              "elements": [
+                                {
+                                  "endIndex": 1941,
+                                  "startIndex": 1914,
+                                  "textRun": {
+                                    "content": "  \"stage\": \"initial-push\",\n",
+                                    "textStyle": {
+                                      "fontSize": {
+                                        "magnitude": 10.0,
+                                        "unit": "PT"
+                                      },
+                                      "weightedFontFamily": {
+                                        "fontFamily": "Courier New"
+                                      }
+                                    }
+                                  }
+                                }
+                              ],
+                              "paragraphStyle": {
+                                "lineSpacing": 100.0,
+                                "namedStyleType": "NORMAL_TEXT"
+                              }
+                            },
+                            "startIndex": 1914
+                          },
+                          {
+                            "endIndex": 2005,
+                            "paragraph": {
+                              "elements": [
+                                {
+                                  "endIndex": 2005,
+                                  "startIndex": 1941,
+                                  "textRun": {
+                                    "content": "  \"features\": [\"heading\", \"lists\", \"table\", \"code\", \"callout\"],\n",
+                                    "textStyle": {
+                                      "fontSize": {
+                                        "magnitude": 10.0,
+                                        "unit": "PT"
+                                      },
+                                      "weightedFontFamily": {
+                                        "fontFamily": "Courier New"
+                                      }
+                                    }
+                                  }
+                                }
+                              ],
+                              "paragraphStyle": {
+                                "lineSpacing": 100.0,
+                                "namedStyleType": "NORMAL_TEXT"
+                              }
+                            },
+                            "startIndex": 1941
+                          },
+                          {
+                            "endIndex": 2025,
+                            "paragraph": {
+                              "elements": [
+                                {
+                                  "endIndex": 2025,
+                                  "startIndex": 2005,
+                                  "textRun": {
+                                    "content": "  \"verified\": false\n",
+                                    "textStyle": {
+                                      "fontSize": {
+                                        "magnitude": 10.0,
+                                        "unit": "PT"
+                                      },
+                                      "weightedFontFamily": {
+                                        "fontFamily": "Courier New"
+                                      }
+                                    }
+                                  }
+                                }
+                              ],
+                              "paragraphStyle": {
+                                "lineSpacing": 100.0,
+                                "namedStyleType": "NORMAL_TEXT"
+                              }
+                            },
+                            "startIndex": 2005
+                          },
+                          {
+                            "endIndex": 2027,
+                            "paragraph": {
+                              "elements": [
+                                {
+                                  "endIndex": 2027,
+                                  "startIndex": 2025,
+                                  "textRun": {
+                                    "content": "}\n",
+                                    "textStyle": {
+                                      "fontSize": {
+                                        "magnitude": 10.0,
+                                        "unit": "PT"
+                                      },
+                                      "weightedFontFamily": {
+                                        "fontFamily": "Courier New"
+                                      }
+                                    }
+                                  }
+                                }
+                              ],
+                              "paragraphStyle": {
+                                "lineSpacing": 100.0,
+                                "namedStyleType": "NORMAL_TEXT"
+                              }
+                            },
+                            "startIndex": 2025
+                          }
+                        ],
+                        "endIndex": 2027,
+                        "startIndex": 1911,
+                        "tableCellStyle": {
+                          "backgroundColor": {},
+                          "columnSpan": 1,
+                          "contentAlignment": "TOP",
+                          "paddingBottom": {
+                            "magnitude": 5.0,
+                            "unit": "PT"
+                          },
+                          "paddingLeft": {
+                            "magnitude": 5.0,
+                            "unit": "PT"
+                          },
+                          "paddingRight": {
+                            "magnitude": 5.0,
+                            "unit": "PT"
+                          },
+                          "paddingTop": {
+                            "magnitude": 5.0,
+                            "unit": "PT"
+                          },
+                          "rowSpan": 1
+                        }
+                      }
+                    ],
+                    "tableRowStyle": {
+                      "minRowHeight": {
+                        "unit": "PT"
+                      }
+                    }
+                  }
+                ],
+                "tableStyle": {
+                  "tableColumnProperties": [
+                    {
+                      "widthType": "EVENLY_DISTRIBUTED"
+                    }
+                  ]
+                }
+              }
+            },
+            {
+              "endIndex": 2042,
+              "paragraph": {
+                "elements": [
+                  {
+                    "endIndex": 2042,
+                    "startIndex": 2028,
+                    "textRun": {
+                      "content": "Contact Sheet\n",
+                      "textStyle": {}
+                    }
+                  }
+                ],
+                "paragraphStyle": {
+                  "headingId": "h.oit5qwi93ng4",
+                  "lineSpacing": 100.0,
+                  "namedStyleType": "HEADING_2"
+                }
+              },
+              "startIndex": 2028
+            },
+            {
+              "endIndex": 2043,
+              "paragraph": {
+                "elements": [
+                  {
+                    "endIndex": 2043,
+                    "startIndex": 2042,
+                    "textRun": {
+                      "content": "\n",
+                      "textStyle": {}
+                    }
+                  }
+                ],
+                "paragraphStyle": {
+                  "headingId": "h.uw4nzrcwujw0",
+                  "lineSpacing": 100.0,
+                  "namedStyleType": "HEADING_2"
+                }
+              },
+              "startIndex": 2042
+            },
+            {
+              "endIndex": 2252,
+              "startIndex": 2043,
+              "table": {
+                "columns": 4,
+                "rows": 4,
+                "tableRows": [
+                  {
+                    "endIndex": 2073,
+                    "startIndex": 2044,
+                    "tableCells": [
+                      {
+                        "content": [
+                          {
+                            "endIndex": 2051,
+                            "paragraph": {
+                              "elements": [
+                                {
+                                  "endIndex": 2051,
+                                  "startIndex": 2046,
+                                  "textRun": {
+                                    "content": "Area\n",
+                                    "textStyle": {}
+                                  }
+                                }
+                              ],
+                              "paragraphStyle": {
+                                "headingId": "h.s5k8c01n5ias",
+                                "lineSpacing": 100.0,
+                                "namedStyleType": "HEADING_2"
+                              }
+                            },
+                            "startIndex": 2046
+                          }
+                        ],
+                        "endIndex": 2051,
+                        "startIndex": 2045,
+                        "tableCellStyle": {
+                          "backgroundColor": {},
+                          "columnSpan": 1,
+                          "contentAlignment": "TOP",
+                          "paddingBottom": {
+                            "magnitude": 5.0,
+                            "unit": "PT"
+                          },
+                          "paddingLeft": {
+                            "magnitude": 5.0,
+                            "unit": "PT"
+                          },
+                          "paddingRight": {
+                            "magnitude": 5.0,
+                            "unit": "PT"
+                          },
+                          "paddingTop": {
+                            "magnitude": 5.0,
+                            "unit": "PT"
+                          },
+                          "rowSpan": 1
+                        }
+                      },
+                      {
+                        "content": [
+                          {
+                            "endIndex": 2058,
+                            "paragraph": {
+                              "elements": [
+                                {
+                                  "endIndex": 2058,
+                                  "startIndex": 2052,
+                                  "textRun": {
+                                    "content": "Owner\n",
+                                    "textStyle": {
+                                      "bold": true
+                                    }
+                                  }
+                                }
+                              ],
+                              "paragraphStyle": {
+                                "lineSpacing": 100.0,
+                                "namedStyleType": "NORMAL_TEXT"
+                              }
+                            },
+                            "startIndex": 2052
+                          }
+                        ],
+                        "endIndex": 2058,
+                        "startIndex": 2051,
+                        "tableCellStyle": {
+                          "backgroundColor": {},
+                          "columnSpan": 1,
+                          "contentAlignment": "TOP",
+                          "paddingBottom": {
+                            "magnitude": 5.0,
+                            "unit": "PT"
+                          },
+                          "paddingLeft": {
+                            "magnitude": 5.0,
+                            "unit": "PT"
+                          },
+                          "paddingRight": {
+                            "magnitude": 5.0,
+                            "unit": "PT"
+                          },
+                          "paddingTop": {
+                            "magnitude": 5.0,
+                            "unit": "PT"
+                          },
+                          "rowSpan": 1
+                        }
+                      },
+                      {
+                        "content": [
+                          {
+                            "endIndex": 2066,
+                            "paragraph": {
+                              "elements": [
+                                {
+                                  "endIndex": 2066,
+                                  "startIndex": 2059,
+                                  "textRun": {
+                                    "content": "Status\n",
+                                    "textStyle": {
+                                      "bold": true
+                                    }
+                                  }
+                                }
+                              ],
+                              "paragraphStyle": {
+                                "lineSpacing": 100.0,
+                                "namedStyleType": "NORMAL_TEXT"
+                              }
+                            },
+                            "startIndex": 2059
+                          }
+                        ],
+                        "endIndex": 2066,
+                        "startIndex": 2058,
+                        "tableCellStyle": {
+                          "backgroundColor": {},
+                          "columnSpan": 1,
+                          "contentAlignment": "TOP",
+                          "paddingBottom": {
+                            "magnitude": 5.0,
+                            "unit": "PT"
+                          },
+                          "paddingLeft": {
+                            "magnitude": 5.0,
+                            "unit": "PT"
+                          },
+                          "paddingRight": {
+                            "magnitude": 5.0,
+                            "unit": "PT"
+                          },
+                          "paddingTop": {
+                            "magnitude": 5.0,
+                            "unit": "PT"
+                          },
+                          "rowSpan": 1
+                        }
+                      },
+                      {
+                        "content": [
+                          {
+                            "endIndex": 2073,
+                            "paragraph": {
+                              "elements": [
+                                {
+                                  "endIndex": 2073,
+                                  "startIndex": 2067,
+                                  "textRun": {
+                                    "content": "Notes\n",
+                                    "textStyle": {
+                                      "bold": true
+                                    }
+                                  }
+                                }
+                              ],
+                              "paragraphStyle": {
+                                "lineSpacing": 100.0,
+                                "namedStyleType": "NORMAL_TEXT"
+                              }
+                            },
+                            "startIndex": 2067
+                          }
+                        ],
+                        "endIndex": 2073,
+                        "startIndex": 2066,
+                        "tableCellStyle": {
+                          "backgroundColor": {},
+                          "columnSpan": 1,
+                          "contentAlignment": "TOP",
+                          "paddingBottom": {
+                            "magnitude": 5.0,
+                            "unit": "PT"
+                          },
+                          "paddingLeft": {
+                            "magnitude": 5.0,
+                            "unit": "PT"
+                          },
+                          "paddingRight": {
+                            "magnitude": 5.0,
+                            "unit": "PT"
+                          },
+                          "paddingTop": {
+                            "magnitude": 5.0,
+                            "unit": "PT"
+                          },
+                          "rowSpan": 1
+                        }
+                      }
+                    ],
+                    "tableRowStyle": {
+                      "minRowHeight": {
+                        "unit": "PT"
+                      }
+                    }
+                  },
+                  {
+                    "endIndex": 2123,
+                    "startIndex": 2073,
+                    "tableCells": [
+                      {
+                        "content": [
+                          {
+                            "endIndex": 2083,
+                            "paragraph": {
+                              "elements": [
+                                {
+                                  "endIndex": 2083,
+                                  "startIndex": 2075,
+                                  "textRun": {
+                                    "content": "Parsing\n",
+                                    "textStyle": {}
+                                  }
+                                }
+                              ],
+                              "paragraphStyle": {
+                                "lineSpacing": 100.0,
+                                "namedStyleType": "NORMAL_TEXT"
+                              }
+                            },
+                            "startIndex": 2075
+                          }
+                        ],
+                        "endIndex": 2083,
+                        "startIndex": 2074,
+                        "tableCellStyle": {
+                          "backgroundColor": {},
+                          "columnSpan": 1,
+                          "contentAlignment": "TOP",
+                          "paddingBottom": {
+                            "magnitude": 5.0,
+                            "unit": "PT"
+                          },
+                          "paddingLeft": {
+                            "magnitude": 5.0,
+                            "unit": "PT"
+                          },
+                          "paddingRight": {
+                            "magnitude": 5.0,
+                            "unit": "PT"
+                          },
+                          "paddingTop": {
+                            "magnitude": 5.0,
+                            "unit": "PT"
+                          },
+                          "rowSpan": 1
+                        }
+                      },
+                      {
+                        "content": [
+                          {
+                            "endIndex": 2093,
+                            "paragraph": {
+                              "elements": [
+                                {
+                                  "endIndex": 2093,
+                                  "startIndex": 2084,
+                                  "textRun": {
+                                    "content": "IR layer\n",
+                                    "textStyle": {}
+                                  }
+                                }
+                              ],
+                              "paragraphStyle": {
+                                "lineSpacing": 100.0,
+                                "namedStyleType": "NORMAL_TEXT"
+                              }
+                            },
+                            "startIndex": 2084
+                          }
+                        ],
+                        "endIndex": 2093,
+                        "startIndex": 2083,
+                        "tableCellStyle": {
+                          "backgroundColor": {},
+                          "columnSpan": 1,
+                          "contentAlignment": "TOP",
+                          "paddingBottom": {
+                            "magnitude": 5.0,
+                            "unit": "PT"
+                          },
+                          "paddingLeft": {
+                            "magnitude": 5.0,
+                            "unit": "PT"
+                          },
+                          "paddingRight": {
+                            "magnitude": 5.0,
+                            "unit": "PT"
+                          },
+                          "paddingTop": {
+                            "magnitude": 5.0,
+                            "unit": "PT"
+                          },
+                          "rowSpan": 1
+                        }
+                      },
+                      {
+                        "content": [
+                          {
+                            "endIndex": 2100,
+                            "paragraph": {
+                              "elements": [
+                                {
+                                  "endIndex": 2100,
+                                  "startIndex": 2094,
+                                  "textRun": {
+                                    "content": "green\n",
+                                    "textStyle": {}
+                                  }
+                                }
+                              ],
+                              "paragraphStyle": {
+                                "lineSpacing": 100.0,
+                                "namedStyleType": "NORMAL_TEXT"
+                              }
+                            },
+                            "startIndex": 2094
+                          }
+                        ],
+                        "endIndex": 2100,
+                        "startIndex": 2093,
+                        "tableCellStyle": {
+                          "backgroundColor": {},
+                          "columnSpan": 1,
+                          "contentAlignment": "TOP",
+                          "paddingBottom": {
+                            "magnitude": 5.0,
+                            "unit": "PT"
+                          },
+                          "paddingLeft": {
+                            "magnitude": 5.0,
+                            "unit": "PT"
+                          },
+                          "paddingRight": {
+                            "magnitude": 5.0,
+                            "unit": "PT"
+                          },
+                          "paddingTop": {
+                            "magnitude": 5.0,
+                            "unit": "PT"
+                          },
+                          "rowSpan": 1
+                        }
+                      },
+                      {
+                        "content": [
+                          {
+                            "endIndex": 2123,
+                            "paragraph": {
+                              "elements": [
+                                {
+                                  "endIndex": 2123,
+                                  "startIndex": 2101,
+                                  "textRun": {
+                                    "content": "Base markdown is rich\n",
+                                    "textStyle": {}
+                                  }
+                                }
+                              ],
+                              "paragraphStyle": {
+                                "lineSpacing": 100.0,
+                                "namedStyleType": "NORMAL_TEXT"
+                              }
+                            },
+                            "startIndex": 2101
+                          }
+                        ],
+                        "endIndex": 2123,
+                        "startIndex": 2100,
+                        "tableCellStyle": {
+                          "backgroundColor": {},
+                          "columnSpan": 1,
+                          "contentAlignment": "TOP",
+                          "paddingBottom": {
+                            "magnitude": 5.0,
+                            "unit": "PT"
+                          },
+                          "paddingLeft": {
+                            "magnitude": 5.0,
+                            "unit": "PT"
+                          },
+                          "paddingRight": {
+                            "magnitude": 5.0,
+                            "unit": "PT"
+                          },
+                          "paddingTop": {
+                            "magnitude": 5.0,
+                            "unit": "PT"
+                          },
+                          "rowSpan": 1
+                        }
+                      }
+                    ],
+                    "tableRowStyle": {
+                      "minRowHeight": {
+                        "unit": "PT"
+                      }
+                    }
+                  },
+                  {
+                    "endIndex": 2192,
+                    "startIndex": 2123,
+                    "tableCells": [
+                      {
+                        "content": [
+                          {
+                            "endIndex": 2134,
+                            "paragraph": {
+                              "elements": [
+                                {
+                                  "endIndex": 2134,
+                                  "startIndex": 2125,
+                                  "textRun": {
+                                    "content": "Lowering\n",
+                                    "textStyle": {}
+                                  }
+                                }
+                              ],
+                              "paragraphStyle": {
+                                "lineSpacing": 100.0,
+                                "namedStyleType": "NORMAL_TEXT"
+                              }
+                            },
+                            "startIndex": 2125
+                          }
+                        ],
+                        "endIndex": 2134,
+                        "startIndex": 2124,
+                        "tableCellStyle": {
+                          "backgroundColor": {},
+                          "columnSpan": 1,
+                          "contentAlignment": "TOP",
+                          "paddingBottom": {
+                            "magnitude": 5.0,
+                            "unit": "PT"
+                          },
+                          "paddingLeft": {
+                            "magnitude": 5.0,
+                            "unit": "PT"
+                          },
+                          "paddingRight": {
+                            "magnitude": 5.0,
+                            "unit": "PT"
+                          },
+                          "paddingTop": {
+                            "magnitude": 5.0,
+                            "unit": "PT"
+                          },
+                          "rowSpan": 1
+                        }
+                      },
+                      {
+                        "content": [
+                          {
+                            "endIndex": 2151,
+                            "paragraph": {
+                              "elements": [
+                                {
+                                  "endIndex": 2151,
+                                  "startIndex": 2135,
+                                  "textRun": {
+                                    "content": "Request planner\n",
+                                    "textStyle": {}
+                                  }
+                                }
+                              ],
+                              "paragraphStyle": {
+                                "lineSpacing": 100.0,
+                                "namedStyleType": "NORMAL_TEXT"
+                              }
+                            },
+                            "startIndex": 2135
+                          }
+                        ],
+                        "endIndex": 2151,
+                        "startIndex": 2134,
+                        "tableCellStyle": {
+                          "backgroundColor": {},
+                          "columnSpan": 1,
+                          "contentAlignment": "TOP",
+                          "paddingBottom": {
+                            "magnitude": 5.0,
+                            "unit": "PT"
+                          },
+                          "paddingLeft": {
+                            "magnitude": 5.0,
+                            "unit": "PT"
+                          },
+                          "paddingRight": {
+                            "magnitude": 5.0,
+                            "unit": "PT"
+                          },
+                          "paddingTop": {
+                            "magnitude": 5.0,
+                            "unit": "PT"
+                          },
+                          "rowSpan": 1
+                        }
+                      },
+                      {
+                        "content": [
+                          {
+                            "endIndex": 2158,
+                            "paragraph": {
+                              "elements": [
+                                {
+                                  "endIndex": 2158,
+                                  "startIndex": 2152,
+                                  "textRun": {
+                                    "content": "green\n",
+                                    "textStyle": {}
+                                  }
+                                }
+                              ],
+                              "paragraphStyle": {
+                                "lineSpacing": 100.0,
+                                "namedStyleType": "NORMAL_TEXT"
+                              }
+                            },
+                            "startIndex": 2152
+                          }
+                        ],
+                        "endIndex": 2158,
+                        "startIndex": 2151,
+                        "tableCellStyle": {
+                          "backgroundColor": {},
+                          "columnSpan": 1,
+                          "contentAlignment": "TOP",
+                          "paddingBottom": {
+                            "magnitude": 5.0,
+                            "unit": "PT"
+                          },
+                          "paddingLeft": {
+                            "magnitude": 5.0,
+                            "unit": "PT"
+                          },
+                          "paddingRight": {
+                            "magnitude": 5.0,
+                            "unit": "PT"
+                          },
+                          "paddingTop": {
+                            "magnitude": 5.0,
+                            "unit": "PT"
+                          },
+                          "rowSpan": 1
+                        }
+                      },
+                      {
+                        "content": [
+                          {
+                            "endIndex": 2192,
+                            "paragraph": {
+                              "elements": [
+                                {
+                                  "endIndex": 2192,
+                                  "startIndex": 2159,
+                                  "textRun": {
+                                    "content": "Requests should be deterministic\n",
+                                    "textStyle": {}
+                                  }
+                                }
+                              ],
+                              "paragraphStyle": {
+                                "lineSpacing": 100.0,
+                                "namedStyleType": "NORMAL_TEXT"
+                              }
+                            },
+                            "startIndex": 2159
+                          }
+                        ],
+                        "endIndex": 2192,
+                        "startIndex": 2158,
+                        "tableCellStyle": {
+                          "backgroundColor": {},
+                          "columnSpan": 1,
+                          "contentAlignment": "TOP",
+                          "paddingBottom": {
+                            "magnitude": 5.0,
+                            "unit": "PT"
+                          },
+                          "paddingLeft": {
+                            "magnitude": 5.0,
+                            "unit": "PT"
+                          },
+                          "paddingRight": {
+                            "magnitude": 5.0,
+                            "unit": "PT"
+                          },
+                          "paddingTop": {
+                            "magnitude": 5.0,
+                            "unit": "PT"
+                          },
+                          "rowSpan": 1
+                        }
+                      }
+                    ],
+                    "tableRowStyle": {
+                      "minRowHeight": {
+                        "unit": "PT"
+                      }
+                    }
+                  },
+                  {
+                    "endIndex": 2251,
+                    "startIndex": 2192,
+                    "tableCells": [
+                      {
+                        "content": [
+                          {
+                            "endIndex": 2207,
+                            "paragraph": {
+                              "elements": [
+                                {
+                                  "endIndex": 2207,
+                                  "startIndex": 2194,
+                                  "textRun": {
+                                    "content": "Verification\n",
+                                    "textStyle": {}
+                                  }
+                                }
+                              ],
+                              "paragraphStyle": {
+                                "lineSpacing": 100.0,
+                                "namedStyleType": "NORMAL_TEXT"
+                              }
+                            },
+                            "startIndex": 2194
+                          }
+                        ],
+                        "endIndex": 2207,
+                        "startIndex": 2193,
+                        "tableCellStyle": {
+                          "backgroundColor": {},
+                          "columnSpan": 1,
+                          "contentAlignment": "TOP",
+                          "paddingBottom": {
+                            "magnitude": 5.0,
+                            "unit": "PT"
+                          },
+                          "paddingLeft": {
+                            "magnitude": 5.0,
+                            "unit": "PT"
+                          },
+                          "paddingRight": {
+                            "magnitude": 5.0,
+                            "unit": "PT"
+                          },
+                          "paddingTop": {
+                            "magnitude": 5.0,
+                            "unit": "PT"
+                          },
+                          "rowSpan": 1
+                        }
+                      },
+                      {
+                        "content": [
+                          {
+                            "endIndex": 2222,
+                            "paragraph": {
+                              "elements": [
+                                {
+                                  "endIndex": 2222,
+                                  "startIndex": 2208,
+                                  "textRun": {
+                                    "content": "Re-pull cycle\n",
+                                    "textStyle": {}
+                                  }
+                                }
+                              ],
+                              "paragraphStyle": {
+                                "lineSpacing": 100.0,
+                                "namedStyleType": "NORMAL_TEXT"
+                              }
+                            },
+                            "startIndex": 2208
+                          }
+                        ],
+                        "endIndex": 2222,
+                        "startIndex": 2207,
+                        "tableCellStyle": {
+                          "backgroundColor": {},
+                          "columnSpan": 1,
+                          "contentAlignment": "TOP",
+                          "paddingBottom": {
+                            "magnitude": 5.0,
+                            "unit": "PT"
+                          },
+                          "paddingLeft": {
+                            "magnitude": 5.0,
+                            "unit": "PT"
+                          },
+                          "paddingRight": {
+                            "magnitude": 5.0,
+                            "unit": "PT"
+                          },
+                          "paddingTop": {
+                            "magnitude": 5.0,
+                            "unit": "PT"
+                          },
+                          "rowSpan": 1
+                        }
+                      },
+                      {
+                        "content": [
+                          {
+                            "endIndex": 2230,
+                            "paragraph": {
+                              "elements": [
+                                {
+                                  "endIndex": 2230,
+                                  "startIndex": 2223,
+                                  "textRun": {
+                                    "content": "yellow\n",
+                                    "textStyle": {}
+                                  }
+                                }
+                              ],
+                              "paragraphStyle": {
+                                "lineSpacing": 100.0,
+                                "namedStyleType": "NORMAL_TEXT"
+                              }
+                            },
+                            "startIndex": 2223
+                          }
+                        ],
+                        "endIndex": 2230,
+                        "startIndex": 2222,
+                        "tableCellStyle": {
+                          "backgroundColor": {},
+                          "columnSpan": 1,
+                          "contentAlignment": "TOP",
+                          "paddingBottom": {
+                            "magnitude": 5.0,
+                            "unit": "PT"
+                          },
+                          "paddingLeft": {
+                            "magnitude": 5.0,
+                            "unit": "PT"
+                          },
+                          "paddingRight": {
+                            "magnitude": 5.0,
+                            "unit": "PT"
+                          },
+                          "paddingTop": {
+                            "magnitude": 5.0,
+                            "unit": "PT"
+                          },
+                          "rowSpan": 1
+                        }
+                      },
+                      {
+                        "content": [
+                          {
+                            "endIndex": 2251,
+                            "paragraph": {
+                              "elements": [
+                                {
+                                  "endIndex": 2251,
+                                  "startIndex": 2231,
+                                  "textRun": {
+                                    "content": "Final state pending\n",
+                                    "textStyle": {}
+                                  }
+                                }
+                              ],
+                              "paragraphStyle": {
+                                "lineSpacing": 100.0,
+                                "namedStyleType": "NORMAL_TEXT"
+                              }
+                            },
+                            "startIndex": 2231
+                          }
+                        ],
+                        "endIndex": 2251,
+                        "startIndex": 2230,
+                        "tableCellStyle": {
+                          "backgroundColor": {},
+                          "columnSpan": 1,
+                          "contentAlignment": "TOP",
+                          "paddingBottom": {
+                            "magnitude": 5.0,
+                            "unit": "PT"
+                          },
+                          "paddingLeft": {
+                            "magnitude": 5.0,
+                            "unit": "PT"
+                          },
+                          "paddingRight": {
+                            "magnitude": 5.0,
+                            "unit": "PT"
+                          },
+                          "paddingTop": {
+                            "magnitude": 5.0,
+                            "unit": "PT"
+                          },
+                          "rowSpan": 1
+                        }
+                      }
+                    ],
+                    "tableRowStyle": {
+                      "minRowHeight": {
+                        "unit": "PT"
+                      }
+                    }
+                  }
+                ],
+                "tableStyle": {
+                  "tableColumnProperties": [
+                    {
+                      "widthType": "EVENLY_DISTRIBUTED"
+                    },
+                    {
+                      "widthType": "EVENLY_DISTRIBUTED"
+                    },
+                    {
+                      "widthType": "EVENLY_DISTRIBUTED"
+                    },
+                    {
+                      "widthType": "EVENLY_DISTRIBUTED"
+                    }
+                  ]
+                }
+              }
+            },
+            {
+              "endIndex": 2260,
+              "paragraph": {
+                "elements": [
+                  {
+                    "endIndex": 2260,
+                    "startIndex": 2252,
+                    "textRun": {
+                      "content": "Closing\n",
+                      "textStyle": {}
+                    }
+                  }
+                ],
+                "paragraphStyle": {
+                  "headingId": "h.o507vbsfdsus",
+                  "lineSpacing": 100.0,
+                  "namedStyleType": "HEADING_3"
+                }
+              },
+              "startIndex": 2252
+            },
+            {
+              "endIndex": 2352,
+              "paragraph": {
+                "elements": [
+                  {
+                    "endIndex": 2352,
+                    "startIndex": 2260,
+                    "textRun": {
+                      "content": "If this round-trip holds, the markdown workflow is in much better shape for real authoring.\n",
+                      "textStyle": {}
+                    }
+                  }
+                ],
+                "paragraphStyle": {
+                  "headingId": "h.lva70ugekj4a",
+                  "lineSpacing": 100.0,
+                  "namedStyleType": "HEADING_3"
+                }
+              },
+              "startIndex": 2260
+            }
+          ]
+        },
+        "documentStyle": {
+          "background": {
+            "color": {}
+          },
+          "documentFormat": {
+            "documentMode": "PAGES"
+          },
+          "marginBottom": {
+            "magnitude": 72.0,
+            "unit": "PT"
+          },
+          "marginFooter": {
+            "magnitude": 36.0,
+            "unit": "PT"
+          },
+          "marginHeader": {
+            "magnitude": 36.0,
+            "unit": "PT"
+          },
+          "marginLeft": {
+            "magnitude": 72.0,
+            "unit": "PT"
+          },
+          "marginRight": {
+            "magnitude": 72.0,
+            "unit": "PT"
+          },
+          "marginTop": {
+            "magnitude": 72.0,
+            "unit": "PT"
+          },
+          "pageNumberStart": 1,
+          "pageSize": {
+            "height": {
+              "magnitude": 841.8897637795277,
+              "unit": "PT"
+            },
+            "width": {
+              "magnitude": 595.2755905511812,
+              "unit": "PT"
+            }
+          },
+          "useCustomHeaderFooterMargins": true
+        },
+        "lists": {
+          "kix.z6fbh771bmsn": {
+            "listProperties": {
+              "nestingLevels": [
+                {
+                  "bulletAlignment": "START",
+                  "glyphFormat": "%0",
+                  "glyphSymbol": "●",
+                  "indentFirstLine": {
+                    "magnitude": 18.0,
+                    "unit": "PT"
+                  },
+                  "indentStart": {
+                    "magnitude": 36.0,
+                    "unit": "PT"
+                  },
+                  "startNumber": 1
+                },
+                {
+                  "bulletAlignment": "START",
+                  "glyphFormat": "%1",
+                  "glyphSymbol": "○",
+                  "indentFirstLine": {
+                    "magnitude": 54.0,
+                    "unit": "PT"
+                  },
+                  "indentStart": {
+                    "magnitude": 72.0,
+                    "unit": "PT"
+                  },
+                  "startNumber": 1
+                },
+                {
+                  "bulletAlignment": "START",
+                  "glyphFormat": "%2",
+                  "glyphSymbol": "■",
+                  "indentFirstLine": {
+                    "magnitude": 90.0,
+                    "unit": "PT"
+                  },
+                  "indentStart": {
+                    "magnitude": 108.0,
+                    "unit": "PT"
+                  },
+                  "startNumber": 1
+                },
+                {
+                  "bulletAlignment": "START",
+                  "glyphFormat": "%3",
+                  "glyphSymbol": "●",
+                  "indentFirstLine": {
+                    "magnitude": 126.0,
+                    "unit": "PT"
+                  },
+                  "indentStart": {
+                    "magnitude": 144.0,
+                    "unit": "PT"
+                  },
+                  "startNumber": 1
+                },
+                {
+                  "bulletAlignment": "START",
+                  "glyphFormat": "%4",
+                  "glyphSymbol": "○",
+                  "indentFirstLine": {
+                    "magnitude": 162.0,
+                    "unit": "PT"
+                  },
+                  "indentStart": {
+                    "magnitude": 180.0,
+                    "unit": "PT"
+                  },
+                  "startNumber": 1
+                },
+                {
+                  "bulletAlignment": "START",
+                  "glyphFormat": "%5",
+                  "glyphSymbol": "■",
+                  "indentFirstLine": {
+                    "magnitude": 198.0,
+                    "unit": "PT"
+                  },
+                  "indentStart": {
+                    "magnitude": 216.0,
+                    "unit": "PT"
+                  },
+                  "startNumber": 1
+                },
+                {
+                  "bulletAlignment": "START",
+                  "glyphFormat": "%6",
+                  "glyphSymbol": "●",
+                  "indentFirstLine": {
+                    "magnitude": 234.0,
+                    "unit": "PT"
+                  },
+                  "indentStart": {
+                    "magnitude": 252.0,
+                    "unit": "PT"
+                  },
+                  "startNumber": 1
+                },
+                {
+                  "bulletAlignment": "START",
+                  "glyphFormat": "%7",
+                  "glyphSymbol": "○",
+                  "indentFirstLine": {
+                    "magnitude": 270.0,
+                    "unit": "PT"
+                  },
+                  "indentStart": {
+                    "magnitude": 288.0,
+                    "unit": "PT"
+                  },
+                  "startNumber": 1
+                },
+                {
+                  "bulletAlignment": "START",
+                  "glyphFormat": "%8",
+                  "glyphSymbol": "■",
+                  "indentFirstLine": {
+                    "magnitude": 306.0,
+                    "unit": "PT"
+                  },
+                  "indentStart": {
+                    "magnitude": 324.0,
+                    "unit": "PT"
+                  },
+                  "startNumber": 1
+                }
+              ]
+            }
+          }
+        },
+        "namedRanges": {
+          "extradoc:callout:warning": {
+            "name": "extradoc:callout:warning",
+            "namedRanges": [
+              {
+                "name": "extradoc:callout:warning",
+                "namedRangeId": "kix.ll4ogsef3uva",
+                "ranges": [
+                  {
+                    "endIndex": 1161,
+                    "startIndex": 1087
+                  }
+                ]
+              }
+            ]
+          },
+          "extradoc:codeblock:json": {
+            "name": "extradoc:codeblock:json",
+            "namedRanges": [
+              {
+                "name": "extradoc:codeblock:json",
+                "namedRangeId": "kix.bhr37ndiglco",
+                "ranges": [
+                  {
+                    "endIndex": 2033,
+                    "startIndex": 1912
+                  }
+                ]
+              }
+            ]
+          },
+          "extradoc:codeblock:python": {
+            "name": "extradoc:codeblock:python",
+            "namedRanges": [
+              {
+                "name": "extradoc:codeblock:python",
+                "namedRangeId": "kix.e7aketabs00",
+                "ranges": [
+                  {
+                    "endIndex": 1912,
+                    "startIndex": 1691
+                  }
+                ]
+              }
+            ]
+          },
+          "extradoc:callout:info": {
+            "name": "extradoc:callout:info",
+            "namedRanges": [
+              {
+                "name": "extradoc:callout:info",
+                "namedRangeId": "kix.bqc75jhy35bb",
+                "ranges": [
+                  {
+                    "endIndex": 1087,
+                    "startIndex": 1023
+                  }
+                ]
+              }
+            ]
+          },
+          "extradoc:blockquote": {
+            "name": "extradoc:blockquote",
+            "namedRanges": [
+              {
+                "name": "extradoc:blockquote",
+                "namedRangeId": "kix.9y2fxr3e95fj",
+                "ranges": [
+                  {
+                    "endIndex": 1023,
+                    "startIndex": 888
+                  }
+                ]
+              }
+            ]
+          }
+        },
+        "namedStyles": {
+          "styles": [
+            {
+              "namedStyleType": "NORMAL_TEXT",
+              "paragraphStyle": {
+                "alignment": "START",
+                "avoidWidowAndOrphan": true,
+                "borderBetween": {
+                  "color": {},
+                  "dashStyle": "SOLID",
+                  "padding": {
+                    "unit": "PT"
+                  },
+                  "width": {
+                    "unit": "PT"
+                  }
+                },
+                "borderBottom": {
+                  "color": {},
+                  "dashStyle": "SOLID",
+                  "padding": {
+                    "unit": "PT"
+                  },
+                  "width": {
+                    "unit": "PT"
+                  }
+                },
+                "borderLeft": {
+                  "color": {},
+                  "dashStyle": "SOLID",
+                  "padding": {
+                    "unit": "PT"
+                  },
+                  "width": {
+                    "unit": "PT"
+                  }
+                },
+                "borderRight": {
+                  "color": {},
+                  "dashStyle": "SOLID",
+                  "padding": {
+                    "unit": "PT"
+                  },
+                  "width": {
+                    "unit": "PT"
+                  }
+                },
+                "borderTop": {
+                  "color": {},
+                  "dashStyle": "SOLID",
+                  "padding": {
+                    "unit": "PT"
+                  },
+                  "width": {
+                    "unit": "PT"
+                  }
+                },
+                "direction": "LEFT_TO_RIGHT",
+                "indentEnd": {
+                  "unit": "PT"
+                },
+                "indentFirstLine": {
+                  "unit": "PT"
+                },
+                "indentStart": {
+                  "unit": "PT"
+                },
+                "keepLinesTogether": false,
+                "keepWithNext": false,
+                "lineSpacing": 115.0,
+                "namedStyleType": "NORMAL_TEXT",
+                "pageBreakBefore": false,
+                "shading": {
+                  "backgroundColor": {}
+                },
+                "spaceAbove": {
+                  "unit": "PT"
+                },
+                "spaceBelow": {
+                  "unit": "PT"
+                },
+                "spacingMode": "COLLAPSE_LISTS"
+              },
+              "textStyle": {
+                "backgroundColor": {},
+                "baselineOffset": "NONE",
+                "bold": false,
+                "fontSize": {
+                  "magnitude": 11.0,
+                  "unit": "PT"
+                },
+                "foregroundColor": {
+                  "color": {
+                    "rgbColor": {}
+                  }
+                },
+                "italic": false,
+                "smallCaps": false,
+                "strikethrough": false,
+                "underline": false,
+                "weightedFontFamily": {
+                  "fontFamily": "Arial",
+                  "weight": 400
+                }
+              }
+            },
+            {
+              "namedStyleType": "HEADING_1",
+              "paragraphStyle": {
+                "direction": "LEFT_TO_RIGHT",
+                "keepLinesTogether": true,
+                "keepWithNext": true,
+                "namedStyleType": "NORMAL_TEXT",
+                "pageBreakBefore": false,
+                "spaceAbove": {
+                  "magnitude": 20.0,
+                  "unit": "PT"
+                },
+                "spaceBelow": {
+                  "magnitude": 6.0,
+                  "unit": "PT"
+                }
+              },
+              "textStyle": {
+                "fontSize": {
+                  "magnitude": 20.0,
+                  "unit": "PT"
+                }
+              }
+            },
+            {
+              "namedStyleType": "HEADING_2",
+              "paragraphStyle": {
+                "direction": "LEFT_TO_RIGHT",
+                "keepLinesTogether": true,
+                "keepWithNext": true,
+                "namedStyleType": "NORMAL_TEXT",
+                "pageBreakBefore": false,
+                "spaceAbove": {
+                  "magnitude": 18.0,
+                  "unit": "PT"
+                },
+                "spaceBelow": {
+                  "magnitude": 6.0,
+                  "unit": "PT"
+                }
+              },
+              "textStyle": {
+                "bold": false,
+                "fontSize": {
+                  "magnitude": 16.0,
+                  "unit": "PT"
+                }
+              }
+            },
+            {
+              "namedStyleType": "HEADING_3",
+              "paragraphStyle": {
+                "direction": "LEFT_TO_RIGHT",
+                "keepLinesTogether": true,
+                "keepWithNext": true,
+                "namedStyleType": "NORMAL_TEXT",
+                "pageBreakBefore": false,
+                "spaceAbove": {
+                  "magnitude": 16.0,
+                  "unit": "PT"
+                },
+                "spaceBelow": {
+                  "magnitude": 4.0,
+                  "unit": "PT"
+                }
+              },
+              "textStyle": {
+                "bold": false,
+                "fontSize": {
+                  "magnitude": 14.0,
+                  "unit": "PT"
+                },
+                "foregroundColor": {
+                  "color": {
+                    "rgbColor": {
+                      "blue": 0.2627451,
+                      "green": 0.2627451,
+                      "red": 0.2627451
+                    }
+                  }
+                }
+              }
+            },
+            {
+              "namedStyleType": "HEADING_4",
+              "paragraphStyle": {
+                "direction": "LEFT_TO_RIGHT",
+                "keepLinesTogether": true,
+                "keepWithNext": true,
+                "namedStyleType": "NORMAL_TEXT",
+                "pageBreakBefore": false,
+                "spaceAbove": {
+                  "magnitude": 14.0,
+                  "unit": "PT"
+                },
+                "spaceBelow": {
+                  "magnitude": 4.0,
+                  "unit": "PT"
+                }
+              },
+              "textStyle": {
+                "fontSize": {
+                  "magnitude": 12.0,
+                  "unit": "PT"
+                },
+                "foregroundColor": {
+                  "color": {
+                    "rgbColor": {
+                      "blue": 0.4,
+                      "green": 0.4,
+                      "red": 0.4
+                    }
+                  }
+                }
+              }
+            },
+            {
+              "namedStyleType": "HEADING_5",
+              "paragraphStyle": {
+                "direction": "LEFT_TO_RIGHT",
+                "keepLinesTogether": true,
+                "keepWithNext": true,
+                "namedStyleType": "NORMAL_TEXT",
+                "pageBreakBefore": false,
+                "spaceAbove": {
+                  "magnitude": 12.0,
+                  "unit": "PT"
+                },
+                "spaceBelow": {
+                  "magnitude": 4.0,
+                  "unit": "PT"
+                }
+              },
+              "textStyle": {
+                "fontSize": {
+                  "magnitude": 11.0,
+                  "unit": "PT"
+                },
+                "foregroundColor": {
+                  "color": {
+                    "rgbColor": {
+                      "blue": 0.4,
+                      "green": 0.4,
+                      "red": 0.4
+                    }
+                  }
+                }
+              }
+            },
+            {
+              "namedStyleType": "HEADING_6",
+              "paragraphStyle": {
+                "direction": "LEFT_TO_RIGHT",
+                "keepLinesTogether": true,
+                "keepWithNext": true,
+                "namedStyleType": "NORMAL_TEXT",
+                "pageBreakBefore": false,
+                "spaceAbove": {
+                  "magnitude": 12.0,
+                  "unit": "PT"
+                },
+                "spaceBelow": {
+                  "magnitude": 4.0,
+                  "unit": "PT"
+                }
+              },
+              "textStyle": {
+                "fontSize": {
+                  "magnitude": 11.0,
+                  "unit": "PT"
+                },
+                "foregroundColor": {
+                  "color": {
+                    "rgbColor": {
+                      "blue": 0.4,
+                      "green": 0.4,
+                      "red": 0.4
+                    }
+                  }
+                },
+                "italic": true
+              }
+            },
+            {
+              "namedStyleType": "TITLE",
+              "paragraphStyle": {
+                "direction": "LEFT_TO_RIGHT",
+                "keepLinesTogether": true,
+                "keepWithNext": true,
+                "namedStyleType": "NORMAL_TEXT",
+                "pageBreakBefore": false,
+                "spaceAbove": {
+                  "unit": "PT"
+                },
+                "spaceBelow": {
+                  "magnitude": 3.0,
+                  "unit": "PT"
+                }
+              },
+              "textStyle": {
+                "fontSize": {
+                  "magnitude": 26.0,
+                  "unit": "PT"
+                }
+              }
+            },
+            {
+              "namedStyleType": "SUBTITLE",
+              "paragraphStyle": {
+                "direction": "LEFT_TO_RIGHT",
+                "keepLinesTogether": true,
+                "keepWithNext": true,
+                "namedStyleType": "NORMAL_TEXT",
+                "pageBreakBefore": false,
+                "spaceAbove": {
+                  "unit": "PT"
+                },
+                "spaceBelow": {
+                  "magnitude": 16.0,
+                  "unit": "PT"
+                }
+              },
+              "textStyle": {
+                "fontSize": {
+                  "magnitude": 15.0,
+                  "unit": "PT"
+                },
+                "foregroundColor": {
+                  "color": {
+                    "rgbColor": {
+                      "blue": 0.4,
+                      "green": 0.4,
+                      "red": 0.4
+                    }
+                  }
+                },
+                "italic": false,
+                "weightedFontFamily": {
+                  "fontFamily": "Arial",
+                  "weight": 400
+                }
+              }
+            }
+          ]
+        }
+      },
+      "tabProperties": {
+        "index": 0,
+        "tabId": "t.0",
+        "title": "Tab 1"
+      }
+    }
+  ],
+  "title": "V2 Markdown Stress Sprint"
+}

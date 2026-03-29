@@ -998,3 +998,13 @@ The first usable milestone is after Task 8:
 
 That milestone already covers the major newline and list-attachment pain points
 without requiring tables or headers to be complete.
+
+Repair-path rule learned from broken live docs:
+
+1. capture a durable `(base.json, desired.json, expected.lowered.json)` fixture
+   whenever a malformed live doc exposes a new reconciler failure
+2. grouped same-anchor body inserts must be lowered in reverse execution order
+   against a shadow document
+3. those grouped inserts must resolve their anchor from the canonical body
+   layout by default, and only use the raw body anchor when the target is a
+   read-only transport block such as TOC/opaque content

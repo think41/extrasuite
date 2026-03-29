@@ -735,6 +735,9 @@ def test_lower_semantic_diff_for_current_fixture_slice() -> None:
         "table_row_and_column_insert": load_expected_lowered_requests(
             "table_row_and_column_insert"
         ),
+        "operational_notes_repair": load_expected_lowered_requests(
+            "operational_notes_repair"
+        ),
     }
 
     for name, expected in cases.items():
@@ -1093,8 +1096,22 @@ def test_lower_semantic_diff_supports_empty_body_mixed_sequence() -> None:
 
     requests = lower_semantic_diff(base, desired)
 
-    assert requests[0]["insertText"]["location"]["index"] == 1
-    assert requests[0]["insertText"]["text"].startswith("Closing paragraph.")
+    text_requests = [
+        request["insertText"]
+        for request in requests
+        if "insertText" in request
+    ]
+
+    assert any(
+        request["location"]["index"] == 1
+        and request["text"].startswith("Mixed Body QA")
+        for request in text_requests
+    )
+    assert any(
+        request["location"]["index"] == 1
+        and request["text"].startswith("Closing paragraph.")
+        for request in text_requests
+    )
     assert any("insertTable" in request for request in requests)
     assert any("createParagraphBullets" in request for request in requests)
     assert any("updateParagraphStyle" in request for request in requests)
@@ -1276,7 +1293,7 @@ def test_lower_semantic_diff_uses_actual_reverse_ranges_for_list_then_heading() 
         and request["updateParagraphStyle"]["paragraphStyle"]["namedStyleType"] == "HEADING_2"
     )
 
-    assert bullet_request["range"]["endIndex"] <= heading_request["range"]["startIndex"]
+    assert heading_request["range"]["endIndex"] <= bullet_request["range"]["startIndex"]
 
     mock = MockGoogleDocsAPI(base)
     mock._batch_update_raw(requests)
@@ -1316,6 +1333,45 @@ def test_lower_semantic_diff_uses_actual_reverse_ranges_for_list_then_heading() 
     assert "bullet" not in operational
     assert operational["paragraphStyle"]["namedStyleType"] == "HEADING_2"
     assert prose.get("paragraphStyle", {}).get("namedStyleType", "NORMAL_TEXT") == "NORMAL_TEXT"
+
+
+def test_lower_semantic_diff_deletes_body_paragraph_slice_after_table() -> None:
+    base = reindex_document(
+        markdown_to_document(
+            {
+                "Tab_1": (
+                    "| Col |\n"
+                    "| --- |\n"
+                    "| value |\n\n"
+                    "## Heading\n\n"
+                    "Body paragraph.\n\n"
+                    "Tail paragraph.\n"
+                )
+            },
+            document_id="body-slice-after-table",
+            title="Body Slice After Table",
+            tab_ids={"Tab_1": "t.0"},
+        )
+    )
+    desired = reindex_document(
+        markdown_to_document(
+            {
+                "Tab_1": (
+                    "| Col |\n"
+                    "| --- |\n"
+                    "| value |\n\n"
+                    "Tail paragraph.\n"
+                )
+            },
+            document_id="body-slice-after-table",
+            title="Body Slice After Table",
+            tab_ids={"Tab_1": "t.0"},
+        )
+    )
+
+    requests = lower_semantic_diff(base, desired)
+
+    assert any("deleteContentRange" in request for request in requests)
 
 
 def test_lower_semantic_diff_rejects_column_insert_through_merged_region() -> None:

@@ -31,6 +31,7 @@ from extradoc.reconcile_v2.diff import (
     UpdateTableColumnPropertiesEdit,
     UpdateTablePinnedHeaderRowsEdit,
     UpdateTableRowStyleEdit,
+    _filter_conflicting_table_edits,
     diff_documents,
     summarize_semantic_edits,
 )
@@ -948,6 +949,22 @@ def test_table_row_and_column_insert_fixture_emits_two_structural_edits() -> Non
     ]
 
 
+def test_operational_notes_repair_fixture_preserves_mixed_body_repair_slice() -> None:
+    base, desired = _load_fixture_pair("operational_notes_repair")
+
+    edits = diff_documents(base, desired)
+
+    assert summarize_semantic_edits(edits) == [
+        "tab t.0: named range extradoc:codeblock:json replace 1 range(s) with 1 range(s)",
+        "tab t.0: named range extradoc:codeblock:python replace 1 range(s) with 1 range(s)",
+        "tab t.0: story t.0:body:table:16:r0:c0 replace 5 paragraph block(s) at 0 with 14 paragraph(s)",
+        "tab t.0: story t.0:body replace 1 paragraph block(s) at 14 with 0 paragraph(s)",
+        "tab t.0: section 0 delete list at block 13",
+        "tab t.0: story t.0:body replace 0 paragraph block(s) at 13 with 2 paragraph(s)",
+        "tab t.0: section 0 insert BULLETED list at block 13 with 13 item(s)",
+    ]
+
+
 def test_table_column_insert_through_merged_fixture_is_explicitly_unsupported() -> None:
     base, desired = _load_fixture_pair("table_column_insert_through_merged")
 
@@ -956,6 +973,26 @@ def test_table_column_insert_through_merged_fixture_is_explicitly_unsupported() 
         match="column structural edits through merged regions",
     ):
         diff_documents(base, desired)
+
+
+def test_filter_conflicting_table_edits_drops_nested_cell_edit_for_deleted_table() -> None:
+    table_cell_edit = ReplaceParagraphSliceEdit(
+        tab_id="t.0",
+        story_id="t.0:body:table:16:r0:c0",
+        section_index=None,
+        start_block_index=0,
+        delete_block_count=5,
+        inserted_paragraphs=(),
+    )
+    body_edits = [
+        DeleteTableBlockEdit(
+            tab_id="t.0",
+            section_index=0,
+            block_index=16,
+        )
+    ]
+
+    assert _filter_conflicting_table_edits([table_cell_edit], body_edits) == []
 
 
 def _load_fixture_pair(name: str) -> tuple[Document, Document]:

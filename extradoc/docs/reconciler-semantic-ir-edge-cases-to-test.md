@@ -138,6 +138,8 @@ The first durable fixture set for `reconcile_v2` should include:
 7. Page break add in body and rejection in non-body containers.
 8. Footnote creation with content population in a dependent batch.
 9. Multi-paragraph styled cell reconciliation plus row/column deletion.
+10. Repair of a malformed mixed body slice where a bad earlier push caused
+    heading/list bleed before later table-backed blocks.
 10. Merge/unmerge topology next to row/column edits.
 11. TOC read-only plus insert-before-TOC.
 12. Multi-section header/footer attachment graph including shared stories and typed slots.

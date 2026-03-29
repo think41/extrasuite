@@ -441,11 +441,11 @@ def _collect_story_paragraphs(
                 for child in paragraph.get("elements", [])
             )
             visible_text = text[:-1] if text.endswith("\n") else text
-            if (
-                block_index == 0
-                and not visible_text.strip()
-                and i + 1 < len(elements)
-                and elements[i + 1].get("table") is not None
+            prev_element = elements[i - 1] if i > 0 else None
+            next_element = elements[i + 1] if i + 1 < len(elements) else None
+            if not visible_text.strip() and (
+                _is_table_structural_element(prev_element)
+                or _is_table_structural_element(next_element)
             ):
                 cursor = end_index
                 i += 1
@@ -548,3 +548,7 @@ def _element_end_index(element: dict, fallback: int) -> int:
             return last["endIndex"]
 
     return fallback
+
+
+def _is_table_structural_element(element: dict | None) -> bool:
+    return bool(element and element.get("table") is not None)
