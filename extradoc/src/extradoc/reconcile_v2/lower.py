@@ -528,7 +528,7 @@ def lower_document_edits(
                 insert_index = edit.row_index + 1 if edit.insert_below else edit.row_index
                 if insert_index >= table.row_count:
                     raise UnsupportedSpikeError(
-                        "reconcile_v2 table spike supports inserted-row content only for non-terminal row inserts"
+                        "reconcile_v2 supports inserted-row content only for non-terminal row inserts"
                     )
                 anchor = _table_cell_text_start(
                     story_layouts,
@@ -566,7 +566,7 @@ def lower_document_edits(
                 insert_index = edit.column_index + 1 if edit.insert_right else edit.column_index
                 if insert_index >= table.column_count:
                     raise UnsupportedSpikeError(
-                        "reconcile_v2 table spike supports inserted-column content only for non-terminal column inserts"
+                        "reconcile_v2 supports inserted-column content only for non-terminal column inserts"
                     )
                 for row_index, text in enumerate(edit.inserted_cells):
                     if not text:
@@ -776,7 +776,7 @@ def lower_document_edits(
                 )
             if start_route != end_route:
                 raise ValueError(
-                    f"Named range {edit.name} crosses routes in unsupported spike slice"
+                    f"Named range {edit.name} crosses routes in an unsupported reconcile_v2 path"
                 )
             requests.append(
                 make_create_named_range(

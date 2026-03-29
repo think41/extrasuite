@@ -1,10 +1,4 @@
-"""Compute a narrow semantic diff over the spike IR.
-
-This is intentionally a confidence-sprint slice. The goal is not a complete
-edit script, but a small set of semantic edits that test whether the revised
-model can describe real Docs changes without collapsing back into transport
-indices and carrier-paragraph hacks.
-"""
+"""Compute a semantic diff over the supported IR surface."""
 
 from __future__ import annotations
 
@@ -342,7 +336,7 @@ SemanticEdit = (
 
 
 def diff_documents(base: Document, desired: Document) -> list[SemanticEdit]:
-    """Return a small semantic edit list for confidence-sprint scenarios."""
+    """Return a semantic edit list for the supported ``reconcile_v2`` surface."""
     return diff_document_irs(parse_document(base), parse_document(desired))
 
 
@@ -1334,7 +1328,7 @@ def _diff_footnote_changes(
                 continue
             if len(desired_refs) != 1:
                 raise UnsupportedSpikeError(
-                    "reconcile_v2 footnote spike supports only one footnote reference "
+                    "reconcile_v2 currently supports only one footnote reference "
                     "per paragraph"
                 )
             desired_story = desired_catalog.get(desired_refs[0])
@@ -1359,7 +1353,7 @@ def _diff_footnote_changes(
                 continue
             if len(base_refs) != 1:
                 raise UnsupportedSpikeError(
-                    "reconcile_v2 footnote spike supports only simple footnote creation "
+                    "reconcile_v2 currently supports only simple footnote creation "
                     "or matched-story content edits"
                 )
     return edits
@@ -1643,13 +1637,13 @@ def _plan_table_comparison(
     desired_column_count = max((len(row.cells) for row in desired_table.rows), default=0)
     if abs(desired_row_count - base_row_count) > 1 or abs(desired_column_count - base_column_count) > 1:
         raise UnsupportedSpikeError(
-            "reconcile_v2 table spike supports at most one row or one column structural change"
+            "reconcile_v2 currently supports at most one row or one column structural change"
         )
     if desired_column_count != base_column_count and (
         _table_has_horizontal_merges(base_table) or _table_has_horizontal_merges(desired_table)
     ):
         raise UnsupportedSpikeError(
-            "reconcile_v2 table spike does not yet support column structural edits through merged regions"
+            "reconcile_v2 does not yet support column structural edits through merged regions"
         )
     shared_row_pairs = tuple((index, index) for index in range(min(base_row_count, desired_row_count)))
     shared_column_pairs = tuple(
@@ -1693,7 +1687,7 @@ def _plan_table_comparison(
     merge_change = _table_merge_change(base_table, desired_table)
     if (desired_row_count != base_row_count or desired_column_count != base_column_count) and merge_change is not None:
         raise UnsupportedSpikeError(
-            "reconcile_v2 table spike does not yet support structural edits intersecting merge-topology changes"
+            "reconcile_v2 does not yet support structural edits intersecting merge-topology changes"
         )
     if merge_change is None:
         return TableComparisonPlan(
@@ -1795,7 +1789,7 @@ def _single_row_table_edit(
         )
     if desired_row_count != base_row_count:
         raise UnsupportedSpikeError(
-            "reconcile_v2 table spike could not align the row structural edit"
+            "reconcile_v2 could not align the row structural edit"
         )
     return None
 
@@ -1853,7 +1847,7 @@ def _single_column_table_edit(
         )
     if desired_column_count != base_column_count:
         raise UnsupportedSpikeError(
-            "reconcile_v2 table spike could not align the column structural edit"
+            "reconcile_v2 could not align the column structural edit"
         )
     return None
 
@@ -2281,7 +2275,7 @@ def _inserted_column_cell_texts(table: TableIR, column_index: int) -> tuple[str,
     for row in table.rows:
         if column_index >= len(row.cells):
             raise UnsupportedSpikeError(
-                "reconcile_v2 table spike requires rectangular inserted-column fixtures"
+                "reconcile_v2 requires rectangular inserted-column fixtures"
             )
         texts.append(_simple_cell_text(row.cells[column_index]))
     return tuple(texts)
@@ -2290,11 +2284,11 @@ def _inserted_column_cell_texts(table: TableIR, column_index: int) -> tuple[str,
 def _simple_cell_text(cell: object) -> str:
     if any(not isinstance(block, ParagraphIR) for block in cell.content.blocks):
         raise UnsupportedSpikeError(
-            "reconcile_v2 table spike supports inserted row/column content only for paragraph-only cells"
+            "reconcile_v2 supports inserted row/column content only for paragraph-only cells"
         )
     if len(cell.content.blocks) > 1:
         raise UnsupportedSpikeError(
-            "reconcile_v2 table spike supports inserted row/column content only for single-paragraph cells"
+            "reconcile_v2 supports inserted row/column content only for single-paragraph cells"
         )
     if not cell.content.blocks:
         return ""

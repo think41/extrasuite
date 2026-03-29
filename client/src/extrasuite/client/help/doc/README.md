@@ -69,6 +69,11 @@ already used (e.g. `t.summary`, `t.newtab`).
 elements inside the <tab>, after </body>. Provide any placeholder id — Google
 assigns the real id on push and the re-pulled file will have the real id.
 
+**Important limitation:** Creating a header/footer on a brand-new tab in a
+document that already has other tabs is not supported by the Google Docs API
+path we rely on. Create the tab first, re-pull, then add the header/footer in a
+second push.
+
 **Headers and footers support the same block elements as <body>.**
 
 **New tab requirements:**
@@ -76,8 +81,11 @@ assigns the real id on push and the re-pulled file will have the real id.
 2. Optionally create a `<TabName>/styles.xml` file (if omitted it is treated as empty `<styles />`).
 3. Add a `<tab>` entry to `index.xml`.
 
+If the document already has other tabs, do not add a brand-new `<header>` or
+`<footer>` in the same push as the new tab creation.
+
 ```xml
-<!-- New tab with header and footer -->
+<!-- Existing tab can add header/footer -->
 <tab id="t.summary" title="Summary">
   <body>
     <sectionbreak sectionType="CONTINUOUS" contentDirection="LEFT_TO_RIGHT" columnSeparatorStyle="NONE" />
@@ -104,10 +112,15 @@ assigns the real id on push and the re-pulled file will have the real id.
   <table>            Table container
   <tr>               Table row
   <td>               Table cell (must contain at least one <p>)
-  <pagebreak/>       Page break (can add/delete — NOT YET IMPLEMENTED, will fail at diff)
+  <pagebreak/>       Page break (body-only where the Docs API allows it)
 
-Note: <footnote> insertion is not yet supported. Existing footnotes are shown
-read-only; to add new footnotes use the Google Docs UI.
+## Important Limits
+
+  <hr/> is read-only — cannot add or remove it through push/push-md
+  <sectionbreak/> is read-only and must remain the first element in every <body>
+  TOC and other opaque pulled-only blocks are read-only
+  Footnote creation/editing in body content is supported
+  New-tab header/footer creation in an existing multi-tab doc is not supported
 
 ## Comments
 

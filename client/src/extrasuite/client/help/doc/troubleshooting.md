@@ -60,6 +60,12 @@ re-pull to verify headings rendered correctly.
 
 Cannot add or remove: <hr/>, <image/>, <autotext/>, <columnbreak/>
 
+Also note:
+- <sectionbreak/> is required and read-only
+- TOC / opaque pulled-only blocks are read-only
+- New-tab header/footer creation in an existing multi-tab doc is not supported;
+  create the tab first, re-pull, then add header/footer
+
 Everything else in the supported tags list is editable.
 
 ---

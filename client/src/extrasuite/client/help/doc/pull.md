@@ -52,8 +52,9 @@ comments cannot be added via the API.
   No newlines inside content elements (<p>, <h1>-<h6>, <li>, <t>, etc.)
   Every <td> must contain at least one <p>, even if empty
   XML-escape special characters: &amp; &lt; &gt; &quot;
-  <hr/>, <image/>, <autotext/>, <sectionbreak/> are read-only — cannot add or remove
+  <hr/>, <image/>, <autotext/>, <sectionbreak/>, and <toc> are read-only
   <sectionbreak/> must be the first element in every <body> — never delete it
+  New-tab header/footer creation in an existing multi-tab doc needs two pushes
   After a list, add <p></p> before a heading to break out of the list context
   Always re-pull before making further changes after a push
 

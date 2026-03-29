@@ -50,6 +50,12 @@ of one tab in standard markdown:
   Code blocks: ```lang ... ```
   Callouts:    > [!WARNING], > [!INFO], > [!NOTE], > [!DANGER], > [!TIP]
   Blockquotes: > text
+  Footnotes:   [^note] plus a matching [^note]: definition
+
+Limits to remember:
+  Horizontal rules pulled from Docs are read-only
+  TOC / opaque pulled-only blocks are read-only
+  New-tab header/footer creation in an existing multi-tab doc needs two pushes
 
 Do NOT edit index.md, index.xml, comments.xml, or files in .pristine/ or .raw/.
 index.md is regenerated on each pull — your edits will be lost.

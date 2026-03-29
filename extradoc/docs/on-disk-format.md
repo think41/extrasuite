@@ -300,7 +300,7 @@ These files store their data as JSON wrapped in a single XML element. They are *
 
 1. **Edit only `document.xml`, `styles.xml`, and `comments.xml`**. All per-tab extras are read-only.
 2. **Do not delete `index.xml`**, `comments.xml`, or the `.pristine/` folder — they are required for diff and push.
-3. **Structural IDs** (`id` attributes on `<header>`, `<footer>`, `<footnote>`, `<list>`) must remain stable. Do not change existing IDs; you may add new headers/footers (new `<header>`/`<footer>` elements), which will receive server-assigned IDs on push.
+3. **Structural IDs** (`id` attributes on `<header>`, `<footer>`, `<footnote>`, `<list>`) must remain stable. Do not change existing IDs. New footnotes are supported. New headers/footers are supported on existing tabs, but creating a header/footer on a newly added tab in an already multi-tab document is not supported.
 4. **Heading IDs** (`headingId` on `<h1>`-`<h6>`) are assigned by Google Docs. Do not change them; they may be referenced by internal links.
 5. **TOC content** is read-only. The reconciler ignores changes inside `<toc>` elements.
 6. **Inline images** (`<image objectId="..."/>`) are read-only. The reconciler cannot create or reorder images.

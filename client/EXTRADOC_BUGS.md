@@ -1,4 +1,11 @@
-# ExtraDoc End-to-End Testing — Bugs & Limitations
+# ExtraDoc End-to-End Testing — Historical Bugs & Limits
+
+This file is historical. Several items below were fixed during the
+`reconcile_v2` cutover. For the current release contract, use:
+
+- `client/src/extrasuite/client/help/doc/README.md`
+- `client/src/extrasuite/client/help/doc/troubleshooting.md`
+- `extradoc/docs/release-checklist.md`
 
 Test document: https://docs.google.com/document/d/1rVowMhvK4p8BCtWrGlIUGg96gE9huIPw2VfPNfcz02o
 Testing date: 2026-03-03
@@ -19,6 +26,8 @@ Method: Using only `--help` documentation as the guide.
 
 ## BUG-2: `<footnote>` insertion fails at diff time
 
+**Status:** Fixed in `reconcile_v2`
+
 **Severity:** High (advertised feature completely non-functional)
 **Symptom:** `Error: Cannot insert paragraph containing non-text elements (pageBreak, horizontalRule, inlineObject, footnoteReference). Use the appropriate API requests directly.`
 **How triggered:** Added `<footnote>` inline inside a `<t>` element, as documented in `--help`.
@@ -29,6 +38,8 @@ Method: Using only `--help` documentation as the guide.
 ---
 
 ## BUG-3: `<pagebreak/>` insertion fails at diff time
+
+**Status:** Fixed
 
 **Severity:** High (advertised feature completely non-functional)
 **Symptom:** `Error: Cannot insert paragraph containing non-text elements (pageBreak, horizontalRule, inlineObject, footnoteReference). Use the appropriate API requests directly.`
@@ -113,6 +124,8 @@ This is also the format that pull produces and round-trips correctly.
 ---
 
 ## BUG-8: Header/footer on a new tab get created on the wrong (existing) tab
+
+**Status:** Explicitly rejected in `reconcile_v2`; still a Docs API limitation
 
 **Severity:** High (header/footer created on wrong tab, push partially fails)
 **Symptom:** API 400 `Segment with ID kix.xxx was not found`; header/footer content not applied.

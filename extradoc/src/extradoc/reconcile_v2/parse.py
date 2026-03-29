@@ -1,7 +1,7 @@
 """Parse transport ``Document`` values into canonical semantic IR.
 
-This is a confidence-sprint parser. It intentionally covers only enough of the
-surface to validate the top-down model against real transport payloads.
+This parser covers the transport surface needed by the semantic reconciler's
+supported feature set.
 """
 
 from __future__ import annotations
@@ -229,13 +229,13 @@ class _StoryResolver:
 
         raise UnsupportedSpikeError(
             f"Cannot resolve transport index {index} in story {self.story_id}. "
-            "The confidence-sprint parser currently supports anchors in paragraph "
+            "The semantic parser currently supports anchors in paragraph "
             "text and at block boundaries only."
         )
 
 
 def parse_document(document: Document) -> DocumentIR:
-    """Parse a transport document into the spike semantic IR."""
+    """Parse a transport document into the semantic IR."""
     return DocumentIR(
         revision_id=document.revision_id,
         tabs=[

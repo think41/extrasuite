@@ -1,8 +1,8 @@
 """Semantic intermediate representation for the second-generation reconciler.
 
-This is intentionally a confidence-sprint slice, not the final production IR.
-It models the top-level architectural decisions so we can test whether the
-design survives contact with real transport payloads.
+This models the top-level architectural decisions used by the production
+reconciler. Some transport boundaries are still rejected explicitly where the
+Google Docs API path is not supported.
 """
 
 from __future__ import annotations

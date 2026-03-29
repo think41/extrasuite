@@ -975,6 +975,13 @@ Commit value:
 1. turns `reconcile_v2` from an isolated engine into the real production
    migration target
 
+Release note:
+
+1. `EXTRADOC_RECONCILER=v1` remains available only as an internal rollback
+   switch. It is not part of the public CLI contract.
+2. The current release gate and support matrix live in
+   [release-checklist.md](./release-checklist.md).
+
 ## What To Reuse From Current Code
 
 ### Reuse as-is

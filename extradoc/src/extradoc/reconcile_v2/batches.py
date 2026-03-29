@@ -1,4 +1,4 @@
-"""Plan narrow multi-batch request sequences for confidence-sprint scenarios."""
+"""Plan multi-batch request sequences for ``reconcile_v2``."""
 
 from __future__ import annotations
 
@@ -448,12 +448,12 @@ def _lower_new_tab_body(
 ) -> list[dict[str, Any]]:
     if len(tab.body.sections) != 1:
         raise UnsupportedSpikeError(
-            "reconcile_v2 multi-batch spike supports creating tabs with exactly one body section"
+            "reconcile_v2 currently supports creating tabs with exactly one body section"
         )
     section = tab.body.sections[0]
     if section.attachments.headers or section.attachments.footers:
         raise UnsupportedSpikeError(
-            "reconcile_v2 multi-batch spike does not yet support creating tabs with section attachments"
+            "reconcile_v2 does not yet support creating tabs with section attachments"
         )
     if not section.blocks:
         return []
@@ -487,7 +487,7 @@ def _lower_new_tab_named_ranges(
         return []
     if len(tab.body.sections) != 1:
         raise UnsupportedSpikeError(
-            "reconcile_v2 multi-batch spike supports new-tab named ranges only for "
+            "reconcile_v2 currently supports new-tab named ranges only for "
             "single-section body stories"
         )
     blocks = tab.body.sections[0].blocks
@@ -496,7 +496,7 @@ def _lower_new_tab_named_ranges(
         for anchor in anchors:
             if anchor.start.story_id != tab.body.id or anchor.end.story_id != tab.body.id:
                 raise UnsupportedSpikeError(
-                    "reconcile_v2 multi-batch spike supports new-tab named ranges only "
+                    "reconcile_v2 currently supports new-tab named ranges only "
                     "in the body story"
                 )
             requests.append(
@@ -532,13 +532,13 @@ def _lower_new_tab_footnotes(
         return [], []
     if len(tab.body.sections) != 1:
         raise UnsupportedSpikeError(
-            "reconcile_v2 multi-batch spike supports new-tab footnotes only for "
+            "reconcile_v2 currently supports new-tab footnotes only for "
             "single-section body stories"
         )
     blocks = tab.body.sections[0].blocks
     if not all(isinstance(block, ParagraphIR) for block in blocks):
         raise UnsupportedSpikeError(
-            "reconcile_v2 multi-batch spike supports new-tab footnotes only in "
+            "reconcile_v2 currently supports new-tab footnotes only in "
             "paragraph-only body stories"
         )
 
@@ -602,7 +602,7 @@ def _lower_blocks_into_empty_story(
             segment_id=segment_id,
         )
     raise UnsupportedSpikeError(
-        "reconcile_v2 multi-batch spike supports creating new-story content only for "
+        "reconcile_v2 currently supports creating new-story content only for "
         "paragraph-only stories or a single recursively-populated table block"
     )
 
@@ -623,11 +623,11 @@ def _lower_table_into_empty_story(
         for row in table.rows
     ):
         raise UnsupportedSpikeError(
-            "reconcile_v2 multi-batch spike requires rectangular tables for creation"
+            "reconcile_v2 currently requires rectangular tables for creation"
         )
     if table.pinned_header_rows or table.merge_regions:
         raise UnsupportedSpikeError(
-            "reconcile_v2 multi-batch spike currently supports plain unmerged table creation only"
+            "reconcile_v2 currently supports plain unmerged table creation only"
         )
 
     requests: list[dict[str, Any]] = [
@@ -645,7 +645,7 @@ def _lower_table_into_empty_story(
             cell = row.cells[column_index]
             if cell.row_span != 1 or cell.column_span != 1 or cell.merge_head is not None:
                 raise UnsupportedSpikeError(
-                    "reconcile_v2 multi-batch spike currently supports unmerged cells only"
+                    "reconcile_v2 currently supports unmerged cells only"
                 )
             cell_start = _cell_content_start(
                 story_start_index=story_start_index,
@@ -734,18 +734,18 @@ def _resolve_new_body_position(
     path = position.path
     if path.section_index not in (None, 0):
         raise UnsupportedSpikeError(
-            "reconcile_v2 multi-batch spike supports new-tab named ranges only in section 0"
+            "reconcile_v2 currently supports new-tab named ranges only in section 0"
         )
     if path.node_path:
         raise UnsupportedSpikeError(
-            "reconcile_v2 multi-batch spike supports new-tab named ranges only on "
+            "reconcile_v2 currently supports new-tab named ranges only on "
             "top-level body paragraphs"
         )
     current = story_start_index
     for block_index, block in enumerate(blocks):
         if not isinstance(block, ParagraphIR):
             raise UnsupportedSpikeError(
-                "reconcile_v2 multi-batch spike supports new-tab named ranges only for "
+                "reconcile_v2 currently supports new-tab named ranges only for "
                 "paragraph-only body stories"
             )
         paragraph_start = current
@@ -809,7 +809,7 @@ def _new_body_inline_transport_length(
     if isinstance(inline, FootnoteRefIR):
         return 1 if include_footnote_refs else 0
     raise UnsupportedSpikeError(
-        "reconcile_v2 multi-batch spike supports new-tab named ranges only for "
+        "reconcile_v2 currently supports new-tab named ranges only for "
         "plain text plus footnote-reference paragraphs"
     )
 

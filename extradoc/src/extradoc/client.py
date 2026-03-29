@@ -77,7 +77,7 @@ class DiffResult:
     document_id: str
     batches: list[BatchUpdateDocumentRequest]
     comment_ops: CommentOperations
-    reconciler_version: str = "v1"
+    reconciler_version: str = "v2"
     base_revision_id: str | None = None
 
 

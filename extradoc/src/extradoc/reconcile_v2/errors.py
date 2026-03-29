@@ -4,12 +4,16 @@ from __future__ import annotations
 
 
 class ReconcileV2Error(Exception):
-    """Base exception for the in-progress semantic-IR reconciler."""
+    """Base exception for the semantic-IR reconciler."""
 
 
 class ParseIRError(ReconcileV2Error):
-    """Raised when transport JSON cannot be represented by the spike IR."""
+    """Raised when transport JSON cannot be represented by the semantic IR."""
 
 
-class UnsupportedSpikeError(ReconcileV2Error):
-    """Raised when the confidence-sprint parser hits an unsupported construct."""
+class UnsupportedReconcileV2Error(ReconcileV2Error):
+    """Raised when ``reconcile_v2`` hits an explicit unsupported boundary."""
+
+
+# Backward-compatible alias for older tests and internal imports.
+UnsupportedSpikeError = UnsupportedReconcileV2Error

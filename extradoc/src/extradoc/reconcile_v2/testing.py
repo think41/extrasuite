@@ -18,7 +18,7 @@ from extradoc.reconcile_v2.ir import (
 
 
 def summarize_document_ir(document: DocumentIR) -> str:
-    """Return a compact human-readable summary of the spike IR."""
+    """Return a compact human-readable summary of the semantic IR."""
     lines = [f"revision={document.revision_id or '<none>'}", f"tabs={len(document.tabs)}"]
     for tab in document.tabs:
         lines.extend(_summarize_tab(tab))

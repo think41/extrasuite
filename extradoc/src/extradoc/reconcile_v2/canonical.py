@@ -1,4 +1,4 @@
-"""Canonicalization helpers for the confidence-sprint semantic IR."""
+"""Canonicalization helpers for the semantic IR."""
 
 from __future__ import annotations
 

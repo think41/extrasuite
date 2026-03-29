@@ -20,7 +20,7 @@ if TYPE_CHECKING:
 
 
 def inspect_document(document: Document) -> DocumentIR:
-    """Parse a transport document into the spike semantic IR."""
+    """Parse a transport document into the semantic IR."""
     return parse_document(document)
 
 
@@ -40,7 +40,7 @@ def canonical_document_signature(document: Document) -> CanonicalDocumentSignatu
 
 
 def semantic_diff(base: Document, desired: Document) -> list[SemanticEdit]:
-    """Return a narrow semantic edit list for confidence-sprint fixtures."""
+    """Return the supported semantic edit list for ``base`` -> ``desired``."""
     return diff_documents(base, desired)
 
 
