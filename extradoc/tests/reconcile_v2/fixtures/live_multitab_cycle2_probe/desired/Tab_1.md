@@ -36,6 +36,4 @@ def sprint_status() -> str:
 {"stage": "edited", "verified": false}
 ```
 
----
-
 [^overview-note]: Footnote text for the overview tab after edits.

@@ -31,11 +31,20 @@ from extradoc.reconcile_v2.diff import (
     UpdateTableColumnPropertiesEdit,
     UpdateTablePinnedHeaderRowsEdit,
     UpdateTableRowStyleEdit,
+    _diff_editable_block_span,
     _filter_conflicting_table_edits,
     diff_documents,
     summarize_semantic_edits,
 )
 from extradoc.reconcile_v2.errors import UnsupportedSpikeError
+from extradoc.reconcile_v2.ir import (
+    ListIR,
+    ListItemIR,
+    ListLevelSpecIR,
+    ListSpecIR,
+    ParagraphIR,
+    TextSpanIR,
+)
 from extradoc.serde._from_markdown import markdown_to_document
 
 from .helpers import load_fixture_pair as load_fixture_pair_shared
@@ -323,6 +332,59 @@ def test_list_kind_change_fixture_emits_list_spec_replace() -> None:
     assert summarize_semantic_edits(edits) == [
         "tab t.0: section 0 list 0 kind BULLETED -> NUMBERED"
     ]
+
+
+def test_same_list_kind_ignores_transport_signature_churn() -> None:
+    paragraph = ParagraphIR(
+        role="NORMAL_TEXT",
+        explicit_style={},
+        inlines=[TextSpanIR(text="item", explicit_text_style={})],
+    )
+    base_block = ListIR(
+        spec=ListSpecIR(
+            signature="transport-a",
+            kind="BULLETED",
+            levels=[
+                ListLevelSpecIR(
+                    glyph_kind="DISC",
+                    glyph_symbol="●",
+                    start_number=1,
+                    indent_start=None,
+                    indent_first_line=None,
+                    text_style={},
+                )
+            ],
+        ),
+        items=[ListItemIR(level=0, paragraph=paragraph)],
+    )
+    desired_block = ListIR(
+        spec=ListSpecIR(
+            signature="transport-b",
+            kind="BULLETED",
+            levels=[
+                ListLevelSpecIR(
+                    glyph_kind="DISC",
+                    glyph_symbol="●",
+                    start_number=1,
+                    indent_start=None,
+                    indent_first_line=None,
+                    text_style={},
+                )
+            ],
+        ),
+        items=[ListItemIR(level=0, paragraph=paragraph)],
+    )
+
+    edits = _diff_editable_block_span(
+        tab_id="t.0",
+        section_index=0,
+        base_blocks=[base_block],
+        desired_blocks=[desired_block],
+        block_offset=0,
+        raw_block_offset=None,
+    )
+
+    assert edits == []
 
 
 def test_list_relevel_fixture_emits_relevel_edit() -> None:

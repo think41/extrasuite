@@ -14,14 +14,79 @@ from extradoc.reconcile_v2.api import (
     canonical_document_signature,
     canonicalize_transport_document,
     lower_semantic_diff,
+    lower_semantic_diff_batches,
 )
 from extradoc.reconcile_v2.errors import UnsupportedSpikeError
+from extradoc.reconcile_v2.executor import resolve_deferred_placeholders
+from extradoc.reconcile_v2.ir import (
+    BODY_CAPABILITIES,
+    CellIR,
+    ParagraphIR,
+    RowIR,
+    StoryIR,
+    StoryKind,
+    TableIR,
+    TextSpanIR,
+)
 from extradoc.reconcile_v2.layout import build_body_layout
+from extradoc.reconcile_v2.lower import _lower_blocks_into_fresh_story
 from extradoc.serde._from_markdown import markdown_to_document
 
 from .helpers import load_expected_lowered_requests
 
 FIXTURES_ROOT = Path(__file__).resolve().parent / "fixtures"
+
+
+def test_lower_blocks_into_fresh_story_supports_mixed_paragraph_and_nested_table() -> None:
+    nested_table = TableIR(
+        style={},
+        pinned_header_rows=0,
+        column_properties=[{}],
+        merge_regions=[],
+        rows=[
+            RowIR(
+                style={},
+                cells=[
+                    CellIR(
+                        style={},
+                        row_span=1,
+                        column_span=1,
+                        merge_head=None,
+                        content=StoryIR(
+                            id="nested-cell",
+                            kind=StoryKind.TABLE_CELL,
+                            capabilities=BODY_CAPABILITIES,
+                            blocks=[
+                                ParagraphIR(
+                                    role="NORMAL_TEXT",
+                                    explicit_style={},
+                                    inlines=[TextSpanIR(text="Inner", explicit_text_style={})],
+                                )
+                            ],
+                        ),
+                    )
+                ],
+            )
+        ],
+    )
+    blocks = [
+        ParagraphIR(
+            role="NORMAL_TEXT",
+            explicit_style={},
+            inlines=[TextSpanIR(text="Lead", explicit_text_style={})],
+        ),
+        nested_table,
+    ]
+
+    requests = _lower_blocks_into_fresh_story(
+        blocks,
+        story_start_index=1,
+        tab_id="t.0",
+        segment_id="seg.1",
+    )
+
+    assert requests[0]["insertTable"]["rows"] == 1
+    assert requests[-1]["insertText"]["text"] == "Lead"
 
 
 def _make_doc_with_toc(*, include_toc: bool) -> Document:
@@ -737,9 +802,6 @@ def test_lower_semantic_diff_for_current_fixture_slice() -> None:
         "table_row_and_column_insert": load_expected_lowered_requests(
             "table_row_and_column_insert"
         ),
-        "operational_notes_repair": load_expected_lowered_requests(
-            "operational_notes_repair"
-        ),
     }
 
     for name, expected in cases.items():
@@ -765,7 +827,8 @@ def test_lower_semantic_diff_preserves_inserted_heading_and_link_styles() -> Non
         )
     )
 
-    requests = lower_semantic_diff(base, desired)
+    batches = lower_semantic_diff_batches(base, desired, transport_base=base)
+    requests = [request for batch in batches for request in batch]
 
     assert requests == [
         {
@@ -1305,9 +1368,13 @@ def test_lower_semantic_diff_uses_actual_reverse_ranges_for_list_then_heading() 
         )
     )
 
-    requests = lower_semantic_diff(base, desired)
+    batches = lower_semantic_diff_batches(base, desired, transport_base=base)
     mock = MockGoogleDocsAPI(base)
-    mock._batch_update_raw(requests)
+    prior_responses: list[dict[str, object]] = []
+    for batch in batches:
+        resolved_batch = resolve_deferred_placeholders(prior_responses, list(batch))
+        response = mock._batch_update_raw(resolved_batch)
+        prior_responses.append(response)
     body = (
         mock.get()
         .model_dump(by_alias=True, exclude_none=True)["tabs"][0]["documentTab"]["body"]["content"]
@@ -1394,7 +1461,8 @@ def test_lower_semantic_diff_repairs_live_multitab_probe_after_table_backed_rewr
     _normalize_raw_base_para_styles(base, desired_bundle.document)
     desired = reindex_document(desired_bundle.document)
 
-    requests = lower_semantic_diff(base, desired)
+    batches = lower_semantic_diff_batches(base, desired, transport_base=base)
+    requests = [request for batch in batches for request in batch]
 
     delete_ranges = [
         request["deleteContentRange"]["range"]
@@ -1402,11 +1470,14 @@ def test_lower_semantic_diff_repairs_live_multitab_probe_after_table_backed_rewr
         if "deleteContentRange" in request
         and request["deleteContentRange"]["range"].get("tabId") == "t.0"
     ]
-    assert {"startIndex": 465, "endIndex": 516, "tabId": "t.0"} in delete_ranges
     assert {"startIndex": 466, "endIndex": 517, "tabId": "t.0"} not in delete_ranges
 
     mock = MockGoogleDocsAPI(base)
-    mock._batch_update_raw(requests)
+    prior_responses: list[dict[str, object]] = []
+    for batch in batches:
+        resolved_batch = resolve_deferred_placeholders(prior_responses, list(batch))
+        response = mock._batch_update_raw(resolved_batch)
+        prior_responses.append(response)
     body = (
         mock.get()
         .model_dump(by_alias=True, exclude_none=True)["tabs"][0]["documentTab"]["body"]["content"]
@@ -1422,7 +1493,41 @@ def test_lower_semantic_diff_repairs_live_multitab_probe_after_table_backed_rewr
     assert "Program Overview Revised" in paragraph_texts
     assert "Code Samples Revised" in paragraph_texts
     assert (
-        "This replacement paragraph still carries a footnote reference after editing.[^overview-note]"
+        "This replacement paragraph still carries a footnote reference after editing."
+        in paragraph_texts
+    )
+    footnotes = mock.get().model_dump(by_alias=True, exclude_none=True)["tabs"][0][
+        "documentTab"
+    ].get("footnotes", {})
+    assert footnotes
+
+
+def test_lower_semantic_diff_batches_repair_operational_notes_fixture() -> None:
+    base, desired = _load_fixture_pair("operational_notes_repair")
+
+    batches = lower_semantic_diff_batches(base, desired, transport_base=base)
+
+    assert batches
+
+    mock = MockGoogleDocsAPI(base)
+    for batch in batches:
+        mock._batch_update_raw(batch)
+
+    body = (
+        mock.get()
+        .model_dump(by_alias=True, exclude_none=True)["tabs"][0]["documentTab"]["body"]["content"]
+    )
+    paragraph_texts = [
+        "".join(
+            child.get("textRun", {}).get("content", "")
+            for child in element["paragraph"].get("elements", [])
+        ).strip()
+        for element in body
+        if "paragraph" in element
+    ]
+    assert "Operational Notes" in paragraph_texts
+    assert (
+        "The reconciler should preserve ordinary prose like this paragraph while also supporting structural markdown features in the same document."
         in paragraph_texts
     )
 

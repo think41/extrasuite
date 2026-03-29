@@ -1010,6 +1010,66 @@ def test_insert_table_basic() -> None:
     assert len(response.replies or []) == 1
 
 
+def test_insert_table_inside_table_cell() -> None:
+    """Test inserting a nested table into an existing table cell."""
+    doc = create_minimal_document()
+    api = MockGoogleDocsAPI(Document.model_validate(doc))
+
+    api.batch_update(
+        BatchUpdateDocumentRequest(
+            requests=[
+                Request.model_validate(
+                    {
+                        "insertTable": {
+                            "location": {"index": 1},
+                            "rows": 1,
+                            "columns": 1,
+                        }
+                    }
+                )
+            ]
+        )
+    )
+    api.batch_update(
+        BatchUpdateDocumentRequest(
+            requests=[
+                Request.model_validate(
+                    {
+                        "insertText": {
+                            "location": {"index": 5},
+                            "text": "Host",
+                        }
+                    }
+                )
+            ]
+        )
+    )
+    api.batch_update(
+        BatchUpdateDocumentRequest(
+            requests=[
+                Request.model_validate(
+                    {
+                        "insertTable": {
+                            "location": {"index": 9},
+                            "rows": 1,
+                            "columns": 1,
+                        }
+                    }
+                )
+            ]
+        )
+    )
+
+    body = api.get().model_dump(by_alias=True, exclude_none=True)["tabs"][0][
+        "documentTab"
+    ]["body"]["content"]
+    outer_table = body[1]["table"]
+    cell_content = outer_table["tableRows"][0]["tableCells"][0]["content"]
+
+    assert cell_content[0]["paragraph"]["elements"][0]["textRun"]["content"] == "Host\n"
+    assert "table" in cell_content[1]
+
+
 def test_insert_table_invalid_dimensions() -> None:
     """Test that table must have positive dimensions."""
     doc = create_minimal_document()

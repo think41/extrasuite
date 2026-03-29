@@ -168,27 +168,32 @@ def _insert_text_simple(segment: dict[str, Any], index: int, text: str) -> None:
     Recurses into table cells when the index falls within a table.
     """
     content = segment.get("content", [])
+    if _insert_text_simple_in_content(content, index, text):
+        return
+    raise ValidationError(f"Could not find paragraph to insert at index {index}")
 
+
+def _insert_text_simple_in_content(
+    content: list[dict[str, Any]],
+    index: int,
+    text: str,
+) -> bool:
     for element in content:
         elem_start = element.get("startIndex", 0)
         elem_end = element.get("endIndex", 0)
 
-        if elem_start <= index < elem_end and "paragraph" in element:
+        if elem_start <= index <= elem_end and "paragraph" in element:
             _insert_into_paragraph(element["paragraph"], index, text)
-            return
+            return True
 
-        if elem_start <= index < elem_end and "table" in element:
-            # Recurse into table cells
-            for row in element["table"].get("tableRows", []):
-                for cell in row.get("tableCells", []):
-                    for cell_elem in cell.get("content", []):
-                        ce_start = cell_elem.get("startIndex", 0)
-                        ce_end = cell_elem.get("endIndex", 0)
-                        if ce_start <= index < ce_end and "paragraph" in cell_elem:
-                            _insert_into_paragraph(cell_elem["paragraph"], index, text)
-                            return
-
-    raise ValidationError(f"Could not find paragraph to insert at index {index}")
+        table = element.get("table")
+        if table is None or not (elem_start <= index <= elem_end):
+            continue
+        for row in table.get("tableRows", []):
+            for cell in row.get("tableCells", []):
+                if _insert_text_simple_in_content(cell.get("content", []), index, text):
+                    return True
+    return False
 
 
 def _insert_into_paragraph(paragraph: dict[str, Any], index: int, text: str) -> None:
@@ -261,31 +266,28 @@ def _insert_text_with_newlines(segment: dict[str, Any], index: int, text: str) -
     Recurses into table cells when the index falls within a table.
     """
     content = segment.get("content", [])
+    if _insert_text_with_newlines_in_content(content, index, text):
+        return
+    raise ValidationError(f"Could not find paragraph to insert at index {index}")
 
-    # Check if index falls within a table cell
-    for element in content:
-        elem_start = element.get("startIndex", 0)
-        elem_end = element.get("endIndex", 0)
-        if elem_start <= index < elem_end and "table" in element:
-            for row in element["table"].get("tableRows", []):
-                for cell in row.get("tableCells", []):
-                    cell_content = cell.get("content", [])
-                    for cell_elem in cell_content:
-                        ce_start = cell_elem.get("startIndex", 0)
-                        ce_end = cell_elem.get("endIndex", 0)
-                        if ce_start <= index < ce_end and "paragraph" in cell_elem:
-                            # Delegate to cell-level insertion
-                            _insert_text_with_newlines_in_cell(
-                                cell, cell_content, cell_elem, index, text
-                            )
-                            return
-            raise ValidationError(
-                f"Could not find paragraph in table cell at index {index}"
-            )
 
+def _insert_text_with_newlines_in_content(
+    content: list[dict[str, Any]],
+    index: int,
+    text: str,
+) -> bool:
     for elem_idx, element in enumerate(content):
         elem_start = element.get("startIndex", 0)
         elem_end = element.get("endIndex", 0)
+
+        table = element.get("table")
+        if table is not None and elem_start <= index < elem_end:
+            for row in table.get("tableRows", []):
+                for cell in row.get("tableCells", []):
+                    cell_content = cell.get("content", [])
+                    if _insert_text_with_newlines_in_content(cell_content, index, text):
+                        return True
+            return False
 
         if elem_start <= index < elem_end and "paragraph" in element:
             paragraph = element["paragraph"]
@@ -384,9 +386,8 @@ def _insert_text_with_newlines(segment: dict[str, Any], index: int, text: str) -
             # Step 4: Replace old element
             content[elem_idx : elem_idx + 1] = new_elements
             # No index shifting needed — reindex handles it
-            return
-
-    raise ValidationError(f"Could not find paragraph to insert at index {index}")
+            return True
+    return False
 
 
 def _insert_text_with_newlines_in_cell(

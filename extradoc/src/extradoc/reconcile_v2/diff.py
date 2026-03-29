@@ -999,7 +999,7 @@ def _diff_editable_block_span(
                     )
                 )
         elif isinstance(base_block, ListIR) and isinstance(desired_block, ListIR):
-            if base_block.spec.signature != desired_block.spec.signature:
+            if base_block.spec.kind != desired_block.spec.kind:
                 edits.append(
                     ReplaceListSpecEdit(
                         tab_id=tab_id,

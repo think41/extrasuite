@@ -35,6 +35,19 @@ Run these on a fresh document and re-pull after every push:
 8. Header/footer cycle:
    edit supported existing header/footer stories and re-pull
 
+## Current Status
+
+1. `markdown_multitab` live smoke is semantically converging on both cycles.
+   Remaining diffs are serializer normalization only:
+   footnote IDs, ordered-list numbering normalization, HTML-table -> pipe-table,
+   and bold header-cell markdown formatting.
+2. `xml_structural` live smoke is still a release blocker.
+   Current live evidence shows:
+   `push` succeeds, but re-pulled XML still drops authored page breaks,
+   first-section header/footer content, and cycle-2 footnote persistence.
+3. The maintained smoke runner is
+   `extradoc/scripts/release_smoke_docs.py`.
+
 ## Accepted Unsupported Boundaries
 
 These are acceptable for release only if they are documented clearly in

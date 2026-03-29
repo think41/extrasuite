@@ -834,20 +834,61 @@ def _content_edit_order_key(
     original_index: int,
     edit: SemanticEdit,
 ) -> tuple[object, ...]:
+    non_body_anchor = _existing_non_body_story_anchor(edit)
+    if non_body_anchor is not None:
+        story_id, section_index, block_index = non_body_anchor
+        return (0, story_id, section_index, -block_index, original_index)
+    body_anchor = _existing_body_edit_anchor(edit)
+    if body_anchor is not None:
+        tab_id, section_index, block_index = body_anchor
+        return (1, tab_id, section_index, -block_index, original_index)
+    return (2, original_index)
+
+
+def _existing_non_body_story_anchor(
+    edit: SemanticEdit,
+) -> tuple[str, int | None, int] | None:
+    if isinstance(edit, ReplaceParagraphTextEdit) and edit.story_id != f"{edit.tab_id}:body":
+        return (edit.story_id, edit.section_index, edit.block_index)
+    if (
+        isinstance(edit, ReplaceParagraphSliceEdit)
+        and edit.story_id != f"{edit.tab_id}:body"
+    ):
+        return (edit.story_id, edit.section_index, edit.start_block_index)
+    return None
+
+
+def _existing_body_edit_anchor(
+    edit: SemanticEdit,
+) -> tuple[str, int, int] | None:
     if (
         isinstance(edit, ReplaceParagraphTextEdit)
         and edit.story_id == f"{edit.tab_id}:body"
         and edit.section_index is not None
     ):
-        return (0, edit.tab_id, edit.section_index, -edit.block_index, original_index)
+        return (edit.tab_id, edit.section_index, edit.block_index)
     if (
         isinstance(edit, ReplaceParagraphSliceEdit)
         and edit.story_id == f"{edit.tab_id}:body"
         and edit.section_index is not None
         and edit.delete_block_count > 0
     ):
-        return (0, edit.tab_id, edit.section_index, -edit.start_block_index, original_index)
-    return (1, original_index)
+        return (edit.tab_id, edit.section_index, edit.start_block_index)
+    if isinstance(
+        edit,
+        (
+            UpdateParagraphRoleEdit,
+            AppendListItemsEdit,
+            ReplaceListSpecEdit,
+            RelevelListItemsEdit,
+            DeleteListBlockEdit,
+            DeleteTableBlockEdit,
+        ),
+    ):
+        return (edit.tab_id, edit.section_index, edit.block_index)
+    if isinstance(edit, InsertSectionEdit):
+        return (edit.tab_id, edit.section_index, edit.split_after_block_index)
+    return None
 
 
 def _lower_body_insert_group(
@@ -1629,52 +1670,97 @@ def _lower_blocks_into_fresh_story(
 ) -> list[dict[str, Any]]:
     if not blocks:
         return []
-    if all(isinstance(block, ParagraphIR) for block in blocks):
-        paragraphs = tuple(blocks)
-        inserted_text = "\n".join(_paragraph_text(block) for block in paragraphs)
-        if not inserted_text:
-            return []
-        requests: list[dict[str, Any]] = [
-            make_insert_text_in_story(
-                index=story_start_index,
-                tab_id=tab_id,
-                segment_id=segment_id,
-                text=inserted_text,
-            )
-        ]
-        paragraph_locations = _inserted_paragraph_locations(
-            start_index=story_start_index,
-            paragraphs=paragraphs,
-            prefix_newline=False,
-        )
-        for paragraph, (paragraph_start, paragraph_end) in paragraph_locations:
-            if paragraph.role != "NORMAL_TEXT":
-                requests.append(
-                    make_update_paragraph_role(
-                        start_index=paragraph_start,
-                        end_index=paragraph_end,
-                        tab_id=tab_id,
-                        role=paragraph.role,
-                    )
+    requests: list[dict[str, Any]] = []
+    for fragment in reversed(_fresh_story_fragments(blocks)):
+        if all(isinstance(block, ParagraphIR) for block in fragment):
+            requests.extend(
+                _lower_paragraph_run_into_fresh_story(
+                    tuple(fragment),
+                    story_start_index=story_start_index,
+                    tab_id=tab_id,
+                    segment_id=segment_id,
                 )
-        requests.extend(
-            _lower_inserted_text_styles(
-                route=type("Route", (), {"tab_id": tab_id, "segment_id": segment_id})(),
-                paragraph_locations=paragraph_locations,
             )
+            continue
+        if len(fragment) == 1 and isinstance(fragment[0], TableIR):
+            requests.extend(
+                _lower_table_into_fresh_story(
+                    fragment[0],
+                    story_start_index=story_start_index,
+                    tab_id=tab_id,
+                    segment_id=segment_id,
+                )
+            )
+            continue
+        raise UnsupportedSpikeError(
+            "reconcile_v2 currently supports fresh-story insertion only for "
+            "paragraph runs and table blocks"
         )
-        return requests
-    if len(blocks) == 1 and isinstance(blocks[0], TableIR):
-        return _lower_table_into_fresh_story(
-            blocks[0],
-            story_start_index=story_start_index,
+    return requests
+
+
+def _fresh_story_fragments(blocks: list[Any]) -> list[list[Any]]:
+    fragments: list[list[Any]] = []
+    paragraph_run: list[Any] = []
+    for block in blocks:
+        if isinstance(block, ParagraphIR):
+            paragraph_run.append(block)
+            continue
+        if paragraph_run:
+            fragments.append(paragraph_run)
+            paragraph_run = []
+        if isinstance(block, TableIR):
+            fragments.append([block])
+            continue
+        raise UnsupportedSpikeError(
+            "reconcile_v2 currently supports fresh-story insertion only for "
+            "paragraphs and tables"
+        )
+    if paragraph_run:
+        fragments.append(paragraph_run)
+    return fragments
+
+
+def _lower_paragraph_run_into_fresh_story(
+    paragraphs: tuple[ParagraphIR, ...],
+    *,
+    story_start_index: int,
+    tab_id: Any,
+    segment_id: Any,
+) -> list[dict[str, Any]]:
+    inserted_text = "\n".join(_paragraph_text(block) for block in paragraphs)
+    if not inserted_text:
+        return []
+    requests: list[dict[str, Any]] = [
+        make_insert_text_in_story(
+            index=story_start_index,
             tab_id=tab_id,
             segment_id=segment_id,
+            text=inserted_text,
         )
-    raise UnsupportedSpikeError(
-        "reconcile_v2 currently supports fresh-story insertion only for paragraph runs "
-        "or a single recursively-populated table block"
+    ]
+    paragraph_locations = _inserted_paragraph_locations(
+        start_index=story_start_index,
+        paragraphs=paragraphs,
+        prefix_newline=False,
     )
+    for paragraph, (paragraph_start, paragraph_end) in paragraph_locations:
+        if paragraph.role != "NORMAL_TEXT":
+            requests.append(
+                make_update_paragraph_role(
+                    start_index=paragraph_start,
+                    end_index=paragraph_end,
+                    tab_id=tab_id,
+                    role=paragraph.role,
+                )
+            )
+    requests.extend(
+        _lower_inserted_text_styles(
+            route=type("Route", (), {"tab_id": tab_id, "segment_id": segment_id})(),
+            paragraph_locations=paragraph_locations,
+        )
+    )
+    return requests
 
 
 def _lower_table_into_fresh_story(

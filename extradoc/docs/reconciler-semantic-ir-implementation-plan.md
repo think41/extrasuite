@@ -1059,3 +1059,17 @@ Repair-path rule learned from broken live docs:
    Reusing the normalized semantic base as the transport shadow can produce
    impossible post-batch indices around special tables and invalid delete
    ranges, even when the semantic edit plan is correct
+
+## Current Release-Smoke Readout
+
+1. `extradoc/scripts/release_smoke_docs.py` is the maintained live smoke
+   runner for release validation.
+2. Markdown smoke currently passes semantically for:
+   empty-doc create, multi-tab create, complex second-pass edits, tables,
+   callouts, code blocks, links, and footnotes.
+3. XML smoke still exposes real parity gaps:
+   authored page breaks do not survive re-pull,
+   first-section header/footer content is not converging,
+   and cycle-2 footnote persistence is not converging.
+4. XML release signoff is blocked until those gaps are either implemented or
+   explicitly removed from the supported XML contract.

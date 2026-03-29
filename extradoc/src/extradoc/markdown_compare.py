@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import difflib
+import re
 from dataclasses import dataclass
 from typing import TYPE_CHECKING
 
@@ -74,9 +75,17 @@ def compare_markdown_tabs(
             name: f"t.{index}"
             for index, name in enumerate(sorted(desired_tabs))
         }
+        normalized_desired_tabs = {
+            name: _normalize_markdown_for_semantic_compare(desired_tabs[name])
+            for name in sorted(desired_tabs)
+        }
+        normalized_actual_tabs = {
+            name: _normalize_markdown_for_semantic_compare(actual_tabs[name])
+            for name in sorted(actual_tabs)
+        }
         desired_doc = reindex_document(
             markdown_to_document(
-                desired_tabs,
+                normalized_desired_tabs,
                 document_id="markdown-compare",
                 title="Markdown Compare",
                 tab_ids=tab_ids,
@@ -84,7 +93,7 @@ def compare_markdown_tabs(
         )
         actual_doc = reindex_document(
             markdown_to_document(
-                actual_tabs,
+                normalized_actual_tabs,
                 document_id="markdown-compare",
                 title="Markdown Compare",
                 tab_ids=tab_ids,
@@ -99,3 +108,23 @@ def compare_markdown_tabs(
         semantic_edits=semantic_edits,
         tab_diffs=tab_diffs,
     )
+
+
+_FOOTNOTE_REF_RE = re.compile(r"\[\^([^\]]+)\]")
+_FOOTNOTE_DEF_RE = re.compile(r"(?m)^\[\^([^\]]+)\]:")
+
+
+def _normalize_markdown_for_semantic_compare(text: str) -> str:
+    label_map: dict[str, str] = {}
+
+    def canonical_label(label: str) -> str:
+        existing = label_map.get(label)
+        if existing is not None:
+            return existing
+        canonical = f"fn{len(label_map) + 1}"
+        label_map[label] = canonical
+        return canonical
+
+    text = _FOOTNOTE_DEF_RE.sub(lambda m: f"[^{canonical_label(m.group(1))}]:", text)
+    text = _FOOTNOTE_REF_RE.sub(lambda m: f"[^{canonical_label(m.group(1))}]", text)
+    return text

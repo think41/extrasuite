@@ -2,8 +2,17 @@
   {
     "deleteContentRange": {
       "range": {
-        "startIndex": 1912,
-        "endIndex": 2026,
+        "startIndex": 1549,
+        "endIndex": 1687,
+        "tabId": "t.0"
+      }
+    }
+  },
+  {
+    "deleteContentRange": {
+      "range": {
+        "startIndex": 1774,
+        "endIndex": 1888,
         "tabId": "t.0"
       }
     }
@@ -11,7 +20,7 @@
   {
     "insertText": {
       "location": {
-        "index": 1912,
+        "index": 1774,
         "tabId": "t.0"
       },
       "text": "from dataclasses import dataclass\n\n\n@dataclass\nclass SprintCheck:\n    name: str\n    passed: bool\n\n\nchecks = [\n    SprintCheck(\"headings\", True),\n    SprintCheck(\"tables\", True),\n    SprintCheck(\"callouts\", True),\n]"
@@ -20,8 +29,8 @@
   {
     "updateTextStyle": {
       "range": {
-        "startIndex": 1912,
-        "endIndex": 1945,
+        "startIndex": 1774,
+        "endIndex": 1807,
         "tabId": "t.0"
       },
       "textStyle": {
@@ -39,8 +48,8 @@
   {
     "updateTextStyle": {
       "range": {
-        "startIndex": 1948,
-        "endIndex": 1958,
+        "startIndex": 1810,
+        "endIndex": 1820,
         "tabId": "t.0"
       },
       "textStyle": {
@@ -58,8 +67,8 @@
   {
     "updateTextStyle": {
       "range": {
-        "startIndex": 1959,
-        "endIndex": 1977,
+        "startIndex": 1821,
+        "endIndex": 1839,
         "tabId": "t.0"
       },
       "textStyle": {
@@ -77,8 +86,8 @@
   {
     "updateTextStyle": {
       "range": {
-        "startIndex": 1978,
-        "endIndex": 1991,
+        "startIndex": 1840,
+        "endIndex": 1853,
         "tabId": "t.0"
       },
       "textStyle": {
@@ -96,8 +105,8 @@
   {
     "updateTextStyle": {
       "range": {
-        "startIndex": 1992,
-        "endIndex": 2008,
+        "startIndex": 1854,
+        "endIndex": 1870,
         "tabId": "t.0"
       },
       "textStyle": {
@@ -115,8 +124,8 @@
   {
     "updateTextStyle": {
       "range": {
-        "startIndex": 2011,
-        "endIndex": 2021,
+        "startIndex": 1873,
+        "endIndex": 1883,
         "tabId": "t.0"
       },
       "textStyle": {
@@ -134,8 +143,8 @@
   {
     "updateTextStyle": {
       "range": {
-        "startIndex": 2022,
-        "endIndex": 2056,
+        "startIndex": 1884,
+        "endIndex": 1918,
         "tabId": "t.0"
       },
       "textStyle": {
@@ -153,8 +162,8 @@
   {
     "updateTextStyle": {
       "range": {
-        "startIndex": 2057,
-        "endIndex": 2089,
+        "startIndex": 1919,
+        "endIndex": 1951,
         "tabId": "t.0"
       },
       "textStyle": {
@@ -172,8 +181,8 @@
   {
     "updateTextStyle": {
       "range": {
-        "startIndex": 2090,
-        "endIndex": 2124,
+        "startIndex": 1952,
+        "endIndex": 1986,
         "tabId": "t.0"
       },
       "textStyle": {
@@ -191,8 +200,8 @@
   {
     "updateTextStyle": {
       "range": {
-        "startIndex": 2125,
-        "endIndex": 2126,
+        "startIndex": 1987,
+        "endIndex": 1988,
         "tabId": "t.0"
       },
       "textStyle": {
@@ -205,15 +214,6 @@
         }
       },
       "fields": "fontSize,weightedFontFamily"
-    }
-  },
-  {
-    "deleteContentRange": {
-      "range": {
-        "startIndex": 1549,
-        "endIndex": 1687,
-        "tabId": "t.0"
-      }
     }
   },
   {

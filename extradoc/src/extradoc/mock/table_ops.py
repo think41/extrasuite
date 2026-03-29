@@ -77,27 +77,27 @@ def handle_insert_table(
 
     # Step 2: Find the content array position right after the split
     content = segment.get("content", [])
-    inject_idx = None
-    for i, element in enumerate(content):
-        if element.get("startIndex", 0) == index + 1:
-            inject_idx = i
-            break
-
-    if inject_idx is None:
+    insertion_site = _find_table_insertion_site(content, index + 1)
+    if insertion_site is None:
         raise ValidationError(
             f"Could not find insertion point for table at index {index}"
         )
+    inject_content, inject_idx = insertion_site
 
     # Step 3: Resolve inherited textStyle from the preceding paragraph's named style.
     # The real API propagates textStyle properties (e.g. fontSize) from the preceding
     # paragraph's named style into newly created table cells.
-    inherited_text_style = _resolve_preceding_text_style(tab, inject_idx, content)
+    inherited_text_style = _resolve_preceding_text_style(
+        tab,
+        inject_idx,
+        inject_content,
+    )
 
     # Step 4: Build table element (indices will be fixed by reindex)
     table_elem = _build_table_element(rows, columns, inherited_text_style)
 
     # Step 5: Insert table into content array
-    content.insert(inject_idx, table_elem)
+    inject_content.insert(inject_idx, table_elem)
 
     # No index shifting — reindex handles it
     return {}
@@ -143,6 +143,28 @@ def _resolve_preceding_text_style(
             return dict(style_def.get("textStyle", {}))
 
     return {}
+
+
+def _find_table_insertion_site(
+    content: list[dict[str, Any]],
+    target_start_index: int,
+) -> tuple[list[dict[str, Any]], int] | None:
+    for index, element in enumerate(content):
+        if element.get("startIndex", 0) == target_start_index:
+            return content, index
+        table = element.get("table")
+        if table is None:
+            continue
+        for row in table.get("tableRows", []):
+            for cell in row.get("tableCells", []):
+                nested_content = cell.get("content", [])
+                nested_site = _find_table_insertion_site(
+                    nested_content,
+                    target_start_index,
+                )
+                if nested_site is not None:
+                    return nested_site
+    return None
 
 
 def _build_table_element(
