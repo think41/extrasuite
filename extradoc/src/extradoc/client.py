@@ -192,6 +192,7 @@ class DocsClient:
             )
             if index.format == "markdown":
                 raw_data = json.loads(raw_doc_path.read_text(encoding="utf-8"))
+                transport_base = Document.model_validate(raw_data)
                 base = Document.model_validate(raw_data)
                 # Strip inherited paragraph style defaults from the raw JSON base
                 # so it is consistent with the markdown-serde-derived desired document.
@@ -203,6 +204,7 @@ class DocsClient:
                     base,
                     desired,
                     reconciler_version=reconciler_version,
+                    transport_base=transport_base,
                 )
                 comment_ops = diff_comments(
                     base_bundle.comments, desired_bundle.comments
@@ -337,9 +339,10 @@ def _reconcile_documents(
     desired: Document,
     *,
     reconciler_version: str,
+    transport_base: Document | None = None,
 ) -> list[BatchUpdateDocumentRequest]:
     if reconciler_version == "v2":
-        return reconcile_v2(base, desired)
+        return reconcile_v2(base, desired, transport_base=transport_base)
     return reconcile_v1(base, desired)
 
 

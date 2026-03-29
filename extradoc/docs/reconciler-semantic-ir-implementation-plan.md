@@ -120,6 +120,26 @@ The reusable harness for this work lives in:
 If a sprint cannot meet this standard, it should first improve the harness
 before expanding feature scope.
 
+## Recent Proven Rules
+
+Recent live markdown verification added two concrete rules that now belong to
+the implementation contract:
+
+1. Markdown footnote syntax must be parsed into real body `footnoteReference`
+   elements plus footnote stories. It is not enough to support only synthetic
+   `<x-fn>` passthrough.
+2. Footnote creation on an empty body must be planned after any content batch
+   that materializes the target paragraph. Desired-side placeholder IDs are not
+   required.
+3. Editing a paragraph that already contains a trailing footnote reference must
+   preserve the existing reference in place. The reconciler must replace only
+   the paragraph text range, not the whole paragraph slice, or the reference
+   and downstream paragraph boundary can be corrupted.
+4. Horizontal rules remain a markdown-serde surface but are a reconciler
+   readonly boundary because Google Docs cannot create them through the API.
+   Base and desired may contain them unchanged, but `push-md` must reject HR
+   create/delete edits explicitly.
+
 ## Module Layout
 
 Initial module layout:
@@ -1012,3 +1032,23 @@ Repair-path rule learned from broken live docs:
    prior request has been emitted, later body deletes/inserts must resolve
    their transport indices from the evolving shadow document, not from a frozen
    base layout
+5. `extradoc:*` named ranges attached to special markdown tables are semantic
+   metadata, not transport cleanup work; when the owning content is deleted,
+   lowering should not emit a separate `deleteNamedRange` request unless the
+   semantic annotation itself is being changed independently
+6. dense special-table rewrites may require iterative content batching even
+   when the semantic diff is a single unmatched body slice; plan batches
+   against an evolving shadow document and apply annotation edits only after
+   the content batches converge
+7. every live repair or convergence probe must begin from a fresh `pull-md`
+   of the target doc. Reusing a previously pulled folder after any successful
+   probe push can create false failures that are really stale-base mismatches,
+   not reconciler bugs
+8. markdown workflow uses two distinct base documents:
+   a. a semantic base derived from the raw doc after markdown-only
+      normalization for diffing
+   b. the untouched raw transport base for iterative batch planning and shadow
+      execution
+   Reusing the normalized semantic base as the transport shadow can produce
+   impossible post-batch indices around special tables and invalid delete
+   ranges, even when the semantic edit plan is correct

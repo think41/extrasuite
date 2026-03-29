@@ -119,10 +119,16 @@ def _find_annotation(
     start, so accept a small lead-in window as long as the table start is still
     immediately adjacent to the range.
     """
+    matches: list[tuple[int, int, str]] = []
     for si, ei, name in nr_spans:
         if (si <= table_si < ei) or (table_si + 1 == si and table_si < ei):
-            return name
-    return None
+            distance = abs(table_si - si)
+            span_width = ei - si
+            matches.append((distance, span_width, name))
+    if not matches:
+        return None
+    matches.sort(key=lambda item: (item[0], item[1], item[2]))
+    return matches[0][2]
 
 
 def _serialize_body(doc_tab: DocumentTab, list_defs: dict[str, Any]) -> str:

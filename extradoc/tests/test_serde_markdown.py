@@ -223,6 +223,34 @@ class TestMarkdownRoundTrip:
         assert tbl.rows == 3  # header + 2 data rows
         assert tbl.columns == 2
 
+    def test_md_to_document_footnote_reference_and_definition(self) -> None:
+        """Markdown footnote syntax becomes a footnote ref plus footnote segment."""
+        doc = markdown_to_document(
+            {
+                "Tab_1": (
+                    "Paragraph with footnote.[^note]\n\n"
+                    "[^note]: Footnote body text.\n"
+                )
+            },
+            document_id="x",
+            title="T",
+        )
+        tab = doc.tabs[0]  # type: ignore[index]
+        dt = tab.document_tab  # type: ignore[union-attr]
+        body = dt.body.content  # type: ignore[union-attr]
+
+        paragraph = next(
+            se.paragraph
+            for se in body
+            if se.paragraph is not None and se.paragraph.elements
+        )
+        assert any(
+            pe.footnote_reference and pe.footnote_reference.footnote_id == "note"
+            for pe in (paragraph.elements or [])
+        )
+        assert dt.footnotes is not None
+        assert "note" in dt.footnotes
+
     def test_md_to_document_link(self) -> None:
         """Hyperlinks are parsed with correct URL."""
         doc = markdown_to_document({"Tab_1": ROUND_TRIP_MD}, document_id="x", title="T")
@@ -798,6 +826,114 @@ def _make_doc_with_named_range_table(
     return doc
 
 
+def _make_doc_with_adjacent_codeblock_ranges() -> Document:
+    doc = _make_doc(
+        [
+            StructuralElement(
+                table=Table(
+                    rows=1,
+                    columns=1,
+                    table_rows=[
+                        TableRow(
+                            table_cells=[
+                                TableCell(
+                                    content=[
+                                        StructuralElement(
+                                            paragraph=Paragraph(
+                                                elements=[
+                                                    ParagraphElement(
+                                                        text_run=TextRun(
+                                                            content="print('hello')\n"
+                                                        )
+                                                    )
+                                                ],
+                                                paragraph_style=ParagraphStyle(
+                                                    named_style_type=ParagraphStyleNamedStyleType.NORMAL_TEXT
+                                                ),
+                                            )
+                                        )
+                                    ],
+                                    table_cell_style=TableCellStyle(),
+                                )
+                            ]
+                        )
+                    ],
+                )
+            ),
+            StructuralElement(
+                table=Table(
+                    rows=1,
+                    columns=1,
+                    table_rows=[
+                        TableRow(
+                            table_cells=[
+                                TableCell(
+                                    content=[
+                                        StructuralElement(
+                                            paragraph=Paragraph(
+                                                elements=[
+                                                    ParagraphElement(
+                                                        text_run=TextRun(
+                                                            content='{"stage": "edited"}\n'
+                                                        )
+                                                    )
+                                                ],
+                                                paragraph_style=ParagraphStyle(
+                                                    named_style_type=ParagraphStyleNamedStyleType.NORMAL_TEXT
+                                                ),
+                                            )
+                                        )
+                                    ],
+                                    table_cell_style=TableCellStyle(),
+                                )
+                            ]
+                        )
+                    ],
+                )
+            ),
+        ]
+    )
+    doc = reindex_document(doc)
+    tab = doc.tabs[0]  # type: ignore[index]
+    body = tab.document_tab.body.content  # type: ignore[union-attr]
+    tables = [se for se in body if se.table is not None]
+    first_table = tables[0]
+    second_table = tables[1]
+    tab.document_tab.named_ranges = {  # type: ignore[union-attr]
+        "extradoc:codeblock:python": NamedRanges(
+            name="extradoc:codeblock:python",
+            named_ranges=[
+                NamedRange(
+                    named_range_id="kix.python",
+                    name="extradoc:codeblock:python",
+                    ranges=[
+                        Range(
+                            start_index=first_table.start_index + 1,
+                            end_index=second_table.start_index + 1,
+                        )
+                    ],
+                )
+            ],
+        ),
+        "extradoc:codeblock:json": NamedRanges(
+            name="extradoc:codeblock:json",
+            named_ranges=[
+                NamedRange(
+                    named_range_id="kix.json",
+                    name="extradoc:codeblock:json",
+                    ranges=[
+                        Range(
+                            start_index=second_table.start_index + 1,
+                            end_index=second_table.end_index + 2,
+                        )
+                    ],
+                )
+            ],
+        ),
+    }
+    return doc
+
+
 class TestSpecialElementsPull:
     """Verify that named ranges drive serialization on the pull path."""
 
@@ -827,6 +963,18 @@ class TestSpecialElementsPull:
         assert "```python" in md
         assert "print('hello')" in md
         assert "| --- |" not in md
+
+    def test_codeblock_pull_prefers_nearest_overlapping_named_range(self) -> None:
+        """Adjacent codeblock ranges must not make the later table inherit the earlier language."""
+        doc = _make_doc_with_adjacent_codeblock_ranges()
+
+        per_tab = document_to_markdown(doc)
+        md = per_tab["Tab_1"]["document.md"]
+
+        assert "```python" in md
+        assert "```json" in md
+        assert md.count("```python") == 1
+        assert md.count("```json") == 1
 
     def test_callout_warning_pull(self) -> None:
         """extradoc:callout:warning → > [!WARNING]\\n> text."""

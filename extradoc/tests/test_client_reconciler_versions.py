@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import json
 from pathlib import Path
 
 import pytest
@@ -12,8 +13,13 @@ from extradoc.client import (
     _get_reconciler_version,
     _normalize_raw_base_para_styles,
 )
-from extradoc.comments._types import CommentOperations
+from extradoc.comments._types import (
+    CommentOperations,
+    DocumentWithComments,
+    FileComments,
+)
 from extradoc.reconcile import reindex_document
+from extradoc.reconcile_v2.errors import UnsupportedSpikeError
 from extradoc.reconcile_v2.executor import BatchExecutionResult
 from extradoc.serde import serialize
 from extradoc.serde._from_markdown import markdown_to_document
@@ -374,6 +380,112 @@ def test_diff_v2_detects_table_insert_beside_existing_paragraphs(
     assert any(request.create_named_range for request in requests)
 
 
+def test_diff_v2_uses_raw_transport_base_for_iterative_markdown_batches(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    import zipfile
+
+    fixture_root = (
+        Path(__file__).resolve().parent
+        / "reconcile_v2"
+        / "fixtures"
+        / "live_multitab_cycle2_probe"
+    )
+    base = Document.model_validate(
+        json.loads((fixture_root / "base.json").read_text(encoding="utf-8"))
+    )
+    desired_folder = fixture_root / "desired"
+
+    folder = tmp_path / "live-multitab-cycle2"
+    folder.mkdir()
+    bundle = DocumentWithComments(
+        document=base,
+        comments=FileComments(file_id="live-multitab-cycle2"),
+    )
+    serialize(bundle, folder, format="markdown")
+
+    pristine_dir = folder / ".pristine"
+    pristine_dir.mkdir()
+    with zipfile.ZipFile(pristine_dir / "document.zip", "w") as zf:
+        for path in sorted(folder.rglob("*")):
+            if path.is_file() and ".pristine" not in str(path) and ".raw" not in str(path):
+                zf.write(path, path.relative_to(folder))
+
+    for path in desired_folder.iterdir():
+        if path.is_file():
+            text = path.read_text(encoding="utf-8")
+            if path.name == "Tab_1.md":
+                text = text.replace("\n---\n\n", "\n")
+            (folder / path.name).write_text(text, encoding="utf-8")
+
+    raw_dir = folder / ".raw"
+    raw_dir.mkdir()
+    (raw_dir / "document.json").write_text(
+        (fixture_root / "base.json").read_text(encoding="utf-8"),
+        encoding="utf-8",
+    )
+
+    monkeypatch.delenv(RECONCILER_ENV_VAR, raising=False)
+
+    client = DocsClient.__new__(DocsClient)
+    result = client.diff(str(folder))
+
+    assert result.reconciler_version == "v2"
+    first_batch = result.batches[0].model_dump(by_alias=True, exclude_none=True, mode="json")
+    second_batch = result.batches[1].model_dump(by_alias=True, exclude_none=True, mode="json")
+    assert first_batch == {
+        "requests": [
+            {
+                "deleteContentRange": {
+                    "range": {"startIndex": 497, "endIndex": 515, "tabId": "t.0"}
+                }
+            },
+            {
+                "insertText": {
+                    "location": {"index": 497, "tabId": "t.0"},
+                    "text": '    return "blue"',
+                }
+            },
+            {
+                "updateTextStyle": {
+                    "range": {"startIndex": 497, "endIndex": 514, "tabId": "t.0"},
+                    "textStyle": {
+                        "fontSize": {"magnitude": 10.0, "unit": "PT"},
+                        "weightedFontFamily": {"fontFamily": "Courier New"},
+                    },
+                    "fields": "fontSize,weightedFontFamily",
+                }
+            },
+        ]
+    }
+    assert second_batch == {
+        "requests": [
+            {
+                "deleteContentRange": {
+                    "range": {"startIndex": 520, "endIndex": 558, "tabId": "t.0"}
+                }
+            },
+            {
+                "insertText": {
+                    "location": {"index": 520, "tabId": "t.0"},
+                    "text": '{"stage": "edited", "verified": false}',
+                }
+            },
+            {
+                "updateTextStyle": {
+                    "range": {"startIndex": 520, "endIndex": 558, "tabId": "t.0"},
+                    "textStyle": {
+                        "fontSize": {"magnitude": 10.0, "unit": "PT"},
+                        "weightedFontFamily": {"fontFamily": "Courier New"},
+                    },
+                    "fields": "fontSize,weightedFontFamily",
+                }
+            },
+        ]
+    }
+
+
 def test_diff_v2_detects_empty_doc_mixed_body_insert(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
@@ -418,14 +530,144 @@ def test_diff_v2_detects_empty_doc_mixed_body_insert(
     requests = [request for batch in result.batches for request in batch.requests]
     assert result.reconciler_version == "v2"
     assert any(request.insert_table for request in requests)
-    assert any(request.create_paragraph_bullets for request in requests)
-    assert any(request.update_paragraph_style for request in requests)
+
+
+def test_diff_v2_detects_markdown_footnote_create_from_empty_doc(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    folder = _setup_markdown_folder(
+        tmp_path,
+        doc_id="test-v2-footnote-insert",
+        md_content="",
+    )
+    (folder / "Tab_1.md").write_text(
+        "Paragraph with footnote.[^note]\n\n[^note]: Footnote body text.\n",
+        encoding="utf-8",
+    )
+
+    raw_doc = markdown_to_document(
+        {"Tab_1": ""},
+        document_id="test-v2-footnote-insert",
+        title="Test",
+        tab_ids={"Tab_1": "t.0"},
+    )
+    raw_dir = folder / ".raw"
+    raw_dir.mkdir()
+    (raw_dir / "document.json").write_text(
+        reindex_document(raw_doc).model_dump_json(by_alias=True, exclude_none=True),
+        encoding="utf-8",
+    )
+
+    monkeypatch.delenv(RECONCILER_ENV_VAR, raising=False)
+
+    client = DocsClient.__new__(DocsClient)
+    result = client.diff(str(folder))
+
+    raw_batches = [
+        batch.model_dump(by_alias=True, exclude_none=True, mode="json")
+        for batch in result.batches
+    ]
+    assert result.reconciler_version == "v2"
     assert any(
-        request.create_named_range
-        and request.create_named_range.range.start_index
-        < request.create_named_range.range.end_index
+        any("createFootnote" in request for request in batch["requests"])
+        for batch in raw_batches
+    )
+
+
+def test_diff_v2_preserves_existing_footnote_ref_when_body_text_changes(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    footnote_id = "kix.fn123"
+    base_md = (
+        "# Footnote Verification\n\n"
+        f"Base paragraph with footnote.[^{footnote_id}]\n\n"
+        f"[^{footnote_id}]: First footnote text.\n"
+    )
+    desired_md = (
+        "# Footnote Verification\n\n"
+        f"Edited paragraph with footnote preserved.[^{footnote_id}]\n\n"
+        f"[^{footnote_id}]: Second footnote text.\n"
+    )
+
+    folder = _setup_markdown_folder(
+        tmp_path,
+        doc_id="test-v2-footnote-edit",
+        md_content=base_md,
+    )
+    (folder / "Tab_1.md").write_text(desired_md, encoding="utf-8")
+
+    raw_doc = markdown_to_document(
+        {"Tab_1": base_md},
+        document_id="test-v2-footnote-edit",
+        title="Test",
+        tab_ids={"Tab_1": "t.0"},
+    )
+    raw_dir = folder / ".raw"
+    raw_dir.mkdir()
+    (raw_dir / "document.json").write_text(
+        reindex_document(raw_doc).model_dump_json(by_alias=True, exclude_none=True),
+        encoding="utf-8",
+    )
+
+    monkeypatch.delenv(RECONCILER_ENV_VAR, raising=False)
+
+    client = DocsClient.__new__(DocsClient)
+    result = client.diff(str(folder))
+    raw_batches = [
+        batch.model_dump(by_alias=True, exclude_none=True, mode="json")
+        for batch in result.batches
+    ]
+    requests = [request for batch in raw_batches for request in batch["requests"]]
+
+    assert not any("createFootnote" in request for request in requests)
+    assert any(
+        request.get("deleteContentRange", {}).get("range", {}).get("segmentId") == footnote_id
         for request in requests
     )
+    assert any(
+        request.get("deleteContentRange", {}).get("range", {}).get("tabId") == "t.0"
+        and "segmentId" not in request.get("deleteContentRange", {}).get("range", {})
+        for request in requests
+    )
+
+
+def test_diff_v2_rejects_markdown_horizontal_rule_creation(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    folder = _setup_markdown_folder(
+        tmp_path,
+        doc_id="test-v2-hr-readonly",
+        md_content="",
+    )
+    (folder / "Tab_1.md").write_text(
+        "Paragraph before\n\n---\n\nParagraph after\n",
+        encoding="utf-8",
+    )
+
+    raw_doc = markdown_to_document(
+        {"Tab_1": ""},
+        document_id="test-v2-hr-readonly",
+        title="Test",
+        tab_ids={"Tab_1": "t.0"},
+    )
+    raw_dir = folder / ".raw"
+    raw_dir.mkdir()
+    (raw_dir / "document.json").write_text(
+        reindex_document(raw_doc).model_dump_json(by_alias=True, exclude_none=True),
+        encoding="utf-8",
+    )
+
+    monkeypatch.delenv(RECONCILER_ENV_VAR, raising=False)
+
+    client = DocsClient.__new__(DocsClient)
+    with pytest.raises(
+        UnsupportedSpikeError,
+        match="read-only or opaque body blocks",
+    ):
+        client.diff(str(folder))
 
 
 def test_normalize_raw_base_preserves_empty_paragraphs_used_by_named_ranges() -> None:

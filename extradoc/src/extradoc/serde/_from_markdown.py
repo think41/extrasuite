@@ -16,9 +16,9 @@ Handled:
     <x-colbreak/>, <x-date/>, <x-auto/>, <x-eq/>
   - Footnote references [^id] and definitions [^id]: text
   - <!-- toc --> read-only marker
-  - Fenced code blocks (```lang ... ```) → 1×1 table + named range
-  - Callouts (> [!WARNING] ...) → 1×1 table + named range
-  - Blockquotes (> text) → 1×1 table + named range
+  - Fenced code blocks (```lang ... ```) → 1x1 table + named range
+  - Callouts (> [!WARNING] ...) → 1x1 table + named range
+  - Blockquotes (> text) → 1x1 table + named range
   - Inline code (`code`) → Courier New text run
 """
 
@@ -29,12 +29,11 @@ import re
 from html.parser import HTMLParser
 from typing import Any
 
-from mistletoe.block_token import CodeFence
+from mistletoe.block_token import CodeFence, Heading, HTMLBlock, Quote, ThematicBreak
 from mistletoe.block_token import Document as MdDocument
-from mistletoe.block_token import Heading, HTMLBlock, ThematicBreak
 from mistletoe.block_token import List as MdList
 from mistletoe.block_token import Paragraph as MdParagraph
-from mistletoe.block_token import Quote, Table as MdTable
+from mistletoe.block_token import Table as MdTable
 from mistletoe.html_renderer import HtmlRenderer
 from mistletoe.span_token import (
     Emphasis,
@@ -72,9 +71,9 @@ from extradoc.api_types._generated import (
     StructuralElement,
     Tab,
     Table,
-    TableOfContents,
     TableCell,
     TableCellStyle,
+    TableOfContents,
     TableRow,
     TabProperties,
     TextRun,
@@ -127,6 +126,7 @@ _X_EQ_RE = re.compile(r"<x-eq\s*/>", re.I)
 
 # Footnote definition at start of line: [^id]: text
 _FN_DEF_RE = re.compile(r"^\[\^([^\]]+)\]:\s*(.*)", re.MULTILINE)
+_FN_REF_RE = re.compile(r"\[\^([^\]]+)\]")
 
 
 # ---------------------------------------------------------------------------
@@ -851,7 +851,7 @@ def _tokens_to_elements(tokens: list[Any], style: TextStyle) -> list[ParagraphEl
             # (where vtabs are normalised to spaces in _normalize_paragraph).
             text = token.content.replace("\u000b", "")
             if text:
-                result.append(_make_text_run(text, style))
+                result.extend(_raw_text_with_footnote_refs(text, style))
 
         elif isinstance(token, EscapeSequence):
             # Backslash-escaped character — treat as plain text
@@ -937,6 +937,23 @@ def _tokens_to_elements(tokens: list[Any], style: TextStyle) -> list[ParagraphEl
 def _make_text_run(text: str, style: TextStyle) -> ParagraphElement:
     ts = style if _style_has_attrs(style) else None
     return ParagraphElement(text_run=TextRun(content=text, text_style=ts))
+
+
+def _raw_text_with_footnote_refs(text: str, style: TextStyle) -> list[ParagraphElement]:
+    elements: list[ParagraphElement] = []
+    cursor = 0
+    for match in _FN_REF_RE.finditer(text):
+        if match.start() > cursor:
+            elements.append(_make_text_run(text[cursor : match.start()], style))
+        elements.append(
+            ParagraphElement(
+                footnote_reference=FootnoteReference(footnote_id=match.group(1))
+            )
+        )
+        cursor = match.end()
+    if cursor < len(text):
+        elements.append(_make_text_run(text[cursor:], style))
+    return elements
 
 
 def _style_has_attrs(style: TextStyle) -> bool:

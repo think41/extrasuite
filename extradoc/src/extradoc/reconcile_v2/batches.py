@@ -21,6 +21,7 @@ from extradoc.reconcile_v2.diff import (
     diff_documents,
 )
 from extradoc.reconcile_v2.errors import UnsupportedSpikeError
+from extradoc.reconcile_v2.executor import resolve_deferred_placeholders
 from extradoc.reconcile_v2.ir import (
     FootnoteRefIR,
     ParagraphIR,
@@ -51,6 +52,8 @@ if TYPE_CHECKING:
 def lower_document_batches(
     base: Document,
     desired: Document,
+    *,
+    transport_base: Document | None = None,
 ) -> list[list[dict[str, Any]]]:
     """Lower the supported reconcile_v2 slice into one or more request batches."""
     edits = diff_documents(base, desired)
@@ -61,19 +64,37 @@ def lower_document_batches(
         batch_offset=len(batches),
     )
     batches.extend(attachment_batches)
-    footnote_batches, remaining_edits = _plan_footnote_batches(
-        base,
-        remaining_edits,
-        batch_offset=len(batches),
-    )
-    batches.extend(footnote_batches)
+    footnote_edits = [
+        edit for edit in remaining_edits if isinstance(edit, CreateFootnoteEdit)
+    ]
+    remaining_edits = [
+        edit for edit in remaining_edits if not isinstance(edit, CreateFootnoteEdit)
+    ]
     if remaining_edits:
         if not batches and _should_iteratively_batch_content(remaining_edits):
-            batches.extend(_plan_iterative_content_batches(base, remaining_edits, desired))
+            batches.extend(
+                _plan_iterative_content_batches(
+                    transport_base or base,
+                    remaining_edits,
+                    desired,
+                )
+            )
         else:
             matched_requests = lower_document_edits(base, remaining_edits, desired=desired)
             if matched_requests:
                 batches.append(matched_requests)
+    if footnote_edits:
+        shadow_base = _apply_shadow_batches(transport_base or base, batches)
+        footnote_batches, unresolved_edits = _plan_footnote_batches(
+            shadow_base,
+            footnote_edits,
+            batch_offset=len(batches),
+        )
+        if unresolved_edits:
+            raise UnsupportedSpikeError(
+                "reconcile_v2 could not resolve post-content footnote insertion anchors"
+            )
+        batches.extend(footnote_batches)
     return batches
 
 
@@ -272,14 +293,20 @@ def _plan_footnote_batches(
     creation_batch: list[dict[str, Any]] = []
     population_batch: list[dict[str, Any]] = []
     layouts: dict[str, object] = {}
+    unresolved_footnotes: list[CreateFootnoteEdit] = []
 
     for edit in footnote_edits:
         layout = layouts.setdefault(edit.tab_id, build_body_layout(base, tab_id=edit.tab_id))
+        if (
+            edit.section_index >= len(layout.sections)
+            or edit.block_index >= len(layout.sections[edit.section_index].block_locations)
+        ):
+            unresolved_footnotes.append(edit)
+            continue
         paragraph = layout.sections[edit.section_index].block_locations[edit.block_index]
         if not isinstance(paragraph, ParagraphLocation):
-            raise UnsupportedSpikeError(
-                "reconcile_v2 footnote spike currently supports body paragraph insertion only"
-            )
+            unresolved_footnotes.append(edit)
+            continue
         request_index = len(creation_batch)
         creation_batch.append(
             make_create_footnote(
@@ -303,9 +330,31 @@ def _plan_footnote_batches(
         )
 
     remaining_edits = [
-        edit for edit in edits if not isinstance(edit, CreateFootnoteEdit)
+        edit
+        for edit in edits
+        if not isinstance(edit, CreateFootnoteEdit) or edit in unresolved_footnotes
     ]
-    return [creation_batch, population_batch], remaining_edits
+    batches: list[list[dict[str, Any]]] = []
+    if creation_batch:
+        batches.append(creation_batch)
+    if population_batch:
+        batches.append(population_batch)
+    return batches, remaining_edits
+
+
+def _apply_shadow_batches(
+    base: Document,
+    batches: list[list[dict[str, Any]]],
+) -> Document:
+    if not batches:
+        return copy.deepcopy(base)
+    shadow = MockGoogleDocsAPI(copy.deepcopy(base))
+    prior_responses: list[dict[str, Any]] = []
+    for batch in batches:
+        resolved = resolve_deferred_placeholders(prior_responses, list(batch))
+        response = shadow._batch_update_raw(resolved)
+        prior_responses.append(response)
+    return shadow.get()
 
 
 def _plan_new_tab_batches(

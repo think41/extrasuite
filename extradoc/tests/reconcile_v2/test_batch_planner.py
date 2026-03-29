@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import json
+import tempfile
 from pathlib import Path
 
 import pytest
@@ -12,6 +13,7 @@ from extradoc.mock.api import MockGoogleDocsAPI
 from extradoc.reconcile import reindex_document
 from extradoc.reconcile_v2.api import lower_semantic_diff_batches, reconcile
 from extradoc.reconcile_v2.errors import UnsupportedSpikeError
+from extradoc.reconcile_v2.executor import resolve_deferred_placeholders
 from extradoc.serde._from_markdown import markdown_to_document
 
 from .helpers import (
@@ -90,6 +92,60 @@ def test_footnote_create_write_batches_match_fixture() -> None:
     assert lower_semantic_diff_batches(base, desired) == load_expected_lowered_batches(
         "footnote_create_write"
     )
+
+
+def test_markdown_footnote_insert_from_empty_doc_batches_content_then_footnote() -> None:
+    base = reindex_document(
+        markdown_to_document(
+            {"Tab_1": ""},
+            document_id="md-footnote-empty",
+            title="Markdown Footnote",
+            tab_ids={"Tab_1": "t.0"},
+        )
+    )
+    desired = reindex_document(
+        markdown_to_document(
+            {
+                "Tab_1": (
+                    "Paragraph with footnote.[^note]\n\n"
+                    "[^note]: Footnote body text.\n"
+                )
+            },
+            document_id="md-footnote-empty",
+            title="Markdown Footnote",
+            tab_ids={"Tab_1": "t.0"},
+        )
+    )
+
+    batches = lower_semantic_diff_batches(base, desired)
+
+    assert len(batches) == 3
+    assert batches[0] == [
+        {
+            "insertText": {
+                "location": {"index": 1, "tabId": "t.0"},
+                "text": "Paragraph with footnote.",
+            }
+        }
+    ]
+    assert "createFootnote" in batches[1][0]
+    assert batches[2] == [
+        {
+            "insertText": {
+                "location": {
+                    "tabId": "t.0",
+                    "segmentId": {
+                        "placeholder": "footnote-t.0-0-0",
+                        "batch_index": 1,
+                        "request_index": 0,
+                        "response_path": "createFootnote.footnoteId",
+                    },
+                    "index": 0,
+                },
+                "text": "Footnote body text.",
+            }
+        }
+    ]
 
 
 def test_create_tab_batches_ignore_desired_future_tab_id() -> None:
@@ -207,27 +263,99 @@ def test_iterative_batches_split_complex_live_table_backed_body_rewrite() -> Non
     fixture_root = (
         Path(__file__).resolve().parent / "fixtures" / "live_multitab_cycle2_probe"
     )
+    transport_base = Document.model_validate(
+        json.loads((fixture_root / "base.json").read_text(encoding="utf-8"))
+    )
     base = Document.model_validate(
         json.loads((fixture_root / "base.json").read_text(encoding="utf-8"))
     )
-    desired_bundle = serde.deserialize(fixture_root / "desired")
+    with tempfile.TemporaryDirectory() as tmp:
+        desired_dir = Path(tmp)
+        for path in (fixture_root / "desired").iterdir():
+            if not path.is_file():
+                continue
+            text = path.read_text(encoding="utf-8")
+            if path.name == "Tab_1.md":
+                text = text.replace("\n---\n\n", "\n")
+            (desired_dir / path.name).write_text(text, encoding="utf-8")
+        desired_bundle = serde.deserialize(desired_dir)
     _normalize_raw_base_para_styles(base, desired_bundle.document)
 
-    batches = lower_semantic_diff_batches(base, reindex_document(desired_bundle.document))
+    batches = lower_semantic_diff_batches(
+        base,
+        reindex_document(desired_bundle.document),
+        transport_base=transport_base,
+    )
 
     assert len(batches) > 1
     assert batches[0] == [
         {
             "deleteContentRange": {
-                "range": {"startIndex": 518, "endIndex": 561, "tabId": "t.0"}
+                "range": {"startIndex": 497, "endIndex": 515, "tabId": "t.0"}
             }
-        }
+        },
+        {
+            "insertText": {
+                "location": {"index": 497, "tabId": "t.0"},
+                "text": '    return "blue"',
+            }
+        },
+        {
+            "updateTextStyle": {
+                "range": {"startIndex": 497, "endIndex": 514, "tabId": "t.0"},
+                "textStyle": {
+                    "fontSize": {"magnitude": 10.0, "unit": "PT"},
+                    "weightedFontFamily": {"fontFamily": "Courier New"},
+                },
+                "fields": "fontSize,weightedFontFamily",
+            }
+        },
+    ]
+    assert batches[1] == [
+        {
+            "deleteContentRange": {
+                "range": {"startIndex": 520, "endIndex": 558, "tabId": "t.0"}
+            }
+        },
+        {
+            "insertText": {
+                "location": {"index": 520, "tabId": "t.0"},
+                "text": '{"stage": "edited", "verified": false}',
+            }
+        },
+        {
+            "updateTextStyle": {
+                "range": {"startIndex": 520, "endIndex": 558, "tabId": "t.0"},
+                "textStyle": {
+                    "fontSize": {"magnitude": 10.0, "unit": "PT"},
+                    "weightedFontFamily": {"fontFamily": "Courier New"},
+                },
+                "fields": "fontSize,weightedFontFamily",
+            }
+        },
+    ]
+    named_range_names = [
+        request["createNamedRange"]["name"]
+        for batch in batches
+        for request in batch
+        if "createNamedRange" in request
+    ]
+    assert {
+        "extradoc:blockquote",
+        "extradoc:callout:tip",
+        "extradoc:callout:warning",
+    }.issubset(named_range_names)
+    assert batches[-2] == [
+        {"createFootnote": {"location": {"index": 220, "tabId": "t.0"}}}
     ]
 
-    current = base
+    current = transport_base
+    prior_responses: list[dict[str, object]] = []
     for batch in batches:
         mock = MockGoogleDocsAPI(current)
-        mock._batch_update_raw(batch)
+        resolved_batch = resolve_deferred_placeholders(prior_responses, list(batch))
+        response = mock._batch_update_raw(resolved_batch)
+        prior_responses.append(response)
         current = mock.get()
 
 

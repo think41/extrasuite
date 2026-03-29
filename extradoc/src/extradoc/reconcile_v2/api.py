@@ -52,12 +52,19 @@ def lower_semantic_diff(base: Document, desired: Document) -> list[dict[str, obj
 def lower_semantic_diff_batches(
     base: Document,
     desired: Document,
+    *,
+    transport_base: Document | None = None,
 ) -> list[list[dict[str, object]]]:
     """Lower the supported semantic diff slice into one or more request batches."""
-    return lower_document_batches(base, desired)
+    return lower_document_batches(base, desired, transport_base=transport_base)
 
 
-def reconcile(base: Document, desired: Document) -> list[BatchUpdateDocumentRequest]:
+def reconcile(
+    base: Document,
+    desired: Document,
+    *,
+    transport_base: Document | None = None,
+) -> list[BatchUpdateDocumentRequest]:
     """Return one or more batchUpdate plans transforming ``base`` into ``desired``.
 
     The semantic reconciler can require multiple request batches when later
@@ -67,5 +74,9 @@ def reconcile(base: Document, desired: Document) -> list[BatchUpdateDocumentRequ
     """
     return [
         BatchUpdateDocumentRequest.model_validate({"requests": batch})
-        for batch in lower_document_batches(base, desired)
+        for batch in lower_document_batches(
+            base,
+            desired,
+            transport_base=transport_base,
+        )
     ]

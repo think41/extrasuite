@@ -27,6 +27,7 @@ from extradoc.reconcile_v2.diff import (
     ReplaceListSpecEdit,
     ReplaceNamedRangesEdit,
     ReplaceParagraphSliceEdit,
+    ReplaceParagraphTextEdit,
     SemanticEdit,
     UnmergeTableCellsEdit,
     UpdateParagraphRoleEdit,
@@ -97,7 +98,11 @@ def lower_document_edits(
     shadow_body_layouts: dict[str, BodyLayout] = {}
     shadow_request_count = -1
     content_edited_story_ids = _edited_story_ids(edits)
-    content_edits = [edit for edit in edits if not isinstance(edit, ReplaceNamedRangesEdit)]
+    indexed_content_edits = [
+        (index, edit) for index, edit in enumerate(edits) if not isinstance(edit, ReplaceNamedRangesEdit)
+    ]
+    indexed_content_edits.sort(key=lambda item: _content_edit_order_key(item[0], item[1]))
+    content_edits = [edit for _, edit in indexed_content_edits]
 
     edit_index = 0
     while edit_index < len(content_edits):
@@ -149,6 +154,67 @@ def lower_document_edits(
                     role=edit.after_role,
                 )
             )
+        elif isinstance(edit, ReplaceParagraphTextEdit):
+            if (
+                edit.story_id == f"{edit.tab_id}:body"
+                and edit.section_index is not None
+            ):
+                paragraph = _paragraph_at(layout, edit.section_index, edit.block_index)
+            else:
+                paragraph = _story_paragraph_at(
+                    current_story_layouts[edit.story_id],
+                    section_index=edit.section_index,
+                    block_index=edit.block_index,
+                )
+            if paragraph.text_end_index > paragraph.text_start_index:
+                requests.append(
+                    make_delete_content_range(
+                        start_index=paragraph.text_start_index,
+                        end_index=paragraph.text_end_index,
+                        tab_id=edit.tab_id,
+                        segment_id=(
+                            None
+                            if edit.story_id == f"{edit.tab_id}:body"
+                            else current_story_layouts[edit.story_id].route.segment_id
+                        ),
+                    )
+                )
+            replacement_text = _paragraph_text(edit.desired_paragraph)
+            if replacement_text:
+                requests.append(
+                    make_insert_text_in_story(
+                        index=paragraph.text_start_index,
+                        tab_id=(
+                            edit.tab_id
+                            if edit.story_id == f"{edit.tab_id}:body"
+                            else current_story_layouts[edit.story_id].route.tab_id
+                        ),
+                        segment_id=(
+                            None
+                            if edit.story_id == f"{edit.tab_id}:body"
+                            else current_story_layouts[edit.story_id].route.segment_id
+                        ),
+                        text=replacement_text,
+                    )
+                )
+                requests.extend(
+                    _lower_inserted_text_styles(
+                        route=(
+                            StoryRoute(tab_id=edit.tab_id, segment_id=None)
+                            if edit.story_id == f"{edit.tab_id}:body"
+                            else current_story_layouts[edit.story_id].route
+                        ),
+                        paragraph_locations=(
+                            (
+                                edit.desired_paragraph,
+                                (
+                                    paragraph.text_start_index,
+                                    paragraph.text_start_index + utf16_len(replacement_text),
+                                ),
+                            ),
+                        ),
+                    )
+                )
         elif isinstance(edit, InsertListBlockEdit):
             story = current_story_layouts[f"{edit.tab_id}:body"]
             insert_index, prefix_newline, suffix_newline = _body_insert_site_for_edit(
@@ -764,6 +830,26 @@ def _body_insert_group_end(edits: list[SemanticEdit], start_index: int) -> int:
     return end_index
 
 
+def _content_edit_order_key(
+    original_index: int,
+    edit: SemanticEdit,
+) -> tuple[object, ...]:
+    if (
+        isinstance(edit, ReplaceParagraphTextEdit)
+        and edit.story_id == f"{edit.tab_id}:body"
+        and edit.section_index is not None
+    ):
+        return (0, edit.tab_id, edit.section_index, -edit.block_index, original_index)
+    if (
+        isinstance(edit, ReplaceParagraphSliceEdit)
+        and edit.story_id == f"{edit.tab_id}:body"
+        and edit.section_index is not None
+        and edit.delete_block_count > 0
+    ):
+        return (0, edit.tab_id, edit.section_index, -edit.start_block_index, original_index)
+    return (1, original_index)
+
+
 def _lower_body_insert_group(
     *,
     base: Document,
@@ -1017,6 +1103,29 @@ def _paragraph_at(
     if not isinstance(block, ParagraphLocation):
         raise TypeError(f"Expected paragraph at section {section_index} block {block_index}")
     return block
+
+
+def _story_paragraph_at(
+    story_layout: Any,
+    *,
+    section_index: int | None,
+    block_index: int,
+) -> Any:
+    paragraph = next(
+        (
+            paragraph
+            for paragraph in story_layout.paragraphs
+            if paragraph.section_index == section_index
+            and paragraph.block_index == block_index
+            and paragraph.node_path == ()
+        ),
+        None,
+    )
+    if paragraph is None:
+        raise TypeError(
+            f"Expected story paragraph at section {section_index} block {block_index}"
+        )
+    return paragraph
 
 
 def _list_at(layout: BodyLayout, section_index: int, block_index: int) -> ListLocation:

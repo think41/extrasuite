@@ -20,6 +20,7 @@ from extradoc.reconcile_v2.ir import (
     FootnoteRefIR,
     ListIR,
     OpaqueBlockIR,
+    OpaqueInlineIR,
     ParagraphIR,
     PositionIR,
     SectionIR,
@@ -93,6 +94,15 @@ class UpdateParagraphRoleEdit:
     block_index: int
     before_role: str
     after_role: str
+
+
+@dataclass(slots=True)
+class ReplaceParagraphTextEdit:
+    tab_id: str
+    story_id: str
+    section_index: int | None
+    block_index: int
+    desired_paragraph: ParagraphIR
 
 
 @dataclass(slots=True)
@@ -308,6 +318,7 @@ SemanticEdit = (
     | DeleteSectionAttachmentEdit
     | CreateFootnoteEdit
     | UpdateParagraphRoleEdit
+    | ReplaceParagraphTextEdit
     | AppendListItemsEdit
     | ReplaceListSpecEdit
     | RelevelListItemsEdit
@@ -383,6 +394,11 @@ def summarize_semantic_edits(edits: Iterable[SemanticEdit]) -> list[str]:
             lines.append(
                 f"tab {edit.tab_id}: section {edit.section_index} block {edit.block_index} "
                 f"role {edit.before_role} -> {edit.after_role}"
+            )
+        elif isinstance(edit, ReplaceParagraphTextEdit):
+            lines.append(
+                f"tab {edit.tab_id}: story {edit.story_id} paragraph {edit.block_index} "
+                "replace text preserving footnote refs"
             )
         elif isinstance(edit, AppendListItemsEdit):
             lines.append(
@@ -501,7 +517,6 @@ def _diff_tab(base: TabIR, desired: TabIR) -> list[SemanticEdit]:
     desired_sections = desired.body.sections
     _ensure_read_only_blocks_unchanged(base_sections, desired_sections)
     edits: list[SemanticEdit] = []
-    edits.extend(_diff_named_ranges(base, desired))
     edits.extend(
         _diff_footnote_changes(
             tab_id=base.id,
@@ -509,6 +524,13 @@ def _diff_tab(base: TabIR, desired: TabIR) -> list[SemanticEdit]:
             desired_sections=desired_sections,
             base_catalog=base.resource_graph.footnotes,
             desired_catalog=desired.resource_graph.footnotes,
+        )
+    )
+    edits.extend(
+        _diff_body_footnote_paragraph_text_changes(
+            tab_id=base.id,
+            base_sections=base_sections,
+            desired_sections=desired_sections,
         )
     )
     edits.extend(
@@ -573,6 +595,7 @@ def _diff_tab(base: TabIR, desired: TabIR) -> list[SemanticEdit]:
     base_flat = _flatten_section_fingerprints(base_sections)
     desired_flat = _flatten_section_fingerprints(desired_sections)
     if base_flat == desired_flat:
+        edits = _diff_named_ranges(base, desired, content_edits=edits) + edits
         edits.extend(table_edits)
         edits.extend(
             _diff_section_boundaries(
@@ -597,6 +620,7 @@ def _diff_tab(base: TabIR, desired: TabIR) -> list[SemanticEdit]:
         )
     edits.extend(_filter_conflicting_table_edits(table_edits, block_edits))
     edits.extend(block_edits)
+    edits = _diff_named_ranges(base, desired, content_edits=edits) + edits
     return edits
 
 
@@ -775,7 +799,9 @@ def _ensure_read_only_blocks_unchanged(
 
 
 def _is_read_only_block(block: BlockIR | None) -> bool:
-    return isinstance(block, TocIR | OpaqueBlockIR)
+    return isinstance(block, TocIR | OpaqueBlockIR) or (
+        isinstance(block, ParagraphIR) and _is_read_only_paragraph(block)
+    )
 
 
 def _read_only_block_positions(blocks: list[BlockIR]) -> list[tuple[int, BlockIR]]:
@@ -791,6 +817,18 @@ def _read_only_block_signature(block: BlockIR) -> tuple[object, ...]:
         return ("toc",)
     if isinstance(block, OpaqueBlockIR):
         return ("opaque", block.kind, tuple(sorted(block.payload.items())))
+    if isinstance(block, ParagraphIR) and _is_read_only_paragraph(block):
+        return (
+            "paragraph-opaque",
+            tuple(
+                (
+                    inline.kind,
+                    tuple(sorted(inline.payload.items())),
+                )
+                for inline in block.inlines
+                if isinstance(inline, OpaqueInlineIR)
+            ),
+        )
     raise TypeError(f"Unsupported read-only block: {type(block).__name__}")
 
 
@@ -1271,25 +1309,44 @@ def _diff_footnote_changes(
     base_catalog: dict[str, StoryIR],
     desired_catalog: dict[str, StoryIR],
 ) -> list[SemanticEdit]:
+    _ = base_catalog
     edits: list[SemanticEdit] = []
-    for section_index, (base_section, desired_section) in enumerate(
-        zip(base_sections, desired_sections, strict=False)
-    ):
-        for block_index, (base_block, desired_block) in enumerate(
-            zip(base_section.blocks, desired_section.blocks, strict=False)
-        ):
-            if not isinstance(base_block, ParagraphIR) or not isinstance(desired_block, ParagraphIR):
+    max_sections = max(len(base_sections), len(desired_sections))
+    for section_index in range(max_sections):
+        base_blocks = (
+            base_sections[section_index].blocks if section_index < len(base_sections) else []
+        )
+        desired_blocks = (
+            desired_sections[section_index].blocks
+            if section_index < len(desired_sections)
+            else []
+        )
+        max_blocks = max(len(base_blocks), len(desired_blocks))
+        for block_index in range(max_blocks):
+            base_block = base_blocks[block_index] if block_index < len(base_blocks) else None
+            desired_block = desired_blocks[block_index] if block_index < len(desired_blocks) else None
+            if not isinstance(desired_block, ParagraphIR):
                 continue
-            if _paragraph_text(base_block) != _paragraph_text(desired_block):
-                continue
-            base_refs = [inline.ref for inline in base_block.inlines if isinstance(inline, FootnoteRefIR)]
             desired_refs = [
                 inline.ref for inline in desired_block.inlines if isinstance(inline, FootnoteRefIR)
             ]
-            if len(base_refs) == 0 and len(desired_refs) == 1:
-                desired_story = desired_catalog.get(desired_refs[0])
-                if desired_story is None:
-                    continue
+            if not desired_refs:
+                continue
+            if len(desired_refs) != 1:
+                raise UnsupportedSpikeError(
+                    "reconcile_v2 footnote spike supports only one footnote reference "
+                    "per paragraph"
+                )
+            desired_story = desired_catalog.get(desired_refs[0])
+            if desired_story is None:
+                continue
+
+            base_refs: list[str] = []
+            if isinstance(base_block, ParagraphIR):
+                base_refs = [
+                    inline.ref for inline in base_block.inlines if isinstance(inline, FootnoteRefIR)
+                ]
+            if len(base_refs) == 0:
                 edits.append(
                     CreateFootnoteEdit(
                         tab_id=tab_id,
@@ -1300,14 +1357,51 @@ def _diff_footnote_changes(
                     )
                 )
                 continue
-            if len(base_refs) != len(desired_refs):
+            if len(base_refs) != 1:
                 raise UnsupportedSpikeError(
                     "reconcile_v2 footnote spike supports only simple footnote creation "
                     "or matched-story content edits"
                 )
-            for base_ref, desired_ref in zip(base_refs, desired_refs, strict=True):
-                if base_ref not in base_catalog or desired_ref not in desired_catalog:
-                    continue
+    return edits
+
+
+def _diff_body_footnote_paragraph_text_changes(
+    *,
+    tab_id: str,
+    base_sections: list[SectionIR],
+    desired_sections: list[SectionIR],
+) -> list[SemanticEdit]:
+    edits: list[SemanticEdit] = []
+    for section_index, (base_section, desired_section) in enumerate(
+        zip(base_sections, desired_sections, strict=False)
+    ):
+        for block_index, (base_block, desired_block) in enumerate(
+            zip(base_section.blocks, desired_section.blocks, strict=False)
+        ):
+            if not isinstance(base_block, ParagraphIR) or not isinstance(desired_block, ParagraphIR):
+                continue
+            if not _paragraphs_share_trailing_single_footnote_ref(base_block, desired_block):
+                continue
+            if base_block.role != desired_block.role:
+                edits.append(
+                    UpdateParagraphRoleEdit(
+                        tab_id=tab_id,
+                        section_index=section_index,
+                        block_index=block_index,
+                        before_role=base_block.role,
+                        after_role=desired_block.role,
+                    )
+                )
+            if _paragraph_text(base_block) != _paragraph_text(desired_block):
+                edits.append(
+                    ReplaceParagraphTextEdit(
+                        tab_id=tab_id,
+                        story_id=f"{tab_id}:body",
+                        section_index=section_index,
+                        block_index=block_index,
+                        desired_paragraph=desired_block,
+                    )
+                )
     return edits
 
 
@@ -1320,13 +1414,11 @@ def _select_matching_footnote_story_pairs(
         for base_block, desired_block in zip(base_section.blocks, desired_section.blocks, strict=False):
             if not isinstance(base_block, ParagraphIR) or not isinstance(desired_block, ParagraphIR):
                 continue
-            if _paragraph_text(base_block) != _paragraph_text(desired_block):
-                continue
             base_refs = [inline.ref for inline in base_block.inlines if isinstance(inline, FootnoteRefIR)]
             desired_refs = [
                 inline.ref for inline in desired_block.inlines if isinstance(inline, FootnoteRefIR)
             ]
-            if len(base_refs) != len(desired_refs):
+            if len(base_refs) != 1 or len(desired_refs) != 1:
                 continue
             pairs.extend(zip(base_refs, desired_refs, strict=True))
     return tuple(pairs)
@@ -1916,15 +2008,26 @@ def _diff_story_paragraph_slice(
     )
 
 
-def _diff_named_ranges(base: TabIR, desired: TabIR) -> list[SemanticEdit]:
+def _diff_named_ranges(
+    base: TabIR,
+    desired: TabIR,
+    *,
+    content_edits: list[SemanticEdit],
+) -> list[SemanticEdit]:
     edits: list[SemanticEdit] = []
     all_names = set(base.annotations.named_ranges) | set(desired.annotations.named_ranges)
     for name in sorted(all_names):
         base_ranges = tuple(base.annotations.named_ranges.get(name, []))
         desired_ranges = tuple(desired.annotations.named_ranges.get(name, []))
-        if _named_range_signature(name, base_ranges) == _named_range_signature(
+        signatures_match = _named_range_signature(name, base_ranges) == _named_range_signature(
             name,
             desired_ranges,
+        )
+        if signatures_match and not _special_named_range_requires_refresh(
+            name=name,
+            base_ranges=base_ranges,
+            desired_ranges=desired_ranges,
+            content_edits=content_edits,
         ):
             continue
         edits.append(
@@ -2000,7 +2103,47 @@ def _all_paragraphs(blocks: list[BlockIR]) -> bool:
 
 
 def _paragraph_signature(paragraph: ParagraphIR) -> tuple[str, str]:
+    trailing_ref = _trailing_single_footnote_ref(paragraph)
+    if trailing_ref is not None:
+        return ("TRAILING_FOOTNOTE_REF", trailing_ref)
     return paragraph.role, _paragraph_text(paragraph)
+
+
+def _is_read_only_paragraph(paragraph: ParagraphIR) -> bool:
+    opaque_inlines = [inline for inline in paragraph.inlines if isinstance(inline, OpaqueInlineIR)]
+    if len(opaque_inlines) != 1:
+        return False
+    if opaque_inlines[0].kind != "horizontal_rule":
+        return False
+    return all(not isinstance(inline, TextSpanIR) or inline.text == "" for inline in paragraph.inlines)
+
+
+def _trailing_single_footnote_ref(paragraph: ParagraphIR) -> str | None:
+    refs = [inline.ref for inline in paragraph.inlines if isinstance(inline, FootnoteRefIR)]
+    if len(refs) != 1:
+        return None
+    footnote_seen = False
+    for inline in paragraph.inlines:
+        if isinstance(inline, TextSpanIR):
+            if footnote_seen and inline.text:
+                return None
+            continue
+        if isinstance(inline, FootnoteRefIR):
+            if footnote_seen:
+                return None
+            footnote_seen = True
+            continue
+        return None
+    return refs[0] if footnote_seen else None
+
+
+def _paragraphs_share_trailing_single_footnote_ref(
+    base: ParagraphIR,
+    desired: ParagraphIR,
+) -> bool:
+    base_ref = _trailing_single_footnote_ref(base)
+    desired_ref = _trailing_single_footnote_ref(desired)
+    return base_ref is not None and base_ref == desired_ref
 
 
 def _story_signature(story: StoryIR) -> tuple[str, ...]:
@@ -2060,6 +2203,49 @@ def _special_named_range_signature(anchor: AnchorRangeIR) -> tuple[str, ...]:
         str(start.section_index),
         str(start.block_index),
     )
+
+
+def _special_named_range_requires_refresh(
+    *,
+    name: str,
+    base_ranges: tuple[AnchorRangeIR, ...],
+    desired_ranges: tuple[AnchorRangeIR, ...],
+    content_edits: list[SemanticEdit],
+) -> bool:
+    if not name.startswith("extradoc:"):
+        return False
+    ranges = desired_ranges or base_ranges
+    return any(
+        _content_edit_touches_special_named_range(edit, anchor)
+        for anchor in ranges
+        for edit in content_edits
+    )
+
+
+def _content_edit_touches_special_named_range(
+    edit: SemanticEdit,
+    anchor: AnchorRangeIR,
+) -> bool:
+    story_id = anchor.start.story_id
+    path = anchor.start.path
+    if not story_id.endswith(":body"):
+        return False
+    expected_tab_id = story_id[:-5]
+    if isinstance(edit, DeleteTableBlockEdit | DeleteListBlockEdit):
+        return (
+            edit.tab_id == expected_tab_id
+            and edit.section_index == path.section_index
+            and edit.block_index == path.block_index
+        )
+    if (
+        isinstance(edit, ReplaceParagraphSliceEdit)
+        and edit.story_id == story_id
+        and edit.section_index == path.section_index
+        and edit.delete_block_count > 0
+    ):
+        delete_stop = edit.start_block_index + edit.delete_block_count
+        return edit.start_block_index <= path.block_index < delete_stop
+    return False
 
 
 def _position_signature(position: PositionIR) -> str:

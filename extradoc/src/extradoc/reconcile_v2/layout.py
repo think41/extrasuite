@@ -5,6 +5,7 @@ from __future__ import annotations
 from dataclasses import dataclass, field
 from typing import TYPE_CHECKING
 
+from extradoc.indexer import utf16_len
 from extradoc.reconcile_v2.ir import PositionEdge, PositionIR
 
 if TYPE_CHECKING:
@@ -174,6 +175,10 @@ def build_body_layout(document: Document, *, tab_id: str) -> BodyLayout:
             for child in paragraph.get("elements", [])
         )
         visible_text = text[:-1] if text.endswith("\n") else text
+        text_start_index, text_end_index = _paragraph_text_run_range(
+            paragraph,
+            fallback_start=element["startIndex"],
+        )
         bullet = paragraph.get("bullet")
         if bullet:
             pending_empty_para = None
@@ -209,8 +214,8 @@ def build_body_layout(document: Document, *, tab_id: str) -> BodyLayout:
             ParagraphLocation(
                 start_index=element["startIndex"],
                 end_index=element["endIndex"],
-                text_start_index=element["startIndex"],
-                text_end_index=element["endIndex"] - 1,
+                text_start_index=text_start_index,
+                text_end_index=text_end_index,
                 text=visible_text,
             )
         )
@@ -512,16 +517,47 @@ def _make_story_paragraph_location(
         for child in paragraph_element.get("elements", [])
     )
     visible_text = text[:-1] if text.endswith("\n") else text
+    text_start_index, text_end_index = _paragraph_text_run_range(
+        paragraph_element,
+        fallback_start=start_index,
+    )
     return StoryParagraphLocation(
         section_index=section_index,
         block_index=block_index,
         node_path=node_path,
         start_index=start_index,
         end_index=end_index,
-        text_start_index=start_index,
-        text_end_index=max(start_index, end_index - 1),
+        text_start_index=text_start_index,
+        text_end_index=text_end_index,
         text=visible_text,
     )
+
+
+def _paragraph_text_run_range(
+    paragraph: dict,
+    *,
+    fallback_start: int,
+) -> tuple[int, int]:
+    full_text = "".join(
+        element.get("textRun", {}).get("content", "")
+        for element in paragraph.get("elements", [])
+    )
+    visible_text = full_text[:-1] if full_text.endswith("\n") else full_text
+    text_runs = [
+        element
+        for element in paragraph.get("elements", [])
+        if element.get("textRun") is not None
+        and (element["textRun"].get("content") or "") != "\n"
+    ]
+    if not text_runs:
+        return fallback_start, fallback_start
+    start_index = text_runs[0].get("startIndex", fallback_start)
+    last_run = text_runs[-1]
+    end_index = last_run.get("endIndex", start_index + utf16_len(visible_text))
+    last_content = last_run.get("textRun", {}).get("content", "")
+    if last_content.endswith("\n"):
+        end_index = max(start_index, end_index - utf16_len("\n"))
+    return start_index, end_index
 
 
 def _element_start_index(element: dict, fallback: int) -> int:

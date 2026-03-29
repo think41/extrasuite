@@ -71,7 +71,10 @@ Each entry captures:
 | Insert page break in body | `client/EXTRADOC_BUGS.md` BUG-3; commit `eb29b63` | Page break is a semantic block lowered via `insertPageBreak`, not paragraph text. |
 | Insert page break in header/footer/footnote/table cell | `client/EXTRADOC_BUGS.md` BUG-3; `CreateFootnoteRequest.md` / `InsertSectionBreakRequest.md` capability rules | Container capabilities must reject unsupported block kinds before lowering. |
 | Insert footnote reference plus footnote content | `client/EXTRADOC_BUGS.md` BUG-2; `CreateFootnoteRequest.md` | Footnote refs are ID-producing inline edits: create reference first, then reconcile the footnote story in a dependent batch. |
+| Insert markdown `[^id]` footnote syntax into an otherwise empty document | live `reconcile_v2` markdown verification | Markdown parsing must materialize a real footnote reference plus footnote story, and batch planning must defer `createFootnote` until the target paragraph exists in transport. |
+| Edit prose around an existing trailing footnote reference while also editing the footnote definition | live `reconcile_v2` markdown verification | Existing footnote refs are structural inline anchors. Reconciler must replace only the paragraph text range around the ref and must process later body paragraphs first so paragraph boundaries do not bleed. |
 | Newly created footnote content includes a transport carrier space | live `reconcile_v2` replay fixture | Canonicalization must erase the bootstrap carrier space so semantic footnote text does not depend on transport initialization noise. |
+| Attempt to create or delete a markdown horizontal rule (`---`) | live `reconcile_v2` markdown verification | Horizontal rules are effectively read-only in Docs transport. The semantic model should represent them, but `push-md` must reject HR create/delete edits and only tolerate unchanged pulled HR blocks. |
 | Paragraph containing HR / inline object / footnote ref in an add gap | `extradoc/src/extradoc/reconcile/_generators.py` guards; `client/EXTRADOC_BUGS.md` | Non-text inline/block producers need first-class lowering or explicit unsupported rejection. They cannot fall through `insertText`. |
 
 ## Sections, Headers, Footers, And Tabs
@@ -151,9 +154,20 @@ The first durable fixture set for `reconcile_v2` should include:
 18. Full markdown workflow probe: empty-doc create of a dense multi-tab doc,
     then `pull-md -> edit headings/prose around table-backed blocks -> push-md`
     without style bleed or stale table-delete indices.
-18. Live transport fixtures for paragraph-role change, list append, list-kind change, section split, and section delete with replay verification against canonical IR.
-19. Live transport fixtures for text replace, paragraph split, table-cell text replace, existing-header text replace, and named-range add with replay verification against semantic diff convergence.
-20. Live transport fixtures for table row/column insert-delete, merge/unmerge, pinned-header rows, row style, column properties, cell style, and inserted-row/column content with replay verification against canonical IR.
-21. Live transport fixture for a simple combined row+column table structural edit, plus an explicit unsupported fixture for column edits through merged regions.
-22. Live transport fixture for list relevel with exact lowered requests and replay verification.
-23. Live multi-tab text-edit fixture whose replay proves structural tab matching and explicit `tabId` routing.
+19. Dense special-table rewrite where deleting one special block should not
+    require an explicit `deleteNamedRange` for unchanged `extradoc:*`
+    metadata that is already removed with the owning content.
+20. Live repair probe must start from a fresh `pull-md` of the target doc; a
+    stale local markdown folder after an earlier successful push is not a valid
+    regression signal and must be rejected by the harness.
+21. Markdown diff may normalize away transport-only empty paragraphs and
+    separators, but iterative lowering must still shadow against the untouched
+    raw transport base. Using the normalized semantic base for shadow execution
+    can produce invalid table delete ranges after earlier batches mutate the
+    document.
+22. Live transport fixtures for paragraph-role change, list append, list-kind change, section split, and section delete with replay verification against canonical IR.
+23. Live transport fixtures for text replace, paragraph split, table-cell text replace, existing-header text replace, and named-range add with replay verification against semantic diff convergence.
+24. Live transport fixtures for table row/column insert-delete, merge/unmerge, pinned-header rows, row style, column properties, cell style, and inserted-row/column content with replay verification against canonical IR.
+25. Live transport fixture for a simple combined row+column table structural edit, plus an explicit unsupported fixture for column edits through merged regions.
+26. Live transport fixture for list relevel with exact lowered requests and replay verification.
+27. Live multi-tab text-edit fixture whose replay proves structural tab matching and explicit `tabId` routing.
