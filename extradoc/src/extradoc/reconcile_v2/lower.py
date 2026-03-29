@@ -5,6 +5,7 @@ from __future__ import annotations
 from typing import TYPE_CHECKING, Any
 
 from extradoc.indexer import utf16_len
+from extradoc.mock.api import MockGoogleDocsAPI
 from extradoc.reconcile_v2.diff import (
     AppendListItemsEdit,
     CreateFootnoteEdit,
@@ -105,7 +106,6 @@ def lower_document_edits(
                     layout=layout,
                     edits=group,
                     desired=desired,
-                    desired_body_layouts=desired_body_layouts,
                 )
             )
             edit_index = group_end
@@ -626,7 +626,6 @@ def _lower_body_insert_group(
     layout: BodyLayout,
     edits: list[SemanticEdit],
     desired: Document | None,
-    desired_body_layouts: dict[str, BodyLayout],
 ) -> list[dict[str, Any]]:
     anchor = _body_insert_anchor(edits[0])
     if anchor is None:
@@ -635,14 +634,14 @@ def _lower_body_insert_group(
         raise UnsupportedSpikeError(
             "reconcile_v2 body insert grouping requires desired document layouts"
         )
-    tab_id, section_index, block_index, _raw_anchor_index = anchor
+    tab_id, _section_index, _block_index, _raw_anchor_index = anchor
     insert_index, prefix_newline, suffix_newline = _body_insert_site_for_edit(
         base,
         layout,
         edits[0],
     )
     final_fragments = [_body_insert_fragment(edit) for edit in reversed(edits)]
-    requests: list[dict[str, Any]] = []
+    structural_requests: list[dict[str, Any]] = []
 
     for execution_index, fragment in enumerate(reversed(final_fragments)):
         final_index = len(final_fragments) - 1 - execution_index
@@ -654,7 +653,7 @@ def _lower_body_insert_group(
                 text = f"\n{text}"
             if needs_suffix:
                 text = f"{text}\n"
-            requests.append(
+            structural_requests.append(
                 make_insert_text(
                     index=insert_index,
                     tab_id=tab_id,
@@ -670,7 +669,7 @@ def _lower_body_insert_group(
                 text = f"\n{text}"
             if needs_suffix:
                 text = f"{text}\n"
-            requests.append(
+            structural_requests.append(
                 make_insert_text(
                     index=insert_index,
                     tab_id=tab_id,
@@ -678,7 +677,7 @@ def _lower_body_insert_group(
                 )
             )
         elif fragment[0] == "table":
-            requests.extend(
+            structural_requests.extend(
                 _lower_blocks_into_fresh_story(
                     [fragment[1]],
                     story_start_index=insert_index,
@@ -689,40 +688,85 @@ def _lower_body_insert_group(
         else:  # pragma: no cover
             raise AssertionError(fragment[0])
 
-    desired_layout = desired_body_layouts.setdefault(tab_id, build_body_layout(desired, tab_id=tab_id))
-    current_block_index = block_index
+    shadow_blocks = _shadow_body_insert_blocks(
+        base=base,
+        tab_id=tab_id,
+        section_index=anchor[1],
+        block_index=anchor[2],
+        fragment_count=_body_insert_fragment_shadow_block_count(final_fragments),
+        structural_requests=structural_requests,
+    )
     paragraph_style_locations: list[tuple[ParagraphIR, tuple[int, int]]] = []
+    style_ops: list[tuple[int, dict[str, Any]]] = []
+    shadow_index = 0
+
     for fragment in final_fragments:
         if fragment[0] == "paragraphs":
             for paragraph in fragment[1]:
-                location = _paragraph_at(desired_layout, section_index, current_block_index)
+                block = shadow_blocks[shadow_index]
+                if not isinstance(block, ParagraphLocation):
+                    raise UnsupportedSpikeError(
+                        "Grouped body insert shadow layout did not resolve a paragraph block"
+                    )
                 paragraph_style_locations.append(
-                    (paragraph, (location.text_start_index, location.end_index))
+                    (paragraph, (block.start_index, block.end_index))
                 )
                 if paragraph.role != "NORMAL_TEXT":
-                    requests.append(
-                        make_update_paragraph_role(
-                            start_index=location.text_start_index,
-                            end_index=location.end_index,
-                            tab_id=tab_id,
-                            role=paragraph.role,
+                    style_ops.append(
+                        (
+                            block.start_index,
+                            make_update_paragraph_role(
+                                start_index=block.start_index,
+                                end_index=block.end_index,
+                                tab_id=tab_id,
+                                role=paragraph.role,
+                            ),
                         )
                     )
-                current_block_index += 1
-        elif fragment[0] == "list":
+                shadow_index += 1
+            continue
+
+        if fragment[0] == "list":
             list_edit = fragment[1]
-            location = _list_at(desired_layout, section_index, current_block_index)
-            requests.append(
-                make_create_paragraph_bullets(
-                    start_index=location.start_index,
-                    end_index=location.end_index,
-                    tab_id=tab_id,
-                    bullet_preset=bullet_preset_for_kind(list_edit.list_kind),
+            item_blocks = shadow_blocks[
+                shadow_index : shadow_index + len(list_edit.items)
+            ]
+            if (
+                len(item_blocks) != len(list_edit.items)
+                or not item_blocks
+                or not all(isinstance(block, ParagraphLocation) for block in item_blocks)
+            ):
+                raise UnsupportedSpikeError(
+                    "Grouped body insert shadow layout did not resolve list item paragraphs"
+                )
+            first_block = item_blocks[0]
+            last_block = item_blocks[-1]
+            style_ops.append(
+                (
+                    first_block.start_index,
+                    make_create_paragraph_bullets(
+                        start_index=first_block.start_index,
+                        end_index=last_block.end_index,
+                        tab_id=tab_id,
+                        bullet_preset=bullet_preset_for_kind(list_edit.list_kind),
+                    ),
                 )
             )
-            current_block_index += 1
-        elif fragment[0] == "table":
-            current_block_index += 1
+            shadow_index += len(list_edit.items)
+            continue
+
+        if fragment[0] == "table":
+            block = shadow_blocks[shadow_index]
+            if not isinstance(block, TableLocation):
+                raise UnsupportedSpikeError(
+                    "Grouped body insert shadow layout did not resolve a table block"
+                )
+            shadow_index += 1
+            continue
+
+    style_ops.sort(key=lambda item: item[0], reverse=True)
+    requests = list(structural_requests)
+    requests.extend(request for _, request in style_ops)
     requests.extend(
         _lower_inserted_text_styles(
             route=StoryRoute(tab_id=tab_id, segment_id=None),
@@ -730,6 +774,41 @@ def _lower_body_insert_group(
         )
     )
     return requests
+
+
+def _body_insert_fragment_shadow_block_count(
+    fragments: list[tuple[str, tuple[ParagraphIR, ...] | InsertListBlockEdit | TableIR]],
+) -> int:
+    count = 0
+    for kind, payload in fragments:
+        if kind == "paragraphs":
+            count += len(payload)
+        elif kind == "list":
+            count += len(payload.items)
+        else:
+            count += 1
+    return count
+
+
+def _shadow_body_insert_blocks(
+    *,
+    base: Document,
+    tab_id: str,
+    section_index: int,
+    block_index: int,
+    fragment_count: int,
+    structural_requests: list[dict[str, Any]],
+) -> tuple[ParagraphLocation | ListLocation | TableLocation, ...]:
+    shadow = MockGoogleDocsAPI(base)
+    shadow._batch_update_raw(structural_requests)
+    shadow_layout = build_body_layout(shadow.get(), tab_id=tab_id)
+    section_blocks = shadow_layout.sections[section_index].block_locations
+    inserted_blocks = tuple(section_blocks[block_index : block_index + fragment_count])
+    if len(inserted_blocks) != fragment_count:
+        raise UnsupportedSpikeError(
+            "Grouped body insert shadow layout did not produce the expected block count"
+        )
+    return inserted_blocks
 
 
 def _body_insert_fragment(

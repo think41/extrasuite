@@ -6,6 +6,7 @@ from pathlib import Path
 import pytest
 
 from extradoc.api_types._generated import Document
+from extradoc.mock.api import MockGoogleDocsAPI
 from extradoc.reconcile import reindex_document
 from extradoc.reconcile_v2.api import (
     canonical_document_signature,
@@ -1227,6 +1228,94 @@ def test_lower_semantic_diff_supports_dense_empty_body_markdown_insert() -> None
             assert range_["startIndex"] < range_["endIndex"]
     assert any("createParagraphBullets" in request for request in requests)
     assert any("updateParagraphStyle" in request for request in requests)
+
+
+def test_lower_semantic_diff_uses_actual_reverse_ranges_for_list_then_heading() -> None:
+    base = reindex_document(
+        markdown_to_document(
+            {"Tab_1": ""},
+            document_id="reverse-range-regression",
+            title="Reverse Range Regression",
+            tab_ids={"Tab_1": "t.0"},
+        )
+    )
+    desired = reindex_document(
+        markdown_to_document(
+            {
+                "Tab_1": (
+                    "> Quote one.\n"
+                    ">\n"
+                    "> Quote two.\n\n"
+                    "> [!INFO]\n"
+                    "> Info callout.\n\n"
+                    "> [!WARNING]\n"
+                    "> Warning callout.\n\n"
+                    "- item one\n"
+                    "- [ ] item two\n\n"
+                    "## Operational Notes\n\n"
+                    "The reconciler should preserve ordinary prose.\n"
+                )
+            },
+            document_id="reverse-range-regression",
+            title="Reverse Range Regression",
+            tab_ids={"Tab_1": "t.0"},
+        )
+    )
+
+    requests = lower_semantic_diff(base, desired)
+    bullet_request = next(
+        request["createParagraphBullets"]
+        for request in requests
+        if "createParagraphBullets" in request
+        and request["createParagraphBullets"]["bulletPreset"] == "BULLET_DISC_CIRCLE_SQUARE"
+    )
+    heading_request = next(
+        request["updateParagraphStyle"]
+        for request in requests
+        if "updateParagraphStyle" in request
+        and request["updateParagraphStyle"]["paragraphStyle"]["namedStyleType"] == "HEADING_2"
+    )
+
+    assert bullet_request["range"]["endIndex"] <= heading_request["range"]["startIndex"]
+
+    mock = MockGoogleDocsAPI(base)
+    mock._batch_update_raw(requests)
+    body = (
+        mock.get()
+        .model_dump(by_alias=True, exclude_none=True)["tabs"][0]["documentTab"]["body"]["content"]
+    )
+    paragraphs = [
+        element["paragraph"]
+        for element in body
+        if "paragraph" in element
+        and "".join(
+            child.get("textRun", {}).get("content", "")
+            for child in element["paragraph"].get("elements", [])
+        ).strip()
+    ]
+
+    operational = next(
+        paragraph
+        for paragraph in paragraphs
+        if "".join(
+            child.get("textRun", {}).get("content", "")
+            for child in paragraph.get("elements", [])
+        ).strip()
+        == "Operational Notes"
+    )
+    prose = next(
+        paragraph
+        for paragraph in paragraphs
+        if "".join(
+            child.get("textRun", {}).get("content", "")
+            for child in paragraph.get("elements", [])
+        ).strip()
+        == "The reconciler should preserve ordinary prose."
+    )
+
+    assert "bullet" not in operational
+    assert operational["paragraphStyle"]["namedStyleType"] == "HEADING_2"
+    assert prose.get("paragraphStyle", {}).get("namedStyleType", "NORMAL_TEXT") == "NORMAL_TEXT"
 
 
 def test_lower_semantic_diff_rejects_column_insert_through_merged_region() -> None:

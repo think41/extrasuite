@@ -914,6 +914,12 @@ Deliverable:
 9. lower same-anchor mixed body inserts as one grouped block-sequence operation
    so bullet/style ranges are computed against final coordinates rather than an
    intermediate shifted state
+   Rule:
+   compute those bullet/style ranges from the actual inserted positions while
+   walking backward, following the `v1` reconciler discipline, rather than from
+   the desired document's forward idealized indices
+   For table-backed mixed inserts, derive those final coordinates from a
+   shadow-applied structural document, not from heuristic table-size math.
 10. treat unchanged read-only body blocks as immutable anchors and diff the
     editable spans around them independently; insertion edits near those anchors
     must preserve the raw body anchor needed for lowering
