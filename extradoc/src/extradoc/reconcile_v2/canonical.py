@@ -11,7 +11,13 @@ from extradoc.reconcile_v2.parse import parse_document
 
 if TYPE_CHECKING:
     from extradoc.api_types._generated import Document
-    from extradoc.reconcile_v2.ir import BlockIR, DocumentIR, StoryIR
+    from extradoc.reconcile_v2.ir import (
+        AnnotationCatalogIR,
+        BlockIR,
+        DocumentIR,
+        PositionIR,
+        StoryIR,
+    )
 
 
 def canonicalize_document(document: Document) -> DocumentIR:
@@ -23,8 +29,15 @@ def canonicalize_document_ir(document: DocumentIR) -> DocumentIR:
     """Return a deep-copied canonical IR with transport carrier blocks removed."""
     canonical = copy.deepcopy(document)
     for tab in canonical.tabs:
-        for section in tab.body.sections:
-            section.blocks = _strip_transport_carrier_paragraphs(section.blocks)
+        for section_index, section in enumerate(tab.body.sections):
+            keep_mask = _transport_block_keep_mask(section.blocks)
+            section.blocks = [block for block, keep in zip(section.blocks, keep_mask, strict=True) if keep]
+            _remap_body_named_range_positions(
+                annotations=tab.annotations,
+                story_id=f"{tab.id}:body",
+                section_index=section_index,
+                keep_mask=keep_mask,
+            )
         for story in tab.resource_graph.headers.values():
             story.blocks = _strip_transport_carrier_paragraphs(story.blocks)
         for story in tab.resource_graph.footers.values():
@@ -46,20 +59,57 @@ def canonical_signature(document: DocumentIR) -> CanonicalDocumentSignature:
 
 
 def _strip_transport_carrier_paragraphs(blocks: list[BlockIR]) -> list[BlockIR]:
-    trimmed = list(blocks)
-    while (
-        len(trimmed) >= 2
-        and _is_transport_carrier_paragraph(trimmed[0])
-        and isinstance(trimmed[1], TableIR)
-    ):
-        trimmed.pop(0)
-    while trimmed and _is_transport_carrier_paragraph(trimmed[-1]):
-        trimmed.pop()
-    return trimmed
+    keep_mask = _transport_block_keep_mask(blocks)
+    return [block for block, keep in zip(blocks, keep_mask, strict=True) if keep]
+
+
+def _transport_block_keep_mask(blocks: list[BlockIR]) -> list[bool]:
+    keep_mask = [True] * len(blocks)
+    for index, block in enumerate(blocks):
+        if not _is_transport_carrier_paragraph(block):
+            continue
+        prev_is_table = index > 0 and isinstance(blocks[index - 1], TableIR)
+        next_is_table = index + 1 < len(blocks) and isinstance(blocks[index + 1], TableIR)
+        if prev_is_table or next_is_table:
+            keep_mask[index] = False
+    for index in range(len(blocks) - 1, -1, -1):
+        if not keep_mask[index] or not _is_transport_carrier_paragraph(blocks[index]):
+            break
+        keep_mask[index] = False
+    return keep_mask
 
 
 def _is_transport_carrier_paragraph(block: BlockIR) -> bool:
     return isinstance(block, ParagraphIR) and block.role == "NORMAL_TEXT" and not block.inlines
+
+
+def _remap_body_named_range_positions(
+    *,
+    annotations: AnnotationCatalogIR,
+    story_id: str,
+    section_index: int,
+    keep_mask: list[bool],
+) -> None:
+    for ranges in annotations.named_ranges.values():
+        for anchor in ranges:
+            _remap_body_position(anchor.start, story_id=story_id, section_index=section_index, keep_mask=keep_mask)
+            _remap_body_position(anchor.end, story_id=story_id, section_index=section_index, keep_mask=keep_mask)
+
+
+def _remap_body_position(
+    position: PositionIR,
+    *,
+    story_id: str,
+    section_index: int,
+    keep_mask: list[bool],
+) -> None:
+    if position.story_id != story_id or position.path.section_index != section_index:
+        return
+    original_index = position.path.block_index
+    if position.path.edge.value == "BEFORE":
+        position.path.block_index = sum(1 for keep in keep_mask[:original_index] if keep)
+        return
+    position.path.block_index = max(sum(1 for keep in keep_mask[: original_index + 1] if keep) - 1, 0)
 
 
 def _iter_table_cell_stories(sections: list[object]) -> list[StoryIR]:

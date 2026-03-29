@@ -126,6 +126,9 @@ def build_body_layout(document: Document, *, tab_id: str) -> BodyLayout:
             pending_list = []
             pending_list_id = None
 
+    def _is_table_element(element: object) -> bool:
+        return isinstance(element, dict) and element.get("table") is not None
+
     for index, element in enumerate(content):
         if "sectionBreak" in element:
             flush_list()
@@ -188,11 +191,11 @@ def build_body_layout(document: Document, *, tab_id: str) -> BodyLayout:
                 pending_list_id = list_id
             continue
 
+        prev_element = content[index - 1] if index > 0 else None
+        next_element = content[index + 1] if index + 1 < len(content) else None
         if (
-            not current_section.block_locations
-            and not visible_text.strip()
-            and index + 1 < len(content)
-            and content[index + 1].get("table") is not None
+            not visible_text.strip()
+            and (_is_table_element(prev_element) or _is_table_element(next_element))
         ):
             pending_empty_para = None
             continue

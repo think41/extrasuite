@@ -101,6 +101,7 @@ class _BlockBoundary:
     block_index: int
     start: int
     end: int
+    kind: str
 
 
 @dataclass(slots=True)
@@ -116,6 +117,7 @@ class _StoryResolver:
         block_index: int,
         start: int,
         end: int,
+        kind: str = "other",
     ) -> None:
         self.block_boundaries.append(
             _BlockBoundary(
@@ -123,6 +125,7 @@ class _StoryResolver:
                 block_index=block_index,
                 start=start,
                 end=end,
+                kind=kind,
             )
         )
 
@@ -212,6 +215,15 @@ class _StoryResolver:
                         section_index=block.section_index,
                         block_index=block.block_index,
                         edge=PositionEdge.AFTER,
+                    ),
+                )
+            if block.kind == "table" and block.start < index < block.end:
+                return PositionIR(
+                    story_id=self.story_id,
+                    path=FlowPathIR(
+                        section_index=block.section_index,
+                        block_index=block.block_index,
+                        edge=PositionEdge.BEFORE,
                     ),
                 )
 
@@ -510,6 +522,7 @@ def _parse_story_blocks(
                     block_index=block_index,
                     start=element.start_index or 0,
                     end=element.end_index or element.start_index or 0,
+                    kind="page_break",
                 )
                 blocks.append(PageBreakIR())
             else:
@@ -519,6 +532,7 @@ def _parse_story_blocks(
                     block_index=block_index,
                     start=element.start_index or start,
                     end=element.end_index or end,
+                    kind="paragraph",
                 )
                 resolver.add_paragraph(
                     section_index=section_index,
@@ -538,6 +552,7 @@ def _parse_story_blocks(
                 block_index=block_index,
                 start=element.start_index or 0,
                 end=element.end_index or element.start_index or 0,
+                kind="table",
             )
             blocks.append(
                 _parse_table(
@@ -556,6 +571,7 @@ def _parse_story_blocks(
                 block_index=block_index,
                 start=element.start_index or 0,
                 end=element.end_index or element.start_index or 0,
+                kind="toc",
             )
             blocks.append(TocIR(style={}))
             i += 1
@@ -569,6 +585,7 @@ def _parse_story_blocks(
             block_index=block_index,
             start=element.start_index or 0,
             end=element.end_index or element.start_index or 0,
+            kind="opaque",
         )
         blocks.append(OpaqueBlockIR(kind="unknown", payload=_as_dict(element)))
         i += 1

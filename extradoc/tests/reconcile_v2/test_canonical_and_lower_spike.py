@@ -13,6 +13,7 @@ from extradoc.reconcile_v2.api import (
     lower_semantic_diff,
 )
 from extradoc.reconcile_v2.errors import UnsupportedSpikeError
+from extradoc.reconcile_v2.layout import build_body_layout
 from extradoc.serde._from_markdown import markdown_to_document
 
 from .helpers import load_expected_lowered_requests
@@ -1129,6 +1130,103 @@ def test_lower_semantic_diff_supports_empty_body_mixed_sequence() -> None:
             }
         },
     ]
+
+
+def test_lower_semantic_diff_supports_dense_empty_body_markdown_insert() -> None:
+    base = reindex_document(
+        markdown_to_document(
+            {"Tab_1": ""},
+            document_id="dense-empty-body-insert",
+            title="Dense Empty Body Insert",
+            tab_ids={"Tab_1": "t.0"},
+        )
+    )
+    desired = reindex_document(
+        markdown_to_document(
+            {
+                "Tab_1": (
+                    "# Stress Doc\n\n"
+                    "Lead with **bold**, *italic*, ~~strike~~, <u>underline</u>, "
+                    "`code`, and a [link](https://example.com).\n\n"
+                    "## Matrix\n\n"
+                    "| A | B |\n"
+                    "| --- | --- |\n"
+                    "| one | two |\n\n"
+                    "## Narrative\n\n"
+                    "> Block quote line one.\n"
+                    ">\n"
+                    "> Block quote line two.\n\n"
+                    "> [!INFO]\n"
+                    "> Info callout.\n\n"
+                    "> [!WARNING]\n"
+                    "> Warning callout.\n\n"
+                    "### Tasks\n\n"
+                    "- first bullet\n"
+                    "- second bullet\n\n"
+                    "1. first number\n"
+                    "2. second number\n\n"
+                    "- [x] checked\n"
+                    "- [ ] pending\n\n"
+                    "## Code\n\n"
+                    "```python\n"
+                    "print('hi')\n"
+                    "```\n\n"
+                    "```json\n"
+                    "{\"ok\": true}\n"
+                    "```\n\n"
+                    "## Closing\n\n"
+                    "| Area | Status |\n"
+                    "| --- | --- |\n"
+                    "| lowering | green |\n"
+                )
+            },
+            document_id="dense-empty-body-insert",
+            title="Dense Empty Body Insert",
+            tab_ids={"Tab_1": "t.0"},
+        )
+    )
+
+    requests = lower_semantic_diff(base, desired)
+    layout = build_body_layout(desired, tab_id="t.0")
+
+    assert [type(block).__name__ for block in layout.sections[0].block_locations] == [
+        "ParagraphLocation",
+        "ParagraphLocation",
+        "ParagraphLocation",
+        "TableLocation",
+        "ParagraphLocation",
+        "TableLocation",
+        "TableLocation",
+        "TableLocation",
+        "ParagraphLocation",
+        "ListLocation",
+        "ListLocation",
+        "ListLocation",
+        "ParagraphLocation",
+        "TableLocation",
+        "TableLocation",
+        "ParagraphLocation",
+        "TableLocation",
+    ]
+    assert sum(1 for request in requests if "insertTable" in request) >= 5
+    named_ranges = {
+        request["createNamedRange"]["name"]
+        for request in requests
+        if "createNamedRange" in request
+    }
+    assert {
+        "extradoc:blockquote",
+        "extradoc:callout:info",
+        "extradoc:callout:warning",
+        "extradoc:codeblock:python",
+        "extradoc:codeblock:json",
+    } <= named_ranges
+    for request in requests:
+        if "createNamedRange" in request:
+            range_ = request["createNamedRange"]["range"]
+            assert range_["startIndex"] < range_["endIndex"]
+    assert any("createParagraphBullets" in request for request in requests)
+    assert any("updateParagraphStyle" in request for request in requests)
 
 
 def test_lower_semantic_diff_rejects_column_insert_through_merged_region() -> None:

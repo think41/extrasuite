@@ -901,6 +901,22 @@ def _resolve_position_for_named_range(
     document: Document | None,
     position: Any,
 ) -> tuple[StoryRoute, int]:
+    if (
+        document is not None
+        and not position.path.node_path
+        and position.path.inline_index is None
+        and position.path.text_offset_utf16 is None
+        and position.story_id.endswith(":body")
+        and position.path.section_index is not None
+    ):
+        tab_id = position.story_id.removesuffix(":body")
+        layout = body_layouts.setdefault(tab_id, build_body_layout(document, tab_id=tab_id))
+        return StoryRoute(tab_id=tab_id), _resolve_body_block_boundary_index(
+            layout,
+            section_index=position.path.section_index,
+            block_index=position.path.block_index,
+            edge=position.path.edge,
+        )
     try:
         return resolve_position_to_index(story_layouts, position)
     except ValueError:

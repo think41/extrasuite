@@ -45,7 +45,7 @@ from extradoc.serde._models import IndexXml
 from extradoc.serde._utils import hex_to_optional_color, optional_color_to_hex
 
 if TYPE_CHECKING:
-    from extradoc.api_types._generated import BatchUpdateDocumentRequest
+    from extradoc.api_types._generated import BatchUpdateDocumentRequest, DocumentTab
     from extradoc.transport import Transport
 
 logger = logging.getLogger(__name__)
@@ -455,6 +455,7 @@ def _normalize_raw_base_para_styles(
             continue
         if dt.body and dt.body.content:
             tab_id = tab.tab_properties.tab_id if tab.tab_properties else None
+            protected_empty_para_indices = _body_named_range_anchor_indices(dt, tab_id)
             preserve_after_table_starts = _preserved_separator_table_starts(
                 dt.body.content,
                 reference_tabs.get(tab_id, []),
@@ -463,11 +464,13 @@ def _normalize_raw_base_para_styles(
             dt.body.content = _strip_inter_table_separators(
                 dt.body.content,
                 preserve_after_table_starts,
+                protected_empty_para_indices,
             )
             # 2. Strip bare empty paragraphs (invisible in markdown)
             dt.body.content = _strip_empty_body_paragraphs(
                 dt.body.content,
                 preserve_after_table_starts,
+                protected_empty_para_indices,
             )
             # 3. Normalise paragraph styles (including TITLE/SUBTITLE mapping)
             for se in dt.body.content:
@@ -540,6 +543,7 @@ def _preserved_separator_table_starts(
 def _strip_inter_table_separators(
     content: list[StructuralElement],
     preserve_after_table_starts: set[int],
+    protected_empty_para_indices: set[int],
 ) -> list[StructuralElement]:
     """Remove empty paragraphs that sit between two tables in the body.
 
@@ -561,6 +565,12 @@ def _strip_inter_table_separators(
                 e.text_run.content for e in elements if e.text_run and e.text_run.content
             )
             if text == "\n":
+                if (
+                    se.start_index in protected_empty_para_indices
+                    or se.end_index in protected_empty_para_indices
+                ):
+                    out.append(se)
+                    continue
                 # Look for a table before and after this paragraph
                 prev_is_table = any(out) and out[-1].table is not None
                 next_is_table = (
@@ -605,6 +615,7 @@ def _is_bare_empty_paragraph(se: StructuralElement) -> bool:
 def _strip_empty_body_paragraphs(
     content: list[StructuralElement],
     preserve_after_table_starts: set[int],
+    protected_empty_para_indices: set[int],
 ) -> list[StructuralElement]:
     """Remove bare empty paragraphs that immediately precede a table.
 
@@ -624,6 +635,12 @@ def _strip_empty_body_paragraphs(
     n = len(content)
     for i, se in enumerate(content):
         if _is_bare_empty_paragraph(se):
+            if (
+                se.start_index in protected_empty_para_indices
+                or se.end_index in protected_empty_para_indices
+            ):
+                result.append(se)
+                continue
             next_is_table = i + 1 < n and content[i + 1].table is not None
             if next_is_table:
                 prev_is_table = bool(result) and result[-1].table is not None
@@ -634,6 +651,25 @@ def _strip_empty_body_paragraphs(
                 continue
         result.append(se)
     return result
+
+
+def _body_named_range_anchor_indices(
+    document_tab: DocumentTab,
+    tab_id: str | None,
+) -> set[int]:
+    indices: set[int] = set()
+    for grouped in (document_tab.named_ranges or {}).values():
+        for named_range in grouped.named_ranges or []:
+            for range_ in named_range.ranges or []:
+                if range_.segment_id:
+                    continue
+                if tab_id is not None and range_.tab_id and str(range_.tab_id) != tab_id:
+                    continue
+                if range_.start_index is not None:
+                    indices.add(range_.start_index)
+                if range_.end_index is not None:
+                    indices.add(range_.end_index)
+    return indices
 
 
 def _normalize_structural_element_para_styles(se: StructuralElement) -> None:

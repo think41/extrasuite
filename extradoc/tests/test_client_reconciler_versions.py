@@ -4,12 +4,13 @@ from pathlib import Path
 
 import pytest
 
-from extradoc.api_types._generated import BatchUpdateDocumentRequest
+from extradoc.api_types._generated import BatchUpdateDocumentRequest, Document
 from extradoc.client import (
     RECONCILER_ENV_VAR,
     DiffResult,
     DocsClient,
     _get_reconciler_version,
+    _normalize_raw_base_para_styles,
 )
 from extradoc.comments._types import CommentOperations
 from extradoc.reconcile import reindex_document
@@ -425,6 +426,102 @@ def test_diff_v2_detects_empty_doc_mixed_body_insert(
         < request.create_named_range.range.end_index
         for request in requests
     )
+
+
+def test_normalize_raw_base_preserves_empty_paragraphs_used_by_named_ranges() -> None:
+    raw = Document.model_validate(
+        {
+            "documentId": "doc-nr",
+            "revisionId": "rev-nr",
+            "tabs": [
+                {
+                    "tabProperties": {"tabId": "t.0", "title": "Tab 1", "index": 0},
+                    "documentTab": {
+                        "namedRanges": {
+                            "extradoc:blockquote": {
+                                "name": "extradoc:blockquote",
+                                "namedRanges": [
+                                    {
+                                        "name": "extradoc:blockquote",
+                                        "namedRangeId": "nr-1",
+                                        "ranges": [
+                                            {
+                                                "startIndex": 7,
+                                                "endIndex": 13,
+                                                "tabId": "t.0",
+                                            }
+                                        ],
+                                    }
+                                ],
+                            }
+                        },
+                        "body": {
+                            "content": [
+                                {"endIndex": 1, "sectionBreak": {}},
+                                {
+                                    "startIndex": 1,
+                                    "endIndex": 7,
+                                    "paragraph": {
+                                        "elements": [
+                                            {
+                                                "startIndex": 1,
+                                                "endIndex": 7,
+                                                "textRun": {"content": "Lead\n"},
+                                            }
+                                        ]
+                                    },
+                                },
+                                {
+                                    "startIndex": 7,
+                                    "endIndex": 8,
+                                    "paragraph": {
+                                        "elements": [
+                                            {
+                                                "startIndex": 7,
+                                                "endIndex": 8,
+                                                "textRun": {"content": "\n"},
+                                            }
+                                        ]
+                                    },
+                                },
+                                {
+                                    "startIndex": 8,
+                                    "endIndex": 12,
+                                    "table": {"rows": 1, "columns": 1, "tableRows": []},
+                                },
+                                {
+                                    "startIndex": 12,
+                                    "endIndex": 13,
+                                    "paragraph": {
+                                        "elements": [
+                                            {
+                                                "startIndex": 12,
+                                                "endIndex": 13,
+                                                "textRun": {"content": "\n"},
+                                            }
+                                        ]
+                                    },
+                                },
+                            ]
+                        },
+                    },
+                }
+            ],
+        }
+    )
+    markdown_reference = reindex_document(
+        markdown_to_document(
+            {"Tab_1": "> quoted\n"},
+            document_id="doc-nr",
+            title="Named Range Preserve",
+            tab_ids={"Tab_1": "t.0"},
+        )
+    )
+
+    _normalize_raw_base_para_styles(raw, markdown_reference)
+
+    content = raw.tabs[0].document_tab.body.content
+    assert [element.start_index for element in content if element.paragraph] == [1, 7, 12]
 
 
 @pytest.mark.asyncio
