@@ -119,6 +119,148 @@ def _make_doc_with_toc(*, include_toc: bool) -> Document:
     )
 
 
+def _make_doc_with_toc_and_table(
+    *,
+    intro_text: str | None = None,
+    include_table: bool = True,
+    tail_text: str = "Tail",
+) -> Document:
+    content: list[dict[str, object]] = [
+        {
+            "endIndex": 1,
+            "sectionBreak": {"sectionStyle": {"columnSeparatorStyle": "NONE"}},
+        }
+    ]
+    cursor = 1
+    if intro_text is not None:
+        intro = f"{intro_text}\n"
+        content.append(
+            {
+                "startIndex": cursor,
+                "endIndex": cursor + len(intro),
+                "paragraph": {
+                    "elements": [
+                        {
+                            "startIndex": cursor,
+                            "endIndex": cursor + len(intro),
+                            "textRun": {"content": intro},
+                        }
+                    ]
+                },
+            }
+        )
+        cursor += len(intro)
+    content.append(
+        {
+            "startIndex": cursor,
+            "endIndex": cursor + 3,
+            "tableOfContents": {
+                "content": [
+                    {
+                        "startIndex": cursor + 1,
+                        "endIndex": cursor + 3,
+                        "paragraph": {
+                            "elements": [
+                                {
+                                    "startIndex": cursor + 1,
+                                    "endIndex": cursor + 3,
+                                    "textRun": {"content": "\n"},
+                                }
+                            ]
+                        },
+                    }
+                ]
+            },
+        }
+    )
+    cursor += 3
+    if include_table:
+        content.append(
+            {
+                "startIndex": cursor,
+                "endIndex": cursor + 10,
+                "table": {
+                    "rows": 1,
+                    "columns": 1,
+                    "tableRows": [
+                        {
+                            "startIndex": cursor + 1,
+                            "endIndex": cursor + 9,
+                            "tableCells": [
+                                {
+                                    "startIndex": cursor + 2,
+                                    "endIndex": cursor + 9,
+                                    "content": [
+                                        {
+                                            "startIndex": cursor + 3,
+                                            "endIndex": cursor + 8,
+                                            "paragraph": {
+                                                "elements": [
+                                                    {
+                                                        "startIndex": cursor + 3,
+                                                        "endIndex": cursor + 7,
+                                                        "textRun": {"content": "code"},
+                                                    },
+                                                    {
+                                                        "startIndex": cursor + 7,
+                                                        "endIndex": cursor + 8,
+                                                        "textRun": {"content": "\n"},
+                                                    },
+                                                ]
+                                            },
+                                        },
+                                        {
+                                            "startIndex": cursor + 8,
+                                            "endIndex": cursor + 9,
+                                            "paragraph": {
+                                                "elements": [
+                                                    {
+                                                        "startIndex": cursor + 8,
+                                                        "endIndex": cursor + 9,
+                                                        "textRun": {"content": "\n"},
+                                                    }
+                                                ]
+                                            },
+                                        },
+                                    ],
+                                    "tableCellStyle": {},
+                                }
+                            ],
+                        }
+                    ],
+                },
+            }
+        )
+        cursor += 10
+    tail = f"{tail_text}\n"
+    content.append(
+        {
+            "startIndex": cursor,
+            "endIndex": cursor + len(tail),
+            "paragraph": {
+                "elements": [
+                    {
+                        "startIndex": cursor,
+                        "endIndex": cursor + len(tail),
+                        "textRun": {"content": tail},
+                    }
+                ]
+            },
+        }
+    )
+    return Document.model_validate(
+        {
+            "documentId": "toc-table-test",
+            "tabs": [
+                {
+                    "tabProperties": {"tabId": "t.0", "title": "Tab 1", "index": 0},
+                    "documentTab": {"body": {"content": content}},
+                }
+            ],
+        }
+    )
+
+
 def test_paragraph_to_heading_fixture_emits_role_change() -> None:
     base, desired = _load_fixture_pair("paragraph_to_heading")
 
@@ -556,6 +698,22 @@ def test_toc_mismatch_is_explicitly_unsupported() -> None:
         match="read-only or opaque body blocks",
     ):
         diff_documents(base, desired)
+
+
+def test_unchanged_toc_can_anchor_mixed_body_edits_around_it() -> None:
+    base = _make_doc_with_toc_and_table()
+    desired = _make_doc_with_toc_and_table(intro_text="Lead", include_table=False)
+
+    edits = diff_documents(base, desired)
+
+    assert [type(edit) for edit in edits] == [
+        DeleteTableBlockEdit,
+        ReplaceParagraphSliceEdit,
+    ]
+    assert summarize_semantic_edits(edits) == [
+        "tab t.0: section 0 delete table at block 0",
+        "tab t.0: story t.0:body replace 0 paragraph block(s) at 0 with 1 paragraph(s)",
+    ]
 
 
 def test_table_row_insert_fixture_emits_structural_row_insert() -> None:

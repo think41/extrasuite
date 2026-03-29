@@ -914,7 +914,10 @@ Deliverable:
 9. lower same-anchor mixed body inserts as one grouped block-sequence operation
    so bullet/style ranges are computed against final coordinates rather than an
    intermediate shifted state
-10. remove the legacy reconciler path only after:
+10. treat unchanged read-only body blocks as immutable anchors and diff the
+    editable spans around them independently; insertion edits near those anchors
+    must preserve the raw body anchor needed for lowering
+11. remove the legacy reconciler path only after:
    1. markdown workflow parity is established
    2. XML workflow parity is established
    3. the feature matrix is explicit for any residual transport-broken cases
@@ -937,6 +940,9 @@ Tests:
    produces deterministic list creation requests under `v2`
 10. `pull-md` on an empty doc -> insert heading + paragraph + list + code block
     -> `push-md` -> `pull-md` round-trips without style or bullet drift
+11. unchanged TOC/read-only body blocks can shift as anchors while nearby table
+    delete/paragraph insert edits still lower against the correct raw body
+    boundary
 
 Commit value:
 

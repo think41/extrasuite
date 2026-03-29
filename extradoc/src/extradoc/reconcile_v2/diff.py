@@ -144,6 +144,7 @@ class ReplaceParagraphSliceEdit:
     start_block_index: int
     delete_block_count: int
     inserted_paragraphs: tuple[ParagraphFragment, ...]
+    body_anchor_block_index: int | None = None
 
 
 @dataclass(slots=True)
@@ -153,6 +154,7 @@ class InsertListBlockEdit:
     block_index: int
     list_kind: str
     items: tuple[ListItemFragment, ...]
+    body_anchor_block_index: int | None = None
 
 
 @dataclass(slots=True)
@@ -168,6 +170,7 @@ class InsertTableBlockEdit:
     section_index: int
     block_index: int
     table: TableIR
+    body_anchor_block_index: int | None = None
 
 
 @dataclass(slots=True)
@@ -667,35 +670,45 @@ def _ensure_read_only_blocks_unchanged(
             if section_index < len(desired_sections)
             else []
         )
-        max_blocks = max(len(base_blocks), len(desired_blocks))
-        for block_index in range(max_blocks):
-            base_block = base_blocks[block_index] if block_index < len(base_blocks) else None
-            desired_block = (
-                desired_blocks[block_index] if block_index < len(desired_blocks) else None
+        base_read_only = [
+            _read_only_block_signature(block)
+            for block in base_blocks
+            if _is_read_only_block(block)
+        ]
+        desired_read_only = [
+            _read_only_block_signature(block)
+            for block in desired_blocks
+            if _is_read_only_block(block)
+        ]
+        if base_read_only != desired_read_only:
+            raise UnsupportedSpikeError(
+                "reconcile_v2 does not support editing read-only or opaque body blocks "
+                f"in section {section_index}"
             )
-            if not _is_read_only_block(base_block) and not _is_read_only_block(desired_block):
-                continue
-            if type(base_block) is not type(desired_block):
-                raise UnsupportedSpikeError(
-                    "reconcile_v2 does not support editing read-only or opaque body blocks "
-                    f"at section {section_index} block {block_index}"
-                )
-            if (
-                isinstance(base_block, OpaqueBlockIR)
-                and isinstance(desired_block, OpaqueBlockIR)
-                and (
-                    base_block.kind != desired_block.kind
-                    or base_block.payload != desired_block.payload
-                )
-            ):
-                raise UnsupportedSpikeError(
-                    "reconcile_v2 does not support editing opaque body blocks "
-                    f"at section {section_index} block {block_index}"
-                )
 
 
 def _is_read_only_block(block: BlockIR | None) -> bool:
     return isinstance(block, TocIR | OpaqueBlockIR)
+
+
+def _read_only_block_positions(blocks: list[BlockIR]) -> list[tuple[int, BlockIR]]:
+    return [
+        (index, block)
+        for index, block in enumerate(blocks)
+        if _is_read_only_block(block)
+    ]
+
+
+def _read_only_block_signature(block: BlockIR) -> tuple[object, ...]:
+    if isinstance(block, TocIR):
+        return ("toc",)
+    if isinstance(block, OpaqueBlockIR):
+        return ("opaque", block.kind, tuple(sorted(block.payload.items())))
+    raise TypeError(f"Unsupported read-only block: {type(block).__name__}")
+
+
+def _editable_block_count(blocks: list[BlockIR]) -> int:
+    return sum(not _is_read_only_block(block) for block in blocks)
 
 
 def _tabs_by_path(tabs: list[TabIR]) -> dict[tuple[int, ...], TabIR]:
@@ -759,13 +772,79 @@ def _diff_section_blocks(
     base_section: SectionIR,
     desired_section: SectionIR,
 ) -> list[SemanticEdit]:
+    base_read_only = _read_only_block_positions(base_section.blocks)
+    desired_read_only = _read_only_block_positions(desired_section.blocks)
+    if not base_read_only and not desired_read_only:
+        return _diff_editable_block_span(
+            tab_id=tab_id,
+            section_index=section_index,
+            base_blocks=base_section.blocks,
+            desired_blocks=desired_section.blocks,
+            block_offset=0,
+            raw_block_offset=0,
+        )
+
+    spans: list[tuple[list[BlockIR], list[BlockIR], int, int]] = []
+    base_start = 0
+    desired_start = 0
+    editable_offset = 0
+    for (base_index, _base_block), (desired_index, _desired_block) in zip(
+        base_read_only,
+        desired_read_only,
+        strict=True,
+    ):
+        spans.append(
+            (
+                base_section.blocks[base_start:base_index],
+                desired_section.blocks[desired_start:desired_index],
+                editable_offset,
+                base_start,
+            )
+        )
+        editable_offset += _editable_block_count(base_section.blocks[base_start:base_index])
+        base_start = base_index + 1
+        desired_start = desired_index + 1
+    spans.append(
+        (
+            base_section.blocks[base_start:],
+            desired_section.blocks[desired_start:],
+            editable_offset,
+            base_start,
+        )
+    )
+    edits: list[SemanticEdit] = []
+    for base_span, desired_span, block_offset, raw_block_offset in reversed(spans):
+        edits.extend(
+            _diff_editable_block_span(
+                tab_id=tab_id,
+                section_index=section_index,
+                base_blocks=base_span,
+                desired_blocks=desired_span,
+                block_offset=block_offset,
+                raw_block_offset=raw_block_offset,
+            )
+        )
+    return edits
+
+
+def _diff_editable_block_span(
+    *,
+    tab_id: str,
+    section_index: int,
+    base_blocks: list[BlockIR],
+    desired_blocks: list[BlockIR],
+    block_offset: int,
+    raw_block_offset: int,
+) -> list[SemanticEdit]:
     edits: list[SemanticEdit] = []
     paragraph_slice = _diff_story_paragraph_slice(
         tab_id=tab_id,
         story_id=f"{tab_id}:body",
         section_index=section_index,
-        base_blocks=base_section.blocks,
-        desired_blocks=desired_section.blocks,
+        base_blocks=base_blocks,
+        desired_blocks=desired_blocks,
+        block_offset=block_offset,
+        raw_block_offset=raw_block_offset,
     )
     if paragraph_slice is not None:
         edits.append(paragraph_slice)
@@ -774,15 +853,17 @@ def _diff_section_blocks(
     block_slice = _diff_section_block_slice(
         tab_id=tab_id,
         section_index=section_index,
-        base_blocks=base_section.blocks,
-        desired_blocks=desired_section.blocks,
+        base_blocks=base_blocks,
+        desired_blocks=desired_blocks,
+        block_offset=block_offset,
+        raw_block_offset=raw_block_offset,
     )
     if block_slice:
         edits.extend(block_slice)
         return edits
 
     for block_index, (base_block, desired_block) in enumerate(
-        zip(base_section.blocks, desired_section.blocks, strict=False)
+        zip(base_blocks, desired_blocks, strict=False)
     ):
         if isinstance(base_block, ParagraphIR) and isinstance(desired_block, ParagraphIR):
             if (
@@ -793,7 +874,7 @@ def _diff_section_blocks(
                     UpdateParagraphRoleEdit(
                         tab_id=tab_id,
                         section_index=section_index,
-                        block_index=block_index,
+                        block_index=block_offset + block_index,
                         before_role=base_block.role,
                         after_role=desired_block.role,
                     )
@@ -804,7 +885,7 @@ def _diff_section_blocks(
                     ReplaceListSpecEdit(
                         tab_id=tab_id,
                         section_index=section_index,
-                        block_index=block_index,
+                        block_index=block_offset + block_index,
                         before_kind=base_block.spec.kind,
                         after_kind=desired_block.spec.kind,
                     )
@@ -822,7 +903,7 @@ def _diff_section_blocks(
                     AppendListItemsEdit(
                         tab_id=tab_id,
                         section_index=section_index,
-                        block_index=block_index,
+                        block_index=block_offset + block_index,
                         list_kind=desired_block.spec.kind,
                         appended_items=tuple(
                             ListItemFragment(
@@ -841,7 +922,7 @@ def _diff_section_blocks(
                     RelevelListItemsEdit(
                         tab_id=tab_id,
                         section_index=section_index,
-                        block_index=block_index,
+                        block_index=block_offset + block_index,
                         list_kind=desired_block.spec.kind,
                         before_levels=base_levels,
                         after_levels=desired_levels,
@@ -856,6 +937,8 @@ def _diff_section_block_slice(
     section_index: int,
     base_blocks: list[BlockIR],
     desired_blocks: list[BlockIR],
+    block_offset: int,
+    raw_block_offset: int,
 ) -> list[SemanticEdit]:
     base_fingerprints = _block_fingerprints(base_blocks)
     desired_fingerprints = _block_fingerprints(desired_blocks)
@@ -895,11 +978,12 @@ def _diff_section_block_slice(
                 tab_id=tab_id,
                 story_id=f"{tab_id}:body",
                 section_index=section_index,
-                start_block_index=prefix,
+                start_block_index=block_offset + prefix,
                 delete_block_count=max(0, delete_stop - prefix),
                 inserted_paragraphs=tuple(
                     ParagraphFragment(paragraph=block) for block in desired_slice
                 ),
+                body_anchor_block_index=raw_block_offset + prefix,
             )
         ]
 
@@ -915,7 +999,8 @@ def _diff_section_block_slice(
     return _plan_mixed_body_block_slice(
         tab_id=tab_id,
         section_index=section_index,
-        block_index=prefix,
+        block_index=block_offset + prefix,
+        raw_block_index=raw_block_offset + prefix,
         base_slice=base_slice,
         desired_slice=desired_slice,
     )
@@ -935,6 +1020,7 @@ def _plan_mixed_body_block_slice(
     tab_id: str,
     section_index: int,
     block_index: int,
+    raw_block_index: int,
     base_slice: list[BlockIR],
     desired_slice: list[BlockIR],
 ) -> list[SemanticEdit]:
@@ -952,6 +1038,7 @@ def _plan_mixed_body_block_slice(
             tab_id=tab_id,
             section_index=section_index,
             block_index=block_index,
+            raw_block_index=raw_block_index,
             blocks=desired_slice,
         )
     )
@@ -1010,6 +1097,7 @@ def _insert_body_block_sequence(
     tab_id: str,
     section_index: int,
     block_index: int,
+    raw_block_index: int,
     blocks: list[BlockIR],
 ) -> list[SemanticEdit]:
     edits: list[SemanticEdit] = []
@@ -1031,6 +1119,7 @@ def _insert_body_block_sequence(
                         ParagraphFragment(paragraph=paragraph)
                         for paragraph in blocks[start : index + 1]
                     ),
+                    body_anchor_block_index=raw_block_index,
                 )
             )
             index = start - 1
@@ -1049,6 +1138,7 @@ def _insert_body_block_sequence(
                         )
                         for item in block.items
                     ),
+                    body_anchor_block_index=raw_block_index,
                 )
             )
         elif isinstance(block, TableIR):
@@ -1058,6 +1148,7 @@ def _insert_body_block_sequence(
                     section_index=section_index,
                     block_index=block_index,
                     table=block,
+                    body_anchor_block_index=raw_block_index,
                 )
             )
         index -= 1
@@ -1587,6 +1678,8 @@ def _diff_story_paragraph_slice(
     section_index: int | None,
     base_blocks: list[BlockIR],
     desired_blocks: list[BlockIR],
+    block_offset: int = 0,
+    raw_block_offset: int | None = None,
 ) -> ReplaceParagraphSliceEdit | None:
     if not _all_paragraphs(base_blocks) or not _all_paragraphs(desired_blocks):
         return None
@@ -1628,11 +1721,15 @@ def _diff_story_paragraph_slice(
         tab_id=tab_id,
         story_id=story_id,
         section_index=section_index,
-        start_block_index=prefix,
+        start_block_index=block_offset + prefix,
         delete_block_count=max(0, delete_stop - prefix),
         inserted_paragraphs=tuple(
             ParagraphFragment(paragraph=block)
             for block in desired_blocks[prefix:insert_stop]
+        ),
+        body_anchor_block_index=(
+            None if raw_block_offset is None or section_index is None or story_id != f"{tab_id}:body"
+            else raw_block_offset + prefix
         ),
     )
 

@@ -864,6 +864,26 @@ their styles and attachment state are part of the semantic document model.
    `defaultHeaderId` / `defaultFooterId`, so supported attachment transforms are
    create, continue, content-update-in-place, and delete.
 
+### Read-only body anchors
+
+Read-only body blocks such as table-of-contents nodes are part of body topology
+even though they are not editable.
+
+Rule:
+
+1. unchanged read-only/opaque blocks are immutable anchors, not global
+   unsupported walls
+2. diff editable spans before, between, and after those anchors independently
+3. only reject when the read-only/opaque subsequence itself changes
+
+Lowering consequence:
+
+1. editable-block indices and raw body-anchor indices can diverge when a
+   read-only block sits between editable blocks
+2. insertion edits that target body boundaries near a read-only anchor must
+   carry the raw anchor coordinate needed for lowering, not only the editable
+   block index
+
 This eliminates the need for document-wide "find first default header/footer"
 stateful hacks.
 

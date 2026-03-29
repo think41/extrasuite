@@ -101,6 +101,7 @@ def lower_document_edits(
             layout = layouts.setdefault(group[0].tab_id, build_body_layout(base, tab_id=group[0].tab_id))
             requests.extend(
                 _lower_body_insert_group(
+                    base=base,
                     layout=layout,
                     edits=group,
                     desired=desired,
@@ -123,10 +124,10 @@ def lower_document_edits(
             )
         elif isinstance(edit, InsertListBlockEdit):
             story = story_layouts[f"{edit.tab_id}:body"]
-            insert_index, prefix_newline, suffix_newline = _body_block_insertion_site(
+            insert_index, prefix_newline, suffix_newline = _body_insert_site_for_edit(
+                base,
                 layout,
-                section_index=edit.section_index,
-                block_index=edit.block_index,
+                edit,
             )
             list_text = "\n".join(
                 ("\t" * item.level) + item.text for item in edit.items
@@ -166,10 +167,10 @@ def lower_document_edits(
                 )
             )
         elif isinstance(edit, InsertTableBlockEdit):
-            insert_index, _prefix_newline, _suffix_newline = _body_block_insertion_site(
+            insert_index, _prefix_newline, _suffix_newline = _body_insert_site_for_edit(
+                base,
                 layout,
-                section_index=edit.section_index,
-                block_index=edit.block_index,
+                edit,
             )
             requests.extend(
                 _lower_blocks_into_fresh_story(
@@ -340,10 +341,10 @@ def lower_document_edits(
                     and edit.section_index is not None
                     and edit.story_id == f"{edit.tab_id}:body"
                 ):
-                    delete_start, prefix_newline, suffix_newline = _body_block_insertion_site(
+                    delete_start, prefix_newline, suffix_newline = _body_insert_site_for_edit(
+                        base,
                         layout,
-                        section_index=edit.section_index,
-                        block_index=edit.start_block_index,
+                        edit,
                     )
                 else:
                     delete_start, prefix_newline, suffix_newline = paragraph_insertion_site(
@@ -579,18 +580,33 @@ def lower_document_edits(
     return requests
 
 
-def _body_insert_anchor(edit: SemanticEdit) -> tuple[str, int, int] | None:
+def _body_insert_anchor(edit: SemanticEdit) -> tuple[str, int, int, int | None] | None:
     if isinstance(edit, InsertListBlockEdit):
-        return (edit.tab_id, edit.section_index, edit.block_index)
+        return (
+            edit.tab_id,
+            edit.section_index,
+            edit.block_index,
+            edit.body_anchor_block_index,
+        )
     if isinstance(edit, InsertTableBlockEdit):
-        return (edit.tab_id, edit.section_index, edit.block_index)
+        return (
+            edit.tab_id,
+            edit.section_index,
+            edit.block_index,
+            edit.body_anchor_block_index,
+        )
     if (
         isinstance(edit, ReplaceParagraphSliceEdit)
         and edit.delete_block_count == 0
         and edit.section_index is not None
         and edit.story_id == f"{edit.tab_id}:body"
     ):
-        return (edit.tab_id, edit.section_index, edit.start_block_index)
+        return (
+            edit.tab_id,
+            edit.section_index,
+            edit.start_block_index,
+            edit.body_anchor_block_index,
+        )
     return None
 
 
@@ -606,6 +622,7 @@ def _body_insert_group_end(edits: list[SemanticEdit], start_index: int) -> int:
 
 def _lower_body_insert_group(
     *,
+    base: Document,
     layout: BodyLayout,
     edits: list[SemanticEdit],
     desired: Document | None,
@@ -618,11 +635,11 @@ def _lower_body_insert_group(
         raise UnsupportedSpikeError(
             "reconcile_v2 body insert grouping requires desired document layouts"
         )
-    tab_id, section_index, block_index = anchor
-    insert_index, prefix_newline, suffix_newline = _body_block_insertion_site(
+    tab_id, section_index, block_index, _raw_anchor_index = anchor
+    insert_index, prefix_newline, suffix_newline = _body_insert_site_for_edit(
+        base,
         layout,
-        section_index=section_index,
-        block_index=block_index,
+        edits[0],
     )
     final_fragments = [_body_insert_fragment(edit) for edit in reversed(edits)]
     requests: list[dict[str, Any]] = []
@@ -755,6 +772,29 @@ def _table_at(layout: BodyLayout, section_index: int, block_index: int) -> Table
     return block
 
 
+def _body_insert_site_for_edit(
+    base: Document,
+    layout: BodyLayout,
+    edit: SemanticEdit,
+) -> tuple[int, bool, bool]:
+    anchor = _body_insert_anchor(edit)
+    if anchor is None:
+        raise TypeError(f"Unsupported body insert edit: {type(edit).__name__}")
+    tab_id, section_index, block_index, raw_block_index = anchor
+    if raw_block_index is None:
+        return _body_block_insertion_site(
+            layout,
+            section_index=section_index,
+            block_index=block_index,
+        )
+    return _raw_body_block_insertion_site(
+        base,
+        tab_id=tab_id,
+        section_index=section_index,
+        raw_block_index=raw_block_index,
+    )
+
+
 def _body_block_insertion_site(
     layout: BodyLayout,
     *,
@@ -775,6 +815,73 @@ def _body_block_insertion_site(
     if isinstance(previous, ParagraphLocation):
         return previous.text_end_index, True, False
     return previous.end_index, False, False
+
+
+def _raw_body_block_insertion_site(
+    document: Document,
+    *,
+    tab_id: str,
+    section_index: int,
+    raw_block_index: int,
+) -> tuple[int, bool, bool]:
+    sections = _raw_body_sections(document, tab_id=tab_id)
+    blocks = sections[section_index]
+    if raw_block_index < len(blocks):
+        target = blocks[raw_block_index]
+        if target["kind"] == "paragraph":
+            if len(blocks) == 1 and target["text"] == "":
+                return int(target["text_start"]), False, False
+            return int(target["text_start"]), False, True
+        return int(target["start"]), False, True
+    if not blocks:
+        return 1, False, False
+    previous = blocks[raw_block_index - 1]
+    if previous["kind"] == "paragraph":
+        return int(previous["text_end"]), True, False
+    return int(previous["end"]), False, False
+
+
+def _raw_body_sections(document: Document, *, tab_id: str) -> list[list[dict[str, object]]]:
+    raw_tab = next(
+        (
+            tab
+            for tab in document.model_dump(by_alias=True, exclude_none=True).get("tabs", [])
+            if tab.get("tabProperties", {}).get("tabId") == tab_id
+        ),
+        None,
+    )
+    if raw_tab is None:
+        raise ValueError(f"Unknown tab id {tab_id}")
+    sections: list[list[dict[str, object]]] = [[]]
+    for element in raw_tab.get("documentTab", {}).get("body", {}).get("content", []):
+        if "sectionBreak" in element:
+            if sections[-1]:
+                sections.append([])
+            continue
+        start_index = int(element.get("startIndex", 0))
+        end_index = int(element.get("endIndex", start_index))
+        if "paragraph" in element:
+            text = "".join(
+                run.get("textRun", {}).get("content", "")
+                for run in element["paragraph"].get("elements", [])
+            )
+            sections[-1].append(
+                {
+                    "kind": "paragraph",
+                    "start": start_index,
+                    "end": end_index,
+                    "text_start": start_index,
+                    "text_end": end_index - 1,
+                    "text": text.removesuffix("\n"),
+                }
+            )
+        elif "table" in element:
+            sections[-1].append({"kind": "table", "start": start_index, "end": end_index})
+        elif "tableOfContents" in element:
+            sections[-1].append({"kind": "toc", "start": start_index, "end": end_index})
+        else:
+            sections[-1].append({"kind": "opaque", "start": start_index, "end": end_index})
+    return sections
 
 
 def _edited_story_ids(edits: list[SemanticEdit]) -> set[str]:

@@ -97,6 +97,148 @@ def _make_doc_with_toc(*, include_toc: bool) -> Document:
     )
 
 
+def _make_doc_with_toc_and_table(
+    *,
+    intro_text: str | None = None,
+    include_table: bool = True,
+    tail_text: str = "Tail",
+) -> Document:
+    content: list[dict[str, object]] = [
+        {
+            "endIndex": 1,
+            "sectionBreak": {"sectionStyle": {"columnSeparatorStyle": "NONE"}},
+        }
+    ]
+    cursor = 1
+    if intro_text is not None:
+        intro = f"{intro_text}\n"
+        content.append(
+            {
+                "startIndex": cursor,
+                "endIndex": cursor + len(intro),
+                "paragraph": {
+                    "elements": [
+                        {
+                            "startIndex": cursor,
+                            "endIndex": cursor + len(intro),
+                            "textRun": {"content": intro},
+                        }
+                    ]
+                },
+            }
+        )
+        cursor += len(intro)
+    content.append(
+        {
+            "startIndex": cursor,
+            "endIndex": cursor + 3,
+            "tableOfContents": {
+                "content": [
+                    {
+                        "startIndex": cursor + 1,
+                        "endIndex": cursor + 3,
+                        "paragraph": {
+                            "elements": [
+                                {
+                                    "startIndex": cursor + 1,
+                                    "endIndex": cursor + 3,
+                                    "textRun": {"content": "\n"},
+                                }
+                            ]
+                        },
+                    }
+                ]
+            },
+        }
+    )
+    cursor += 3
+    if include_table:
+        content.append(
+            {
+                "startIndex": cursor,
+                "endIndex": cursor + 10,
+                "table": {
+                    "rows": 1,
+                    "columns": 1,
+                    "tableRows": [
+                        {
+                            "startIndex": cursor + 1,
+                            "endIndex": cursor + 9,
+                            "tableCells": [
+                                {
+                                    "startIndex": cursor + 2,
+                                    "endIndex": cursor + 9,
+                                    "content": [
+                                        {
+                                            "startIndex": cursor + 3,
+                                            "endIndex": cursor + 8,
+                                            "paragraph": {
+                                                "elements": [
+                                                    {
+                                                        "startIndex": cursor + 3,
+                                                        "endIndex": cursor + 7,
+                                                        "textRun": {"content": "code"},
+                                                    },
+                                                    {
+                                                        "startIndex": cursor + 7,
+                                                        "endIndex": cursor + 8,
+                                                        "textRun": {"content": "\n"},
+                                                    },
+                                                ]
+                                            },
+                                        },
+                                        {
+                                            "startIndex": cursor + 8,
+                                            "endIndex": cursor + 9,
+                                            "paragraph": {
+                                                "elements": [
+                                                    {
+                                                        "startIndex": cursor + 8,
+                                                        "endIndex": cursor + 9,
+                                                        "textRun": {"content": "\n"},
+                                                    }
+                                                ]
+                                            },
+                                        },
+                                    ],
+                                    "tableCellStyle": {},
+                                }
+                            ],
+                        }
+                    ],
+                },
+            }
+        )
+        cursor += 10
+    tail = f"{tail_text}\n"
+    content.append(
+        {
+            "startIndex": cursor,
+            "endIndex": cursor + len(tail),
+            "paragraph": {
+                "elements": [
+                    {
+                        "startIndex": cursor,
+                        "endIndex": cursor + len(tail),
+                        "textRun": {"content": tail},
+                    }
+                ]
+            },
+        }
+    )
+    return Document.model_validate(
+        {
+            "documentId": "toc-table-test",
+            "tabs": [
+                {
+                    "tabProperties": {"tabId": "t.0", "title": "Tab 1", "index": 0},
+                    "documentTab": {"body": {"content": content}},
+                }
+            ],
+        }
+    )
+
+
 def _make_doc_with_named_range(
     *,
     text: str,
@@ -1008,6 +1150,25 @@ def test_lower_semantic_diff_rejects_toc_mismatch() -> None:
         match="read-only or opaque body blocks",
     ):
         lower_semantic_diff(base, desired)
+
+
+def test_lower_semantic_diff_supports_mixed_edits_around_unchanged_toc() -> None:
+    base = _make_doc_with_toc_and_table()
+    desired = _make_doc_with_toc_and_table(intro_text="Lead", include_table=False)
+
+    assert lower_semantic_diff(base, desired) == [
+        {
+            "deleteContentRange": {
+                "range": {"startIndex": 4, "endIndex": 14, "tabId": "t.0"}
+            }
+        },
+        {
+            "insertText": {
+                "location": {"index": 1, "tabId": "t.0"},
+                "text": "Lead\n",
+            }
+        },
+    ]
 
 
 def test_lower_semantic_diff_named_range_add_ignores_desired_named_range_id() -> None:
