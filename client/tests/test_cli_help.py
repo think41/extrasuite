@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 from argparse import Namespace
+from pathlib import Path
 from typing import TYPE_CHECKING
 
 from extrasuite.client.cli import build_parser
@@ -25,7 +26,7 @@ def test_sheet_formula_help_supports_nested_case_insensitive_paths(
     capsys: pytest.CaptureFixture[str],
 ) -> None:
     parser = build_parser()
-    args = parser.parse_args(["sheet", "help", "FORMULAS", "dcount"])
+    args = parser.parse_args(["sheets", "help", "FORMULAS", "dcount"])
 
     cmd_module_help(args)
 
@@ -50,3 +51,35 @@ def test_docs_parser_supports_confidence_sprint_raw_commands() -> None:
     assert download_args.subcommand == "download-raw"
     assert download_args.url.endswith("/abc123")
     assert download_args.output == "out"
+
+
+def test_docs_help_hides_internal_reconciler_flag() -> None:
+    help_dir = (
+        Path(__file__).resolve().parents[1]
+        / "src"
+        / "extrasuite"
+        / "client"
+        / "help"
+        / "doc"
+    )
+    for name in ("push.md", "push-md.md", "diff.md"):
+        text = (help_dir / name).read_text(encoding="utf-8")
+        assert "EXTRADOC_RECONCILER" not in text
+
+
+def test_docs_help_reflects_current_release_contract() -> None:
+    help_dir = (
+        Path(__file__).resolve().parents[1]
+        / "src"
+        / "extrasuite"
+        / "client"
+        / "help"
+        / "doc"
+    )
+    readme = (help_dir / "README.md").read_text(encoding="utf-8")
+    pull_md = (help_dir / "pull-md.md").read_text(encoding="utf-8")
+
+    assert "Footnote creation/editing in body content is supported" in readme
+    assert "New-tab header/footer creation in an existing multi-tab doc is not supported" in readme
+    assert "Footnotes:" in pull_md
+    assert "Horizontal rules pulled from Docs are read-only" in pull_md
