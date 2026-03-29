@@ -231,7 +231,7 @@
         "index": 1164,
         "tabId": "t.0"
       },
-      "text": "Prepare the empty document.\nPush one dense markdown document.\n\tValidate nested bullet handling.\n\tValidate nested numbering handling.\nRe-pull and inspect the generated markdown.\nConfirm heading structure.\nConfirm inline style structure.\n\tCheck links.\n\tCheck inline code.\nConfirm list structure.\n[x] Heading coverage\n[x] Inline style coverage\n[ ] Second-pass edits pending\n"
+      "text": "Operational Notes\nThe reconciler should preserve ordinary prose like this paragraph while also supporting structural markdown features in the same document.\n"
     }
   },
   {
@@ -240,14 +240,40 @@
         "index": 1164,
         "tabId": "t.0"
       },
-      "text": "Operational Notes\nThe reconciler should preserve ordinary prose like this paragraph while also supporting structural markdown features in the same document.\n"
+      "text": "Prepare the empty document.\nPush one dense markdown document.\n\tValidate nested bullet handling.\n\tValidate nested numbering handling.\nRe-pull and inspect the generated markdown.\nConfirm heading structure.\nConfirm inline style structure.\n\tCheck links.\n\tCheck inline code.\nConfirm list structure.\n[x] Heading coverage\n[x] Inline style coverage\n[ ] Second-pass edits pending\n"
     }
   },
   {
     "updateParagraphStyle": {
       "range": {
-        "startIndex": 1321,
+        "startIndex": 1553,
         "endIndex": 1692,
+        "tabId": "t.0"
+      },
+      "paragraphStyle": {
+        "namedStyleType": "NORMAL_TEXT"
+      },
+      "fields": "namedStyleType"
+    }
+  },
+  {
+    "updateParagraphStyle": {
+      "range": {
+        "startIndex": 1535,
+        "endIndex": 1553,
+        "tabId": "t.0"
+      },
+      "paragraphStyle": {
+        "namedStyleType": "HEADING_2"
+      },
+      "fields": "namedStyleType"
+    }
+  },
+  {
+    "updateParagraphStyle": {
+      "range": {
+        "startIndex": 1164,
+        "endIndex": 1535,
         "tabId": "t.0"
       },
       "paragraphStyle": {
@@ -259,42 +285,11 @@
   {
     "createParagraphBullets": {
       "range": {
-        "startIndex": 1321,
-        "endIndex": 1692,
+        "startIndex": 1164,
+        "endIndex": 1535,
         "tabId": "t.0"
       },
       "bulletPreset": "BULLET_DISC_CIRCLE_SQUARE"
-    }
-  },
-  {
-    "updateParagraphStyle": {
-      "range": {
-        "startIndex": 1182,
-        "endIndex": 1321,
-        "tabId": "t.0"
-      },
-      "paragraphStyle": {
-        "namedStyleType": "NORMAL_TEXT"
-      },
-      "fields": "namedStyleType"
-    }
-  },
-  {
-    "updateParagraphStyle": {
-      "range": {
-        "startIndex": 1164,
-        "endIndex": 1182,
-        "tabId": "t.0"
-      },
-      "paragraphStyle": {
-        "namedStyleType": "HEADING_2"
-      },
-      "fields": "namedStyleType"
-    }
-  },
-  {
-    "deleteNamedRange": {
-      "name": "extradoc:codeblock:json"
     }
   },
   {
@@ -305,11 +300,6 @@
         "endIndex": 2033,
         "tabId": "t.0"
       }
-    }
-  },
-  {
-    "deleteNamedRange": {
-      "name": "extradoc:codeblock:python"
     }
   },
   {

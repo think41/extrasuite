@@ -5,7 +5,9 @@ from pathlib import Path
 
 import pytest
 
+import extradoc.serde as serde
 from extradoc.api_types._generated import Document
+from extradoc.client import _normalize_raw_base_para_styles
 from extradoc.mock.api import MockGoogleDocsAPI
 from extradoc.reconcile import reindex_document
 from extradoc.reconcile_v2.api import (
@@ -987,13 +989,13 @@ def test_lower_semantic_diff_supports_paragraph_table_replacement() -> None:
                 "fields": "fontSize,weightedFontFamily",
             }
         },
-        {
-            "createNamedRange": {
-                "name": "extradoc:codeblock",
-                "range": {"startIndex": 1, "endIndex": 11, "tabId": "t.0"},
-            }
-        },
-    ]
+            {
+                "createNamedRange": {
+                    "name": "extradoc:codeblock",
+                    "range": {"startIndex": 2, "endIndex": 11, "tabId": "t.0"},
+                }
+            },
+        ]
 
 
 def test_lower_semantic_diff_supports_table_paragraph_replacement() -> None:
@@ -1023,10 +1025,9 @@ def test_lower_semantic_diff_supports_table_paragraph_replacement() -> None:
         {
             "insertText": {
                 "location": {"index": 1, "tabId": "t.0"},
-                "text": "Alpha\n",
+                "text": "Alpha",
             }
         },
-        {"deleteNamedRange": {"name": "extradoc:codeblock"}},
     ]
 
 
@@ -1055,7 +1056,6 @@ def test_lower_semantic_diff_supports_paragraph_insert_before_table() -> None:
                 "text": "Lead\n",
             }
         },
-        {"deleteNamedRange": {"name": "extradoc:codeblock"}},
         {
             "createNamedRange": {
                 "name": "extradoc:codeblock",
@@ -1246,6 +1246,32 @@ def test_lower_semantic_diff_supports_dense_empty_body_markdown_insert() -> None
     assert any("createParagraphBullets" in request for request in requests)
     assert any("updateParagraphStyle" in request for request in requests)
 
+    mock = MockGoogleDocsAPI(base)
+    mock._batch_update_raw(requests)
+    body = (
+        mock.get()
+        .model_dump(by_alias=True, exclude_none=True)["tabs"][0]["documentTab"]["body"]["content"]
+    )
+    assert body[-1]["endIndex"] >= max(
+        request["createNamedRange"]["range"]["endIndex"]
+        for request in requests
+        if "createNamedRange" in request
+    )
+    paragraph_texts = [
+        "".join(
+            child.get("textRun", {}).get("content", "")
+            for child in element["paragraph"].get("elements", [])
+        ).strip()
+        for element in body
+        if "paragraph" in element
+    ]
+    assert [text for text in paragraph_texts if text][:4] == [
+        "Stress Doc",
+        "Lead with bold, italic, strike, underline, code, and a link.",
+        "Matrix",
+        "Narrative",
+    ]
+
 
 def test_lower_semantic_diff_uses_actual_reverse_ranges_for_list_then_heading() -> None:
     base = reindex_document(
@@ -1280,21 +1306,6 @@ def test_lower_semantic_diff_uses_actual_reverse_ranges_for_list_then_heading() 
     )
 
     requests = lower_semantic_diff(base, desired)
-    bullet_request = next(
-        request["createParagraphBullets"]
-        for request in requests
-        if "createParagraphBullets" in request
-        and request["createParagraphBullets"]["bulletPreset"] == "BULLET_DISC_CIRCLE_SQUARE"
-    )
-    heading_request = next(
-        request["updateParagraphStyle"]
-        for request in requests
-        if "updateParagraphStyle" in request
-        and request["updateParagraphStyle"]["paragraphStyle"]["namedStyleType"] == "HEADING_2"
-    )
-
-    assert heading_request["range"]["endIndex"] <= bullet_request["range"]["startIndex"]
-
     mock = MockGoogleDocsAPI(base)
     mock._batch_update_raw(requests)
     body = (
@@ -1372,6 +1383,79 @@ def test_lower_semantic_diff_deletes_body_paragraph_slice_after_table() -> None:
     requests = lower_semantic_diff(base, desired)
 
     assert any("deleteContentRange" in request for request in requests)
+
+
+def test_lower_semantic_diff_repairs_live_multitab_probe_after_table_backed_rewrites() -> None:
+    fixture_root = FIXTURES_ROOT / "live_multitab_cycle2_probe"
+    base = Document.model_validate(
+        json.loads((fixture_root / "base.json").read_text(encoding="utf-8"))
+    )
+    desired_bundle = serde.deserialize(fixture_root / "desired")
+    _normalize_raw_base_para_styles(base, desired_bundle.document)
+    desired = reindex_document(desired_bundle.document)
+
+    requests = lower_semantic_diff(base, desired)
+
+    delete_ranges = [
+        request["deleteContentRange"]["range"]
+        for request in requests
+        if "deleteContentRange" in request
+        and request["deleteContentRange"]["range"].get("tabId") == "t.0"
+    ]
+    assert {"startIndex": 465, "endIndex": 516, "tabId": "t.0"} in delete_ranges
+    assert {"startIndex": 466, "endIndex": 517, "tabId": "t.0"} not in delete_ranges
+
+    mock = MockGoogleDocsAPI(base)
+    mock._batch_update_raw(requests)
+    body = (
+        mock.get()
+        .model_dump(by_alias=True, exclude_none=True)["tabs"][0]["documentTab"]["body"]["content"]
+    )
+    paragraph_texts = [
+        "".join(
+            child.get("textRun", {}).get("content", "")
+            for child in element["paragraph"].get("elements", [])
+        ).strip()
+        for element in body
+        if "paragraph" in element
+    ]
+    assert "Program Overview Revised" in paragraph_texts
+    assert "Code Samples Revised" in paragraph_texts
+    assert (
+        "This replacement paragraph still carries a footnote reference after editing.[^overview-note]"
+        in paragraph_texts
+    )
+
+
+def test_lower_semantic_diff_ignores_empty_live_table_row_height_styles() -> None:
+    fixture_root = FIXTURES_ROOT / "live_delete_json_probe"
+    base = Document.model_validate(
+        json.loads((fixture_root / "base.json").read_text(encoding="utf-8"))
+    )
+    desired_bundle = serde.deserialize(fixture_root / "desired")
+    _normalize_raw_base_para_styles(base, desired_bundle.document)
+    desired = reindex_document(desired_bundle.document)
+
+    requests = lower_semantic_diff(base, desired)
+
+    assert not any(
+        "updateTableRowStyle" in request
+        and request["updateTableRowStyle"].get("fields") == "minRowHeight"
+        and request["updateTableRowStyle"].get("tableRowStyle") == {}
+        for request in requests
+    )
+    assert not any("updateTableCellStyle" in request for request in requests)
+    deleted_named_ranges = [
+        request["deleteNamedRange"]["name"]
+        for request in requests
+        if "deleteNamedRange" in request
+    ]
+    assert "extradoc:blockquote" not in deleted_named_ranges
+    assert "extradoc:codeblock:python" not in deleted_named_ranges
+    assert "extradoc:codeblock:json" not in deleted_named_ranges
+
+    mock = MockGoogleDocsAPI(base)
+    mock._batch_update_raw(requests)
 
 
 def test_lower_semantic_diff_rejects_column_insert_through_merged_region() -> None:

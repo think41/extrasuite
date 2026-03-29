@@ -2,13 +2,22 @@
 
 from __future__ import annotations
 
+import copy
 from typing import TYPE_CHECKING, Any
 
+from extradoc.api_types._generated import Document
 from extradoc.indexer import utf16_len
+from extradoc.mock.api import MockGoogleDocsAPI
 from extradoc.reconcile_v2.canonical import canonicalize_document
 from extradoc.reconcile_v2.diff import (
     CreateFootnoteEdit,
     CreateSectionAttachmentEdit,
+    DeleteListBlockEdit,
+    DeleteTableBlockEdit,
+    InsertListBlockEdit,
+    InsertTableBlockEdit,
+    ReplaceNamedRangesEdit,
+    ReplaceParagraphSliceEdit,
     diff_documents,
 )
 from extradoc.reconcile_v2.errors import UnsupportedSpikeError
@@ -35,7 +44,6 @@ from extradoc.reconcile_v2.requests import (
 )
 
 if TYPE_CHECKING:
-    from extradoc.api_types._generated import Document
     from extradoc.reconcile_v2.diff import SemanticEdit
     from extradoc.reconcile_v2.ir import BlockIR, CellIR
 
@@ -59,10 +67,99 @@ def lower_document_batches(
         batch_offset=len(batches),
     )
     batches.extend(footnote_batches)
-    matched_requests = lower_document_edits(base, remaining_edits, desired=desired)
-    if matched_requests:
-        batches.append(matched_requests)
+    if remaining_edits:
+        if not batches and _should_iteratively_batch_content(remaining_edits):
+            batches.extend(_plan_iterative_content_batches(base, remaining_edits, desired))
+        else:
+            matched_requests = lower_document_edits(base, remaining_edits, desired=desired)
+            if matched_requests:
+                batches.append(matched_requests)
     return batches
+
+
+def _should_iteratively_batch_content(edits: list[SemanticEdit]) -> bool:
+    content_edits = [edit for edit in edits if not isinstance(edit, ReplaceNamedRangesEdit)]
+    body_delete_count = 0
+    has_table_delete = False
+    for edit in content_edits:
+        if isinstance(edit, DeleteTableBlockEdit):
+            has_table_delete = True
+            body_delete_count += 1
+        elif isinstance(edit, DeleteListBlockEdit) or (
+            isinstance(edit, ReplaceParagraphSliceEdit)
+            and edit.story_id == f"{edit.tab_id}:body"
+            and edit.delete_block_count > 0
+        ):
+            body_delete_count += 1
+    return has_table_delete and body_delete_count > 1
+
+
+def _plan_iterative_content_batches(
+    base: Document,
+    edits: list[SemanticEdit],
+    desired: Document,
+) -> list[list[dict[str, Any]]]:
+    batches: list[list[dict[str, Any]]] = []
+    current_base = copy.deepcopy(base)
+    content_edits = [edit for edit in edits if not isinstance(edit, ReplaceNamedRangesEdit)]
+    named_range_edits = [edit for edit in edits if isinstance(edit, ReplaceNamedRangesEdit)]
+
+    edit_index = 0
+    while edit_index < len(content_edits):
+        next_index = _next_iterative_content_group_end(content_edits, edit_index)
+        next_batch_edits = content_edits[edit_index:next_index]
+        requests = lower_document_edits(current_base, next_batch_edits, desired=desired)
+        if not requests:
+            break
+        batches.append(requests)
+        shadow = MockGoogleDocsAPI(current_base)
+        shadow._batch_update_raw(requests)
+        current_base = shadow.get()
+        edit_index = next_index
+
+    if named_range_edits:
+        requests = lower_document_edits(current_base, named_range_edits, desired=desired)
+        if requests:
+            batches.append(requests)
+    return batches
+
+
+def _next_iterative_content_group_end(
+    edits: list[SemanticEdit],
+    start_index: int,
+) -> int:
+    anchor = _iterative_body_insert_anchor(edits[start_index])
+    if anchor is None:
+        return start_index + 1
+    end_index = start_index + 1
+    while end_index < len(edits) and _iterative_body_insert_anchor(edits[end_index]) == anchor:
+        end_index += 1
+    return end_index
+
+
+def _iterative_body_insert_anchor(
+    edit: SemanticEdit,
+) -> tuple[str, int, int, int | None] | None:
+    if isinstance(edit, (InsertTableBlockEdit, InsertListBlockEdit)):
+        return (
+            edit.tab_id,
+            edit.section_index,
+            edit.block_index,
+            edit.body_anchor_block_index,
+        )
+    if (
+        isinstance(edit, ReplaceParagraphSliceEdit)
+        and edit.delete_block_count == 0
+        and edit.section_index is not None
+        and edit.story_id == f"{edit.tab_id}:body"
+    ):
+        return (
+            edit.tab_id,
+            edit.section_index,
+            edit.start_block_index,
+            edit.body_anchor_block_index,
+        )
+    return None
 
 
 def _plan_attachment_batches(
@@ -224,6 +321,7 @@ def _plan_new_tab_batches(
         for path, tab in _walk_tabs(desired_ir.tabs)
         if path not in base_tabs_by_path
     ]
+    desired_raw_tabs_by_path = dict(_walk_raw_tabs(desired.model_dump(by_alias=True, exclude_none=True).get("tabs", [])))
     if not new_tabs:
         return []
 
@@ -264,7 +362,11 @@ def _plan_new_tab_batches(
     population_batch_index = len(batches)
     for path, tab in new_tabs:
         deferred_tab_id = created_tab_refs[path]
-        population_requests = _lower_new_tab_body(tab, deferred_tab_id)
+        population_requests = _lower_new_tab_body(
+            tab,
+            desired_raw_tab=desired_raw_tabs_by_path[path],
+            deferred_tab_id=deferred_tab_id,
+        )
         population_batch.extend(population_requests)
         footnote_requests, footnote_population_requests = _lower_new_tab_footnotes(
             tab,
@@ -274,16 +376,14 @@ def _plan_new_tab_batches(
             request_index_offset=len(population_batch),
         )
         population_batch.extend(footnote_requests)
-        named_range_requests = _lower_new_tab_named_ranges(
-            tab,
-            deferred_tab_id,
-            anchors_include_footnote_refs=bool(footnote_requests),
-        )
         if footnote_requests:
+            named_range_requests = _lower_new_tab_named_ranges(
+                tab,
+                deferred_tab_id,
+                anchors_include_footnote_refs=True,
+            )
             deferred_followup_batch.extend(footnote_population_requests)
             deferred_followup_batch.extend(named_range_requests)
-        else:
-            population_batch.extend(named_range_requests)
     if population_batch:
         batches.append(population_batch)
     if deferred_followup_batch:
@@ -291,7 +391,12 @@ def _plan_new_tab_batches(
     return batches
 
 
-def _lower_new_tab_body(tab: TabIR, deferred_tab_id: dict[str, object]) -> list[dict[str, Any]]:
+def _lower_new_tab_body(
+    tab: TabIR,
+    *,
+    desired_raw_tab: dict[str, object],
+    deferred_tab_id: dict[str, object],
+) -> list[dict[str, Any]]:
     if len(tab.body.sections) != 1:
         raise UnsupportedSpikeError(
             "reconcile_v2 multi-batch spike supports creating tabs with exactly one body section"
@@ -301,11 +406,25 @@ def _lower_new_tab_body(tab: TabIR, deferred_tab_id: dict[str, object]) -> list[
         raise UnsupportedSpikeError(
             "reconcile_v2 multi-batch spike does not yet support creating tabs with section attachments"
         )
-    return _lower_blocks_into_empty_story(
-        section.blocks,
-        story_start_index=1,
-        tab_id=deferred_tab_id,
-        segment_id=None,
+    if not section.blocks:
+        return []
+    shadow_tab_id = "t.shadow"
+    synthetic_base = _make_empty_shadow_tab_document(title=tab.title, tab_id=shadow_tab_id)
+    synthetic_desired = _make_shadow_tab_document_from_raw(
+        desired_raw_tab,
+        tab_id=shadow_tab_id,
+    )
+    filter_named_ranges = bool(tab.resource_graph.footnotes)
+    body_edits = [
+        edit
+        for edit in diff_documents(synthetic_base, synthetic_desired)
+        if not isinstance(edit, CreateFootnoteEdit | CreateSectionAttachmentEdit)
+        and not (filter_named_ranges and isinstance(edit, ReplaceNamedRangesEdit))
+    ]
+    return _replace_tab_id(
+        lower_document_edits(synthetic_base, body_edits, desired=synthetic_desired),
+        old_tab_id=shadow_tab_id,
+        new_tab_id=deferred_tab_id,
     )
 
 
@@ -713,6 +832,97 @@ def _walk_tabs(
         pairs.append((path, tab))
         pairs.extend(_walk_tabs(tab.child_tabs, path))
     return pairs
+
+
+def _walk_raw_tabs(
+    tabs: list[dict[str, object]],
+    prefix: tuple[int, ...] = (),
+) -> list[tuple[tuple[int, ...], dict[str, object]]]:
+    pairs: list[tuple[tuple[int, ...], dict[str, object]]] = []
+    for index, tab in enumerate(tabs):
+        path = (*prefix, index)
+        pairs.append((path, tab))
+        child_tabs = tab.get("childTabs", [])
+        if isinstance(child_tabs, list):
+            pairs.extend(_walk_raw_tabs(child_tabs, path))
+    return pairs
+
+
+def _make_empty_shadow_tab_document(*, title: str, tab_id: str) -> Document:
+    return Document.model_validate(
+        {
+            "documentId": "new-tab-shadow",
+            "title": title,
+            "tabs": [
+                {
+                    "tabProperties": {"tabId": tab_id, "title": title, "index": 0},
+                    "documentTab": {
+                        "body": {
+                            "content": [
+                                {
+                                    "endIndex": 1,
+                                    "sectionBreak": {
+                                        "sectionStyle": {
+                                            "columnSeparatorStyle": "NONE"
+                                        }
+                                    },
+                                },
+                                {
+                                    "startIndex": 1,
+                                    "endIndex": 2,
+                                    "paragraph": {
+                                        "elements": [
+                                            {
+                                                "startIndex": 1,
+                                                "endIndex": 2,
+                                                "textRun": {"content": "\n"},
+                                            }
+                                        ]
+                                    },
+                                },
+                            ]
+                        }
+                    },
+                }
+            ],
+        }
+    )
+
+
+def _make_shadow_tab_document_from_raw(raw_tab: dict[str, object], *, tab_id: str) -> Document:
+    cloned_tab = copy.deepcopy(raw_tab)
+    tab_props = cloned_tab.setdefault("tabProperties", {})
+    if isinstance(tab_props, dict):
+        tab_props["tabId"] = tab_id
+        tab_props["index"] = 0
+    cloned_tab.pop("childTabs", None)
+    return Document.model_validate(
+        {
+            "documentId": "new-tab-shadow",
+            "title": tab_props.get("title", "Shadow Tab") if isinstance(tab_props, dict) else "Shadow Tab",
+            "tabs": [cloned_tab],
+        }
+    )
+
+
+def _replace_tab_id(
+    requests: list[dict[str, Any]],
+    *,
+    old_tab_id: str,
+    new_tab_id: dict[str, object],
+) -> list[dict[str, Any]]:
+    replaced = copy.deepcopy(requests)
+
+    def _replace(value: Any) -> Any:
+        if isinstance(value, dict):
+            return {key: _replace(item) for key, item in value.items()}
+        if isinstance(value, list):
+            return [_replace(item) for item in value]
+        if value == old_tab_id:
+            return new_tab_id
+        return value
+
+    return [_replace(request) for request in replaced]
 
 
 def _parent_tab_reference(

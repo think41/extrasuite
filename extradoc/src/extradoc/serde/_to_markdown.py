@@ -27,13 +27,7 @@ from typing import TYPE_CHECKING, Any
 
 from extradoc.serde._special_elements import special_element_from_named_range
 from extradoc.serde._utils import (
-    _apply_formatting,
-    _escape_md,
-    _is_monospace,
-    _MONOSPACE_FAMILIES,
-    _normalize_url,
     _style_has_attrs,
-    _wrap_markers,
     optional_color_to_hex,
     sanitize_tab_name,
     serialize_text_run,
@@ -43,12 +37,10 @@ if TYPE_CHECKING:
     from extradoc.api_types._generated import (
         Document,
         DocumentTab,
-        NamedRanges,
         Paragraph,
         ParagraphElement,
         StructuralElement,
         Table,
-        TextStyle,
     )
 
 # Named style → heading prefix (TITLE/SUBTITLE are lossy on round-trip)
@@ -121,12 +113,14 @@ def _find_annotation(
 ) -> str | None:
     """Return the extradoc:* name whose span contains table_si, or None.
 
-    The real Google Docs API may assign table startIndex values that are a few
-    positions off from what our internal reindex computed, so we match by
-    containment: the named range [si, ei) must contain table_si.
+    The real Google Docs API may assign table startIndex values that drift by a
+    small amount from the named range we previously wrote. In live docs we have
+    observed the table start index land one code point before the named-range
+    start, so accept a small lead-in window as long as the table start is still
+    immediately adjacent to the range.
     """
     for si, ei, name in nr_spans:
-        if si <= table_si < ei:
+        if (si <= table_si < ei) or (table_si + 1 == si and table_si < ei):
             return name
     return None
 

@@ -631,6 +631,9 @@ def _parse_table(
                 )
             )
         row_style = _as_dict(row.table_row_style)
+        min_row_height = row_style.get("minRowHeight")
+        if isinstance(min_row_height, dict) and "magnitude" not in min_row_height:
+            row_style.pop("minRowHeight", None)
         if row_style.get("tableHeader") and row_index == derived_pinned_header_rows:
             derived_pinned_header_rows += 1
         row_style.pop("tableHeader", None)

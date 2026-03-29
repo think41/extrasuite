@@ -564,6 +564,8 @@ def _diff_tab(base: TabIR, desired: TabIR) -> list[SemanticEdit]:
     )
     table_edits = _diff_section_tables(
         tab_id=base.id,
+        base_tab=base,
+        desired_tab=desired,
         base_sections=base_sections,
         desired_sections=desired_sections,
     )
@@ -866,10 +868,10 @@ def _diff_section_blocks(
             base_blocks=base_section.blocks,
             desired_blocks=desired_section.blocks,
             block_offset=0,
-            raw_block_offset=0,
+            raw_block_offset=None,
         )
 
-    spans: list[tuple[list[BlockIR], list[BlockIR], int, int]] = []
+    spans: list[tuple[list[BlockIR], list[BlockIR], int, int | None]] = []
     base_start = 0
     desired_start = 0
     editable_offset = 0
@@ -919,7 +921,7 @@ def _diff_editable_block_span(
     base_blocks: list[BlockIR],
     desired_blocks: list[BlockIR],
     block_offset: int,
-    raw_block_offset: int,
+    raw_block_offset: int | None,
 ) -> list[SemanticEdit]:
     edits: list[SemanticEdit] = []
     paragraph_slice = _diff_story_paragraph_slice(
@@ -1023,7 +1025,7 @@ def _diff_section_block_slice(
     base_blocks: list[BlockIR],
     desired_blocks: list[BlockIR],
     block_offset: int,
-    raw_block_offset: int,
+    raw_block_offset: int | None,
 ) -> list[SemanticEdit]:
     base_fingerprints = _block_fingerprints(base_blocks)
     desired_fingerprints = _block_fingerprints(desired_blocks)
@@ -1068,7 +1070,9 @@ def _diff_section_block_slice(
                 inserted_paragraphs=tuple(
                     ParagraphFragment(paragraph=block) for block in desired_slice
                 ),
-                body_anchor_block_index=raw_block_offset + prefix,
+                body_anchor_block_index=(
+                    raw_block_offset + prefix if raw_block_offset is not None else None
+                ),
             )
         ]
 
@@ -1085,7 +1089,9 @@ def _diff_section_block_slice(
         tab_id=tab_id,
         section_index=section_index,
         block_index=block_offset + prefix,
-        raw_block_index=raw_block_offset + prefix,
+        raw_block_index=(
+            raw_block_offset + prefix if raw_block_offset is not None else None
+        ),
         base_slice=base_slice,
         desired_slice=desired_slice,
     )
@@ -1136,7 +1142,7 @@ def _delete_body_block_sequence(
     tab_id: str,
     section_index: int,
     start_block_index: int,
-    raw_start_block_index: int,
+    raw_start_block_index: int | None,
     blocks: list[BlockIR],
 ) -> list[SemanticEdit]:
     edits: list[SemanticEdit] = []
@@ -1155,7 +1161,11 @@ def _delete_body_block_sequence(
                     start_block_index=start_block_index + start,
                     delete_block_count=index - start + 1,
                     inserted_paragraphs=(),
-                    body_anchor_block_index=raw_start_block_index + start,
+                    body_anchor_block_index=(
+                        None
+                        if raw_start_block_index is None
+                        else raw_start_block_index + start
+                    ),
                 )
             )
             index = start - 1
@@ -1166,7 +1176,11 @@ def _delete_body_block_sequence(
                     tab_id=tab_id,
                     section_index=section_index,
                     block_index=start_block_index + index,
-                    body_anchor_block_index=raw_start_block_index + index,
+                    body_anchor_block_index=(
+                        None
+                        if raw_start_block_index is None
+                        else raw_start_block_index + index
+                    ),
                 )
             )
         elif isinstance(block, TableIR):
@@ -1175,7 +1189,11 @@ def _delete_body_block_sequence(
                     tab_id=tab_id,
                     section_index=section_index,
                     block_index=start_block_index + index,
-                    body_anchor_block_index=raw_start_block_index + index,
+                    body_anchor_block_index=(
+                        None
+                        if raw_start_block_index is None
+                        else raw_start_block_index + index
+                    ),
                 )
             )
         index -= 1
@@ -1187,7 +1205,7 @@ def _insert_body_block_sequence(
     tab_id: str,
     section_index: int,
     block_index: int,
-    raw_block_index: int,
+    raw_block_index: int | None,
     blocks: list[BlockIR],
 ) -> list[SemanticEdit]:
     edits: list[SemanticEdit] = []
@@ -1226,7 +1244,7 @@ def _insert_body_block_sequence(
                             level=item.level,
                             text=_paragraph_text(item.paragraph),
                         )
-                        for item in block.items
+                    for item in block.items
                     ),
                     body_anchor_block_index=raw_block_index,
                 )
@@ -1387,6 +1405,8 @@ def _diff_story_catalog(
 def _diff_section_tables(
     *,
     tab_id: str,
+    base_tab: TabIR,
+    desired_tab: TabIR,
     base_sections: list[SectionIR],
     desired_sections: list[SectionIR],
 ) -> list[SemanticEdit]:
@@ -1408,16 +1428,22 @@ def _diff_section_tables(
             )
             if plan is None:
                 continue
-            edits.extend(
-                _diff_table_properties(
-                    tab_id=tab_id,
-                    section_index=section_index,
-                    block_index=block_index,
-                    base_table=base_block,
-                    desired_table=desired_block,
-                    plan=plan,
+            if not _same_special_table_kind(
+                base_tab=base_tab,
+                desired_tab=desired_tab,
+                section_index=section_index,
+                block_index=block_index,
+            ):
+                edits.extend(
+                    _diff_table_properties(
+                        tab_id=tab_id,
+                        section_index=section_index,
+                        block_index=block_index,
+                        base_table=base_block,
+                        desired_table=desired_block,
+                        plan=plan,
+                    )
                 )
-            )
             if plan.recurse_cells:
                 for base_row_index, desired_row_index in plan.row_pairs:
                     base_row = base_block.rows[base_row_index]
@@ -1443,6 +1469,72 @@ def _diff_section_tables(
                             edits.append(edit)
             edits.extend(plan.structural_edits)
     return edits
+
+
+def _same_special_table_kind(
+    *,
+    base_tab: TabIR,
+    desired_tab: TabIR,
+    section_index: int,
+    block_index: int,
+) -> bool:
+    base_kind = _special_table_kind_for_block(
+        tab=base_tab,
+        section_index=section_index,
+        block_index=block_index,
+    )
+    if base_kind is None:
+        return False
+    desired_kind = _special_table_kind_for_block(
+        tab=desired_tab,
+        section_index=section_index,
+        block_index=block_index,
+    )
+    return desired_kind == base_kind
+
+
+def _special_table_kind_for_block(
+    *,
+    tab: TabIR,
+    section_index: int,
+    block_index: int,
+) -> str | None:
+    story_id = f"{tab.id}:body"
+    for name, ranges in tab.annotations.named_ranges.items():
+        if not name.startswith("extradoc:"):
+            continue
+        for anchor in ranges:
+            start = anchor.start.path
+            end = anchor.end.path
+            if (
+                anchor.start.story_id != story_id
+                or anchor.end.story_id != story_id
+                or start.section_index != section_index
+                or end.section_index != section_index
+                or start.block_index != block_index
+                or start.node_path
+                or end.node_path
+                or start.edge.value != "BEFORE"
+            ):
+                continue
+            if start.inline_index is not None or start.text_offset_utf16 is not None:
+                continue
+            if end.block_index not in {block_index, block_index + 1}:
+                continue
+            if end.edge.value in {"BEFORE", "AFTER"}:
+                if end.inline_index is not None or end.text_offset_utf16 is not None:
+                    continue
+            elif end.edge.value == "INTERIOR":
+                if (
+                    end.block_index != block_index + 1
+                    or end.inline_index != 0
+                    or end.text_offset_utf16 != 0
+                ):
+                    continue
+            else:
+                continue
+            return name
+    return None
 
 
 def _plan_table_comparison(
@@ -1699,7 +1791,7 @@ def _diff_table_properties(
             base_table.rows[base_row_index].style,
             desired_table.rows[desired_row_index].style,
         )
-        if row_fields:
+        if row_fields and row_style:
             edits.append(
                 UpdateTableRowStyleEdit(
                     tab_id=tab_id,
@@ -1721,7 +1813,7 @@ def _diff_table_properties(
             base_table.column_properties[base_column_index],
             desired_table.column_properties[desired_column_index],
         )
-        if fields:
+        if fields and properties:
             edits.append(
                 UpdateTableColumnPropertiesEdit(
                     tab_id=tab_id,
@@ -1746,7 +1838,7 @@ def _diff_table_properties(
                 _cell_style_payload(base_row.cells[base_column_index].style),
                 _cell_style_payload(desired_row.cells[desired_column_index].style),
             )
-            if fields:
+            if fields and style:
                 edits.append(
                     UpdateTableCellStyleEdit(
                         tab_id=tab_id,
@@ -1830,7 +1922,10 @@ def _diff_named_ranges(base: TabIR, desired: TabIR) -> list[SemanticEdit]:
     for name in sorted(all_names):
         base_ranges = tuple(base.annotations.named_ranges.get(name, []))
         desired_ranges = tuple(desired.annotations.named_ranges.get(name, []))
-        if _named_range_signature(base_ranges) == _named_range_signature(desired_ranges):
+        if _named_range_signature(name, base_ranges) == _named_range_signature(
+            name,
+            desired_ranges,
+        ):
             continue
         edits.append(
             ReplaceNamedRangesEdit(
@@ -1943,13 +2038,27 @@ def _cell_style_payload(style: dict[str, object]) -> dict[str, object]:
     }
 
 
-def _named_range_signature(ranges: tuple[AnchorRangeIR, ...]) -> tuple[tuple[str, str], ...]:
+def _named_range_signature(
+    name: str,
+    ranges: tuple[AnchorRangeIR, ...],
+) -> tuple[tuple[str, ...], ...]:
+    if name.startswith("extradoc:"):
+        return tuple(_special_named_range_signature(anchor) for anchor in ranges)
     return tuple(
         (
             _position_signature(anchor.start),
             _position_signature(anchor.end),
         )
         for anchor in ranges
+    )
+
+
+def _special_named_range_signature(anchor: AnchorRangeIR) -> tuple[str, ...]:
+    start = anchor.start.path
+    return (
+        _position_signature(anchor.start).split("|", 1)[0],
+        str(start.section_index),
+        str(start.block_index),
     )
 
 

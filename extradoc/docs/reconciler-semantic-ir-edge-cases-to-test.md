@@ -148,6 +148,9 @@ The first durable fixture set for `reconcile_v2` should include:
 15. Heading-role-only change with no effective formatting delta.
 16. Raw-transport fixture where mock reindexing would have produced different table coordinates.
 17. Multi-batch revision handoff using returned `requiredRevisionId`.
+18. Full markdown workflow probe: empty-doc create of a dense multi-tab doc,
+    then `pull-md -> edit headings/prose around table-backed blocks -> push-md`
+    without style bleed or stale table-delete indices.
 18. Live transport fixtures for paragraph-role change, list append, list-kind change, section split, and section delete with replay verification against canonical IR.
 19. Live transport fixtures for text replace, paragraph split, table-cell text replace, existing-header text replace, and named-range add with replay verification against semantic diff convergence.
 20. Live transport fixtures for table row/column insert-delete, merge/unmerge, pinned-header rows, row style, column properties, cell style, and inserted-row/column content with replay verification against canonical IR.

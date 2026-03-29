@@ -6,6 +6,7 @@ from typing import TYPE_CHECKING, Any
 
 from extradoc.indexer import utf16_len
 from extradoc.mock.api import MockGoogleDocsAPI
+from extradoc.mock.exceptions import ValidationError
 from extradoc.reconcile_v2.diff import (
     AppendListItemsEdit,
     CreateFootnoteEdit,
@@ -91,6 +92,10 @@ def lower_document_edits(
     story_layouts = build_story_layouts(base)
     desired_story_layouts = build_story_layouts(desired) if desired is not None else None
     desired_body_layouts: dict[str, BodyLayout] = {}
+    shadow_document: Document | None = None
+    shadow_story_layouts: dict[str, object] | None = None
+    shadow_body_layouts: dict[str, BodyLayout] = {}
+    shadow_request_count = -1
     content_edited_story_ids = _edited_story_ids(edits)
     content_edits = [edit for edit in edits if not isinstance(edit, ReplaceNamedRangesEdit)]
 
@@ -99,7 +104,6 @@ def lower_document_edits(
         group_end = _body_insert_group_end(content_edits, edit_index)
         if group_end - edit_index > 1:
             group = content_edits[edit_index:group_end]
-            layout = layouts.setdefault(group[0].tab_id, build_body_layout(base, tab_id=group[0].tab_id))
             requests.extend(
                 _lower_body_insert_group(
                     base=base,
@@ -111,7 +115,30 @@ def lower_document_edits(
             edit_index = group_end
             continue
         edit = content_edits[edit_index]
-        layout = layouts.setdefault(edit.tab_id, build_body_layout(base, tab_id=edit.tab_id))
+        current_document = base
+        current_story_layouts = story_layouts
+        current_body_layouts = layouts
+        if requests:
+            (
+                shadow_document,
+                shadow_story_layouts,
+                shadow_body_layouts,
+                shadow_request_count,
+            ) = _ensure_shadow_state(
+                base=base,
+                requests=requests,
+                shadow_document=shadow_document,
+                shadow_story_layouts=shadow_story_layouts,
+                shadow_request_count=shadow_request_count,
+            )
+            if shadow_document is not None and shadow_story_layouts is not None:
+                current_document = shadow_document
+                current_story_layouts = shadow_story_layouts
+                current_body_layouts = shadow_body_layouts
+        layout = current_body_layouts.setdefault(
+            edit.tab_id,
+            build_body_layout(current_document, tab_id=edit.tab_id),
+        )
         if isinstance(edit, UpdateParagraphRoleEdit):
             paragraph = _paragraph_at(layout, edit.section_index, edit.block_index)
             requests.append(
@@ -123,9 +150,9 @@ def lower_document_edits(
                 )
             )
         elif isinstance(edit, InsertListBlockEdit):
-            story = story_layouts[f"{edit.tab_id}:body"]
+            story = current_story_layouts[f"{edit.tab_id}:body"]
             insert_index, prefix_newline, suffix_newline = _body_insert_site_for_edit(
-                base,
+                current_document,
                 layout,
                 edit,
             )
@@ -168,7 +195,7 @@ def lower_document_edits(
             )
         elif isinstance(edit, InsertTableBlockEdit):
             insert_index, _prefix_newline, _suffix_newline = _body_insert_site_for_edit(
-                base,
+                current_document,
                 layout,
                 edit,
             )
@@ -183,7 +210,7 @@ def lower_document_edits(
         elif isinstance(edit, DeleteTableBlockEdit):
             if edit.body_anchor_block_index is not None:
                 table_range = _raw_body_block_range(
-                    base,
+                    current_document,
                     tab_id=edit.tab_id,
                     section_index=edit.section_index,
                     raw_block_index=edit.body_anchor_block_index,
@@ -326,7 +353,7 @@ def lower_document_edits(
                 "use lower_semantic_diff_batches() or reconcile()"
             )
         elif isinstance(edit, ReplaceParagraphSliceEdit):
-            story = story_layouts[edit.story_id]
+            story = current_story_layouts[edit.story_id]
             inserted_text = "\n".join(fragment.text for fragment in edit.inserted_paragraphs)
             prefix_newline = False
             suffix_newline = False
@@ -374,7 +401,7 @@ def lower_document_edits(
                     and edit.story_id == f"{edit.tab_id}:body"
                 ):
                     delete_start, prefix_newline, suffix_newline = _body_insert_site_for_edit(
-                        base,
+                        current_document,
                         layout,
                         edit,
                     )
@@ -568,34 +595,119 @@ def lower_document_edits(
         edit_index += 1
 
     for edit in [edit for edit in edits if isinstance(edit, ReplaceNamedRangesEdit)]:
-        if edit.before_count:
+        if edit.before_count and not edit.name.startswith("extradoc:"):
             requests.append(make_delete_named_range(name=edit.name))
         for anchor in edit.desired_ranges:
             layout_source = story_layouts
             body_layout_source = layouts
             document_source = base
             if (
-                desired_story_layouts is not None
+                desired is not None
                 and (
                     anchor.start.story_id in content_edited_story_ids
                     or anchor.end.story_id in content_edited_story_ids
                 )
             ):
-                layout_source = desired_story_layouts
-                body_layout_source = desired_body_layouts
-                document_source = desired
-            start_route, start_index = _resolve_position_for_named_range(
-                story_layouts=layout_source,
-                body_layouts=body_layout_source,
-                document=document_source,
-                position=anchor.start,
-            )
-            end_route, end_index = _resolve_position_for_named_range(
-                story_layouts=layout_source,
-                body_layouts=body_layout_source,
-                document=document_source,
-                position=anchor.end,
-            )
+                if requests:
+                    try:
+                        (
+                            shadow_document,
+                            shadow_story_layouts,
+                            shadow_body_layouts,
+                            shadow_request_count,
+                        ) = _ensure_shadow_state(
+                            base=base,
+                            requests=requests,
+                            shadow_document=shadow_document,
+                            shadow_story_layouts=shadow_story_layouts,
+                            shadow_request_count=shadow_request_count,
+                        )
+                    except ValidationError:
+                        shadow_document = None
+                        shadow_story_layouts = None
+                        shadow_body_layouts = {}
+                        shadow_request_count = -1
+                special_range = (
+                    _resolve_special_table_named_range(
+                        document=shadow_document,
+                        body_layouts=shadow_body_layouts,
+                        anchor=anchor,
+                        name=edit.name,
+                    )
+                    if shadow_document is not None
+                    else None
+                )
+                if special_range is not None:
+                    start_route, start_index, end_index = special_range
+                    end_route = start_route
+                else:
+                    if desired_story_layouts is None:
+                        raise ValueError("Desired story layouts are required for edited named ranges")
+                    start_route, start_index = _resolve_position_for_named_range(
+                        story_layouts=desired_story_layouts,
+                        body_layouts=desired_body_layouts,
+                        document=desired,
+                        position=anchor.start,
+                    )
+                    end_route, end_index = _resolve_position_for_named_range(
+                        story_layouts=desired_story_layouts,
+                        body_layouts=desired_body_layouts,
+                        document=desired,
+                        position=anchor.end,
+                    )
+                    if not _named_range_fits_current_document(
+                        base=base,
+                        requests=requests,
+                        route=start_route,
+                        start_index=start_index,
+                        end_index=end_index,
+                        shadow_document=shadow_document,
+                    ):
+                        if shadow_document is None:
+                            (
+                                shadow_document,
+                                shadow_story_layouts,
+                                shadow_body_layouts,
+                                shadow_request_count,
+                            ) = _ensure_shadow_state(
+                                base=base,
+                                requests=requests,
+                                shadow_document=shadow_document,
+                                shadow_story_layouts=shadow_story_layouts,
+                                shadow_request_count=shadow_request_count,
+                            )
+                        layout_source = (
+                            shadow_story_layouts
+                            if shadow_story_layouts is not None
+                            else story_layouts
+                        )
+                        body_layout_source = shadow_body_layouts
+                        document_source = shadow_document if shadow_document is not None else base
+                        start_route, start_index = _resolve_position_for_named_range(
+                            story_layouts=layout_source,
+                            body_layouts=body_layout_source,
+                            document=document_source,
+                            position=anchor.start,
+                        )
+                        end_route, end_index = _resolve_position_for_named_range(
+                            story_layouts=layout_source,
+                            body_layouts=body_layout_source,
+                            document=document_source,
+                            position=anchor.end,
+                        )
+            else:
+                start_route, start_index = _resolve_position_for_named_range(
+                    story_layouts=layout_source,
+                    body_layouts=body_layout_source,
+                    document=document_source,
+                    position=anchor.start,
+                )
+                end_route, end_index = _resolve_position_for_named_range(
+                    story_layouts=layout_source,
+                    body_layouts=body_layout_source,
+                    document=document_source,
+                    position=anchor.end,
+                )
             if start_route != end_route:
                 raise ValueError(
                     f"Named range {edit.name} crosses routes in unsupported spike slice"
@@ -668,7 +780,8 @@ def _lower_body_insert_group(
         )
     tab_id, _section_index, _block_index, _raw_anchor_index = anchor
     desired_fragments = [_body_insert_fragment(edit) for edit in edits]
-    execution_fragments = list(reversed(desired_fragments))
+    execution_fragments = desired_fragments
+    final_fragments = list(reversed(desired_fragments))
     structural_requests: list[dict[str, Any]] = []
     shadow = MockGoogleDocsAPI(base)
     if prior_requests:
@@ -737,13 +850,13 @@ def _lower_body_insert_group(
         shadow_layout=shadow_layout,
         section_index=anchor[1],
         block_index=anchor[2],
-        fragment_count=_body_insert_fragment_shadow_block_count(desired_fragments),
+        fragment_count=_body_insert_fragment_shadow_block_count(final_fragments),
     )
     paragraph_style_locations: list[tuple[ParagraphIR, tuple[int, int]]] = []
     style_ops: list[tuple[int, dict[str, Any]]] = []
     shadow_index = 0
 
-    for fragment in desired_fragments:
+    for fragment in final_fragments:
         if fragment[0] == "paragraphs":
             for paragraph in fragment[1]:
                 block = shadow_blocks[shadow_index]
@@ -1101,6 +1214,124 @@ def _edited_story_ids(edits: list[SemanticEdit]) -> set[str]:
         if isinstance(edit, InsertTableBlockEdit):
             story_ids.update(_table_story_ids(edit.table))
     return story_ids
+
+
+def _ensure_shadow_state(
+    *,
+    base: Document,
+    requests: list[dict[str, Any]],
+    shadow_document: Document | None,
+    shadow_story_layouts: dict[str, object] | None,
+    shadow_request_count: int,
+) -> tuple[Document | None, dict[str, object] | None, dict[str, BodyLayout], int]:
+    if not requests:
+        return None, None, {}, -1
+    if (
+        shadow_document is not None
+        and shadow_story_layouts is not None
+        and shadow_request_count == len(requests)
+    ):
+        return shadow_document, shadow_story_layouts, {}, shadow_request_count
+    shadow = MockGoogleDocsAPI(base)
+    shadow._batch_update_raw(requests)
+    current_document = shadow.get()
+    current_story_layouts = build_story_layouts(current_document)
+    return current_document, current_story_layouts, {}, len(requests)
+
+
+def _named_range_fits_current_document(
+    *,
+    base: Document,
+    requests: list[dict[str, Any]],
+    route: StoryRoute,
+    start_index: int,
+    end_index: int,
+    shadow_document: Document | None,
+) -> bool:
+    if start_index >= end_index:
+        return False
+    if shadow_document is None:
+        if not requests:
+            current_document = base
+        else:
+            try:
+                shadow = MockGoogleDocsAPI(base)
+                shadow._batch_update_raw(requests)
+                current_document = shadow.get()
+            except ValidationError:
+                return True
+    else:
+        current_document = shadow_document
+    segment_end = _story_route_end_index(current_document, route)
+    return end_index <= segment_end
+
+
+def _story_route_end_index(document: Document, route: StoryRoute) -> int:
+    raw = document.model_dump(by_alias=True, exclude_none=True)
+    raw_tab = next(
+        (
+            tab
+            for tab in raw.get("tabs", [])
+            if tab.get("tabProperties", {}).get("tabId") == route.tab_id
+        ),
+        None,
+    )
+    if raw_tab is None:
+        raise ValueError(f"Unknown tab id {route.tab_id!r}")
+    document_tab = raw_tab.get("documentTab", {})
+    if route.segment_id is None:
+        content = document_tab.get("body", {}).get("content", [])
+    else:
+        content = None
+        for container_name in ("headers", "footers", "footnotes"):
+            container = document_tab.get(container_name, {})
+            if route.segment_id in container:
+                content = container[route.segment_id].get("content", [])
+                break
+        if content is None:
+            raise ValueError(f"Unknown segment id {route.segment_id!r}")
+    if not content:
+        return 1 if route.segment_id is None else 0
+    return int(content[-1].get("endIndex", 0))
+
+
+def _resolve_special_table_named_range(
+    *,
+    document: Document | None,
+    body_layouts: dict[str, BodyLayout],
+    anchor: Any,
+    name: str,
+) -> tuple[StoryRoute, int, int] | None:
+    if document is None or not name.startswith("extradoc:"):
+        return None
+    start = anchor.start.path
+    end = anchor.end.path
+    if (
+        not anchor.start.story_id.endswith(":body")
+        or anchor.start.story_id != anchor.end.story_id
+        or start.section_index is None
+        or start.section_index != end.section_index
+        or start.block_index is None
+        or end.block_index != start.block_index + 1
+        or start.node_path
+        or end.node_path
+        or start.inline_index is not None
+        or end.inline_index is not None
+        or start.text_offset_utf16 is not None
+        or end.text_offset_utf16 is not None
+        or start.edge.value != "BEFORE"
+        or end.edge.value != "BEFORE"
+    ):
+        return None
+    tab_id = anchor.start.story_id.removesuffix(":body")
+    layout = body_layouts.setdefault(tab_id, build_body_layout(document, tab_id=tab_id))
+    blocks = layout.sections[start.section_index].block_locations
+    if start.block_index >= len(blocks):
+        return None
+    block = blocks[start.block_index]
+    if not isinstance(block, TableLocation):
+        return None
+    return StoryRoute(tab_id=tab_id), block.start_index, block.end_index
 
 
 def _resolve_position_for_named_range(

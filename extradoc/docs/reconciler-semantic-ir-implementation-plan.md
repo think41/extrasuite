@@ -1008,3 +1008,7 @@ Repair-path rule learned from broken live docs:
 3. those grouped inserts must resolve their anchor from the canonical body
    layout by default, and only use the raw body anchor when the target is a
    read-only transport block such as TOC/opaque content
+4. reverse ordering alone is not enough for table-backed body content; once any
+   prior request has been emitted, later body deletes/inserts must resolve
+   their transport indices from the evolving shadow document, not from a frozen
+   base layout

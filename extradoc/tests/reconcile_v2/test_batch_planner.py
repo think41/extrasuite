@@ -1,10 +1,18 @@
 from __future__ import annotations
 
+import json
+from pathlib import Path
+
 import pytest
 
+import extradoc.serde as serde
 from extradoc.api_types._generated import BatchUpdateDocumentRequest, Document
+from extradoc.client import _normalize_raw_base_para_styles
+from extradoc.mock.api import MockGoogleDocsAPI
+from extradoc.reconcile import reindex_document
 from extradoc.reconcile_v2.api import lower_semantic_diff_batches, reconcile
 from extradoc.reconcile_v2.errors import UnsupportedSpikeError
+from extradoc.serde._from_markdown import markdown_to_document
 
 from .helpers import (
     load_expected_lowered_batches,
@@ -152,6 +160,75 @@ def test_create_tab_footnote_batches_ignore_desired_future_tab_and_footnote_ids(
     assert lower_semantic_diff_batches(base, desired_future_id) == load_expected_lowered_batches(
         "create_tab_footnote_write"
     )
+
+
+def test_create_new_tab_with_mixed_markdown_body_is_supported() -> None:
+    base = reindex_document(
+        markdown_to_document(
+            {"Tab_1": "alpha\n"},
+            document_id="new-tab-mixed-body",
+            title="New Tab Mixed Body",
+            tab_ids={"Tab_1": "t.0"},
+        )
+    )
+    desired = reindex_document(
+        markdown_to_document(
+            {
+                "Tab_1": "alpha\n",
+                "Second_Tab": (
+                    "# Heading\n\n"
+                    "Lead paragraph.\n\n"
+                    "- bullet one\n"
+                    "- bullet two\n\n"
+                    "```python\n"
+                    "print('ok')\n"
+                    "```\n"
+                ),
+            },
+            document_id="new-tab-mixed-body",
+            title="New Tab Mixed Body",
+            tab_ids={"Tab_1": "t.0", "Second_Tab": "t.future"},
+        )
+    )
+
+    batches = lower_semantic_diff_batches(base, desired)
+
+    assert len(batches) >= 2
+    assert "addDocumentTab" in batches[0][0]
+    flattened = [request for batch in batches[1:] for request in batch]
+    assert any("insertText" in request for request in flattened)
+    assert any("insertTable" in request for request in flattened)
+    assert any("createParagraphBullets" in request for request in flattened)
+    assert any("updateParagraphStyle" in request for request in flattened)
+    assert any("createNamedRange" in request for request in flattened)
+
+
+def test_iterative_batches_split_complex_live_table_backed_body_rewrite() -> None:
+    fixture_root = (
+        Path(__file__).resolve().parent / "fixtures" / "live_multitab_cycle2_probe"
+    )
+    base = Document.model_validate(
+        json.loads((fixture_root / "base.json").read_text(encoding="utf-8"))
+    )
+    desired_bundle = serde.deserialize(fixture_root / "desired")
+    _normalize_raw_base_para_styles(base, desired_bundle.document)
+
+    batches = lower_semantic_diff_batches(base, reindex_document(desired_bundle.document))
+
+    assert len(batches) > 1
+    assert batches[0] == [
+        {
+            "deleteContentRange": {
+                "range": {"startIndex": 518, "endIndex": 561, "tabId": "t.0"}
+            }
+        }
+    ]
+
+    current = base
+    for batch in batches:
+        mock = MockGoogleDocsAPI(current)
+        mock._batch_update_raw(batch)
+        current = mock.get()
 
 
 def test_create_tab_named_range_footnote_batches_ignore_desired_future_tab_and_footnote_ids() -> None:

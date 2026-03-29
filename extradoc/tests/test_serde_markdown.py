@@ -812,6 +812,22 @@ class TestSpecialElementsPull:
         assert "print('hello')" in md
         assert "```" in md
 
+    def test_codeblock_pull_tolerates_table_start_one_before_named_range(self) -> None:
+        """Live Docs can report table start one code point before the named range."""
+        doc = _make_doc_with_named_range_table(
+            "extradoc:codeblock:python", "print('hello')"
+        )
+        tab = doc.tabs[0]  # type: ignore[index]
+        named_ranges = tab.document_tab.named_ranges  # type: ignore[union-attr]
+        entry = named_ranges["extradoc:codeblock:python"].named_ranges[0]
+        entry.ranges[0].start_index += 1
+
+        per_tab = document_to_markdown(doc)
+        md = per_tab["Tab_1"]["document.md"]
+        assert "```python" in md
+        assert "print('hello')" in md
+        assert "| --- |" not in md
+
     def test_callout_warning_pull(self) -> None:
         """extradoc:callout:warning → > [!WARNING]\\n> text."""
         doc = _make_doc_with_named_range_table("extradoc:callout:warning", "Watch out!")
