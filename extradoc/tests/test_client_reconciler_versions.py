@@ -202,6 +202,50 @@ def _diff_result_v2_refresh_with_post_table_style() -> DiffResult:
     )
 
 
+def _diff_result_v2_refresh_with_post_page_break_insert() -> DiffResult:
+    desired = reindex_document(
+        markdown_to_document(
+            {"Tab_1": "alpha\n"},
+            document_id="doc-6",
+            title="Test",
+            tab_ids={"Tab_1": "t.0"},
+        )
+    )
+    batch = BatchUpdateDocumentRequest.model_validate(
+        {
+            "requests": [
+                {
+                    "insertText": {
+                        "location": {"index": 1, "tabId": "t.0"},
+                        "text": "After Break\nClosing paragraph.",
+                    }
+                },
+                {
+                    "insertPageBreak": {
+                        "location": {"index": 1, "tabId": "t.0"},
+                    }
+                },
+                {
+                    "insertText": {
+                        "location": {"index": 1, "tabId": "t.0"},
+                        "text": "Paragraph before the break.\n",
+                    }
+                },
+            ]
+        }
+    )
+    return DiffResult(
+        document_id="doc-6",
+        batches=[batch],
+        comment_ops=CommentOperations(),
+        reconciler_version="v2",
+        base_revision_id="rev-0",
+        desired_document=desired,
+        desired_format="xml",
+        allow_live_refresh=True,
+    )
+
+
 def _setup_markdown_folder(
     tmp_path: Path,
     *,
@@ -258,16 +302,19 @@ def test_get_reconciler_version_rejects_invalid_value(
         _get_reconciler_version()
 
 
-def test_should_refresh_v2_batches_only_for_insert_table() -> None:
+def test_should_refresh_v2_batches_for_insert_table_or_page_break() -> None:
     assert _should_refresh_v2_batches(
         [{"insertTable": {"rows": 1, "columns": 1, "location": {"index": 1, "tabId": "t.0"}}}]
+    )
+    assert _should_refresh_v2_batches(
+        [{"insertPageBreak": {"location": {"index": 1, "tabId": "t.0"}}}]
     )
     assert not _should_refresh_v2_batches(
         [{"insertText": {"location": {"index": 1, "tabId": "t.0"}, "text": "x"}}]
     )
 
 
-def test_truncate_batch_before_post_table_para_ops() -> None:
+def test_truncate_batch_before_post_structural_para_ops() -> None:
     batch = [
         {
             "insertText": {
@@ -296,7 +343,31 @@ def test_truncate_batch_before_post_table_para_ops() -> None:
         },
     ]
 
-    assert _truncate_batch_before_post_table_para_ops(batch) == batch[:3]
+    assert _truncate_batch_before_post_table_para_ops(batch) == batch[:2]
+
+
+def test_truncate_batch_before_post_page_break_ops() -> None:
+    batch = [
+        {
+            "insertText": {
+                "location": {"index": 1, "tabId": "t.0"},
+                "text": "After Break\nClosing paragraph.",
+            }
+        },
+        {
+            "insertPageBreak": {
+                "location": {"index": 1, "tabId": "t.0"},
+            }
+        },
+        {
+            "insertText": {
+                "location": {"index": 1, "tabId": "t.0"},
+                "text": "Paragraph before the break.\n",
+            }
+        },
+    ]
+
+    assert _truncate_batch_before_post_table_para_ops(batch) == batch[:2]
 
 
 def test_tab_ids_subset_rejects_future_tabs() -> None:
@@ -1057,7 +1128,6 @@ async def test_push_refreshes_v2_batches_after_insert_table(
     ]
 
 
-@pytest.mark.asyncio
 async def test_push_truncates_post_table_paragraph_ops_before_refresh(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
@@ -1115,6 +1185,130 @@ async def test_push_truncates_post_table_paragraph_ops_before_refresh(
                 "rows": 1,
                 "columns": 1,
                 "location": {"index": 1, "tabId": "t.0"},
+            }
+        },
+    ]
+
+
+@pytest.mark.asyncio
+async def test_push_truncates_post_page_break_ops_before_refresh(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    transport = _FakeTransport()
+    transport.raw_document = reindex_document(
+        markdown_to_document(
+            {"Tab_1": "alpha\n"},
+            document_id="doc-6",
+            title="Test",
+            tab_ids={"Tab_1": "t.0"},
+        )
+    ).model_dump(by_alias=True, exclude_none=True)
+    client = DocsClient(transport)
+    monkeypatch.setattr(
+        DocsClient,
+        "diff",
+        lambda _self, _folder: _diff_result_v2_refresh_with_post_page_break_insert(),
+    )
+
+    refreshed = BatchUpdateDocumentRequest.model_validate(
+        {
+            "requests": [
+                {
+                    "insertText": {
+                        "location": {"index": 1, "tabId": "t.0"},
+                        "text": "refreshed",
+                    }
+                }
+            ]
+        }
+    )
+
+    def _fake_reconcile_v2(
+        _base: Document,
+        _desired: Document,
+        transport_base: Document | None = None,
+    ) -> list[BatchUpdateDocumentRequest]:
+        _ = transport_base
+        return [refreshed]
+
+    monkeypatch.setattr("extradoc.client.reconcile_v2", _fake_reconcile_v2)
+
+    result = await client.push(Path("/tmp/folder"))
+
+    assert result.success is True
+    assert transport.calls[0][1] == [
+        {
+            "insertText": {
+                "location": {"index": 1, "tabId": "t.0"},
+                "text": "After Break\nClosing paragraph.",
+            }
+        },
+        {
+            "insertPageBreak": {
+                "location": {"index": 1, "tabId": "t.0"},
+            }
+        },
+    ]
+
+
+@pytest.mark.asyncio
+async def test_push_refreshes_v2_batches_after_insert_page_break(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    transport = _FakeTransport()
+    transport.raw_document = reindex_document(
+        markdown_to_document(
+            {"Tab_1": "alpha\n"},
+            document_id="doc-7",
+            title="Test",
+            tab_ids={"Tab_1": "t.0"},
+        )
+    ).model_dump(by_alias=True, exclude_none=True)
+    client = DocsClient(transport)
+    monkeypatch.setattr(
+        DocsClient,
+        "diff",
+        lambda _self, _folder: _diff_result_v2_refresh_with_post_page_break_insert(),
+    )
+
+    refreshed = BatchUpdateDocumentRequest.model_validate(
+        {
+            "requests": [
+                {
+                    "insertText": {
+                        "location": {"index": 1, "tabId": "t.0"},
+                        "text": "refreshed",
+                    }
+                }
+            ]
+        }
+    )
+
+    def _fake_reconcile_v2(
+        _base: Document,
+        _desired: Document,
+        transport_base: Document | None = None,
+    ) -> list[BatchUpdateDocumentRequest]:
+        _ = transport_base
+        return [refreshed]
+
+    monkeypatch.setattr("extradoc.client.reconcile_v2", _fake_reconcile_v2)
+
+    result = await client.push(Path("/tmp/folder"))
+
+    assert result.success is True
+    assert transport.get_document_calls == ["doc-6"]
+    assert [call[1][0] for call in transport.calls] == [
+        {
+            "insertText": {
+                "location": {"index": 1, "tabId": "t.0"},
+                "text": "After Break\nClosing paragraph.",
+            }
+        },
+        {
+            "insertText": {
+                "location": {"index": 1, "tabId": "t.0"},
+                "text": "refreshed",
             }
         },
     ]

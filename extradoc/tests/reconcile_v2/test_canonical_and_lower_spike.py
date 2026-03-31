@@ -31,7 +31,10 @@ from extradoc.reconcile_v2.ir import (
     TextSpanIR,
 )
 from extradoc.reconcile_v2.layout import build_body_layout
-from extradoc.reconcile_v2.lower import _lower_blocks_into_fresh_story
+from extradoc.reconcile_v2.lower import (
+    _lower_blocks_into_fresh_story,
+    _raw_transport_block_keep_mask,
+)
 from extradoc.serde._from_markdown import markdown_to_document
 
 from .helpers import load_expected_lowered_requests
@@ -1933,6 +1936,71 @@ def test_transport_block_keep_mask_drops_carrier_runs_adjacent_to_page_breaks() 
     ]
 
     assert _transport_block_keep_mask(blocks) == [True, False, False, True, True]
+
+
+def test_raw_transport_block_keep_mask_drops_carrier_runs_adjacent_to_pagebreaks() -> None:
+    raw_blocks = [
+        {"kind": "paragraph", "text": "Before break", "start": 1, "end": 14},
+        {"kind": "paragraph", "text": "", "start": 14, "end": 15},
+        {"kind": "paragraph", "text": "", "start": 15, "end": 16},
+        {"kind": "pagebreak", "start": 16, "end": 18},
+        {"kind": "paragraph", "text": "After break", "start": 18, "end": 30},
+    ]
+
+    assert _raw_transport_block_keep_mask(raw_blocks) == [True, False, False, True, True]
+
+
+def test_lower_semantic_diff_inserts_pre_pagebreak_group_at_stable_anchor() -> None:
+    base = reindex_document(
+        markdown_to_document(
+            {"Tab_1": "<x-pagebreak/>\n\n## After Break\n\nClosing paragraph.\n"},
+            document_id="pagebreak-stable-anchor",
+            title="Pagebreak Stable Anchor",
+            tab_ids={"Tab_1": "t.0"},
+        )
+    )
+    desired = reindex_document(
+        markdown_to_document(
+            {
+                "Tab_1": (
+                    "# XML Page Break Verification\n\n"
+                    "Body-only XML verification without tables.\n\n"
+                    "- First bullet\n"
+                    "- Second bullet\n\n"
+                    "Paragraph before the break.\n\n"
+                    "<x-pagebreak/>\n\n"
+                    "## After Break\n\n"
+                    "Closing paragraph.\n"
+                )
+            },
+            document_id="pagebreak-stable-anchor",
+            title="Pagebreak Stable Anchor",
+            tab_ids={"Tab_1": "t.0"},
+        )
+    )
+
+    batches = lower_semantic_diff_batches(base, desired, transport_base=base)
+
+    assert batches[0][:3] == [
+        {
+            "insertText": {
+                "location": {"index": 1, "tabId": "t.0"},
+                "text": "Paragraph before the break.\n",
+            }
+        },
+        {
+            "insertText": {
+                "location": {"index": 1, "tabId": "t.0"},
+                "text": "First bullet\nSecond bullet\n",
+            }
+        },
+        {
+            "insertText": {
+                "location": {"index": 1, "tabId": "t.0"},
+                "text": "XML Page Break Verification\nBody-only XML verification without tables.\n",
+            }
+        },
+    ]
 
 
 def test_lower_semantic_diff_table_cell_text_replace_preserves_cell_paragraphs() -> None:

@@ -1123,17 +1123,38 @@ def _lower_body_insert_group(
         block_index=anchor[2],
         raw_block_index=anchor[3],
     )
-    for final_index, fragment in enumerate(insertion_fragments):
-        current_doc = shadow.get()
-        current_layout = build_body_layout(current_doc, tab_id=tab_id)
-        insert_index, current_prefix, current_suffix = _body_insert_site_for_group_anchor(
+    fixed_insert_index: int | None = None
+    if _body_group_anchor_targets_fixed_structural_block(
+        document=current_doc,
+        tab_id=tab_id,
+        section_index=anchor[1],
+        block_index=anchor[2],
+        raw_block_index=anchor[3],
+    ):
+        fixed_insert_index, _, _ = _body_insert_site_for_group_anchor(
             document=current_doc,
             _layout=current_layout,
             tab_id=tab_id,
             section_index=anchor[1],
             block_index=anchor[2],
-            raw_block_index=None,
+            raw_block_index=anchor[3],
         )
+    for final_index, fragment in enumerate(insertion_fragments):
+        if fixed_insert_index is not None:
+            insert_index = fixed_insert_index
+            current_prefix = False
+            current_suffix = False
+        else:
+            current_doc = shadow.get()
+            current_layout = build_body_layout(current_doc, tab_id=tab_id)
+            insert_index, current_prefix, current_suffix = _body_insert_site_for_group_anchor(
+                document=current_doc,
+                _layout=current_layout,
+                tab_id=tab_id,
+                section_index=anchor[1],
+                block_index=anchor[2],
+                raw_block_index=None,
+            )
         needs_prefix = (final_index == 0 and prefix_newline) or current_prefix
         needs_suffix = (
             final_index < len(insertion_fragments) - 1
@@ -1321,6 +1342,24 @@ def _lower_body_insert_group(
         )
     )
     return requests
+
+
+def _body_group_anchor_targets_fixed_structural_block(
+    *,
+    document: Document,
+    tab_id: str,
+    section_index: int,
+    block_index: int,
+    raw_block_index: int | None,
+) -> bool:
+    raw_sections = _raw_body_sections(document, tab_id=tab_id)
+    raw_blocks = raw_sections[section_index]
+    target_raw_index = raw_block_index
+    if target_raw_index is None:
+        target_raw_index = _canonical_to_raw_body_block_index(raw_blocks, block_index)
+    if target_raw_index >= len(raw_blocks):
+        return False
+    return raw_blocks[target_raw_index]["kind"] == "pagebreak"
 
 
 def _body_insert_fragment_shadow_block_count(
@@ -1689,6 +1728,26 @@ def _raw_transport_block_keep_mask(
         )
         if prev_is_structural or next_is_structural:
             keep_mask[index] = False
+    run_start = 0
+    while run_start < len(raw_blocks):
+        if not _is_raw_transport_carrier_paragraph(raw_blocks[run_start]):
+            run_start += 1
+            continue
+        run_end = run_start
+        while run_end + 1 < len(raw_blocks) and _is_raw_transport_carrier_paragraph(
+            raw_blocks[run_end + 1]
+        ):
+            run_end += 1
+        prev_is_structural = run_start > 0 and _is_raw_transport_carrier_anchor(
+            raw_blocks[run_start - 1]
+        )
+        next_is_structural = run_end + 1 < len(raw_blocks) and _is_raw_transport_carrier_anchor(
+            raw_blocks[run_end + 1]
+        )
+        if prev_is_structural or next_is_structural:
+            for index in range(run_start, run_end + 1):
+                keep_mask[index] = False
+        run_start = run_end + 1
     saw_noncarrier = any(
         not _is_raw_transport_carrier_paragraph(block) for block in raw_blocks
     )
@@ -1709,7 +1768,7 @@ def _is_raw_transport_carrier_paragraph(block: dict[str, object]) -> bool:
 
 
 def _is_raw_transport_carrier_anchor(block: dict[str, object]) -> bool:
-    return block["kind"] in {"table", "page_break"}
+    return block["kind"] in {"table", "pagebreak", "page_break"}
 
 
 def _raw_body_block_range(

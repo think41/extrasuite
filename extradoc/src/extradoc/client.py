@@ -437,21 +437,16 @@ async def _execute_document_batches_v2_live_refresh(
         changes_applied += len(batch)
         batch_index += 1
 
-        if batch_index >= len(request_batches):
-            continue
         if not _should_refresh_v2_batches(resolved_batch):
             continue
 
-        document_data = await transport.get_document(result.document_id)
-        transport_base = Document.model_validate(document_data.raw)
-        base = Document.model_validate(document_data.raw)
-        revision_id = transport_base.revision_id or revision_id
-        if result.desired_format == "markdown":
-            _normalize_raw_base_para_styles(base, result.desired_document)
-        refreshed_batches = reconcile_v2(
-            base,
-            result.desired_document,
-            transport_base=transport_base,
+        refreshed_batches, revision_id = await _refresh_v2_batches_after_structural_ops(
+            transport=transport,
+            document_id=result.document_id,
+            _resolved_batch=resolved_batch,
+            desired_document=result.desired_document,
+            desired_format=result.desired_format,
+            current_revision_id=revision_id,
         )
         request_batches = [
             [
@@ -466,21 +461,50 @@ async def _execute_document_batches_v2_live_refresh(
     return changes_applied
 
 
+async def _refresh_v2_batches_after_structural_ops(
+    *,
+    transport: Transport,
+    document_id: str,
+    _resolved_batch: list[dict],
+    desired_document: Document,
+    desired_format: str,
+    current_revision_id: str | None,
+) -> tuple[list[BatchUpdateDocumentRequest], str | None]:
+    document_data = await transport.get_document(document_id)
+    transport_base = Document.model_validate(document_data.raw)
+    base = Document.model_validate(document_data.raw)
+    next_revision_id = transport_base.revision_id or current_revision_id
+    if desired_format == "markdown":
+        _normalize_raw_base_para_styles(base, desired_document)
+    refreshed_batches = reconcile_v2(
+        base,
+        desired_document,
+        transport_base=transport_base,
+    )
+    return refreshed_batches, next_revision_id
+
+
 def _should_refresh_v2_batches(batch: list[dict]) -> bool:
-    return any("insertTable" in request for request in batch)
+    return any(
+        "insertTable" in request or "insertPageBreak" in request for request in batch
+    )
 
 
 def _truncate_batch_before_post_table_para_ops(batch: list[dict]) -> list[dict]:
-    seen_insert_table_tabs: set[str] = set()
+    seen_structural_tabs: set[str] = set()
     for index, request in enumerate(batch):
         kind = next(iter(request))
         tab_id = _request_tab_id(request)
-        if kind == "insertTable" and tab_id is not None:
-            seen_insert_table_tabs.add(tab_id)
+        if kind in {"insertTable", "insertPageBreak"} and tab_id is not None:
+            seen_structural_tabs.add(tab_id)
             continue
-        if tab_id in seen_insert_table_tabs and kind in {
+        if tab_id in seen_structural_tabs and kind in {
+            "insertText",
             "createParagraphBullets",
             "updateParagraphStyle",
+            "updateTextStyle",
+            "insertTable",
+            "insertPageBreak",
         }:
             return batch[:index]
     return batch
@@ -489,7 +513,7 @@ def _truncate_batch_before_post_table_para_ops(batch: list[dict]) -> list[dict]:
 def _request_tab_id(request: dict) -> str | None:
     kind = next(iter(request))
     payload = request[kind]
-    if kind in {"insertTable", "insertText"}:
+    if kind in {"insertTable", "insertText", "insertPageBreak"}:
         return payload.get("location", {}).get("tabId")
     if kind in {"createParagraphBullets", "deleteContentRange", "updateParagraphStyle", "updateTextStyle"}:
         return payload.get("range", {}).get("tabId")
