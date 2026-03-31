@@ -14,11 +14,17 @@ result = mock.get()                         # returns updated document as dict
 
 ## Status
 
-The mock is exercised by the `extradoc` test suite and is intended to be
-good enough for reconcile verification and focused request-level testing.
-It is not high-confidence for release signoff. If reconciler behavior matters,
-use fixture-backed replay against live Google Docs and treat the mock as a fast
-debugging aid rather than the source of truth.
+The mock is exercised by the `extradoc` test suite and is useful for focused
+request-level debugging. It is not transport truth and must not be treated as
+authoritative for reconciler behavior or release signoff.
+
+If mock behavior disagrees with live Google Docs:
+- the live Google Docs result wins
+- reconciler logic should follow live fixture-backed behavior
+- do not add compensating reconciler code just to satisfy the mock
+
+Use the mock as a fast local aid only. For anything transport-sensitive,
+verify against live Google Docs with captured fixtures and replay.
 
 ## How It Works
 

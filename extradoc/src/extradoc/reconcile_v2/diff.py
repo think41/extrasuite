@@ -129,6 +129,17 @@ class RelevelListItemsEdit:
     after_levels: tuple[int, ...]
 
 
+@dataclass(slots=True)
+class UpdateListItemRolesEdit:
+    tab_id: str
+    section_index: int
+    block_index: int
+    list_kind: str
+    item_indexes: tuple[int, ...]
+    before_roles: tuple[str, ...]
+    after_roles: tuple[str, ...]
+
+
 @dataclass(frozen=True, slots=True)
 class ParagraphFragment:
     paragraph: ParagraphIR
@@ -334,6 +345,7 @@ SemanticEdit = (
     | AppendListItemsEdit
     | ReplaceListSpecEdit
     | RelevelListItemsEdit
+    | UpdateListItemRolesEdit
     | ReplaceParagraphSliceEdit
     | InsertListBlockEdit
     | DeleteListBlockEdit
@@ -433,6 +445,11 @@ def summarize_semantic_edits(edits: Iterable[SemanticEdit]) -> list[str]:
             lines.append(
                 f"tab {edit.tab_id}: section {edit.section_index} list {edit.block_index} "
                 f"relevel {changed} item(s) in {edit.list_kind}"
+            )
+        elif isinstance(edit, UpdateListItemRolesEdit):
+            lines.append(
+                f"tab {edit.tab_id}: section {edit.section_index} list {edit.block_index} "
+                f"reset paragraph role on {len(edit.item_indexes)} item(s) in {edit.list_kind}"
             )
         elif isinstance(edit, ReplaceParagraphSliceEdit):
             lines.append(
@@ -1074,6 +1091,33 @@ def _diff_editable_block_span(
                         list_kind=desired_block.spec.kind,
                         before_levels=base_levels,
                         after_levels=desired_levels,
+                    )
+                )
+            base_roles = tuple(item.paragraph.role for item in base_block.items)
+            desired_roles = tuple(item.paragraph.role for item in desired_block.items)
+            if (
+                len(base_roles) == len(desired_roles)
+                and base_roles != desired_roles
+                and base_items == desired_items
+            ):
+                changed_indexes = tuple(
+                    index
+                    for index, (before_role, after_role) in enumerate(
+                        zip(base_roles, desired_roles, strict=True)
+                    )
+                    if before_role != after_role
+                )
+                edits.append(
+                    UpdateListItemRolesEdit(
+                        tab_id=tab_id,
+                        section_index=section_index,
+                        block_index=block_offset + block_index,
+                        list_kind=desired_block.spec.kind,
+                        item_indexes=changed_indexes,
+                        before_roles=tuple(base_roles[index] for index in changed_indexes),
+                        after_roles=tuple(
+                            desired_roles[index] for index in changed_indexes
+                        ),
                     )
                 )
     return edits

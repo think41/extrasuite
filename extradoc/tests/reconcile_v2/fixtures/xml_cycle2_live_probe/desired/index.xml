@@ -1,0 +1,7 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<doc id="1_35AHwoEwiqwkW_ZCOydWq4TID-7PiIuQr_fpALT120" title="Release Smoke XML" revision="AIxLkSukiGNAMoieQflPqGifPpYnIf-Cheh8z_05CUGsawlGPkaDavjQQohO1i3B78u9nW6OaYRYE0215o8PgaSGjbcTfE5lHhPhxrOVKXAfP-w">
+  <tab id="t.0" title="Tab 1" folder="Tab_1">
+    <h1 xpath="/tab/body/h1[1]" headingId="h.aayqnu5b1itt">Release XML Smoke</h1>
+    <h2 xpath="/tab/body/h2[2]" headingId="h.3bx5shufgzms">After Break</h2>
+  </tab>
+</doc>

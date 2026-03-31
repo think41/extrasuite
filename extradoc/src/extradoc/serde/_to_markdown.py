@@ -145,7 +145,7 @@ def _serialize_body(doc_tab: DocumentTab, list_defs: dict[str, Any]) -> str:
         footnote_defs[fn_id] = " ".join(p for p in parts if p)
 
     body_content = doc_tab.body.content if doc_tab.body else []
-    blocks = _serialize_content(body_content, list_types, nr_spans)
+    blocks = _serialize_content(body_content, list_types, list_defs, nr_spans)
 
     # Append footnote definitions
     if footnote_defs:
@@ -159,6 +159,7 @@ def _serialize_body(doc_tab: DocumentTab, list_defs: dict[str, Any]) -> str:
 def _serialize_content(
     content: list[StructuralElement],
     list_types: dict[str, str],
+    list_defs: dict[str, Any],
     nr_spans: list[tuple[int, int, str]] | None = None,
 ) -> list[str]:
     """Serialize a list of StructuralElements to markdown lines."""
@@ -230,7 +231,7 @@ def _serialize_content(
             else:
                 bullet = para.bullet
                 if bullet:
-                    line = _serialize_list_item(para, list_types)
+                    line = _serialize_list_item(para, list_types, list_defs)
                     if line is not None:
                         this_list_id = bullet.list_id
                         if lines and (not in_list or this_list_id != current_list_id):
@@ -300,14 +301,19 @@ def _serialize_paragraph(para: Paragraph) -> str | None:
     return inline
 
 
-def _serialize_list_item(para: Paragraph, list_types: dict[str, str]) -> str | None:
+def _serialize_list_item(
+    para: Paragraph,
+    list_types: dict[str, str],
+    list_defs: dict[str, Any],
+) -> str | None:
     bullet = para.bullet
     if not bullet:
         return None
 
     inline = _serialize_inlines(para.elements or [])
-    nesting = bullet.nesting_level or 0
-    list_type = list_types.get(bullet.list_id or "", "bullet")
+    list_id = bullet.list_id or ""
+    nesting = _list_item_nesting_level(para, list_defs.get(list_id))
+    list_type = list_types.get(list_id, "bullet")
     indent = "  " * nesting
 
     if list_type == "decimal":
@@ -316,6 +322,40 @@ def _serialize_list_item(para: Paragraph, list_types: dict[str, str]) -> str | N
         return f"{indent}- [ ] {inline}"
     else:
         return f"{indent}- {inline}"
+
+
+def _list_item_nesting_level(para: Paragraph, list_def: Any) -> int:
+    bullet = para.bullet
+    if bullet and bullet.nesting_level is not None:
+        return bullet.nesting_level
+    ps = para.paragraph_style
+    indent_start = ps.indent_start if ps else None
+    if not indent_start or indent_start.magnitude is None:
+        return 0
+    target_magnitude = indent_start.magnitude
+    target_unit = indent_start.unit or "PT"
+
+    if isinstance(list_def, dict):
+        nesting_levels = list_def.get("listProperties", {}).get("nestingLevels", [])
+        for index, level in enumerate(nesting_levels):
+            level_indent = level.get("indentStart", {})
+            if (
+                isinstance(level_indent, dict)
+                and level_indent.get("magnitude") == target_magnitude
+                and level_indent.get("unit", "PT") == target_unit
+            ):
+                return index
+        return 0
+
+    list_properties = getattr(list_def, "list_properties", None)
+    nesting_levels = (list_properties.nesting_levels or []) if list_properties else []
+    for index, level in enumerate(nesting_levels):
+        level_indent = level.indent_start
+        if not level_indent or level_indent.magnitude is None:
+            continue
+        if level_indent.magnitude == target_magnitude and (level_indent.unit or "PT") == target_unit:
+            return index
+    return 0
 
 
 # ---------------------------------------------------------------------------

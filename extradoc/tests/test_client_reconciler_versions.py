@@ -12,6 +12,9 @@ from extradoc.client import (
     DocsClient,
     _get_reconciler_version,
     _normalize_raw_base_para_styles,
+    _should_refresh_v2_batches,
+    _tab_ids_subset,
+    _truncate_batch_before_post_table_para_ops,
 )
 from extradoc.comments._types import (
     CommentOperations,
@@ -28,6 +31,8 @@ from extradoc.serde._from_markdown import markdown_to_document
 class _FakeTransport:
     def __init__(self) -> None:
         self.calls: list[tuple[str, list[dict], dict | None]] = []
+        self.get_document_calls: list[str] = []
+        self.raw_document: dict | None = None
 
     async def batch_update(
         self,
@@ -38,8 +43,13 @@ class _FakeTransport:
         self.calls.append((document_id, requests, write_control))
         return {"replies": []}
 
-    async def get_document(self, document_id: str) -> object:  # pragma: no cover
-        raise NotImplementedError
+    async def get_document(self, document_id: str) -> object:
+        self.get_document_calls.append(document_id)
+        if self.raw_document is None:
+            raise NotImplementedError
+        from extradoc.transport import DocumentData
+
+        return DocumentData(document_id=document_id, title="Test", raw=self.raw_document)
 
     async def list_comments(self, file_id: str) -> list[dict]:  # pragma: no cover
         raise NotImplementedError
@@ -90,6 +100,22 @@ def _batch_with_insert(text: str) -> BatchUpdateDocumentRequest:
     )
 
 
+def _batch_with_insert_table() -> BatchUpdateDocumentRequest:
+    return BatchUpdateDocumentRequest.model_validate(
+        {
+            "requests": [
+                {
+                    "insertTable": {
+                        "rows": 1,
+                        "columns": 1,
+                        "location": {"index": 1, "tabId": "t.0"},
+                    }
+                }
+            ]
+        }
+    )
+
+
 def _diff_result_v1() -> DiffResult:
     return DiffResult(
         document_id="doc-1",
@@ -106,6 +132,73 @@ def _diff_result_v2() -> DiffResult:
         comment_ops=CommentOperations(),
         reconciler_version="v2",
         base_revision_id="rev-0",
+    )
+
+
+def _diff_result_v2_refresh() -> DiffResult:
+    desired = reindex_document(
+        markdown_to_document(
+            {"Tab_1": "alpha\n"},
+            document_id="doc-3",
+            title="Test",
+            tab_ids={"Tab_1": "t.0"},
+        )
+    )
+    return DiffResult(
+        document_id="doc-3",
+        batches=[_batch_with_insert_table(), _batch_with_insert("omega")],
+        comment_ops=CommentOperations(),
+        reconciler_version="v2",
+        base_revision_id="rev-0",
+        desired_document=desired,
+        desired_format="markdown",
+        allow_live_refresh=True,
+    )
+
+
+def _diff_result_v2_refresh_with_post_table_style() -> DiffResult:
+    desired = reindex_document(
+        markdown_to_document(
+            {"Tab_1": "alpha\n"},
+            document_id="doc-5",
+            title="Test",
+            tab_ids={"Tab_1": "t.0"},
+        )
+    )
+    batch = BatchUpdateDocumentRequest.model_validate(
+        {
+            "requests": [
+                {
+                    "insertText": {
+                        "location": {"index": 1, "tabId": "t.0"},
+                        "text": "Lists Revised\n",
+                    }
+                },
+                {
+                    "insertTable": {
+                        "rows": 1,
+                        "columns": 1,
+                        "location": {"index": 1, "tabId": "t.0"},
+                    }
+                },
+                {
+                    "createParagraphBullets": {
+                        "range": {"startIndex": 10, "endIndex": 20, "tabId": "t.0"},
+                        "bulletPreset": "BULLET_DISC_CIRCLE_SQUARE",
+                    }
+                },
+            ]
+        }
+    )
+    return DiffResult(
+        document_id="doc-5",
+        batches=[batch],
+        comment_ops=CommentOperations(),
+        reconciler_version="v2",
+        base_revision_id="rev-0",
+        desired_document=desired,
+        desired_format="markdown",
+        allow_live_refresh=True,
     )
 
 
@@ -163,6 +256,68 @@ def test_get_reconciler_version_rejects_invalid_value(
     monkeypatch.setenv(RECONCILER_ENV_VAR, "broken")
     with pytest.raises(ValueError, match=RECONCILER_ENV_VAR):
         _get_reconciler_version()
+
+
+def test_should_refresh_v2_batches_only_for_insert_table() -> None:
+    assert _should_refresh_v2_batches(
+        [{"insertTable": {"rows": 1, "columns": 1, "location": {"index": 1, "tabId": "t.0"}}}]
+    )
+    assert not _should_refresh_v2_batches(
+        [{"insertText": {"location": {"index": 1, "tabId": "t.0"}, "text": "x"}}]
+    )
+
+
+def test_truncate_batch_before_post_table_para_ops() -> None:
+    batch = [
+        {
+            "insertText": {
+                "location": {"index": 1, "tabId": "t.0"},
+                "text": "Lists Revised\n",
+            }
+        },
+        {
+            "insertTable": {
+                "rows": 1,
+                "columns": 1,
+                "location": {"index": 1, "tabId": "t.0"},
+            }
+        },
+        {
+            "insertText": {
+                "location": {"index": 5, "tabId": "t.0"},
+                "text": "Tip callout replacement text.",
+            }
+        },
+        {
+            "createParagraphBullets": {
+                "range": {"startIndex": 422, "endIndex": 484, "tabId": "t.0"},
+                "bulletPreset": "BULLET_DISC_CIRCLE_SQUARE",
+            }
+        },
+    ]
+
+    assert _truncate_batch_before_post_table_para_ops(batch) == batch[:3]
+
+
+def test_tab_ids_subset_rejects_future_tabs() -> None:
+    base = reindex_document(
+        markdown_to_document(
+            {"Tab_1": "alpha\n"},
+            document_id="subset-base",
+            title="Test",
+            tab_ids={"Tab_1": "t.0"},
+        )
+    )
+    desired = reindex_document(
+        markdown_to_document(
+            {"Tab_1": "alpha\n", "Second_Tab": "beta\n"},
+            document_id="subset-base",
+            title="Test",
+            tab_ids={"Tab_1": "t.0", "Second_Tab": "t.future"},
+        )
+    )
+
+    assert not _tab_ids_subset(base, desired)
 
 
 def test_diff_uses_reconcile_v2_by_default(
@@ -837,3 +992,182 @@ async def test_push_uses_v2_executor(
         ],
         "initial_revision_id": "rev-0",
     }
+
+
+@pytest.mark.asyncio
+async def test_push_refreshes_v2_batches_after_insert_table(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    transport = _FakeTransport()
+    transport.raw_document = reindex_document(
+        markdown_to_document(
+            {"Tab_1": "alpha\n"},
+            document_id="doc-3",
+            title="Test",
+            tab_ids={"Tab_1": "t.0"},
+        )
+    ).model_dump(by_alias=True, exclude_none=True)
+    client = DocsClient(transport)
+    monkeypatch.setattr(
+        DocsClient,
+        "diff",
+        lambda _self, _folder: _diff_result_v2_refresh(),
+    )
+
+    refreshed = BatchUpdateDocumentRequest.model_validate(
+        {
+            "requests": [
+                {
+                    "insertText": {
+                        "location": {"index": 1, "tabId": "t.0"},
+                        "text": "refreshed",
+                    }
+                }
+            ]
+        }
+    )
+    def _fake_reconcile_v2(
+        _base: Document,
+        _desired: Document,
+        transport_base: Document | None = None,
+    ) -> list[BatchUpdateDocumentRequest]:
+        _ = transport_base
+        return [refreshed]
+
+    monkeypatch.setattr("extradoc.client.reconcile_v2", _fake_reconcile_v2)
+
+    result = await client.push(Path("/tmp/folder"))
+
+    assert result.success is True
+    assert transport.get_document_calls == ["doc-3"]
+    assert [call[1][0] for call in transport.calls] == [
+        {
+            "insertTable": {
+                "rows": 1,
+                "columns": 1,
+                "location": {"index": 1, "tabId": "t.0"},
+            }
+        },
+        {
+            "insertText": {
+                "location": {"index": 1, "tabId": "t.0"},
+                "text": "refreshed",
+            }
+        },
+    ]
+
+
+@pytest.mark.asyncio
+async def test_push_truncates_post_table_paragraph_ops_before_refresh(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    transport = _FakeTransport()
+    transport.raw_document = reindex_document(
+        markdown_to_document(
+            {"Tab_1": "alpha\n"},
+            document_id="doc-5",
+            title="Test",
+            tab_ids={"Tab_1": "t.0"},
+        )
+    ).model_dump(by_alias=True, exclude_none=True)
+    client = DocsClient(transport)
+    monkeypatch.setattr(
+        DocsClient,
+        "diff",
+        lambda _self, _folder: _diff_result_v2_refresh_with_post_table_style(),
+    )
+
+    refreshed = BatchUpdateDocumentRequest.model_validate(
+        {
+            "requests": [
+                {
+                    "insertText": {
+                        "location": {"index": 1, "tabId": "t.0"},
+                        "text": "refreshed",
+                    }
+                }
+            ]
+        }
+    )
+
+    def _fake_reconcile_v2(
+        _base: Document,
+        _desired: Document,
+        transport_base: Document | None = None,
+    ) -> list[BatchUpdateDocumentRequest]:
+        _ = transport_base
+        return [refreshed]
+
+    monkeypatch.setattr("extradoc.client.reconcile_v2", _fake_reconcile_v2)
+
+    result = await client.push(Path("/tmp/folder"))
+
+    assert result.success is True
+    assert transport.calls[0][1] == [
+        {
+            "insertText": {
+                "location": {"index": 1, "tabId": "t.0"},
+                "text": "Lists Revised\n",
+            }
+        },
+        {
+            "insertTable": {
+                "rows": 1,
+                "columns": 1,
+                "location": {"index": 1, "tabId": "t.0"},
+            }
+        },
+    ]
+
+
+@pytest.mark.asyncio
+async def test_push_refresh_uses_fetched_revision_id_for_followup_batches(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    transport = _FakeTransport()
+    refreshed_doc = reindex_document(
+        markdown_to_document(
+            {"Tab_1": "alpha\n"},
+            document_id="doc-4",
+            title="Test",
+            tab_ids={"Tab_1": "t.0"},
+        )
+    ).model_dump(by_alias=True, exclude_none=True)
+    refreshed_doc["revisionId"] = "rev-1"
+    transport.raw_document = refreshed_doc
+    client = DocsClient(transport)
+    monkeypatch.setattr(
+        DocsClient,
+        "diff",
+        lambda _self, _folder: _diff_result_v2_refresh(),
+    )
+
+    refreshed = BatchUpdateDocumentRequest.model_validate(
+        {
+            "requests": [
+                {
+                    "insertText": {
+                        "location": {"index": 1, "tabId": "t.0"},
+                        "text": "refreshed",
+                    }
+                }
+            ]
+        }
+    )
+
+    def _fake_reconcile_v2(
+        _base: Document,
+        _desired: Document,
+        transport_base: Document | None = None,
+    ) -> list[BatchUpdateDocumentRequest]:
+        _ = transport_base
+        return [refreshed]
+
+    monkeypatch.setattr("extradoc.client.reconcile_v2", _fake_reconcile_v2)
+
+    result = await client.push(Path("/tmp/folder"))
+
+    assert result.success is True
+    assert transport.get_document_calls == ["doc-3"]
+    assert transport.calls[0][2] == {"requiredRevisionId": "rev-0"}
+    assert transport.calls[1][2] == {"requiredRevisionId": "rev-1"}

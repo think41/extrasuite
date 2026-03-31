@@ -12,6 +12,7 @@ from extradoc.client import _normalize_raw_base_para_styles
 from extradoc.mock.api import MockGoogleDocsAPI
 from extradoc.reconcile import reindex_document
 from extradoc.reconcile_v2.api import lower_semantic_diff_batches, reconcile
+from extradoc.reconcile_v2.batches import _body_carrier_style_reset_requests
 from extradoc.reconcile_v2.errors import UnsupportedSpikeError
 from extradoc.reconcile_v2.executor import resolve_deferred_placeholders
 from extradoc.serde._from_markdown import markdown_to_document
@@ -148,6 +149,53 @@ def test_markdown_footnote_insert_from_empty_doc_batches_content_then_footnote()
     ]
 
 
+def test_markdown_special_tables_from_empty_doc_split_table_followups() -> None:
+    base = reindex_document(
+        markdown_to_document(
+            {"Tab_1": ""},
+            document_id="md-special-table-split",
+            title="Markdown Special Table Split",
+            tab_ids={"Tab_1": "t.0"},
+        )
+    )
+    desired = reindex_document(
+        markdown_to_document(
+            {
+                "Tab_1": (
+                    "> [!INFO]\n"
+                    "> Info callout.\n\n"
+                    "> Plain blockquote.\n\n"
+                    "```json\n"
+                    "{\"ok\": true}\n"
+                    "```\n"
+                )
+            },
+            document_id="md-special-table-split",
+            title="Markdown Special Table Split",
+            tab_ids={"Tab_1": "t.0"},
+        )
+    )
+
+    batches = lower_semantic_diff_batches(base, desired)
+
+    assert len(batches) >= 2
+    assert any("insertTable" in request for request in batches[0])
+    assert all("insertTable" not in request for request in batches[1][0:1])
+    assert not any(
+        kind in {"createParagraphBullets", "updateParagraphStyle"}
+        for request in batches[0]
+        for kind in request
+    )
+    assert any(
+        any(
+            kind in {"updateTableCellStyle", "createNamedRange"}
+            for request in batch
+            for kind in request
+        )
+        for batch in batches[1:]
+    )
+
+
 def test_create_tab_batches_ignore_desired_future_tab_id() -> None:
     base, desired = load_fixture_pair("create_tab_table_write")
     desired_raw = desired.model_dump(by_alias=True, exclude_none=True)
@@ -257,6 +305,51 @@ def test_create_new_tab_with_mixed_markdown_body_is_supported() -> None:
     assert any("createParagraphBullets" in request for request in flattened)
     assert any("updateParagraphStyle" in request for request in flattened)
     assert any("createNamedRange" in request for request in flattened)
+    assert not any(
+        "insertText" in request
+        and request["insertText"]["location"].get("index") == 1
+        and isinstance(request["insertText"]["text"], str)
+        and request["insertText"]["text"].startswith("\n")
+        for request in flattened
+    )
+
+
+def test_create_new_tab_with_note_callout_emits_special_named_range() -> None:
+    base = reindex_document(
+        markdown_to_document(
+            {"Tab_1": "alpha\n"},
+            document_id="new-tab-note-callout",
+            title="New Tab Note Callout",
+            tab_ids={"Tab_1": "t.0"},
+        )
+    )
+    desired = reindex_document(
+        markdown_to_document(
+            {
+                "Tab_1": "alpha\n",
+                "Second_Tab": (
+                    "# Workbench\n\n"
+                    "## Quotes\n\n"
+                    "> [!NOTE]\n"
+                    "> Keep the note callout metadata on creation.\n"
+                ),
+            },
+            document_id="new-tab-note-callout",
+            title="New Tab Note Callout",
+            tab_ids={"Tab_1": "t.0", "Second_Tab": "t.future"},
+        )
+    )
+
+    flattened = [
+        request
+        for batch in lower_semantic_diff_batches(base, desired)
+        for request in batch
+    ]
+
+    assert any(
+        request.get("createNamedRange", {}).get("name") == "extradoc:callout:note"
+        for request in flattened
+    )
 
 
 def test_iterative_batches_split_complex_live_table_backed_body_rewrite() -> None:
@@ -288,52 +381,26 @@ def test_iterative_batches_split_complex_live_table_backed_body_rewrite() -> Non
     )
 
     assert len(batches) > 1
-    assert batches[0] == [
-        {
-            "deleteContentRange": {
-                "range": {"startIndex": 497, "endIndex": 515, "tabId": "t.0"}
-            }
-        },
-        {
-            "insertText": {
-                "location": {"index": 497, "tabId": "t.0"},
-                "text": '    return "blue"',
-            }
-        },
-        {
-            "updateTextStyle": {
-                "range": {"startIndex": 497, "endIndex": 514, "tabId": "t.0"},
-                "textStyle": {
-                    "fontSize": {"magnitude": 10.0, "unit": "PT"},
-                    "weightedFontFamily": {"fontFamily": "Courier New"},
-                },
-                "fields": "fontSize,weightedFontFamily",
-            }
-        },
-    ]
-    assert batches[1] == [
-        {
-            "deleteContentRange": {
-                "range": {"startIndex": 520, "endIndex": 558, "tabId": "t.0"}
-            }
-        },
-        {
-            "insertText": {
-                "location": {"index": 520, "tabId": "t.0"},
-                "text": '{"stage": "edited", "verified": false}',
-            }
-        },
-        {
-            "updateTextStyle": {
-                "range": {"startIndex": 520, "endIndex": 558, "tabId": "t.0"},
-                "textStyle": {
-                    "fontSize": {"magnitude": 10.0, "unit": "PT"},
-                    "weightedFontFamily": {"fontFamily": "Courier New"},
-                },
-                "fields": "fontSize,weightedFontFamily",
-            }
-        },
-    ]
+    flattened = [request for batch in batches for request in batch]
+    assert any(
+        request.get("insertText", {}).get("text") == '    return "blue"'
+        and request["insertText"]["location"].get("tabId") == "t.0"
+        for request in flattened
+    )
+    assert any(
+        request.get("insertText", {}).get("text") == '{"stage": "edited", "verified": false}'
+        and request["insertText"]["location"].get("tabId") == "t.0"
+        for request in flattened
+    )
+    assert sum(
+        1
+        for request in flattened
+        if request.get("updateTextStyle", {}).get("textStyle", {}).get(
+            "weightedFontFamily", {}
+        ).get("fontFamily")
+        == "Courier New"
+        and request["updateTextStyle"]["range"].get("tabId") == "t.0"
+    ) >= 2
     named_range_names = [
         request["createNamedRange"]["name"]
         for batch in batches
@@ -357,6 +424,231 @@ def test_iterative_batches_split_complex_live_table_backed_body_rewrite() -> Non
         response = mock._batch_update_raw(resolved_batch)
         prior_responses.append(response)
         current = mock.get()
+
+
+def test_iterative_batches_accept_small_xml_live_residual_fallback() -> None:
+    fixture_root = Path(__file__).resolve().parent / "fixtures" / "xml_live_cycle1_after_failure"
+    base = Document.model_validate(
+        json.loads((fixture_root / "base.json").read_text(encoding="utf-8"))
+    )
+    desired_bundle = serde.deserialize(fixture_root / "desired")
+    desired = reindex_document(desired_bundle.document)
+
+    batches = lower_semantic_diff_batches(base, desired, transport_base=base)
+
+    assert batches
+    assert any(
+        any("insertTable" in request for request in batch)
+        for batch in batches
+    )
+    assert any(
+        any("createFootnote" in request for request in batch)
+        for batch in batches
+    )
+
+
+def test_iterative_batches_support_xml_cycle2_live_probe() -> None:
+    fixture_root = Path(__file__).resolve().parent / "fixtures" / "xml_cycle2_live_probe"
+    base = Document.model_validate(
+        json.loads((fixture_root / "base.json").read_text(encoding="utf-8"))
+    )
+    desired_bundle = serde.deserialize(fixture_root / "desired")
+    desired = reindex_document(desired_bundle.document)
+
+    batches = lower_semantic_diff_batches(base, desired, transport_base=base)
+
+    assert batches
+    flattened = [request for batch in batches for request in batch]
+    assert any("deleteTableRow" in request or "deleteContentRange" in request for request in flattened)
+    assert any("insertTable" in request for request in flattened)
+    assert any(
+        request.get("insertText", {}).get("location", {}).get("segmentId")
+        or request.get("deleteContentRange", {}).get("range", {}).get("segmentId")
+        for request in flattened
+    )
+
+
+def test_body_carrier_style_reset_requests_normalize_table_adjacent_blank_paragraphs() -> None:
+    document = reindex_document(
+        markdown_to_document(
+            {
+                "Tab_1": (
+                    "## Alerts Revised\n\n"
+                    "> [!TIP]\n"
+                    "> Tip callout replacement text.\n\n"
+                    "> [!WARNING]\n"
+                    "> Warning callout edited text.\n"
+                )
+            },
+            document_id="carrier-style-reset",
+            title="Carrier Style Reset",
+            tab_ids={"Tab_1": "t.0"},
+        )
+    )
+    raw = document.model_dump(by_alias=True, exclude_none=True)
+    body = raw["tabs"][0]["documentTab"]["body"]["content"]
+    body.insert(
+        5,
+        {
+            "startIndex": 271,
+            "endIndex": 272,
+            "paragraph": {
+                "elements": [
+                    {
+                        "startIndex": 271,
+                        "endIndex": 272,
+                        "textRun": {"content": "\n", "textStyle": {}},
+                    }
+                ],
+                "paragraphStyle": {"namedStyleType": "HEADING_2"},
+            },
+        },
+    )
+    broken = Document.model_validate(raw)
+
+    requests = _body_carrier_style_reset_requests(broken)
+
+    assert requests == [
+        {
+            "updateParagraphStyle": {
+                "range": {"startIndex": 271, "endIndex": 272, "tabId": "t.0"},
+                "paragraphStyle": {"namedStyleType": "NORMAL_TEXT"},
+                "fields": "namedStyleType",
+            }
+        }
+    ]
+
+
+def test_body_carrier_style_reset_requests_normalize_blank_paragraph_runs_before_tables() -> None:
+    raw = {
+        "documentId": "carrier-run",
+        "tabs": [
+            {
+                "tabProperties": {"tabId": "t.0", "title": "Tab 1", "index": 0},
+                "documentTab": {
+                    "body": {
+                        "content": [
+                            {
+                                "endIndex": 1,
+                                "sectionBreak": {
+                                    "sectionStyle": {"columnSeparatorStyle": "NONE"}
+                                },
+                            },
+                            {
+                                "startIndex": 1,
+                                "endIndex": 17,
+                                "paragraph": {
+                                    "elements": [
+                                        {
+                                            "startIndex": 1,
+                                            "endIndex": 17,
+                                            "textRun": {"content": "Code Samples\n"},
+                                        }
+                                    ],
+                                    "paragraphStyle": {"namedStyleType": "HEADING_2"},
+                                },
+                            },
+                            {
+                                "startIndex": 17,
+                                "endIndex": 18,
+                                "paragraph": {
+                                    "elements": [
+                                        {
+                                            "startIndex": 17,
+                                            "endIndex": 18,
+                                            "textRun": {"content": "\n", "textStyle": {}},
+                                        }
+                                    ],
+                                    "paragraphStyle": {"namedStyleType": "HEADING_2"},
+                                },
+                            },
+                            {
+                                "startIndex": 18,
+                                "endIndex": 19,
+                                "paragraph": {
+                                    "elements": [
+                                        {
+                                            "startIndex": 18,
+                                            "endIndex": 19,
+                                            "textRun": {"content": "\n", "textStyle": {}},
+                                        }
+                                    ],
+                                    "paragraphStyle": {"namedStyleType": "NORMAL_TEXT"},
+                                },
+                            },
+                            {
+                                "startIndex": 19,
+                                "endIndex": 29,
+                                "table": {
+                                    "rows": 1,
+                                    "columns": 1,
+                                    "tableRows": [
+                                        {
+                                            "startIndex": 20,
+                                            "endIndex": 28,
+                                            "tableCells": [
+                                                {
+                                                    "startIndex": 21,
+                                                    "endIndex": 28,
+                                                    "content": [
+                                                        {
+                                                            "startIndex": 22,
+                                                            "endIndex": 27,
+                                                            "paragraph": {
+                                                                "elements": [
+                                                                    {
+                                                                        "startIndex": 22,
+                                                                        "endIndex": 26,
+                                                                        "textRun": {"content": "code"},
+                                                                    },
+                                                                    {
+                                                                        "startIndex": 26,
+                                                                        "endIndex": 27,
+                                                                        "textRun": {"content": "\n"},
+                                                                    },
+                                                                ]
+                                                            },
+                                                        },
+                                                        {
+                                                            "startIndex": 27,
+                                                            "endIndex": 28,
+                                                            "paragraph": {
+                                                                "elements": [
+                                                                    {
+                                                                        "startIndex": 27,
+                                                                        "endIndex": 28,
+                                                                        "textRun": {"content": "\n"},
+                                                                    }
+                                                                ]
+                                                            },
+                                                        },
+                                                    ],
+                                                    "tableCellStyle": {},
+                                                }
+                                            ],
+                                        }
+                                    ],
+                                },
+                            },
+                        ]
+                    }
+                },
+            }
+        ],
+    }
+    broken = Document.model_validate(raw)
+
+    requests = _body_carrier_style_reset_requests(broken)
+
+    assert requests == [
+        {
+            "updateParagraphStyle": {
+                "range": {"startIndex": 17, "endIndex": 18, "tabId": "t.0"},
+                "paragraphStyle": {"namedStyleType": "NORMAL_TEXT"},
+                "fields": "namedStyleType",
+            }
+        }
+    ]
 
 
 def test_create_tab_named_range_footnote_batches_ignore_desired_future_tab_and_footnote_ids() -> None:

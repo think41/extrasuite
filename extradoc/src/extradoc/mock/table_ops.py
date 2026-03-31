@@ -98,6 +98,17 @@ def handle_insert_table(
 
     # Step 5: Insert table into content array
     inject_content.insert(inject_idx, table_elem)
+    if segment_id is None:
+        inject_content.insert(
+            inject_idx + 1,
+            _build_table_carrier_paragraph(
+                paragraph_style=_resolve_preceding_paragraph_style(
+                    inject_idx,
+                    inject_content,
+                ),
+                text_style=inherited_text_style,
+            ),
+        )
 
     # No index shifting — reindex handles it
     return {}
@@ -143,6 +154,18 @@ def _resolve_preceding_text_style(
             return dict(style_def.get("textStyle", {}))
 
     return {}
+
+
+def _resolve_preceding_paragraph_style(
+    inject_idx: int,
+    content: list[dict[str, Any]],
+) -> dict[str, Any]:
+    if inject_idx <= 0:
+        return {}
+    paragraph = content[inject_idx - 1].get("paragraph")
+    if paragraph is None:
+        return {}
+    return dict(paragraph.get("paragraphStyle", {}))
 
 
 def _find_table_insertion_site(
@@ -234,6 +257,30 @@ def _build_table_element(
                     {"widthType": "EVENLY_DISTRIBUTED"} for _ in range(columns)
                 ],
             },
+        },
+    }
+
+
+def _build_table_carrier_paragraph(
+    *,
+    paragraph_style: dict[str, Any] | None = None,
+    text_style: dict[str, Any] | None = None,
+) -> dict[str, Any]:
+    return {
+        "startIndex": 0,
+        "endIndex": 0,
+        "paragraph": {
+            "elements": [
+                {
+                    "startIndex": 0,
+                    "endIndex": 0,
+                    "textRun": {
+                        "content": "\n",
+                        "textStyle": dict(text_style or {}),
+                    },
+                }
+            ],
+            "paragraphStyle": dict(paragraph_style or {}),
         },
     }
 

@@ -1175,6 +1175,12 @@ def test_insert_table_basic() -> None:
         )
     )
     assert len(response.replies or []) == 1
+    body = api.get().model_dump(by_alias=True, exclude_none=True)["tabs"][0][
+        "documentTab"
+    ]["body"]["content"]
+    assert "table" in body[1]
+    assert body[2]["paragraph"]["elements"][0]["textRun"]["content"] == "\n"
+    assert body[2]["paragraph"]["paragraphStyle"] == {}
 
 
 def test_insert_table_inside_table_cell() -> None:

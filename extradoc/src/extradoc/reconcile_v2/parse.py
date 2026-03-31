@@ -187,7 +187,7 @@ class _StoryResolver:
                         edge=PositionEdge.BEFORE,
                     ),
                 )
-            if is_end and index == para.end:
+            if index == para.end:
                 return PositionIR(
                     story_id=self.story_id,
                     path=FlowPathIR(
@@ -195,6 +195,37 @@ class _StoryResolver:
                         block_index=para.block_index,
                         node_path=para.node_path,
                         edge=PositionEdge.AFTER,
+                    ),
+                )
+            if para.spans:
+                if para.start < index < para.spans[0].start:
+                    return PositionIR(
+                        story_id=self.story_id,
+                        path=FlowPathIR(
+                            section_index=para.section_index,
+                            block_index=para.block_index,
+                            node_path=para.node_path,
+                            edge=PositionEdge.BEFORE,
+                        ),
+                    )
+                if para.spans[-1].end <= index < para.end:
+                    return PositionIR(
+                        story_id=self.story_id,
+                        path=FlowPathIR(
+                            section_index=para.section_index,
+                            block_index=para.block_index,
+                            node_path=para.node_path,
+                            edge=PositionEdge.AFTER,
+                        ),
+                    )
+            if not para.spans and para.start < index < para.end:
+                return PositionIR(
+                    story_id=self.story_id,
+                    path=FlowPathIR(
+                        section_index=para.section_index,
+                        block_index=para.block_index,
+                        node_path=para.node_path,
+                        edge=PositionEdge.AFTER if is_end else PositionEdge.BEFORE,
                     ),
                 )
 

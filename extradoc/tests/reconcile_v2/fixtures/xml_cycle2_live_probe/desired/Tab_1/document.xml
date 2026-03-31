@@ -1,0 +1,54 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<tab id="t.0" title="Tab 1" index="0">
+  <body>
+    <sectionbreak
+      sectionType="CONTINUOUS"
+      contentDirection="LEFT_TO_RIGHT"
+      columnSeparatorStyle="NONE"
+      defaultHeaderId="h.release"
+      defaultFooterId="f.release"
+    />
+    <h1>Release XML Smoke Updated</h1>
+    <p>Paragraph with a <a href="https://example.com/release-updated">release link</a> and the edited footnote marker<footnoteref id="fn.release" />.</p>
+    <li type="bullet">First bullet updated</li>
+    <li type="bullet">Second bullet updated</li>
+    <p>Paragraph before the table updated.</p>
+    <table>
+      <tr>
+        <td>
+          <p><t><b>Bold</b></t><t> cell text updated</t></p>
+        </td>
+        <td>
+          <p>Plain cell updated</p>
+        </td>
+      </tr>
+      <tr>
+        <td>
+          <p>Nested table host updated.</p>
+          <table>
+            <tr>
+              <td><p>Inner A1 updated</p></td>
+              <td><p>Inner A2 updated</p></td>
+            </tr>
+          </table>
+        </td>
+        <td>
+          <p><a href="https://example.com/table-updated">Cell link updated</a></p>
+        </td>
+      </tr>
+    </table>
+    <p>After table paragraph updated.</p>
+    <pagebreak />
+    <h2>After Break Updated</h2>
+    <p>Closing prose updated.</p>
+  </body>
+  <header id="h.release">
+    <p>Release Header Updated</p>
+  </header>
+  <footer id="f.release">
+    <p>Release Footer Updated</p>
+  </footer>
+  <footnote id="fn.release">
+    <p>Release footnote text updated.</p>
+  </footnote>
+</tab>

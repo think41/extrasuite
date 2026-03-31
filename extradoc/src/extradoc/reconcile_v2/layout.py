@@ -106,6 +106,13 @@ class StoryLayout:
     paragraphs: tuple[StoryParagraphLocation, ...]
 
 
+@dataclass(frozen=True, slots=True)
+class _BodyStoryLookup:
+    paragraph_blocks: dict[tuple[int, int, int], int]
+    list_item_blocks: dict[tuple[int, int, int], int]
+    table_blocks: dict[tuple[int, int, int], int]
+
+
 def build_body_layout(document: Document, *, tab_id: str) -> BodyLayout:
     """Build a canonicalized body layout for one tab."""
     raw_tab = next(
@@ -251,6 +258,13 @@ def build_body_layout(document: Document, *, tab_id: str) -> BodyLayout:
         )
 
     flush_list()
+    for section in sections:
+        keep_mask = _body_block_keep_mask(section.block_locations)
+        section.block_locations = [
+            block
+            for block, keep in zip(section.block_locations, keep_mask, strict=True)
+            if keep
+        ]
     return BodyLayout(tab_id=tab_id, sections=tuple(sections))
 
 
@@ -262,6 +276,8 @@ def build_story_layouts(document: Document) -> dict[str, StoryLayout]:
         props = raw_tab.get("tabProperties", {})
         tab_id = props.get("tabId") or f"tab-{tab_ordinal}"
         document_tab = raw_tab.get("documentTab", {})
+        body_layout = build_body_layout(document, tab_id=tab_id)
+        body_lookup = _build_body_story_lookup(body_layout)
 
         body_story_id = f"{tab_id}:body"
         layouts[body_story_id] = StoryLayout(
@@ -274,6 +290,7 @@ def build_story_layouts(document: Document) -> dict[str, StoryLayout]:
                     route=StoryRoute(tab_id=tab_id),
                     layouts=layouts,
                     sectioned_body=True,
+                    body_lookup=body_lookup,
                 )
             ),
         )
@@ -414,6 +431,7 @@ def _collect_story_paragraphs(
     route: StoryRoute,
     layouts: dict[str, StoryLayout],
     sectioned_body: bool,
+    body_lookup: _BodyStoryLookup | None = None,
 ) -> list[StoryParagraphLocation]:
     paragraphs: list[StoryParagraphLocation] = []
     block_index = 0
@@ -455,11 +473,26 @@ def _collect_story_paragraphs(
                         break
                     item_start = _element_start_index(candidate, cursor)
                     item_end = _element_end_index(candidate, item_start)
+                    resolved_block_index = (
+                        _resolve_body_list_block_index(
+                            body_lookup,
+                            section_index=section_index,
+                            start_index=item_start,
+                            end_index=item_end,
+                        )
+                        if sectioned_body and body_lookup is not None
+                        else block_index
+                    )
+                    if resolved_block_index is None:
+                        cursor = item_end
+                        item_index += 1
+                        i += 1
+                        continue
                     paragraphs.append(
                         _make_story_paragraph_location(
                             paragraph_element=candidate_paragraph,
                             section_index=section_index,
-                            block_index=block_index,
+                            block_index=resolved_block_index,
                             node_path=(item_index,),
                             start_index=item_start,
                             end_index=item_end,
@@ -468,7 +501,8 @@ def _collect_story_paragraphs(
                     cursor = item_end
                     item_index += 1
                     i += 1
-                block_index += 1
+                if not (sectioned_body and body_lookup is not None):
+                    block_index += 1
                 continue
 
             text = "".join(
@@ -485,28 +519,57 @@ def _collect_story_paragraphs(
                 cursor = end_index
                 i += 1
                 continue
+            resolved_block_index = (
+                _resolve_body_paragraph_block_index(
+                    body_lookup,
+                    section_index=section_index,
+                    start_index=start_index,
+                    end_index=end_index,
+                )
+                if sectioned_body and body_lookup is not None
+                else block_index
+            )
+            if resolved_block_index is None:
+                cursor = end_index
+                i += 1
+                continue
 
             paragraphs.append(
                 _make_story_paragraph_location(
                     paragraph_element=paragraph,
                     section_index=section_index,
-                    block_index=block_index,
+                    block_index=resolved_block_index,
                     node_path=(),
                     start_index=start_index,
                     end_index=end_index,
                 )
             )
             cursor = end_index
-            block_index += 1
+            if not (sectioned_body and body_lookup is not None):
+                block_index += 1
             i += 1
             continue
 
         table = element.get("table")
         if table is not None:
+            resolved_block_index = (
+                _resolve_body_table_block_index(
+                    body_lookup,
+                    section_index=section_index,
+                    start_index=start_index,
+                    end_index=end_index,
+                )
+                if sectioned_body and body_lookup is not None
+                else block_index
+            )
+            if resolved_block_index is None:
+                cursor = end_index
+                i += 1
+                continue
             for row_index, row in enumerate(table.get("tableRows", [])):
                 for column_index, cell in enumerate(row.get("tableCells", [])):
                     cell_story_id = (
-                        f"{story_id}:table:{block_index}:r{row_index}:c{column_index}"
+                        f"{story_id}:table:{resolved_block_index}:r{row_index}:c{column_index}"
                     )
                     layouts[cell_story_id] = StoryLayout(
                         story_id=cell_story_id,
@@ -522,7 +585,8 @@ def _collect_story_paragraphs(
                         ),
                     )
             cursor = end_index
-            block_index += 1
+            if not (sectioned_body and body_lookup is not None):
+                block_index += 1
             i += 1
             continue
 
@@ -666,3 +730,98 @@ def _element_end_index(element: dict, fallback: int) -> int:
 
 def _is_table_structural_element(element: dict | None) -> bool:
     return bool(element and element.get("table") is not None)
+
+
+def _body_block_keep_mask(
+    blocks: list[ParagraphLocation | ListLocation | TableLocation | PageBreakLocation],
+) -> list[bool]:
+    keep_mask = [True] * len(blocks)
+    for index, block in enumerate(blocks):
+        if not _is_body_transport_carrier_paragraph(block):
+            continue
+        prev_is_structural = index > 0 and _is_body_transport_carrier_anchor(blocks[index - 1])
+        next_is_structural = (
+            index + 1 < len(blocks) and _is_body_transport_carrier_anchor(blocks[index + 1])
+        )
+        if prev_is_structural or next_is_structural:
+            keep_mask[index] = False
+    saw_noncarrier = any(not _is_body_transport_carrier_paragraph(block) for block in blocks)
+    if saw_noncarrier:
+        for index, block in enumerate(blocks):
+            if not keep_mask[index] or not _is_body_transport_carrier_paragraph(block):
+                break
+            keep_mask[index] = False
+    for index in range(len(blocks) - 1, -1, -1):
+        if not keep_mask[index] or not _is_body_transport_carrier_paragraph(blocks[index]):
+            break
+        keep_mask[index] = False
+    return keep_mask
+
+
+def _is_body_transport_carrier_paragraph(
+    block: ParagraphLocation | ListLocation | TableLocation | PageBreakLocation,
+) -> bool:
+    return isinstance(block, ParagraphLocation) and not block.text
+
+
+def _is_body_transport_carrier_anchor(
+    block: ParagraphLocation | ListLocation | TableLocation | PageBreakLocation,
+) -> bool:
+    return isinstance(block, TableLocation | PageBreakLocation)
+
+
+def _build_body_story_lookup(body_layout: BodyLayout) -> _BodyStoryLookup:
+    paragraph_blocks: dict[tuple[int, int, int], int] = {}
+    list_item_blocks: dict[tuple[int, int, int], int] = {}
+    table_blocks: dict[tuple[int, int, int], int] = {}
+    for section_index, section in enumerate(body_layout.sections):
+        for block_index, block in enumerate(section.block_locations):
+            key = (section_index, block.start_index, block.end_index)
+            if isinstance(block, ParagraphLocation):
+                paragraph_blocks[key] = block_index
+            elif isinstance(block, TableLocation):
+                table_blocks[key] = block_index
+            elif isinstance(block, ListLocation):
+                for item in block.items:
+                    list_item_blocks[(section_index, item.start_index, item.end_index)] = block_index
+    return _BodyStoryLookup(
+        paragraph_blocks=paragraph_blocks,
+        list_item_blocks=list_item_blocks,
+        table_blocks=table_blocks,
+    )
+
+
+def _resolve_body_paragraph_block_index(
+    lookup: _BodyStoryLookup,
+    *,
+    section_index: int | None,
+    start_index: int,
+    end_index: int,
+) -> int | None:
+    if section_index is None:
+        return None
+    return lookup.paragraph_blocks.get((section_index, start_index, end_index))
+
+
+def _resolve_body_list_block_index(
+    lookup: _BodyStoryLookup,
+    *,
+    section_index: int | None,
+    start_index: int,
+    end_index: int,
+) -> int | None:
+    if section_index is None:
+        return None
+    return lookup.list_item_blocks.get((section_index, start_index, end_index))
+
+
+def _resolve_body_table_block_index(
+    lookup: _BodyStoryLookup,
+    *,
+    section_index: int | None,
+    start_index: int,
+    end_index: int,
+) -> int | None:
+    if section_index is None:
+        return None
+    return lookup.table_blocks.get((section_index, start_index, end_index))

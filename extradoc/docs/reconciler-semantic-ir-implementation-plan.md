@@ -1074,17 +1074,21 @@ Repair-path rule learned from broken live docs:
     structural inserts are complete. Emitting bullets inline recreates the
     classic bleed problem where later same-anchor paragraph inserts are
     absorbed into the already-bulleted block.
+13. body canonicalization and raw-body lowering must treat carrier paragraphs
+    adjacent to page breaks the same way they treat carrier paragraphs around
+    tables. If the canonical layer drops those carriers but the raw body
+    mapper still counts them, paragraph edits after a page break target the
+    wrong block during second-pass XML rewrites.
 
 ## Current Release-Smoke Readout
 
 1. `extradoc/scripts/release_smoke_docs.py` is the maintained live smoke
    runner for release validation.
 2. Current live evidence:
-   markdown cycle 1 is semantically converged on the dense multi-tab smoke doc,
-   and XML cycle 1 is semantically converged on the structural smoke doc.
-3. Remaining live blockers are both second-pass updates:
-   markdown cycle 2 still leaves table-backed markdown constructs and code/footnote
-   content partially stale after the edit pass,
-   and XML cycle 2 still leaves a residual footnote/body rewrite diff.
-4. Release signoff remains blocked until those second-pass smoke failures are
-   either fixed or explicitly carved out of the supported contract.
+   markdown cycles 1 and 2 are semantically converged on the dense multi-tab
+   smoke doc, and XML cycles 1 and 2 are semantically converged on the
+   structural smoke doc.
+3. Remaining diffs in the smoke artifacts are serializer normalization only,
+   not semantic reconciler failures.
+4. The latest fully green live run is
+   `tmp-doc-md-verify/release-smoke/20260331-v2-leading-blank-fix-7/summary.json`.

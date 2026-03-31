@@ -16,11 +16,13 @@ from extradoc.reconcile_v2.api import (
     lower_semantic_diff,
     lower_semantic_diff_batches,
 )
+from extradoc.reconcile_v2.canonical import _transport_block_keep_mask
 from extradoc.reconcile_v2.errors import UnsupportedSpikeError
 from extradoc.reconcile_v2.executor import resolve_deferred_placeholders
 from extradoc.reconcile_v2.ir import (
     BODY_CAPABILITIES,
     CellIR,
+    PageBreakIR,
     ParagraphIR,
     RowIR,
     StoryIR,
@@ -1504,6 +1506,106 @@ def test_lower_semantic_diff_uses_actual_reverse_ranges_for_list_then_heading() 
     assert prose.get("paragraphStyle", {}).get("namedStyleType", "NORMAL_TEXT") == "NORMAL_TEXT"
 
 
+def test_lower_semantic_diff_uses_structural_nesting_for_inserted_lists() -> None:
+    base = reindex_document(
+        markdown_to_document(
+            {"Tab_1": ""},
+            document_id="nested-list-insert",
+            title="Nested List Insert",
+            tab_ids={"Tab_1": "t.0"},
+        )
+    )
+    desired = reindex_document(
+        markdown_to_document(
+            {"Tab_1": "- parent\n  - child\n"},
+            document_id="nested-list-insert",
+            title="Nested List Insert",
+            tab_ids={"Tab_1": "t.0"},
+        )
+    )
+
+    requests = lower_semantic_diff(base, desired)
+
+    text_payloads = [
+        request["insertText"]["text"]
+        for request in requests
+        if "insertText" in request
+    ]
+    assert text_payloads == ["\nparent\nchild"]
+    assert any("createParagraphBullets" in request for request in requests)
+    indent_updates = [
+        request["updateParagraphStyle"]
+        for request in requests
+        if "updateParagraphStyle" in request
+        and "indentStart" in request["updateParagraphStyle"]["paragraphStyle"]
+    ]
+    assert indent_updates
+    assert indent_updates[0]["paragraphStyle"]["indentStart"]["magnitude"] == 72
+
+
+def test_lower_semantic_diff_relevels_lists_without_tab_text_edits() -> None:
+    base = reindex_document(
+        markdown_to_document(
+            {"Tab_1": "- parent\n- child\n"},
+            document_id="nested-list-relevel",
+            title="Nested List Relevel",
+            tab_ids={"Tab_1": "t.0"},
+        )
+    )
+    desired = reindex_document(
+        markdown_to_document(
+            {"Tab_1": "- parent\n  - child\n"},
+            document_id="nested-list-relevel",
+            title="Nested List Relevel",
+            tab_ids={"Tab_1": "t.0"},
+        )
+    )
+
+    requests = lower_semantic_diff(base, desired)
+
+    assert not any(
+        "insertText" in request and "\t" in request["insertText"]["text"]
+        for request in requests
+    )
+    assert any("deleteParagraphBullets" in request for request in requests)
+    assert any("createParagraphBullets" in request for request in requests)
+    assert any(
+        "updateParagraphStyle" in request
+        and "indentStart" in request["updateParagraphStyle"]["paragraphStyle"]
+        for request in requests
+    )
+    delete_index = next(
+        index for index, request in enumerate(requests) if "deleteParagraphBullets" in request
+    )
+    create_index = next(
+        index for index, request in enumerate(requests) if "createParagraphBullets" in request
+    )
+    style_index = next(
+        index
+        for index, request in enumerate(requests)
+        if "updateParagraphStyle" in request
+        and "indentStart" in request["updateParagraphStyle"]["paragraphStyle"]
+    )
+    assert delete_index < create_index < style_index
+
+    mock = MockGoogleDocsAPI(base)
+    mock._batch_update_raw(requests)
+    body = mock.get().model_dump(by_alias=True, exclude_none=True)["tabs"][0]["documentTab"][
+        "body"
+    ]["content"]
+    child = next(
+        element["paragraph"]
+        for element in body
+        if "paragraph" in element
+        and "".join(
+            child.get("textRun", {}).get("content", "")
+            for child in element["paragraph"].get("elements", [])
+        ).strip()
+        == "child"
+    )
+    assert child["bullet"]["nestingLevel"] == 1
+
+
 def test_lower_semantic_diff_deletes_body_paragraph_slice_after_table() -> None:
     base = reindex_document(
         markdown_to_document(
@@ -1543,6 +1645,156 @@ def test_lower_semantic_diff_deletes_body_paragraph_slice_after_table() -> None:
     assert any("deleteContentRange" in request for request in requests)
 
 
+def test_lower_semantic_diff_from_empty_body_avoids_leading_carrier_newlines() -> None:
+    base = reindex_document(
+        markdown_to_document(
+            {"Tab_1": ""},
+            document_id="empty-body-mixed-build",
+            title="Empty Body Mixed Build",
+            tab_ids={"Tab_1": "t.0"},
+        )
+    )
+    desired = reindex_document(
+        markdown_to_document(
+            {
+                "Tab_1": (
+                    "# Program Overview\n\n"
+                    "Lead paragraph.\n\n"
+                    "## Alerts\n\n"
+                    "> [!INFO]\n"
+                    "> Info callout opening text.\n\n"
+                    "## After Alert\n\n"
+                    "Tail paragraph.\n"
+                )
+            },
+            document_id="empty-body-mixed-build",
+            title="Empty Body Mixed Build",
+            tab_ids={"Tab_1": "t.0"},
+        )
+    )
+
+    batches = lower_semantic_diff_batches(base, desired, transport_base=base)
+    flattened = [request for batch in batches for request in batch]
+
+    assert not any(
+        "insertText" in request
+        and request["insertText"]["location"].get("tabId") == "t.0"
+        and request["insertText"]["location"].get("index") == 1
+        and isinstance(request["insertText"]["text"], str)
+        and request["insertText"]["text"].startswith("\n")
+        for request in flattened
+    )
+
+
+def test_lower_semantic_diff_resets_unstyled_text_after_heading_for_callouts() -> None:
+    base = reindex_document(
+        markdown_to_document(
+            {"Tab_1": ""},
+            document_id="callout-style-reset",
+            title="Callout Style Reset",
+            tab_ids={"Tab_1": "t.0"},
+        )
+    )
+    desired = reindex_document(
+        markdown_to_document(
+            {
+                "Tab_1": (
+                    "## Alerts Revised\n\n"
+                    "> [!TIP]\n"
+                    "> Tip callout replacement text.\n"
+                )
+            },
+            document_id="callout-style-reset",
+            title="Callout Style Reset",
+            tab_ids={"Tab_1": "t.0"},
+        )
+    )
+
+    batches = lower_semantic_diff_batches(base, desired, transport_base=base)
+    flattened = [request for batch in batches for request in batch]
+
+    assert any(
+        request.get("updateTextStyle", {}).get("textStyle") == {}
+        and "fontSize" in request.get("updateTextStyle", {}).get("fields", "")
+        for request in flattened
+    )
+
+
+def test_lower_semantic_diff_resets_unstyled_replaced_callout_text_after_heading() -> None:
+    base = reindex_document(
+        markdown_to_document(
+            {
+                "Tab_1": (
+                    "## Alerts\n\n"
+                    "> [!TIP]\n"
+                    "> Tip opening text.\n"
+                )
+            },
+            document_id="callout-style-reset-replace",
+            title="Callout Style Reset Replace",
+            tab_ids={"Tab_1": "t.0"},
+        )
+    )
+    desired = reindex_document(
+        markdown_to_document(
+            {
+                "Tab_1": (
+                    "## Alerts Revised\n\n"
+                    "> [!TIP]\n"
+                    "> Tip callout replacement text.\n"
+                )
+            },
+            document_id="callout-style-reset-replace",
+            title="Callout Style Reset Replace",
+            tab_ids={"Tab_1": "t.0"},
+        )
+    )
+
+    requests = lower_semantic_diff(base, desired)
+
+    assert any(
+        request.get("updateTextStyle", {}).get("textStyle") == {}
+        and "fontSize" in request.get("updateTextStyle", {}).get("fields", "")
+        for request in requests
+    )
+
+
+def test_lower_semantic_diff_resets_inserted_list_items_to_normal_text() -> None:
+    base = reindex_document(
+        markdown_to_document(
+            {"Tab_1": "## Lists Revised\n"},
+            document_id="list-normal-reset",
+            title="List Normal Reset",
+            tab_ids={"Tab_1": "t.0"},
+        )
+    )
+    desired = reindex_document(
+        markdown_to_document(
+            {
+                "Tab_1": (
+                    "## Lists Revised\n\n"
+                    "- First bullet edited\n"
+                    "- Second bullet edited\n"
+                    "  - Nested bullet edited\n"
+                )
+            },
+            document_id="list-normal-reset",
+            title="List Normal Reset",
+            tab_ids={"Tab_1": "t.0"},
+        )
+    )
+
+    requests = lower_semantic_diff(base, desired)
+
+    normal_text_updates = [
+        request
+        for request in requests
+        if request.get("updateParagraphStyle", {}).get("paragraphStyle", {}).get("namedStyleType")
+        == "NORMAL_TEXT"
+    ]
+    assert normal_text_updates
+
+
 def test_lower_semantic_diff_repairs_live_multitab_probe_after_table_backed_rewrites() -> None:
     fixture_root = FIXTURES_ROOT / "live_multitab_cycle2_probe"
     base = Document.model_validate(
@@ -1562,6 +1814,13 @@ def test_lower_semantic_diff_repairs_live_multitab_probe_after_table_backed_rewr
         and request["deleteContentRange"]["range"].get("tabId") == "t.0"
     ]
     assert {"startIndex": 466, "endIndex": 517, "tabId": "t.0"} not in delete_ranges
+
+    assert not any(
+        "insertText" in request
+        and request["insertText"]["location"].get("tabId") == "t.0"
+        and "\t" in request["insertText"]["text"]
+        for request in requests
+    )
 
     mock = MockGoogleDocsAPI(base)
     prior_responses: list[dict[str, object]] = []
@@ -1591,6 +1850,89 @@ def test_lower_semantic_diff_repairs_live_multitab_probe_after_table_backed_rewr
         "documentTab"
     ].get("footnotes", {})
     assert footnotes
+
+
+def test_lower_semantic_diff_applies_cell_styles_for_inserted_special_tables() -> None:
+    base = reindex_document(
+        markdown_to_document(
+            {"Tab_1": ""},
+            document_id="special-table-style-insert",
+            title="Special Table Style Insert",
+            tab_ids={"Tab_1": "t.0"},
+        )
+    )
+    desired = reindex_document(
+        markdown_to_document(
+            {
+                "Tab_1": (
+                    "> [!INFO]\n"
+                    "> Styled callout cell.\n\n"
+                    "```python\n"
+                    "print('styled')\n"
+                    "```\n"
+                )
+            },
+            document_id="special-table-style-insert",
+            title="Special Table Style Insert",
+            tab_ids={"Tab_1": "t.0"},
+        )
+    )
+
+    requests = lower_semantic_diff(base, desired)
+
+    assert any("insertTable" in request for request in requests)
+    assert any("updateTableCellStyle" in request for request in requests)
+
+
+def test_transport_block_keep_mask_drops_carrier_runs_adjacent_to_tables() -> None:
+    blocks = [
+        ParagraphIR(
+            role="HEADING_2",
+            explicit_style={"namedStyleType": "HEADING_2"},
+            inlines=[TextSpanIR(text="Code Samples", explicit_text_style={})],
+        ),
+        ParagraphIR(
+            role="HEADING_2",
+            explicit_style={"namedStyleType": "HEADING_2"},
+            inlines=[],
+        ),
+        ParagraphIR(
+            role="NORMAL_TEXT",
+            explicit_style={"namedStyleType": "NORMAL_TEXT"},
+            inlines=[],
+        ),
+        TableIR(style={}, pinned_header_rows=0, column_properties=[], merge_regions=[], rows=[]),
+    ]
+
+    assert _transport_block_keep_mask(blocks) == [True, False, False, True]
+
+
+def test_transport_block_keep_mask_drops_carrier_runs_adjacent_to_page_breaks() -> None:
+    blocks = [
+        ParagraphIR(
+            role="NORMAL_TEXT",
+            explicit_style={"namedStyleType": "NORMAL_TEXT"},
+            inlines=[TextSpanIR(text="Before break", explicit_text_style={})],
+        ),
+        ParagraphIR(
+            role="NORMAL_TEXT",
+            explicit_style={"namedStyleType": "NORMAL_TEXT"},
+            inlines=[],
+        ),
+        ParagraphIR(
+            role="HEADING_2",
+            explicit_style={"namedStyleType": "HEADING_2"},
+            inlines=[],
+        ),
+        PageBreakIR(),
+        ParagraphIR(
+            role="HEADING_2",
+            explicit_style={"namedStyleType": "HEADING_2"},
+            inlines=[TextSpanIR(text="After break", explicit_text_style={})],
+        ),
+    ]
+
+    assert _transport_block_keep_mask(blocks) == [True, False, False, True, True]
 
 
 def test_lower_semantic_diff_table_cell_text_replace_preserves_cell_paragraphs() -> None:
@@ -1821,6 +2163,35 @@ def test_lower_semantic_diff_stages_named_range_anchor_moves_after_content_edits
             }
         },
     ]
+
+
+def test_lower_semantic_diff_batches_repair_live_list_role_bleed_fixture() -> None:
+    fixture_root = FIXTURES_ROOT / "live_list_role_bleed_repair"
+    base = Document.model_validate(
+        json.loads((fixture_root / "base.json").read_text(encoding="utf-8"))
+    )
+    desired_bundle = serde.deserialize(fixture_root / "desired")
+    _normalize_raw_base_para_styles(base, desired_bundle.document)
+    desired = reindex_document(desired_bundle.document)
+
+    batches = lower_semantic_diff_batches(base, desired, transport_base=base)
+    requests = [request for batch in batches for request in batch]
+
+    normalized_role_ranges = {
+        (
+            request["updateParagraphStyle"]["range"]["startIndex"],
+            request["updateParagraphStyle"]["range"]["endIndex"],
+        )
+        for request in requests
+        if "updateParagraphStyle" in request
+        and request["updateParagraphStyle"]["paragraphStyle"].get("namedStyleType")
+        == "NORMAL_TEXT"
+    }
+
+    assert (485, 505) in normalized_role_ranges
+    assert (505, 526) in normalized_role_ranges
+    assert (526, 550) in normalized_role_ranges
+    assert (550, 574) in normalized_role_ranges
 
 
 def _load_fixture_pair(name: str) -> tuple[Document, Document]:

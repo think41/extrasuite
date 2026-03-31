@@ -51,8 +51,12 @@ push:  apply comment ops first
 - `comment-ref` elements in `document.xml` are display metadata derived from
   `comments.xml`, not primary editable content.
 - `src/extradoc/mock/` is useful for fast local regressions, but it is not a
-  release-confidence source. For reconciler changes, prefer fixture-backed live
-  Google Docs replay before trusting the result.
+  release-confidence source and must not be treated as the transport truth.
+  For reconciler changes, prefer fixture-backed live Google Docs replay before
+  trusting the result.
+- Do not add compensating reconciler logic just to satisfy the mock. If mock
+  behavior disagrees with live Google Docs, the mock is wrong for that purpose
+  and live fixtures win.
 
 ## Development
 

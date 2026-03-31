@@ -40,7 +40,10 @@ from extradoc.reconcile import (
     resolve_deferred_ids,
 )
 from extradoc.reconcile_v2.api import reconcile as reconcile_v2
-from extradoc.reconcile_v2.executor import execute_request_batches
+from extradoc.reconcile_v2.executor import (
+    execute_request_batches,
+    resolve_deferred_placeholders,
+)
 from extradoc.serde._models import IndexXml
 from extradoc.serde._utils import hex_to_optional_color, optional_color_to_hex
 
@@ -79,6 +82,9 @@ class DiffResult:
     comment_ops: CommentOperations
     reconciler_version: str = "v2"
     base_revision_id: str | None = None
+    desired_document: Document | None = None
+    desired_format: str | None = None
+    allow_live_refresh: bool = False
 
 
 class DocsClient:
@@ -215,6 +221,9 @@ class DocsClient:
                     comment_ops=comment_ops,
                     reconciler_version=reconciler_version,
                     base_revision_id=base.revision_id,
+                    desired_document=desired,
+                    desired_format="markdown",
+                    allow_live_refresh=_tab_ids_subset(base, desired),
                 )
 
         base = reindex_document(base_bundle.document)
@@ -233,6 +242,9 @@ class DocsClient:
             comment_ops=comment_ops,
             reconciler_version=reconciler_version,
             base_revision_id=base.revision_id,
+            desired_document=desired,
+            desired_format="xml",
+            allow_live_refresh=_tab_ids_subset(base, desired),
         )
 
     async def push(self, folder: str | Path, *, force: bool = False) -> PushResult:
@@ -351,6 +363,12 @@ async def _execute_document_batches(
     result: DiffResult,
 ) -> int:
     if result.reconciler_version == "v2":
+        if (
+            result.allow_live_refresh
+            and result.desired_document is not None
+            and result.desired_format is not None
+        ):
+            return await _execute_document_batches_v2_live_refresh(transport, result)
         request_batches = [
             [
                 request.model_dump(by_alias=True, exclude_none=True)
@@ -381,6 +399,128 @@ async def _execute_document_batches(
         prior_responses.append(resp)
         changes_applied += len(batch.requests or [])
     return changes_applied
+
+
+async def _execute_document_batches_v2_live_refresh(
+    transport: Transport,
+    result: DiffResult,
+) -> int:
+    assert result.desired_document is not None
+    assert result.desired_format is not None
+
+    request_batches = [
+        [
+            request.model_dump(by_alias=True, exclude_none=True)
+            for request in (batch.requests or [])
+        ]
+        for batch in result.batches
+    ]
+    revision_id = result.base_revision_id
+    changes_applied = 0
+    batch_index = 0
+    prior_responses: list[dict] = []  # type: ignore[type-arg]
+
+    while batch_index < len(request_batches):
+        batch = request_batches[batch_index]
+        resolved_batch = resolve_deferred_placeholders(prior_responses, list(batch))
+        resolved_batch = _truncate_batch_before_post_table_para_ops(resolved_batch)
+        write_control = None
+        if revision_id is not None:
+            write_control = {"requiredRevisionId": revision_id}
+        response = await transport.batch_update(
+            result.document_id,
+            list(resolved_batch),
+            write_control=write_control,
+        )
+        prior_responses.append(response)
+        revision_id = _next_required_revision_id(response, revision_id)
+        changes_applied += len(batch)
+        batch_index += 1
+
+        if batch_index >= len(request_batches):
+            continue
+        if not _should_refresh_v2_batches(resolved_batch):
+            continue
+
+        document_data = await transport.get_document(result.document_id)
+        transport_base = Document.model_validate(document_data.raw)
+        base = Document.model_validate(document_data.raw)
+        revision_id = transport_base.revision_id or revision_id
+        if result.desired_format == "markdown":
+            _normalize_raw_base_para_styles(base, result.desired_document)
+        refreshed_batches = reconcile_v2(
+            base,
+            result.desired_document,
+            transport_base=transport_base,
+        )
+        request_batches = [
+            [
+                request.model_dump(by_alias=True, exclude_none=True)
+                for request in (batch.requests or [])
+            ]
+            for batch in refreshed_batches
+        ]
+        batch_index = 0
+        prior_responses = []
+
+    return changes_applied
+
+
+def _should_refresh_v2_batches(batch: list[dict]) -> bool:
+    return any("insertTable" in request for request in batch)
+
+
+def _truncate_batch_before_post_table_para_ops(batch: list[dict]) -> list[dict]:
+    seen_insert_table_tabs: set[str] = set()
+    for index, request in enumerate(batch):
+        kind = next(iter(request))
+        tab_id = _request_tab_id(request)
+        if kind == "insertTable" and tab_id is not None:
+            seen_insert_table_tabs.add(tab_id)
+            continue
+        if tab_id in seen_insert_table_tabs and kind in {
+            "createParagraphBullets",
+            "updateParagraphStyle",
+        }:
+            return batch[:index]
+    return batch
+
+
+def _request_tab_id(request: dict) -> str | None:
+    kind = next(iter(request))
+    payload = request[kind]
+    if kind in {"insertTable", "insertText"}:
+        return payload.get("location", {}).get("tabId")
+    if kind in {"createParagraphBullets", "deleteContentRange", "updateParagraphStyle", "updateTextStyle"}:
+        return payload.get("range", {}).get("tabId")
+    return None
+
+
+def _tab_ids_subset(base: Document, desired: Document) -> bool:
+    base_tab_ids = {
+        tab.tab_properties.tab_id
+        for tab in base.tabs
+        if tab.tab_properties and tab.tab_properties.tab_id
+    }
+    desired_tab_ids = {
+        tab.tab_properties.tab_id
+        for tab in desired.tabs
+        if tab.tab_properties and tab.tab_properties.tab_id
+    }
+    return desired_tab_ids <= base_tab_ids
+
+
+def _next_required_revision_id(
+    response: dict,
+    current_revision_id: str | None,
+) -> str | None:
+    write_control = response.get("writeControl")
+    if not isinstance(write_control, dict):
+        return current_revision_id
+    next_revision_id = write_control.get("requiredRevisionId")
+    if not isinstance(next_revision_id, str):
+        return current_revision_id
+    return next_revision_id
 
 
 # ---------------------------------------------------------------------------

@@ -11,14 +11,32 @@ from extradoc.indexer import utf16_len
 from extradoc.mock.api import MockGoogleDocsAPI
 from extradoc.reconcile_v2.canonical import canonicalize_document
 from extradoc.reconcile_v2.diff import (
+    AppendListItemsEdit,
     CreateFootnoteEdit,
     CreateSectionAttachmentEdit,
     DeleteListBlockEdit,
+    DeletePageBreakBlockEdit,
     DeleteTableBlockEdit,
+    DeleteTableColumnEdit,
+    DeleteTableRowEdit,
     InsertListBlockEdit,
+    InsertPageBreakBlockEdit,
     InsertTableBlockEdit,
+    InsertTableColumnEdit,
+    InsertTableRowEdit,
+    MergeTableCellsEdit,
+    RelevelListItemsEdit,
+    ReplaceListSpecEdit,
     ReplaceNamedRangesEdit,
     ReplaceParagraphSliceEdit,
+    ReplaceParagraphTextEdit,
+    UnmergeTableCellsEdit,
+    UpdateListItemRolesEdit,
+    UpdateParagraphRoleEdit,
+    UpdateTableCellStyleEdit,
+    UpdateTableColumnPropertiesEdit,
+    UpdateTablePinnedHeaderRowsEdit,
+    UpdateTableRowStyleEdit,
     diff_documents,
 )
 from extradoc.reconcile_v2.errors import UnsupportedSpikeError
@@ -40,8 +58,10 @@ from extradoc.reconcile_v2.requests import (
     make_create_footnote,
     make_create_header,
     make_create_named_range,
+    make_delete_content_range,
     make_insert_table,
     make_insert_text_in_story,
+    make_update_paragraph_style,
     make_update_section_attachment,
 )
 
@@ -57,8 +77,13 @@ def lower_document_batches(
     transport_base: Document | None = None,
 ) -> list[list[dict[str, Any]]]:
     """Lower the supported reconcile_v2 slice into one or more request batches."""
-    edits = diff_documents(base, desired)
     batches = _plan_new_tab_batches(base, desired)
+    new_tab_ids = _new_tab_ids(base, desired)
+    edits = [
+        edit
+        for edit in diff_documents(base, desired)
+        if getattr(edit, "tab_id", None) not in new_tab_ids
+    ]
     attachment_batches, remaining_edits = _plan_attachment_batches(
         base,
         edits,
@@ -81,9 +106,13 @@ def lower_document_batches(
                 )
             )
         else:
-            matched_requests = lower_document_edits(base, remaining_edits, desired=desired)
-            if matched_requests:
-                batches.append(matched_requests)
+            batches.extend(
+                _lower_content_request_batches(
+                    base,
+                    remaining_edits,
+                    desired=desired,
+                )
+            )
     if footnote_edits:
         shadow_base = _apply_shadow_batches(transport_base or base, batches)
         footnote_batches, unresolved_edits = _plan_footnote_batches(
@@ -97,6 +126,17 @@ def lower_document_batches(
             )
         batches.extend(footnote_batches)
     return batches
+
+
+def _new_tab_ids(base: Document, desired: Document) -> set[str]:
+    base_ir = canonicalize_document(base)
+    desired_ir = canonicalize_document(desired)
+    base_tabs_by_path = dict(_walk_tabs(base_ir.tabs))
+    return {
+        tab.id
+        for path, tab in _walk_tabs(desired_ir.tabs)
+        if path not in base_tabs_by_path
+    }
 
 
 def _should_iteratively_batch_content(edits: list[SemanticEdit]) -> bool:
@@ -148,28 +188,53 @@ def _plan_iterative_content_batches(
             key=lambda edit: _content_edit_order_key(0, edit)  # type: ignore[arg-type]
         )
         requests: list[dict[str, Any]] = []
+        request_batches: list[list[dict[str, Any]]] = []
         next_base: Document | None = None
-        best_remaining_count = len(content_edits)
-        for start_index in range(len(content_edits)):
-            for next_batch_edits in _iterative_batch_candidates(content_edits, start_index):
-                try:
-                    candidate_requests = lower_document_edits(
-                        current_base,
-                        next_batch_edits,
-                        desired=desired,
-                    )
-                except UnsupportedSpikeError:
-                    continue
-                if not candidate_requests:
-                    continue
+        best_score = _content_edit_score(content_edits)
+        current_score = best_score
+        fallback_requests: list[dict[str, Any]] = []
+        fallback_request_batches: list[list[dict[str, Any]]] = []
+        fallback_next_base: Document | None = None
+        fallback_score: tuple[int, int] | None = None
+        used_small_residual_fallback = False
+        direct_small_residual_batches: list[list[dict[str, Any]]] = []
+        if len(content_edits) <= 12:
+            try:
+                candidate_batches = _lower_content_request_batches(
+                    current_base,
+                    content_edits,
+                    desired=desired,
+                )
+            except Exception:
+                candidate_batches = []
+            if candidate_batches:
+                direct_small_residual_batches = candidate_batches
                 shadow = MockGoogleDocsAPI(current_base)
                 try:
-                    shadow._batch_update_raw(candidate_requests)
+                    for candidate_batch in candidate_batches:
+                        shadow._batch_update_raw(candidate_batch)
                 except Exception:
-                    continue
-                candidate_next_base = shadow.get()
-                candidate_remaining_count = len(
-                    [
+                    candidate_batches = []
+                if candidate_batches:
+                    cleanup_batch = _leading_body_carrier_cleanup_requests(shadow.get())
+                    if cleanup_batch:
+                        try:
+                            shadow._batch_update_raw(cleanup_batch)
+                        except Exception:
+                            candidate_batches = []
+                        else:
+                            candidate_batches = [*candidate_batches, cleanup_batch]
+                    style_reset_batch = _body_carrier_style_reset_requests(shadow.get())
+                    if candidate_batches and style_reset_batch:
+                        try:
+                            shadow._batch_update_raw(style_reset_batch)
+                        except Exception:
+                            candidate_batches = []
+                        else:
+                            candidate_batches = [*candidate_batches, style_reset_batch]
+                if candidate_batches:
+                    candidate_next_base = shadow.get()
+                    candidate_remaining = [
                         edit
                         for edit in diff_documents(
                             _document_without_named_ranges(candidate_next_base),
@@ -177,26 +242,120 @@ def _plan_iterative_content_batches(
                         )
                         if not isinstance(edit, ReplaceNamedRangesEdit | CreateFootnoteEdit)
                     ]
-                )
-                if candidate_remaining_count < best_remaining_count:
-                    best_remaining_count = candidate_remaining_count
-                    requests = candidate_requests
+                    candidate_score = _content_edit_score(candidate_remaining)
+                    fallback_requests = [request for batch in candidate_batches for request in batch]
+                    fallback_request_batches = candidate_batches
+                    fallback_next_base = candidate_next_base
+                    fallback_score = candidate_score
+                    if candidate_score < best_score:
+                        best_score = candidate_score
+                        requests = fallback_requests
+                        request_batches = candidate_batches
+                        next_base = candidate_next_base
+        for start_index in range(len(content_edits)):
+            for next_batch_edits in _iterative_batch_candidates(content_edits, start_index):
+                try:
+                    candidate_batches = _lower_content_request_batches(
+                        current_base,
+                        next_batch_edits,
+                        desired=desired,
+                    )
+                except Exception:
+                    continue
+                if not candidate_batches:
+                    continue
+                shadow = MockGoogleDocsAPI(current_base)
+                try:
+                    for candidate_batch in candidate_batches:
+                        shadow._batch_update_raw(candidate_batch)
+                except Exception:
+                    continue
+                cleanup_batch = _leading_body_carrier_cleanup_requests(shadow.get())
+                if cleanup_batch:
+                    try:
+                        shadow._batch_update_raw(cleanup_batch)
+                    except Exception:
+                        continue
+                    candidate_batches = [*candidate_batches, cleanup_batch]
+                style_reset_batch = _body_carrier_style_reset_requests(shadow.get())
+                if style_reset_batch:
+                    try:
+                        shadow._batch_update_raw(style_reset_batch)
+                    except Exception:
+                        continue
+                    candidate_batches = [*candidate_batches, style_reset_batch]
+                candidate_next_base = shadow.get()
+                candidate_remaining = [
+                        edit
+                        for edit in diff_documents(
+                            _document_without_named_ranges(candidate_next_base),
+                            desired_content,
+                        )
+                        if not isinstance(edit, ReplaceNamedRangesEdit | CreateFootnoteEdit)
+                    ]
+                candidate_score = _content_edit_score(candidate_remaining)
+                if candidate_score < best_score:
+                    best_score = candidate_score
+                    requests = [request for batch in candidate_batches for request in batch]
+                    request_batches = candidate_batches
                     next_base = candidate_next_base
-                    if best_remaining_count == 0:
+                    if best_score == (0, 0):
                         break
-            if best_remaining_count == 0:
+                    if _good_enough_iterative_score(best_score, current_score):
+                        break
+            if best_score == (0, 0):
+                break
+            if requests and _good_enough_iterative_score(best_score, current_score):
                 break
         if not requests:
-            break
-        if best_remaining_count >= len(content_edits):
-            raise UnsupportedSpikeError(
-                "reconcile_v2 iterative content planning could not find a batch "
-                "that reduced the remaining mixed body rewrite"
-            )
-        batches.append(requests)
+            if (
+                fallback_requests
+                and fallback_next_base is not None
+                and fallback_score is not None
+            ):
+                requests = fallback_requests
+                request_batches = fallback_request_batches
+                next_base = fallback_next_base
+                best_score = fallback_score
+            else:
+                if (
+                    direct_small_residual_batches
+                    and not any(
+                        isinstance(edit, ReplaceNamedRangesEdit)
+                        for edit in current_edits
+                    )
+                ):
+                    batches.extend(direct_small_residual_batches)
+                    return batches
+                raise UnsupportedSpikeError(
+                    "reconcile_v2 iterative content planning could not lower the remaining "
+                    "mixed body rewrite"
+                )
+        elif (
+            fallback_requests
+            and fallback_next_base is not None
+            and fallback_score is not None
+            and len(content_edits) <= 12
+            and best_score >= _content_edit_score(content_edits)
+        ):
+            requests = fallback_requests
+            request_batches = fallback_request_batches
+            next_base = fallback_next_base
+            best_score = fallback_score
+            used_small_residual_fallback = True
+        if best_score >= _content_edit_score(content_edits):
+            if used_small_residual_fallback:
+                pass
+            else:
+                raise UnsupportedSpikeError(
+                    "reconcile_v2 iterative content planning could not find a batch "
+                    "that reduced the remaining mixed body rewrite"
+                )
+        batches.extend(request_batches or [requests])
         if next_base is None:
             shadow = MockGoogleDocsAPI(current_base)
-            shadow._batch_update_raw(requests)
+            for request_batch in request_batches or [requests]:
+                shadow._batch_update_raw(request_batch)
             next_base = shadow.get()
         current_base = next_base
 
@@ -210,6 +369,238 @@ def _plan_iterative_content_batches(
         if requests:
             batches.append(requests)
     return batches
+
+
+def _leading_body_carrier_cleanup_requests(
+    document: Document,
+) -> list[dict[str, Any]]:
+    raw = document.model_dump(by_alias=True, exclude_none=True)
+    requests: list[dict[str, Any]] = []
+    for tab in raw.get("tabs", []):
+        tab_id = tab.get("tabProperties", {}).get("tabId")
+        if not isinstance(tab_id, str):
+            continue
+        body = tab.get("documentTab", {}).get("body", {}).get("content", [])
+        leading_empty_paragraphs: list[dict[str, Any]] = []
+        first_nonempty: dict[str, Any] | None = None
+        in_first_section = False
+        for element in body:
+            if "sectionBreak" in element:
+                if in_first_section and leading_empty_paragraphs:
+                    break
+                in_first_section = True
+                continue
+            if not in_first_section:
+                continue
+            paragraph = element.get("paragraph")
+            if paragraph is not None:
+                text = "".join(
+                    child.get("textRun", {}).get("content", "")
+                    for child in paragraph.get("elements", [])
+                )
+                if text == "\n":
+                    leading_empty_paragraphs.append(element)
+                    continue
+            first_nonempty = element
+            break
+        if not leading_empty_paragraphs or first_nonempty is None:
+            continue
+        start_index = int(leading_empty_paragraphs[0]["startIndex"])
+        if "table" in first_nonempty:
+            if len(leading_empty_paragraphs) <= 1:
+                continue
+            end_index = int(leading_empty_paragraphs[-1]["startIndex"])
+        else:
+            end_index = int(first_nonempty["startIndex"])
+        if start_index >= end_index:
+            continue
+        requests.append(
+            make_delete_content_range(
+                start_index=start_index,
+                end_index=end_index,
+                tab_id=tab_id,
+            )
+        )
+    requests.sort(
+        key=lambda request: (
+            request["deleteContentRange"]["range"]["tabId"],
+            request["deleteContentRange"]["range"]["startIndex"],
+        ),
+        reverse=True,
+    )
+    return requests
+
+
+def _body_carrier_style_reset_requests(
+    document: Document,
+) -> list[dict[str, Any]]:
+    raw = document.model_dump(by_alias=True, exclude_none=True)
+    requests: list[dict[str, Any]] = []
+    for tab in raw.get("tabs", []):
+        tab_id = tab.get("tabProperties", {}).get("tabId")
+        if not isinstance(tab_id, str):
+            continue
+        body = tab.get("documentTab", {}).get("body", {}).get("content", [])
+        for index, element in enumerate(body):
+            paragraph = element.get("paragraph")
+            if paragraph is None:
+                continue
+            text = "".join(
+                child.get("textRun", {}).get("content", "")
+                for child in paragraph.get("elements", [])
+            )
+            if text != "\n":
+                continue
+            prev_kind = _adjacent_body_element_kind(body, index, step=-1)
+            next_kind = _adjacent_body_element_kind(body, index, step=1)
+            if prev_kind not in {"table", "page_break"} and next_kind not in {
+                "table",
+                "page_break",
+            }:
+                continue
+            if paragraph.get("paragraphStyle", {}).get("namedStyleType") == "NORMAL_TEXT":
+                continue
+            requests.append(
+                make_update_paragraph_style(
+                    start_index=int(element["startIndex"]),
+                    end_index=int(element["endIndex"]),
+                    tab_id=tab_id,
+                    paragraph_style={"namedStyleType": "NORMAL_TEXT"},
+                    fields=("namedStyleType",),
+                )
+            )
+    requests.sort(
+        key=lambda request: (
+            request["updateParagraphStyle"]["range"]["tabId"],
+            request["updateParagraphStyle"]["range"]["startIndex"],
+        ),
+        reverse=True,
+    )
+    return requests
+
+
+def _adjacent_body_element_kind(
+    body: list[dict[str, Any]],
+    index: int,
+    *,
+    step: int,
+) -> str | None:
+    cursor = index + step
+    while 0 <= cursor < len(body):
+        element = body[cursor]
+        if "sectionBreak" in element:
+            cursor += step
+            continue
+        if "table" in element:
+            return "table"
+        paragraph = element.get("paragraph")
+        if paragraph is not None:
+            text = "".join(
+                child.get("textRun", {}).get("content", "")
+                for child in paragraph.get("elements", [])
+            )
+            if text == "\n":
+                cursor += step
+                continue
+            for child in paragraph.get("elements", []):
+                if "pageBreak" in child:
+                    return "page_break"
+            return "paragraph"
+        return None
+    return None
+
+
+def _rebatch_inserted_table_followups(
+    requests: list[dict[str, Any]],
+) -> list[list[dict[str, Any]]]:
+    if not any("insertTable" in request for request in requests):
+        return [requests]
+    primary: list[dict[str, Any]] = []
+    followup: list[dict[str, Any]] = []
+    saw_insert_table = False
+    for request in requests:
+        kind = next(iter(request))
+        if kind == "insertTable":
+            saw_insert_table = True
+        if saw_insert_table and _is_inserted_table_followup_request(request):
+            followup.append(request)
+        else:
+            primary.append(request)
+    if not followup:
+        return [requests]
+    return [primary, followup]
+
+
+def _lower_content_request_batches(
+    base: Document,
+    edits: list[SemanticEdit],
+    *,
+    desired: Document,
+) -> list[list[dict[str, Any]]]:
+    ordered_edits = sorted(
+        edits,
+        key=lambda edit: _content_edit_order_key(0, edit),  # type: ignore[arg-type]
+    )
+    requests = lower_document_edits(base, ordered_edits, desired=desired)
+    if not requests:
+        return []
+    request_batches = _rebatch_inserted_table_followups(requests)
+    if len(request_batches) == 1 or not any(
+        _request_contains_deferred_placeholder(request)
+        for batch in request_batches
+        for request in batch
+    ):
+        return request_batches
+
+    primary_batch = request_batches[0]
+    shadow = MockGoogleDocsAPI(base)
+    shadow._batch_update_raw(primary_batch)
+    shadow_base = shadow.get()
+    remaining_edits = [
+        edit
+        for edit in diff_documents(shadow_base, desired)
+        if not isinstance(edit, CreateFootnoteEdit)
+    ]
+    if not remaining_edits:
+        return [primary_batch]
+    followup_requests = lower_document_edits(
+        shadow_base,
+        remaining_edits,
+        desired=desired,
+    )
+    if not followup_requests:
+        return [primary_batch]
+    followup_batches = _rebatch_inserted_table_followups(followup_requests)
+    return [primary_batch, *followup_batches]
+
+
+def _request_contains_deferred_placeholder(value: object) -> bool:
+    if isinstance(value, dict):
+        if "placeholder" in value:
+            return True
+        return any(_request_contains_deferred_placeholder(item) for item in value.values())
+    if isinstance(value, list):
+        return any(_request_contains_deferred_placeholder(item) for item in value)
+    return False
+
+
+def _is_inserted_table_followup_request(request: dict[str, Any]) -> bool:
+    kind = next(iter(request))
+    if kind in {
+        "pinTableHeaderRows",
+        "updateTableCellStyle",
+        "updateTableColumnProperties",
+        "updateTableRowStyle",
+    }:
+        return True
+    if kind != "createNamedRange":
+        return False
+    name = request["createNamedRange"].get("name", "")
+    return isinstance(name, str) and name.startswith("extradoc:")
+
+
+def _is_new_tab_special_table_followup_batch(batch: list[dict[str, Any]]) -> bool:
+    return bool(batch) and all(_is_inserted_table_followup_request(request) for request in batch)
 
 
 def _document_without_named_ranges(document: Document) -> Document:
@@ -241,9 +632,22 @@ def _iterative_batch_candidates(
 ) -> list[list[SemanticEdit]]:
     next_index = _next_iterative_content_group_end(edits, start_index)
     if next_index == start_index + 1:
-        return [edits[start_index:next_index]]
-    group = edits[start_index:next_index]
-    candidates = [group]
+        candidates = [edits[start_index:next_index]]
+    else:
+        group = edits[start_index:next_index]
+        candidates = [group]
+    for end_index in range(
+        min(len(edits), start_index + 6),
+        start_index + 1,
+        -1,
+    ):
+        candidate = edits[start_index:end_index]
+        if candidate in candidates:
+            continue
+        if _iterative_candidates_share_context(candidate):
+            candidates.append(candidate)
+    if next_index == start_index + 1:
+        return candidates
     for index in range(next_index - 1, start_index - 1, -1):
         candidates.append(edits[index : index + 1])
     return candidates
@@ -275,6 +679,63 @@ def _iterative_body_insert_anchor(
             edit.body_anchor_block_index,
         )
     return None
+
+
+def _iterative_candidates_share_context(edits: list[SemanticEdit]) -> bool:
+    if len(edits) < 2:
+        return True
+    first_tab_id = getattr(edits[0], "tab_id", None)
+    first_section_index = getattr(edits[0], "section_index", None)
+    return all(
+        getattr(edit, "tab_id", None) == first_tab_id
+        and getattr(edit, "section_index", None) == first_section_index
+        for edit in edits[1:]
+    )
+
+
+def _content_edit_score(edits: list[SemanticEdit]) -> tuple[int, int]:
+    return (sum(_content_edit_weight(edit) for edit in edits), len(edits))
+
+
+def _content_edit_weight(edit: SemanticEdit) -> int:
+    if isinstance(edit, ReplaceParagraphSliceEdit):
+        return max(1, edit.delete_block_count + len(edit.inserted_paragraphs)) * 4
+    if isinstance(edit, DeleteTableBlockEdit | InsertTableBlockEdit):
+        return 12
+    if isinstance(edit, DeleteListBlockEdit | InsertListBlockEdit):
+        return 8
+    if isinstance(edit, DeletePageBreakBlockEdit | InsertPageBreakBlockEdit):
+        return 6
+    if isinstance(edit, AppendListItemsEdit | ReplaceListSpecEdit | RelevelListItemsEdit):
+        return 4
+    if isinstance(edit, UpdateListItemRolesEdit):
+        return 2
+    if isinstance(edit, ReplaceParagraphTextEdit | UpdateParagraphRoleEdit):
+        return 2
+    if isinstance(
+        edit,
+        UpdateTablePinnedHeaderRowsEdit
+        | UpdateTableRowStyleEdit
+        | UpdateTableColumnPropertiesEdit
+        | UpdateTableCellStyleEdit
+        | InsertTableRowEdit
+        | DeleteTableRowEdit
+        | InsertTableColumnEdit
+        | DeleteTableColumnEdit
+        | MergeTableCellsEdit
+        | UnmergeTableCellsEdit,
+    ):
+        return 2
+    return 1
+
+
+def _good_enough_iterative_score(
+    candidate_score: tuple[int, int],
+    current_score: tuple[int, int],
+) -> bool:
+    weight_improvement = current_score[0] - candidate_score[0]
+    count_improvement = current_score[1] - candidate_score[1]
+    return weight_improvement >= 24 or count_improvement >= 4
 
 
 def _plan_attachment_batches(
@@ -500,46 +961,42 @@ def _plan_new_tab_batches(
         )
         created_tab_refs[path] = deferred_tab_id
 
-    population_batch: list[dict[str, Any]] = []
-    deferred_followup_batch: list[dict[str, Any]] = []
-    population_batch_index = len(batches)
     for path, tab in new_tabs:
         deferred_tab_id = created_tab_refs[path]
-        population_requests = _lower_new_tab_body(
+        body_batches = _lower_new_tab_body_batches(
             tab,
             desired_raw_tab=desired_raw_tabs_by_path[path],
             deferred_tab_id=deferred_tab_id,
         )
-        population_batch.extend(population_requests)
+        batches.extend(body_batches)
         footnote_requests, footnote_population_requests = _lower_new_tab_footnotes(
             tab,
             deferred_tab_id,
             placeholder_prefix="-".join(str(part) for part in path),
-            batch_index=population_batch_index,
-            request_index_offset=len(population_batch),
+            batch_index=len(batches),
+            request_index_offset=0,
         )
-        population_batch.extend(footnote_requests)
         if footnote_requests:
-            named_range_requests = _lower_new_tab_named_ranges(
-                tab,
-                deferred_tab_id,
-                anchors_include_footnote_refs=True,
+            batches.append(footnote_requests)
+            followup_batch = list(footnote_population_requests)
+            followup_batch.extend(
+                _lower_new_tab_named_ranges(
+                    tab,
+                    deferred_tab_id,
+                    anchors_include_footnote_refs=True,
+                )
             )
-            deferred_followup_batch.extend(footnote_population_requests)
-            deferred_followup_batch.extend(named_range_requests)
-    if population_batch:
-        batches.append(population_batch)
-    if deferred_followup_batch:
-        batches.append(deferred_followup_batch)
+            if followup_batch:
+                batches.append(followup_batch)
     return batches
 
 
-def _lower_new_tab_body(
+def _lower_new_tab_body_batches(
     tab: TabIR,
     *,
     desired_raw_tab: dict[str, object],
     deferred_tab_id: dict[str, object],
-) -> list[dict[str, Any]]:
+) -> list[list[dict[str, Any]]]:
     if len(tab.body.sections) != 1:
         raise UnsupportedSpikeError(
             "reconcile_v2 currently supports creating tabs with exactly one body section"
@@ -562,13 +1019,24 @@ def _lower_new_tab_body(
         edit
         for edit in diff_documents(synthetic_base, synthetic_desired)
         if not isinstance(edit, CreateFootnoteEdit | CreateSectionAttachmentEdit)
-        and not (filter_named_ranges and isinstance(edit, ReplaceNamedRangesEdit))
+        and not (
+            filter_named_ranges
+            and isinstance(edit, ReplaceNamedRangesEdit)
+            and not edit.name.startswith("extradoc:")
+        )
     ]
-    return _replace_tab_id(
-        lower_document_edits(synthetic_base, body_edits, desired=synthetic_desired),
-        old_tab_id=shadow_tab_id,
-        new_tab_id=deferred_tab_id,
-    )
+    return [
+        _replace_tab_id(
+            batch,
+            old_tab_id=shadow_tab_id,
+            new_tab_id=deferred_tab_id,
+        )
+        for batch in _lower_content_request_batches(
+            synthetic_base,
+            body_edits,
+            desired=synthetic_desired,
+        )
+    ]
 
 
 def _lower_new_tab_named_ranges(
@@ -587,6 +1055,8 @@ def _lower_new_tab_named_ranges(
     blocks = tab.body.sections[0].blocks
     requests: list[dict[str, Any]] = []
     for name, anchors in tab.annotations.named_ranges.items():
+        if name.startswith("extradoc:"):
+            continue
         for anchor in anchors:
             if anchor.start.story_id != tab.body.id or anchor.end.story_id != tab.body.id:
                 raise UnsupportedSpikeError(

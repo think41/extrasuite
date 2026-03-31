@@ -105,6 +105,27 @@ def make_update_paragraph_role(
     }
 
 
+def make_update_paragraph_style(
+    *,
+    start_index: int,
+    end_index: int,
+    tab_id: str,
+    paragraph_style: dict[str, Any],
+    fields: tuple[str, ...] | list[str],
+) -> dict[str, Any]:
+    return {
+        "updateParagraphStyle": {
+            "range": {
+                "startIndex": start_index,
+                "endIndex": end_index,
+                "tabId": tab_id,
+            },
+            "paragraphStyle": paragraph_style,
+            "fields": ",".join(fields),
+        }
+    }
+
+
 def make_update_text_style(
     *,
     start_index: int,

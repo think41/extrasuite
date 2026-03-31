@@ -1157,6 +1157,28 @@ class TestSpecialElementsPull:
         assert "[read the license](LICENSE)" in md
         assert "http://LICENSE" not in md
 
+    def test_list_pull_derives_nesting_from_indent_when_bullet_level_missing(self) -> None:
+        doc = reindex_document(
+            markdown_to_document(
+                {"Tab_1": "- parent\n  - child\n"},
+                document_id="nested-list-pull",
+                title="Nested List Pull",
+                tab_ids={"Tab_1": "t.0"},
+            )
+        )
+
+        body = doc.tabs[0].document_tab.body.content
+        child_paragraph = body[1].paragraph
+        assert child_paragraph is not None
+        assert child_paragraph.bullet is not None
+        child_paragraph.bullet.nesting_level = None
+
+        per_tab = document_to_markdown(doc)
+        md = per_tab["Tab_1"]["document.md"]
+
+        assert "- parent" in md
+        assert "  - child" in md
+
 
 # ---------------------------------------------------------------------------
 # Test 6: Round-trip — markdown → Document → markdown for special elements

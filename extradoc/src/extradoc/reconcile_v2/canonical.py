@@ -6,7 +6,14 @@ import copy
 from dataclasses import dataclass
 from typing import TYPE_CHECKING
 
-from extradoc.reconcile_v2.ir import ListIR, ParagraphIR, StoryKind, TableIR, TextSpanIR
+from extradoc.reconcile_v2.ir import (
+    ListIR,
+    PageBreakIR,
+    ParagraphIR,
+    StoryKind,
+    TableIR,
+    TextSpanIR,
+)
 from extradoc.reconcile_v2.parse import parse_document
 
 if TYPE_CHECKING:
@@ -68,10 +75,24 @@ def _transport_block_keep_mask(blocks: list[BlockIR]) -> list[bool]:
     for index, block in enumerate(blocks):
         if not _is_transport_carrier_paragraph(block):
             continue
-        prev_is_table = index > 0 and isinstance(blocks[index - 1], TableIR)
-        next_is_table = index + 1 < len(blocks) and isinstance(blocks[index + 1], TableIR)
-        if prev_is_table or next_is_table:
+        prev_is_structural = index > 0 and _is_transport_carrier_anchor(blocks[index - 1])
+        next_is_structural = index + 1 < len(blocks) and _is_transport_carrier_anchor(blocks[index + 1])
+        if prev_is_structural or next_is_structural:
             keep_mask[index] = False
+    run_start = 0
+    while run_start < len(blocks):
+        if not _is_transport_carrier_paragraph(blocks[run_start]):
+            run_start += 1
+            continue
+        run_end = run_start
+        while run_end + 1 < len(blocks) and _is_transport_carrier_paragraph(blocks[run_end + 1]):
+            run_end += 1
+        prev_is_structural = run_start > 0 and _is_transport_carrier_anchor(blocks[run_start - 1])
+        next_is_structural = run_end + 1 < len(blocks) and _is_transport_carrier_anchor(blocks[run_end + 1])
+        if prev_is_structural or next_is_structural:
+            for index in range(run_start, run_end + 1):
+                keep_mask[index] = False
+        run_start = run_end + 1
     saw_noncarrier = any(not _is_transport_carrier_paragraph(block) for block in blocks)
     if saw_noncarrier:
         for index, block in enumerate(blocks):
@@ -87,6 +108,10 @@ def _transport_block_keep_mask(blocks: list[BlockIR]) -> list[bool]:
 
 def _is_transport_carrier_paragraph(block: BlockIR) -> bool:
     return isinstance(block, ParagraphIR) and not block.inlines
+
+
+def _is_transport_carrier_anchor(block: BlockIR) -> bool:
+    return isinstance(block, TableIR | PageBreakIR)
 
 
 def _remap_body_named_range_positions(

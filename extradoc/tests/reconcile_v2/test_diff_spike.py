@@ -6,7 +6,9 @@ from pathlib import Path
 
 import pytest
 
+import extradoc.serde as serde
 from extradoc.api_types._generated import Document
+from extradoc.client import _normalize_raw_base_para_styles
 from extradoc.reconcile import reindex_document
 from extradoc.reconcile_v2.diff import (
     AppendListItemsEdit,
@@ -27,6 +29,7 @@ from extradoc.reconcile_v2.diff import (
     ReplaceParagraphSliceEdit,
     ReplaceParagraphTextEdit,
     UnmergeTableCellsEdit,
+    UpdateListItemRolesEdit,
     UpdateParagraphRoleEdit,
     UpdateTableCellStyleEdit,
     UpdateTableColumnPropertiesEdit,
@@ -1066,6 +1069,35 @@ def test_operational_notes_repair_fixture_preserves_mixed_body_repair_slice() ->
         "tab t.0: story t.0:body replace 0 paragraph block(s) at 13 with 1 paragraph(s)",
         "tab t.0: section 0 insert BULLETED list at block 13 with 13 item(s)",
     ]
+
+
+def test_live_list_role_bleed_fixture_emits_list_item_role_repairs() -> None:
+    fixture_root = FIXTURES_ROOT / "live_list_role_bleed_repair"
+    base = Document.model_validate(
+        json.loads((fixture_root / "base.json").read_text(encoding="utf-8"))
+    )
+    desired_bundle = serde.deserialize(fixture_root / "desired")
+    _normalize_raw_base_para_styles(base, desired_bundle.document)
+    desired = reindex_document(desired_bundle.document)
+
+    edits = diff_documents(base, desired)
+
+    assert any(
+        isinstance(edit, UpdateListItemRolesEdit)
+        and edit.tab_id == "t.0"
+        and edit.block_index == 9
+        and edit.item_indexes == (0, 1)
+        and edit.after_roles == ("NORMAL_TEXT", "NORMAL_TEXT")
+        for edit in edits
+    )
+    assert any(
+        isinstance(edit, UpdateListItemRolesEdit)
+        and edit.tab_id == "t.0"
+        and edit.block_index == 10
+        and edit.item_indexes == (0, 1)
+        and edit.after_roles == ("NORMAL_TEXT", "NORMAL_TEXT")
+        for edit in edits
+    )
 
 
 def test_diff_story_table_cell_single_paragraph_change_uses_text_replace() -> None:
