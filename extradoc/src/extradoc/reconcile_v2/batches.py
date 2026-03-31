@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import copy
+import hashlib
 from typing import TYPE_CHECKING, Any
 
 from extradoc.api_types._generated import Document
@@ -32,7 +33,7 @@ from extradoc.reconcile_v2.ir import (
     TextSpanIR,
 )
 from extradoc.reconcile_v2.layout import ParagraphLocation, build_body_layout
-from extradoc.reconcile_v2.lower import lower_document_edits
+from extradoc.reconcile_v2.lower import _content_edit_order_key, lower_document_edits
 from extradoc.reconcile_v2.requests import (
     make_add_document_tab,
     make_create_footer,
@@ -71,7 +72,7 @@ def lower_document_batches(
         edit for edit in remaining_edits if not isinstance(edit, CreateFootnoteEdit)
     ]
     if remaining_edits:
-        if not batches and _should_iteratively_batch_content(remaining_edits):
+        if _should_iteratively_batch_content(remaining_edits):
             batches.extend(
                 _plan_iterative_content_batches(
                     transport_base or base,
@@ -117,32 +118,108 @@ def _should_iteratively_batch_content(edits: list[SemanticEdit]) -> bool:
 
 def _plan_iterative_content_batches(
     base: Document,
-    edits: list[SemanticEdit],
+    _edits: list[SemanticEdit],
     desired: Document,
 ) -> list[list[dict[str, Any]]]:
     batches: list[list[dict[str, Any]]] = []
     current_base = copy.deepcopy(base)
-    content_edits = [edit for edit in edits if not isinstance(edit, ReplaceNamedRangesEdit)]
-    named_range_edits = [edit for edit in edits if isinstance(edit, ReplaceNamedRangesEdit)]
-
-    edit_index = 0
-    while edit_index < len(content_edits):
-        next_index = _next_iterative_content_group_end(content_edits, edit_index)
-        next_batch_edits = content_edits[edit_index:next_index]
-        requests = lower_document_edits(current_base, next_batch_edits, desired=desired)
+    desired_content = _document_without_named_ranges(desired)
+    seen_state_hashes: set[str] = set()
+    while True:
+        state_hash = hashlib.sha256(
+            current_base.model_dump_json(by_alias=True, exclude_none=True).encode("utf-8")
+        ).hexdigest()
+        if state_hash in seen_state_hashes:
+            raise UnsupportedSpikeError(
+                "reconcile_v2 iterative content planning entered a repeated state "
+                "while lowering a mixed body rewrite"
+            )
+        seen_state_hashes.add(state_hash)
+        current_content_base = _document_without_named_ranges(current_base)
+        current_edits = diff_documents(current_content_base, desired_content)
+        content_edits = [
+            edit
+            for edit in current_edits
+            if not isinstance(edit, ReplaceNamedRangesEdit | CreateFootnoteEdit)
+        ]
+        if not content_edits:
+            break
+        content_edits.sort(
+            key=lambda edit: _content_edit_order_key(0, edit)  # type: ignore[arg-type]
+        )
+        requests: list[dict[str, Any]] = []
+        next_base: Document | None = None
+        best_remaining_count = len(content_edits)
+        for start_index in range(len(content_edits)):
+            for next_batch_edits in _iterative_batch_candidates(content_edits, start_index):
+                try:
+                    candidate_requests = lower_document_edits(
+                        current_base,
+                        next_batch_edits,
+                        desired=desired,
+                    )
+                except UnsupportedSpikeError:
+                    continue
+                if not candidate_requests:
+                    continue
+                shadow = MockGoogleDocsAPI(current_base)
+                try:
+                    shadow._batch_update_raw(candidate_requests)
+                except Exception:
+                    continue
+                candidate_next_base = shadow.get()
+                candidate_remaining_count = len(
+                    [
+                        edit
+                        for edit in diff_documents(
+                            _document_without_named_ranges(candidate_next_base),
+                            desired_content,
+                        )
+                        if not isinstance(edit, ReplaceNamedRangesEdit | CreateFootnoteEdit)
+                    ]
+                )
+                if candidate_remaining_count < best_remaining_count:
+                    best_remaining_count = candidate_remaining_count
+                    requests = candidate_requests
+                    next_base = candidate_next_base
+                    if best_remaining_count == 0:
+                        break
+            if best_remaining_count == 0:
+                break
         if not requests:
             break
+        if best_remaining_count >= len(content_edits):
+            raise UnsupportedSpikeError(
+                "reconcile_v2 iterative content planning could not find a batch "
+                "that reduced the remaining mixed body rewrite"
+            )
         batches.append(requests)
-        shadow = MockGoogleDocsAPI(current_base)
-        shadow._batch_update_raw(requests)
-        current_base = shadow.get()
-        edit_index = next_index
+        if next_base is None:
+            shadow = MockGoogleDocsAPI(current_base)
+            shadow._batch_update_raw(requests)
+            next_base = shadow.get()
+        current_base = next_base
 
+    named_range_edits = [
+        edit
+        for edit in diff_documents(_document_without_named_ranges(current_base), desired)
+        if isinstance(edit, ReplaceNamedRangesEdit)
+    ]
     if named_range_edits:
         requests = lower_document_edits(current_base, named_range_edits, desired=desired)
         if requests:
             batches.append(requests)
     return batches
+
+
+def _document_without_named_ranges(document: Document) -> Document:
+    raw = document.model_dump(by_alias=True, exclude_none=True)
+    for tab in raw.get("tabs", []):
+        document_tab = tab.get("documentTab")
+        if not isinstance(document_tab, dict):
+            continue
+        document_tab["namedRanges"] = {}
+    return Document.model_validate(raw)
 
 
 def _next_iterative_content_group_end(
@@ -158,6 +235,20 @@ def _next_iterative_content_group_end(
     return end_index
 
 
+def _iterative_batch_candidates(
+    edits: list[SemanticEdit],
+    start_index: int,
+) -> list[list[SemanticEdit]]:
+    next_index = _next_iterative_content_group_end(edits, start_index)
+    if next_index == start_index + 1:
+        return [edits[start_index:next_index]]
+    group = edits[start_index:next_index]
+    candidates = [group]
+    for index in range(next_index - 1, start_index - 1, -1):
+        candidates.append(edits[index : index + 1])
+    return candidates
+
+
 def _iterative_body_insert_anchor(
     edit: SemanticEdit,
 ) -> tuple[str, int, int, int | None] | None:
@@ -170,9 +261,12 @@ def _iterative_body_insert_anchor(
         )
     if (
         isinstance(edit, ReplaceParagraphSliceEdit)
-        and edit.delete_block_count == 0
         and edit.section_index is not None
         and edit.story_id == f"{edit.tab_id}:body"
+        and (
+            edit.delete_block_count == 0
+            or (edit.delete_block_count > 0 and not edit.inserted_paragraphs)
+        )
     ):
         return (
             edit.tab_id,

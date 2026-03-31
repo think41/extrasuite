@@ -16,6 +16,9 @@ result = mock.get()                         # returns updated document as dict
 
 The mock is exercised by the `extradoc` test suite and is intended to be
 good enough for reconcile verification and focused request-level testing.
+It is not high-confidence for release signoff. If reconciler behavior matters,
+use fixture-backed replay against live Google Docs and treat the mock as a fast
+debugging aid rather than the source of truth.
 
 ## How It Works
 

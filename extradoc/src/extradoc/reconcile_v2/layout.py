@@ -13,12 +13,20 @@ if TYPE_CHECKING:
 
 
 @dataclass(frozen=True, slots=True)
+class InlineSlotLocation:
+    kind: str
+    start_index: int
+    end_index: int
+
+
+@dataclass(frozen=True, slots=True)
 class ParagraphLocation:
     start_index: int
     end_index: int
     text_start_index: int
     text_end_index: int
     text: str
+    inline_slots: tuple[InlineSlotLocation, ...] = ()
 
 
 @dataclass(frozen=True, slots=True)
@@ -45,6 +53,12 @@ class TableLocation:
 
 
 @dataclass(frozen=True, slots=True)
+class PageBreakLocation:
+    start_index: int
+    end_index: int
+
+
+@dataclass(frozen=True, slots=True)
 class SectionBoundaryLocation:
     delete_start_index: int
     delete_end_index: int
@@ -54,7 +68,7 @@ class SectionBoundaryLocation:
 
 @dataclass(slots=True)
 class SectionLayout:
-    block_locations: list[ParagraphLocation | ListLocation | TableLocation] = field(
+    block_locations: list[ParagraphLocation | ListLocation | TableLocation | PageBreakLocation] = field(
         default_factory=list
     )
     incoming_boundary: SectionBoundaryLocation | None = None
@@ -82,6 +96,7 @@ class StoryParagraphLocation:
     text_start_index: int
     text_end_index: int
     text: str
+    inline_slots: tuple[InlineSlotLocation, ...] = ()
 
 
 @dataclass(frozen=True, slots=True)
@@ -179,6 +194,20 @@ def build_body_layout(document: Document, *, tab_id: str) -> BodyLayout:
             paragraph,
             fallback_start=element["startIndex"],
         )
+        inline_slots = _paragraph_inline_slots(
+            paragraph,
+            fallback_start=element["startIndex"],
+        )
+        if any(child.get("pageBreak") is not None for child in paragraph.get("elements", [])):
+            flush_list()
+            pending_empty_para = None
+            current_section.block_locations.append(
+                PageBreakLocation(
+                    start_index=element["startIndex"],
+                    end_index=element["endIndex"],
+                )
+            )
+            continue
         bullet = paragraph.get("bullet")
         if bullet:
             pending_empty_para = None
@@ -217,6 +246,7 @@ def build_body_layout(document: Document, *, tab_id: str) -> BodyLayout:
                 text_start_index=text_start_index,
                 text_end_index=text_end_index,
                 text=visible_text,
+                inline_slots=inline_slots,
             )
         )
 
@@ -521,6 +551,10 @@ def _make_story_paragraph_location(
         paragraph_element,
         fallback_start=start_index,
     )
+    inline_slots = _paragraph_inline_slots(
+        paragraph_element,
+        fallback_start=start_index,
+    )
     return StoryParagraphLocation(
         section_index=section_index,
         block_index=block_index,
@@ -530,6 +564,7 @@ def _make_story_paragraph_location(
         text_start_index=text_start_index,
         text_end_index=text_end_index,
         text=visible_text,
+        inline_slots=inline_slots,
     )
 
 
@@ -558,6 +593,49 @@ def _paragraph_text_run_range(
     if last_content.endswith("\n"):
         end_index = max(start_index, end_index - utf16_len("\n"))
     return start_index, end_index
+
+
+def _paragraph_inline_slots(
+    paragraph: dict,
+    *,
+    fallback_start: int,
+) -> tuple[InlineSlotLocation, ...]:
+    slots: list[InlineSlotLocation] = []
+    for element in paragraph.get("elements", []):
+        start_index = element.get("startIndex", fallback_start)
+        end_index = element.get("endIndex", start_index)
+        text_run = element.get("textRun")
+        if text_run is not None:
+            content = text_run.get("content", "")
+            visible = content[:-1] if content.endswith("\n") else content
+            if not visible:
+                continue
+            slots.append(
+                InlineSlotLocation(
+                    kind="text",
+                    start_index=start_index,
+                    end_index=start_index + utf16_len(visible),
+                )
+            )
+            continue
+        if element.get("pageBreak") is not None:
+            continue
+        if element.get("footnoteReference") is not None:
+            kind = "footnote"
+        elif element.get("inlineObjectElement") is not None:
+            kind = "inline_object"
+        elif element.get("autoText") is not None:
+            kind = "auto_text"
+        else:
+            kind = "opaque"
+        slots.append(
+            InlineSlotLocation(
+                kind=kind,
+                start_index=start_index,
+                end_index=end_index,
+            )
+        )
+    return tuple(slots)
 
 
 def _element_start_index(element: dict, fallback: int) -> int:

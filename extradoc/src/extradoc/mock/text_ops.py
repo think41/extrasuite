@@ -178,11 +178,15 @@ def _insert_text_simple_in_content(
     index: int,
     text: str,
 ) -> bool:
-    for element in content:
+    for elem_idx, element in enumerate(content):
         elem_start = element.get("startIndex", 0)
         elem_end = element.get("endIndex", 0)
 
-        if elem_start <= index <= elem_end and "paragraph" in element:
+        if (
+            elem_start <= index < elem_end
+            and "paragraph" in element
+            and not _prefer_following_content_sibling(content, elem_idx, index)
+        ):
             _insert_into_paragraph(element["paragraph"], index, text)
             return True
 
@@ -204,7 +208,11 @@ def _insert_into_paragraph(paragraph: dict[str, Any], index: int, text: str) -> 
         run_start = para_elem.get("startIndex", 0)
         run_end = para_elem.get("endIndex", 0)
 
-        if run_start <= index <= run_end and "textRun" in para_elem:
+        if (
+            run_start <= index < run_end
+            and "textRun" in para_elem
+            and not _prefer_following_run(para_elements, pe_idx, index)
+        ):
             text_run = para_elem["textRun"]
             content_str = text_run.get("content", "")
             run_style = text_run.get("textStyle", {})
@@ -259,6 +267,38 @@ def _insert_into_paragraph(paragraph: dict[str, Any], index: int, text: str) -> 
     raise ValidationError(f"Could not find text run to insert at index {index}")
 
 
+def _prefer_following_content_sibling(
+    content: list[dict[str, Any]],
+    current_index: int,
+    index: int,
+) -> bool:
+    if content[current_index].get("endIndex", 0) != index:
+        return False
+    for next_element in content[current_index + 1 :]:
+        next_start = next_element.get("startIndex", 0)
+        if next_start != index:
+            return False
+        if "paragraph" in next_element or "table" in next_element:
+            return True
+    return False
+
+
+def _prefer_following_run(
+    para_elements: list[dict[str, Any]],
+    current_index: int,
+    index: int,
+) -> bool:
+    if para_elements[current_index].get("endIndex", 0) != index:
+        return False
+    for next_element in para_elements[current_index + 1 :]:
+        next_start = next_element.get("startIndex", 0)
+        if next_start != index:
+            return False
+        if "textRun" in next_element:
+            return True
+    return False
+
+
 def _insert_text_with_newlines(segment: dict[str, Any], index: int, text: str) -> None:
     """Insert text that contains newlines, creating new paragraphs.
 
@@ -289,7 +329,11 @@ def _insert_text_with_newlines_in_content(
                         return True
             return False
 
-        if elem_start <= index < elem_end and "paragraph" in element:
+        if (
+            elem_start <= index < elem_end
+            and "paragraph" in element
+            and not _prefer_following_content_sibling(content, elem_idx, index)
+        ):
             paragraph = element["paragraph"]
             para_elements = paragraph.get("elements", [])
             para_style = copy.deepcopy(paragraph.get("paragraphStyle", {}))
@@ -297,9 +341,9 @@ def _insert_text_with_newlines_in_content(
             # Step 1: Collect all runs, inserting text into the target run.
             # When inserting into a link-styled run, the inserted text gets
             # empty textStyle {} (the real API does not propagate link styles).
-            runs: list[tuple[str, dict[str, Any]]] = []
+            runs: list[tuple[str, dict[str, Any], bool]] = []
             inserted = False
-            for pe in para_elements:
+            for pe_idx, pe in enumerate(para_elements):
                 if "textRun" not in pe:
                     continue
                 run_start = pe.get("startIndex", 0)
@@ -307,7 +351,11 @@ def _insert_text_with_newlines_in_content(
                 run_content = pe["textRun"].get("content", "")
                 run_style = pe["textRun"].get("textStyle", {})
 
-                if not inserted and run_start <= index <= run_end:
+                if (
+                    not inserted
+                    and run_start <= index < run_end
+                    and not _prefer_following_run(para_elements, pe_idx, index)
+                ):
                     offset = calculate_utf16_offset(run_content, index - run_start)
                     if "link" in run_style:
                         # Link runs: strip link+foregroundColor, keep explicit styles
@@ -315,36 +363,41 @@ def _insert_text_with_newlines_in_content(
                         before = run_content[:offset]
                         after = run_content[offset:]
                         if before:
-                            runs.append((before, copy.deepcopy(run_style)))
-                        runs.append((text, inherited_style))
+                            runs.append((before, copy.deepcopy(run_style), True))
+                        runs.append((text, inherited_style, False))
                         if after:
-                            runs.append((after, copy.deepcopy(run_style)))
+                            runs.append((after, copy.deepcopy(run_style), True))
                     else:
-                        new_content = run_content[:offset] + text + run_content[offset:]
-                        runs.append((new_content, copy.deepcopy(run_style)))
+                        before = run_content[:offset]
+                        after = run_content[offset:]
+                        if before:
+                            runs.append((before, copy.deepcopy(run_style), True))
+                        runs.append((text, copy.deepcopy(run_style), False))
+                        if after:
+                            runs.append((after, copy.deepcopy(run_style), True))
                     inserted = True
                 else:
-                    runs.append((run_content, copy.deepcopy(run_style)))
+                    runs.append((run_content, copy.deepcopy(run_style), True))
 
             # Step 2: Split runs at \n boundaries to form paragraph groups
-            para_groups: list[list[tuple[str, dict[str, Any]]]] = []
-            current_group: list[tuple[str, dict[str, Any]]] = []
+            para_groups: list[list[tuple[str, dict[str, Any], bool]]] = []
+            current_group: list[tuple[str, dict[str, Any], bool]] = []
 
-            for content_str, style in runs:
+            for content_str, style, is_original in runs:
                 while "\n" in content_str:
                     nl_idx = content_str.index("\n")
                     before = content_str[: nl_idx + 1]
                     after = content_str[nl_idx + 1 :]
 
                     if before:
-                        current_group.append((before, style))
+                        current_group.append((before, style, is_original))
                     para_groups.append(current_group)
                     current_group = []
                     content_str = after
                     style = copy.deepcopy(style)
 
                 if content_str:
-                    current_group.append((content_str, style))
+                    current_group.append((content_str, style, is_original))
 
             if current_group:
                 para_groups.append(current_group)
@@ -357,7 +410,8 @@ def _insert_text_with_newlines_in_content(
                     continue
 
                 elements: list[dict[str, Any]] = []
-                for text_content, style in group:
+                group_has_original_content = False
+                for text_content, style, is_original in group:
                     elements.append(
                         {
                             "startIndex": 0,
@@ -368,12 +422,13 @@ def _insert_text_with_newlines_in_content(
                             },
                         }
                     )
+                    group_has_original_content = group_has_original_content or is_original
 
                 para_dict: dict[str, Any] = {
                     "elements": elements,
                     "paragraphStyle": copy.deepcopy(para_style),
                 }
-                if "bullet" in paragraph:
+                if "bullet" in paragraph and group_has_original_content:
                     para_dict["bullet"] = copy.deepcopy(paragraph["bullet"])
                 new_elements.append(
                     {
@@ -411,7 +466,7 @@ def _insert_text_with_newlines_in_cell(
     # Collect all runs, inserting text into the target run
     runs: list[tuple[str, dict[str, Any]]] = []
     inserted = False
-    for pe in para_elements:
+    for pe_idx, pe in enumerate(para_elements):
         if "textRun" not in pe:
             continue
         run_start = pe.get("startIndex", 0)
@@ -419,7 +474,11 @@ def _insert_text_with_newlines_in_cell(
         run_content = pe["textRun"].get("content", "")
         run_style = pe["textRun"].get("textStyle", {})
 
-        if not inserted and run_start <= index <= run_end:
+        if (
+            not inserted
+            and run_start <= index < run_end
+            and not _prefer_following_run(para_elements, pe_idx, index)
+        ):
             offset = calculate_utf16_offset(run_content, index - run_start)
             new_content = run_content[:offset] + text + run_content[offset:]
             runs.append((new_content, copy.deepcopy(run_style)))

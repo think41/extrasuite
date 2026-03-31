@@ -238,7 +238,13 @@ Second-pass heading replacements should not bleed into surrounding table cells o
 XML_INITIAL_DOCUMENT = """<?xml version="1.0" encoding="UTF-8"?>
 <tab id="t.0" title="Tab 1" index="0">
   <body>
-    <sectionbreak sectionType="CONTINUOUS" contentDirection="LEFT_TO_RIGHT" columnSeparatorStyle="NONE" />
+    <sectionbreak
+      sectionType="CONTINUOUS"
+      contentDirection="LEFT_TO_RIGHT"
+      columnSeparatorStyle="NONE"
+      defaultHeaderId="h.release"
+      defaultFooterId="f.release"
+    />
     <h1>Release XML Smoke</h1>
     <p>Paragraph with a <a href="https://example.com/release">release link</a> and a footnote marker<footnoteref id="fn.release" />.</p>
     <li type="bullet">First bullet</li>
@@ -288,7 +294,13 @@ XML_INITIAL_DOCUMENT = """<?xml version="1.0" encoding="UTF-8"?>
 XML_EDITED_DOCUMENT = """<?xml version="1.0" encoding="UTF-8"?>
 <tab id="t.0" title="Tab 1" index="0">
   <body>
-    <sectionbreak sectionType="CONTINUOUS" contentDirection="LEFT_TO_RIGHT" columnSeparatorStyle="NONE" />
+    <sectionbreak
+      sectionType="CONTINUOUS"
+      contentDirection="LEFT_TO_RIGHT"
+      columnSeparatorStyle="NONE"
+      defaultHeaderId="h.release"
+      defaultFooterId="f.release"
+    />
     <h1>Release XML Smoke Updated</h1>
     <p>Paragraph with a <a href="https://example.com/release-updated">release link</a> and the edited footnote marker<footnoteref id="fn.release" />.</p>
     <li type="bullet">First bullet updated</li>

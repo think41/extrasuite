@@ -743,6 +743,127 @@ def test_insert_text_beyond_document() -> None:
     assert "beyond" in str(exc_info.value).lower()
 
 
+def test_insert_text_at_table_cell_paragraph_boundary_targets_following_paragraph() -> None:
+    doc = {
+        "documentId": "table_boundary_doc",
+        "title": "Table Boundary Doc",
+        "revisionId": "initial_revision",
+        "tabs": [
+            {
+                "tabProperties": {
+                    "tabId": "tab1",
+                    "title": "Tab 1",
+                    "index": 0,
+                },
+                "documentTab": {
+                    "body": {
+                        "content": [
+                            {
+                                "startIndex": 1,
+                                "endIndex": 8,
+                                "paragraph": {
+                                    "elements": [
+                                        {
+                                            "startIndex": 1,
+                                            "endIndex": 8,
+                                            "textRun": {
+                                                "content": "Before\n",
+                                                "textStyle": {},
+                                            },
+                                        }
+                                    ],
+                                    "paragraphStyle": {},
+                                },
+                            },
+                            {
+                                "startIndex": 8,
+                                "endIndex": 16,
+                                "table": {
+                                    "rows": 1,
+                                    "columns": 1,
+                                    "tableRows": [
+                                        {
+                                            "tableCells": [
+                                                {
+                                                    "content": [
+                                                        {
+                                                            "startIndex": 9,
+                                                            "endIndex": 12,
+                                                            "paragraph": {
+                                                                "elements": [
+                                                                    {
+                                                                        "startIndex": 9,
+                                                                        "endIndex": 12,
+                                                                        "textRun": {
+                                                                            "content": "A\n",
+                                                                            "textStyle": {},
+                                                                        },
+                                                                    }
+                                                                ],
+                                                                "paragraphStyle": {},
+                                                            },
+                                                        },
+                                                        {
+                                                            "startIndex": 12,
+                                                            "endIndex": 15,
+                                                            "paragraph": {
+                                                                "elements": [
+                                                                    {
+                                                                        "startIndex": 12,
+                                                                        "endIndex": 15,
+                                                                        "textRun": {
+                                                                            "content": "B\n",
+                                                                            "textStyle": {},
+                                                                        },
+                                                                    }
+                                                                ],
+                                                                "paragraphStyle": {},
+                                                            },
+                                                        },
+                                                    ]
+                                                }
+                                            ]
+                                        }
+                                    ],
+                                },
+                            },
+                        ]
+                    },
+                    "headers": {},
+                    "footers": {},
+                    "footnotes": {},
+                    "namedRanges": {},
+                },
+            }
+        ],
+    }
+    api = MockGoogleDocsAPI(Document.model_validate(doc))
+
+    api.batch_update(
+        BatchUpdateDocumentRequest(
+            requests=[
+                Request.model_validate(
+                    {"insertText": {"location": {"index": 12}, "text": "X"}}
+                )
+            ]
+        )
+    )
+
+    body = api.get().model_dump(by_alias=True, exclude_none=True)["tabs"][0]["documentTab"]["body"][
+        "content"
+    ]
+    table_cell_content = body[1]["table"]["tableRows"][0]["tableCells"][0]["content"]
+    paragraph_texts = [
+        "".join(
+            element.get("textRun", {}).get("content", "")
+            for element in paragraph["paragraph"]["elements"]
+        )
+        for paragraph in table_cell_content
+    ]
+
+    assert paragraph_texts == ["A\n", "XB\n"]
+
+
 def test_insert_text_requires_location() -> None:
     """Test that insertText requires either location or endOfSegmentLocation."""
     doc = create_minimal_document()
@@ -980,6 +1101,52 @@ def test_delete_paragraph_bullets_basic() -> None:
         )
     )
     assert len(response.replies or []) == 1
+
+
+def test_insert_text_with_newlines_before_bulleted_paragraph_only_keeps_bullet_on_original() -> None:
+    doc = create_minimal_document()
+    api = MockGoogleDocsAPI(Document.model_validate(doc))
+
+    api.batch_update(
+        BatchUpdateDocumentRequest(
+            requests=[
+                Request.model_validate(
+                    {
+                        "createParagraphBullets": {
+                            "range": {"startIndex": 1, "endIndex": 5},
+                            "bulletPreset": "BULLET_DISC_CIRCLE_SQUARE",
+                        }
+                    }
+                )
+            ]
+        )
+    )
+
+    api.batch_update(
+        BatchUpdateDocumentRequest(
+            requests=[
+                Request.model_validate(
+                    {
+                        "insertText": {
+                            "location": {"index": 1},
+                            "text": "Lead\nBody\n",
+                        }
+                    }
+                )
+            ]
+        )
+    )
+
+    body = api.get().tabs[0].document_tab.body.content
+    paragraphs = [element.paragraph for element in body if element.paragraph is not None]
+    assert [paragraph.elements[0].text_run.content for paragraph in paragraphs] == [
+        "Lead\n",
+        "Body\n",
+        "Hello\n",
+    ]
+    assert paragraphs[0].bullet is None
+    assert paragraphs[1].bullet is None
+    assert paragraphs[2].bullet is not None
 
 
 # ========================================================================

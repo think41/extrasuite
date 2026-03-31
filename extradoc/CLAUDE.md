@@ -50,6 +50,9 @@ push:  apply comment ops first
 - After `push`, always re-pull before making further edits.
 - `comment-ref` elements in `document.xml` are display metadata derived from
   `comments.xml`, not primary editable content.
+- `src/extradoc/mock/` is useful for fast local regressions, but it is not a
+  release-confidence source. For reconciler changes, prefer fixture-backed live
+  Google Docs replay before trusting the result.
 
 ## Development
 

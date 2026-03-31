@@ -1059,17 +1059,32 @@ Repair-path rule learned from broken live docs:
    Reusing the normalized semantic base as the transport shadow can produce
    impossible post-batch indices around special tables and invalid delete
    ranges, even when the semantic edit plan is correct
+9. iterative content batching must score viable candidate batches by the size
+   of the remaining semantic diff, not just accept the first lowerable batch.
+   Greedy single-edit batches can oscillate indefinitely on dense second-pass
+   markdown rewrites.
+10. when table comparison encounters an unsupported structural shape during a
+    re-diff, it must degrade to whole-table delete+insert instead of aborting
+    iterative planning. This is especially important for table-backed markdown
+    constructs after earlier body rewrites.
+11. grouped same-anchor body inserts must not span a page break. Page breaks
+    need their own anchor operation, or the shadow layout can lose the page
+    break and miscount inserted blocks.
+12. grouped list inserts must defer `createParagraphBullets` until after all
+    structural inserts are complete. Emitting bullets inline recreates the
+    classic bleed problem where later same-anchor paragraph inserts are
+    absorbed into the already-bulleted block.
 
 ## Current Release-Smoke Readout
 
 1. `extradoc/scripts/release_smoke_docs.py` is the maintained live smoke
    runner for release validation.
-2. Markdown smoke currently passes semantically for:
-   empty-doc create, multi-tab create, complex second-pass edits, tables,
-   callouts, code blocks, links, and footnotes.
-3. XML smoke still exposes real parity gaps:
-   authored page breaks do not survive re-pull,
-   first-section header/footer content is not converging,
-   and cycle-2 footnote persistence is not converging.
-4. XML release signoff is blocked until those gaps are either implemented or
-   explicitly removed from the supported XML contract.
+2. Current live evidence:
+   markdown cycle 1 is semantically converged on the dense multi-tab smoke doc,
+   and XML cycle 1 is semantically converged on the structural smoke doc.
+3. Remaining live blockers are both second-pass updates:
+   markdown cycle 2 still leaves table-backed markdown constructs and code/footnote
+   content partially stale after the edit pass,
+   and XML cycle 2 still leaves a residual footnote/body rewrite diff.
+4. Release signoff remains blocked until those second-pass smoke failures are
+   either fixed or explicitly carved out of the supported contract.

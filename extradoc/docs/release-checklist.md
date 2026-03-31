@@ -37,15 +37,19 @@ Run these on a fresh document and re-pull after every push:
 
 ## Current Status
 
-1. `markdown_multitab` live smoke is semantically converging on both cycles.
-   Remaining diffs are serializer normalization only:
+1. `markdown_multitab` cycle 1 is now semantically converged in live smoke.
+   Remaining cycle-1 diffs are serializer normalization only:
    footnote IDs, ordered-list numbering normalization, HTML-table -> pipe-table,
    and bold header-cell markdown formatting.
-2. `xml_structural` live smoke is still a release blocker.
-   Current live evidence shows:
-   `push` succeeds, but re-pulled XML still drops authored page breaks,
-   first-section header/footer content, and cycle-2 footnote persistence.
-3. The maintained smoke runner is
+2. `markdown_multitab` cycle 2 is still a release blocker.
+   Current live evidence shows second-pass edits against the dense multi-tab
+   doc can still leave stale table-backed markdown constructs and stale
+   code/footnote content after re-pull.
+3. `xml_structural` cycle 1 is now semantically converged in live smoke.
+4. `xml_structural` cycle 2 is still a release blocker.
+   Current live evidence shows a residual second-pass footnote/body rewrite
+   diff after re-pull.
+5. The maintained smoke runner is
    `extradoc/scripts/release_smoke_docs.py`.
 
 ## Accepted Unsupported Boundaries

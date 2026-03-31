@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import copy
 from dataclasses import dataclass
 from itertools import accumulate
 from typing import TYPE_CHECKING, TypeVar
@@ -15,6 +16,7 @@ from extradoc.reconcile_v2.ir import (
     ListIR,
     OpaqueBlockIR,
     OpaqueInlineIR,
+    PageBreakIR,
     ParagraphIR,
     PositionIR,
     SectionIR,
@@ -187,6 +189,22 @@ class DeleteTableBlockEdit:
 
 
 @dataclass(slots=True)
+class InsertPageBreakBlockEdit:
+    tab_id: str
+    section_index: int
+    block_index: int
+    body_anchor_block_index: int | None = None
+
+
+@dataclass(slots=True)
+class DeletePageBreakBlockEdit:
+    tab_id: str
+    section_index: int
+    block_index: int
+    body_anchor_block_index: int | None = None
+
+
+@dataclass(slots=True)
 class ReplaceNamedRangesEdit:
     tab_id: str
     name: str
@@ -321,6 +339,8 @@ SemanticEdit = (
     | DeleteListBlockEdit
     | InsertTableBlockEdit
     | DeleteTableBlockEdit
+    | InsertPageBreakBlockEdit
+    | DeletePageBreakBlockEdit
     | ReplaceNamedRangesEdit
     | InsertTableRowEdit
     | DeleteTableRowEdit
@@ -344,6 +364,7 @@ def diff_document_irs(base: DocumentIR, desired: DocumentIR) -> list[SemanticEdi
     """Diff parsed IR values, normalizing away transport carrier paragraphs."""
     base = canonicalize_document_ir(base)
     desired = canonicalize_document_ir(desired)
+    desired = _normalize_desired_semantic_ids(base, desired)
     edits: list[SemanticEdit] = []
     desired_tabs = _tabs_by_path(desired.tabs)
     for path, base_tab in _walk_tabs(base.tabs):
@@ -435,6 +456,14 @@ def summarize_semantic_edits(edits: Iterable[SemanticEdit]) -> list[str]:
         elif isinstance(edit, DeleteTableBlockEdit):
             lines.append(
                 f"tab {edit.tab_id}: section {edit.section_index} delete table at block {edit.block_index}"
+            )
+        elif isinstance(edit, InsertPageBreakBlockEdit):
+            lines.append(
+                f"tab {edit.tab_id}: section {edit.section_index} insert page break at block {edit.block_index}"
+            )
+        elif isinstance(edit, DeletePageBreakBlockEdit):
+            lines.append(
+                f"tab {edit.tab_id}: section {edit.section_index} delete page break at block {edit.block_index}"
             )
         elif isinstance(edit, ReplaceNamedRangesEdit):
             lines.append(
@@ -662,7 +691,7 @@ def _body_deleted_block_ranges(
                 )
             )
             continue
-        if isinstance(edit, DeleteListBlockEdit | DeleteTableBlockEdit):
+        if isinstance(edit, DeleteListBlockEdit | DeleteTableBlockEdit | DeletePageBreakBlockEdit):
             deleted.append(
                 (edit.tab_id, edit.section_index, edit.block_index, edit.block_index)
             )
@@ -1084,8 +1113,60 @@ def _diff_section_block_slice(
     insert_stop = len(desired_blocks) - suffix
     base_slice = _normalize_structural_block_slice(base_blocks[prefix:delete_stop])
     desired_slice = _normalize_structural_block_slice(desired_blocks[prefix:insert_stop])
+    edge_edits: list[SemanticEdit] = []
+    if any(
+        isinstance(block, PageBreakIR)
+        for block in (*base_slice, *desired_slice)
+    ):
+        leading_pairs = 0
+        while leading_pairs < min(len(base_slice), len(desired_slice)):
+            pair_edits = _diff_compatible_edge_pair(
+                tab_id=tab_id,
+                section_index=section_index,
+                block_index=block_offset + prefix + leading_pairs,
+                base_block=base_slice[leading_pairs],
+                desired_block=desired_slice[leading_pairs],
+            )
+            if pair_edits is None:
+                break
+            edge_edits.extend(pair_edits)
+            leading_pairs += 1
+
+        trailing_pairs = 0
+        while trailing_pairs < min(
+            len(base_slice) - leading_pairs,
+            len(desired_slice) - leading_pairs,
+        ):
+            base_index = len(base_slice) - 1 - trailing_pairs
+            desired_index = len(desired_slice) - 1 - trailing_pairs
+            pair_edits = _diff_compatible_edge_pair(
+                tab_id=tab_id,
+                section_index=section_index,
+                block_index=block_offset + prefix + base_index,
+                base_block=base_slice[base_index],
+                desired_block=desired_slice[desired_index],
+            )
+            if pair_edits is None:
+                break
+            edge_edits.extend(pair_edits)
+            trailing_pairs += 1
+
+        if leading_pairs or trailing_pairs:
+            base_slice = base_slice[leading_pairs : len(base_slice) - trailing_pairs]
+            desired_slice = desired_slice[leading_pairs : len(desired_slice) - trailing_pairs]
+            prefix += leading_pairs
+            delete_stop -= trailing_pairs
+            insert_stop -= trailing_pairs
+            if not base_slice and not desired_slice:
+                return edge_edits
 
     if _all_paragraphs(base_slice) and _all_paragraphs(desired_slice):
+        if (
+            len(base_slice) == len(desired_slice)
+            and [_paragraph_signature(block) for block in base_slice]
+            == [_paragraph_signature(block) for block in desired_slice]
+        ):
+            return []
         if (
             len(base_slice) == len(desired_slice)
             and [_paragraph_text(block) for block in base_slice]
@@ -1115,9 +1196,9 @@ def _diff_section_block_slice(
             or (isinstance(base_slice[0], TableIR) and isinstance(desired_slice[0], TableIR))
         )
     ):
-        return []
+        return edge_edits
 
-    return _plan_mixed_body_block_slice(
+    return edge_edits + _plan_mixed_body_block_slice(
         tab_id=tab_id,
         section_index=section_index,
         block_index=block_offset + prefix,
@@ -1127,6 +1208,46 @@ def _diff_section_block_slice(
         base_slice=base_slice,
         desired_slice=desired_slice,
     )
+
+
+def _diff_compatible_edge_pair(
+    *,
+    tab_id: str,
+    section_index: int,
+    block_index: int,
+    base_block: BlockIR,
+    desired_block: BlockIR,
+) -> list[SemanticEdit] | None:
+    if isinstance(base_block, PageBreakIR) and isinstance(desired_block, PageBreakIR):
+        return []
+    if not isinstance(base_block, ParagraphIR) or not isinstance(desired_block, ParagraphIR):
+        return None
+    if _non_text_inline_signature(base_block) != _non_text_inline_signature(desired_block):
+        return None
+    if _paragraphs_share_trailing_single_footnote_ref(base_block, desired_block):
+        return []
+    edits: list[SemanticEdit] = []
+    if base_block.role != desired_block.role:
+        edits.append(
+            UpdateParagraphRoleEdit(
+                tab_id=tab_id,
+                section_index=section_index,
+                block_index=block_index,
+                before_role=base_block.role,
+                after_role=desired_block.role,
+            )
+        )
+    if _paragraph_text(base_block) != _paragraph_text(desired_block):
+        edits.append(
+            ReplaceParagraphTextEdit(
+                tab_id=tab_id,
+                story_id=f"{tab_id}:body",
+                section_index=section_index,
+                block_index=block_index,
+                desired_paragraph=desired_block,
+            )
+        )
+    return edits
 
 
 def _normalize_structural_block_slice(blocks: list[BlockIR]) -> list[BlockIR]:
@@ -1228,6 +1349,19 @@ def _delete_body_block_sequence(
                     ),
                 )
             )
+        elif isinstance(block, PageBreakIR):
+            edits.append(
+                DeletePageBreakBlockEdit(
+                    tab_id=tab_id,
+                    section_index=section_index,
+                    block_index=start_block_index + index,
+                    body_anchor_block_index=(
+                        None
+                        if raw_start_block_index is None
+                        else raw_start_block_index + index
+                    ),
+                )
+            )
         index -= 1
     return edits
 
@@ -1291,6 +1425,15 @@ def _insert_body_block_sequence(
                     body_anchor_block_index=raw_block_index,
                 )
             )
+        elif isinstance(block, PageBreakIR):
+            edits.append(
+                InsertPageBreakBlockEdit(
+                    tab_id=tab_id,
+                    section_index=section_index,
+                    block_index=block_index,
+                    body_anchor_block_index=raw_block_index,
+                )
+            )
         index -= 1
     return edits
 
@@ -1305,6 +1448,13 @@ def _diff_footnote_changes(
 ) -> list[SemanticEdit]:
     _ = base_catalog
     edits: list[SemanticEdit] = []
+    matched_desired_refs = {
+        desired_ref
+        for _base_ref, desired_ref in _select_matching_footnote_story_pairs(
+            base_sections,
+            desired_sections,
+        )
+    }
     max_sections = max(len(base_sections), len(desired_sections))
     for section_index in range(max_sections):
         base_blocks = (
@@ -1341,6 +1491,8 @@ def _diff_footnote_changes(
                     inline.ref for inline in base_block.inlines if isinstance(inline, FootnoteRefIR)
                 ]
             if len(base_refs) == 0:
+                if desired_refs[0] in matched_desired_refs:
+                    continue
                 edits.append(
                     CreateFootnoteEdit(
                         tab_id=tab_id,
@@ -1416,6 +1568,72 @@ def _select_matching_footnote_story_pairs(
                 continue
             pairs.extend(zip(base_refs, desired_refs, strict=True))
     return tuple(pairs)
+
+
+def _normalize_desired_semantic_ids(base: DocumentIR, desired: DocumentIR) -> DocumentIR:
+    normalized = copy.deepcopy(desired)
+    desired_tabs = _tabs_by_path(normalized.tabs)
+    for path, base_tab in _walk_tabs(base.tabs):
+        desired_tab = desired_tabs.get(path)
+        if desired_tab is None:
+            continue
+        _normalize_tab_footnote_ids(base_tab, desired_tab)
+    return normalized
+
+
+def _normalize_tab_footnote_ids(base_tab: TabIR, desired_tab: TabIR) -> None:
+    ref_map: dict[str, str] = {}
+    for base_ref, desired_ref in _select_matching_footnote_story_pairs(
+        base_tab.body.sections,
+        desired_tab.body.sections,
+    ):
+        if base_ref != desired_ref:
+            ref_map[desired_ref] = base_ref
+    if not ref_map:
+        return
+    _remap_footnote_refs_in_sections(desired_tab.body.sections, ref_map)
+    for story in desired_tab.resource_graph.headers.values():
+        _remap_footnote_refs_in_story(story, ref_map)
+    for story in desired_tab.resource_graph.footers.values():
+        _remap_footnote_refs_in_story(story, ref_map)
+    remapped_footnotes: dict[str, StoryIR] = {}
+    for story_ref, story in desired_tab.resource_graph.footnotes.items():
+        target_ref = ref_map.get(story_ref, story_ref)
+        if target_ref != story_ref:
+            story.id = f"{desired_tab.id}:footnote:{target_ref}"
+        _remap_footnote_refs_in_story(story, ref_map)
+        remapped_footnotes[target_ref] = story
+    desired_tab.resource_graph.footnotes = remapped_footnotes
+
+
+def _remap_footnote_refs_in_sections(
+    sections: list[SectionIR],
+    ref_map: dict[str, str],
+) -> None:
+    for section in sections:
+        for block in section.blocks:
+            _remap_footnote_refs_in_block(block, ref_map)
+
+
+def _remap_footnote_refs_in_story(story: StoryIR, ref_map: dict[str, str]) -> None:
+    for block in story.blocks:
+        _remap_footnote_refs_in_block(block, ref_map)
+
+
+def _remap_footnote_refs_in_block(block: BlockIR, ref_map: dict[str, str]) -> None:
+    if isinstance(block, ParagraphIR):
+        for inline in block.inlines:
+            if isinstance(inline, FootnoteRefIR):
+                inline.ref = ref_map.get(inline.ref, inline.ref)
+        return
+    if isinstance(block, ListIR):
+        for item in block.items:
+            _remap_footnote_refs_in_block(item.paragraph, ref_map)
+        return
+    if isinstance(block, TableIR):
+        for row in block.rows:
+            for cell in row.cells:
+                _remap_footnote_refs_in_story(cell.content, ref_map)
 
 
 def _diff_attached_story_catalog(
@@ -1505,13 +1723,81 @@ def _diff_section_tables(
         ):
             if not isinstance(base_block, TableIR) or not isinstance(desired_block, TableIR):
                 continue
-            plan = _plan_table_comparison(
-                tab_id=tab_id,
+            base_special_kind = _special_table_kind_for_block(
+                tab=base_tab,
                 section_index=section_index,
                 block_index=block_index,
-                base_table=base_block,
-                desired_table=desired_block,
             )
+            desired_special_kind = _special_table_kind_for_block(
+                tab=desired_tab,
+                section_index=section_index,
+                block_index=block_index,
+            )
+            if base_special_kind != desired_special_kind and (
+                base_special_kind is not None or desired_special_kind is not None
+            ):
+                edits.append(
+                    DeleteTableBlockEdit(
+                        tab_id=tab_id,
+                        section_index=section_index,
+                        block_index=block_index,
+                    )
+                )
+                edits.append(
+                    InsertTableBlockEdit(
+                        tab_id=tab_id,
+                        section_index=section_index,
+                        block_index=block_index,
+                        table=desired_block,
+                    )
+                )
+                continue
+            if (
+                base_special_kind is not None
+                and desired_special_kind is not None
+                and base_block != desired_block
+            ):
+                edits.append(
+                    DeleteTableBlockEdit(
+                        tab_id=tab_id,
+                        section_index=section_index,
+                        block_index=block_index,
+                    )
+                )
+                edits.append(
+                    InsertTableBlockEdit(
+                        tab_id=tab_id,
+                        section_index=section_index,
+                        block_index=block_index,
+                        table=desired_block,
+                    )
+                )
+                continue
+            try:
+                plan = _plan_table_comparison(
+                    tab_id=tab_id,
+                    section_index=section_index,
+                    block_index=block_index,
+                    base_table=base_block,
+                    desired_table=desired_block,
+                )
+            except UnsupportedSpikeError:
+                edits.append(
+                    DeleteTableBlockEdit(
+                        tab_id=tab_id,
+                        section_index=section_index,
+                        block_index=block_index,
+                    )
+                )
+                edits.append(
+                    InsertTableBlockEdit(
+                        tab_id=tab_id,
+                        section_index=section_index,
+                        block_index=block_index,
+                        table=desired_block,
+                    )
+                )
+                continue
             if plan is None:
                 continue
             if not _same_special_table_kind(
@@ -1948,7 +2234,7 @@ def _diff_story_paragraph_slice(
     desired_blocks: list[BlockIR],
     block_offset: int = 0,
     raw_block_offset: int | None = None,
-) -> ReplaceParagraphSliceEdit | None:
+) -> SemanticEdit | None:
     if not _all_paragraphs(base_blocks) or not _all_paragraphs(desired_blocks):
         return None
 
@@ -1985,6 +2271,25 @@ def _diff_story_paragraph_slice(
     if delete_stop <= prefix and insert_stop <= prefix:
         return None
 
+    base_slice = base_blocks[prefix:delete_stop]
+    desired_slice = desired_blocks[prefix:insert_stop]
+    if (
+        len(base_slice) == 1
+        and len(desired_slice) == 1
+        and isinstance(base_slice[0], ParagraphIR)
+        and isinstance(desired_slice[0], ParagraphIR)
+        and base_slice[0].role == desired_slice[0].role
+        and _non_text_inline_signature(base_slice[0]) == _non_text_inline_signature(desired_slice[0])
+        and not _paragraphs_share_trailing_single_footnote_ref(base_slice[0], desired_slice[0])
+    ):
+        return ReplaceParagraphTextEdit(
+            tab_id=tab_id,
+            story_id=story_id,
+            section_index=section_index,
+            block_index=block_offset + prefix,
+            desired_paragraph=desired_slice[0],
+        )
+
     return ReplaceParagraphSliceEdit(
         tab_id=tab_id,
         story_id=story_id,
@@ -1993,7 +2298,7 @@ def _diff_story_paragraph_slice(
         delete_block_count=max(0, delete_stop - prefix),
         inserted_paragraphs=tuple(
             ParagraphFragment(paragraph=block)
-            for block in desired_blocks[prefix:insert_stop]
+            for block in desired_slice
         ),
         body_anchor_block_index=(
             None if raw_block_offset is None or section_index is None or story_id != f"{tab_id}:body"
@@ -2101,6 +2406,21 @@ def _paragraph_signature(paragraph: ParagraphIR) -> tuple[str, str]:
     if trailing_ref is not None:
         return ("TRAILING_FOOTNOTE_REF", trailing_ref)
     return paragraph.role, _paragraph_text(paragraph)
+
+
+def _non_text_inline_signature(paragraph: ParagraphIR) -> tuple[tuple[object, ...], ...]:
+    signature: list[tuple[object, ...]] = []
+    for inline in paragraph.inlines:
+        if isinstance(inline, TextSpanIR):
+            continue
+        if isinstance(inline, FootnoteRefIR):
+            signature.append(("footnote", inline.ref))
+            continue
+        if isinstance(inline, OpaqueInlineIR):
+            signature.append(("opaque", inline.kind, tuple(sorted(inline.payload.items()))))
+            continue
+        signature.append((type(inline).__name__, repr(inline)))
+    return tuple(signature)
 
 
 def _is_read_only_paragraph(paragraph: ParagraphIR) -> bool:

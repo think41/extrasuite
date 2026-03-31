@@ -72,6 +72,12 @@ def _transport_block_keep_mask(blocks: list[BlockIR]) -> list[bool]:
         next_is_table = index + 1 < len(blocks) and isinstance(blocks[index + 1], TableIR)
         if prev_is_table or next_is_table:
             keep_mask[index] = False
+    saw_noncarrier = any(not _is_transport_carrier_paragraph(block) for block in blocks)
+    if saw_noncarrier:
+        for index, block in enumerate(blocks):
+            if not keep_mask[index] or not _is_transport_carrier_paragraph(block):
+                break
+            keep_mask[index] = False
     for index in range(len(blocks) - 1, -1, -1):
         if not keep_mask[index] or not _is_transport_carrier_paragraph(blocks[index]):
             break
@@ -80,7 +86,7 @@ def _transport_block_keep_mask(blocks: list[BlockIR]) -> list[bool]:
 
 
 def _is_transport_carrier_paragraph(block: BlockIR) -> bool:
-    return isinstance(block, ParagraphIR) and block.role == "NORMAL_TEXT" and not block.inlines
+    return isinstance(block, ParagraphIR) and not block.inlines
 
 
 def _remap_body_named_range_positions(

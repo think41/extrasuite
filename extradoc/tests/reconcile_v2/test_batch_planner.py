@@ -408,6 +408,85 @@ def test_create_tab_with_footer_is_explicitly_unsupported() -> None:
         lower_semantic_diff_batches(base, desired_with_footer)
 
 
+def test_page_break_batches_insert_and_replay_semantically() -> None:
+    base = reindex_document(
+        markdown_to_document(
+            {"Tab_1": ""},
+            document_id="pagebreak-batches",
+            title="Pagebreak Batches",
+            tab_ids={"Tab_1": "t.0"},
+        )
+    )
+    desired = reindex_document(
+        markdown_to_document(
+            {
+                "Tab_1": (
+                    "Leading paragraph.\n\n"
+                    "<x-pagebreak/>\n\n"
+                    "Trailing paragraph.\n"
+                )
+            },
+            document_id="pagebreak-batches",
+            title="Pagebreak Batches",
+            tab_ids={"Tab_1": "t.0"},
+        )
+    )
+
+    batches = lower_semantic_diff_batches(base, desired)
+
+    flattened = [request for batch in batches for request in batch]
+    assert any("insertPageBreak" in request for request in flattened)
+    assert any(
+        request.get("insertText", {}).get("text") == "Trailing paragraph."
+        for request in flattened
+    )
+    assert any(
+        request.get("insertText", {}).get("text") == "Leading paragraph.\n"
+        for request in flattened
+    )
+
+
+def test_page_break_splits_empty_body_grouped_insert_with_other_blocks() -> None:
+    base = reindex_document(
+        markdown_to_document(
+            {"Tab_1": ""},
+            document_id="pagebreak-mixed-group",
+            title="Pagebreak Mixed Group",
+            tab_ids={"Tab_1": "t.0"},
+        )
+    )
+    desired = reindex_document(
+        markdown_to_document(
+            {
+                "Tab_1": (
+                    "# Heading\n\n"
+                    "- first bullet\n"
+                    "- second bullet\n\n"
+                    "| A | B |\n"
+                    "| --- | --- |\n"
+                    "| 1 | 2 |\n\n"
+                    "<x-pagebreak/>\n\n"
+                    "After break.\n"
+                )
+            },
+            document_id="pagebreak-mixed-group",
+            title="Pagebreak Mixed Group",
+            tab_ids={"Tab_1": "t.0"},
+        )
+    )
+
+    batches = lower_semantic_diff_batches(base, desired)
+
+    flattened = [request for batch in batches for request in batch]
+    assert any("insertPageBreak" in request for request in flattened)
+    assert any("insertTable" in request for request in flattened)
+    assert any("createParagraphBullets" in request for request in flattened)
+    assert any(
+        request.get("insertText", {}).get("text") == "After break."
+        for request in flattened
+    )
+
+
 def _strip_indices(elements: list[dict]) -> None:
     for element in elements:
         element.pop("startIndex", None)

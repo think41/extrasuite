@@ -222,6 +222,17 @@ def make_insert_section_break(
     }
 
 
+def make_insert_page_break(*, index: int, tab_id: str) -> dict[str, Any]:
+    return {
+        "insertPageBreak": {
+            "location": {
+                "index": index,
+                "tabId": tab_id,
+            }
+        }
+    }
+
+
 def make_delete_content_range(
     *,
     start_index: int,

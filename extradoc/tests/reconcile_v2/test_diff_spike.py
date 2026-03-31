@@ -25,6 +25,7 @@ from extradoc.reconcile_v2.diff import (
     ReplaceListSpecEdit,
     ReplaceNamedRangesEdit,
     ReplaceParagraphSliceEdit,
+    ReplaceParagraphTextEdit,
     UnmergeTableCellsEdit,
     UpdateParagraphRoleEdit,
     UpdateTableCellStyleEdit,
@@ -1011,6 +1012,46 @@ def test_table_row_and_column_insert_fixture_emits_two_structural_edits() -> Non
     ]
 
 
+def test_table_multi_structural_change_falls_back_to_delete_and_insert() -> None:
+    base = reindex_document(
+        markdown_to_document(
+            {
+                "Tab_1": (
+                    "| A | B |\n"
+                    "| --- | --- |\n"
+                    "| 1 | 2 |\n"
+                    "| 3 | 4 |\n"
+                )
+            },
+            document_id="table-multi-structural-fallback",
+            title="Table Multi Structural Fallback",
+            tab_ids={"Tab_1": "t.0"},
+        )
+    )
+    desired = reindex_document(
+        markdown_to_document(
+            {
+                "Tab_1": (
+                    "| A | B | C |\n"
+                    "| --- | --- | --- |\n"
+                    "| 1 | 2 | 5 |\n"
+                    "| 3 | 4 | 6 |\n"
+                    "| 7 | 8 | 9 |\n"
+                    "| 10 | 11 | 12 |\n"
+                )
+            },
+            document_id="table-multi-structural-fallback",
+            title="Table Multi Structural Fallback",
+            tab_ids={"Tab_1": "t.0"},
+        )
+    )
+
+    assert summarize_semantic_edits(diff_documents(base, desired)) == [
+        "tab t.0: section 0 delete table at block 0",
+        "tab t.0: section 0 insert table at block 0",
+    ]
+
+
 def test_operational_notes_repair_fixture_preserves_mixed_body_repair_slice() -> None:
     base, desired = _load_fixture_pair("operational_notes_repair")
 
@@ -1020,10 +1061,94 @@ def test_operational_notes_repair_fixture_preserves_mixed_body_repair_slice() ->
         "tab t.0: named range extradoc:codeblock:json replace 1 range(s) with 1 range(s)",
         "tab t.0: named range extradoc:codeblock:python replace 1 range(s) with 1 range(s)",
         "tab t.0: story t.0:body:table:16:r0:c0 replace 5 paragraph block(s) at 0 with 14 paragraph(s)",
-        "tab t.0: story t.0:body replace 1 paragraph block(s) at 14 with 0 paragraph(s)",
+        "tab t.0: section 0 block 14 role HEADING_2 -> NORMAL_TEXT",
         "tab t.0: section 0 delete list at block 13",
-        "tab t.0: story t.0:body replace 0 paragraph block(s) at 13 with 2 paragraph(s)",
+        "tab t.0: story t.0:body replace 0 paragraph block(s) at 13 with 1 paragraph(s)",
         "tab t.0: section 0 insert BULLETED list at block 13 with 13 item(s)",
+    ]
+
+
+def test_diff_story_table_cell_single_paragraph_change_uses_text_replace() -> None:
+    base = reindex_document(
+        markdown_to_document(
+            {
+                "Tab_1": (
+                    "```python\n"
+                    "def sprint_status() -> str:\n"
+                    '    return "green"\n'
+                    "```\n"
+                )
+            },
+            document_id="table-cell-text-replace",
+            title="Table Cell Text Replace",
+            tab_ids={"Tab_1": "t.0"},
+        )
+    )
+    desired = reindex_document(
+        markdown_to_document(
+            {
+                "Tab_1": (
+                    "```python\n"
+                    "def sprint_status() -> str:\n"
+                    '    return "blue"\n'
+                    "```\n"
+                )
+            },
+            document_id="table-cell-text-replace",
+            title="Table Cell Text Replace",
+            tab_ids={"Tab_1": "t.0"},
+        )
+    )
+
+    edits = diff_documents(base, desired)
+
+    text_replaces = [
+        edit
+        for edit in edits
+        if isinstance(edit, ReplaceParagraphTextEdit)
+        and edit.story_id == "t.0:body:table:0:r0:c0"
+    ]
+
+    assert len(text_replaces) == 1
+    assert text_replaces[0].block_index == 1
+    assert not any(
+        isinstance(edit, ReplaceParagraphSliceEdit)
+        and edit.story_id == "t.0:body:table:0:r0:c0"
+        for edit in edits
+    )
+
+
+def test_diff_matches_existing_footnote_by_story_not_authored_id() -> None:
+    base = reindex_document(
+        markdown_to_document(
+            {
+                "Tab_1": (
+                    "Paragraph with original footnote text.[^kix.live]\n\n"
+                    "[^kix.live]: Original footnote body.\n"
+                )
+            },
+            document_id="footnote-id-remap",
+            title="Footnote Id Remap",
+            tab_ids={"Tab_1": "t.0"},
+        )
+    )
+    desired = reindex_document(
+        markdown_to_document(
+            {
+                "Tab_1": (
+                    "Paragraph with edited footnote text.[^fn.authored]\n\n"
+                    "[^fn.authored]: Edited footnote body.\n"
+                )
+            },
+            document_id="footnote-id-remap",
+            title="Footnote Id Remap",
+            tab_ids={"Tab_1": "t.0"},
+        )
+    )
+
+    assert summarize_semantic_edits(diff_documents(base, desired)) == [
+        "tab t.0: story t.0:body paragraph 0 replace text preserving footnote refs",
+        "tab t.0: story t.0:footnote:kix.live replace 1 paragraph block(s) at 0 with 1 paragraph(s)",
     ]
 
 

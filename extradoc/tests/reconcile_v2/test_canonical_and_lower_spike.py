@@ -425,6 +425,97 @@ def test_section_split_canonicalization_removes_carrier_paragraph_noise() -> Non
     assert [len(section.blocks) for section in body.sections] == [1, 1]
 
 
+def test_canonicalization_strips_styled_empty_table_carrier_paragraph() -> None:
+    transport = Document.model_validate(
+        {
+            "documentId": "styled-carrier",
+            "title": "Styled Carrier",
+            "tabs": [
+                {
+                    "tabProperties": {"tabId": "t.0", "title": "Tab 1", "index": 0},
+                    "documentTab": {
+                        "body": {
+                            "content": [
+                                {
+                                    "startIndex": 0,
+                                    "endIndex": 1,
+                                    "sectionBreak": {"sectionStyle": {"columnSeparatorStyle": "NONE"}},
+                                },
+                                {
+                                    "startIndex": 1,
+                                    "endIndex": 8,
+                                    "paragraph": {
+                                        "elements": [
+                                            {
+                                                "startIndex": 1,
+                                                "endIndex": 8,
+                                                "textRun": {"content": "Title\n"},
+                                            }
+                                        ],
+                                        "paragraphStyle": {"namedStyleType": "HEADING_1"},
+                                    },
+                                },
+                                {
+                                    "startIndex": 8,
+                                    "endIndex": 9,
+                                    "paragraph": {
+                                        "elements": [
+                                            {
+                                                "startIndex": 8,
+                                                "endIndex": 9,
+                                                "textRun": {"content": "\n"},
+                                            }
+                                        ],
+                                        "paragraphStyle": {"namedStyleType": "HEADING_2"},
+                                    },
+                                },
+                                {
+                                    "startIndex": 9,
+                                    "endIndex": 13,
+                                    "table": {
+                                        "rows": 1,
+                                        "columns": 1,
+                                        "tableRows": [
+                                            {
+                                                "tableCells": [
+                                                    {
+                                                        "content": [
+                                                            {
+                                                                "startIndex": 10,
+                                                                "endIndex": 12,
+                                                                "paragraph": {
+                                                                    "elements": [
+                                                                        {
+                                                                            "startIndex": 10,
+                                                                            "endIndex": 12,
+                                                                            "textRun": {"content": "x\n"},
+                                                                        }
+                                                                    ]
+                                                                },
+                                                            }
+                                                        ]
+                                                    }
+                                                ]
+                                            }
+                                        ],
+                                    },
+                                },
+                            ]
+                        }
+                    },
+                }
+            ],
+        }
+    )
+
+    canonical = canonicalize_transport_document(transport)
+
+    assert [type(block).__name__ for block in canonical.tabs[0].body.sections[0].blocks] == [
+        "ParagraphIR",
+        "TableIR",
+    ]
+
+
 def test_lower_semantic_diff_for_current_fixture_slice() -> None:
     cases = {
         "paragraph_to_heading": [
@@ -1500,6 +1591,51 @@ def test_lower_semantic_diff_repairs_live_multitab_probe_after_table_backed_rewr
         "documentTab"
     ].get("footnotes", {})
     assert footnotes
+
+
+def test_lower_semantic_diff_table_cell_text_replace_preserves_cell_paragraphs() -> None:
+    base = reindex_document(
+        markdown_to_document(
+            {
+                "Tab_1": (
+                    "```python\n"
+                    "def sprint_status() -> str:\n"
+                    '    return "green"\n'
+                    "```\n"
+                )
+            },
+            document_id="table-cell-paragraph-preserve",
+            title="Table Cell Paragraph Preserve",
+            tab_ids={"Tab_1": "t.0"},
+        )
+    )
+    desired = reindex_document(
+        markdown_to_document(
+            {
+                "Tab_1": (
+                    "```python\n"
+                    "def sprint_status() -> str:\n"
+                    '    return "blue"\n'
+                    "```\n"
+                )
+            },
+            document_id="table-cell-paragraph-preserve",
+            title="Table Cell Paragraph Preserve",
+            tab_ids={"Tab_1": "t.0"},
+        )
+    )
+
+    requests = lower_semantic_diff(base, desired)
+
+    mock = MockGoogleDocsAPI(base)
+    mock._batch_update_raw(requests)
+    repaired = canonicalize_transport_document(mock.get())
+    table = repaired.tabs[0].body.sections[0].blocks[0]
+    cell_blocks = table.rows[0].cells[0].content.blocks
+
+    assert len(cell_blocks) == 2
+    assert "".join(span.text for span in cell_blocks[0].inlines) == "def sprint_status() -> str:"
+    assert "".join(span.text for span in cell_blocks[1].inlines) == '    return "blue"'
 
 
 def test_lower_semantic_diff_batches_repair_operational_notes_fixture() -> None:
