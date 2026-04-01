@@ -648,20 +648,27 @@ def _truncate_batch_before_post_table_para_ops(batch: list[dict]) -> list[dict]:
     """Keep a structural shell plus safe surrounding content before refresh.
 
     Live Docs can lag behind the shadow shape around fresh ``insertTable``
-    and ``insertPageBreak`` operations. For each tab that contains a structural
-    op, we keep:
+    and ``insertPageBreak`` operations.  The lowered batch is in reverse
+    document order (bottom-to-top insertion), so the first structural op in
+    the batch corresponds to the *last* structural element in document order.
 
-    - everything before and including the first structural request
-    - for ``insertTable`` only: same-anchor ``insertText`` requests that appear
-      after it in the lowered batch (these are pre-table body paragraphs with
-      predictable indices that are safe to materialise together with the table)
+    **Single structural op per tab**: keep everything before and including the
+    structural op in batch order (= the content that follows it in document
+    order).  For ``insertTable``, also keep same-anchor ``insertText`` ops that
+    appear after it in the batch (pre-table body paragraphs).  For
+    ``insertPageBreak``, defer all following content.
 
-    For ``insertPageBreak``, all content after the break in the request list is
-    deferred — those inserts go before the break in the final document and need
-    the refreshed live plan to get the right indices.
+    **Multiple structural ops per tab**: keep only the *last* structural op in
+    batch order (= the *first* structural element in document order) together
+    with the ``insertText`` ops that follow it in the batch (pre-structural
+    body paragraphs in document order).  Content before the last structural op
+    in batch order (= content after the first structural element in document
+    order) is deferred entirely — it belongs to later refresh cycles.  This
+    prevents the re-plan from seeing a document where end-of-document content
+    has been inserted before beginning-of-document structural elements.
 
-    Everything else on that tab after the structural op is deferred until the
-    next live refresh.
+    Everything else on that tab after the selected structural op is deferred
+    until the next live refresh.
     """
     structural_kinds = {"insertTable", "insertPageBreak"}
     if not any(k in request for k in structural_kinds for request in batch):
@@ -675,21 +682,32 @@ def _truncate_batch_before_post_table_para_ops(batch: list[dict]) -> list[dict]:
         "insertPageBreak",
     }
 
+    # Track both first and last structural op per tab to detect multi-structural batches.
     first_structural_index_by_tab: dict[str, int] = {}
-    first_structural_kind_by_tab: dict[str, str] = {}
-    structural_location_by_tab: dict[str, int | None] = {}
+    last_structural_index_by_tab: dict[str, int] = {}
+    last_structural_kind_by_tab: dict[str, str] = {}
+    last_structural_location_by_tab: dict[str, int | None] = {}
     for index, request in enumerate(batch):
         kind = next(iter(request))
         tab_id = _request_tab_id(request)
-        if kind in structural_kinds and tab_id is not None and tab_id not in first_structural_index_by_tab:
-            first_structural_index_by_tab[tab_id] = index
-            first_structural_kind_by_tab[tab_id] = kind
-            structural_location_by_tab[tab_id] = request[kind].get("location", {}).get(
+        if kind in structural_kinds and tab_id is not None:
+            if tab_id not in first_structural_index_by_tab:
+                first_structural_index_by_tab[tab_id] = index
+            last_structural_index_by_tab[tab_id] = index
+            last_structural_kind_by_tab[tab_id] = kind
+            last_structural_location_by_tab[tab_id] = request[kind].get("location", {}).get(
                 "index"
             )
 
     if not first_structural_index_by_tab:
         return batch
+
+    # Tabs where multiple structural ops exist: use the last one (first in doc order).
+    multi_structural_tabs = {
+        tab_id
+        for tab_id in first_structural_index_by_tab
+        if first_structural_index_by_tab[tab_id] != last_structural_index_by_tab[tab_id]
+    }
 
     trimmed: list[dict] = []
     for index, request in enumerate(batch):
@@ -698,15 +716,31 @@ def _truncate_batch_before_post_table_para_ops(batch: list[dict]) -> list[dict]:
         if tab_id is None or tab_id not in first_structural_index_by_tab:
             trimmed.append(request)
             continue
-        structural_index = first_structural_index_by_tab[tab_id]
-        structural_kind = first_structural_kind_by_tab[tab_id]
-        structural_location = structural_location_by_tab[tab_id]
-        # Always keep everything up to and including the structural op.
-        if index <= structural_index:
+
+        if tab_id in multi_structural_tabs:
+            # Multi-structural: use last structural op (first in doc order).
+            # Drop everything before it in batch order (later in doc order).
+            structural_index = last_structural_index_by_tab[tab_id]
+            structural_kind = last_structural_kind_by_tab[tab_id]
+            structural_location = last_structural_location_by_tab[tab_id]
+            if index < structural_index:
+                # Earlier batch position = later doc position: defer entirely.
+                continue
+        else:
+            # Single structural op: existing behaviour (keep everything up to it).
+            structural_index = first_structural_index_by_tab[tab_id]
+            structural_kind = last_structural_kind_by_tab[tab_id]
+            structural_location = last_structural_location_by_tab[tab_id]
+            if index <= structural_index:
+                trimmed.append(request)
+                continue
+
+        # At or after the structural op in batch order.
+        if index == structural_index:
             trimmed.append(request)
             continue
         # After the structural op: for insertTable, allow same-anchor insertText
-        # (pre-table body paragraphs). For insertPageBreak, defer all content.
+        # (pre-table body paragraphs).  For insertPageBreak, defer all content.
         if (
             structural_kind == "insertTable"
             and kind == "insertText"
