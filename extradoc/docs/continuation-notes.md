@@ -37,41 +37,18 @@ Key invariant: `lower.py` uses the **raw transport base** for index arithmetic, 
 
 ---
 
-## Current Live State (as of 2026-04-01, checkpoint `e5a55cf`)
+## Current Live State (as of 2026-04-01, checkpoint after table reconciler work)
 
 | Scenario | Status |
 |---|---|
-| Markdown multi-tab create + edit | **Broken** — see regression below |
+| Markdown multi-tab create + edit | **Broken** — separate issue, not addressed here |
 | XML minimal (heading + para) | **Proven live** |
 | XML heading + list + page break (no table) | **Proven live** |
-| XML with simple table (no page break) | **Partial** — shell created, cells empty first cycle |
-| XML page break + table together | **Failing** |
-
-### Open regression: `_table_anchor_signature` includes row count
-
-`./extrasuite doc diff <any-md-doc-with-table-row-change>` fails:
-
-```
-Error: reconcile_v2 iterative content planning could not lower the remaining mixed body rewrite
-```
-
-Root cause: `_table_anchor_signature` in `diff.py` (~line 1081) includes `len(table.rows)`. When a table gains or loses a row, the signature changes → flat fallback → `DeleteTableBlockEdit` + `InsertTableBlockEdit` → iterative planner triggers → fails.
-
-**Fix**: Drop `len(table.rows)` from the signature. Keep column count from the first row and `pinned_header_rows`. Row count is not an identity property.
-
-```python
-# AFTER
-def _table_anchor_signature(table: TableIR) -> tuple[object, ...]:
-    first_row = table.rows[0] if table.rows else None
-    return (
-        "table",
-        len(first_row.cells) if first_row else 0,
-        tuple((cell.row_span, cell.column_span) for cell in (first_row.cells if first_row else [])),
-        table.pinned_header_rows,
-    )
-```
-
-This must be fixed before the bigger table integration work below.
+| XML with simple table (no page break) | **Proven live** — converges in one cycle |
+| XML page break + table together | **Failing** — not yet addressed |
+| Table: add/delete single row | **Proven live** |
+| Table: add 2+ rows at once | **Proven live** |
+| Table: cell edits + row insert + column delete in one push | **Proven live** |
 
 ---
 
@@ -116,38 +93,34 @@ This must be fixed before the bigger table integration work below.
 
 ## Path Forward
 
-### Step 1: Fix the open regression (prerequisite)
+### Step 1: DONE — Table reconciler fixes
 
-Fix `_table_anchor_signature` as described above. Without this, markdown docs with any table row change are broken. Validate:
-```bash
-cd extradoc
-uv run pytest tests/ -x -q
-./extrasuite docs diff md-test   # should produce InsertTableRowEdit, not error
-```
+Five bugs fixed in `diff.py` and `lower.py`:
 
-### Step 2: Integrate `table_diff.py` into the reconciler
+1. **`_table_anchor_signature`** — removed `len(table.rows)` so tables with row count changes are still recognised as the same body-level anchor (no flat delete+reinsert fallback).
+2. **`_diff_section_tables`** — when `_plan_table_comparison` raises `UnsupportedReconcileV2Error` (>±1 change), now calls `diff_tables()` from `table_diff.py` instead of falling back to delete+reinsert.
+3. **`InsertTableRowEdit` iteration order** — reversed `inserted_cells` loop (last column first) so earlier insertions don't corrupt later cell indices in the same batch.
+4. **Terminal row insert anchor** — new last-row inserts now use `table.end_index + 1` as the cell-0 anchor instead of raising `UnsupportedReconcileV2Error`.
+5. **Shadow layout for anchor lookup** — switched non-terminal row/column insert anchor lookups from `story_layouts` (base) to `current_story_layouts` (shadow) so consecutive inserts in one batch correctly anchor to previously-inserted rows.
 
-`reconcile_v2/table_diff.py` (commit `1da82ce`) has `match_tables()` and `diff_tables()` that produce `InsertTableRowEdit` / `DeleteTableRowEdit` / `InsertTableColumnEdit` / `DeleteTableColumnEdit`. This needs to replace `_table_anchor_signature` + `_diff_section_tables` in `diff.py`.
+Proven live in one push cycle:
+- Add/delete single row
+- Add 2+ rows at once
+- Cell edits + row insert + column delete together
 
-The integration must handle the identity-matching improvement: use cell-hash similarity (`table_similarity()`) instead of the current signature-based approach so tables with row/column changes are matched correctly rather than treated as delete+reinsert.
+### Step 2: Eliminate the structural re-fetch in `client.py`
 
-### Step 3: Eliminate the structural re-fetch in `client.py`
+`insertTableRow` / `deleteTableRow` / `insertTableColumn` / `deleteTableColumn` do **not** trigger the structural re-fetch (that is only `insertTable` and `insertPageBreak`). The row/column ops already converge in one cycle without any re-fetch.
 
-Once the reconciler emits correct row/column edits (Step 2), the cell content edits that follow can be expressed using the deterministic index formulas above. The goal is:
+The remaining re-fetch cases are:
+1. **`insertTable` / `insertPageBreak`** — still triggers `_refresh_v2_batches_after_structural_ops`. Now that tables converge via row/column ops instead of delete+reinsert, this path fires less often but is not yet eliminated.
+2. **`delete-only` refresh** — `deleteContentRange` followed by inserts whose indices were computed pre-delete. Not yet addressed.
 
-1. `diff.py` / `lower.py` emit structural ops (insertTableRow etc.) AND subsequent cell content ops (insertText into new cells) in the same lowered batch.
-2. The cell content indices are computed using the prediction formulas — **no `get_document` call needed**.
-3. Remove `_truncate_batch_for_live_refresh` logic for the `structural` case in `client.py`.
+### Step 3: Prove broader convergence
 
-The delete-then-reinsert re-fetch (`delete-only` reason) is a separate concern and should not be conflated with this work.
-
-### Step 4: Prove live convergence
-
-After Steps 2–3:
-- XML simple table (no page break) must converge in one cycle
-- XML table + page break must converge
+- XML page break + table together — still failing
 - Full structural XML smoke (`scripts/release_smoke_docs.py`)
-- Markdown table row insert/delete must converge
+- Markdown table row insert/delete
 
 ---
 

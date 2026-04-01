@@ -39,7 +39,10 @@ from extradoc.reconcile_v2.diff import (
     UpdateTablePinnedHeaderRowsEdit,
     UpdateTableRowStyleEdit,
 )
-from extradoc.reconcile_v2.errors import ReconcileInvariantError, UnsupportedReconcileV2Error
+from extradoc.reconcile_v2.errors import (
+    ReconcileInvariantError,
+    UnsupportedReconcileV2Error,
+)
 from extradoc.reconcile_v2.ir import ParagraphIR, TableIR, TextSpanIR
 from extradoc.reconcile_v2.layout import (
     BodyLayout,
@@ -107,9 +110,13 @@ def lower_document_edits(
     shadow_request_count = -1
     content_edited_story_ids = _edited_story_ids(edits)
     indexed_content_edits = [
-        (index, edit) for index, edit in enumerate(edits) if not isinstance(edit, ReplaceNamedRangesEdit)
+        (index, edit)
+        for index, edit in enumerate(edits)
+        if not isinstance(edit, ReplaceNamedRangesEdit)
     ]
-    indexed_content_edits.sort(key=lambda item: _content_edit_order_key(item[0], item[1]))
+    indexed_content_edits.sort(
+        key=lambda item: _content_edit_order_key(item[0], item[1])
+    )
     content_edits = [edit for _, edit in indexed_content_edits]
 
     edit_index = 0
@@ -220,7 +227,8 @@ def lower_document_edits(
                                     edit.desired_paragraph,
                                     (
                                         paragraph.text_start_index,
-                                        paragraph.text_start_index + utf16_len(replacement_text),
+                                        paragraph.text_start_index
+                                        + utf16_len(replacement_text),
                                     ),
                                 ),
                             ),
@@ -336,7 +344,9 @@ def lower_document_edits(
                 start_index = page_break_range["start"]
                 end_index = page_break_range["end"]
             else:
-                page_break = _page_break_at(layout, edit.section_index, edit.block_index)
+                page_break = _page_break_at(
+                    layout, edit.section_index, edit.block_index
+                )
                 start_index = page_break.start_index
                 end_index = page_break.end_index
             requests.append(
@@ -348,7 +358,9 @@ def lower_document_edits(
             )
         elif isinstance(edit, AppendListItemsEdit):
             list_location = _list_at(layout, edit.section_index, edit.block_index)
-            insert_text = "".join(_list_item_text(item) + "\n" for item in edit.appended_items)
+            insert_text = "".join(
+                _list_item_text(item) + "\n" for item in edit.appended_items
+            )
             insert_index = list_location.end_index
             requests.append(
                 make_insert_text(
@@ -485,7 +497,9 @@ def lower_document_edits(
             )
         elif isinstance(edit, ReplaceParagraphSliceEdit):
             story = current_story_layouts[edit.story_id]
-            inserted_text = "\n".join(fragment.text for fragment in edit.inserted_paragraphs)
+            inserted_text = "\n".join(
+                fragment.text for fragment in edit.inserted_paragraphs
+            )
             prefix_newline = False
             suffix_newline = False
             if edit.delete_block_count > 0:
@@ -529,16 +543,20 @@ def lower_document_edits(
                     and edit.section_index is not None
                     and edit.story_id == f"{edit.tab_id}:body"
                 ):
-                    delete_start, prefix_newline, suffix_newline = _body_insert_site_for_edit(
-                        current_document,
-                        layout,
-                        edit,
+                    delete_start, prefix_newline, suffix_newline = (
+                        _body_insert_site_for_edit(
+                            current_document,
+                            layout,
+                            edit,
+                        )
                     )
                 else:
-                    delete_start, prefix_newline, suffix_newline = paragraph_insertion_site(
-                        story,
-                        section_index=edit.section_index,
-                        block_index=edit.start_block_index,
+                    delete_start, prefix_newline, suffix_newline = (
+                        paragraph_insertion_site(
+                            story,
+                            section_index=edit.section_index,
+                            block_index=edit.start_block_index,
+                        )
                     )
                 if inserted_text:
                     if prefix_newline:
@@ -588,16 +606,21 @@ def lower_document_edits(
                 )
             )
             if any(edit.inserted_cells):
-                insert_index = edit.row_index + 1 if edit.insert_below else edit.row_index
-                if insert_index >= table.row_count:
-                    raise UnsupportedReconcileV2Error(
-                        "reconcile_v2 supports inserted-row content only for non-terminal row inserts"
-                    )
-                anchor = _table_cell_text_start(
-                    story_layouts,
-                    f"{edit.tab_id}:body:table:{edit.block_index}:r{insert_index}:c0",
+                insert_index = (
+                    edit.row_index + 1 if edit.insert_below else edit.row_index
                 )
-                for column_index, text in enumerate(edit.inserted_cells):
+                if insert_index >= table.row_count:
+                    # Terminal insert: new row appended after all existing rows.
+                    # The new row's cell 0 text starts at table.end_index + 1
+                    # (row opener at end_index-1, cell opener at end_index, text at end_index+1).
+                    anchor = table.end_index + 1
+                else:
+                    anchor = _table_cell_text_start(
+                        current_story_layouts,
+                        f"{edit.tab_id}:body:table:{edit.block_index}:r{insert_index}:c0",
+                    )
+                for column_index in reversed(range(len(edit.inserted_cells))):
+                    text = edit.inserted_cells[column_index]
                     if text:
                         requests.append(
                             make_insert_text(
@@ -626,16 +649,19 @@ def lower_document_edits(
                 )
             )
             if any(edit.inserted_cells):
-                insert_index = edit.column_index + 1 if edit.insert_right else edit.column_index
+                insert_index = (
+                    edit.column_index + 1 if edit.insert_right else edit.column_index
+                )
                 if insert_index >= table.column_count:
                     raise UnsupportedReconcileV2Error(
                         "reconcile_v2 supports inserted-column content only for non-terminal column inserts"
                     )
-                for row_index, text in enumerate(edit.inserted_cells):
+                for row_index in reversed(range(len(edit.inserted_cells))):
+                    text = edit.inserted_cells[row_index]
                     if not text:
                         continue
                     anchor = _table_cell_text_start(
-                        story_layouts,
+                        current_story_layouts,
                         f"{edit.tab_id}:body:table:{edit.block_index}:r{row_index}:c{insert_index}",
                     )
                     requests.append(
@@ -730,12 +756,9 @@ def lower_document_edits(
             layout_source = story_layouts
             body_layout_source = layouts
             document_source = base
-            if (
-                desired is not None
-                and (
-                    anchor.start.story_id in content_edited_story_ids
-                    or anchor.end.story_id in content_edited_story_ids
-                )
+            if desired is not None and (
+                anchor.start.story_id in content_edited_story_ids
+                or anchor.end.story_id in content_edited_story_ids
             ):
                 if requests:
                     try:
@@ -815,7 +838,9 @@ def lower_document_edits(
                             else story_layouts
                         )
                         body_layout_source = shadow_body_layouts
-                        document_source = shadow_document if shadow_document is not None else base
+                        document_source = (
+                            shadow_document if shadow_document is not None else base
+                        )
                         start_route, start_index = _resolve_position_for_named_range(
                             story_layouts=layout_source,
                             body_layouts=body_layout_source,
@@ -931,7 +956,9 @@ def _body_insert_group_end(
         return end_index
     if _is_delete_then_insert_group_root(edits[start_index]):
         end_index = start_index + 1
-        while end_index < len(edits) and _body_insert_anchor(edits[end_index]) == anchor:
+        while (
+            end_index < len(edits) and _body_insert_anchor(edits[end_index]) == anchor
+        ):
             if (
                 not _is_groupable_body_insert(edits[end_index])
                 or _is_delete_then_insert_group_root(edits[end_index])
@@ -942,9 +969,8 @@ def _body_insert_group_end(
         return end_index
     end_index = start_index + 1
     while end_index < len(edits) and _body_insert_anchor(edits[end_index]) == anchor:
-        if (
-            not _is_groupable_body_insert(edits[end_index])
-            or isinstance(edits[end_index], InsertPageBreakBlockEdit)
+        if not _is_groupable_body_insert(edits[end_index]) or isinstance(
+            edits[end_index], InsertPageBreakBlockEdit
         ):
             break
         end_index += 1
@@ -983,7 +1009,9 @@ def _is_groupable_body_insert(edit: SemanticEdit) -> bool:
         )
     ):
         return True
-    return isinstance(edit, InsertListBlockEdit | InsertTableBlockEdit | InsertPageBreakBlockEdit)
+    return isinstance(
+        edit, InsertListBlockEdit | InsertTableBlockEdit | InsertPageBreakBlockEdit
+    )
 
 
 def _is_delete_then_insert_group_root(edit: SemanticEdit) -> bool:
@@ -1017,7 +1045,10 @@ def _content_edit_order_key(
 def _existing_non_body_story_anchor(
     edit: SemanticEdit,
 ) -> tuple[str, int | None, int] | None:
-    if isinstance(edit, ReplaceParagraphTextEdit) and edit.story_id != f"{edit.tab_id}:body":
+    if (
+        isinstance(edit, ReplaceParagraphTextEdit)
+        and edit.story_id != f"{edit.tab_id}:body"
+    ):
         return (edit.story_id, edit.section_index, edit.block_index)
     if (
         isinstance(edit, ReplaceParagraphSliceEdit)
@@ -1057,16 +1088,14 @@ def _existing_body_edit_anchor(
         return (edit.tab_id, edit.section_index, edit.start_block_index)
     if isinstance(
         edit,
-        (
-            UpdateParagraphRoleEdit,
-            UpdateListItemRolesEdit,
-            AppendListItemsEdit,
-            ReplaceListSpecEdit,
-            RelevelListItemsEdit,
-            DeleteListBlockEdit,
-            DeletePageBreakBlockEdit,
-            DeleteTableBlockEdit,
-        ),
+        UpdateParagraphRoleEdit
+        | UpdateListItemRolesEdit
+        | AppendListItemsEdit
+        | ReplaceListSpecEdit
+        | RelevelListItemsEdit
+        | DeleteListBlockEdit
+        | DeletePageBreakBlockEdit
+        | DeleteTableBlockEdit,
     ):
         return (edit.tab_id, edit.section_index, edit.block_index)
     if isinstance(edit, InsertSectionEdit):
@@ -1157,13 +1186,15 @@ def _lower_body_insert_group(
         else:
             current_doc = shadow.get()
             current_layout = build_body_layout(current_doc, tab_id=tab_id)
-            insert_index, current_prefix, current_suffix = _body_insert_site_for_group_anchor(
-                document=current_doc,
-                _layout=current_layout,
-                tab_id=tab_id,
-                section_index=anchor[1],
-                block_index=anchor[2],
-                raw_block_index=None,
+            insert_index, current_prefix, current_suffix = (
+                _body_insert_site_for_group_anchor(
+                    document=current_doc,
+                    _layout=current_layout,
+                    tab_id=tab_id,
+                    section_index=anchor[1],
+                    block_index=anchor[2],
+                    raw_block_index=None,
+                )
             )
         needs_prefix = (final_index == 0 and prefix_newline) or current_prefix
         needs_suffix = (
@@ -1373,7 +1404,9 @@ def _body_group_anchor_targets_fixed_structural_block(
 
 
 def _body_insert_fragment_shadow_block_count(
-    fragments: list[tuple[str, tuple[ParagraphIR, ...] | InsertListBlockEdit | TableIR | None]],
+    fragments: list[
+        tuple[str, tuple[ParagraphIR, ...] | InsertListBlockEdit | TableIR | None]
+    ],
 ) -> int:
     count = 0
     for kind, payload in fragments:
@@ -1403,7 +1436,9 @@ def _shadow_inserted_blocks_from_layout(
 
 
 def _consume_shadow_block_type(
-    blocks: tuple[ParagraphLocation | ListLocation | TableLocation | PageBreakLocation, ...],
+    blocks: tuple[
+        ParagraphLocation | ListLocation | TableLocation | PageBreakLocation, ...
+    ],
     start_index: int,
     expected_type: type[object],
 ) -> tuple[object | None, int]:
@@ -1428,7 +1463,9 @@ def _body_insert_fragment(
         return ("table", edit.table)
     if isinstance(edit, InsertPageBreakBlockEdit):
         return ("pagebreak", None)
-    raise TypeError(f"Unsupported body insert edit in grouped lowering: {type(edit).__name__}")
+    raise TypeError(
+        f"Unsupported body insert edit in grouped lowering: {type(edit).__name__}"
+    )
 
 
 def _story_paragraph_delete_end(
@@ -1442,7 +1479,9 @@ def _story_paragraph_delete_end(
     # Table cells must retain their terminal newline sentinel. When a slice
     # spans to the logical end of the cell story, stop before the last raw
     # paragraph terminator instead of deleting through it.
-    return min(delete_end, max(paragraphs[-1].start_index, paragraphs[-1].end_index - 1))
+    return min(
+        delete_end, max(paragraphs[-1].start_index, paragraphs[-1].end_index - 1)
+    )
 
 
 def _body_paragraph_slice(
@@ -1473,7 +1512,9 @@ def _paragraph_at(
 ) -> ParagraphLocation:
     block = layout.sections[section_index].block_locations[block_index]
     if not isinstance(block, ParagraphLocation):
-        raise TypeError(f"Expected paragraph at section {section_index} block {block_index}")
+        raise TypeError(
+            f"Expected paragraph at section {section_index} block {block_index}"
+        )
     return block
 
 
@@ -1507,10 +1548,14 @@ def _list_at(layout: BodyLayout, section_index: int, block_index: int) -> ListLo
     return block
 
 
-def _table_at(layout: BodyLayout, section_index: int, block_index: int) -> TableLocation:
+def _table_at(
+    layout: BodyLayout, section_index: int, block_index: int
+) -> TableLocation:
     block = layout.sections[section_index].block_locations[block_index]
     if not isinstance(block, TableLocation):
-        raise TypeError(f"Expected table at section {section_index} block {block_index}")
+        raise TypeError(
+            f"Expected table at section {section_index} block {block_index}"
+        )
     return block
 
 
@@ -1521,7 +1566,9 @@ def _page_break_at(
 ) -> PageBreakLocation:
     block = layout.sections[section_index].block_locations[block_index]
     if not isinstance(block, PageBreakLocation):
-        raise TypeError(f"Expected page break at section {section_index} block {block_index}")
+        raise TypeError(
+            f"Expected page break at section {section_index} block {block_index}"
+        )
     return block
 
 
@@ -1662,11 +1709,15 @@ def _raw_body_block_insertion_site(
     return int(previous["end"]), False, False
 
 
-def _raw_body_sections(document: Document, *, tab_id: str) -> list[list[dict[str, object]]]:
+def _raw_body_sections(
+    document: Document, *, tab_id: str
+) -> list[list[dict[str, object]]]:
     raw_tab = next(
         (
             tab
-            for tab in document.model_dump(by_alias=True, exclude_none=True).get("tabs", [])
+            for tab in document.model_dump(by_alias=True, exclude_none=True).get(
+                "tabs", []
+            )
             if tab.get("tabProperties", {}).get("tabId") == tab_id
         ),
         None,
@@ -1705,11 +1756,15 @@ def _raw_body_sections(document: Document, *, tab_id: str) -> list[list[dict[str
                 }
             )
         elif "table" in element:
-            sections[-1].append({"kind": "table", "start": start_index, "end": end_index})
+            sections[-1].append(
+                {"kind": "table", "start": start_index, "end": end_index}
+            )
         elif "tableOfContents" in element:
             sections[-1].append({"kind": "toc", "start": start_index, "end": end_index})
         else:
-            sections[-1].append({"kind": "opaque", "start": start_index, "end": end_index})
+            sections[-1].append(
+                {"kind": "opaque", "start": start_index, "end": end_index}
+            )
     return sections
 
 
@@ -1733,10 +1788,12 @@ def _raw_transport_block_keep_mask(
     for index, block in enumerate(raw_blocks):
         if not _is_raw_transport_carrier_paragraph(block):
             continue
-        prev_is_structural = index > 0 and _is_raw_transport_carrier_anchor(raw_blocks[index - 1])
-        next_is_structural = (
-            index + 1 < len(raw_blocks) and _is_raw_transport_carrier_anchor(raw_blocks[index + 1])
+        prev_is_structural = index > 0 and _is_raw_transport_carrier_anchor(
+            raw_blocks[index - 1]
         )
+        next_is_structural = index + 1 < len(
+            raw_blocks
+        ) and _is_raw_transport_carrier_anchor(raw_blocks[index + 1])
         if prev_is_structural or next_is_structural:
             keep_mask[index] = False
     run_start = 0
@@ -1752,9 +1809,9 @@ def _raw_transport_block_keep_mask(
         prev_is_structural = run_start > 0 and _is_raw_transport_carrier_anchor(
             raw_blocks[run_start - 1]
         )
-        next_is_structural = run_end + 1 < len(raw_blocks) and _is_raw_transport_carrier_anchor(
-            raw_blocks[run_end + 1]
-        )
+        next_is_structural = run_end + 1 < len(
+            raw_blocks
+        ) and _is_raw_transport_carrier_anchor(raw_blocks[run_end + 1])
         if prev_is_structural or next_is_structural:
             for index in range(run_start, run_end + 1):
                 keep_mask[index] = False
@@ -1768,7 +1825,9 @@ def _raw_transport_block_keep_mask(
                 break
             keep_mask[index] = False
     for index in range(len(raw_blocks) - 1, -1, -1):
-        if not keep_mask[index] or not _is_raw_transport_carrier_paragraph(raw_blocks[index]):
+        if not keep_mask[index] or not _is_raw_transport_carrier_paragraph(
+            raw_blocks[index]
+        ):
             break
         keep_mask[index] = False
     return keep_mask
@@ -1949,7 +2008,9 @@ def _resolve_position_for_named_range(
         and position.path.section_index is not None
     ):
         tab_id = position.story_id.removesuffix(":body")
-        layout = body_layouts.setdefault(tab_id, build_body_layout(document, tab_id=tab_id))
+        layout = body_layouts.setdefault(
+            tab_id, build_body_layout(document, tab_id=tab_id)
+        )
         return StoryRoute(tab_id=tab_id), _resolve_body_block_boundary_index(
             layout,
             section_index=position.path.section_index,
@@ -1969,7 +2030,9 @@ def _resolve_position_for_named_range(
         ):
             raise
         tab_id = position.story_id.removesuffix(":body")
-        layout = body_layouts.setdefault(tab_id, build_body_layout(document, tab_id=tab_id))
+        layout = body_layouts.setdefault(
+            tab_id, build_body_layout(document, tab_id=tab_id)
+        )
         return StoryRoute(tab_id=tab_id), _resolve_body_block_boundary_index(
             layout,
             section_index=position.path.section_index,
@@ -2322,7 +2385,9 @@ def _lower_single_anchor_paragraph_text_replace(
     return requests
 
 
-def _desired_text_buckets(desired_paragraph: ParagraphIR) -> tuple[tuple[TextSpanIR, ...], ...]:
+def _desired_text_buckets(
+    desired_paragraph: ParagraphIR,
+) -> tuple[tuple[TextSpanIR, ...], ...]:
     buckets: list[list[TextSpanIR]] = [[]]
     for inline in desired_paragraph.inlines:
         if isinstance(inline, TextSpanIR):
@@ -2552,11 +2617,20 @@ def _lower_table_into_fresh_story(
         row = table.rows[row_index]
         for column_index in range(column_count - 1, -1, -1):
             cell = row.cells[column_index]
-            if cell.row_span != 1 or cell.column_span != 1 or cell.merge_head is not None:
+            if (
+                cell.row_span != 1
+                or cell.column_span != 1
+                or cell.merge_head is not None
+            ):
                 raise UnsupportedReconcileV2Error(
                     "reconcile_v2 currently supports only unmerged-cell table insertion"
                 )
-            cell_start = story_start_index + 4 + row_index * (1 + 2 * column_count) + 2 * column_index
+            cell_start = (
+                story_start_index
+                + 4
+                + row_index * (1 + 2 * column_count)
+                + 2 * column_index
+            )
             requests.extend(
                 _lower_blocks_into_fresh_story(
                     cell.content.blocks,

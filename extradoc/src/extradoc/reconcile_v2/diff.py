@@ -366,6 +366,10 @@ SemanticEdit = (
     | UpdateTableCellStyleEdit
 )
 
+# Imported here (after edit dataclasses) to break the circular dependency:
+# table_diff.py imports edit types from this module.
+from extradoc.reconcile_v2.table_diff import TableDiffContext, diff_tables  # noqa: E402
+
 
 def diff_documents(base: Document, desired: Document) -> list[SemanticEdit]:
     """Return a semantic edit list for the supported ``reconcile_v2`` surface."""
@@ -455,7 +459,9 @@ def summarize_semantic_edits(edits: Iterable[SemanticEdit]) -> list[str]:
         elif isinstance(edit, RelevelListItemsEdit):
             changed = sum(
                 before != after
-                for before, after in zip(edit.before_levels, edit.after_levels, strict=True)
+                for before, after in zip(
+                    edit.before_levels, edit.after_levels, strict=True
+                )
             )
             lines.append(
                 f"tab {edit.tab_id}: section {edit.section_index} list {edit.block_index} "
@@ -505,9 +511,7 @@ def summarize_semantic_edits(edits: Iterable[SemanticEdit]) -> list[str]:
         elif isinstance(edit, InsertTableRowEdit):
             suffix = ""
             if any(edit.inserted_cells):
-                suffix = (
-                    f" with {sum(bool(text) for text in edit.inserted_cells)} populated cell(s)"
-                )
+                suffix = f" with {sum(bool(text) for text in edit.inserted_cells)} populated cell(s)"
             lines.append(
                 f"tab {edit.tab_id}: section {edit.section_index} table {edit.block_index} "
                 f"insert row {'below' if edit.insert_below else 'above'} {edit.row_index}{suffix}"
@@ -520,9 +524,7 @@ def summarize_semantic_edits(edits: Iterable[SemanticEdit]) -> list[str]:
         elif isinstance(edit, InsertTableColumnEdit):
             suffix = ""
             if any(edit.inserted_cells):
-                suffix = (
-                    f" with {sum(bool(text) for text in edit.inserted_cells)} populated cell(s)"
-                )
+                suffix = f" with {sum(bool(text) for text in edit.inserted_cells)} populated cell(s)"
             lines.append(
                 f"tab {edit.tab_id}: section {edit.section_index} table {edit.block_index} "
                 f"insert column {'right of' if edit.insert_right else 'left of'} {edit.column_index}{suffix}"
@@ -683,7 +685,8 @@ def _diff_tab(
                 desired_section=desired_section,
                 raw_base_blocks=(
                     raw_base_sections[section_index]
-                    if raw_base_sections is not None and section_index < len(raw_base_sections)
+                    if raw_base_sections is not None
+                    and section_index < len(raw_base_sections)
                     else None
                 ),
             )
@@ -738,7 +741,9 @@ def _body_deleted_block_ranges(
                 )
             )
             continue
-        if isinstance(edit, DeleteListBlockEdit | DeleteTableBlockEdit | DeletePageBreakBlockEdit):
+        if isinstance(
+            edit, DeleteListBlockEdit | DeleteTableBlockEdit | DeletePageBreakBlockEdit
+        ):
             deleted.append(
                 (edit.tab_id, edit.section_index, edit.block_index, edit.block_index)
             )
@@ -802,9 +807,9 @@ def _diff_section_attachment_changes(
                     continue
                 if base_ref is not None:
                     base_story = base_catalog.get(base_ref)
-                    if base_story is not None and _story_signature(base_story) == _story_signature(
-                        desired_story
-                    ):
+                    if base_story is not None and _story_signature(
+                        base_story
+                    ) == _story_signature(desired_story):
                         continue
                 if base_ref is not None and base_ref_counts.get(base_ref, 0) == 1:
                     # Unique attachments can be updated in place by story-content diff.
@@ -844,7 +849,9 @@ def _ensure_read_only_blocks_unchanged(
     max_sections = max(len(base_sections), len(desired_sections))
     for section_index in range(max_sections):
         base_blocks = (
-            base_sections[section_index].blocks if section_index < len(base_sections) else []
+            base_sections[section_index].blocks
+            if section_index < len(base_sections)
+            else []
         )
         desired_blocks = (
             desired_sections[section_index].blocks
@@ -1060,9 +1067,7 @@ def _diff_section_blocks(
 
 def _anchor_block_positions(blocks: list[BlockIR]) -> list[tuple[int, BlockIR]]:
     return [
-        (index, block)
-        for index, block in enumerate(blocks)
-        if _is_anchor_block(block)
+        (index, block) for index, block in enumerate(blocks) if _is_anchor_block(block)
     ]
 
 
@@ -1079,13 +1084,13 @@ def _anchor_block_signature(block: BlockIR) -> tuple[object, ...]:
 
 
 def _table_anchor_signature(table: TableIR) -> tuple[object, ...]:
+    first_row = table.rows[0] if table.rows else None
     return (
         "table",
-        len(table.rows),
-        tuple(len(row.cells) for row in table.rows),
+        len(first_row.cells) if first_row else 0,
         tuple(
-            tuple((cell.row_span, cell.column_span) for cell in row.cells)
-            for row in table.rows
+            (cell.row_span, cell.column_span)
+            for cell in (first_row.cells if first_row else [])
         ),
         table.pinned_header_rows,
     )
@@ -1101,7 +1106,9 @@ def _raw_body_sections_from_document(
     raw_tab = next(
         (
             tab
-            for tab in document.model_dump(by_alias=True, exclude_none=True).get("tabs", [])
+            for tab in document.model_dump(by_alias=True, exclude_none=True).get(
+                "tabs", []
+            )
             if tab.get("tabProperties", {}).get("tabId") == tab_id
         ),
         None,
@@ -1140,11 +1147,15 @@ def _raw_body_sections_from_document(
                 }
             )
         elif "table" in element:
-            sections[-1].append({"kind": "table", "start": start_index, "end": end_index})
+            sections[-1].append(
+                {"kind": "table", "start": start_index, "end": end_index}
+            )
         elif "tableOfContents" in element:
             sections[-1].append({"kind": "toc", "start": start_index, "end": end_index})
         else:
-            sections[-1].append({"kind": "opaque", "start": start_index, "end": end_index})
+            sections[-1].append(
+                {"kind": "opaque", "start": start_index, "end": end_index}
+            )
     return sections
 
 
@@ -1168,10 +1179,12 @@ def _raw_transport_block_keep_mask(
     for index, block in enumerate(raw_blocks):
         if not _is_raw_transport_carrier_paragraph(block):
             continue
-        prev_is_structural = index > 0 and _is_raw_transport_carrier_anchor(raw_blocks[index - 1])
-        next_is_structural = (
-            index + 1 < len(raw_blocks) and _is_raw_transport_carrier_anchor(raw_blocks[index + 1])
+        prev_is_structural = index > 0 and _is_raw_transport_carrier_anchor(
+            raw_blocks[index - 1]
         )
+        next_is_structural = index + 1 < len(
+            raw_blocks
+        ) and _is_raw_transport_carrier_anchor(raw_blocks[index + 1])
         if prev_is_structural or next_is_structural:
             keep_mask[index] = False
     run_start = 0
@@ -1187,9 +1200,9 @@ def _raw_transport_block_keep_mask(
         prev_is_structural = run_start > 0 and _is_raw_transport_carrier_anchor(
             raw_blocks[run_start - 1]
         )
-        next_is_structural = run_end + 1 < len(raw_blocks) and _is_raw_transport_carrier_anchor(
-            raw_blocks[run_end + 1]
-        )
+        next_is_structural = run_end + 1 < len(
+            raw_blocks
+        ) and _is_raw_transport_carrier_anchor(raw_blocks[run_end + 1])
         if prev_is_structural or next_is_structural:
             for index in range(run_start, run_end + 1):
                 keep_mask[index] = False
@@ -1203,7 +1216,9 @@ def _raw_transport_block_keep_mask(
                 break
             keep_mask[index] = False
     for index in range(len(raw_blocks) - 1, -1, -1):
-        if not keep_mask[index] or not _is_raw_transport_carrier_paragraph(raw_blocks[index]):
+        if not keep_mask[index] or not _is_raw_transport_carrier_paragraph(
+            raw_blocks[index]
+        ):
             break
         keep_mask[index] = False
     return keep_mask
@@ -1255,7 +1270,9 @@ def _diff_editable_block_span(
     for block_index, (base_block, desired_block) in enumerate(
         zip(base_blocks, desired_blocks, strict=False)
     ):
-        if isinstance(base_block, ParagraphIR) and isinstance(desired_block, ParagraphIR):
+        if isinstance(base_block, ParagraphIR) and isinstance(
+            desired_block, ParagraphIR
+        ):
             if (
                 _paragraph_text(base_block) == _paragraph_text(desired_block)
                 and base_block.role != desired_block.role
@@ -1339,7 +1356,9 @@ def _diff_editable_block_span(
                         block_index=block_offset + block_index,
                         list_kind=desired_block.spec.kind,
                         item_indexes=changed_indexes,
-                        before_roles=tuple(base_roles[index] for index in changed_indexes),
+                        before_roles=tuple(
+                            base_roles[index] for index in changed_indexes
+                        ),
                         after_roles=tuple(
                             desired_roles[index] for index in changed_indexes
                         ),
@@ -1381,12 +1400,11 @@ def _diff_section_block_slice(
     delete_stop = len(base_blocks) - suffix
     insert_stop = len(desired_blocks) - suffix
     base_slice = _normalize_structural_block_slice(base_blocks[prefix:delete_stop])
-    desired_slice = _normalize_structural_block_slice(desired_blocks[prefix:insert_stop])
+    desired_slice = _normalize_structural_block_slice(
+        desired_blocks[prefix:insert_stop]
+    )
     edge_edits: list[SemanticEdit] = []
-    if any(
-        isinstance(block, PageBreakIR)
-        for block in (*base_slice, *desired_slice)
-    ):
+    if any(isinstance(block, PageBreakIR) for block in (*base_slice, *desired_slice)):
         leading_pairs = 0
         while leading_pairs < min(len(base_slice), len(desired_slice)):
             pair_edits = _diff_compatible_edge_pair(
@@ -1422,7 +1440,9 @@ def _diff_section_block_slice(
 
         if leading_pairs or trailing_pairs:
             base_slice = base_slice[leading_pairs : len(base_slice) - trailing_pairs]
-            desired_slice = desired_slice[leading_pairs : len(desired_slice) - trailing_pairs]
+            desired_slice = desired_slice[
+                leading_pairs : len(desired_slice) - trailing_pairs
+            ]
             prefix += leading_pairs
             delete_stop -= trailing_pairs
             insert_stop -= trailing_pairs
@@ -1430,17 +1450,13 @@ def _diff_section_block_slice(
                 return edge_edits
 
     if _all_paragraphs(base_slice) and _all_paragraphs(desired_slice):
-        if (
-            len(base_slice) == len(desired_slice)
-            and [_paragraph_signature(block) for block in base_slice]
-            == [_paragraph_signature(block) for block in desired_slice]
-        ):
+        if len(base_slice) == len(desired_slice) and [
+            _paragraph_signature(block) for block in base_slice
+        ] == [_paragraph_signature(block) for block in desired_slice]:
             return []
-        if (
-            len(base_slice) == len(desired_slice)
-            and [_paragraph_text(block) for block in base_slice]
-            == [_paragraph_text(block) for block in desired_slice]
-        ):
+        if len(base_slice) == len(desired_slice) and [
+            _paragraph_text(block) for block in base_slice
+        ] == [_paragraph_text(block) for block in desired_slice]:
             return []
         return [
             ReplaceParagraphSliceEdit(
@@ -1458,11 +1474,10 @@ def _diff_section_block_slice(
             )
         ]
 
-    if (
-        len(base_slice) == len(desired_slice) == 1
-        and (
-            (isinstance(base_slice[0], ListIR) and isinstance(desired_slice[0], ListIR))
-            or (isinstance(base_slice[0], TableIR) and isinstance(desired_slice[0], TableIR))
+    if len(base_slice) == len(desired_slice) == 1 and (
+        (isinstance(base_slice[0], ListIR) and isinstance(desired_slice[0], ListIR))
+        or (
+            isinstance(base_slice[0], TableIR) and isinstance(desired_slice[0], TableIR)
         )
     ):
         return edge_edits
@@ -1489,9 +1504,13 @@ def _diff_compatible_edge_pair(
 ) -> list[SemanticEdit] | None:
     if isinstance(base_block, PageBreakIR) and isinstance(desired_block, PageBreakIR):
         return []
-    if not isinstance(base_block, ParagraphIR) or not isinstance(desired_block, ParagraphIR):
+    if not isinstance(base_block, ParagraphIR) or not isinstance(
+        desired_block, ParagraphIR
+    ):
         return None
-    if _non_text_inline_signature(base_block) != _non_text_inline_signature(desired_block):
+    if _non_text_inline_signature(base_block) != _non_text_inline_signature(
+        desired_block
+    ):
         return None
     if _paragraphs_share_trailing_single_footnote_ref(base_block, desired_block):
         return []
@@ -1522,7 +1541,11 @@ def _diff_compatible_edge_pair(
 def _normalize_structural_block_slice(blocks: list[BlockIR]) -> list[BlockIR]:
     normalized: list[BlockIR] = []
     for block in blocks:
-        if _is_empty_paragraph_block(block) and normalized and isinstance(normalized[-1], TableIR):
+        if (
+            _is_empty_paragraph_block(block)
+            and normalized
+            and isinstance(normalized[-1], TableIR)
+        ):
             continue
         normalized.append(block)
     return normalized
@@ -1679,7 +1702,7 @@ def _insert_body_block_sequence(
                             level=item.level,
                             text=_paragraph_text(item.paragraph),
                         )
-                    for item in block.items
+                        for item in block.items
                     ),
                     body_anchor_block_index=raw_block_index,
                 )
@@ -1727,7 +1750,9 @@ def _diff_footnote_changes(
     max_sections = max(len(base_sections), len(desired_sections))
     for section_index in range(max_sections):
         base_blocks = (
-            base_sections[section_index].blocks if section_index < len(base_sections) else []
+            base_sections[section_index].blocks
+            if section_index < len(base_sections)
+            else []
         )
         desired_blocks = (
             desired_sections[section_index].blocks
@@ -1736,12 +1761,20 @@ def _diff_footnote_changes(
         )
         max_blocks = max(len(base_blocks), len(desired_blocks))
         for block_index in range(max_blocks):
-            base_block = base_blocks[block_index] if block_index < len(base_blocks) else None
-            desired_block = desired_blocks[block_index] if block_index < len(desired_blocks) else None
+            base_block = (
+                base_blocks[block_index] if block_index < len(base_blocks) else None
+            )
+            desired_block = (
+                desired_blocks[block_index]
+                if block_index < len(desired_blocks)
+                else None
+            )
             if not isinstance(desired_block, ParagraphIR):
                 continue
             desired_refs = [
-                inline.ref for inline in desired_block.inlines if isinstance(inline, FootnoteRefIR)
+                inline.ref
+                for inline in desired_block.inlines
+                if isinstance(inline, FootnoteRefIR)
             ]
             if not desired_refs:
                 continue
@@ -1757,7 +1790,9 @@ def _diff_footnote_changes(
             base_refs: list[str] = []
             if isinstance(base_block, ParagraphIR):
                 base_refs = [
-                    inline.ref for inline in base_block.inlines if isinstance(inline, FootnoteRefIR)
+                    inline.ref
+                    for inline in base_block.inlines
+                    if isinstance(inline, FootnoteRefIR)
                 ]
             if len(base_refs) == 0:
                 if desired_refs[0] in matched_desired_refs:
@@ -1793,9 +1828,13 @@ def _diff_body_footnote_paragraph_text_changes(
         for block_index, (base_block, desired_block) in enumerate(
             zip(base_section.blocks, desired_section.blocks, strict=False)
         ):
-            if not isinstance(base_block, ParagraphIR) or not isinstance(desired_block, ParagraphIR):
+            if not isinstance(base_block, ParagraphIR) or not isinstance(
+                desired_block, ParagraphIR
+            ):
                 continue
-            if not _paragraphs_share_trailing_single_footnote_ref(base_block, desired_block):
+            if not _paragraphs_share_trailing_single_footnote_ref(
+                base_block, desired_block
+            ):
                 continue
             if base_block.role != desired_block.role:
                 edits.append(
@@ -1825,13 +1864,25 @@ def _select_matching_footnote_story_pairs(
     desired_sections: list[SectionIR],
 ) -> tuple[tuple[str, str], ...]:
     pairs: list[tuple[str, str]] = []
-    for base_section, desired_section in zip(base_sections, desired_sections, strict=False):
-        for base_block, desired_block in zip(base_section.blocks, desired_section.blocks, strict=False):
-            if not isinstance(base_block, ParagraphIR) or not isinstance(desired_block, ParagraphIR):
+    for base_section, desired_section in zip(
+        base_sections, desired_sections, strict=False
+    ):
+        for base_block, desired_block in zip(
+            base_section.blocks, desired_section.blocks, strict=False
+        ):
+            if not isinstance(base_block, ParagraphIR) or not isinstance(
+                desired_block, ParagraphIR
+            ):
                 continue
-            base_refs = [inline.ref for inline in base_block.inlines if isinstance(inline, FootnoteRefIR)]
+            base_refs = [
+                inline.ref
+                for inline in base_block.inlines
+                if isinstance(inline, FootnoteRefIR)
+            ]
             desired_refs = [
-                inline.ref for inline in desired_block.inlines if isinstance(inline, FootnoteRefIR)
+                inline.ref
+                for inline in desired_block.inlines
+                if isinstance(inline, FootnoteRefIR)
             ]
             if len(base_refs) != 1 or len(desired_refs) != 1:
                 continue
@@ -1839,7 +1890,9 @@ def _select_matching_footnote_story_pairs(
     return tuple(pairs)
 
 
-def _normalize_desired_semantic_ids(base: DocumentIR, desired: DocumentIR) -> DocumentIR:
+def _normalize_desired_semantic_ids(
+    base: DocumentIR, desired: DocumentIR
+) -> DocumentIR:
     normalized = copy.deepcopy(desired)
     desired_tabs = _tabs_by_path(normalized.tabs)
     for path, base_tab in _walk_tabs(base.tabs):
@@ -1916,7 +1969,9 @@ def _diff_attached_story_catalog(
 ) -> list[SemanticEdit]:
     edits: list[SemanticEdit] = []
     seen_pairs: set[tuple[str, str]] = set()
-    for base_section, desired_section in zip(base_sections, desired_sections, strict=False):
+    for base_section, desired_section in zip(
+        base_sections, desired_sections, strict=False
+    ):
         base_attachments = getattr(base_section.attachments, attachment_kind)
         desired_attachments = getattr(desired_section.attachments, attachment_kind)
         for slot in sorted(set(base_attachments) & set(desired_attachments)):
@@ -1928,7 +1983,10 @@ def _diff_attached_story_catalog(
                 continue
             if base_ref != desired_ref and (
                 _story_signature(base_story) != _story_signature(desired_story)
-                and _attachment_ref_counts(base_sections, attachment_kind).get(base_ref, 0) > 1
+                and _attachment_ref_counts(base_sections, attachment_kind).get(
+                    base_ref, 0
+                )
+                > 1
             ):
                 continue
             story_pair = (base_ref, desired_ref)
@@ -1958,10 +2016,16 @@ def _diff_story_catalog(
     pairs = (
         pair_selector
         if pair_selector is not None
-        else tuple((story_ref, story_ref) for story_ref in sorted(set(base_catalog) & set(desired_catalog)))
+        else tuple(
+            (story_ref, story_ref)
+            for story_ref in sorted(set(base_catalog) & set(desired_catalog))
+        )
     )
     for base_story_ref, desired_story_ref in pairs:
-        if base_story_ref not in base_catalog or desired_story_ref not in desired_catalog:
+        if (
+            base_story_ref not in base_catalog
+            or desired_story_ref not in desired_catalog
+        ):
             continue
         edit = _diff_story_paragraph_slice(
             tab_id=tab_id,
@@ -2004,7 +2068,9 @@ def _diff_section_tables(
         ):
             base_block = base_section.blocks[base_block_index]
             desired_block = desired_section.blocks[desired_block_index]
-            if not isinstance(base_block, TableIR) or not isinstance(desired_block, TableIR):
+            if not isinstance(base_block, TableIR) or not isinstance(
+                desired_block, TableIR
+            ):
                 continue
             base_special_kind = _special_table_kind_for_block(
                 tab=base_tab,
@@ -2065,21 +2131,12 @@ def _diff_section_tables(
                     desired_table=desired_block,
                 )
             except UnsupportedReconcileV2Error:
-                edits.append(
-                    DeleteTableBlockEdit(
-                        tab_id=tab_id,
-                        section_index=section_index,
-                        block_index=base_block_index,
-                    )
+                ctx = TableDiffContext(
+                    tab_id=tab_id,
+                    section_index=section_index,
+                    block_index=base_block_index,
                 )
-                edits.append(
-                    InsertTableBlockEdit(
-                        tab_id=tab_id,
-                        section_index=section_index,
-                        block_index=base_block_index,
-                        table=desired_block,
-                    )
-                )
+                edits.extend(diff_tables(base_block, desired_block, ctx=ctx))
                 continue
             if plan is None:
                 continue
@@ -2105,10 +2162,9 @@ def _diff_section_tables(
                     base_row = base_block.rows[base_row_index]
                     desired_row = desired_block.rows[desired_row_index]
                     for base_column_index, desired_column_index in plan.column_pairs:
-                        if (
-                            base_column_index >= len(base_row.cells)
-                            or desired_column_index >= len(desired_row.cells)
-                        ):
+                        if base_column_index >= len(
+                            base_row.cells
+                        ) or desired_column_index >= len(desired_row.cells):
                             continue
                         base_cell = base_row.cells[base_column_index]
                         desired_cell = desired_row.cells[desired_column_index]
@@ -2205,18 +2261,26 @@ def _plan_table_comparison(
     base_row_count = len(base_table.rows)
     desired_row_count = len(desired_table.rows)
     base_column_count = max((len(row.cells) for row in base_table.rows), default=0)
-    desired_column_count = max((len(row.cells) for row in desired_table.rows), default=0)
-    if abs(desired_row_count - base_row_count) > 1 or abs(desired_column_count - base_column_count) > 1:
+    desired_column_count = max(
+        (len(row.cells) for row in desired_table.rows), default=0
+    )
+    if (
+        abs(desired_row_count - base_row_count) > 1
+        or abs(desired_column_count - base_column_count) > 1
+    ):
         raise UnsupportedReconcileV2Error(
             "reconcile_v2 currently supports at most one row or one column structural change"
         )
     if desired_column_count != base_column_count and (
-        _table_has_horizontal_merges(base_table) or _table_has_horizontal_merges(desired_table)
+        _table_has_horizontal_merges(base_table)
+        or _table_has_horizontal_merges(desired_table)
     ):
         raise UnsupportedReconcileV2Error(
             "reconcile_v2 does not yet support column structural edits through merged regions"
         )
-    shared_row_pairs = tuple((index, index) for index in range(min(base_row_count, desired_row_count)))
+    shared_row_pairs = tuple(
+        (index, index) for index in range(min(base_row_count, desired_row_count))
+    )
     shared_column_pairs = tuple(
         (index, index) for index in range(min(base_column_count, desired_column_count))
     )
@@ -2256,7 +2320,9 @@ def _plan_table_comparison(
         )
 
     merge_change = _table_merge_change(base_table, desired_table)
-    if (desired_row_count != base_row_count or desired_column_count != base_column_count) and merge_change is not None:
+    if (
+        desired_row_count != base_row_count or desired_column_count != base_column_count
+    ) and merge_change is not None:
         raise UnsupportedReconcileV2Error(
             "reconcile_v2 does not yet support structural edits intersecting merge-topology changes"
         )
@@ -2461,10 +2527,9 @@ def _diff_table_properties(
             )
 
     for base_column_index, desired_column_index in plan.column_pairs:
-        if (
-            base_column_index >= len(base_table.column_properties)
-            or desired_column_index >= len(desired_table.column_properties)
-        ):
+        if base_column_index >= len(
+            base_table.column_properties
+        ) or desired_column_index >= len(desired_table.column_properties):
             continue
         properties, fields = _style_delta(
             base_table.column_properties[base_column_index],
@@ -2486,9 +2551,8 @@ def _diff_table_properties(
         base_row = base_table.rows[base_row_index]
         desired_row = desired_table.rows[desired_row_index]
         for base_column_index, desired_column_index in plan.column_pairs:
-            if (
-                base_column_index >= len(base_row.cells)
-                or desired_column_index >= len(desired_row.cells)
+            if base_column_index >= len(base_row.cells) or desired_column_index >= len(
+                desired_row.cells
             ):
                 continue
             style, fields = _style_delta(
@@ -2523,11 +2587,9 @@ def _diff_story_paragraph_slice(
     if not _all_paragraphs(base_blocks) or not _all_paragraphs(desired_blocks):
         return None
 
-    if (
-        len(base_blocks) == len(desired_blocks)
-        and [_paragraph_text(block) for block in base_blocks]
-        == [_paragraph_text(block) for block in desired_blocks]
-    ):
+    if len(base_blocks) == len(desired_blocks) and [
+        _paragraph_text(block) for block in base_blocks
+    ] == [_paragraph_text(block) for block in desired_blocks]:
         return None
 
     base_signatures = [_paragraph_signature(block) for block in base_blocks]
@@ -2564,8 +2626,11 @@ def _diff_story_paragraph_slice(
         and isinstance(base_slice[0], ParagraphIR)
         and isinstance(desired_slice[0], ParagraphIR)
         and base_slice[0].role == desired_slice[0].role
-        and _non_text_inline_signature(base_slice[0]) == _non_text_inline_signature(desired_slice[0])
-        and not _paragraphs_share_trailing_single_footnote_ref(base_slice[0], desired_slice[0])
+        and _non_text_inline_signature(base_slice[0])
+        == _non_text_inline_signature(desired_slice[0])
+        and not _paragraphs_share_trailing_single_footnote_ref(
+            base_slice[0], desired_slice[0]
+        )
     ):
         return ReplaceParagraphTextEdit(
             tab_id=tab_id,
@@ -2582,11 +2647,13 @@ def _diff_story_paragraph_slice(
         start_block_index=block_offset + prefix,
         delete_block_count=max(0, delete_stop - prefix),
         inserted_paragraphs=tuple(
-            ParagraphFragment(paragraph=block)
-            for block in desired_slice
+            ParagraphFragment(paragraph=block) for block in desired_slice
         ),
         body_anchor_block_index=(
-            None if raw_block_offset is None or section_index is None or story_id != f"{tab_id}:body"
+            None
+            if raw_block_offset is None
+            or section_index is None
+            or story_id != f"{tab_id}:body"
             else raw_block_offset + prefix
         ),
     )
@@ -2599,11 +2666,15 @@ def _diff_named_ranges(
     content_edits: list[SemanticEdit],
 ) -> list[SemanticEdit]:
     edits: list[SemanticEdit] = []
-    all_names = set(base.annotations.named_ranges) | set(desired.annotations.named_ranges)
+    all_names = set(base.annotations.named_ranges) | set(
+        desired.annotations.named_ranges
+    )
     for name in sorted(all_names):
         base_ranges = tuple(base.annotations.named_ranges.get(name, []))
         desired_ranges = tuple(desired.annotations.named_ranges.get(name, []))
-        signatures_match = _named_range_signature(name, base_ranges) == _named_range_signature(
+        signatures_match = _named_range_signature(
+            name, base_ranges
+        ) == _named_range_signature(
             name,
             desired_ranges,
         )
@@ -2644,7 +2715,11 @@ def _locate_split_anchor(sections: list[SectionIR], boundary: int) -> tuple[int,
 
 
 def _flatten_section_fingerprints(sections: list[SectionIR]) -> list[str]:
-    return [fingerprint for section in sections for fingerprint in _block_fingerprints(section.blocks)]
+    return [
+        fingerprint
+        for section in sections
+        for fingerprint in _block_fingerprints(section.blocks)
+    ]
 
 
 def _block_fingerprints(blocks: list[BlockIR]) -> list[str]:
@@ -2654,7 +2729,8 @@ def _block_fingerprints(blocks: list[BlockIR]) -> list[str]:
             fingerprints.append(f"P:{block.role}:{_paragraph_text(block)}")
         elif isinstance(block, ListIR):
             items = "|".join(
-                f"{item.level}:{_paragraph_text(item.paragraph)}" for item in block.items
+                f"{item.level}:{_paragraph_text(item.paragraph)}"
+                for item in block.items
             )
             fingerprints.append(f"L:{block.spec.kind}:{items}")
         else:
@@ -2693,7 +2769,9 @@ def _paragraph_signature(paragraph: ParagraphIR) -> tuple[str, str]:
     return paragraph.role, _paragraph_text(paragraph)
 
 
-def _non_text_inline_signature(paragraph: ParagraphIR) -> tuple[tuple[object, ...], ...]:
+def _non_text_inline_signature(
+    paragraph: ParagraphIR,
+) -> tuple[tuple[object, ...], ...]:
     signature: list[tuple[object, ...]] = []
     for inline in paragraph.inlines:
         if isinstance(inline, TextSpanIR):
@@ -2702,23 +2780,32 @@ def _non_text_inline_signature(paragraph: ParagraphIR) -> tuple[tuple[object, ..
             signature.append(("footnote", inline.ref))
             continue
         if isinstance(inline, OpaqueInlineIR):
-            signature.append(("opaque", inline.kind, tuple(sorted(inline.payload.items()))))
+            signature.append(
+                ("opaque", inline.kind, tuple(sorted(inline.payload.items())))
+            )
             continue
         signature.append((type(inline).__name__, repr(inline)))
     return tuple(signature)
 
 
 def _is_read_only_paragraph(paragraph: ParagraphIR) -> bool:
-    opaque_inlines = [inline for inline in paragraph.inlines if isinstance(inline, OpaqueInlineIR)]
+    opaque_inlines = [
+        inline for inline in paragraph.inlines if isinstance(inline, OpaqueInlineIR)
+    ]
     if len(opaque_inlines) != 1:
         return False
     if opaque_inlines[0].kind != "horizontal_rule":
         return False
-    return all(not isinstance(inline, TextSpanIR) or inline.text == "" for inline in paragraph.inlines)
+    return all(
+        not isinstance(inline, TextSpanIR) or inline.text == ""
+        for inline in paragraph.inlines
+    )
 
 
 def _trailing_single_footnote_ref(paragraph: ParagraphIR) -> str | None:
-    refs = [inline.ref for inline in paragraph.inlines if isinstance(inline, FootnoteRefIR)]
+    refs = [
+        inline.ref for inline in paragraph.inlines if isinstance(inline, FootnoteRefIR)
+    ]
     if len(refs) != 1:
         return None
     footnote_seen = False
@@ -2862,7 +2949,9 @@ def _story_identity_signature(story_id: str) -> str:
 
 
 def _table_row_signatures(table: TableIR) -> tuple[tuple[str, ...], ...]:
-    return tuple(tuple(_table_cell_signature(cell) for cell in row.cells) for row in table.rows)
+    return tuple(
+        tuple(_table_cell_signature(cell) for cell in row.cells) for row in table.rows
+    )
 
 
 def _table_has_horizontal_merges(table: TableIR) -> bool:
@@ -2974,26 +3063,39 @@ def _best_single_deletion_index(
 
 
 def _signature_tuple_similarity(left: tuple[str, ...], right: tuple[str, ...]) -> int:
-    score = sum(left_item == right_item for left_item, right_item in zip(left, right, strict=False))
+    score = sum(
+        left_item == right_item
+        for left_item, right_item in zip(left, right, strict=False)
+    )
     if len(left) == len(right):
         return score
     return score - abs(len(left) - len(right))
 
 
-def _exact_single_insertion_index(base: tuple[T, ...], desired: tuple[T, ...]) -> int | None:
+def _exact_single_insertion_index(
+    base: tuple[T, ...], desired: tuple[T, ...]
+) -> int | None:
     if len(desired) != len(base) + 1:
         return None
     for insert_index in range(len(desired)):
-        if desired[:insert_index] == base[:insert_index] and desired[insert_index + 1 :] == base[insert_index:]:
+        if (
+            desired[:insert_index] == base[:insert_index]
+            and desired[insert_index + 1 :] == base[insert_index:]
+        ):
             return insert_index
     return None
 
 
-def _exact_single_deletion_index(base: tuple[T, ...], desired: tuple[T, ...]) -> int | None:
+def _exact_single_deletion_index(
+    base: tuple[T, ...], desired: tuple[T, ...]
+) -> int | None:
     if len(base) != len(desired) + 1:
         return None
     for delete_index in range(len(base)):
-        if base[:delete_index] == desired[:delete_index] and base[delete_index + 1 :] == desired[delete_index:]:
+        if (
+            base[:delete_index] == desired[:delete_index]
+            and base[delete_index + 1 :] == desired[delete_index:]
+        ):
             return delete_index
     return None
 
