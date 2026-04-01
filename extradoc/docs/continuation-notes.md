@@ -68,37 +68,81 @@ Each commit should prove one narrow thing live, leave a fixture or log entry, an
 
 ---
 
-## Current Live State (as of 2026-03-31, checkpoint `b4aaccf`)
+## Current Live State (as of 2026-04-01, checkpoint `cad298e`)
 
 | Scenario | Status |
 |---|---|
-| Markdown multi-tab create + edit (cycle 1 + 2) | **Proven live** |
-| Markdown callouts / blockquotes / code blocks | **Proven live** |
-| Markdown footnotes | **Proven live** |
+| Markdown multi-tab create + edit (cycle 1 + 2) | **Broken** — see regression note below |
+| Markdown callouts / blockquotes / code blocks | **Broken** — same regression |
+| Markdown footnotes | Unknown |
 | XML minimal (heading + para) | **Proven live** |
 | XML heading + list + page break (no table) | **Proven live** — single cycle |
-| XML with simple table (no page break) | **Partial** — shell created, cell content empty on first cycle; second-cycle diff fills cells |
-| XML page break + heading + list + table (medium) | **Failing** — page break ends up on wrong side of suffix content |
+| XML with simple table (no page break) | **Partial** — shell created, cell content empty on first cycle |
+| XML page break + heading + list + table (medium) | **Failing** |
 | Full structural XML smoke | **Not yet attempted clean** |
 
-**Active uncommitted changes** (`git diff HEAD`):
-- `batches.py`: adds `_rebatch_same_tab_structural_requests()` — splits multiple `insertTable` / `insertPageBreak` in same tab into separate batches. Fixes medium-XML regression where page-break and table shell were being batched together.
-- `batches.py`: adds `_request_tab_id()` helper used by the above.
-- `client.py`: `DiffResult` now carries `desired_document`, `desired_format`, `allow_live_refresh`; the live-refresh executor `_execute_document_batches_v2_live_refresh` uses these.
+### Regression introduced in `3b8a95d`
 
-These uncommitted changes should be committed once the medium-XML page-break + table scenario is proven.
+`./extrasuite doc diff <any-md-doc-with-table-row-change>` fails with:
+
+```
+Error: reconcile_v2 iterative content planning could not lower the remaining mixed body rewrite
+```
+
+**Root cause** (diagnosed 2026-04-01):
+
+1. `_table_anchor_signature` in `diff.py` includes the row count in the table's identity signature.
+2. When any table gains or loses a row (e.g. adding a "Callouts" row to the features table), the signature changes → `_diff_section_blocks` sees base and desired anchor signatures as unequal → falls back to flat `_diff_editable_block_span` for the whole section.
+3. Flat mode generates `DeleteTableBlockEdit` (old table) + `InsertTableBlockEdit` (new table) instead of `InsertTableRowEdit`.
+4. `_should_iteratively_batch_content` triggers (has_table_delete=True, body_delete_count>1).
+5. The iterative planner in `3b8a95d` switched from count-based to score-based iteration. The score-based approach cannot find a valid path for this shape and raises `ReconcileInvariantError`.
+
+At `d95eb28` (one commit before `3b8a95d`), the old count-based planner happened to find a path through, so the bug was hidden.
+
+**Fix**: Option B — remove row count from `_table_anchor_signature`. A table with N rows and a table with N+1 rows should be recognised as the same anchor (matched by column count and spans). Row insertions/deletions are then handled by `_diff_section_tables` via `InsertTableRowEdit` / `DeleteTableRowEdit`, which is the correct path. This eliminates the spurious `DeleteTableBlockEdit` and prevents the iterative planner from triggering for routine table edits.
+
+This is the **next task** before any other work.
 
 ---
 
-## How to Work on XML Correctness
+## How to Work on the Next Fix
 
-**The active problem**: after a structural live-refresh cycle, content intended for the *suffix* of a page break is still being reinserted on the *wrong side* of the break. Root cause is in how the refreshed plan resolves indices after the partial structural state.
+**The active problem**: `_table_anchor_signature` uses row count as part of identity. Any row addition/removal causes flat-mode fallback → spurious delete/reinsert → iterative planner → failure.
 
-**Isolation steps** (least to most complex, build confidence at each step):
-1. XML with list + page break (no table) — already proven ✓
-2. XML with simple table (no page break) — shell proves, cell fill needs second cycle
-3. XML with table + page break together — current blocker
-4. XML with multiple tables, footnotes, sections
+**Fix location**: `diff.py:_table_anchor_signature` (~line 1081).
+
+Change: drop `len(table.rows)` from the signature. Keep column count (derived from first row) and span structure, which actually identifies the table's structural shape. Row count is not an identity property — it changes on insert/delete and that is expected.
+
+```python
+# BEFORE
+def _table_anchor_signature(table: TableIR) -> tuple[object, ...]:
+    return (
+        "table",
+        len(table.rows),           # ← remove this
+        tuple(len(row.cells) for row in table.rows),  # ← changes with row count too
+        ...
+    )
+
+# AFTER — identity based on column structure, not row count
+def _table_anchor_signature(table: TableIR) -> tuple[object, ...]:
+    first_row = table.rows[0] if table.rows else None
+    return (
+        "table",
+        len(first_row.cells) if first_row else 0,   # column count
+        tuple((cell.row_span, cell.column_span) for cell in (first_row.cells if first_row else [])),
+        table.pinned_header_rows,
+    )
+```
+
+**Validation steps** (in order):
+1. `uv run pytest tests/ -x -q` — all 142 should still pass
+2. `./extrasuite doc diff md-test` — should produce valid batches (no error)
+3. Inspect the diff output: should see `InsertTableRowEdit` not `DeleteTableBlockEdit`
+4. Live push of md-test, re-pull, semantic diff empty
+5. Then continue XML isolation steps:
+   - XML with simple table (no page break) — should converge in one cycle
+   - XML with table + page break together
+   - Full structural XML smoke
 
 **Debugging workflow**:
 ```bash
@@ -173,16 +217,19 @@ uv run python scripts/release_smoke_docs.py
 
 ## What's Next
 
-**Immediate** (before calling XML "done"):
-1. Commit the current uncommitted changes once medium-XML page-break + table converges
-2. Identify why suffix content goes to the wrong side of the page break during replan — instrument `lower.py` anchor resolution in the refresh path
-3. Prove: XML table + page break converges in one or two cycles live
-4. Prove: the full structural XML smoke scenario (heading + list + table + page break + footnote)
+**Immediate** (fix the regression first):
+1. Fix `_table_anchor_signature` to not include row count (see How to Work on the Next Fix above)
+2. Verify markdown diff/push works again for docs with table row changes
+3. Verify XML simple table path converges (cell content filled in first cycle)
+4. Prove: XML table + page break converges in one or two cycles live
+5. Prove: the full structural XML smoke scenario (heading + list + table + page break)
 
 **After XML stabilises**:
-5. Align `tests/` with current reconciler behavior — delete stale exact-shape expectations, replace with fixture-backed or semantic-convergence tests
-6. Verify the full live smoke matrix passes clean from `release_smoke_docs.py`
-7. Release `extradoc` with v2 as the locked default (remove v1 fallback env var)
+6. Align `tests/` with current reconciler behavior — delete stale exact-shape expectations
+7. Verify the full live smoke matrix passes clean from `release_smoke_docs.py`
+8. Release `extradoc` with v2 as the locked default
+
+**Key decision made 2026-04-01**: The iterative planner should be a last resort. The correct fix for row insert/delete is to improve `_diff_section_blocks` to produce the right edit type in the first place, not to make the iterative planner more capable. Improving the planner is whack-a-mole.
 
 **Known unsupported boundaries** (do not attempt to fix without a dedicated design task):
 - Section-break insertion/deletion
