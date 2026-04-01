@@ -5,6 +5,7 @@ Orchestrates pull/diff/push using serde + reconcile + comments packages.
 
 from __future__ import annotations
 
+import asyncio
 import json
 import logging
 import os
@@ -46,6 +47,7 @@ from extradoc.reconcile_v2.executor import (
 )
 from extradoc.serde._models import IndexXml
 from extradoc.serde._utils import hex_to_optional_color, optional_color_to_hex
+from extradoc.transport import APIError
 
 if TYPE_CHECKING:
     from extradoc.api_types._generated import BatchUpdateDocumentRequest, DocumentTab
@@ -106,7 +108,9 @@ class DocsClient:
         Args:
             document_id: The document identifier
             output_path: Parent directory for the output folder
-            save_raw: Whether to save raw API responses to .raw/ folder
+            save_raw: Whether to save optional raw sidecars such as comments.json.
+                The raw document JSON is always written because diff/push now
+                treat ``.raw/document.json`` as required transport state.
             format: Output format — "xml" (default) or "markdown"
 
         Returns:
@@ -129,27 +133,27 @@ class DocsClient:
         # Serialize bundle to folder
         written_files = serde.serialize(bundle, document_dir, format=format)
 
-        # Optionally save raw API responses
-        if save_raw:
-            raw_dir = document_dir / RAW_DIR
-            raw_dir.mkdir(parents=True, exist_ok=True)
+        # Raw document JSON is always materialized because the reconciler uses
+        # it as transport-accurate base state during diff/push.
+        raw_dir = document_dir / RAW_DIR
+        raw_dir.mkdir(parents=True, exist_ok=True)
 
-            raw_doc_path = raw_dir / "document.json"
-            raw_doc_path.write_text(
-                json.dumps(document_data.raw, indent=2, ensure_ascii=False),
+        raw_doc_path = raw_dir / "document.json"
+        raw_doc_path.write_text(
+            json.dumps(document_data.raw, indent=2, ensure_ascii=False),
+            encoding="utf-8",
+        )
+        written_files.append(raw_doc_path)
+
+        if save_raw and raw_comments:
+            raw_comments_path = raw_dir / "comments.json"
+            raw_comments_path.write_text(
+                json.dumps(
+                    {"comments": raw_comments}, indent=2, ensure_ascii=False
+                ),
                 encoding="utf-8",
             )
-            written_files.append(raw_doc_path)
-
-            if raw_comments:
-                raw_comments_path = raw_dir / "comments.json"
-                raw_comments_path.write_text(
-                    json.dumps(
-                        {"comments": raw_comments}, indent=2, ensure_ascii=False
-                    ),
-                    encoding="utf-8",
-                )
-                written_files.append(raw_comments_path)
+            written_files.append(raw_comments_path)
 
         # Create pristine zip from the serde output
         pristine_path = _create_pristine_zip(document_dir)
@@ -162,12 +166,11 @@ class DocsClient:
 
         This is local-only and does not make any API calls.
 
-        For markdown-format folders: if .raw/document.json exists, the raw
-        Google Docs API response is used as the base document.  This gives
-        accurate real-API startIndex values so the reconciler generates valid
-        deleteContentRange/updateTextStyle requests.  Without it the mock
-        reindexer's table-overhead undercount causes deleteContentRange to
-        start before the true cell boundary and the API rejects the request.
+        When `.raw/document.json` exists, it is treated as the authoritative
+        live transport base for reconciliation. XML/markdown semantic
+        correctness is still validated at the serde boundary, but the
+        reconciler itself runs against the pulled raw document so requests are
+        anchored to real Docs indices/story state.
 
         Args:
             folder: Path to document folder (containing index.xml)
@@ -185,20 +188,16 @@ class DocsClient:
 
         desired_bundle = serde.deserialize(folder)
 
-        # For markdown format, prefer the raw API JSON as the base document so
-        # that generated requests carry real startIndex values rather than the
-        # mock reindexer's approximations.  The raw JSON already has valid
-        # indices — do NOT call reindex_document() on it, as that would
-        # overwrite accurate API indices with mock-computed approximations.
+        index_path = folder / "index.xml"
+        index = serde.IndexXml.from_xml_string(index_path.read_text(encoding="utf-8"))
+
+        # Prefer the raw API JSON as transport base so generated requests carry
+        # real Docs indices rather than reconstructed approximations.
         raw_doc_path = folder / RAW_DIR / "document.json"
         if raw_doc_path.exists():
-            index_path = folder / "index.xml"
-            index = serde.IndexXml.from_xml_string(
-                index_path.read_text(encoding="utf-8")
-            )
+            raw_data = json.loads(raw_doc_path.read_text(encoding="utf-8"))
+            transport_base = Document.model_validate(raw_data)
             if index.format == "markdown":
-                raw_data = json.loads(raw_doc_path.read_text(encoding="utf-8"))
-                transport_base = Document.model_validate(raw_data)
                 base = Document.model_validate(raw_data)
                 # Strip inherited paragraph style defaults from the raw JSON base
                 # so it is consistent with the markdown-serde-derived desired document.
@@ -225,6 +224,26 @@ class DocsClient:
                     desired_format="markdown",
                     allow_live_refresh=_tab_ids_subset(base, desired),
                 )
+
+            base = transport_base
+            desired = reindex_document(desired_bundle.document)
+            batches = _reconcile_documents(
+                base,
+                desired,
+                reconciler_version=reconciler_version,
+                transport_base=transport_base,
+            )
+            comment_ops = diff_comments(base_bundle.comments, desired_bundle.comments)
+            return DiffResult(
+                document_id=document_id,
+                batches=batches,
+                comment_ops=comment_ops,
+                reconciler_version=reconciler_version,
+                base_revision_id=transport_base.revision_id,
+                desired_document=desired,
+                desired_format=index.format,
+                allow_live_refresh=_tab_ids_subset(base, desired),
+            )
 
         base = reindex_document(base_bundle.document)
         desired = reindex_document(desired_bundle.document)
@@ -423,31 +442,61 @@ async def _execute_document_batches_v2_live_refresh(
     while batch_index < len(request_batches):
         batch = request_batches[batch_index]
         resolved_batch = resolve_deferred_placeholders(prior_responses, list(batch))
-        resolved_batch = _truncate_batch_before_post_table_para_ops(resolved_batch)
+        resolved_batch, refresh_reason = _truncate_batch_for_live_refresh(resolved_batch)
         write_control = None
         if revision_id is not None:
             write_control = {"requiredRevisionId": revision_id}
-        response = await transport.batch_update(
-            result.document_id,
-            list(resolved_batch),
-            write_control=write_control,
-        )
+        try:
+            response = await transport.batch_update(
+                result.document_id,
+                list(resolved_batch),
+                write_control=write_control,
+            )
+        except APIError as exc:
+            if not _is_revision_mismatch_error(exc):
+                raise
+            refreshed_batches, revision_id = await _refresh_v2_batches_after_live_change(
+                transport=transport,
+                document_id=result.document_id,
+                desired_document=result.desired_document,
+                desired_format=result.desired_format,
+                current_revision_id=revision_id,
+            )
+            request_batches = [
+                [
+                    request.model_dump(by_alias=True, exclude_none=True)
+                    for request in (batch.requests or [])
+                ]
+                for batch in refreshed_batches
+            ]
+            batch_index = 0
+            prior_responses = []
+            continue
         prior_responses.append(response)
         revision_id = _next_required_revision_id(response, revision_id)
         changes_applied += len(batch)
         batch_index += 1
 
-        if not _should_refresh_v2_batches(resolved_batch):
+        if refresh_reason is None:
             continue
 
-        refreshed_batches, revision_id = await _refresh_v2_batches_after_structural_ops(
-            transport=transport,
-            document_id=result.document_id,
-            _resolved_batch=resolved_batch,
-            desired_document=result.desired_document,
-            desired_format=result.desired_format,
-            current_revision_id=revision_id,
-        )
+        if refresh_reason == "structural":
+            refreshed_batches, revision_id = await _refresh_v2_batches_after_structural_ops(
+                transport=transport,
+                document_id=result.document_id,
+                _resolved_batch=resolved_batch,
+                desired_document=result.desired_document,
+                desired_format=result.desired_format,
+                current_revision_id=revision_id,
+            )
+        else:
+            refreshed_batches, revision_id = await _refresh_v2_batches_after_live_change(
+                transport=transport,
+                document_id=result.document_id,
+                desired_document=result.desired_document,
+                desired_format=result.desired_format,
+                current_revision_id=revision_id,
+            )
         request_batches = [
             [
                 request.model_dump(by_alias=True, exclude_none=True)
@@ -466,6 +515,40 @@ async def _refresh_v2_batches_after_structural_ops(
     transport: Transport,
     document_id: str,
     _resolved_batch: list[dict],
+    desired_document: Document,
+    desired_format: str,
+    current_revision_id: str | None,
+) -> tuple[list[BatchUpdateDocumentRequest], str | None]:
+    max_attempts = 20
+    next_revision_id = current_revision_id
+    for attempt in range(max_attempts):
+        document_data = await transport.get_document(document_id)
+        transport_base = Document.model_validate(document_data.raw)
+        base = Document.model_validate(document_data.raw)
+        next_revision_id = transport_base.revision_id or current_revision_id
+        if desired_format == "markdown":
+            _normalize_raw_base_para_styles(base, desired_document)
+        refreshed_batches = reconcile_v2(
+            base,
+            desired_document,
+            transport_base=transport_base,
+        )
+        if not _refresh_still_contains_same_structural_shell(
+            resolved_batch=_resolved_batch,
+            refreshed_batches=refreshed_batches,
+        ):
+            return refreshed_batches, next_revision_id
+        if attempt < max_attempts - 1:
+            await asyncio.sleep(0.5)
+    raise RuntimeError(
+        "Live Docs did not expose the applied structural change after refresh retries"
+    )
+
+
+async def _refresh_v2_batches_after_live_change(
+    *,
+    transport: Transport,
+    document_id: str,
     desired_document: Document,
     desired_format: str,
     current_revision_id: str | None,
@@ -490,24 +573,189 @@ def _should_refresh_v2_batches(batch: list[dict]) -> bool:
     )
 
 
+def _truncate_batch_for_live_refresh(batch: list[dict]) -> tuple[list[dict], str | None]:
+    structural_trimmed = _truncate_batch_before_post_table_para_ops(batch)
+    if structural_trimmed != batch:
+        return structural_trimmed, "structural"
+    # Batch has structural ops but nothing to truncate — still requires a refresh
+    # so the reconciler can re-plan from the live post-structural state.
+    if _should_refresh_v2_batches(batch):
+        return batch, "structural"
+    delete_trimmed = _truncate_batch_before_delete_sensitive_inserts(batch)
+    if delete_trimmed != batch:
+        return delete_trimmed, "delete-only"
+    return batch, None
+
+
+def _is_revision_mismatch_error(exc: APIError) -> bool:
+    return exc.status_code == 400 and "required revision ID" in str(exc)
+
+
+def _refresh_still_contains_same_structural_shell(
+    *,
+    resolved_batch: list[dict],
+    refreshed_batches: list[BatchUpdateDocumentRequest],
+) -> bool:
+    wanted = {
+        _structural_request_signature(request)
+        for request in resolved_batch
+        if _structural_request_signature(request) is not None
+    }
+    if not wanted:
+        return False
+    refreshed_raw = [
+        request
+        for batch in refreshed_batches
+        for request in (
+            batch.model_dump(by_alias=True, exclude_none=True, mode="json").get("requests")
+            or []
+        )
+    ]
+    seen = {
+        _structural_request_signature(request)
+        for request in refreshed_raw
+        if _structural_request_signature(request) is not None
+    }
+    if wanted.isdisjoint(seen):
+        return False
+    if not refreshed_batches:
+        return True
+    first_refreshed_batch = (
+        refreshed_batches[0]
+        .model_dump(by_alias=True, exclude_none=True, mode="json")
+        .get("requests")
+        or []
+    )
+    truncated_first_refreshed_batch = _truncate_batch_before_post_table_para_ops(
+        list(first_refreshed_batch)
+    )
+    return truncated_first_refreshed_batch == resolved_batch
+
+
+def _structural_request_signature(request: dict) -> tuple[str, str | None, int | None] | None:
+    if "insertTable" in request:
+        payload = request["insertTable"]
+        location = payload.get("location", {})
+        return ("insertTable", location.get("tabId"), location.get("index"))
+    if "insertPageBreak" in request:
+        payload = request["insertPageBreak"]
+        location = payload.get("location", {})
+        return ("insertPageBreak", location.get("tabId"), location.get("index"))
+    return None
+
+
 def _truncate_batch_before_post_table_para_ops(batch: list[dict]) -> list[dict]:
-    seen_structural_tabs: set[str] = set()
+    """Keep a structural shell plus safe surrounding content before refresh.
+
+    Live Docs can lag behind the shadow shape around fresh ``insertTable``
+    and ``insertPageBreak`` operations. For each tab that contains a structural
+    op, we keep:
+
+    - everything before and including the first structural request
+    - for ``insertTable`` only: same-anchor ``insertText`` requests that appear
+      after it in the lowered batch (these are pre-table body paragraphs with
+      predictable indices that are safe to materialise together with the table)
+
+    For ``insertPageBreak``, all content after the break in the request list is
+    deferred — those inserts go before the break in the final document and need
+    the refreshed live plan to get the right indices.
+
+    Everything else on that tab after the structural op is deferred until the
+    next live refresh.
+    """
+    structural_kinds = {"insertTable", "insertPageBreak"}
+    if not any(k in request for k in structural_kinds for request in batch):
+        return batch
+    same_tab_followup_kinds = {
+        "insertText",
+        "createParagraphBullets",
+        "updateParagraphStyle",
+        "updateTextStyle",
+        "insertTable",
+        "insertPageBreak",
+    }
+
+    first_structural_index_by_tab: dict[str, int] = {}
+    first_structural_kind_by_tab: dict[str, str] = {}
+    structural_location_by_tab: dict[str, int | None] = {}
     for index, request in enumerate(batch):
         kind = next(iter(request))
         tab_id = _request_tab_id(request)
-        if kind in {"insertTable", "insertPageBreak"} and tab_id is not None:
-            seen_structural_tabs.add(tab_id)
+        if kind in structural_kinds and tab_id is not None and tab_id not in first_structural_index_by_tab:
+            first_structural_index_by_tab[tab_id] = index
+            first_structural_kind_by_tab[tab_id] = kind
+            structural_location_by_tab[tab_id] = request[kind].get("location", {}).get(
+                "index"
+            )
+
+    if not first_structural_index_by_tab:
+        return batch
+
+    trimmed: list[dict] = []
+    for index, request in enumerate(batch):
+        kind = next(iter(request))
+        tab_id = _request_tab_id(request)
+        if tab_id is None or tab_id not in first_structural_index_by_tab:
+            trimmed.append(request)
             continue
-        if tab_id in seen_structural_tabs and kind in {
-            "insertText",
-            "createParagraphBullets",
-            "updateParagraphStyle",
-            "updateTextStyle",
-            "insertTable",
-            "insertPageBreak",
-        }:
-            return batch[:index]
-    return batch
+        structural_index = first_structural_index_by_tab[tab_id]
+        structural_kind = first_structural_kind_by_tab[tab_id]
+        structural_location = structural_location_by_tab[tab_id]
+        # Always keep everything up to and including the structural op.
+        if index <= structural_index:
+            trimmed.append(request)
+            continue
+        # After the structural op: for insertTable, allow same-anchor insertText
+        # (pre-table body paragraphs). For insertPageBreak, defer all content.
+        if (
+            structural_kind == "insertTable"
+            and kind == "insertText"
+            and (
+                structural_location is None
+                or request[kind].get("location", {}).get("index")
+                <= structural_location
+            )
+        ):
+            trimmed.append(request)
+            continue
+        if kind in same_tab_followup_kinds:
+            continue
+        trimmed.append(request)
+    return trimmed
+
+
+def _truncate_batch_before_delete_sensitive_inserts(batch: list[dict]) -> list[dict]:
+    """Split destructive same-tab rewrites into a delete-only live round.
+
+    Some refreshed body-repair batches delete a large range and then reinsert
+    content using indices from the pre-delete layout. Live Docs rightfully
+    rejects those stale follow-up indices. For the live-refresh execution path,
+    keep the delete requests only, then re-fetch and replan from the actual
+    post-delete transport state.
+    """
+    delete_tabs = {
+        request["deleteContentRange"]["range"].get("tabId")
+        for request in batch
+        if "deleteContentRange" in request
+    }
+    delete_tabs.discard(None)
+    if not delete_tabs:
+        return batch
+    if not any(
+        _request_tab_id(request) in delete_tabs
+        and next(iter(request)) != "deleteContentRange"
+        for request in batch
+    ):
+        return batch
+    trimmed: list[dict] = []
+    for request in batch:
+        tab_id = _request_tab_id(request)
+        if tab_id not in delete_tabs:
+            trimmed.append(request)
+            continue
+        if "deleteContentRange" in request:
+            trimmed.append(request)
+    return trimmed
 
 
 def _request_tab_id(request: dict) -> str | None:

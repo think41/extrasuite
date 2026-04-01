@@ -1008,6 +1008,9 @@ def _content_edit_order_key(
     non_body_anchor = _existing_non_body_story_anchor(edit)
     if non_body_anchor is not None:
         story_id, section_index, block_index = non_body_anchor
+        table_cell_key = _table_cell_story_order_key(story_id)
+        if table_cell_key is not None:
+            return (0, *table_cell_key, section_index, -block_index, original_index)
         return (0, story_id, section_index, -block_index, original_index)
     body_anchor = _existing_body_edit_anchor(edit)
     if body_anchor is not None:
@@ -1027,6 +1030,18 @@ def _existing_non_body_story_anchor(
     ):
         return (edit.story_id, edit.section_index, edit.start_block_index)
     return None
+
+
+def _table_cell_story_order_key(story_id: str) -> tuple[str, int, int] | None:
+    if ":table:" not in story_id or ":r" not in story_id or ":c" not in story_id:
+        return None
+    try:
+        prefix, row_part, col_part = story_id.rsplit(":", 2)
+        row_index = int(row_part.removeprefix("r"))
+        col_index = int(col_part.removeprefix("c"))
+    except ValueError:
+        return None
+    return (prefix, -row_index, -col_index)
 
 
 def _existing_body_edit_anchor(
@@ -1626,6 +1641,7 @@ def _raw_body_block_insertion_site(
 ) -> tuple[int, bool, bool]:
     sections = _raw_body_sections(document, tab_id=tab_id)
     blocks = sections[section_index]
+    raw_block_index = min(raw_block_index, len(blocks))
     if raw_block_index < len(blocks):
         target = blocks[raw_block_index]
         if target["kind"] == "paragraph":

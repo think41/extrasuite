@@ -1092,3 +1092,31 @@ Repair-path rule learned from broken live docs:
    not semantic reconciler failures.
 4. The latest fully green live run is
    `tmp-doc-md-verify/release-smoke/20260331-v2-leading-blank-fix-7/summary.json`.
+
+### Task 21: XML Semantic Boundary Hardening
+
+Deliverable:
+
+1. treat `.raw/document.json` as required workflow state for Docs pull folders;
+   `pull` and `pull-md` should always materialize it
+2. define XML correctness first at the `document.xml -> Document` boundary
+3. add a dedicated XML semantic test suite around `serde.deserialize()`
+4. only treat remaining XML issues as reconciler/lowering bugs after the
+   desired XML has been shown to parse into the expected semantic `Document`
+
+Tests:
+
+1. desired XML with section break, heading, paragraph, list, page break, and
+   table parses into the expected `Document` structure
+2. desired XML with flat list `level=` attributes parses into the expected
+   bullet nesting levels
+3. desired XML with header/footer/footnote segments parses into the expected
+   `DocumentTab` resources and inline footnote references
+4. desired XML survives `deserialize -> serialize -> deserialize` with stable
+   semantic `Document` meaning
+
+Commit value:
+
+1. separates XML parsing correctness from reconciler correctness
+2. makes XML debugging far more direct: first verify the semantic `Document`,
+   then verify lowering/execution

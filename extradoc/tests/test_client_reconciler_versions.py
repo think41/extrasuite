@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import asyncio
 import json
 from pathlib import Path
 
@@ -10,11 +11,18 @@ from extradoc.client import (
     RECONCILER_ENV_VAR,
     DiffResult,
     DocsClient,
+    _execute_document_batches_v2_live_refresh,
     _get_reconciler_version,
     _normalize_raw_base_para_styles,
+    _refresh_still_contains_same_structural_shell,
+    _refresh_v2_batches_after_live_change,
+    _refresh_v2_batches_after_structural_ops,
     _should_refresh_v2_batches,
+    _structural_request_signature,
     _tab_ids_subset,
+    _truncate_batch_before_delete_sensitive_inserts,
     _truncate_batch_before_post_table_para_ops,
+    _truncate_batch_for_live_refresh,
 )
 from extradoc.comments._types import (
     CommentOperations,
@@ -22,10 +30,14 @@ from extradoc.comments._types import (
     FileComments,
 )
 from extradoc.reconcile import reindex_document
+from extradoc.reconcile_v2.diff import ReplaceParagraphTextEdit
 from extradoc.reconcile_v2.errors import UnsupportedSpikeError
 from extradoc.reconcile_v2.executor import BatchExecutionResult
+from extradoc.reconcile_v2.ir import ParagraphIR, TextSpanIR
+from extradoc.reconcile_v2.lower import _content_edit_order_key
 from extradoc.serde import serialize
 from extradoc.serde._from_markdown import markdown_to_document
+from extradoc.transport import APIError
 
 
 class _FakeTransport:
@@ -33,6 +45,8 @@ class _FakeTransport:
         self.calls: list[tuple[str, list[dict], dict | None]] = []
         self.get_document_calls: list[str] = []
         self.raw_document: dict | None = None
+        self.raw_documents: list[dict] | None = None
+        self.batch_update_exceptions: list[Exception] | None = None
 
     async def batch_update(
         self,
@@ -40,19 +54,28 @@ class _FakeTransport:
         requests: list[dict],
         write_control: dict | None = None,
     ) -> dict:
+        if self.batch_update_exceptions:
+            exc = self.batch_update_exceptions.pop(0)
+            if exc is not None:
+                raise exc
         self.calls.append((document_id, requests, write_control))
         return {"replies": []}
 
     async def get_document(self, document_id: str) -> object:
         self.get_document_calls.append(document_id)
-        if self.raw_document is None:
+        raw_document = None
+        if self.raw_documents:
+            raw_document = self.raw_documents.pop(0)
+        else:
+            raw_document = self.raw_document
+        if raw_document is None:
             raise NotImplementedError
         from extradoc.transport import DocumentData
 
-        return DocumentData(document_id=document_id, title="Test", raw=self.raw_document)
+        return DocumentData(document_id=document_id, title="Test", raw=raw_document)
 
-    async def list_comments(self, file_id: str) -> list[dict]:  # pragma: no cover
-        raise NotImplementedError
+    async def list_comments(self, _file_id: str) -> list[dict]:
+        return []
 
     async def create_reply(
         self,
@@ -282,6 +305,36 @@ def _setup_markdown_folder(
     return folder
 
 
+def _setup_xml_folder(
+    tmp_path: Path,
+    *,
+    doc_id: str,
+    base_document: Document,
+) -> Path:
+    import zipfile
+
+    from extradoc.comments._types import DocumentWithComments, FileComments
+
+    folder = tmp_path / doc_id
+    folder.mkdir()
+
+    bundle = DocumentWithComments(
+        document=base_document,
+        comments=FileComments(file_id=doc_id),
+    )
+    serialize(bundle, folder, format="xml")
+
+    pristine_dir = folder / ".pristine"
+    pristine_dir.mkdir()
+    zip_path = pristine_dir / "document.zip"
+    with zipfile.ZipFile(zip_path, "w") as zf:
+        for path in sorted(folder.rglob("*")):
+            if path.is_file() and ".pristine" not in str(path) and ".raw" not in str(path):
+                zf.write(path, path.relative_to(folder))
+
+    return folder
+
+
 def test_get_reconciler_version_defaults_to_v2(monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.delenv(RECONCILER_ENV_VAR, raising=False)
     assert _get_reconciler_version() == "v2"
@@ -314,6 +367,181 @@ def test_should_refresh_v2_batches_for_insert_table_or_page_break() -> None:
     )
 
 
+def test_structural_request_signature_extracts_insert_locations() -> None:
+    assert _structural_request_signature(
+        {"insertTable": {"rows": 1, "columns": 1, "location": {"index": 7, "tabId": "t.0"}}}
+    ) == ("insertTable", "t.0", 7)
+    assert _structural_request_signature(
+        {"insertPageBreak": {"location": {"index": 11, "tabId": "t.0"}}}
+    ) == ("insertPageBreak", "t.0", 11)
+    assert _structural_request_signature(
+        {"insertText": {"location": {"index": 1, "tabId": "t.0"}, "text": "x"}}
+    ) is None
+
+
+def test_refresh_detects_stale_same_structural_shell() -> None:
+    resolved_batch = [
+        {"insertPageBreak": {"location": {"index": 1, "tabId": "t.0"}}}
+    ]
+    stale_batches = [
+        BatchUpdateDocumentRequest.model_validate(
+            {"requests": resolved_batch}
+        )
+    ]
+    fresh_batches = [
+        BatchUpdateDocumentRequest.model_validate(
+            {
+                "requests": [
+                    {
+                        "insertText": {
+                            "location": {"index": 1, "tabId": "t.0"},
+                            "text": "After Break",
+                        }
+                    }
+                ]
+            }
+        )
+    ]
+    progressed_same_shell_batches = [
+        BatchUpdateDocumentRequest.model_validate(
+            {
+                "requests": [
+                    {
+                        "deleteContentRange": {
+                            "range": {
+                                "startIndex": 72,
+                                "endIndex": 74,
+                                "tabId": "t.0",
+                            }
+                        }
+                    },
+                    {
+                        "insertPageBreak": {
+                            "location": {"index": 72, "tabId": "t.0"}
+                        }
+                    },
+                    {
+                        "insertText": {
+                            "location": {"index": 71, "tabId": "t.0"},
+                            "text": "\nParagraph before the break.\n",
+                        }
+                    },
+                ]
+            }
+        )
+    ]
+
+    assert _refresh_still_contains_same_structural_shell(
+        resolved_batch=resolved_batch,
+        refreshed_batches=stale_batches,
+    )
+    assert not _refresh_still_contains_same_structural_shell(
+        resolved_batch=resolved_batch,
+        refreshed_batches=progressed_same_shell_batches,
+    )
+    assert not _refresh_still_contains_same_structural_shell(
+        resolved_batch=resolved_batch,
+        refreshed_batches=fresh_batches,
+    )
+
+
+@pytest.mark.asyncio
+async def test_refresh_retries_until_structural_shell_disappears(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    base_doc = reindex_document(
+        markdown_to_document(
+            {"Tab_1": "alpha\n"},
+            document_id="retry-doc",
+            title="Retry",
+            tab_ids={"Tab_1": "t.0"},
+        )
+    )
+    base_raw = base_doc.model_dump(by_alias=True, exclude_none=True)
+    transport = _FakeTransport()
+    transport.raw_documents = [base_raw, base_raw]
+    desired = base_doc
+    stale_batch = [
+        BatchUpdateDocumentRequest.model_validate(
+            {"requests": [{"insertPageBreak": {"location": {"index": 1, "tabId": "t.0"}}}]}
+        )
+    ]
+    fresh_batch = [
+        BatchUpdateDocumentRequest.model_validate(
+            {"requests": [{"insertText": {"location": {"index": 1, "tabId": "t.0"}, "text": "After Break"}}]}
+        )
+    ]
+    planned = iter([stale_batch, fresh_batch])
+
+    def _fake_reconcile(
+        _base: Document,
+        _desired_document: Document,
+        *,
+        transport_base: Document | None = None,
+    ) -> list[BatchUpdateDocumentRequest]:
+        _ = transport_base
+        return next(planned)
+
+    monkeypatch.setattr("extradoc.client.reconcile_v2", _fake_reconcile)
+
+    refreshed_batches, revision_id = await _refresh_v2_batches_after_structural_ops(
+        transport=transport,
+        document_id="retry-doc",
+        _resolved_batch=[{"insertPageBreak": {"location": {"index": 1, "tabId": "t.0"}}}],
+        desired_document=desired,
+        desired_format="xml",
+        current_revision_id=None,
+    )
+
+    assert revision_id is None
+    assert len(transport.get_document_calls) == 2
+    assert refreshed_batches == fresh_batch
+
+
+@pytest.mark.asyncio
+async def test_refresh_raises_if_structural_shell_never_materializes(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    base_doc = reindex_document(
+        markdown_to_document(
+            {"Tab_1": "alpha\n"},
+            document_id="retry-doc-fail",
+            title="Retry",
+            tab_ids={"Tab_1": "t.0"},
+        )
+    )
+    base_raw = base_doc.model_dump(by_alias=True, exclude_none=True)
+    transport = _FakeTransport()
+    transport.raw_documents = [base_raw] * 20
+    desired = base_doc
+    stale_batch = [
+        BatchUpdateDocumentRequest.model_validate(
+            {"requests": [{"insertPageBreak": {"location": {"index": 1, "tabId": "t.0"}}}]}
+        )
+    ]
+
+    def _always_stale(
+        _base: Document,
+        _desired_document: Document,
+        *,
+        transport_base: Document | None = None,
+    ) -> list[BatchUpdateDocumentRequest]:
+        _ = transport_base
+        return stale_batch
+
+    monkeypatch.setattr("extradoc.client.reconcile_v2", _always_stale)
+
+    with pytest.raises(RuntimeError, match="structural change"):
+        await _refresh_v2_batches_after_structural_ops(
+            transport=transport,
+            document_id="retry-doc-fail",
+            _resolved_batch=[{"insertPageBreak": {"location": {"index": 1, "tabId": "t.0"}}}],
+            desired_document=desired,
+            desired_format="xml",
+            current_revision_id=None,
+        )
+
+
 def test_truncate_batch_before_post_structural_para_ops() -> None:
     batch = [
         {
@@ -343,10 +571,14 @@ def test_truncate_batch_before_post_structural_para_ops() -> None:
         },
     ]
 
-    assert _truncate_batch_before_post_table_para_ops(batch) == batch[:2]
+    # insertText before the table (batch[0]) is kept; non-text followups dropped.
+    assert _truncate_batch_before_post_table_para_ops(batch) == [batch[0], batch[1]]
 
 
 def test_truncate_batch_before_post_page_break_ops() -> None:
+    # For insertPageBreak: keep everything up to and including the break.
+    # Content that appears AFTER the break in the request list (which inserts
+    # BEFORE the break in the final document) is deferred to the refresh cycle.
     batch = [
         {
             "insertText": {
@@ -367,7 +599,299 @@ def test_truncate_batch_before_post_page_break_ops() -> None:
         },
     ]
 
-    assert _truncate_batch_before_post_table_para_ops(batch) == batch[:2]
+    assert _truncate_batch_before_post_table_para_ops(batch) == [batch[0], batch[1]]
+
+
+def test_truncate_batch_before_post_page_break_ops_drops_lower_anchor_suffix() -> None:
+    # Lower-anchor inserts that follow the insertPageBreak in the request list
+    # insert BEFORE the break in the final document.  They are deferred so the
+    # refreshed plan can anchor them correctly relative to the live break.
+    batch = [
+        {
+            "insertText": {
+                "location": {"index": 73, "tabId": "t.0"},
+                "text": "\nAfter Break\nClosing paragraph.",
+            }
+        },
+        {
+            "insertPageBreak": {
+                "location": {"index": 72, "tabId": "t.0"},
+            }
+        },
+        {
+            "insertText": {
+                "location": {"index": 71, "tabId": "t.0"},
+                "text": "\nParagraph before the break.\n",
+            }
+        },
+        {
+            "insertText": {
+                "location": {"index": 71, "tabId": "t.0"},
+                "text": "First bullet\nSecond bullet",
+            }
+        },
+    ]
+
+    assert _truncate_batch_before_post_table_para_ops(batch) == [batch[0], batch[1]]
+
+
+def test_truncate_batch_preserves_same_anchor_prefix_text_after_insert_table() -> None:
+    batch = [
+        {
+            "insertText": {
+                "location": {"index": 1, "tabId": "t.0"},
+                "text": "Closing paragraph.\n",
+            }
+        },
+        {
+            "insertTable": {
+                "rows": 2,
+                "columns": 2,
+                "location": {"index": 1, "tabId": "t.0"},
+            }
+        },
+        {
+            "insertText": {
+                "location": {"index": 12, "tabId": "t.0"},
+                "text": "Delta",
+            }
+        },
+        {
+            "insertText": {
+                "location": {"index": 1, "tabId": "t.0"},
+                "text": "First bullet\nSecond bullet\n",
+            }
+        },
+        {
+            "insertText": {
+                "location": {"index": 1, "tabId": "t.0"},
+                "text": "Simple Table Verification\nXML body with a list and table, but no page break.\n",
+            }
+        },
+        {
+            "createParagraphBullets": {
+                "range": {"startIndex": 78, "endIndex": 105, "tabId": "t.0"},
+                "bulletPreset": "BULLET_DISC_CIRCLE_SQUARE",
+            }
+        },
+    ]
+
+    # batch[0]: insertText("Closing paragraph.\n", index=1) — before table, kept
+    # batch[1]: insertTable(index=1) — kept
+    # batch[2]: insertText("Delta", index=12) — high-index cell write, deferred
+    # batch[3]: insertText("First bullet..", index=1) — same-anchor after table, kept
+    # batch[4]: insertText("Simple Table..", index=1) — same-anchor after table, kept
+    # batch[5]: createParagraphBullets — deferred
+    assert _truncate_batch_before_post_table_para_ops(batch) == [
+        batch[0],
+        batch[1],
+        batch[3],
+        batch[4],
+    ]
+
+
+def test_truncate_batch_before_delete_sensitive_inserts_keeps_delete_only_round() -> None:
+    batch = [
+        {
+            "deleteContentRange": {
+                "range": {"startIndex": 50, "endIndex": 80, "tabId": "t.0"}
+            }
+        },
+        {
+            "insertText": {
+                "location": {"index": 34, "tabId": "t.0"},
+                "text": "After Break\nClosing paragraph.\n",
+            }
+        },
+        {
+            "updateParagraphStyle": {
+                "range": {"startIndex": 34, "endIndex": 46, "tabId": "t.0"},
+                "paragraphStyle": {"namedStyleType": "HEADING_2"},
+                "fields": "namedStyleType",
+            }
+        },
+    ]
+
+    assert _truncate_batch_before_delete_sensitive_inserts(batch) == [batch[0]]
+    assert _truncate_batch_for_live_refresh(batch) == ([batch[0]], "delete-only")
+
+
+@pytest.mark.asyncio
+async def test_refresh_after_live_change_replans_from_latest_raw_document(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    base_doc = reindex_document(
+        markdown_to_document(
+            {"Tab_1": "alpha\n"},
+            document_id="refresh-live-change",
+            title="Refresh",
+            tab_ids={"Tab_1": "t.0"},
+        )
+    )
+    base_raw = base_doc.model_dump(by_alias=True, exclude_none=True)
+    transport = _FakeTransport()
+    transport.raw_document = base_raw
+    desired = base_doc
+    replanned = [
+        BatchUpdateDocumentRequest.model_validate(
+            {"requests": [{"insertText": {"location": {"index": 1, "tabId": "t.0"}, "text": "beta"}}]}
+        )
+    ]
+
+    def _fake_reconcile(
+        _base: Document,
+        _desired_document: Document,
+        *,
+        transport_base: Document | None = None,
+    ) -> list[BatchUpdateDocumentRequest]:
+        assert transport_base is not None
+        return replanned
+
+    monkeypatch.setattr("extradoc.client.reconcile_v2", _fake_reconcile)
+
+    refreshed_batches, revision_id = await _refresh_v2_batches_after_live_change(
+        transport=transport,
+        document_id="refresh-live-change",
+        desired_document=desired,
+        desired_format="xml",
+        current_revision_id=None,
+    )
+
+    assert revision_id is None
+    assert transport.get_document_calls == ["refresh-live-change"]
+    assert refreshed_batches == replanned
+
+
+@pytest.mark.asyncio
+async def test_execute_v2_live_refresh_recovers_from_revision_mismatch(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    base_doc = reindex_document(
+        markdown_to_document(
+            {"Tab_1": "alpha\n"},
+            document_id="retry-revision-doc",
+            title="Retry",
+            tab_ids={"Tab_1": "t.0"},
+        )
+    )
+    base_raw = base_doc.model_dump(by_alias=True, exclude_none=True)
+    desired = base_doc
+    initial_batch = BatchUpdateDocumentRequest.model_validate(
+        {
+            "requests": [
+                {
+                    "insertText": {
+                        "location": {"index": 1, "tabId": "t.0"},
+                        "text": "omega",
+                    }
+                }
+            ]
+        }
+    )
+    refreshed_batch = BatchUpdateDocumentRequest.model_validate(
+        {
+            "requests": [
+                {
+                    "insertText": {
+                        "location": {"index": 1, "tabId": "t.0"},
+                        "text": "beta",
+                    }
+                }
+            ]
+        }
+    )
+    transport = _FakeTransport()
+    transport.raw_document = base_raw
+    transport.batch_update_exceptions = [
+        APIError("The required revision ID 'rev-old' does not match the latest revision.", 400)
+    ]
+
+    def _fake_reconcile(
+        _base: Document,
+        _desired_document: Document,
+        *,
+        transport_base: Document | None = None,
+    ) -> list[BatchUpdateDocumentRequest]:
+        assert transport_base is not None
+        return [refreshed_batch]
+
+    monkeypatch.setattr("extradoc.client.reconcile_v2", _fake_reconcile)
+
+    result = DiffResult(
+        document_id="retry-revision-doc",
+        batches=[initial_batch],
+        comment_ops=CommentOperations(),
+        reconciler_version="v2",
+        base_revision_id="rev-old",
+        desired_document=desired,
+        desired_format="xml",
+        allow_live_refresh=True,
+    )
+
+    changes = await _execute_document_batches_v2_live_refresh(transport, result)
+
+    assert changes == 1
+    assert transport.get_document_calls == ["retry-revision-doc"]
+    assert transport.calls == [
+        (
+            "retry-revision-doc",
+            refreshed_batch.model_dump(by_alias=True, exclude_none=True, mode="json")["requests"],
+            {"requiredRevisionId": "rev-old"},
+        )
+    ]
+
+
+def test_table_cell_story_edits_sort_descending_by_cell_anchor() -> None:
+    paragraph = ParagraphIR(
+        role="NORMAL_TEXT",
+        explicit_style={},
+        inlines=[TextSpanIR(text="x", explicit_text_style={})],
+    )
+    edits = [
+        ReplaceParagraphTextEdit(
+            tab_id="t.0",
+            story_id="t.0:body:table:2:r0:c0",
+            section_index=0,
+            block_index=0,
+            desired_paragraph=paragraph,
+        ),
+        ReplaceParagraphTextEdit(
+            tab_id="t.0",
+            story_id="t.0:body:table:2:r0:c1",
+            section_index=0,
+            block_index=0,
+            desired_paragraph=paragraph,
+        ),
+        ReplaceParagraphTextEdit(
+            tab_id="t.0",
+            story_id="t.0:body:table:2:r1:c0",
+            section_index=0,
+            block_index=0,
+            desired_paragraph=paragraph,
+        ),
+        ReplaceParagraphTextEdit(
+            tab_id="t.0",
+            story_id="t.0:body:table:2:r1:c1",
+            section_index=0,
+            block_index=0,
+            desired_paragraph=paragraph,
+        ),
+    ]
+
+    ordered_story_ids = [
+        edit.story_id
+        for _, edit in sorted(
+            enumerate(edits),
+            key=lambda item: _content_edit_order_key(item[0], item[1]),
+        )
+    ]
+
+    assert ordered_story_ids == [
+        "t.0:body:table:2:r1:c1",
+        "t.0:body:table:2:r1:c0",
+        "t.0:body:table:2:r0:c1",
+        "t.0:body:table:2:r0:c0",
+    ]
 
 
 def test_tab_ids_subset_rejects_future_tabs() -> None:
@@ -658,58 +1182,156 @@ def test_diff_v2_uses_raw_transport_base_for_iterative_markdown_batches(
     result = client.diff(str(folder))
 
     assert result.reconciler_version == "v2"
-    first_batch = result.batches[0].model_dump(by_alias=True, exclude_none=True, mode="json")
-    second_batch = result.batches[1].model_dump(by_alias=True, exclude_none=True, mode="json")
-    assert first_batch == {
-        "requests": [
-            {
-                "deleteContentRange": {
-                    "range": {"startIndex": 497, "endIndex": 515, "tabId": "t.0"}
-                }
-            },
-            {
-                "insertText": {
-                    "location": {"index": 497, "tabId": "t.0"},
-                    "text": '    return "blue"',
-                }
-            },
-            {
-                "updateTextStyle": {
-                    "range": {"startIndex": 497, "endIndex": 514, "tabId": "t.0"},
-                    "textStyle": {
-                        "fontSize": {"magnitude": 10.0, "unit": "PT"},
-                        "weightedFontFamily": {"fontFamily": "Courier New"},
-                    },
-                    "fields": "fontSize,weightedFontFamily",
-                }
-            },
-        ]
-    }
-    assert second_batch == {
-        "requests": [
-            {
-                "deleteContentRange": {
-                    "range": {"startIndex": 520, "endIndex": 558, "tabId": "t.0"}
-                }
-            },
-            {
-                "insertText": {
-                    "location": {"index": 520, "tabId": "t.0"},
-                    "text": '{"stage": "edited", "verified": false}',
-                }
-            },
-            {
-                "updateTextStyle": {
-                    "range": {"startIndex": 520, "endIndex": 558, "tabId": "t.0"},
-                    "textStyle": {
-                        "fontSize": {"magnitude": 10.0, "unit": "PT"},
-                        "weightedFontFamily": {"fontFamily": "Courier New"},
-                    },
-                    "fields": "fontSize,weightedFontFamily",
-                }
-            },
-        ]
-    }
+    requests = [
+        request.model_dump(by_alias=True, exclude_none=True, mode="json")
+        for batch in result.batches
+        for request in (batch.requests or [])
+    ]
+    assert {
+        "deleteContentRange": {
+            "range": {"startIndex": 497, "endIndex": 515, "tabId": "t.0"}
+        }
+    } in requests
+    assert {
+        "insertText": {
+            "location": {"index": 497, "tabId": "t.0"},
+            "text": '    return "blue"',
+        }
+    } in requests
+    assert {
+        "deleteContentRange": {
+            "range": {"startIndex": 520, "endIndex": 558, "tabId": "t.0"}
+        }
+    } in requests
+    assert {
+        "insertText": {
+            "location": {"index": 520, "tabId": "t.0"},
+            "text": '{"stage": "edited", "verified": false}',
+        }
+    } in requests
+
+
+def test_pull_always_writes_raw_document_json_even_when_save_raw_is_false(
+    tmp_path: Path,
+) -> None:
+    raw_document = reindex_document(
+        markdown_to_document(
+            {"Tab_1": "alpha\n"},
+            document_id="pull-raw-doc",
+            title="Test",
+            tab_ids={"Tab_1": "t.0"},
+        )
+    ).model_dump(by_alias=True, exclude_none=True)
+
+    transport = _FakeTransport()
+    transport.raw_document = raw_document
+    client = DocsClient(transport)
+
+    written = asyncio.run(
+        client.pull(
+            "pull-raw-doc",
+            tmp_path,
+            save_raw=False,
+            format="xml",
+        )
+    )
+
+    raw_doc_path = tmp_path / "pull-raw-doc" / ".raw" / "document.json"
+    raw_comments_path = tmp_path / "pull-raw-doc" / ".raw" / "comments.json"
+
+    assert raw_doc_path in written
+    assert raw_doc_path.exists()
+    assert not raw_comments_path.exists()
+
+
+def test_diff_xml_uses_raw_transport_base_when_present(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    base_document = markdown_to_document(
+        {"Tab_1": "alpha paragraph\n"},
+        document_id="xml-raw-base",
+        title="Test",
+        tab_ids={"Tab_1": "t.0"},
+    )
+    desired_document = markdown_to_document(
+        {"Tab_1": "beta paragraph\n"},
+        document_id="xml-raw-base",
+        title="Test",
+        tab_ids={"Tab_1": "t.0"},
+    )
+
+    folder = _setup_xml_folder(
+        tmp_path,
+        doc_id="xml-raw-base",
+        base_document=base_document,
+    )
+
+    desired_dir = tmp_path / "xml-desired"
+    serialize(
+        DocumentWithComments(
+            document=desired_document,
+            comments=FileComments(file_id="xml-raw-base"),
+        ),
+        desired_dir,
+        format="xml",
+    )
+    (folder / "Tab_1" / "document.xml").write_text(
+        (desired_dir / "Tab_1" / "document.xml").read_text(encoding="utf-8"),
+        encoding="utf-8",
+    )
+    (folder / "Tab_1" / "styles.xml").write_text(
+        (desired_dir / "Tab_1" / "styles.xml").read_text(encoding="utf-8"),
+        encoding="utf-8",
+    )
+
+    raw_doc = reindex_document(base_document)
+    raw_doc.revision_id = "rev-xml-raw"
+    raw_dir = folder / ".raw"
+    raw_dir.mkdir()
+    (raw_dir / "document.json").write_text(
+        raw_doc.model_dump_json(by_alias=True, exclude_none=True),
+        encoding="utf-8",
+    )
+
+    monkeypatch.delenv(RECONCILER_ENV_VAR, raising=False)
+    captured: dict[str, object] = {}
+
+    def _fake_reconcile_documents(
+        base: Document,
+        desired: Document,
+        *,
+        reconciler_version: str,
+        transport_base: Document | None = None,
+    ) -> list[BatchUpdateDocumentRequest]:
+        captured["reconciler_version"] = reconciler_version
+        captured["base"] = base
+        captured["desired"] = desired
+        captured["transport_base"] = transport_base
+        return []
+
+    client = DocsClient.__new__(DocsClient)
+    monkeypatch.setattr("extradoc.client._reconcile_documents", _fake_reconcile_documents)
+    result = client.diff(str(folder))
+
+    assert result.reconciler_version == "v2"
+    assert result.base_revision_id == "rev-xml-raw"
+    assert result.desired_format == "xml"
+    assert captured["reconciler_version"] == "v2"
+    assert isinstance(captured["transport_base"], Document)
+    assert captured["transport_base"].revision_id == "rev-xml-raw"
+    assert isinstance(captured["base"], Document)
+    assert isinstance(captured["desired"], Document)
+    assert any(
+        element.start_index is not None
+        for element in captured["base"].tabs[0].document_tab.body.content
+    )
+    assert (
+        any(
+            element.start_index is not None
+            for element in captured["transport_base"].tabs[0].document_tab.body.content
+        )
+    )
 
 
 def test_diff_v2_detects_empty_doc_mixed_body_insert(
@@ -1128,6 +1750,7 @@ async def test_push_refreshes_v2_batches_after_insert_table(
     ]
 
 
+@pytest.mark.asyncio
 async def test_push_truncates_post_table_paragraph_ops_before_refresh(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:

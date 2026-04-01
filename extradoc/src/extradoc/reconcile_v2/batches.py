@@ -531,6 +531,33 @@ def _rebatch_inserted_table_followups(
     return [primary, followup]
 
 
+def _rebatch_same_tab_structural_requests(
+    requests: list[dict[str, Any]],
+) -> list[list[dict[str, Any]]]:
+    structural_kinds = {"insertTable", "insertPageBreak"}
+    batches: list[list[dict[str, Any]]] = []
+    current: list[dict[str, Any]] = []
+    structural_tabs_in_batch: set[str] = set()
+    for request in requests:
+        kind = next(iter(request))
+        tab_id = _request_tab_id(request)
+        if (
+            kind in structural_kinds
+            and tab_id is not None
+            and tab_id in structural_tabs_in_batch
+            and current
+        ):
+            batches.append(current)
+            current = []
+            structural_tabs_in_batch = set()
+        current.append(request)
+        if kind in structural_kinds and tab_id is not None:
+            structural_tabs_in_batch.add(tab_id)
+    if current:
+        batches.append(current)
+    return batches
+
+
 def _lower_content_request_batches(
     base: Document,
     edits: list[SemanticEdit],
@@ -582,6 +609,41 @@ def _request_contains_deferred_placeholder(value: object) -> bool:
     if isinstance(value, list):
         return any(_request_contains_deferred_placeholder(item) for item in value)
     return False
+
+
+def _request_tab_id(request: dict[str, Any]) -> str | None:
+    kind = next(iter(request))
+    payload = request[kind]
+    if not isinstance(payload, dict):
+        return None
+    if kind in {"insertText", "insertTable", "insertPageBreak"}:
+        location = payload.get("location")
+        if isinstance(location, dict):
+            tab_id = location.get("tabId")
+            return str(tab_id) if tab_id is not None else None
+    range_ = payload.get("range")
+    if isinstance(range_, dict):
+        tab_id = range_.get("tabId")
+        return str(tab_id) if tab_id is not None else None
+    table_start = payload.get("tableStartLocation")
+    if isinstance(table_start, dict):
+        tab_id = table_start.get("tabId")
+        return str(tab_id) if tab_id is not None else None
+    table_range = payload.get("tableRange")
+    if isinstance(table_range, dict):
+        table_cell_location = table_range.get("tableCellLocation")
+        if isinstance(table_cell_location, dict):
+            table_start = table_cell_location.get("tableStartLocation")
+            if isinstance(table_start, dict):
+                tab_id = table_start.get("tabId")
+                return str(tab_id) if tab_id is not None else None
+    table_cell_location = payload.get("tableCellLocation")
+    if isinstance(table_cell_location, dict):
+        table_start = table_cell_location.get("tableStartLocation")
+        if isinstance(table_start, dict):
+            tab_id = table_start.get("tabId")
+            return str(tab_id) if tab_id is not None else None
+    return None
 
 
 def _is_inserted_table_followup_request(request: dict[str, Any]) -> bool:

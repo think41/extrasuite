@@ -172,23 +172,107 @@ Decide whether the remaining work should focus on:
   - the remaining XML issue is no longer “page breaks” in general
   - it is specifically fresh table population / same-cycle table cell writes
     after the structural table insert on the XML path
+- Fresh re-verification after the XML semantic-boundary work:
+  - minimal XML doc `1xkQ_h6xuKVjWhAg1c-757XrzBNRANce1EYCi2ccTyCM` still converged
+    semantically after `pull -> edit -> push -> pull`
+  - page-break XML doc `1mE_g4n8uEf25CDCbghX_wXF3Tigsyuexy6XJQwXmNrE` still did not
+    converge; re-pull showed `Second bullet` promoted to `HEADING_2`
+  - fresh-table XML doc `1M9QS6jEMN2QdJsiduD4WacUDBIbAs2kNXESHcfMmO7U` still created
+    only the table shell; re-pull showed all four `<td>` contents empty
+- Current interpretation after the fresh re-verification:
+  - desired XML parsing is no longer the main suspect
+  - the remaining XML failures are in the structural refresh / staged execution
+    path after shell inserts
+- Structural refresh follow-up:
+  - current code now truncates same-tab structural batches to the shell request
+    only and retries live refresh when the refreshed plan still asks for the
+    same shell insert
+  - fresh page-break rerun `1ffZjm0TKoJ1Q5LZG228RTaCzyEI0w0wMJxiFnJIbC5k` no longer
+    hangs silently; `push` now fails explicitly with:
+    `Live Docs did not expose the applied structural change after refresh retries`
+  - re-pulling the partial doc showed exactly the structural shell state:
+    `<pagebreak/>` plus an empty trailing paragraph, with none of the intended
+    surrounding heading/list/prose content
+- Current interpretation after the explicit refresh failure:
+  - the XML structural path is still blocked, but the failure mode is now much
+    cleaner: the executor can detect that live Docs has not exposed enough
+    structural state to continue safely
+  - the next fix should target the structural refresh strategy itself rather
+    than XML parsing or semantic diffing
+- XML structural execution follow-up after the semantic-boundary work:
+  - using shell-only truncation was too aggressive; it left the live base too
+    empty, so refresh kept replanning the same shell inserts
+  - preserving safe same-anchor prefix text after the structural shell moved
+    the page-break path forward, but exposed that the stale-shell detector was
+    too strict; a refreshed plan can still contain the same shell request and
+    still represent real semantic progress
+  - the stale-shell detector now only blocks when the first refreshed batch
+    truncates back to the exact same shell batch we already executed
+  - after that change, the page-break path advanced to the next real failure:
+    stale post-delete indices in live refreshed batches
+  - delete-sensitive live batches now split into a delete-only round, then
+    re-fetch and replan from the actual post-delete document state
+  - revision-mismatch responses after live refresh are now treated as a signal
+    to re-fetch and replan rather than a terminal failure
+  - stale raw insertion anchors are now clamped to the current raw section end
+    instead of crashing during XML replan
+- Fresh live XML page-break retest on doc `1rXUhe2T2f0iNuS-wUvcKgexV1QpRYXfh8SskmxvADqw`:
+  - one-cycle `push` completed successfully: `Applied 38 document changes`
+  - re-pull no longer shows total corruption or structural failure
+  - semantic diff after re-pull is down to 2 localized paragraph-slice repairs
+  - remaining issue:
+    - the `<pagebreak />` ends up after the `After Break` heading and closing
+      paragraph instead of before them
+    - re-pulled XML also has one leading empty paragraph and one trailing empty
+      paragraph around the page-break region
+- Current interpretation after the latest page-break retest:
+  - the XML page-break path is no longer blocked on refresh timing or stale
+    revision handling
+  - the remaining gap is now a narrower reconciler/lowering issue:
+    content intended for the suffix span after an existing page break is still
+    being reinserted on the wrong side of that page break during repair/replan
+
+### 2026-04-01
+
+- Applied diff.py anchor changes (PageBreakIR + TableIR treated as section anchors)
+  and lower.py fixes (table cell sort order, raw_block_index clamping).
+- XML page-break test on doc `1ffZjm0TKoJ1Q5LZG228RTaCzyEI0w0wMJxiFnJIbC5k`:
+  - Starting state: nearly empty doc (just a shell pagebreak + empty para)
+  - Authored XML: h1 + para + 2 bullets + pagebreak + h2 + para
+  - Cycle 1: Applied 11 changes. Page break landed on CORRECT side. Second list item
+    came back as `<p>` instead of `<li>` (list continuation lost across refresh boundary).
+  - Cycle 2: Applied 10 changes. Both list items now correct `<li>`.
+    Extra carrier `<p/>` before and after pagebreak (API-emitted, not user content).
+  - Cycle 3: **No changes to apply** — fully converged.
+- XML table-repair test on doc `1M9QS6jEMN2QdJsiduD4WacUDBIbAs2kNXESHcfMmO7U`:
+  - Starting state: table shell with empty cells (from prior session)
+  - Authored XML: h1 + para + 2x2 table with Alpha/Beta/Gamma/Delta + para
+  - Cycle 1: Applied 8 changes. All cells correctly populated.
+  - Cycle 2: **No changes to apply** — fully converged.
+- Test suite cleanup: deleted 7 internal-implementation test files (~10.8K LOC),
+  added `test_serde_xml_semantic.py` (public interface: XML folder → Document).
 
 ## Latest Known State
 
-- The most recent live repair check on doc `1prgtIDeKhmIB4B1I8lwr7qbtzUSAZeP-GVBTZ0XGAvk`
-  succeeded after the latest list-role and carrier-normalization fixes.
-- Final raw verification showed:
-  - list items after `## Lists Revised` are `NORMAL_TEXT`
-  - callout-gap carrier paragraphs are `NORMAL_TEXT`
-  - the blank paragraph before the code-block table is `NORMAL_TEXT`
-- Broader local test coverage is not yet aligned with the current reconciler
-  behavior. Many failures appear to be stale exact-shape expectations rather
-  than newly discovered live regressions.
+- XML page-break push: converges in 2 cycles. The page break now lands on the correct
+  side in cycle 1. The second list item before the break loses its bullet and becomes
+  a `<p>` in cycle 1 (list continuation across the structural refresh boundary), then
+  recovers in cycle 2. Carrier `<p/>` elements around the break are API-emitted and
+  are correctly ignored by the reconciler diff.
+- XML table repair (existing shell → fill cells): converges in 1 cycle.
+- XML minimal (heading + para): proven live, unchanged.
+- Fresh table creation from empty doc (table insert + cell fill in one shot): NOT YET
+  VERIFIED with current changes. Prior behavior was 2 cycles (shell in cycle 1, cells
+  in cycle 2). The lower.py table-cell sort order fix may improve this.
+- Test suite: internal spike tests deleted. Remaining failures are 9 pre-existing
+  off-by-1 index errors in the old v1 reconciler table tests (unrelated to v2 path)
+  and 1 pre-existing `UnsupportedSpikeError` in iterative markdown batching.
 
 ## Open Questions
 
-1. Does the full maintained live smoke matrix still pass from the current checkpoint?
-2. Are there any remaining live XML-specific failures after the recent markdown/body fixes?
+1. Does fresh XML table creation (empty doc → table with cell content) now converge
+   in 1 cycle with the lower.py table-cell sort fix?
+2. Does the full maintained live smoke matrix still pass from the current checkpoint?
 3. Do comments need a dedicated live smoke pass before release?
 4. Why did `release_smoke_docs.py` exit during `20260331-live-verification-pass1`
    without writing `summary.json`?

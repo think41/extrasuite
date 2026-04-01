@@ -369,10 +369,19 @@ SemanticEdit = (
 
 def diff_documents(base: Document, desired: Document) -> list[SemanticEdit]:
     """Return a semantic edit list for the supported ``reconcile_v2`` surface."""
-    return diff_document_irs(parse_document(base), parse_document(desired))
+    return diff_document_irs(
+        parse_document(base),
+        parse_document(desired),
+        raw_base_document=base,
+    )
 
 
-def diff_document_irs(base: DocumentIR, desired: DocumentIR) -> list[SemanticEdit]:
+def diff_document_irs(
+    base: DocumentIR,
+    desired: DocumentIR,
+    *,
+    raw_base_document: Document | None = None,
+) -> list[SemanticEdit]:
     """Diff parsed IR values, normalizing away transport carrier paragraphs."""
     base = canonicalize_document_ir(base)
     desired = canonicalize_document_ir(desired)
@@ -383,7 +392,13 @@ def diff_document_irs(base: DocumentIR, desired: DocumentIR) -> list[SemanticEdi
         desired_tab = desired_tabs.get(path)
         if desired_tab is None:
             continue
-        edits.extend(_diff_tab(base_tab, desired_tab))
+        edits.extend(
+            _diff_tab(
+                base_tab,
+                desired_tab,
+                raw_base_document=raw_base_document,
+            )
+        )
     return edits
 
 
@@ -552,9 +567,19 @@ def summarize_semantic_edits(edits: Iterable[SemanticEdit]) -> list[str]:
     return lines
 
 
-def _diff_tab(base: TabIR, desired: TabIR) -> list[SemanticEdit]:
+def _diff_tab(
+    base: TabIR,
+    desired: TabIR,
+    *,
+    raw_base_document: Document | None = None,
+) -> list[SemanticEdit]:
     base_sections = base.body.sections
     desired_sections = desired.body.sections
+    raw_base_sections = (
+        _raw_body_sections_from_document(raw_base_document, tab_id=base.id)
+        if raw_base_document is not None
+        else None
+    )
     _ensure_read_only_blocks_unchanged(base_sections, desired_sections)
     edits: list[SemanticEdit] = []
     edits.extend(
@@ -656,6 +681,11 @@ def _diff_tab(base: TabIR, desired: TabIR) -> list[SemanticEdit]:
                 section_index=section_index,
                 base_section=base_section,
                 desired_section=desired_section,
+                raw_base_blocks=(
+                    raw_base_sections[section_index]
+                    if raw_base_sections is not None and section_index < len(raw_base_sections)
+                    else None
+                ),
             )
         )
     edits.extend(_filter_conflicting_table_edits(table_edits, block_edits))
@@ -936,17 +966,37 @@ def _diff_section_blocks(
     section_index: int,
     base_section: SectionIR,
     desired_section: SectionIR,
+    raw_base_blocks: list[dict[str, object]] | None = None,
 ) -> list[SemanticEdit]:
-    base_read_only = _read_only_block_positions(base_section.blocks)
-    desired_read_only = _read_only_block_positions(desired_section.blocks)
-    if not base_read_only and not desired_read_only:
+    base_anchors = _anchor_block_positions(base_section.blocks)
+    desired_anchors = _anchor_block_positions(desired_section.blocks)
+    if not base_anchors and not desired_anchors:
         return _diff_editable_block_span(
             tab_id=tab_id,
             section_index=section_index,
             base_blocks=base_section.blocks,
             desired_blocks=desired_section.blocks,
             block_offset=0,
-            raw_block_offset=None,
+            raw_block_offset=(
+                None
+                if raw_base_blocks is None
+                else _canonical_to_raw_body_block_index(raw_base_blocks, 0)
+            ),
+        )
+    if [_anchor_block_signature(block) for _, block in base_anchors] != [
+        _anchor_block_signature(block) for _, block in desired_anchors
+    ]:
+        return _diff_editable_block_span(
+            tab_id=tab_id,
+            section_index=section_index,
+            base_blocks=base_section.blocks,
+            desired_blocks=desired_section.blocks,
+            block_offset=0,
+            raw_block_offset=(
+                None
+                if raw_base_blocks is None
+                else _canonical_to_raw_body_block_index(raw_base_blocks, 0)
+            ),
         )
 
     spans: list[tuple[list[BlockIR], list[BlockIR], int, int | None]] = []
@@ -954,8 +1004,8 @@ def _diff_section_blocks(
     desired_start = 0
     editable_offset = 0
     for (base_index, _base_block), (desired_index, _desired_block) in zip(
-        base_read_only,
-        desired_read_only,
+        base_anchors,
+        desired_anchors,
         strict=True,
     ):
         spans.append(
@@ -963,7 +1013,11 @@ def _diff_section_blocks(
                 base_section.blocks[base_start:base_index],
                 desired_section.blocks[desired_start:desired_index],
                 editable_offset,
-                base_start,
+                (
+                    None
+                    if raw_base_blocks is None
+                    else _canonical_to_raw_body_block_index(raw_base_blocks, base_start)
+                ),
             )
         )
         editable_offset += _editable_block_count(base_section.blocks[base_start:base_index])
@@ -974,7 +1028,11 @@ def _diff_section_blocks(
             base_section.blocks[base_start:],
             desired_section.blocks[desired_start:],
             editable_offset,
-            base_start,
+            (
+                None
+                if raw_base_blocks is None
+                else _canonical_to_raw_body_block_index(raw_base_blocks, base_start)
+            ),
         )
     )
     edits: list[SemanticEdit] = []
@@ -990,6 +1048,165 @@ def _diff_section_blocks(
             )
         )
     return edits
+
+
+def _anchor_block_positions(blocks: list[BlockIR]) -> list[tuple[int, BlockIR]]:
+    return [
+        (index, block)
+        for index, block in enumerate(blocks)
+        if _is_anchor_block(block)
+    ]
+
+
+def _is_anchor_block(block: BlockIR | None) -> bool:
+    return _is_read_only_block(block) or isinstance(block, PageBreakIR | TableIR)
+
+
+def _anchor_block_signature(block: BlockIR) -> tuple[object, ...]:
+    if isinstance(block, PageBreakIR):
+        return ("pagebreak",)
+    if isinstance(block, TableIR):
+        return _table_anchor_signature(block)
+    return _read_only_block_signature(block)
+
+
+def _table_anchor_signature(table: TableIR) -> tuple[object, ...]:
+    return (
+        "table",
+        len(table.rows),
+        tuple(len(row.cells) for row in table.rows),
+        tuple(
+            tuple((cell.row_span, cell.column_span) for cell in row.cells)
+            for row in table.rows
+        ),
+        table.pinned_header_rows,
+    )
+
+
+def _raw_body_sections_from_document(
+    document: Document | None,
+    *,
+    tab_id: str,
+) -> list[list[dict[str, object]]]:
+    if document is None:
+        return []
+    raw_tab = next(
+        (
+            tab
+            for tab in document.model_dump(by_alias=True, exclude_none=True).get("tabs", [])
+            if tab.get("tabProperties", {}).get("tabId") == tab_id
+        ),
+        None,
+    )
+    if raw_tab is None:
+        raise ValueError(f"Unknown tab id {tab_id}")
+    sections: list[list[dict[str, object]]] = [[]]
+    for element in raw_tab.get("documentTab", {}).get("body", {}).get("content", []):
+        if "sectionBreak" in element:
+            if sections[-1]:
+                sections.append([])
+            continue
+        start_index = int(element.get("startIndex", 0))
+        end_index = int(element.get("endIndex", start_index))
+        if "paragraph" in element:
+            if any(
+                child.get("pageBreak") is not None
+                for child in element["paragraph"].get("elements", [])
+            ):
+                sections[-1].append(
+                    {"kind": "pagebreak", "start": start_index, "end": end_index}
+                )
+                continue
+            text = "".join(
+                run.get("textRun", {}).get("content", "")
+                for run in element["paragraph"].get("elements", [])
+            )
+            sections[-1].append(
+                {
+                    "kind": "paragraph",
+                    "start": start_index,
+                    "end": end_index,
+                    "text_start": start_index,
+                    "text_end": end_index - 1,
+                    "text": text.removesuffix("\n"),
+                }
+            )
+        elif "table" in element:
+            sections[-1].append({"kind": "table", "start": start_index, "end": end_index})
+        elif "tableOfContents" in element:
+            sections[-1].append({"kind": "toc", "start": start_index, "end": end_index})
+        else:
+            sections[-1].append({"kind": "opaque", "start": start_index, "end": end_index})
+    return sections
+
+
+def _canonical_to_raw_body_block_index(
+    raw_blocks: list[dict[str, object]],
+    block_index: int,
+) -> int:
+    keep_mask = _raw_transport_block_keep_mask(raw_blocks)
+    kept_indices = [index for index, keep in enumerate(keep_mask) if keep]
+    if not kept_indices:
+        return 0
+    if block_index < len(kept_indices):
+        return kept_indices[block_index]
+    return len(raw_blocks)
+
+
+def _raw_transport_block_keep_mask(
+    raw_blocks: list[dict[str, object]],
+) -> list[bool]:
+    keep_mask = [True] * len(raw_blocks)
+    for index, block in enumerate(raw_blocks):
+        if not _is_raw_transport_carrier_paragraph(block):
+            continue
+        prev_is_structural = index > 0 and _is_raw_transport_carrier_anchor(raw_blocks[index - 1])
+        next_is_structural = (
+            index + 1 < len(raw_blocks) and _is_raw_transport_carrier_anchor(raw_blocks[index + 1])
+        )
+        if prev_is_structural or next_is_structural:
+            keep_mask[index] = False
+    run_start = 0
+    while run_start < len(raw_blocks):
+        if not _is_raw_transport_carrier_paragraph(raw_blocks[run_start]):
+            run_start += 1
+            continue
+        run_end = run_start
+        while run_end + 1 < len(raw_blocks) and _is_raw_transport_carrier_paragraph(
+            raw_blocks[run_end + 1]
+        ):
+            run_end += 1
+        prev_is_structural = run_start > 0 and _is_raw_transport_carrier_anchor(
+            raw_blocks[run_start - 1]
+        )
+        next_is_structural = run_end + 1 < len(raw_blocks) and _is_raw_transport_carrier_anchor(
+            raw_blocks[run_end + 1]
+        )
+        if prev_is_structural or next_is_structural:
+            for index in range(run_start, run_end + 1):
+                keep_mask[index] = False
+        run_start = run_end + 1
+    saw_noncarrier = any(
+        not _is_raw_transport_carrier_paragraph(block) for block in raw_blocks
+    )
+    if saw_noncarrier:
+        for index, block in enumerate(raw_blocks):
+            if not keep_mask[index] or not _is_raw_transport_carrier_paragraph(block):
+                break
+            keep_mask[index] = False
+    for index in range(len(raw_blocks) - 1, -1, -1):
+        if not keep_mask[index] or not _is_raw_transport_carrier_paragraph(raw_blocks[index]):
+            break
+        keep_mask[index] = False
+    return keep_mask
+
+
+def _is_raw_transport_carrier_paragraph(block: dict[str, object]) -> bool:
+    return block["kind"] == "paragraph" and block.get("text") == ""
+
+
+def _is_raw_transport_carrier_anchor(block: dict[str, object]) -> bool:
+    return block["kind"] in {"table", "pagebreak", "page_break"}
 
 
 def _diff_editable_block_span(
@@ -1762,20 +1979,34 @@ def _diff_section_tables(
     for section_index, (base_section, desired_section) in enumerate(
         zip(base_sections, desired_sections, strict=False)
     ):
-        for block_index, (base_block, desired_block) in enumerate(
-            zip(base_section.blocks, desired_section.blocks, strict=False)
+        base_table_positions = [
+            index
+            for index, block in enumerate(base_section.blocks)
+            if isinstance(block, TableIR)
+        ]
+        desired_table_positions = [
+            index
+            for index, block in enumerate(desired_section.blocks)
+            if isinstance(block, TableIR)
+        ]
+        for base_block_index, desired_block_index in zip(
+            base_table_positions,
+            desired_table_positions,
+            strict=False,
         ):
+            base_block = base_section.blocks[base_block_index]
+            desired_block = desired_section.blocks[desired_block_index]
             if not isinstance(base_block, TableIR) or not isinstance(desired_block, TableIR):
                 continue
             base_special_kind = _special_table_kind_for_block(
                 tab=base_tab,
                 section_index=section_index,
-                block_index=block_index,
+                block_index=base_block_index,
             )
             desired_special_kind = _special_table_kind_for_block(
                 tab=desired_tab,
                 section_index=section_index,
-                block_index=block_index,
+                block_index=desired_block_index,
             )
             if base_special_kind != desired_special_kind and (
                 base_special_kind is not None or desired_special_kind is not None
@@ -1784,14 +2015,14 @@ def _diff_section_tables(
                     DeleteTableBlockEdit(
                         tab_id=tab_id,
                         section_index=section_index,
-                        block_index=block_index,
+                        block_index=base_block_index,
                     )
                 )
                 edits.append(
                     InsertTableBlockEdit(
                         tab_id=tab_id,
                         section_index=section_index,
-                        block_index=block_index,
+                        block_index=base_block_index,
                         table=desired_block,
                     )
                 )
@@ -1805,14 +2036,14 @@ def _diff_section_tables(
                     DeleteTableBlockEdit(
                         tab_id=tab_id,
                         section_index=section_index,
-                        block_index=block_index,
+                        block_index=base_block_index,
                     )
                 )
                 edits.append(
                     InsertTableBlockEdit(
                         tab_id=tab_id,
                         section_index=section_index,
-                        block_index=block_index,
+                        block_index=base_block_index,
                         table=desired_block,
                     )
                 )
@@ -1821,7 +2052,7 @@ def _diff_section_tables(
                 plan = _plan_table_comparison(
                     tab_id=tab_id,
                     section_index=section_index,
-                    block_index=block_index,
+                    block_index=base_block_index,
                     base_table=base_block,
                     desired_table=desired_block,
                 )
@@ -1830,14 +2061,14 @@ def _diff_section_tables(
                     DeleteTableBlockEdit(
                         tab_id=tab_id,
                         section_index=section_index,
-                        block_index=block_index,
+                        block_index=base_block_index,
                     )
                 )
                 edits.append(
                     InsertTableBlockEdit(
                         tab_id=tab_id,
                         section_index=section_index,
-                        block_index=block_index,
+                        block_index=base_block_index,
                         table=desired_block,
                     )
                 )
@@ -1848,13 +2079,14 @@ def _diff_section_tables(
                 base_tab=base_tab,
                 desired_tab=desired_tab,
                 section_index=section_index,
-                block_index=block_index,
+                base_block_index=base_block_index,
+                desired_block_index=desired_block_index,
             ):
                 edits.extend(
                     _diff_table_properties(
                         tab_id=tab_id,
                         section_index=section_index,
-                        block_index=block_index,
+                        block_index=base_block_index,
                         base_table=base_block,
                         desired_table=desired_block,
                         plan=plan,
@@ -1875,7 +2107,7 @@ def _diff_section_tables(
                         edit = _diff_story_paragraph_slice(
                             tab_id=tab_id,
                             story_id=(
-                                f"{tab_id}:body:table:{block_index}:r{base_row_index}:c{base_column_index}"
+                                f"{tab_id}:body:table:{base_block_index}:r{base_row_index}:c{base_column_index}"
                             ),
                             section_index=None,
                             base_blocks=base_cell.content.blocks,
@@ -1892,19 +2124,20 @@ def _same_special_table_kind(
     base_tab: TabIR,
     desired_tab: TabIR,
     section_index: int,
-    block_index: int,
+    base_block_index: int,
+    desired_block_index: int,
 ) -> bool:
     base_kind = _special_table_kind_for_block(
         tab=base_tab,
         section_index=section_index,
-        block_index=block_index,
+        block_index=base_block_index,
     )
     if base_kind is None:
         return False
     desired_kind = _special_table_kind_for_block(
         tab=desired_tab,
         section_index=section_index,
-        block_index=block_index,
+        block_index=desired_block_index,
     )
     return desired_kind == base_kind
 
