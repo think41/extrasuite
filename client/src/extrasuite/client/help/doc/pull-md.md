@@ -9,10 +9,6 @@ Download a Google Doc in markdown format.
   url           Document URL or ID
   output_dir    Output directory (optional)
 
-## Flags
-
-  --no-raw      Skip saving raw API responses (.raw/ folder)
-
 ## Output
 
 If output_dir is given, files are created directly in output_dir.
@@ -25,7 +21,7 @@ The folder contains:
   index.xml       Internal metadata used by push-md — do not edit
   comments.xml    Comments and replies (present only if document has comments)
   .pristine/      Snapshot for diff/push comparison — do not edit
-  .raw/           Raw API responses for debugging — do not edit
+  .raw/           Raw transport state required by diff/push — do not edit
 
 ## Navigating with index.md
 

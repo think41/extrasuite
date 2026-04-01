@@ -48,7 +48,7 @@ def cmd_doc_pull(args: Any) -> None:
             await client.pull(
                 document_id,
                 pull_parent,
-                save_raw=not args.no_raw,
+                save_raw=True,
             )
             if tmp_parent is not None:
                 dest_dir.parent.mkdir(parents=True, exist_ok=True)
@@ -147,7 +147,7 @@ def cmd_doc_pull_md(args: Any) -> None:
             await client.pull(
                 document_id,
                 pull_parent,
-                save_raw=not args.no_raw,
+                save_raw=True,
                 format="markdown",
             )
             if tmp_parent is not None:

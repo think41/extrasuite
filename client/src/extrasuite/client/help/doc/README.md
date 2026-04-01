@@ -15,7 +15,7 @@ See `extrasuite doc pull --help` for directory layout, agent hints, and critical
     index.xml       Outline, tab mapping, and heading XPaths into document.xml
     comments.xml    Comments and replies
     .pristine/      Internal state - do not edit
-    .raw/           Raw API responses - do not edit
+    .raw/           Raw transport state required by diff/push - do not edit
     <tab_folder>/
       document.xml  Tab content - this is what you edit
       styles.xml    Named style definitions

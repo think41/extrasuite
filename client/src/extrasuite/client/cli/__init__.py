@@ -618,10 +618,6 @@ def build_parser() -> Any:
     )
     sp.add_argument("url", help="Document URL or ID")
     sp.add_argument("output_dir", nargs="?", help="Output directory (default: .)")
-    sp.add_argument(
-        "--no-raw", action="store_true", help="Don't save raw API responses"
-    )
-
     sp = doc_sub.add_parser(
         "pull-md",
         help="Download a document as markdown",
@@ -631,10 +627,6 @@ def build_parser() -> Any:
     )
     sp.add_argument("url", help="Document URL or ID")
     sp.add_argument("output_dir", nargs="?", help="Output directory (default: .)")
-    sp.add_argument(
-        "--no-raw", action="store_true", help="Don't save raw API responses"
-    )
-
     sp = doc_sub.add_parser(
         "diff",
         help="Offline debugging tool - show pending changes",

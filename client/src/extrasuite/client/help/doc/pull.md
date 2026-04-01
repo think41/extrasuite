@@ -9,10 +9,6 @@ Download a Google Doc to a local folder.
   url           Document URL or ID
   output_dir    Output directory (optional)
 
-## Flags
-
-  --no-raw      Skip saving raw API responses (.raw/ folder)
-
 ## Output
 
 If output_dir is given, files are created directly in output_dir.
@@ -23,7 +19,7 @@ The folder contains:
   index.xml       Document outline, tab mapping, and heading XPaths into document.xml
   comments.xml    Comments and replies
   .pristine/      Snapshot for diff/push comparison - do not edit
-  .raw/           Raw API responses for debugging - do not edit
+  .raw/           Raw transport state required by diff/push - do not edit
   <tab_folder>/   One folder per document tab
     document.xml  Tab content in semantic XML - this is what you edit
     styles.xml    Named style definitions (edit to add/modify styles)
