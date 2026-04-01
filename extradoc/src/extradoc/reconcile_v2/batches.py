@@ -39,7 +39,7 @@ from extradoc.reconcile_v2.diff import (
     UpdateTableRowStyleEdit,
     diff_documents,
 )
-from extradoc.reconcile_v2.errors import UnsupportedSpikeError
+from extradoc.reconcile_v2.errors import ReconcileInvariantError, UnsupportedReconcileV2Error
 from extradoc.reconcile_v2.executor import resolve_deferred_placeholders
 from extradoc.reconcile_v2.ir import (
     FootnoteRefIR,
@@ -121,7 +121,7 @@ def lower_document_batches(
             batch_offset=len(batches),
         )
         if unresolved_edits:
-            raise UnsupportedSpikeError(
+            raise ReconcileInvariantError(
                 "reconcile_v2 could not resolve post-content footnote insertion anchors"
             )
         batches.extend(footnote_batches)
@@ -170,7 +170,7 @@ def _plan_iterative_content_batches(
             current_base.model_dump_json(by_alias=True, exclude_none=True).encode("utf-8")
         ).hexdigest()
         if state_hash in seen_state_hashes:
-            raise UnsupportedSpikeError(
+            raise ReconcileInvariantError(
                 "reconcile_v2 iterative content planning entered a repeated state "
                 "while lowering a mixed body rewrite"
             )
@@ -327,7 +327,7 @@ def _plan_iterative_content_batches(
                 ):
                     batches.extend(direct_small_residual_batches)
                     return batches
-                raise UnsupportedSpikeError(
+                raise ReconcileInvariantError(
                     "reconcile_v2 iterative content planning could not lower the remaining "
                     "mixed body rewrite"
                 )
@@ -347,7 +347,7 @@ def _plan_iterative_content_batches(
             if used_small_residual_fallback:
                 pass
             else:
-                raise UnsupportedSpikeError(
+                raise ReconcileInvariantError(
                     "reconcile_v2 iterative content planning could not find a batch "
                     "that reduced the remaining mixed body rewrite"
                 )
@@ -850,7 +850,7 @@ def _plan_attachment_batches(
             )
             response_path = "createFooter.footerId"
         else:
-            raise UnsupportedSpikeError(
+            raise UnsupportedReconcileV2Error(
                 f"Unsupported attachment kind for creation: {first_edit.attachment_kind}"
             )
         deferred_story_id = _deferred_id(
@@ -995,7 +995,7 @@ def _plan_new_tab_batches(
     created_tab_refs: dict[tuple[int, ...], dict[str, object]] = {}
     for path, tab in new_tabs:
         if tab.resource_graph.headers or tab.resource_graph.footers:
-            raise UnsupportedSpikeError(
+            raise UnsupportedReconcileV2Error(
                 "reconcile_v2 cannot safely create headers/footers on a newly added tab "
                 "in a document that already has tabs; the Docs API misroutes createHeader/"
                 "createFooter to the first tab"
@@ -1060,12 +1060,12 @@ def _lower_new_tab_body_batches(
     deferred_tab_id: dict[str, object],
 ) -> list[list[dict[str, Any]]]:
     if len(tab.body.sections) != 1:
-        raise UnsupportedSpikeError(
+        raise UnsupportedReconcileV2Error(
             "reconcile_v2 currently supports creating tabs with exactly one body section"
         )
     section = tab.body.sections[0]
     if section.attachments.headers or section.attachments.footers:
-        raise UnsupportedSpikeError(
+        raise UnsupportedReconcileV2Error(
             "reconcile_v2 does not yet support creating tabs with section attachments"
         )
     if not section.blocks:
@@ -1110,7 +1110,7 @@ def _lower_new_tab_named_ranges(
     if not any(tab.annotations.named_ranges.values()):
         return []
     if len(tab.body.sections) != 1:
-        raise UnsupportedSpikeError(
+        raise UnsupportedReconcileV2Error(
             "reconcile_v2 currently supports new-tab named ranges only for "
             "single-section body stories"
         )
@@ -1121,7 +1121,7 @@ def _lower_new_tab_named_ranges(
             continue
         for anchor in anchors:
             if anchor.start.story_id != tab.body.id or anchor.end.story_id != tab.body.id:
-                raise UnsupportedSpikeError(
+                raise UnsupportedReconcileV2Error(
                     "reconcile_v2 currently supports new-tab named ranges only "
                     "in the body story"
                 )
@@ -1157,13 +1157,13 @@ def _lower_new_tab_footnotes(
     if not tab.resource_graph.footnotes:
         return [], []
     if len(tab.body.sections) != 1:
-        raise UnsupportedSpikeError(
+        raise UnsupportedReconcileV2Error(
             "reconcile_v2 currently supports new-tab footnotes only for "
             "single-section body stories"
         )
     blocks = tab.body.sections[0].blocks
     if not all(isinstance(block, ParagraphIR) for block in blocks):
-        raise UnsupportedSpikeError(
+        raise UnsupportedReconcileV2Error(
             "reconcile_v2 currently supports new-tab footnotes only in "
             "paragraph-only body stories"
         )
@@ -1227,7 +1227,7 @@ def _lower_blocks_into_empty_story(
             tab_id=tab_id,
             segment_id=segment_id,
         )
-    raise UnsupportedSpikeError(
+    raise UnsupportedReconcileV2Error(
         "reconcile_v2 currently supports creating new-story content only for "
         "paragraph-only stories or a single recursively-populated table block"
     )
@@ -1248,11 +1248,11 @@ def _lower_table_into_empty_story(
         len(row.cells) != column_count
         for row in table.rows
     ):
-        raise UnsupportedSpikeError(
+        raise UnsupportedReconcileV2Error(
             "reconcile_v2 currently requires rectangular tables for creation"
         )
     if table.pinned_header_rows or table.merge_regions:
-        raise UnsupportedSpikeError(
+        raise UnsupportedReconcileV2Error(
             "reconcile_v2 currently supports plain unmerged table creation only"
         )
 
@@ -1270,7 +1270,7 @@ def _lower_table_into_empty_story(
         for column_index in range(column_count - 1, -1, -1):
             cell = row.cells[column_index]
             if cell.row_span != 1 or cell.column_span != 1 or cell.merge_head is not None:
-                raise UnsupportedSpikeError(
+                raise UnsupportedReconcileV2Error(
                     "reconcile_v2 currently supports unmerged cells only"
                 )
             cell_start = _cell_content_start(
@@ -1336,7 +1336,7 @@ def _new_tab_footnote_anchors(
             elif isinstance(inline, FootnoteRefIR):
                 story = footnotes.get(inline.ref)
                 if story is None:
-                    raise UnsupportedSpikeError(
+                    raise UnsupportedReconcileV2Error(
                         f"Missing desired footnote story for ref {inline.ref!r}"
                     )
                 anchors.append(
@@ -1359,18 +1359,18 @@ def _resolve_new_body_position(
 ) -> int:
     path = position.path
     if path.section_index not in (None, 0):
-        raise UnsupportedSpikeError(
+        raise UnsupportedReconcileV2Error(
             "reconcile_v2 currently supports new-tab named ranges only in section 0"
         )
     if path.node_path:
-        raise UnsupportedSpikeError(
+        raise UnsupportedReconcileV2Error(
             "reconcile_v2 currently supports new-tab named ranges only on "
             "top-level body paragraphs"
         )
     current = story_start_index
     for block_index, block in enumerate(blocks):
         if not isinstance(block, ParagraphIR):
-            raise UnsupportedSpikeError(
+            raise UnsupportedReconcileV2Error(
                 "reconcile_v2 currently supports new-tab named ranges only for "
                 "paragraph-only body stories"
             )
@@ -1406,7 +1406,7 @@ def _resolve_new_body_position(
             block,
             include_footnote_refs=include_footnote_refs,
         ) + 1
-    raise UnsupportedSpikeError(
+    raise ReconcileInvariantError(
         "reconcile_v2 could not resolve a new-tab named range anchor into the created story"
     )
 
@@ -1434,7 +1434,7 @@ def _new_body_inline_transport_length(
         return utf16_len(inline.text)
     if isinstance(inline, FootnoteRefIR):
         return 1 if include_footnote_refs else 0
-    raise UnsupportedSpikeError(
+    raise ReconcileInvariantError(
         "reconcile_v2 currently supports new-tab named ranges only for "
         "plain text plus footnote-reference paragraphs"
     )
@@ -1467,7 +1467,7 @@ def _section_break_index(
     layout = body_layouts.setdefault(tab_id, build_body_layout(base, tab_id=tab_id))
     boundary = layout.sections[section_index].incoming_boundary
     if boundary is None:
-        raise UnsupportedSpikeError(
+        raise ReconcileInvariantError(
             f"Missing section boundary for tab {tab_id} section {section_index}"
         )
     return boundary.section_break_start_index
@@ -1481,14 +1481,14 @@ def _section_boundary_for_update(
     section_index: int,
 ) -> dict[str, int]:
     if section_index == 0:
-        raise UnsupportedSpikeError(
+        raise UnsupportedReconcileV2Error(
             "reconcile_v2 does not yet support first-section attachment reassignment "
             "through updateSectionStyle"
         )
     layout = body_layouts.setdefault(tab_id, build_body_layout(base, tab_id=tab_id))
     boundary = layout.sections[section_index].incoming_boundary
     if boundary is None:
-        raise UnsupportedSpikeError(
+        raise ReconcileInvariantError(
             f"Missing section boundary for tab {tab_id} section {section_index}"
         )
     return {
@@ -1613,7 +1613,7 @@ def _parent_tab_reference(
         return created_tab_refs[parent_path]
     parent = base_tabs_by_path.get(parent_path)
     if parent is None:
-        raise UnsupportedSpikeError(
+        raise ReconcileInvariantError(
             f"Could not resolve parent tab for new tab at path {path!r}"
         )
     return parent.id

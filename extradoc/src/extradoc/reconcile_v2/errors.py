@@ -12,8 +12,16 @@ class ParseIRError(ReconcileV2Error):
 
 
 class UnsupportedReconcileV2Error(ReconcileV2Error):
-    """Raised when ``reconcile_v2`` hits an explicit unsupported boundary."""
+    """Raised when ``reconcile_v2`` hits an explicit unsupported boundary.
+
+    Use this for deliberate scope restrictions: operations the reconciler does
+    not support (merged tables, multi-section new tabs, etc.).
+    """
 
 
-# Backward-compatible alias for older tests and internal imports.
-UnsupportedSpikeError = UnsupportedReconcileV2Error
+class ReconcileInvariantError(ReconcileV2Error):
+    """Raised when an internal reconciler invariant is violated.
+
+    This indicates a bug in the reconciler itself — the input was valid but
+    an internal intermediate state was inconsistent.
+    """

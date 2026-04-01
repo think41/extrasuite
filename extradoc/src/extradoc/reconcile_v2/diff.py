@@ -9,7 +9,7 @@ from typing import TYPE_CHECKING, TypeVar
 
 from extradoc.indexer import utf16_len
 from extradoc.reconcile_v2.canonical import canonicalize_document_ir
-from extradoc.reconcile_v2.errors import UnsupportedSpikeError
+from extradoc.reconcile_v2.errors import UnsupportedReconcileV2Error
 from extradoc.reconcile_v2.ir import (
     AnchorRangeIR,
     FootnoteRefIR,
@@ -821,7 +821,7 @@ def _diff_section_attachment_changes(
                 continue
             if base_ref is not None:
                 if base_ref_counts.get(base_ref, 0) > 1:
-                    raise UnsupportedSpikeError(
+                    raise UnsupportedReconcileV2Error(
                         "reconcile_v2 does not yet support deleting a shared "
                         f"{attachment_kind[:-1]} attachment from only one section"
                     )
@@ -862,7 +862,7 @@ def _ensure_read_only_blocks_unchanged(
             if _is_read_only_block(block)
         ]
         if base_read_only != desired_read_only:
-            raise UnsupportedSpikeError(
+            raise UnsupportedReconcileV2Error(
                 "reconcile_v2 does not support editing read-only or opaque body blocks "
                 f"in section {section_index}"
             )
@@ -983,9 +983,19 @@ def _diff_section_blocks(
                 else _canonical_to_raw_body_block_index(raw_base_blocks, 0)
             ),
         )
-    if [_anchor_block_signature(block) for _, block in base_anchors] != [
-        _anchor_block_signature(block) for _, block in desired_anchors
-    ]:
+    base_sigs = [_anchor_block_signature(block) for _, block in base_anchors]
+    desired_sigs = [_anchor_block_signature(block) for _, block in desired_anchors]
+    if base_sigs == desired_sigs:
+        # Exact match — use all anchors as split points.
+        matched_base_anchors = base_anchors
+        matched_desired_anchors = desired_anchors
+    elif base_sigs and desired_sigs[: len(base_sigs)] == base_sigs:
+        # base is a non-empty prefix of desired — match base anchors to the
+        # first N desired anchors.  The remaining desired anchors (beyond N)
+        # are handled by the trailing span and become pure insertions.
+        matched_base_anchors = base_anchors
+        matched_desired_anchors = desired_anchors[: len(base_anchors)]
+    else:
         return _diff_editable_block_span(
             tab_id=tab_id,
             section_index=section_index,
@@ -1003,8 +1013,8 @@ def _diff_section_blocks(
     base_start = 0
     desired_start = 0
     for (base_index, _base_block), (desired_index, _desired_block) in zip(
-        base_anchors,
-        desired_anchors,
+        matched_base_anchors,
+        matched_desired_anchors,
         strict=True,
     ):
         spans.append(
@@ -1736,7 +1746,7 @@ def _diff_footnote_changes(
             if not desired_refs:
                 continue
             if len(desired_refs) != 1:
-                raise UnsupportedSpikeError(
+                raise UnsupportedReconcileV2Error(
                     "reconcile_v2 currently supports only one footnote reference "
                     "per paragraph"
                 )
@@ -1763,7 +1773,7 @@ def _diff_footnote_changes(
                 )
                 continue
             if len(base_refs) != 1:
-                raise UnsupportedSpikeError(
+                raise UnsupportedReconcileV2Error(
                     "reconcile_v2 currently supports only simple footnote creation "
                     "or matched-story content edits"
                 )
@@ -2054,7 +2064,7 @@ def _diff_section_tables(
                     base_table=base_block,
                     desired_table=desired_block,
                 )
-            except UnsupportedSpikeError:
+            except UnsupportedReconcileV2Error:
                 edits.append(
                     DeleteTableBlockEdit(
                         tab_id=tab_id,
@@ -2197,13 +2207,13 @@ def _plan_table_comparison(
     base_column_count = max((len(row.cells) for row in base_table.rows), default=0)
     desired_column_count = max((len(row.cells) for row in desired_table.rows), default=0)
     if abs(desired_row_count - base_row_count) > 1 or abs(desired_column_count - base_column_count) > 1:
-        raise UnsupportedSpikeError(
+        raise UnsupportedReconcileV2Error(
             "reconcile_v2 currently supports at most one row or one column structural change"
         )
     if desired_column_count != base_column_count and (
         _table_has_horizontal_merges(base_table) or _table_has_horizontal_merges(desired_table)
     ):
-        raise UnsupportedSpikeError(
+        raise UnsupportedReconcileV2Error(
             "reconcile_v2 does not yet support column structural edits through merged regions"
         )
     shared_row_pairs = tuple((index, index) for index in range(min(base_row_count, desired_row_count)))
@@ -2247,7 +2257,7 @@ def _plan_table_comparison(
 
     merge_change = _table_merge_change(base_table, desired_table)
     if (desired_row_count != base_row_count or desired_column_count != base_column_count) and merge_change is not None:
-        raise UnsupportedSpikeError(
+        raise UnsupportedReconcileV2Error(
             "reconcile_v2 does not yet support structural edits intersecting merge-topology changes"
         )
     if merge_change is None:
@@ -2349,7 +2359,7 @@ def _single_row_table_edit(
             ),
         )
     if desired_row_count != base_row_count:
-        raise UnsupportedSpikeError(
+        raise UnsupportedReconcileV2Error(
             "reconcile_v2 could not align the row structural edit"
         )
     return None
@@ -2407,7 +2417,7 @@ def _single_column_table_edit(
             ),
         )
     if desired_column_count != base_column_count:
-        raise UnsupportedSpikeError(
+        raise UnsupportedReconcileV2Error(
             "reconcile_v2 could not align the column structural edit"
         )
     return None
@@ -2869,7 +2879,7 @@ def _inserted_column_cell_texts(table: TableIR, column_index: int) -> tuple[str,
     texts: list[str] = []
     for row in table.rows:
         if column_index >= len(row.cells):
-            raise UnsupportedSpikeError(
+            raise UnsupportedReconcileV2Error(
                 "reconcile_v2 requires rectangular inserted-column fixtures"
             )
         texts.append(_simple_cell_text(row.cells[column_index]))
@@ -2878,11 +2888,11 @@ def _inserted_column_cell_texts(table: TableIR, column_index: int) -> tuple[str,
 
 def _simple_cell_text(cell: object) -> str:
     if any(not isinstance(block, ParagraphIR) for block in cell.content.blocks):
-        raise UnsupportedSpikeError(
+        raise UnsupportedReconcileV2Error(
             "reconcile_v2 supports inserted row/column content only for paragraph-only cells"
         )
     if len(cell.content.blocks) > 1:
-        raise UnsupportedSpikeError(
+        raise UnsupportedReconcileV2Error(
             "reconcile_v2 supports inserted row/column content only for single-paragraph cells"
         )
     if not cell.content.blocks:

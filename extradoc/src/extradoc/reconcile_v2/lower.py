@@ -39,7 +39,7 @@ from extradoc.reconcile_v2.diff import (
     UpdateTablePinnedHeaderRowsEdit,
     UpdateTableRowStyleEdit,
 )
-from extradoc.reconcile_v2.errors import UnsupportedSpikeError
+from extradoc.reconcile_v2.errors import ReconcileInvariantError, UnsupportedReconcileV2Error
 from extradoc.reconcile_v2.ir import ParagraphIR, TableIR, TextSpanIR
 from extradoc.reconcile_v2.layout import (
     BodyLayout,
@@ -470,16 +470,16 @@ def lower_document_edits(
                     make_delete_footer(footer_id=edit.story_id, tab_id=edit.tab_id)
                 )
             else:
-                raise UnsupportedSpikeError(
+                raise UnsupportedReconcileV2Error(
                     f"Unsupported section attachment kind: {edit.attachment_kind}"
                 )
         elif isinstance(edit, CreateSectionAttachmentEdit):
-            raise UnsupportedSpikeError(
+            raise ReconcileInvariantError(
                 "reconcile_v2 section attachment creation requires batch planning; "
                 "use lower_semantic_diff_batches() or reconcile()"
             )
         elif isinstance(edit, CreateFootnoteEdit):
-            raise UnsupportedSpikeError(
+            raise ReconcileInvariantError(
                 "reconcile_v2 footnote creation requires batch planning; "
                 "use lower_semantic_diff_batches() or reconcile()"
             )
@@ -590,7 +590,7 @@ def lower_document_edits(
             if any(edit.inserted_cells):
                 insert_index = edit.row_index + 1 if edit.insert_below else edit.row_index
                 if insert_index >= table.row_count:
-                    raise UnsupportedSpikeError(
+                    raise UnsupportedReconcileV2Error(
                         "reconcile_v2 supports inserted-row content only for non-terminal row inserts"
                     )
                 anchor = _table_cell_text_start(
@@ -628,7 +628,7 @@ def lower_document_edits(
             if any(edit.inserted_cells):
                 insert_index = edit.column_index + 1 if edit.insert_right else edit.column_index
                 if insert_index >= table.column_count:
-                    raise UnsupportedSpikeError(
+                    raise UnsupportedReconcileV2Error(
                         "reconcile_v2 supports inserted-column content only for non-terminal column inserts"
                     )
                 for row_index, text in enumerate(edit.inserted_cells):
@@ -1085,7 +1085,7 @@ def _lower_body_insert_group(
     if anchor is None:
         raise ValueError("Body insert group requires a shared body anchor")
     if desired is None:
-        raise UnsupportedSpikeError(
+        raise ReconcileInvariantError(
             "reconcile_v2 body insert grouping requires desired document layouts"
         )
     tab_id, _section_index, _block_index, _raw_anchor_index = anchor
@@ -1241,7 +1241,7 @@ def _lower_body_insert_group(
                     ParagraphLocation,
                 )
                 if block is None:
-                    raise UnsupportedSpikeError(
+                    raise ReconcileInvariantError(
                         "Grouped body insert shadow layout did not resolve a paragraph block"
                     )
                 paragraph_style_locations.append(
@@ -1274,7 +1274,7 @@ def _lower_body_insert_group(
                     break
                 list_paragraphs.append(block)
             if len(list_paragraphs) != len(fragment[1].items):
-                raise UnsupportedSpikeError(
+                raise ReconcileInvariantError(
                     "Grouped body insert shadow layout did not resolve a list block"
                 )
             list_ops.append(
@@ -1314,7 +1314,7 @@ def _lower_body_insert_group(
                 TableLocation,
             )
             if block is None:
-                raise UnsupportedSpikeError(
+                raise ReconcileInvariantError(
                     "Grouped body insert shadow layout did not resolve a table block"
                 )
             style_ops.extend(
@@ -1334,7 +1334,7 @@ def _lower_body_insert_group(
                 PageBreakLocation,
             )
             if block is None:
-                raise UnsupportedSpikeError(
+                raise ReconcileInvariantError(
                     "Grouped body insert shadow layout did not resolve a page break block"
                 )
             shadow_index = next_index
@@ -1396,7 +1396,7 @@ def _shadow_inserted_blocks_from_layout(
     section_blocks = shadow_layout.sections[section_index].block_locations
     inserted_blocks = tuple(section_blocks[block_index:])
     if len(inserted_blocks) < fragment_count:
-        raise UnsupportedSpikeError(
+        raise ReconcileInvariantError(
             "Grouped body insert shadow layout did not produce the expected block count"
         )
     return inserted_blocks
@@ -2155,7 +2155,7 @@ def _lower_paragraph_text_replace_preserving_inline_anchors(
     anchor_slots = tuple(slot for slot in paragraph.inline_slots if slot.kind != "text")
     desired_buckets = _desired_text_buckets(desired_paragraph)
     if len(desired_buckets) != len(anchor_slots) + 1:
-        raise UnsupportedSpikeError(
+        raise UnsupportedReconcileV2Error(
             "reconcile_v2 could not align inline anchors while replacing paragraph text"
         )
     if (
@@ -2448,7 +2448,7 @@ def _lower_blocks_into_fresh_story(
                 )
             )
             continue
-        raise UnsupportedSpikeError(
+        raise UnsupportedReconcileV2Error(
             "reconcile_v2 currently supports fresh-story insertion only for "
             "paragraph runs and table blocks"
         )
@@ -2468,7 +2468,7 @@ def _fresh_story_fragments(blocks: list[Any]) -> list[list[Any]]:
         if isinstance(block, TableIR):
             fragments.append([block])
             continue
-        raise UnsupportedSpikeError(
+        raise UnsupportedReconcileV2Error(
             "reconcile_v2 currently supports fresh-story insertion only for "
             "paragraphs and tables"
         )
@@ -2531,11 +2531,11 @@ def _lower_table_into_fresh_story(
     if row_count == 0 or column_count == 0:
         return []
     if any(len(row.cells) != column_count for row in table.rows):
-        raise UnsupportedSpikeError(
+        raise UnsupportedReconcileV2Error(
             "reconcile_v2 currently requires rectangular tables for mixed body insertion"
         )
     if table.pinned_header_rows or table.merge_regions:
-        raise UnsupportedSpikeError(
+        raise UnsupportedReconcileV2Error(
             "reconcile_v2 currently supports only plain unmerged table insertion "
             "for mixed body edits"
         )
@@ -2553,7 +2553,7 @@ def _lower_table_into_fresh_story(
         for column_index in range(column_count - 1, -1, -1):
             cell = row.cells[column_index]
             if cell.row_span != 1 or cell.column_span != 1 or cell.merge_head is not None:
-                raise UnsupportedSpikeError(
+                raise UnsupportedReconcileV2Error(
                     "reconcile_v2 currently supports only unmerged-cell table insertion"
                 )
             cell_start = story_start_index + 4 + row_index * (1 + 2 * column_count) + 2 * column_index
@@ -2571,7 +2571,7 @@ def _lower_table_into_fresh_story(
 def _table_cell_text_start(story_layouts: dict[str, Any], story_id: str) -> int:
     story = story_layouts.get(story_id)
     if story is None or not story.paragraphs:
-        raise UnsupportedSpikeError(
+        raise ReconcileInvariantError(
             f"Could not resolve inserted table-cell anchor from story {story_id}"
         )
     return story.paragraphs[0].text_start_index

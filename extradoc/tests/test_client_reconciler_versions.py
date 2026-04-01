@@ -31,7 +31,7 @@ from extradoc.comments._types import (
 )
 from extradoc.reconcile import reindex_document
 from extradoc.reconcile_v2.diff import ReplaceParagraphTextEdit
-from extradoc.reconcile_v2.errors import UnsupportedSpikeError
+from extradoc.reconcile_v2.errors import UnsupportedReconcileV2Error
 from extradoc.reconcile_v2.executor import BatchExecutionResult
 from extradoc.reconcile_v2.ir import ParagraphIR, TextSpanIR
 from extradoc.reconcile_v2.lower import _content_edit_order_key
@@ -1512,7 +1512,7 @@ def test_diff_v2_rejects_markdown_horizontal_rule_creation(
 
     client = DocsClient.__new__(DocsClient)
     with pytest.raises(
-        UnsupportedSpikeError,
+        UnsupportedReconcileV2Error,
         match="read-only or opaque body blocks",
     ):
         client.diff(str(folder))

@@ -10,7 +10,7 @@ from dataclasses import dataclass, field
 from typing import TYPE_CHECKING, Any
 
 from extradoc.indexer import utf16_len
-from extradoc.reconcile_v2.errors import ParseIRError, UnsupportedSpikeError
+from extradoc.reconcile_v2.errors import ParseIRError, UnsupportedReconcileV2Error
 from extradoc.reconcile_v2.ir import (
     BODY_CAPABILITIES,
     FOOTER_CAPABILITIES,
@@ -258,7 +258,7 @@ class _StoryResolver:
                     ),
                 )
 
-        raise UnsupportedSpikeError(
+        raise UnsupportedReconcileV2Error(
             f"Cannot resolve transport index {index} in story {self.story_id}. "
             "The semantic parser currently supports anchors in paragraph "
             "text and at block boundaries only."
