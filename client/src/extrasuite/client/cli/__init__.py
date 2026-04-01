@@ -55,6 +55,7 @@ from extrasuite.client.cli.doc import (
     cmd_doc_push,
     cmd_doc_push_md,
     cmd_doc_share,
+    cmd_doc_verify_table_indices,
 )
 from extrasuite.client.cli.drive import cmd_drive_ls, cmd_drive_search
 from extrasuite.client.cli.form import (
@@ -130,6 +131,7 @@ _COMMANDS: dict[tuple[str, str | None], Callable[..., Any]] = {
     ("docs", "create-empty"): cmd_doc_create_empty,
     ("docs", "download-raw"): cmd_doc_download_raw,
     ("docs", "share"): cmd_doc_share,
+    ("docs", "verify-table-indices"): cmd_doc_verify_table_indices,
     ("gmail", "compose"): cmd_gmail_compose,
     ("gmail", "edit-draft"): cmd_gmail_edit_draft,
     ("gmail", "reply"): cmd_gmail_reply,
@@ -718,6 +720,13 @@ def build_parser() -> Any:
         default="reader",
         help="Permission role (default: reader)",
     )
+
+    sp = doc_sub.add_parser(
+        "verify-table-indices",
+        help="[debug] Verify deterministic table index prediction against the live API",
+        parents=[auth_parent],
+    )
+    sp.add_argument("url", help="Document URL or ID to use as test target")
 
     sp = doc_sub.add_parser(
         "help",
