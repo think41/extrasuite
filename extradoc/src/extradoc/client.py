@@ -47,7 +47,7 @@ from extradoc.reconcile_v2.executor import (
 )
 from extradoc.serde._models import IndexXml
 from extradoc.serde._utils import hex_to_optional_color, optional_color_to_hex
-from extradoc.transport import APIError
+from extradoc.transport import APIError, DocumentConflictError
 
 if TYPE_CHECKING:
     from extradoc.api_types._generated import BatchUpdateDocumentRequest, DocumentTab
@@ -148,9 +148,7 @@ class DocsClient:
         if save_raw and raw_comments:
             raw_comments_path = raw_dir / "comments.json"
             raw_comments_path.write_text(
-                json.dumps(
-                    {"comments": raw_comments}, indent=2, ensure_ascii=False
-                ),
+                json.dumps({"comments": raw_comments}, indent=2, ensure_ascii=False),
                 encoding="utf-8",
             )
             written_files.append(raw_comments_path)
@@ -442,7 +440,9 @@ async def _execute_document_batches_v2_live_refresh(
     while batch_index < len(request_batches):
         batch = request_batches[batch_index]
         resolved_batch = resolve_deferred_placeholders(prior_responses, list(batch))
-        resolved_batch, refresh_reason = _truncate_batch_for_live_refresh(resolved_batch)
+        resolved_batch, refresh_reason = _truncate_batch_for_live_refresh(
+            resolved_batch
+        )
         write_control = None
         if revision_id is not None:
             write_control = {"requiredRevisionId": revision_id}
@@ -455,23 +455,10 @@ async def _execute_document_batches_v2_live_refresh(
         except APIError as exc:
             if not _is_revision_mismatch_error(exc):
                 raise
-            refreshed_batches, revision_id = await _refresh_v2_batches_after_live_change(
-                transport=transport,
-                document_id=result.document_id,
-                desired_document=result.desired_document,
-                desired_format=result.desired_format,
-                current_revision_id=revision_id,
-            )
-            request_batches = [
-                [
-                    request.model_dump(by_alias=True, exclude_none=True)
-                    for request in (batch.requests or [])
-                ]
-                for batch in refreshed_batches
-            ]
-            batch_index = 0
-            prior_responses = []
-            continue
+            raise DocumentConflictError(
+                "The document was modified by another party after you pulled it. "
+                "Re-pull the document, merge your changes, and push again."
+            ) from exc
         prior_responses.append(response)
         revision_id = _next_required_revision_id(response, revision_id)
         changes_applied += len(batch)
@@ -481,7 +468,10 @@ async def _execute_document_batches_v2_live_refresh(
             continue
 
         if refresh_reason == "structural":
-            refreshed_batches, revision_id = await _refresh_v2_batches_after_structural_ops(
+            (
+                refreshed_batches,
+                revision_id,
+            ) = await _refresh_v2_batches_after_structural_ops(
                 transport=transport,
                 document_id=result.document_id,
                 _resolved_batch=resolved_batch,
@@ -490,7 +480,10 @@ async def _execute_document_batches_v2_live_refresh(
                 current_revision_id=revision_id,
             )
         else:
-            refreshed_batches, revision_id = await _refresh_v2_batches_after_live_change(
+            (
+                refreshed_batches,
+                revision_id,
+            ) = await _refresh_v2_batches_after_live_change(
                 transport=transport,
                 document_id=result.document_id,
                 desired_document=result.desired_document,
@@ -573,7 +566,9 @@ def _should_refresh_v2_batches(batch: list[dict]) -> bool:
     )
 
 
-def _truncate_batch_for_live_refresh(batch: list[dict]) -> tuple[list[dict], str | None]:
+def _truncate_batch_for_live_refresh(
+    batch: list[dict],
+) -> tuple[list[dict], str | None]:
     structural_trimmed = _truncate_batch_before_post_table_para_ops(batch)
     if structural_trimmed != batch:
         return structural_trimmed, "structural"
@@ -607,7 +602,9 @@ def _refresh_still_contains_same_structural_shell(
         request
         for batch in refreshed_batches
         for request in (
-            batch.model_dump(by_alias=True, exclude_none=True, mode="json").get("requests")
+            batch.model_dump(by_alias=True, exclude_none=True, mode="json").get(
+                "requests"
+            )
             or []
         )
     ]
@@ -632,7 +629,9 @@ def _refresh_still_contains_same_structural_shell(
     return truncated_first_refreshed_batch == resolved_batch
 
 
-def _structural_request_signature(request: dict) -> tuple[str, str | None, int | None] | None:
+def _structural_request_signature(
+    request: dict,
+) -> tuple[str, str | None, int | None] | None:
     if "insertTable" in request:
         payload = request["insertTable"]
         location = payload.get("location", {})
@@ -695,8 +694,8 @@ def _truncate_batch_before_post_table_para_ops(batch: list[dict]) -> list[dict]:
                 first_structural_index_by_tab[tab_id] = index
             last_structural_index_by_tab[tab_id] = index
             last_structural_kind_by_tab[tab_id] = kind
-            last_structural_location_by_tab[tab_id] = request[kind].get("location", {}).get(
-                "index"
+            last_structural_location_by_tab[tab_id] = (
+                request[kind].get("location", {}).get("index")
             )
 
     if not first_structural_index_by_tab:
@@ -746,8 +745,7 @@ def _truncate_batch_before_post_table_para_ops(batch: list[dict]) -> list[dict]:
             and kind == "insertText"
             and (
                 structural_location is None
-                or request[kind].get("location", {}).get("index")
-                <= structural_location
+                or request[kind].get("location", {}).get("index") <= structural_location
             )
         ):
             trimmed.append(request)
@@ -797,7 +795,12 @@ def _request_tab_id(request: dict) -> str | None:
     payload = request[kind]
     if kind in {"insertTable", "insertText", "insertPageBreak"}:
         return payload.get("location", {}).get("tabId")
-    if kind in {"createParagraphBullets", "deleteContentRange", "updateParagraphStyle", "updateTextStyle"}:
+    if kind in {
+        "createParagraphBullets",
+        "deleteContentRange",
+        "updateParagraphStyle",
+        "updateTextStyle",
+    }:
         return payload.get("range", {}).get("tabId")
     return None
 
@@ -893,7 +896,9 @@ def _normalize_raw_base_para_styles(
     reference_tabs: dict[str, list[StructuralElement]] = {}
     if markdown_reference is not None:
         for ref_tab in markdown_reference.tabs:
-            ref_tab_id = ref_tab.tab_properties.tab_id if ref_tab.tab_properties else None
+            ref_tab_id = (
+                ref_tab.tab_properties.tab_id if ref_tab.tab_properties else None
+            )
             ref_dt = ref_tab.document_tab
             if ref_tab_id and ref_dt and ref_dt.body and ref_dt.body.content:
                 reference_tabs[ref_tab_id] = ref_dt.body.content
@@ -1011,7 +1016,9 @@ def _strip_inter_table_separators(
             para = se.paragraph
             elements = para.elements or []
             text = "".join(
-                e.text_run.content for e in elements if e.text_run and e.text_run.content
+                e.text_run.content
+                for e in elements
+                if e.text_run and e.text_run.content
             )
             if text == "\n":
                 if (
@@ -1022,12 +1029,13 @@ def _strip_inter_table_separators(
                     continue
                 # Look for a table before and after this paragraph
                 prev_is_table = any(out) and out[-1].table is not None
-                next_is_table = (
-                    i + 1 < n and content[i + 1].table is not None
-                )
+                next_is_table = i + 1 < n and content[i + 1].table is not None
                 if prev_is_table and next_is_table:
                     prev_start = out[-1].start_index
-                    if prev_start is not None and prev_start in preserve_after_table_starts:
+                    if (
+                        prev_start is not None
+                        and prev_start in preserve_after_table_starts
+                    ):
                         out.append(se)
                         continue
                     continue  # skip this inter-table separator
@@ -1052,10 +1060,17 @@ def _is_bare_empty_paragraph(se: StructuralElement) -> bool:
         if tr is not None and tr.content == "\n":
             ts = tr.text_style
             return ts is None or not any(
-                getattr(ts, f, None) for f in (
-                    "bold", "italic", "underline", "strikethrough",
-                    "link", "weighted_font_family", "foreground_color",
-                    "background_color", "font_size",
+                getattr(ts, f, None)
+                for f in (
+                    "bold",
+                    "italic",
+                    "underline",
+                    "strikethrough",
+                    "link",
+                    "weighted_font_family",
+                    "foreground_color",
+                    "background_color",
+                    "font_size",
                 )
             )
     return False
@@ -1112,7 +1127,11 @@ def _body_named_range_anchor_indices(
             for range_ in named_range.ranges or []:
                 if range_.segment_id:
                     continue
-                if tab_id is not None and range_.tab_id and str(range_.tab_id) != tab_id:
+                if (
+                    tab_id is not None
+                    and range_.tab_id
+                    and str(range_.tab_id) != tab_id
+                ):
                     continue
                 if range_.start_index is not None:
                     indices.add(range_.start_index)

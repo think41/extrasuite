@@ -37,7 +37,7 @@ from extradoc.reconcile_v2.ir import ParagraphIR, TextSpanIR
 from extradoc.reconcile_v2.lower import _content_edit_order_key
 from extradoc.serde import serialize
 from extradoc.serde._from_markdown import markdown_to_document
-from extradoc.transport import APIError
+from extradoc.transport import APIError, DocumentConflictError
 
 
 class _FakeTransport:
@@ -91,7 +91,9 @@ class _FakeTransport:
     ) -> dict:  # pragma: no cover
         raise NotImplementedError
 
-    async def delete_comment(self, file_id: str, comment_id: str) -> None:  # pragma: no cover
+    async def delete_comment(
+        self, file_id: str, comment_id: str
+    ) -> None:  # pragma: no cover
         raise NotImplementedError
 
     async def edit_reply(
@@ -299,7 +301,11 @@ def _setup_markdown_folder(
     zip_path = pristine_dir / "document.zip"
     with zipfile.ZipFile(zip_path, "w") as zf:
         for path in sorted(folder.rglob("*")):
-            if path.is_file() and ".pristine" not in str(path) and ".raw" not in str(path):
+            if (
+                path.is_file()
+                and ".pristine" not in str(path)
+                and ".raw" not in str(path)
+            ):
                 zf.write(path, path.relative_to(folder))
 
     return folder
@@ -329,7 +335,11 @@ def _setup_xml_folder(
     zip_path = pristine_dir / "document.zip"
     with zipfile.ZipFile(zip_path, "w") as zf:
         for path in sorted(folder.rglob("*")):
-            if path.is_file() and ".pristine" not in str(path) and ".raw" not in str(path):
+            if (
+                path.is_file()
+                and ".pristine" not in str(path)
+                and ".raw" not in str(path)
+            ):
                 zf.write(path, path.relative_to(folder))
 
     return folder
@@ -357,7 +367,15 @@ def test_get_reconciler_version_rejects_invalid_value(
 
 def test_should_refresh_v2_batches_for_insert_table_or_page_break() -> None:
     assert _should_refresh_v2_batches(
-        [{"insertTable": {"rows": 1, "columns": 1, "location": {"index": 1, "tabId": "t.0"}}}]
+        [
+            {
+                "insertTable": {
+                    "rows": 1,
+                    "columns": 1,
+                    "location": {"index": 1, "tabId": "t.0"},
+                }
+            }
+        ]
     )
     assert _should_refresh_v2_batches(
         [{"insertPageBreak": {"location": {"index": 1, "tabId": "t.0"}}}]
@@ -369,24 +387,29 @@ def test_should_refresh_v2_batches_for_insert_table_or_page_break() -> None:
 
 def test_structural_request_signature_extracts_insert_locations() -> None:
     assert _structural_request_signature(
-        {"insertTable": {"rows": 1, "columns": 1, "location": {"index": 7, "tabId": "t.0"}}}
+        {
+            "insertTable": {
+                "rows": 1,
+                "columns": 1,
+                "location": {"index": 7, "tabId": "t.0"},
+            }
+        }
     ) == ("insertTable", "t.0", 7)
     assert _structural_request_signature(
         {"insertPageBreak": {"location": {"index": 11, "tabId": "t.0"}}}
     ) == ("insertPageBreak", "t.0", 11)
-    assert _structural_request_signature(
-        {"insertText": {"location": {"index": 1, "tabId": "t.0"}, "text": "x"}}
-    ) is None
+    assert (
+        _structural_request_signature(
+            {"insertText": {"location": {"index": 1, "tabId": "t.0"}, "text": "x"}}
+        )
+        is None
+    )
 
 
 def test_refresh_detects_stale_same_structural_shell() -> None:
-    resolved_batch = [
-        {"insertPageBreak": {"location": {"index": 1, "tabId": "t.0"}}}
-    ]
+    resolved_batch = [{"insertPageBreak": {"location": {"index": 1, "tabId": "t.0"}}}]
     stale_batches = [
-        BatchUpdateDocumentRequest.model_validate(
-            {"requests": resolved_batch}
-        )
+        BatchUpdateDocumentRequest.model_validate({"requests": resolved_batch})
     ]
     fresh_batches = [
         BatchUpdateDocumentRequest.model_validate(
@@ -415,11 +438,7 @@ def test_refresh_detects_stale_same_structural_shell() -> None:
                             }
                         }
                     },
-                    {
-                        "insertPageBreak": {
-                            "location": {"index": 72, "tabId": "t.0"}
-                        }
-                    },
+                    {"insertPageBreak": {"location": {"index": 72, "tabId": "t.0"}}},
                     {
                         "insertText": {
                             "location": {"index": 71, "tabId": "t.0"},
@@ -463,12 +482,25 @@ async def test_refresh_retries_until_structural_shell_disappears(
     desired = base_doc
     stale_batch = [
         BatchUpdateDocumentRequest.model_validate(
-            {"requests": [{"insertPageBreak": {"location": {"index": 1, "tabId": "t.0"}}}]}
+            {
+                "requests": [
+                    {"insertPageBreak": {"location": {"index": 1, "tabId": "t.0"}}}
+                ]
+            }
         )
     ]
     fresh_batch = [
         BatchUpdateDocumentRequest.model_validate(
-            {"requests": [{"insertText": {"location": {"index": 1, "tabId": "t.0"}, "text": "After Break"}}]}
+            {
+                "requests": [
+                    {
+                        "insertText": {
+                            "location": {"index": 1, "tabId": "t.0"},
+                            "text": "After Break",
+                        }
+                    }
+                ]
+            }
         )
     ]
     planned = iter([stale_batch, fresh_batch])
@@ -487,7 +519,9 @@ async def test_refresh_retries_until_structural_shell_disappears(
     refreshed_batches, revision_id = await _refresh_v2_batches_after_structural_ops(
         transport=transport,
         document_id="retry-doc",
-        _resolved_batch=[{"insertPageBreak": {"location": {"index": 1, "tabId": "t.0"}}}],
+        _resolved_batch=[
+            {"insertPageBreak": {"location": {"index": 1, "tabId": "t.0"}}}
+        ],
         desired_document=desired,
         desired_format="xml",
         current_revision_id=None,
@@ -516,7 +550,11 @@ async def test_refresh_raises_if_structural_shell_never_materializes(
     desired = base_doc
     stale_batch = [
         BatchUpdateDocumentRequest.model_validate(
-            {"requests": [{"insertPageBreak": {"location": {"index": 1, "tabId": "t.0"}}}]}
+            {
+                "requests": [
+                    {"insertPageBreak": {"location": {"index": 1, "tabId": "t.0"}}}
+                ]
+            }
         )
     ]
 
@@ -535,7 +573,9 @@ async def test_refresh_raises_if_structural_shell_never_materializes(
         await _refresh_v2_batches_after_structural_ops(
             transport=transport,
             document_id="retry-doc-fail",
-            _resolved_batch=[{"insertPageBreak": {"location": {"index": 1, "tabId": "t.0"}}}],
+            _resolved_batch=[
+                {"insertPageBreak": {"location": {"index": 1, "tabId": "t.0"}}}
+            ],
             desired_document=desired,
             desired_format="xml",
             current_revision_id=None,
@@ -690,7 +730,9 @@ def test_truncate_batch_preserves_same_anchor_prefix_text_after_insert_table() -
     ]
 
 
-def test_truncate_batch_before_delete_sensitive_inserts_keeps_delete_only_round() -> None:
+def test_truncate_batch_before_delete_sensitive_inserts_keeps_delete_only_round() -> (
+    None
+):
     batch = [
         {
             "deleteContentRange": {
@@ -734,7 +776,16 @@ async def test_refresh_after_live_change_replans_from_latest_raw_document(
     desired = base_doc
     replanned = [
         BatchUpdateDocumentRequest.model_validate(
-            {"requests": [{"insertText": {"location": {"index": 1, "tabId": "t.0"}, "text": "beta"}}]}
+            {
+                "requests": [
+                    {
+                        "insertText": {
+                            "location": {"index": 1, "tabId": "t.0"},
+                            "text": "beta",
+                        }
+                    }
+                ]
+            }
         )
     ]
 
@@ -763,9 +814,7 @@ async def test_refresh_after_live_change_replans_from_latest_raw_document(
 
 
 @pytest.mark.asyncio
-async def test_execute_v2_live_refresh_recovers_from_revision_mismatch(
-    monkeypatch: pytest.MonkeyPatch,
-) -> None:
+async def test_execute_v2_live_refresh_raises_on_revision_mismatch() -> None:
     base_doc = reindex_document(
         markdown_to_document(
             {"Tab_1": "alpha\n"},
@@ -788,34 +837,14 @@ async def test_execute_v2_live_refresh_recovers_from_revision_mismatch(
             ]
         }
     )
-    refreshed_batch = BatchUpdateDocumentRequest.model_validate(
-        {
-            "requests": [
-                {
-                    "insertText": {
-                        "location": {"index": 1, "tabId": "t.0"},
-                        "text": "beta",
-                    }
-                }
-            ]
-        }
-    )
     transport = _FakeTransport()
     transport.raw_document = base_raw
     transport.batch_update_exceptions = [
-        APIError("The required revision ID 'rev-old' does not match the latest revision.", 400)
+        APIError(
+            "The required revision ID 'rev-old' does not match the latest revision.",
+            400,
+        )
     ]
-
-    def _fake_reconcile(
-        _base: Document,
-        _desired_document: Document,
-        *,
-        transport_base: Document | None = None,
-    ) -> list[BatchUpdateDocumentRequest]:
-        assert transport_base is not None
-        return [refreshed_batch]
-
-    monkeypatch.setattr("extradoc.client.reconcile_v2", _fake_reconcile)
 
     result = DiffResult(
         document_id="retry-revision-doc",
@@ -828,17 +857,10 @@ async def test_execute_v2_live_refresh_recovers_from_revision_mismatch(
         allow_live_refresh=True,
     )
 
-    changes = await _execute_document_batches_v2_live_refresh(transport, result)
+    with pytest.raises(DocumentConflictError):
+        await _execute_document_batches_v2_live_refresh(transport, result)
 
-    assert changes == 1
-    assert transport.get_document_calls == ["retry-revision-doc"]
-    assert transport.calls == [
-        (
-            "retry-revision-doc",
-            refreshed_batch.model_dump(by_alias=True, exclude_none=True, mode="json")["requests"],
-            {"requiredRevisionId": "rev-old"},
-        )
-    ]
+    assert transport.get_document_calls == []
 
 
 def test_table_cell_story_edits_sort_descending_by_cell_anchor() -> None:
@@ -996,7 +1018,9 @@ def test_diff_v2_detects_first_markdown_content_in_empty_doc(
         doc_id="test-v2-empty-first-push",
         md_content="",
     )
-    (folder / "Tab_1.md").write_text("alpha paragraph\n\nbeta paragraph\n", encoding="utf-8")
+    (folder / "Tab_1.md").write_text(
+        "alpha paragraph\n\nbeta paragraph\n", encoding="utf-8"
+    )
 
     raw_doc = markdown_to_document(
         {"Tab_1": ""},
@@ -1159,7 +1183,11 @@ def test_diff_v2_uses_raw_transport_base_for_iterative_markdown_batches(
     pristine_dir.mkdir()
     with zipfile.ZipFile(pristine_dir / "document.zip", "w") as zf:
         for path in sorted(folder.rglob("*")):
-            if path.is_file() and ".pristine" not in str(path) and ".raw" not in str(path):
+            if (
+                path.is_file()
+                and ".pristine" not in str(path)
+                and ".raw" not in str(path)
+            ):
                 zf.write(path, path.relative_to(folder))
 
     for path in desired_folder.iterdir():
@@ -1311,7 +1339,9 @@ def test_diff_xml_uses_raw_transport_base_when_present(
         return []
 
     client = DocsClient.__new__(DocsClient)
-    monkeypatch.setattr("extradoc.client._reconcile_documents", _fake_reconcile_documents)
+    monkeypatch.setattr(
+        "extradoc.client._reconcile_documents", _fake_reconcile_documents
+    )
     result = client.diff(str(folder))
 
     assert result.reconciler_version == "v2"
@@ -1326,11 +1356,9 @@ def test_diff_xml_uses_raw_transport_base_when_present(
         element.start_index is not None
         for element in captured["base"].tabs[0].document_tab.body.content
     )
-    assert (
-        any(
-            element.start_index is not None
-            for element in captured["transport_base"].tabs[0].document_tab.body.content
-        )
+    assert any(
+        element.start_index is not None
+        for element in captured["transport_base"].tabs[0].document_tab.body.content
     )
 
 
@@ -1471,7 +1499,8 @@ def test_diff_v2_preserves_existing_footnote_ref_when_body_text_changes(
 
     assert not any("createFootnote" in request for request in requests)
     assert any(
-        request.get("deleteContentRange", {}).get("range", {}).get("segmentId") == footnote_id
+        request.get("deleteContentRange", {}).get("range", {}).get("segmentId")
+        == footnote_id
         for request in requests
     )
     assert any(
@@ -1611,7 +1640,11 @@ def test_normalize_raw_base_preserves_empty_paragraphs_used_by_named_ranges() ->
     _normalize_raw_base_para_styles(raw, markdown_reference)
 
     content = raw.tabs[0].document_tab.body.content
-    assert [element.start_index for element in content if element.paragraph] == [1, 7, 12]
+    assert [element.start_index for element in content if element.paragraph] == [
+        1,
+        7,
+        12,
+    ]
 
 
 @pytest.mark.asyncio
@@ -1719,6 +1752,7 @@ async def test_push_refreshes_v2_batches_after_insert_table(
             ]
         }
     )
+
     def _fake_reconcile_v2(
         _base: Document,
         _desired: Document,

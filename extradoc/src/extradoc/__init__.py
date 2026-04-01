@@ -6,6 +6,7 @@ from extradoc.client import DocsClient, PushResult
 from extradoc.transport import (
     APIError,
     AuthenticationError,
+    DocumentConflictError,
     GoogleDocsTransport,
     LocalFileTransport,
     NotFoundError,
@@ -16,6 +17,7 @@ from extradoc.transport import (
 __all__ = [
     "APIError",
     "AuthenticationError",
+    "DocumentConflictError",
     "DocsClient",
     "GoogleDocsTransport",
     "LocalFileTransport",

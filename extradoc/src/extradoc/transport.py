@@ -53,6 +53,15 @@ class APIError(TransportError):
         self.status_code = status_code
 
 
+class DocumentConflictError(TransportError):
+    """Raised when a push is rejected due to a concurrent edit.
+
+    The document was modified by another party after the base revision was
+    pulled.  The caller must re-pull, perform a 3-way merge, and push again.
+    This cannot be resolved transparently.
+    """
+
+
 @dataclass(frozen=True)
 class DocumentData:
     """Complete document data from Google Docs API.
