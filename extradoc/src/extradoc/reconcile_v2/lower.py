@@ -494,15 +494,10 @@ def lower_document_edits(
                     and edit.section_index is not None
                     and edit.story_id == f"{edit.tab_id}:body"
                 ):
-                    raw_start_block_index = (
-                        edit.body_anchor_block_index
-                        if edit.body_anchor_block_index is not None
-                        else edit.start_block_index
-                    )
                     paragraphs = _body_paragraph_slice(
                         layout,
                         section_index=edit.section_index,
-                        start_block_index=raw_start_block_index,
+                        start_block_index=edit.start_block_index,
                         delete_block_count=edit.delete_block_count,
                     )
                     delete_start = paragraphs[0].text_start_index

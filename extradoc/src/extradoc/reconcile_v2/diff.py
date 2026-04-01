@@ -1002,7 +1002,6 @@ def _diff_section_blocks(
     spans: list[tuple[list[BlockIR], list[BlockIR], int, int | None]] = []
     base_start = 0
     desired_start = 0
-    editable_offset = 0
     for (base_index, _base_block), (desired_index, _desired_block) in zip(
         base_anchors,
         desired_anchors,
@@ -1012,7 +1011,7 @@ def _diff_section_blocks(
             (
                 base_section.blocks[base_start:base_index],
                 desired_section.blocks[desired_start:desired_index],
-                editable_offset,
+                base_start,
                 (
                     None
                     if raw_base_blocks is None
@@ -1020,14 +1019,13 @@ def _diff_section_blocks(
                 ),
             )
         )
-        editable_offset += _editable_block_count(base_section.blocks[base_start:base_index])
         base_start = base_index + 1
         desired_start = desired_index + 1
     spans.append(
         (
             base_section.blocks[base_start:],
             desired_section.blocks[desired_start:],
-            editable_offset,
+            base_start,
             (
                 None
                 if raw_base_blocks is None
