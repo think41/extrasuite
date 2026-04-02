@@ -275,41 +275,20 @@ def lower_batches(
                 )
 
             # ---------------------------------------------------------------- #
-            # DocumentStyle
+            # DocumentStyle → batch 1
             # ---------------------------------------------------------------- #
             case UpdateDocumentStyleOp():
-                # Header/footer ID fields in documentStyle are managed via
-                # CreateHeaderOp/CreateFooterOp/DeleteHeaderOp/DeleteFooterOp.
-                # Suppress the UpdateDocumentStyleOp if the only difference is
-                # header/footer ID fields (those are handled structurally).
-                # For other documentStyle changes, raise — they require manual work.
-                _HEADER_FOOTER_FIELDS = {
-                    "defaultHeaderId",
-                    "firstPageHeaderId",
-                    "evenPageHeaderId",
-                    "defaultFooterId",
-                    "firstPageFooterId",
-                    "evenPageFooterId",
-                    "useFirstPageHeaderFooter",
-                    "useEvenPageHeaderFooter",
+                # op.changed_fields already excludes header/footer ID fields
+                # (those are managed structurally by CreateHeader/Footer ops).
+                req: dict[str, Any] = {
+                    "updateDocumentStyle": {
+                        "documentStyle": op.changed_fields,
+                        "fields": op.fields_mask,
+                    }
                 }
-                base_s = {
-                    k: v
-                    for k, v in op.base_style.items()
-                    if k not in _HEADER_FOOTER_FIELDS
-                }
-                desired_s = {
-                    k: v
-                    for k, v in op.desired_style.items()
-                    if k not in _HEADER_FOOTER_FIELDS
-                }
-                if base_s != desired_s:
-                    raise NotImplementedError(
-                        f"lowering for UpdateDocumentStyleOp not implemented — "
-                        f"DocumentStyle changes (excluding header/footer IDs) cannot "
-                        f"be applied via batchUpdate. (tab_id={op.tab_id!r})"
-                    )
-                # Only header/footer ID fields changed — handled structurally.
+                if op.tab_id:
+                    req["updateDocumentStyle"]["tabId"] = op.tab_id
+                batch1.append(req)
 
             # ---------------------------------------------------------------- #
             # Lists — InsertListOp is handled implicitly via paragraph bullets;

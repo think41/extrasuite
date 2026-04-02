@@ -245,6 +245,35 @@ def _diff_tab(
 # ---------------------------------------------------------------------------
 
 
+_HEADER_FOOTER_ID_FIELDS: frozenset[str] = frozenset(
+    {
+        "defaultHeaderId",
+        "firstPageHeaderId",
+        "evenPageHeaderId",
+        "defaultFooterId",
+        "firstPageFooterId",
+        "evenPageFooterId",
+    }
+)
+
+# Writable DocumentStyle fields that can be applied via updateDocumentStyle.
+# Header/footer ID fields are excluded — they're managed by structural ops.
+_WRITABLE_DOC_STYLE_FIELDS: list[str] = [
+    "background",
+    "flipPageOrientation",
+    "marginBottom",
+    "marginFooter",
+    "marginHeader",
+    "marginLeft",
+    "marginRight",
+    "marginTop",
+    "pageNumberStart",
+    "pageSize",
+    "useEvenPageHeaderFooter",
+    "useFirstPageHeaderFooter",
+]
+
+
 def _diff_document_style(
     tab_id: str,
     base_dt: dict[str, Any],
@@ -253,14 +282,16 @@ def _diff_document_style(
     base_style = base_dt.get("documentStyle", {})
     desired_style = desired_dt.get("documentStyle", {})
 
-    if base_style == desired_style:
+    result = _styles_changed(base_style, desired_style, _WRITABLE_DOC_STYLE_FIELDS)
+    if result is None:
         return []
 
+    changed_fields, fields_mask = result
     return [
         UpdateDocumentStyleOp(
             tab_id=tab_id,
-            base_style=base_style,
-            desired_style=desired_style,
+            changed_fields=changed_fields,
+            fields_mask=fields_mask,
         )
     ]
 

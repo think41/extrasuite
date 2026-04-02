@@ -33,6 +33,7 @@ from extradoc.reconcile_v3.model import (
     InsertTableRowOp,
     InsertTabOp,
     UpdateBodyContentOp,
+    UpdateDocumentStyleOp,
     UpdateFootnoteContentOp,
     UpdateNamedStyleOp,
     UpdateTableCellStyleOp,
@@ -2328,3 +2329,92 @@ class TestTableStyleLowering:
         assert isinstance(result, list)
         style_reqs = [r for r in result if "updateTableCellStyle" in r]
         assert len(style_reqs) == 1
+
+
+# ===========================================================================
+# Part 6: DocumentStyle lowering
+# ===========================================================================
+
+
+class TestDocumentStyleLowering:
+    """Tests for UpdateDocumentStyleOp → updateDocumentStyle request."""
+
+    def test_lower_op_produces_correct_request(self) -> None:
+        """UpdateDocumentStyleOp lowers to a correct updateDocumentStyle request."""
+        op = UpdateDocumentStyleOp(
+            tab_id="t1",
+            changed_fields={"marginTop": {"magnitude": 36, "unit": "PT"}},
+            fields_mask="marginTop",
+        )
+        reqs = lower_ops([op])
+        assert len(reqs) == 1
+        req = reqs[0]
+        assert "updateDocumentStyle" in req
+        body = req["updateDocumentStyle"]
+        assert body["documentStyle"] == {"marginTop": {"magnitude": 36, "unit": "PT"}}
+        assert body["fields"] == "marginTop"
+        assert body["tabId"] == "t1"
+
+    def test_lower_op_fields_mask_is_correct(self) -> None:
+        """fields_mask is passed through verbatim."""
+        op = UpdateDocumentStyleOp(
+            tab_id="t1",
+            changed_fields={
+                "marginTop": {"magnitude": 72, "unit": "PT"},
+                "pageNumberStart": 2,
+            },
+            fields_mask="marginTop,pageNumberStart",
+        )
+        reqs = lower_ops([op])
+        assert len(reqs) == 1
+        body = reqs[0]["updateDocumentStyle"]
+        assert body["fields"] == "marginTop,pageNumberStart"
+
+    def test_lower_op_legacy_tab_no_tab_id_in_request(self) -> None:
+        """Legacy pseudo-tabs (empty tab_id) omit tabId from the request."""
+        op = UpdateDocumentStyleOp(
+            tab_id="",
+            changed_fields={"pageNumberStart": 3},
+            fields_mask="pageNumberStart",
+        )
+        reqs = lower_ops([op])
+        assert len(reqs) == 1
+        body = reqs[0]["updateDocumentStyle"]
+        assert "tabId" not in body
+
+    def test_end_to_end_changed_margins(self) -> None:
+        """End-to-end: document with changed margins reconciles without error."""
+        base_style: dict[str, Any] = {
+            "marginTop": {"magnitude": 72, "unit": "PT"},
+            "marginBottom": {"magnitude": 72, "unit": "PT"},
+        }
+        desired_style: dict[str, Any] = {
+            "marginTop": {"magnitude": 36, "unit": "PT"},
+            "marginBottom": {"magnitude": 36, "unit": "PT"},
+        }
+        base = make_document(
+            tabs=[
+                make_tab(
+                    "t1",
+                    body_content=[make_indexed_para("Hello\n", 1)],
+                    document_style=base_style,
+                )
+            ]
+        )
+        desired = make_document(
+            tabs=[
+                make_tab(
+                    "t1",
+                    body_content=[make_indexed_para("Hello\n", 1)],
+                    document_style=desired_style,
+                )
+            ]
+        )
+        result = reconcile(base, desired)
+        assert isinstance(result, list)
+        style_reqs = [r for r in result if "updateDocumentStyle" in r]
+        assert len(style_reqs) == 1
+        body = style_reqs[0]["updateDocumentStyle"]
+        assert body["documentStyle"]["marginTop"] == {"magnitude": 36, "unit": "PT"}
+        assert body["documentStyle"]["marginBottom"] == {"magnitude": 36, "unit": "PT"}
+        assert set(body["fields"].split(",")) == {"marginTop", "marginBottom"}

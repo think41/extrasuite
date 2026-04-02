@@ -167,7 +167,7 @@ class TestDocumentStyle:
         assert ops == []
 
     def test_changed_style_emits_op(self) -> None:
-        """Changed DocumentStyle → UpdateDocumentStyleOp (lowering unsupported)."""
+        """Changed DocumentStyle → UpdateDocumentStyleOp with correct fields."""
         base_style = {"pageSize": {"width": {"magnitude": 612, "unit": "PT"}}}
         desired_style = {"pageSize": {"width": {"magnitude": 792, "unit": "PT"}}}
         base = make_document(tabs=[make_tab("t1", document_style=base_style)])
@@ -176,20 +176,94 @@ class TestDocumentStyle:
         style_ops = [op for op in ops if isinstance(op, UpdateDocumentStyleOp)]
         assert len(style_ops) == 1
         assert style_ops[0].tab_id == "t1"
-        assert style_ops[0].base_style == base_style
-        assert style_ops[0].desired_style == desired_style
+        assert style_ops[0].changed_fields == {
+            "pageSize": {"width": {"magnitude": 792, "unit": "PT"}}
+        }
+        assert style_ops[0].fields_mask == "pageSize"
 
-    def test_changed_style_lowering_raises(self) -> None:
-        """Lowering an UpdateDocumentStyleOp raises NotImplementedError."""
-        from extradoc.reconcile_v3.lower import lower_ops
 
+class TestDocumentStyleDiff:
+    """Precise tests for the _diff_document_style logic."""
+
+    def test_identical_style_no_op(self) -> None:
+        style = {
+            "marginTop": {"magnitude": 72, "unit": "PT"},
+            "pageSize": {"width": {"magnitude": 612, "unit": "PT"}},
+        }
+        base = make_document(tabs=[make_tab("t1", document_style=style)])
+        desired = make_document(
+            tabs=[make_tab("t1", document_style=copy.deepcopy(style))]
+        )
+        ops = diff(base, desired)
+        assert not any(isinstance(op, UpdateDocumentStyleOp) for op in ops)
+
+    def test_margin_changed(self) -> None:
+        base_style = {"marginTop": {"magnitude": 72, "unit": "PT"}}
+        desired_style = {"marginTop": {"magnitude": 36, "unit": "PT"}}
+        base = make_document(tabs=[make_tab("t1", document_style=base_style)])
+        desired = make_document(tabs=[make_tab("t1", document_style=desired_style)])
+        ops = diff(base, desired)
+        style_ops = [op for op in ops if isinstance(op, UpdateDocumentStyleOp)]
+        assert len(style_ops) == 1
+        op = style_ops[0]
+        assert op.changed_fields == {"marginTop": {"magnitude": 36, "unit": "PT"}}
+        assert op.fields_mask == "marginTop"
+
+    def test_page_size_changed(self) -> None:
         base_style = {"pageSize": {"width": {"magnitude": 612, "unit": "PT"}}}
         desired_style = {"pageSize": {"width": {"magnitude": 792, "unit": "PT"}}}
         base = make_document(tabs=[make_tab("t1", document_style=base_style)])
         desired = make_document(tabs=[make_tab("t1", document_style=desired_style)])
         ops = diff(base, desired)
-        with pytest.raises(NotImplementedError, match="UpdateDocumentStyleOp"):
-            lower_ops(ops)
+        style_ops = [op for op in ops if isinstance(op, UpdateDocumentStyleOp)]
+        assert len(style_ops) == 1
+        op = style_ops[0]
+        assert "pageSize" in op.fields_mask
+        assert op.changed_fields["pageSize"] == {
+            "width": {"magnitude": 792, "unit": "PT"}
+        }
+
+    def test_background_changed(self) -> None:
+        base_style: dict[str, Any] = {}
+        desired_style = {"background": {"color": {"color": {"rgbColor": {"red": 1.0}}}}}
+        base = make_document(tabs=[make_tab("t1", document_style=base_style)])
+        desired = make_document(tabs=[make_tab("t1", document_style=desired_style)])
+        ops = diff(base, desired)
+        style_ops = [op for op in ops if isinstance(op, UpdateDocumentStyleOp)]
+        assert len(style_ops) == 1
+        op = style_ops[0]
+        assert op.fields_mask == "background"
+        assert "background" in op.changed_fields
+
+    def test_header_footer_id_only_change_no_op(self) -> None:
+        """Header/footer ID changes are structural — no UpdateDocumentStyleOp."""
+        base_style: dict[str, Any] = {}
+        desired_style = {"defaultHeaderId": "h1", "defaultFooterId": "f1"}
+        base = make_document(tabs=[make_tab("t1", document_style=base_style)])
+        desired = make_document(tabs=[make_tab("t1", document_style=desired_style)])
+        ops = diff(base, desired)
+        style_ops = [op for op in ops if isinstance(op, UpdateDocumentStyleOp)]
+        assert len(style_ops) == 0
+
+    def test_multiple_fields_changed_single_op(self) -> None:
+        base_style: dict[str, Any] = {}
+        desired_style = {
+            "marginTop": {"magnitude": 72, "unit": "PT"},
+            "marginBottom": {"magnitude": 72, "unit": "PT"},
+            "pageNumberStart": 2,
+        }
+        base = make_document(tabs=[make_tab("t1", document_style=base_style)])
+        desired = make_document(tabs=[make_tab("t1", document_style=desired_style)])
+        ops = diff(base, desired)
+        style_ops = [op for op in ops if isinstance(op, UpdateDocumentStyleOp)]
+        assert len(style_ops) == 1
+        op = style_ops[0]
+        assert set(op.fields_mask.split(",")) == {
+            "marginTop",
+            "marginBottom",
+            "pageNumberStart",
+        }
+        assert op.changed_fields["pageNumberStart"] == 2
 
 
 # ===========================================================================

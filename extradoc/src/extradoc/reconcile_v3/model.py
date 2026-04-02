@@ -49,15 +49,19 @@ class DeleteTabOp:
 
 @dataclass
 class UpdateDocumentStyleOp:
-    """DocumentStyle changed between base and desired.
+    """Writable DocumentStyle fields changed between base and desired.
 
-    Not yet implementable via batchUpdate — lowering raises NotImplementedError.
-    Detected and reported so callers know a change exists.
+    Only carries the fields that actually changed (header/footer ID fields are
+    excluded — those are managed structurally by header/footer ops).
+
+    ``changed_fields`` is a dict of field_name → desired_value for every field
+    that differs.  ``fields_mask`` is the comma-separated field-mask string
+    required by the Google Docs ``updateDocumentStyle`` request.
     """
 
     tab_id: str
-    base_style: dict[str, Any]
-    desired_style: dict[str, Any]
+    changed_fields: dict[str, Any]
+    fields_mask: str
 
 
 # ---------------------------------------------------------------------------
