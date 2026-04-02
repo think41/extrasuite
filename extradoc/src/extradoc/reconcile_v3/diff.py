@@ -281,6 +281,11 @@ def _diff_document_style(
     base_dt: dict[str, Any],
     desired_dt: dict[str, Any],
 ) -> list[ReconcileOp]:
+    # If the desired document has no "documentStyle" key (e.g. markdown
+    # format does not model document style), leave the existing style
+    # untouched.
+    if "documentStyle" not in desired_dt:
+        return []
     base_style = base_dt.get("documentStyle", {})
     desired_style = desired_dt.get("documentStyle", {})
 
@@ -309,6 +314,10 @@ def _diff_named_styles(
     desired_dt: dict[str, Any],
 ) -> list[ReconcileOp]:
     base_styles = base_dt.get("namedStyles", {}).get("styles", [])
+    # When the desired document has no "namedStyles" key at all (e.g. the
+    # markdown format does not model named styles), treat it as "preserve
+    # whatever the base has" — neither update nor delete anything.
+    desired_named_styles_present = "namedStyles" in desired_dt
     desired_styles = desired_dt.get("namedStyles", {}).get("styles", [])
 
     base_by_type: dict[str, dict[str, Any]] = {
@@ -319,6 +328,10 @@ def _diff_named_styles(
     }
 
     ops: list[ReconcileOp] = []
+
+    if not desired_named_styles_present:
+        # Format doesn't model named styles — leave them untouched.
+        return ops
 
     # Updated or added
     for style_type, d_style in desired_by_type.items():
