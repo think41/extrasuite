@@ -313,7 +313,7 @@ def lower_batches(
                 )
 
             # ---------------------------------------------------------------- #
-            # InlineObjects — unsupported
+            # InlineObjects
             # ---------------------------------------------------------------- #
             case UpdateInlineObjectOp():
                 raise NotImplementedError(
@@ -323,17 +323,30 @@ def lower_batches(
                 )
 
             case InsertInlineObjectOp():
-                raise NotImplementedError(
-                    f"lowering for InsertInlineObjectOp not supported — "
-                    f"inline object insertion is not yet implemented. "
-                    f"(tab_id={op.tab_id!r}, inline_object_id={op.inline_object_id!r})"
-                )
+                # Insert an inline image via insertInlineImage → batch 1
+                insert_req: dict[str, Any] = {
+                    "insertInlineImage": {
+                        "uri": op.content_uri,
+                        "location": {
+                            "index": op.insert_index,
+                            "segmentId": op.tab_id,
+                        },
+                    }
+                }
+                if op.object_size is not None:
+                    insert_req["insertInlineImage"]["objectSize"] = op.object_size
+                batch1.append(insert_req)
 
             case DeleteInlineObjectOp():
-                raise NotImplementedError(
-                    f"lowering for DeleteInlineObjectOp not supported — "
-                    f"inline object deletion is not yet implemented. "
-                    f"(tab_id={op.tab_id!r}, inline_object_id={op.inline_object_id!r})"
+                # Delete the inlineObjectElement (occupies exactly 1 character)
+                # via deleteContentRange → batch 1
+                batch1.append(
+                    _make_delete_content_range(
+                        start_index=op.delete_index,
+                        end_index=op.delete_index + 1,
+                        tab_id=op.tab_id,
+                        segment_id=None,
+                    )
                 )
 
             # ---------------------------------------------------------------- #

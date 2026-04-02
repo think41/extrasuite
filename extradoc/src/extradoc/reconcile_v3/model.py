@@ -153,20 +153,62 @@ class UpdateInlineObjectOp:
 
 @dataclass
 class InsertInlineObjectOp:
-    """An inline object present in desired is absent in base."""
+    """Insert an inline image into a paragraph.
+
+    Emitted when an ``inlineObjectElement`` appears in the desired paragraph
+    but not in the base paragraph.  The image is inserted via
+    ``insertInlineImage`` at ``insert_index`` in the flat document space.
+
+    Fields
+    ------
+    tab_id:
+        Target tab (empty string for legacy single-tab documents).
+    inline_object_id:
+        The ``inlineObjectId`` key from the desired document's
+        ``inlineObjects`` map.
+    content_uri:
+        The ``imageProperties.contentUri`` from the desired inline object —
+        this is the URL passed to ``insertInlineImage``.
+    insert_index:
+        The character position in the flat document space where the image
+        element should be inserted.
+    object_size:
+        Optional ``embeddedObject.size`` dict (contains ``width`` and
+        ``height`` Dimension dicts).  Passed as ``objectSize`` to
+        ``insertInlineImage`` when present.
+    """
 
     tab_id: str
     inline_object_id: str
-    desired_obj: dict[str, Any]
+    content_uri: str
+    insert_index: int
+    object_size: dict[str, Any] | None = None
 
 
 @dataclass
 class DeleteInlineObjectOp:
-    """An inline object present in base is absent in desired."""
+    """Delete an inline image from a paragraph.
+
+    Emitted when an ``inlineObjectElement`` appears in the base paragraph but
+    not in the desired paragraph.  Deletion is done via ``deleteContentRange``
+    on the single character occupied by the element.
+
+    Fields
+    ------
+    tab_id:
+        Target tab (empty string for legacy single-tab documents).
+    inline_object_id:
+        The ``inlineObjectId`` key from the base document's ``inlineObjects``
+        map.
+    delete_index:
+        The ``startIndex`` of the ``inlineObjectElement`` in the base
+        document.  The element occupies exactly 1 character, so the range
+        ``[delete_index, delete_index + 1)`` is deleted.
+    """
 
     tab_id: str
     inline_object_id: str
-    base_obj: dict[str, Any]
+    delete_index: int
 
 
 # ---------------------------------------------------------------------------

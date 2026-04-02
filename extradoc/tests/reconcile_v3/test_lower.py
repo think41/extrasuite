@@ -15,7 +15,7 @@ elements to simulate real Google Docs API responses and enable index arithmetic.
 from __future__ import annotations
 
 import copy
-from typing import Any
+from typing import Any, ClassVar
 
 import pytest
 
@@ -24,10 +24,12 @@ from extradoc.reconcile_v3.lower import lower_batches, lower_ops
 from extradoc.reconcile_v3.model import (
     DeleteFootnoteOp,
     DeleteHeaderOp,
+    DeleteInlineObjectOp,
     DeleteTableColumnOp,
     DeleteTableRowOp,
     DeleteTabOp,
     InsertFootnoteOp,
+    InsertInlineObjectOp,
     InsertNamedStyleOp,
     InsertTableColumnOp,
     InsertTableRowOp,
@@ -35,6 +37,7 @@ from extradoc.reconcile_v3.model import (
     UpdateBodyContentOp,
     UpdateDocumentStyleOp,
     UpdateFootnoteContentOp,
+    UpdateInlineObjectOp,
     UpdateNamedStyleOp,
     UpdateTableCellStyleOp,
     UpdateTableColumnPropertiesOp,
@@ -2418,3 +2421,166 @@ class TestDocumentStyleLowering:
         assert body["documentStyle"]["marginTop"] == {"magnitude": 36, "unit": "PT"}
         assert body["documentStyle"]["marginBottom"] == {"magnitude": 36, "unit": "PT"}
         assert set(body["fields"].split(",")) == {"marginTop", "marginBottom"}
+
+
+# ===========================================================================
+# Part 6: Inline image insert/delete lowering
+# ===========================================================================
+
+
+class TestInlineImageLowering:
+    """Tests for lowering InsertInlineObjectOp and DeleteInlineObjectOp."""
+
+    _content_uri = "https://lh3.googleusercontent.com/img123"
+    _object_size: ClassVar[dict[str, Any]] = {
+        "width": {"magnitude": 200, "unit": "PT"},
+        "height": {"magnitude": 150, "unit": "PT"},
+    }
+
+    def test_insert_inline_object_request_shape(self) -> None:
+        """InsertInlineObjectOp → insertInlineImage with correct fields."""
+        op = InsertInlineObjectOp(
+            tab_id="t1",
+            inline_object_id="kix.abc",
+            content_uri=self._content_uri,
+            insert_index=5,
+            object_size=self._object_size,
+        )
+        batches = lower_batches([op])
+        # Should appear in batch 1 (content ops)
+        assert len(batches) == 1
+        reqs = batches[0]
+        assert len(reqs) == 1
+        req = reqs[0]
+        assert "insertInlineImage" in req
+        body = req["insertInlineImage"]
+        assert body["uri"] == self._content_uri
+        assert body["location"]["index"] == 5
+        assert body["location"]["segmentId"] == "t1"
+        assert body["objectSize"] == self._object_size
+
+    def test_insert_inline_object_without_size(self) -> None:
+        """InsertInlineObjectOp without object_size → no objectSize field."""
+        op = InsertInlineObjectOp(
+            tab_id="t1",
+            inline_object_id="kix.abc",
+            content_uri=self._content_uri,
+            insert_index=3,
+            object_size=None,
+        )
+        batches = lower_batches([op])
+        assert len(batches) == 1
+        req = batches[0][0]
+        assert "objectSize" not in req["insertInlineImage"]
+
+    def test_delete_inline_object_request_shape(self) -> None:
+        """DeleteInlineObjectOp → deleteContentRange of 1 character."""
+        op = DeleteInlineObjectOp(
+            tab_id="t1",
+            inline_object_id="kix.old",
+            delete_index=7,
+        )
+        batches = lower_batches([op])
+        assert len(batches) == 1
+        reqs = batches[0]
+        assert len(reqs) == 1
+        req = reqs[0]
+        assert "deleteContentRange" in req
+        rng = req["deleteContentRange"]["range"]
+        assert rng["startIndex"] == 7
+        assert rng["endIndex"] == 8  # exactly 1 character
+        assert rng["tabId"] == "t1"
+
+    def test_insert_and_delete_both_go_to_batch_1(self) -> None:
+        """Both insert and delete ops land in the same batch (batch 1)."""
+        insert_op = InsertInlineObjectOp(
+            tab_id="t1",
+            inline_object_id="kix.new",
+            content_uri=self._content_uri,
+            insert_index=2,
+        )
+        delete_op = DeleteInlineObjectOp(
+            tab_id="t1",
+            inline_object_id="kix.old",
+            delete_index=10,
+        )
+        batches = lower_batches([insert_op, delete_op])
+        assert len(batches) == 1  # only batch 1, no batch 0
+        reqs = batches[0]
+        assert len(reqs) == 2
+        assert "insertInlineImage" in reqs[0]
+        assert "deleteContentRange" in reqs[1]
+
+    def test_update_inline_object_raises(self) -> None:
+        """UpdateInlineObjectOp raises NotImplementedError (API limitation)."""
+        import pytest
+
+        op = UpdateInlineObjectOp(
+            tab_id="t1",
+            inline_object_id="kix.existing",
+            base_obj={},
+            desired_obj={"changed": True},
+        )
+        with pytest.raises(NotImplementedError, match="batchUpdate"):
+            lower_batches([op])
+
+    def test_end_to_end_reconcile_with_image_added(self) -> None:
+        """End-to-end: reconcile() on a document where a matched paragraph gains an image."""
+        from tests.reconcile_v3.test_diff import _make_inline_object
+
+        obj_id = "kix.e2e"
+        content_uri = "https://lh3.googleusercontent.com/e2e"
+        obj = _make_inline_object(obj_id, content_uri)
+
+        # Base: paragraph "Hello\n" + terminal
+        base = make_document(
+            tabs=[
+                make_tab(
+                    "t1",
+                    body_content=[
+                        make_indexed_para("Hello\n", 1),
+                        make_indexed_terminal(7),
+                    ],
+                    inline_objects={},
+                )
+            ]
+        )
+
+        # Desired: same paragraph but now with an image element prepended
+        desired_para: dict[str, Any] = {
+            "startIndex": 1,
+            "endIndex": 8,
+            "paragraph": {
+                "elements": [
+                    {
+                        "startIndex": 1,
+                        "endIndex": 2,
+                        "inlineObjectElement": {
+                            "inlineObjectId": obj_id,
+                            "textStyle": {},
+                        },
+                    },
+                    {
+                        "startIndex": 2,
+                        "endIndex": 8,
+                        "textRun": {"content": "Hello\n", "textStyle": {}},
+                    },
+                ],
+                "paragraphStyle": {"namedStyleType": "NORMAL_TEXT"},
+            },
+        }
+        desired = make_document(
+            tabs=[
+                make_tab(
+                    "t1",
+                    body_content=[desired_para, make_indexed_terminal(8)],
+                    inline_objects={obj_id: obj},
+                )
+            ]
+        )
+
+        result = reconcile(base, desired)
+        assert isinstance(result, list)
+        insert_reqs = [r for r in result if "insertInlineImage" in r]
+        assert len(insert_reqs) == 1
+        assert insert_reqs[0]["insertInlineImage"]["uri"] == content_uri

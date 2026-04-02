@@ -34,10 +34,12 @@ from extradoc.reconcile_v3.model import (
     DeleteFooterOp,
     DeleteFootnoteOp,
     DeleteHeaderOp,
+    DeleteInlineObjectOp,
     DeleteListOp,
     DeleteNamedStyleOp,
     DeleteTabOp,
     InsertFootnoteOp,
+    InsertInlineObjectOp,
     InsertListOp,
     InsertNamedStyleOp,
     InsertTabOp,
@@ -670,12 +672,16 @@ def _diff_body(
     if b_content == d_content:
         return []
 
+    desired_inline_objects: dict[str, Any] = desired_dt.get("inlineObjects", {}) or {}
+    base_inline_objects: dict[str, Any] = base_dt.get("inlineObjects", {}) or {}
     alignment = _align_content_sequence(b_content, d_content)
     child_ops = _diff_table_cells_in_alignment(
         tab_id=tab_id,
         alignment=alignment,
         base_content=b_content,
         desired_content=d_content,
+        desired_inline_objects=desired_inline_objects,
+        base_inline_objects=base_inline_objects,
     )
 
     # Emit body op first, then all table-cell child ops flat at the top level.
@@ -700,9 +706,13 @@ def _diff_table_cells_in_alignment(
     alignment: ContentAlignment,
     base_content: list[dict[str, Any]],
     desired_content: list[dict[str, Any]],
+    desired_inline_objects: dict[str, Any] | None = None,
+    base_inline_objects: dict[str, Any] | None = None,
 ) -> list[ReconcileOp]:
-    """For matched table pairs, recurse into table cells."""
+    """For matched element pairs, recurse into table cells and check inline images."""
     ops: list[ReconcileOp] = []
+    _desired_objs = desired_inline_objects or {}
+    _base_objs = base_inline_objects or {}
     for match in alignment.matches:
         b_el = base_content[match.base_idx]
         d_el = desired_content[match.desired_idx]
@@ -716,8 +726,106 @@ def _diff_table_cells_in_alignment(
                     desired_table=d_el["table"],
                     table_label=f"body_table_{match.base_idx}",
                     table_start_index=table_start_index,
+                    desired_inline_objects=_desired_objs,
+                    base_inline_objects=_base_objs,
                 )
             )
+        elif "paragraph" in b_el and "paragraph" in d_el:
+            ops.extend(
+                _diff_paragraph_inline_images(
+                    tab_id=tab_id,
+                    base_para=b_el["paragraph"],
+                    desired_para=d_el["paragraph"],
+                    desired_inline_objects=_desired_objs,
+                    base_inline_objects=_base_objs,
+                )
+            )
+    return ops
+
+
+def _diff_paragraph_inline_images(
+    tab_id: str,
+    base_para: dict[str, Any],
+    desired_para: dict[str, Any],
+    desired_inline_objects: dict[str, Any],
+    base_inline_objects: dict[str, Any],  # noqa: ARG001 — reserved for future use
+) -> list[ReconcileOp]:
+    """Detect inline images added or removed in a matched paragraph pair.
+
+    Walks the ``elements`` arrays of both paragraphs and compares
+    ``inlineObjectElement`` entries.  When an image appears in the desired
+    paragraph but not in the base, emits ``InsertInlineObjectOp``.  When an
+    image appears in the base but not in the desired, emits
+    ``DeleteInlineObjectOp``.
+
+    Only the simple add/remove case is handled.  Reordering images within a
+    paragraph is not supported in this implementation.
+    """
+    ops: list[ReconcileOp] = []
+
+    base_elements = base_para.get("elements", [])
+    desired_elements = desired_para.get("elements", [])
+
+    # Collect inlineObjectIds present in each paragraph
+    base_image_ids: set[str] = set()
+    for pe in base_elements:
+        ioe = pe.get("inlineObjectElement")
+        if ioe is not None:
+            obj_id = ioe.get("inlineObjectId")
+            if obj_id:
+                base_image_ids.add(obj_id)
+
+    desired_image_ids: set[str] = set()
+    # Also build a map from id → element for index lookup
+    desired_image_elements: dict[str, dict[str, Any]] = {}
+    for pe in desired_elements:
+        ioe = pe.get("inlineObjectElement")
+        if ioe is not None:
+            obj_id = ioe.get("inlineObjectId")
+            if obj_id:
+                desired_image_ids.add(obj_id)
+                desired_image_elements[obj_id] = pe
+
+    # Images added: present in desired but not in base
+    for obj_id in desired_image_ids - base_image_ids:
+        inline_obj = desired_inline_objects.get(obj_id, {})
+        props = inline_obj.get("inlineObjectProperties", {})
+        embedded = props.get("embeddedObject", {})
+        image_props = embedded.get("imageProperties", {})
+        content_uri: str = image_props.get("contentUri", "")
+        object_size: dict[str, Any] | None = embedded.get("size") or None
+
+        # Get the insert_index from the desired paragraph element
+        pe = desired_image_elements[obj_id]
+        insert_index: int = pe.get("startIndex", 0)
+
+        ops.append(
+            InsertInlineObjectOp(
+                tab_id=tab_id,
+                inline_object_id=obj_id,
+                content_uri=content_uri,
+                insert_index=insert_index,
+                object_size=object_size,
+            )
+        )
+
+    # Images deleted: present in base but not in desired
+    for pe in base_elements:
+        ioe = pe.get("inlineObjectElement")
+        if ioe is None:
+            continue
+        obj_id = ioe.get("inlineObjectId")
+        if not obj_id or obj_id in desired_image_ids:
+            continue
+        delete_index: int = pe.get("startIndex", 0)
+        ops.append(
+            DeleteInlineObjectOp(
+                tab_id=tab_id,
+                inline_object_id=obj_id,
+                delete_index=delete_index,
+            )
+        )
+
     return ops
 
 
@@ -749,9 +857,13 @@ def _diff_table(
     desired_table: dict[str, Any],
     table_label: str,
     table_start_index: int = 0,
+    desired_inline_objects: dict[str, Any] | None = None,
+    base_inline_objects: dict[str, Any] | None = None,
 ) -> list[ReconcileOp]:
     """Diff two matched tables: emit structural row/column ops + cell content ops."""
     ops: list[ReconcileOp] = []
+    _desired_objs = desired_inline_objects or {}
+    _base_objs = base_inline_objects or {}
 
     # Phase 1: Structural ops (row/column inserts and deletes)
     structural_ops = _diff_tables_structural(
@@ -787,6 +899,8 @@ def _diff_table(
                     alignment=alignment,
                     base_content=b_content,
                     desired_content=d_content,
+                    desired_inline_objects=_desired_objs,
+                    base_inline_objects=_base_objs,
                 )
                 ops.append(
                     UpdateBodyContentOp(

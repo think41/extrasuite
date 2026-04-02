@@ -27,12 +27,14 @@ from extradoc.reconcile_v3.model import (
     DeleteFooterOp,
     DeleteFootnoteOp,
     DeleteHeaderOp,
+    DeleteInlineObjectOp,
     DeleteListOp,
     DeleteNamedStyleOp,
     DeleteTableColumnOp,
     DeleteTableRowOp,
     DeleteTabOp,
     InsertFootnoteOp,
+    InsertInlineObjectOp,
     InsertListOp,
     InsertNamedStyleOp,
     InsertTableColumnOp,
@@ -1377,3 +1379,374 @@ class TestTableStyleDiff:
         cell_style_ops = [op for op in ops if isinstance(op, UpdateTableCellStyleOp)]
         assert len(insert_row_ops) >= 1
         assert len(cell_style_ops) == 1
+
+
+# ===========================================================================
+# Part 10: Inline image insert/delete
+# ===========================================================================
+
+
+def _make_inline_object(obj_id: str, content_uri: str) -> dict[str, Any]:  # noqa: ARG001
+    """Build a minimal inlineObjects map entry for an image."""
+    return {
+        "inlineObjectProperties": {
+            "embeddedObject": {
+                "imageProperties": {
+                    "contentUri": content_uri,
+                    "sourceUri": content_uri,
+                },
+                "size": {
+                    "width": {"magnitude": 100, "unit": "PT"},
+                    "height": {"magnitude": 80, "unit": "PT"},
+                },
+            }
+        }
+    }
+
+
+def _make_para_with_image(
+    obj_id: str,
+    image_start: int = 1,
+) -> dict[str, Any]:
+    """Build a paragraph content element containing an inlineObjectElement."""
+    return {
+        "startIndex": image_start,
+        "endIndex": image_start + 2,  # image (1 char) + trailing \n (1 char)
+        "paragraph": {
+            "elements": [
+                {
+                    "startIndex": image_start,
+                    "endIndex": image_start + 1,
+                    "inlineObjectElement": {
+                        "inlineObjectId": obj_id,
+                        "textStyle": {},
+                    },
+                },
+                {
+                    "startIndex": image_start + 1,
+                    "endIndex": image_start + 2,
+                    "textRun": {"content": "\n", "textStyle": {}},
+                },
+            ],
+            "paragraphStyle": {"namedStyleType": "NORMAL_TEXT"},
+        },
+    }
+
+
+class TestInlineImageDiff:
+    """Tests for inline image insert/delete detection in diff."""
+
+    def test_identical_paragraph_with_image_no_ops(self) -> None:
+        """Same inlineObjectId in both base and desired → no inline image ops."""
+        obj_id = "kix.abc"
+        obj = _make_inline_object(obj_id, "https://example.com/img.png")
+        para = _make_para_with_image(obj_id, image_start=1)
+        terminal = make_terminal_para()
+
+        doc = make_document(
+            tabs=[
+                make_tab(
+                    "t1",
+                    body_content=[para, terminal],
+                    inline_objects={obj_id: obj},
+                )
+            ]
+        )
+        import copy
+
+        ops = diff(doc, copy.deepcopy(doc))
+        insert_ops = [op for op in ops if isinstance(op, InsertInlineObjectOp)]
+        delete_ops = [op for op in ops if isinstance(op, DeleteInlineObjectOp)]
+        assert insert_ops == []
+        assert delete_ops == []
+
+    def test_image_added_to_paragraph(self) -> None:
+        """Desired paragraph gains an inlineObjectElement absent in base → InsertInlineObjectOp.
+
+        Base: paragraph with text "Hello\\n" only.
+        Desired: same paragraph but now also has an inlineObjectElement prepended.
+        The two paragraphs are matched by content alignment; the new image is detected.
+        """
+        obj_id = "kix.new"
+        content_uri = "https://lh3.googleusercontent.com/new"
+        obj = _make_inline_object(obj_id, content_uri)
+
+        # Base paragraph: text only
+        base_para: dict[str, Any] = {
+            "startIndex": 1,
+            "endIndex": 7,
+            "paragraph": {
+                "elements": [
+                    {
+                        "startIndex": 1,
+                        "endIndex": 7,
+                        "textRun": {"content": "Hello\n", "textStyle": {}},
+                    }
+                ],
+                "paragraphStyle": {"namedStyleType": "NORMAL_TEXT"},
+            },
+        }
+        terminal_base: dict[str, Any] = {
+            "startIndex": 7,
+            "endIndex": 8,
+            "paragraph": {
+                "elements": [
+                    {"startIndex": 7, "endIndex": 8, "textRun": {"content": "\n"}}
+                ],
+                "paragraphStyle": {"namedStyleType": "NORMAL_TEXT"},
+            },
+        }
+        base = make_document(
+            tabs=[
+                make_tab(
+                    "t1",
+                    body_content=[base_para, terminal_base],
+                    inline_objects={},
+                )
+            ]
+        )
+
+        # Desired paragraph: image + same text "Hello\n"
+        desired_para: dict[str, Any] = {
+            "startIndex": 1,
+            "endIndex": 8,
+            "paragraph": {
+                "elements": [
+                    {
+                        "startIndex": 1,
+                        "endIndex": 2,
+                        "inlineObjectElement": {
+                            "inlineObjectId": obj_id,
+                            "textStyle": {},
+                        },
+                    },
+                    {
+                        "startIndex": 2,
+                        "endIndex": 8,
+                        "textRun": {"content": "Hello\n", "textStyle": {}},
+                    },
+                ],
+                "paragraphStyle": {"namedStyleType": "NORMAL_TEXT"},
+            },
+        }
+        terminal_desired: dict[str, Any] = {
+            "startIndex": 8,
+            "endIndex": 9,
+            "paragraph": {
+                "elements": [
+                    {"startIndex": 8, "endIndex": 9, "textRun": {"content": "\n"}}
+                ],
+                "paragraphStyle": {"namedStyleType": "NORMAL_TEXT"},
+            },
+        }
+        desired = make_document(
+            tabs=[
+                make_tab(
+                    "t1",
+                    body_content=[desired_para, terminal_desired],
+                    inline_objects={obj_id: obj},
+                )
+            ]
+        )
+        ops = diff(base, desired)
+        insert_ops = [op for op in ops if isinstance(op, InsertInlineObjectOp)]
+        assert len(insert_ops) == 1
+        op = insert_ops[0]
+        assert op.inline_object_id == obj_id
+        assert op.content_uri == content_uri
+        assert op.object_size == {
+            "width": {"magnitude": 100, "unit": "PT"},
+            "height": {"magnitude": 80, "unit": "PT"},
+        }
+
+    def test_image_removed_from_paragraph(self) -> None:
+        """Base paragraph has an inlineObjectElement absent in desired → DeleteInlineObjectOp.
+
+        Base: paragraph with image + text "Hello\\n".
+        Desired: same paragraph text "Hello\\n" only (image removed).
+        The paragraphs are matched; the removed image is detected.
+        """
+        obj_id = "kix.old"
+        obj = _make_inline_object(obj_id, "https://lh3.googleusercontent.com/old")
+
+        # Base paragraph: image (at index 1) + text "Hello\n"
+        base_para: dict[str, Any] = {
+            "startIndex": 1,
+            "endIndex": 8,
+            "paragraph": {
+                "elements": [
+                    {
+                        "startIndex": 1,
+                        "endIndex": 2,
+                        "inlineObjectElement": {
+                            "inlineObjectId": obj_id,
+                            "textStyle": {},
+                        },
+                    },
+                    {
+                        "startIndex": 2,
+                        "endIndex": 8,
+                        "textRun": {"content": "Hello\n", "textStyle": {}},
+                    },
+                ],
+                "paragraphStyle": {"namedStyleType": "NORMAL_TEXT"},
+            },
+        }
+        terminal_base: dict[str, Any] = {
+            "startIndex": 8,
+            "endIndex": 9,
+            "paragraph": {
+                "elements": [
+                    {"startIndex": 8, "endIndex": 9, "textRun": {"content": "\n"}}
+                ],
+                "paragraphStyle": {"namedStyleType": "NORMAL_TEXT"},
+            },
+        }
+        base = make_document(
+            tabs=[
+                make_tab(
+                    "t1",
+                    body_content=[base_para, terminal_base],
+                    inline_objects={obj_id: obj},
+                )
+            ]
+        )
+
+        # Desired paragraph: text only "Hello\n" (image removed)
+        desired_para: dict[str, Any] = {
+            "startIndex": 1,
+            "endIndex": 7,
+            "paragraph": {
+                "elements": [
+                    {
+                        "startIndex": 1,
+                        "endIndex": 7,
+                        "textRun": {"content": "Hello\n", "textStyle": {}},
+                    }
+                ],
+                "paragraphStyle": {"namedStyleType": "NORMAL_TEXT"},
+            },
+        }
+        terminal_desired: dict[str, Any] = {
+            "startIndex": 7,
+            "endIndex": 8,
+            "paragraph": {
+                "elements": [
+                    {"startIndex": 7, "endIndex": 8, "textRun": {"content": "\n"}}
+                ],
+                "paragraphStyle": {"namedStyleType": "NORMAL_TEXT"},
+            },
+        }
+        desired = make_document(
+            tabs=[
+                make_tab(
+                    "t1",
+                    body_content=[desired_para, terminal_desired],
+                    inline_objects={},
+                )
+            ]
+        )
+        ops = diff(base, desired)
+        delete_ops = [op for op in ops if isinstance(op, DeleteInlineObjectOp)]
+        assert len(delete_ops) == 1
+        op = delete_ops[0]
+        assert op.inline_object_id == obj_id
+        assert op.delete_index == 1  # startIndex of the inlineObjectElement
+
+    def test_image_added_and_text_matches_in_same_paragraph(self) -> None:
+        """Image added to a matched paragraph → both InsertInlineObjectOp and UpdateBodyContentOp.
+
+        Base: paragraph with text "Hello there\n" only.
+        Desired: same paragraph text "Hello there\n" + an inlineObjectElement.
+        The two paragraphs are matched (same text); the new image is also detected.
+        """
+        obj_id = "kix.added"
+        content_uri = "https://lh3.googleusercontent.com/added"
+        obj = _make_inline_object(obj_id, content_uri)
+
+        # Base: paragraph with text only
+        base_para: dict[str, Any] = {
+            "startIndex": 1,
+            "endIndex": 13,
+            "paragraph": {
+                "elements": [
+                    {
+                        "startIndex": 1,
+                        "endIndex": 13,
+                        "textRun": {"content": "Hello there\n", "textStyle": {}},
+                    }
+                ],
+                "paragraphStyle": {"namedStyleType": "NORMAL_TEXT"},
+            },
+        }
+        terminal_base2: dict[str, Any] = {
+            "startIndex": 13,
+            "endIndex": 14,
+            "paragraph": {
+                "elements": [
+                    {"startIndex": 13, "endIndex": 14, "textRun": {"content": "\n"}}
+                ],
+                "paragraphStyle": {"namedStyleType": "NORMAL_TEXT"},
+            },
+        }
+        base = make_document(
+            tabs=[
+                make_tab(
+                    "t1",
+                    body_content=[base_para, terminal_base2],
+                    inline_objects={},
+                )
+            ]
+        )
+
+        # Desired: same paragraph text but also with an image prepended
+        desired_para: dict[str, Any] = {
+            "startIndex": 1,
+            "endIndex": 14,
+            "paragraph": {
+                "elements": [
+                    {
+                        "startIndex": 1,
+                        "endIndex": 2,
+                        "inlineObjectElement": {
+                            "inlineObjectId": obj_id,
+                            "textStyle": {},
+                        },
+                    },
+                    {
+                        "startIndex": 2,
+                        "endIndex": 14,
+                        "textRun": {"content": "Hello there\n", "textStyle": {}},
+                    },
+                ],
+                "paragraphStyle": {"namedStyleType": "NORMAL_TEXT"},
+            },
+        }
+        terminal_desired: dict[str, Any] = {
+            "startIndex": 14,
+            "endIndex": 15,
+            "paragraph": {
+                "elements": [
+                    {"startIndex": 14, "endIndex": 15, "textRun": {"content": "\n"}}
+                ],
+                "paragraphStyle": {"namedStyleType": "NORMAL_TEXT"},
+            },
+        }
+        desired = make_document(
+            tabs=[
+                make_tab(
+                    "t1",
+                    body_content=[desired_para, terminal_desired],
+                    inline_objects={obj_id: obj},
+                )
+            ]
+        )
+
+        ops = diff(base, desired)
+        insert_ops = [op for op in ops if isinstance(op, InsertInlineObjectOp)]
+        body_ops = [op for op in ops if isinstance(op, UpdateBodyContentOp)]
+        assert len(insert_ops) == 1
+        assert insert_ops[0].inline_object_id == obj_id
+        assert insert_ops[0].content_uri == content_uri
+        # Body content changed too (paragraph now contains an inlineObjectElement)
+        assert len(body_ops) >= 1
