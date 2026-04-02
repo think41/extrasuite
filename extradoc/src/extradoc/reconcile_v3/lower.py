@@ -712,7 +712,9 @@ def _plan_insertions(
         else:
             deleted_sizes[base_idx] = 0
 
-    requests: list[dict[str, Any]] = []
+    # Phase 1: Compute (insert_pos, desired_idx, element_requests) for each insert.
+    # We collect them first so we can reorder within same-position groups.
+    planned: list[tuple[int, int, list[dict[str, Any]]]] = []
 
     for desired_idx in sorted(alignment.desired_inserts):
         # Find the base insertion point: the startIndex of the next surviving
@@ -751,7 +753,32 @@ def _plan_insertions(
             tab_id=tab_id,
             segment_id=segment_id,
         )
-        requests.extend(reqs)
+        planned.append((insert_pos, desired_idx, reqs))
+
+    # Phase 2: Emit requests in the correct order.
+    #
+    # When multiple elements are inserted at the SAME index, Google Docs
+    # processes requests sequentially.  Each insertText(index=X) pushes all
+    # existing content at X upward.  So inserting [A, B, C] all at X gives the
+    # final order [C, B, A] — reversed.
+    #
+    # Fix: within a same-position group, reverse the emission order (emit the
+    # element that should appear LAST first).  Elements with different target
+    # positions are emitted in ascending position order (lower positions first),
+    # which is correct because inserting at a lower position does not affect the
+    # absolute position of a later insert at a higher position.
+    from itertools import groupby
+
+    requests: list[dict[str, Any]] = []
+    # Sort by insert_pos ascending, then within same pos by desired_idx ascending
+    # (groupby requires presorted input on the grouping key)
+    planned.sort(key=lambda t: (t[0], t[1]))
+    for _pos, group_iter in groupby(planned, key=lambda t: t[0]):
+        group = list(group_iter)
+        # Within the group, emit in REVERSE desired_idx order so that the first
+        # desired element ends up first after all same-position inserts land.
+        for _insert_pos, _desired_idx, reqs in reversed(group):
+            requests.extend(reqs)
 
     return requests
 
