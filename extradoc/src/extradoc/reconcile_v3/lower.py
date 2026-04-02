@@ -449,6 +449,7 @@ def lower_batches(
                         desired_content=op.desired_content,
                         tab_id=op.tab_id,
                         segment_id=None,
+                        use_end_of_segment_for_body=op.story_kind == "body",
                     )
                 )
 
@@ -566,6 +567,7 @@ def _lower_story_content_update(
     desired_content: list[dict[str, Any]],
     tab_id: str,
     segment_id: str | None,
+    use_end_of_segment_for_body: bool = False,
 ) -> list[dict[str, Any]]:
     """Lower a ContentAlignment into delete/insert/update request dicts.
 
@@ -645,20 +647,45 @@ def _lower_story_content_update(
             desired_content=desired_content,
             tab_id=tab_id,
             segment_id=segment_id,
+            use_end_of_segment_for_body=use_end_of_segment_for_body,
         )
         requests.extend(insert_requests)
 
     # Handle matched elements whose content differs (text updates).
+    # The update requests must use coordinates that account for whole-element
+    # deletions (base_deletes) applied earlier in this batch.  Compute the
+    # number of characters deleted BEFORE each matched element's startIndex so
+    # we can shift the generated request indices accordingly.
+    deleted_sizes: dict[int, int] = {}
+    for base_idx in alignment.base_deletes:
+        el = base_content[base_idx]
+        start, end = _element_range(el)
+        if start is not None and end is not None:
+            deleted_sizes[base_idx] = end - start
+        else:
+            deleted_sizes[base_idx] = 0
+
     for match in alignment.matches:
         b_el = base_content[match.base_idx]
         d_el = desired_content[match.desired_idx]
         if b_el == d_el:
             continue
+        b_el_start = _element_start(b_el)
+        shift = (
+            _deleted_chars_before(
+                deleted_sizes=deleted_sizes,
+                base_content=base_content,
+                before_pos=b_el_start,
+            )
+            if b_el_start is not None
+            else 0
+        )
         update_reqs = _lower_element_update(
             base_el=b_el,
             desired_el=d_el,
             tab_id=tab_id,
             segment_id=segment_id,
+            pre_delete_shift=shift,
         )
         requests.extend(update_reqs)
 
@@ -672,6 +699,7 @@ def _plan_insertions(
     desired_content: list[dict[str, Any]],
     tab_id: str,
     segment_id: str | None,
+    use_end_of_segment_for_body: bool = False,
 ) -> list[dict[str, Any]]:
     """Plan insertion requests for desired_inserts.
 
@@ -714,7 +742,28 @@ def _plan_insertions(
 
     # Phase 1: Compute (insert_pos, desired_idx, element_requests) for each insert.
     # We collect them first so we can reorder within same-position groups.
+    # insert_pos == -1 is a sentinel meaning "use endOfSegmentLocation" (body end).
+    END_OF_SEGMENT = -1
     planned: list[tuple[int, int, list[dict[str, Any]]]] = []
+
+    # Pre-compute whether the base's terminal paragraph is a synthetic one
+    # (appended by _ensure_base_trailing_paragraph at startIndex ==
+    # second-to-last element's endIndex).  Inserting at this position via an
+    # explicit index fails with "index out of range" because the position
+    # equals the exclusive segment end.  We use endOfSegmentLocation instead.
+    # This only applies to body-level insertions (use_end_of_segment_for_body=True),
+    # NOT to table cell or header/footer insertions where the terminal IS a
+    # valid insertion target within the cell/segment.
+    synthetic_terminal_idx: int | None = None
+    if (
+        use_end_of_segment_for_body
+        and len(base_content) >= 2
+        and _is_terminal_paragraph(base_content[-1])
+    ):
+        prev_end = base_content[-2].get("endIndex")
+        term_start = _element_start(base_content[-1])
+        if prev_end is not None and term_start == prev_end:
+            synthetic_terminal_idx = term_start  # e.g. 157
 
     for desired_idx in sorted(alignment.desired_inserts):
         # Find the base insertion point: the startIndex of the next surviving
@@ -737,6 +786,30 @@ def _plan_insertions(
         if raw_insert_pos is None:
             # No index info — skip
             continue
+
+        # If the computed insertion position is the synthetic terminal's
+        # startIndex, that position equals the exclusive segment end.
+        # For plain paragraph insertions, using an explicit index fails with
+        # "index out of range" — use endOfSegmentLocation instead.
+        # For table/sectionBreak/pageBreak insertions, fall through to the
+        # normal path (these use different API requests and their index
+        # semantics may differ).
+        if raw_insert_pos == synthetic_terminal_idx:
+            d_el = desired_content[desired_idx]
+            if _is_terminal_paragraph(d_el):
+                # Skip re-inserting the synthetic trailing paragraph
+                continue
+            if "paragraph" in d_el and not _is_pagebreak_para(
+                d_el.get("paragraph", {})
+            ):
+                reqs = _lower_element_insert_end_of_segment(
+                    el=d_el,
+                    tab_id=tab_id,
+                    segment_id=segment_id,
+                )
+                planned.append((END_OF_SEGMENT, desired_idx, reqs))
+                continue
+            # For tables, page breaks, section breaks: fall through to index-based insert
 
         # Adjust for characters deleted before this insertion point
         offset = _deleted_chars_before(
@@ -767,18 +840,34 @@ def _plan_insertions(
     # positions are emitted in ascending position order (lower positions first),
     # which is correct because inserting at a lower position does not affect the
     # absolute position of a later insert at a higher position.
+    #
+    # END_OF_SEGMENT (-1) entries use endOfSegmentLocation; they always go last
+    # so that prior index-based insertions don't shift their target.
+    # Within the END_OF_SEGMENT group, emit in ascending desired_idx order
+    # (NOT reversed) because endOfSegmentLocation always appends — each insert
+    # goes to the END of whatever content exists, so the first-emitted element
+    # ends up first.
     from itertools import groupby
 
     requests: list[dict[str, Any]] = []
-    # Sort by insert_pos ascending, then within same pos by desired_idx ascending
-    # (groupby requires presorted input on the grouping key)
-    planned.sort(key=lambda t: (t[0], t[1]))
-    for _pos, group_iter in groupby(planned, key=lambda t: t[0]):
+
+    # Separate end-of-segment entries from position-based entries
+    pos_entries = [(p, d, r) for p, d, r in planned if p != END_OF_SEGMENT]
+    eos_entries = [(p, d, r) for p, d, r in planned if p == END_OF_SEGMENT]
+
+    # Sort position-based entries by insert_pos ascending, then desired_idx ascending
+    pos_entries.sort(key=lambda t: (t[0], t[1]))
+    for _pos, group_iter in groupby(pos_entries, key=lambda t: t[0]):
         group = list(group_iter)
         # Within the group, emit in REVERSE desired_idx order so that the first
         # desired element ends up first after all same-position inserts land.
         for _insert_pos, _desired_idx, reqs in reversed(group):
             requests.extend(reqs)
+
+    # Emit end-of-segment entries in ASCENDING desired_idx order
+    eos_entries.sort(key=lambda t: t[1])
+    for _eos, _desired_idx, reqs in eos_entries:
+        requests.extend(reqs)
 
     return requests
 
@@ -804,12 +893,18 @@ def _lower_element_update(
     desired_el: dict[str, Any],
     tab_id: str,
     segment_id: str | None,
+    pre_delete_shift: int = 0,
 ) -> list[dict[str, Any]]:
     """Lower an in-place element update (matched element, content changed).
 
     For paragraphs: replace text runs.
     For tables: raise NotImplementedError (complex; not yet implemented).
     For structural elements: no-op (cannot change their content).
+
+    ``pre_delete_shift`` is the total number of characters removed by
+    whole-element base_deletes whose startIndex is below this element's
+    startIndex.  All generated request indices are shifted down by this
+    amount to account for the prior deletions.
     """
     if "paragraph" in base_el and "paragraph" in desired_el:
         return _lower_paragraph_update(
@@ -817,6 +912,7 @@ def _lower_element_update(
             desired_el=desired_el,
             tab_id=tab_id,
             segment_id=segment_id,
+            pre_delete_shift=pre_delete_shift,
         )
     elif "table" in base_el and "table" in desired_el:
         # Table cell content updates are emitted as separate UpdateBodyContentOp
@@ -842,6 +938,7 @@ def _lower_paragraph_update(
     desired_el: dict[str, Any],
     tab_id: str,
     segment_id: str | None,
+    pre_delete_shift: int = 0,
 ) -> list[dict[str, Any]]:
     """Replace the text content of a paragraph in place using surgical ops.
 
@@ -862,13 +959,16 @@ def _lower_paragraph_update(
     if start is None or end is None:
         return []
 
+    adjusted_start = start - pre_delete_shift
+    adjusted_end = end - pre_delete_shift
+
     # Always compute run-level diff (handles text changes + text-style changes).
     # For the same-text case this emits only updateTextStyle for changed runs.
     # For the changed-text case this emits delete/insert/updateTextStyle as needed.
     requests = _diff_paragraph_runs(
         base_para=base_para,
         desired_para=desired_para,
-        story_offset=start,
+        story_offset=adjusted_start,
         tab_id=tab_id,
         segment_id=segment_id,
     )
@@ -878,8 +978,8 @@ def _lower_paragraph_update(
     style_reqs = _lower_para_style_update(
         base_para=base_para,
         desired_para=desired_para,
-        start_index=start,
-        end_index=end,
+        start_index=adjusted_start,
+        end_index=adjusted_end,
         tab_id=tab_id,
         segment_id=segment_id,
     )
@@ -1130,10 +1230,19 @@ def _style_update_ops_for_equal_span(
         b_style = _style_at_offset(base_spans, i)
         d_style = _style_at_offset(desired_spans, j)
 
-        # Find next boundary in either base or desired spans
+        # Find next boundary in either base or desired spans.
+        # b_next and d_next are in their respective coordinate spaces
+        # (base: [base_start, base_end), desired: [desired_start, desired_end)).
+        # Advance by the smaller of the two distances so we never overshoot
+        # a span boundary in either sequence.
         b_next = _next_span_boundary(base_spans, i, base_end)
         d_next = _next_span_boundary(desired_spans, j, desired_end)
-        chunk_end = min(b_next, d_next)
+        step = min(b_next - i, d_next - j)
+        if step <= 0:
+            # Defensive guard: should never happen given well-formed spans,
+            # but prevent an infinite loop if spans don't cover the position.
+            break
+        chunk_end = i + step
 
         if not _styles_equal(b_style, d_style):
             abs_start = story_offset + i
@@ -1156,7 +1265,6 @@ def _style_update_ops_for_equal_span(
                     )
                 )
 
-        step = chunk_end - i
         i += step
         j += step
 
@@ -1364,6 +1472,68 @@ def _lower_element_insert(
         raise NotImplementedError(
             f"lowering for insertion of element kind {list(el.keys())!r} not yet implemented"
         )
+
+
+def _lower_element_insert_end_of_segment(
+    *,
+    el: dict[str, Any],
+    tab_id: str,
+    segment_id: str | None,
+) -> list[dict[str, Any]]:
+    """Insert a content element at the end of its body/segment.
+
+    Uses ``endOfSegmentLocation`` to avoid explicit index arithmetic when
+    the target position is the body's terminal newline (which has an index
+    equal to the exclusive end of the segment, making explicit indexing fail).
+
+    Only plain paragraphs are supported.  Tables and section breaks that land
+    at the body end still need the caller to use a different strategy.
+    """
+    if "paragraph" not in el:
+        raise NotImplementedError(
+            f"end-of-segment insertion for element kind {list(el.keys())!r} "
+            "not yet implemented"
+        )
+    para = el.get("paragraph", {})
+    text = _para_text(para)
+    if not text.endswith("\n"):
+        text = text + "\n"
+    # endOfSegmentLocation inserts just before the body's terminal \n, i.e.
+    # inside the last existing paragraph.  Prepend \n so the insertion first
+    # creates a paragraph break and then the new paragraph content follows.
+    text = "\n" + text
+
+    requests: list[dict[str, Any]] = []
+    location: dict[str, Any] = {}
+    if tab_id:
+        location["tabId"] = tab_id
+    if segment_id:
+        location["segmentId"] = segment_id
+
+    requests.append(
+        {
+            "insertText": {
+                "endOfSegmentLocation": location,
+                "text": text,
+            }
+        }
+    )
+
+    # Apply paragraph style at the insertion point.  After endOfSegmentLocation
+    # insert, the new paragraph occupies the LAST position before the terminal.
+    # We don't know the exact index without re-querying the document; skip the
+    # explicit style request.  If the paragraph only carries namedStyleType, the
+    # default (NORMAL_TEXT) is already correct for body-end paragraphs.
+    desired_ps = para.get("paragraphStyle", {})
+    non_normal = {k: v for k, v in desired_ps.items() if k != "namedStyleType"}
+    # Only emit updateParagraphStyle for non-NORMAL_TEXT headings or explicit
+    # non-default fields.  We cannot know the post-insert index, so we skip
+    # the style request for simplicity.  A follow-up re-pull will show the
+    # correct style (which defaults to NORMAL_TEXT for new paragraphs).
+    # TODO: support heading styles at end-of-body inserts by re-querying.
+    _ = non_normal  # suppress unused-variable warning
+
+    return requests
 
 
 def _lower_paragraph_insert(
@@ -1649,10 +1819,21 @@ def _para_text(para: dict[str, Any]) -> str:
 
 
 def _is_terminal_paragraph(el: dict[str, Any]) -> bool:
-    """Return True if el is a paragraph whose only content is a bare newline."""
+    """Return True if el is a paragraph whose only content is a bare newline.
+
+    A page-break paragraph has a 'pageBreak' inline element plus a '\\n' textRun
+    but is NOT a terminal paragraph — it is structural content.  We exclude
+    paragraphs that contain any non-textRun inline elements.
+    """
     if "paragraph" not in el:
         return False
-    text = _para_text(el["paragraph"])
+    para = el["paragraph"]
+    elements = para.get("elements", [])
+    # Reject if any element is not a textRun
+    for pe in elements:
+        if "textRun" not in pe:
+            return False
+    text = _para_text(para)
     return text == "\n"
 
 
