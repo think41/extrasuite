@@ -29,10 +29,14 @@ from extradoc.reconcile_v3.model import (
     DeleteHeaderOp,
     DeleteListOp,
     DeleteNamedStyleOp,
+    DeleteTableColumnOp,
+    DeleteTableRowOp,
     DeleteTabOp,
     InsertFootnoteOp,
     InsertListOp,
     InsertNamedStyleOp,
+    InsertTableColumnOp,
+    InsertTableRowOp,
     InsertTabOp,
     UpdateBodyContentOp,
     UpdateDocumentStyleOp,
@@ -1016,3 +1020,100 @@ class TestAlignmentIntegration:
         assert len(body_ops) == 1
         for idx in body_ops[0].alignment.base_deletes:
             assert 0 <= idx < len(base_content)
+
+
+# ===========================================================================
+# Part 10: Table structural ops
+# ===========================================================================
+
+
+class TestTableStructuralOps:
+    """Tests for row/column insert and delete ops detected by the diff layer."""
+
+    def _make_doc_with_table(self, rows: list[list[str]]) -> dict[str, Any]:
+        """Build a minimal document with a single table."""
+        body = [make_table_el(rows), make_terminal_para()]
+        return make_document(tabs=[make_tab("t1", body_content=body)])
+
+    def test_identical_tables_no_ops(self) -> None:
+        """Identical tables should produce no structural ops."""
+        doc = self._make_doc_with_table([["A", "B"], ["C", "D"]])
+        ops = diff(doc, copy.deepcopy(doc))
+        structural = [
+            op
+            for op in ops
+            if isinstance(
+                op,
+                InsertTableRowOp | DeleteTableRowOp | InsertTableColumnOp | DeleteTableColumnOp,
+            )
+        ]
+        assert structural == []
+
+    def test_row_added(self) -> None:
+        """Base 2-row, desired 3-row → InsertTableRowOp for the new row."""
+        base = self._make_doc_with_table([["A", "B"], ["C", "D"]])
+        desired = self._make_doc_with_table([["A", "B"], ["C", "D"], ["E", "F"]])
+        ops = diff(base, desired)
+        insert_row_ops = [op for op in ops if isinstance(op, InsertTableRowOp)]
+        assert len(insert_row_ops) == 1
+        assert insert_row_ops[0].insert_below is True
+
+    def test_row_deleted(self) -> None:
+        """Base 3-row, desired 2-row → DeleteTableRowOp for the removed row."""
+        base = self._make_doc_with_table([["A", "B"], ["C", "D"], ["E", "F"]])
+        desired = self._make_doc_with_table([["A", "B"], ["E", "F"]])
+        ops = diff(base, desired)
+        delete_row_ops = [op for op in ops if isinstance(op, DeleteTableRowOp)]
+        assert len(delete_row_ops) == 1
+
+    def test_column_added(self) -> None:
+        """Base 2-col, desired 3-col → InsertTableColumnOp."""
+        base = self._make_doc_with_table([["A", "B"], ["C", "D"]])
+        desired = self._make_doc_with_table([["A", "B", "X"], ["C", "D", "Y"]])
+        ops = diff(base, desired)
+        insert_col_ops = [op for op in ops if isinstance(op, InsertTableColumnOp)]
+        assert len(insert_col_ops) == 1
+        assert insert_col_ops[0].insert_right is True
+
+    def test_column_deleted(self) -> None:
+        """Base 3-col, desired 2-col → DeleteTableColumnOp."""
+        base = self._make_doc_with_table([["A", "B", "C"], ["D", "E", "F"]])
+        desired = self._make_doc_with_table([["A", "C"], ["D", "F"]])
+        ops = diff(base, desired)
+        delete_col_ops = [op for op in ops if isinstance(op, DeleteTableColumnOp)]
+        assert len(delete_col_ops) == 1
+
+    def test_row_added_and_cell_content_changed(self) -> None:
+        """Row added AND cell content changed → both InsertTableRowOp and UpdateBodyContentOp."""
+        base = self._make_doc_with_table([["A", "B"], ["C", "D"]])
+        # Change "A" to "A_modified" and add a new row
+        desired = self._make_doc_with_table(
+            [["A_modified", "B"], ["C", "D"], ["E", "F"]]
+        )
+        ops = diff(base, desired)
+        insert_row_ops = [op for op in ops if isinstance(op, InsertTableRowOp)]
+        cell_ops = [
+            op
+            for op in ops
+            if isinstance(op, UpdateBodyContentOp) and op.story_kind == "table_cell"
+        ]
+        assert len(insert_row_ops) >= 1
+        assert len(cell_ops) >= 1
+
+    def test_fuzzy_row_match_insert_middle(self) -> None:
+        """Fuzzy LCS: base has 2 rows, desired has 3 (middle row inserted).
+
+        ["hello", "world"] rows in base; desired adds a new row in the middle.
+        The outer rows should be matched, the middle row emits InsertTableRowOp.
+        """
+        base = self._make_doc_with_table([["hello"], ["world"]])
+        desired = self._make_doc_with_table([["hello"], ["new_row"], ["world"]])
+        ops = diff(base, desired)
+        insert_row_ops = [op for op in ops if isinstance(op, InsertTableRowOp)]
+        delete_row_ops = [op for op in ops if isinstance(op, DeleteTableRowOp)]
+        # Should insert 1 row (the new middle row) and not delete any
+        assert len(insert_row_ops) == 1
+        assert len(delete_row_ops) == 0
+        # The inserted row should be below row 0 (after "hello")
+        assert insert_row_ops[0].row_index == 0
+        assert insert_row_ops[0].insert_below is True

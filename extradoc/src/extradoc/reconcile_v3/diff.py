@@ -51,6 +51,8 @@ from extradoc.reconcile_v3.model import (
     UpdateListOp,
     UpdateNamedStyleOp,
 )
+from extradoc.reconcile_v3.table_diff import diff_tables as _diff_tables_structural
+from extradoc.reconcile_v3.table_diff import get_matched_rows
 
 # ---------------------------------------------------------------------------
 # Public entry point
@@ -671,12 +673,15 @@ def _diff_table_cells_in_alignment(
         b_el = base_content[match.base_idx]
         d_el = desired_content[match.desired_idx]
         if "table" in b_el and "table" in d_el:
+            # Extract the table's startIndex from the base element for lowering
+            table_start_index: int = b_el.get("startIndex", 0)
             ops.extend(
                 _diff_table(
                     tab_id=tab_id,
                     base_table=b_el["table"],
                     desired_table=d_el["table"],
                     table_label=f"body_table_{match.base_idx}",
+                    table_start_index=table_start_index,
                 )
             )
     return ops
@@ -687,25 +692,40 @@ def _diff_table(
     base_table: dict[str, Any],
     desired_table: dict[str, Any],
     table_label: str,
+    table_start_index: int = 0,
 ) -> list[ReconcileOp]:
-    """Diff two matched tables by recursing into each matched cell."""
+    """Diff two matched tables: emit structural row/column ops + cell content ops."""
+    ops: list[ReconcileOp] = []
+
+    # Phase 1: Structural ops (row/column inserts and deletes)
+    structural_ops = _diff_tables_structural(
+        base_table,
+        desired_table,
+        tab_id=tab_id,
+        table_start_index=table_start_index,
+    )
+    ops.extend(structural_ops)
+
+    # Phase 2: Cell content ops for matched rows (fuzzy LCS matching)
+    row_matches = get_matched_rows(base_table, desired_table)
     base_rows = base_table.get("tableRows", [])
     desired_rows = desired_table.get("tableRows", [])
 
-    ops: list[ReconcileOp] = []
-
-    # Simple positional matching for cells within matched rows
-    for row_idx, (b_row, d_row) in enumerate(
-        zip(base_rows, desired_rows, strict=False)
-    ):
+    for base_row_idx, desired_row_idx in row_matches:
+        b_row = base_rows[base_row_idx]
+        d_row = desired_rows[desired_row_idx]
         b_cells = b_row.get("tableCells", [])
         d_cells = d_row.get("tableCells", [])
+        # Only emit cell content ops when row column counts match
+        # (mismatched counts will be fixed by column structural ops in a later pass)
+        if len(b_cells) != len(d_cells):
+            continue
         for col_idx, (b_cell, d_cell) in enumerate(zip(b_cells, d_cells, strict=False)):
             b_content = b_cell.get("content", [])
             d_content = d_cell.get("content", [])
             if b_content == d_content:
                 continue
-            cell_label = f"{table_label}:r{row_idx}:c{col_idx}"
+            cell_label = f"{table_label}:r{base_row_idx}:c{col_idx}"
             alignment = _align_content_sequence(b_content, d_content)
             child_ops = _diff_table_cells_in_alignment(
                 tab_id=tab_id,

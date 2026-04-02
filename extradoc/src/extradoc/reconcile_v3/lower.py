@@ -51,11 +51,15 @@ from extradoc.reconcile_v3.model import (
     DeleteInlineObjectOp,
     DeleteListOp,
     DeleteNamedStyleOp,
+    DeleteTableColumnOp,
+    DeleteTableRowOp,
     DeleteTabOp,
     InsertFootnoteOp,
     InsertInlineObjectOp,
     InsertListOp,
     InsertNamedStyleOp,
+    InsertTableColumnOp,
+    InsertTableRowOp,
     InsertTabOp,
     ReconcileOp,
     UpdateBodyContentOp,
@@ -450,6 +454,47 @@ def lower_batches(
                         desired_content=op.desired_content,
                         tab_id=op.tab_id,
                         segment_id=None,
+                    )
+                )
+
+            # ---------------------------------------------------------------- #
+            # Table structural ops → batch 1
+            # ---------------------------------------------------------------- #
+            case InsertTableRowOp():
+                batch1.append(
+                    _make_insert_table_row(
+                        table_start_index=op.table_start_index,
+                        row_index=op.row_index,
+                        insert_below=op.insert_below,
+                        tab_id=op.tab_id,
+                    )
+                )
+
+            case DeleteTableRowOp():
+                batch1.append(
+                    _make_delete_table_row(
+                        table_start_index=op.table_start_index,
+                        row_index=op.row_index,
+                        tab_id=op.tab_id,
+                    )
+                )
+
+            case InsertTableColumnOp():
+                batch1.append(
+                    _make_insert_table_column(
+                        table_start_index=op.table_start_index,
+                        column_index=op.column_index,
+                        insert_right=op.insert_right,
+                        tab_id=op.tab_id,
+                    )
+                )
+
+            case DeleteTableColumnOp():
+                batch1.append(
+                    _make_delete_table_column(
+                        table_start_index=op.table_start_index,
+                        column_index=op.column_index,
+                        tab_id=op.tab_id,
                     )
                 )
 
@@ -1588,5 +1633,105 @@ def _make_update_section_style_deferred(
                 field_name: deferred_id,
             },
             "fields": field_name,
+        }
+    }
+
+
+# ---------------------------------------------------------------------------
+# Table structural request helpers
+# ---------------------------------------------------------------------------
+
+
+def _table_start_location(
+    *,
+    table_start_index: int,
+    tab_id: str,
+) -> dict[str, Any]:
+    loc: dict[str, Any] = {"index": table_start_index}
+    if tab_id:
+        loc["tabId"] = tab_id
+    return loc
+
+
+def _make_insert_table_row(
+    *,
+    table_start_index: int,
+    row_index: int,
+    insert_below: bool,
+    tab_id: str,
+) -> dict[str, Any]:
+    return {
+        "insertTableRow": {
+            "tableCellLocation": {
+                "tableStartLocation": _table_start_location(
+                    table_start_index=table_start_index,
+                    tab_id=tab_id,
+                ),
+                "rowIndex": row_index,
+                "columnIndex": 0,
+            },
+            "insertBelow": insert_below,
+        }
+    }
+
+
+def _make_delete_table_row(
+    *,
+    table_start_index: int,
+    row_index: int,
+    tab_id: str,
+) -> dict[str, Any]:
+    return {
+        "deleteTableRow": {
+            "tableCellLocation": {
+                "tableStartLocation": _table_start_location(
+                    table_start_index=table_start_index,
+                    tab_id=tab_id,
+                ),
+                "rowIndex": row_index,
+                "columnIndex": 0,
+            }
+        }
+    }
+
+
+def _make_insert_table_column(
+    *,
+    table_start_index: int,
+    column_index: int,
+    insert_right: bool,
+    tab_id: str,
+) -> dict[str, Any]:
+    return {
+        "insertTableColumn": {
+            "tableCellLocation": {
+                "tableStartLocation": _table_start_location(
+                    table_start_index=table_start_index,
+                    tab_id=tab_id,
+                ),
+                "rowIndex": 0,
+                "columnIndex": column_index,
+            },
+            "insertRight": insert_right,
+        }
+    }
+
+
+def _make_delete_table_column(
+    *,
+    table_start_index: int,
+    column_index: int,
+    tab_id: str,
+) -> dict[str, Any]:
+    return {
+        "deleteTableColumn": {
+            "tableCellLocation": {
+                "tableStartLocation": _table_start_location(
+                    table_start_index=table_start_index,
+                    tab_id=tab_id,
+                ),
+                "rowIndex": 0,
+                "columnIndex": column_index,
+            }
         }
     }

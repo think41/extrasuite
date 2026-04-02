@@ -280,6 +280,50 @@ class UpdateFootnoteContentOp:
 
 
 # ---------------------------------------------------------------------------
+# Table structural ops
+# ---------------------------------------------------------------------------
+
+
+@dataclass
+class InsertTableRowOp:
+    """Insert a new row into an existing table."""
+
+    tab_id: str
+    table_start_index: int  # startIndex of the table in the flat doc space
+    row_index: int  # where to insert (0-based, refers to base row)
+    insert_below: bool  # True = insert after row_index, False = insert before
+    column_count: int  # needed to create blank cells
+
+
+@dataclass
+class DeleteTableRowOp:
+    """Delete a row from an existing table."""
+
+    tab_id: str
+    table_start_index: int
+    row_index: int
+
+
+@dataclass
+class InsertTableColumnOp:
+    """Insert a new column into an existing table."""
+
+    tab_id: str
+    table_start_index: int
+    column_index: int  # where to insert (0-based, refers to base column)
+    insert_right: bool  # True = insert after column_index, False = insert before
+
+
+@dataclass
+class DeleteTableColumnOp:
+    """Delete a column from an existing table."""
+
+    tab_id: str
+    table_start_index: int
+    column_index: int
+
+
+# ---------------------------------------------------------------------------
 # Body content
 # ---------------------------------------------------------------------------
 
@@ -321,4 +365,8 @@ ReconcileOp = (
     | DeleteFootnoteOp
     | UpdateFootnoteContentOp
     | UpdateBodyContentOp
+    | InsertTableRowOp
+    | DeleteTableRowOp
+    | InsertTableColumnOp
+    | DeleteTableColumnOp
 )

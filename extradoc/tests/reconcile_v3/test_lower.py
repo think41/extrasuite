@@ -24,9 +24,13 @@ from extradoc.reconcile_v3.lower import lower_batches, lower_ops
 from extradoc.reconcile_v3.model import (
     DeleteFootnoteOp,
     DeleteHeaderOp,
+    DeleteTableColumnOp,
+    DeleteTableRowOp,
     DeleteTabOp,
     InsertFootnoteOp,
     InsertNamedStyleOp,
+    InsertTableColumnOp,
+    InsertTableRowOp,
     InsertTabOp,
     UpdateBodyContentOp,
     UpdateFootnoteContentOp,
@@ -1975,3 +1979,188 @@ class TestFootnoteLowering:
         assert (
             len(fn_deletes) >= 1
         ), f"Expected delete at index 4 for footnote ref, got: {result}"
+
+
+# ===========================================================================
+# Part 6: Table structural op lowering
+# ===========================================================================
+
+
+class TestTableStructuralLowering:
+    """Tests for InsertTableRowOp, DeleteTableRowOp, InsertTableColumnOp, DeleteTableColumnOp."""
+
+    TAB_ID = "t1"
+    TABLE_START = 5
+
+    def test_insert_table_row_request_shape(self) -> None:
+        """InsertTableRowOp → correct insertTableRow request shape."""
+        op = InsertTableRowOp(
+            tab_id=self.TAB_ID,
+            table_start_index=self.TABLE_START,
+            row_index=1,
+            insert_below=True,
+            column_count=2,
+        )
+        batches = lower_batches([op])
+        assert len(batches) == 1
+        reqs = batches[0]
+        assert len(reqs) == 1
+        req = reqs[0]
+        assert "insertTableRow" in req
+        itr = req["insertTableRow"]
+        loc = itr["tableCellLocation"]
+        assert loc["tableStartLocation"]["index"] == self.TABLE_START
+        assert loc["tableStartLocation"]["tabId"] == self.TAB_ID
+        assert loc["rowIndex"] == 1
+        assert loc["columnIndex"] == 0
+        assert itr["insertBelow"] is True
+
+    def test_delete_table_row_request_shape(self) -> None:
+        """DeleteTableRowOp → correct deleteTableRow request shape."""
+        op = DeleteTableRowOp(
+            tab_id=self.TAB_ID,
+            table_start_index=self.TABLE_START,
+            row_index=2,
+        )
+        batches = lower_batches([op])
+        assert len(batches) == 1
+        reqs = batches[0]
+        assert len(reqs) == 1
+        req = reqs[0]
+        assert "deleteTableRow" in req
+        dtr = req["deleteTableRow"]
+        loc = dtr["tableCellLocation"]
+        assert loc["tableStartLocation"]["index"] == self.TABLE_START
+        assert loc["tableStartLocation"]["tabId"] == self.TAB_ID
+        assert loc["rowIndex"] == 2
+        assert loc["columnIndex"] == 0
+
+    def test_insert_table_column_request_shape(self) -> None:
+        """InsertTableColumnOp → correct insertTableColumn request shape."""
+        op = InsertTableColumnOp(
+            tab_id=self.TAB_ID,
+            table_start_index=self.TABLE_START,
+            column_index=1,
+            insert_right=True,
+        )
+        batches = lower_batches([op])
+        assert len(batches) == 1
+        reqs = batches[0]
+        assert len(reqs) == 1
+        req = reqs[0]
+        assert "insertTableColumn" in req
+        itc = req["insertTableColumn"]
+        loc = itc["tableCellLocation"]
+        assert loc["tableStartLocation"]["index"] == self.TABLE_START
+        assert loc["tableStartLocation"]["tabId"] == self.TAB_ID
+        assert loc["rowIndex"] == 0
+        assert loc["columnIndex"] == 1
+        assert itc["insertRight"] is True
+
+    def test_delete_table_column_request_shape(self) -> None:
+        """DeleteTableColumnOp → correct deleteTableColumn request shape."""
+        op = DeleteTableColumnOp(
+            tab_id=self.TAB_ID,
+            table_start_index=self.TABLE_START,
+            column_index=0,
+        )
+        batches = lower_batches([op])
+        assert len(batches) == 1
+        reqs = batches[0]
+        assert len(reqs) == 1
+        req = reqs[0]
+        assert "deleteTableColumn" in req
+        dtc = req["deleteTableColumn"]
+        loc = dtc["tableCellLocation"]
+        assert loc["tableStartLocation"]["index"] == self.TABLE_START
+        assert loc["tableStartLocation"]["tabId"] == self.TAB_ID
+        assert loc["rowIndex"] == 0
+        assert loc["columnIndex"] == 0
+
+    def test_table_ops_go_into_content_batch_not_batch_0(self) -> None:
+        """Table structural ops go into batch 1 (content batch), not batch 0."""
+        # A CreateHeaderOp forces batch 0 to be non-empty so we can verify
+        # table ops don't end up there.
+        from extradoc.reconcile_v3.model import CreateHeaderOp
+
+        ops: list[Any] = [
+            CreateHeaderOp(
+                tab_id=self.TAB_ID,
+                section_slot="DEFAULT",
+                desired_header_id="h1",
+                desired_content=[make_para_el("Header"), make_terminal_para()],
+            ),
+            InsertTableRowOp(
+                tab_id=self.TAB_ID,
+                table_start_index=self.TABLE_START,
+                row_index=0,
+                insert_below=False,
+                column_count=2,
+            ),
+        ]
+        batches = lower_batches(ops)
+        # Batch 0 should have createHeader; batch 1 should have insertTableRow
+        assert len(batches) >= 2
+        batch0_keys = {next(iter(r.keys())) for r in batches[0]}
+        assert "createHeader" in batch0_keys
+        batch1_keys = {next(iter(r.keys())) for r in batches[1]}
+        assert "insertTableRow" in batch1_keys
+
+    def test_end_to_end_table_gains_row(self) -> None:
+        """reconcile(base, desired) on a doc where a table gains a row.
+
+        The result must not raise NotImplementedError and must contain at
+        least one insertTableRow request.
+        """
+        # Build a simple document with an indexed table (startIndex=1)
+        table_el = {
+            "startIndex": 1,
+            "endIndex": 20,
+            "table": {
+                "tableRows": [
+                    {
+                        "tableCells": [
+                            {"content": [make_para_el("A\n")], "tableCellStyle": {}}
+                        ],
+                        "tableRowStyle": {},
+                    }
+                ],
+                "columns": 1,
+                "rows": 1,
+            },
+        }
+        terminal = make_indexed_terminal(21)
+        base = make_indexed_doc(body_content=[table_el, terminal])
+
+        # Desired: two rows
+        table_el_desired = {
+            "startIndex": 1,
+            "endIndex": 30,
+            "table": {
+                "tableRows": [
+                    {
+                        "tableCells": [
+                            {"content": [make_para_el("A\n")], "tableCellStyle": {}}
+                        ],
+                        "tableRowStyle": {},
+                    },
+                    {
+                        "tableCells": [
+                            {"content": [make_para_el("B\n")], "tableCellStyle": {}}
+                        ],
+                        "tableRowStyle": {},
+                    },
+                ],
+                "columns": 1,
+                "rows": 2,
+            },
+        }
+        terminal_desired = make_indexed_terminal(31)
+        desired = make_indexed_doc(body_content=[table_el_desired, terminal_desired])
+
+        result = reconcile(base, desired)
+        assert isinstance(result, list)
+        insert_row_reqs = [r for r in result if "insertTableRow" in r]
+        assert (
+            len(insert_row_reqs) >= 1
+        ), f"Expected insertTableRow request, got: {result}"
