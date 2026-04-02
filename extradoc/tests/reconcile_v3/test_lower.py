@@ -2584,3 +2584,311 @@ class TestInlineImageLowering:
         insert_reqs = [r for r in result if "insertInlineImage" in r]
         assert len(insert_reqs) == 1
         assert insert_reqs[0]["insertInlineImage"]["uri"] == content_uri
+
+
+# ===========================================================================
+# Part 7: Page break and section break insertion
+# ===========================================================================
+
+
+def make_indexed_page_break(start: int) -> dict[str, Any]:
+    """Return a page break paragraph element with index fields.
+
+    A page break paragraph contains a ``pageBreak`` ParagraphElement and a
+    terminal newline textRun.  insertPageBreak inserts 2 characters, so
+    endIndex = start + 2.
+    """
+    return {
+        "startIndex": start,
+        "endIndex": start + 2,
+        "paragraph": {
+            "elements": [
+                {"pageBreak": {}},
+                {"textRun": {"content": "\n"}},
+            ],
+            "paragraphStyle": {"namedStyleType": "NORMAL_TEXT"},
+        },
+    }
+
+
+def make_indexed_section_break(
+    start: int,
+    section_style: dict[str, Any] | None = None,
+) -> dict[str, Any]:
+    """Return a section break structural element with index fields.
+
+    A section break occupies 1 character (endIndex = start + 1).
+    ``section_style`` defaults to a minimal style with ``sectionType=NEXT_PAGE``.
+    """
+    return {
+        "startIndex": start,
+        "endIndex": start + 1,
+        "sectionBreak": {
+            "sectionStyle": section_style or {"sectionType": "NEXT_PAGE"},
+        },
+    }
+
+
+class TestPageBreakSectionBreak:
+    """Tests for page break and section break insertion / update lowering."""
+
+    # ------------------------------------------------------------------
+    # Page break insertion
+    # ------------------------------------------------------------------
+
+    def test_insert_page_break_emits_insert_page_break_request(self) -> None:
+        """Desired has a page break paragraph, base doesn't → insertPageBreak."""
+        base = make_indexed_doc(body_content=[make_indexed_terminal(1)])
+        desired = make_indexed_doc(
+            body_content=[
+                # Page break paragraph (no index — desired docs may lack indices)
+                {
+                    "paragraph": {
+                        "elements": [
+                            {"pageBreak": {}},
+                            {"textRun": {"content": "\n"}},
+                        ],
+                        "paragraphStyle": {"namedStyleType": "NORMAL_TEXT"},
+                    }
+                },
+                make_terminal_para(),
+            ]
+        )
+
+        requests = lower_ops(diff(base, desired))
+        pb_reqs = [r for r in requests if "insertPageBreak" in r]
+        assert len(pb_reqs) == 1
+        loc = pb_reqs[0]["insertPageBreak"]["location"]
+        assert loc["index"] == 1  # Insert before terminal at index 1
+
+    def test_insert_page_break_uses_tab_id(self) -> None:
+        """insertPageBreak request carries the correct tabId."""
+        base = make_indexed_doc(tab_id="myTab", body_content=[make_indexed_terminal(1)])
+        desired = make_indexed_doc(
+            tab_id="myTab",
+            body_content=[
+                {
+                    "paragraph": {
+                        "elements": [
+                            {"pageBreak": {}},
+                            {"textRun": {"content": "\n"}},
+                        ],
+                        "paragraphStyle": {"namedStyleType": "NORMAL_TEXT"},
+                    }
+                },
+                make_terminal_para(),
+            ],
+        )
+
+        requests = lower_ops(diff(base, desired))
+        pb_reqs = [r for r in requests if "insertPageBreak" in r]
+        assert len(pb_reqs) == 1
+        assert pb_reqs[0]["insertPageBreak"]["location"]["tabId"] == "myTab"
+
+    def test_page_break_delete_uses_delete_content_range(self) -> None:
+        """Base has a page break, desired doesn't → deleteContentRange (existing path).
+
+        The alignment algorithm treats the page break paragraph as a PARAGRAPH
+        node.  When it is unmatched in desired, the lowering emits a
+        deleteContentRange covering the element's startIndex..endIndex.
+        """
+        base = make_indexed_doc(
+            body_content=[
+                make_indexed_page_break(1),  # page break para at 1..3
+                make_indexed_terminal(3),
+            ]
+        )
+        desired = make_indexed_doc(body_content=[make_indexed_terminal(1)])
+
+        requests = lower_ops(diff(base, desired))
+        delete_reqs = [r for r in requests if "deleteContentRange" in r]
+        assert len(delete_reqs) == 1
+        dcr = delete_reqs[0]["deleteContentRange"]["range"]
+        assert dcr["startIndex"] == 1
+        assert dcr["endIndex"] == 3
+
+    # ------------------------------------------------------------------
+    # Section break insertion
+    # ------------------------------------------------------------------
+
+    def test_insert_section_break_emits_insert_section_break_request(self) -> None:
+        """Desired has a section break, base doesn't → insertSectionBreak."""
+        base = make_indexed_doc(body_content=[make_indexed_terminal(1)])
+        desired = make_indexed_doc(
+            body_content=[
+                {
+                    "sectionBreak": {
+                        "sectionStyle": {"sectionType": "NEXT_PAGE"},
+                    }
+                },
+                make_terminal_para(),
+            ]
+        )
+
+        requests = lower_ops(diff(base, desired))
+        sb_reqs = [r for r in requests if "insertSectionBreak" in r]
+        assert len(sb_reqs) == 1
+        req = sb_reqs[0]["insertSectionBreak"]
+        assert req["sectionType"] == "NEXT_PAGE"
+        assert req["location"]["index"] == 1
+
+    def test_insert_section_break_custom_section_type(self) -> None:
+        """sectionType from sectionStyle is preserved in the request."""
+        base = make_indexed_doc(body_content=[make_indexed_terminal(1)])
+        desired = make_indexed_doc(
+            body_content=[
+                {
+                    "sectionBreak": {
+                        "sectionStyle": {"sectionType": "CONTINUOUS"},
+                    }
+                },
+                make_terminal_para(),
+            ]
+        )
+
+        requests = lower_ops(diff(base, desired))
+        sb_reqs = [r for r in requests if "insertSectionBreak" in r]
+        assert len(sb_reqs) == 1
+        assert sb_reqs[0]["insertSectionBreak"]["sectionType"] == "CONTINUOUS"
+
+    def test_insert_section_break_missing_section_type_defaults_to_next_page(
+        self,
+    ) -> None:
+        """Missing sectionType defaults to NEXT_PAGE."""
+        base = make_indexed_doc(body_content=[make_indexed_terminal(1)])
+        desired = make_indexed_doc(
+            body_content=[
+                {"sectionBreak": {"sectionStyle": {}}},
+                make_terminal_para(),
+            ]
+        )
+
+        requests = lower_ops(diff(base, desired))
+        sb_reqs = [r for r in requests if "insertSectionBreak" in r]
+        assert len(sb_reqs) == 1
+        assert sb_reqs[0]["insertSectionBreak"]["sectionType"] == "NEXT_PAGE"
+
+    def test_insert_section_break_with_extra_style_emits_update_section_style(
+        self,
+    ) -> None:
+        """Section break with custom sectionStyle fields also emits updateSectionStyle."""
+        base = make_indexed_doc(body_content=[make_indexed_terminal(1)])
+        desired = make_indexed_doc(
+            body_content=[
+                {
+                    "sectionBreak": {
+                        "sectionStyle": {
+                            "sectionType": "NEXT_PAGE",
+                            "columnCount": 2,
+                        }
+                    }
+                },
+                make_terminal_para(),
+            ]
+        )
+
+        requests = lower_ops(diff(base, desired))
+        sb_reqs = [r for r in requests if "insertSectionBreak" in r]
+        uss_reqs = [r for r in requests if "updateSectionStyle" in r]
+        assert len(sb_reqs) == 1
+        assert len(uss_reqs) >= 1
+        uss = uss_reqs[-1]["updateSectionStyle"]
+        assert "columnCount" in uss["sectionStyle"]
+
+    # ------------------------------------------------------------------
+    # Section break style update (matched section breaks, style changed)
+    # ------------------------------------------------------------------
+
+    def test_matched_section_breaks_with_changed_style_emits_update_section_style(
+        self,
+    ) -> None:
+        """Matched section breaks with a sectionStyle change → updateSectionStyle."""
+        base = make_indexed_doc(
+            body_content=[
+                make_indexed_section_break(
+                    1, {"sectionType": "NEXT_PAGE", "columnCount": 1}
+                ),
+                make_indexed_terminal(2),
+            ]
+        )
+        desired = make_indexed_doc(
+            body_content=[
+                {
+                    "sectionBreak": {
+                        "sectionStyle": {
+                            "sectionType": "NEXT_PAGE",
+                            "columnCount": 2,
+                        }
+                    }
+                },
+                make_terminal_para(),
+            ]
+        )
+
+        requests = lower_ops(diff(base, desired))
+        uss_reqs = [r for r in requests if "updateSectionStyle" in r]
+        assert len(uss_reqs) >= 1
+        uss = uss_reqs[0]["updateSectionStyle"]
+        assert uss["sectionStyle"]["columnCount"] == 2
+        assert "columnCount" in uss["fields"]
+
+    def test_matched_section_breaks_identical_style_produces_no_request(self) -> None:
+        """Identical section break styles produce no updateSectionStyle request."""
+        base = make_indexed_doc(
+            body_content=[
+                make_indexed_section_break(1, {"sectionType": "NEXT_PAGE"}),
+                make_indexed_terminal(2),
+            ]
+        )
+        desired = make_indexed_doc(
+            body_content=[
+                {"sectionBreak": {"sectionStyle": {"sectionType": "NEXT_PAGE"}}},
+                make_indexed_terminal(2),
+            ]
+        )
+
+        requests = lower_ops(diff(base, desired))
+        uss_reqs = [r for r in requests if "updateSectionStyle" in r]
+        # No header/footer created → no deferred updateSectionStyle
+        # Only checking that no content-diff updateSectionStyle is emitted.
+        content_uss = [
+            r
+            for r in uss_reqs
+            if r["updateSectionStyle"].get("range", {}).get("startIndex", -1) > 0
+        ]
+        assert content_uss == []
+
+    # ------------------------------------------------------------------
+    # End-to-end: reconcile() on document gaining a page break
+    # ------------------------------------------------------------------
+
+    def test_reconcile_document_gaining_page_break_no_error(self) -> None:
+        """End-to-end reconcile on a document that gains a page break."""
+        from extradoc.reconcile_v3.api import reconcile
+
+        base = make_indexed_doc(
+            body_content=[
+                make_indexed_para("First paragraph\n", 1),
+                make_indexed_terminal(17),
+            ]
+        )
+        desired = make_indexed_doc(
+            body_content=[
+                make_para_el("First paragraph\n"),
+                {
+                    "paragraph": {
+                        "elements": [
+                            {"pageBreak": {}},
+                            {"textRun": {"content": "\n"}},
+                        ],
+                        "paragraphStyle": {"namedStyleType": "NORMAL_TEXT"},
+                    }
+                },
+                make_terminal_para(),
+            ]
+        )
+
+        result = reconcile(base, desired)
+        assert isinstance(result, list)
+        pb_reqs = [r for r in result if "insertPageBreak" in r]
+        assert len(pb_reqs) == 1

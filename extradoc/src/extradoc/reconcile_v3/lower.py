@@ -798,8 +798,14 @@ def _lower_element_update(
         # cell-level child ops handle the actual content edits.  No body-level
         # request is needed here.
         return []
+    elif "sectionBreak" in base_el and "sectionBreak" in desired_el:
+        return _lower_section_break_update(
+            base_el=base_el,
+            desired_el=desired_el,
+            tab_id=tab_id,
+        )
     else:
-        # Section breaks, TOC etc. — no content to update
+        # TOC etc. — no content to update
         return []
 
 
@@ -1297,11 +1303,17 @@ def _lower_element_insert(
 ) -> list[dict[str, Any]]:
     """Generate request(s) to insert a content element at the given index.
 
+    For page break paragraphs: insertPageBreak.
     For paragraphs: insertText (text + \\n) + style requests.
     For tables: insertTable (dimensions only; cell content not yet supported).
-    For structural elements: raises NotImplementedError.
+    For section breaks: insertSectionBreak + optional updateSectionStyle.
     """
-    if "paragraph" in el:
+    if "paragraph" in el and _is_pagebreak_para(el["paragraph"]):
+        return _lower_page_break_insert(
+            index=index,
+            tab_id=tab_id,
+        )
+    elif "paragraph" in el:
         return _lower_paragraph_insert(
             el=el,
             index=index,
@@ -1316,9 +1328,10 @@ def _lower_element_insert(
             segment_id=segment_id,
         )
     elif "sectionBreak" in el:
-        # Section breaks cannot be inserted via insertText; skip.
-        raise NotImplementedError(
-            "lowering for section break insertion not yet implemented"
+        return _lower_section_break_insert(
+            el=el,
+            index=index,
+            tab_id=tab_id,
         )
     else:
         raise NotImplementedError(
@@ -1400,6 +1413,139 @@ def _lower_table_insert(
                 "rows": rows,
                 "columns": cols,
                 "location": location,
+            }
+        }
+    ]
+
+
+def _is_pagebreak_para(para: dict[str, Any]) -> bool:
+    """Return True if a paragraph dict's only content element(s) include a pageBreak.
+
+    A page break paragraph has a ``pageBreak`` element among its elements (plus
+    an optional terminal ``\\n`` textRun).  Such paragraphs must be inserted via
+    ``insertPageBreak``, not ``insertText``.
+    """
+    has_page_break = False
+    for elem in para.get("elements", []):
+        if "pageBreak" in elem:
+            has_page_break = True
+        elif "textRun" in elem:
+            content = elem["textRun"].get("content", "")
+            if content not in ("", "\n"):
+                # Real text alongside the page break — not a pure page break para
+                return False
+        else:
+            # Other inline elements (inlineObject, footnoteReference, etc.)
+            return False
+    return has_page_break
+
+
+def _lower_page_break_insert(
+    *,
+    index: int,
+    tab_id: str,
+) -> list[dict[str, Any]]:
+    """Insert a page break via ``insertPageBreak`` at ``index``.
+
+    ``insertPageBreak`` inserts two characters (pageBreak element + newline).
+    The ``segmentId`` field must be omitted — the API only allows page breaks
+    in the document body.
+    """
+    location: dict[str, Any] = {"index": index}
+    if tab_id:
+        location["tabId"] = tab_id
+    return [{"insertPageBreak": {"location": location}}]
+
+
+def _lower_section_break_insert(
+    *,
+    el: dict[str, Any],
+    index: int,
+    tab_id: str,
+) -> list[dict[str, Any]]:
+    """Insert a section break via ``insertSectionBreak`` at ``index``.
+
+    Reads ``sectionType`` from ``el["sectionBreak"]["sectionStyle"]["sectionType"]``;
+    defaults to ``"NEXT_PAGE"`` if absent.
+
+    If the ``sectionStyle`` contains additional style fields beyond
+    ``sectionType``, emits a follow-up ``updateSectionStyle`` request covering
+    the newly inserted section break character.
+    """
+    section_break = el.get("sectionBreak", {})
+    section_style = section_break.get("sectionStyle", {})
+    section_type = section_style.get("sectionType", "NEXT_PAGE")
+
+    location: dict[str, Any] = {"index": index}
+    if tab_id:
+        location["tabId"] = tab_id
+
+    requests: list[dict[str, Any]] = [
+        {
+            "insertSectionBreak": {
+                "location": location,
+                "sectionType": section_type,
+            }
+        }
+    ]
+
+    # Emit updateSectionStyle for any non-default style fields.
+    # insertSectionBreak inserts 2 characters (newline + section break element),
+    # so the section break lands at index+1 in the post-insert document.
+    style_fields = [k for k in section_style if k != "sectionType"]
+    if style_fields and section_style:
+        style_to_apply = {k: section_style[k] for k in style_fields}
+        range_: dict[str, Any] = {
+            "startIndex": index + 1,
+            "endIndex": index + 2,
+        }
+        if tab_id:
+            range_["tabId"] = tab_id
+        requests.append(
+            {
+                "updateSectionStyle": {
+                    "range": range_,
+                    "sectionStyle": style_to_apply,
+                    "fields": ",".join(sorted(style_fields)),
+                }
+            }
+        )
+
+    return requests
+
+
+def _lower_section_break_update(
+    *,
+    base_el: dict[str, Any],
+    desired_el: dict[str, Any],
+    tab_id: str,
+) -> list[dict[str, Any]]:
+    """Emit ``updateSectionStyle`` when a matched section break's style changed.
+
+    The range covers the section break character itself (startIndex → endIndex).
+    If ``sectionStyle`` is identical, returns an empty list.
+    """
+    base_style = base_el.get("sectionBreak", {}).get("sectionStyle", {})
+    desired_style = desired_el.get("sectionBreak", {}).get("sectionStyle", {})
+
+    changed_fields = _style_fields(base_style, desired_style)
+    if not changed_fields:
+        return []
+
+    start, end = _element_range(base_el)
+    if start is None or end is None:
+        return []
+
+    range_: dict[str, Any] = {"startIndex": start, "endIndex": end}
+    if tab_id:
+        range_["tabId"] = tab_id
+
+    return [
+        {
+            "updateSectionStyle": {
+                "range": range_,
+                "sectionStyle": desired_style,
+                "fields": ",".join(sorted(changed_fields)),
             }
         }
     ]
