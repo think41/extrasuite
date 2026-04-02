@@ -1,4 +1,4 @@
-# Continuation Notes — extradoc reconcile_v2 + XML/Markdown
+# Continuation Notes — extradoc reconcile_v2 / reconcile_v3 + XML/Markdown
 
 **Audience**: Architect familiar with Google Docs API.
 
@@ -34,6 +34,44 @@ Key invariant: `lower.py` uses the **raw transport base** for index arithmetic, 
 ## The Mock is Not the Truth
 
 `src/extradoc/mock/` does not replicate real UTF-16 index side effects after structural ops. A fix proven only against the mock is not proven. Live fixtures win.
+
+---
+
+## Current Live State (as of 2026-04-02, reconcile_v3 wired into client.py)
+
+`reconcile_v3` is now the production-selectable reconciler via `EXTRADOC_RECONCILER=v3`.
+The default remains `v2`. Set the env var to switch:
+
+```bash
+EXTRADOC_RECONCILER=v3 ./extrasuite docs push <folder>
+```
+
+### reconcile_v3 stub inventory
+
+| Op | Status | Notes |
+|---|---|---|
+| `UpdateBodyContentOp` | **Implemented** | Core path: delete + insert + in-place text update |
+| `UpdateHeaderContentOp` / `UpdateFooterContentOp` | **Implemented** | Delegates to `_lower_story_content_update` |
+| `UpdateFootnoteContentOp` | **Implemented** | Delegates to `_lower_story_content_update` |
+| `CreateHeaderOp` / `CreateFooterOp` | **Implemented** | Batch 0 + deferred ID attach in Batch 1 |
+| `DeleteHeaderOp` / `DeleteFooterOp` | **Implemented** | Batch 1 delete |
+| `InsertTabOp` / `DeleteTabOp` | **Implemented** | Batch 0 create / Batch 1 delete |
+| `UpdateNamedStyleOp` / `InsertNamedStyleOp` | **Implemented** | Batch 1 updateDocumentStyle |
+| `DeleteNamedStyleOp` | **Raises** | Google Docs API does not support removing a namedStyle |
+| `UpdateDocumentStyleOp` | **Raises** unless only header/footer ID fields changed | Non-ID documentStyle changes not supported via batchUpdate |
+| `InsertListOp` / `DeleteListOp` | **No-op** (correct) | Implicit via createParagraphBullets / deleteParagraphBullets on content |
+| `UpdateListOp` | **Raises** | List definitions cannot be edited via batchUpdate |
+| `UpdateInlineObjectOp` / `InsertInlineObjectOp` / `DeleteInlineObjectOp` | **Raises** | Genuinely unsupported by the API |
+| `InsertFootnoteOp` / `DeleteFootnoteOp` | **Implemented** | Batch 0 createFootnote + deferred ID; delete via ref removal |
+
+### reconcile_v3 test suite
+
+- 109 unit tests in `tests/reconcile_v3/` (test_diff.py + test_lower.py)
+- All pass as of integration date
+
+### Live refresh
+
+`reconcile_v3` does **not** support the `allow_live_refresh` path (no structural re-fetch after insertTable/insertPageBreak). If those ops appear, they go through one batch and succeed or fail atomically — no retry loop. This is intentional: v3 targets the common case where re-fetch is not needed.
 
 ---
 
@@ -228,25 +266,14 @@ above for full details and test results.
 
 Next: integrate into `diff.py` — see Step 3 below.
 
-### Step 3: Integrate content_align into reconcile_v2
+### Step 3: SUPERSEDED — Integrate content_align into reconcile_v2
 
-Replace the top-level block-matching logic in `_diff_section_block_slice` (diff.py)
-with a call to `align_content()`. Concretely:
+This step (integrating `content_align.py` into `reconcile_v2/diff.py`) is superseded
+by `reconcile_v3`, which was built from scratch with content-alignment at its core.
+`reconcile_v3` is now wired into `client.py` and selectable via `EXTRADOC_RECONCILER=v3`.
 
-1. Build `ContentNode` lists from the base and desired `BlockIR` sequences using
-   `content_node_from_ir()` (already implemented in `content_align.py`).
-2. Call `align_content(base_nodes, desired_nodes)` to get the `ContentAlignment`.
-3. For each `ContentMatch`: route to the existing per-type diff logic
-   (paragraph diff, list diff, table diff via `table_diff.py`).
-4. For each `base_deletes` index: emit `DeleteContentRange` (existing path).
-5. For each `desired_inserts` index: emit insert ops (existing path).
-
-The terminal pre-match in `align_content` replaces `_ensure_base_trailing_paragraph`
-— the synthetic paragraph patching in `client.py` becomes unnecessary.
-
-Key callsite to replace: `_diff_section_block_slice` in `diff.py`, currently ~lines
-1370–1494. The prefix/suffix trimming and fallback to `_plan_mixed_body_block_slice`
-are replaced by the DP output.
+The `reconcile_v2/content_align.py` module remains as a reference and is still used
+by `reconcile_v2` tests, but no further integration work is planned there.
 
 ### Step 4: Eliminate the structural re-fetch in `client.py`
 
@@ -272,9 +299,14 @@ The remaining re-fetch cases are:
 | Public reconcile_v2 entry point | `src/extradoc/reconcile_v2/api.py` |
 | Semantic diff (table anchor signature bug here) | `src/extradoc/reconcile_v2/diff.py` |
 | Table diff algorithm (proven, integrated) | `src/extradoc/reconcile_v2/table_diff.py` |
-| Content alignment DP (proven, not yet integrated) | `src/extradoc/reconcile_v2/content_align.py` |
+| Content alignment DP (proven, not yet integrated into v2) | `src/extradoc/reconcile_v2/content_align.py` |
 | Lowering (single batch + shadow doc) | `src/extradoc/reconcile_v2/lower.py` |
 | Multi-batch planning | `src/extradoc/reconcile_v2/batches.py` |
+| Public reconcile_v3 entry point | `src/extradoc/reconcile_v3/api.py` |
+| reconcile_v3 diff (top-down tree diff) | `src/extradoc/reconcile_v3/diff.py` |
+| reconcile_v3 lowering (multi-batch, deferred IDs) | `src/extradoc/reconcile_v3/lower.py` |
+| reconcile_v3 op types | `src/extradoc/reconcile_v3/model.py` |
+| reconcile_v3 unit tests | `tests/reconcile_v3/` |
 | Table index prediction formulas (proven live) | `client/src/extrasuite/client/cli/doc.py` (`_predict_*` functions) |
 | Live fixture capture script | `scripts/capture_reconcile_v2_fixtures.py` |
 | Live smoke runner | `scripts/release_smoke_docs.py` |

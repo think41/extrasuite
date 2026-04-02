@@ -18,6 +18,7 @@ from typing import TYPE_CHECKING
 
 import extradoc.serde as serde
 from extradoc.api_types._generated import (
+    BatchUpdateDocumentRequest,
     Document,
     Paragraph,
     ParagraphElement,
@@ -45,12 +46,13 @@ from extradoc.reconcile_v2.executor import (
     execute_request_batches,
     resolve_deferred_placeholders,
 )
+from extradoc.reconcile_v3.api import reconcile_batches as reconcile_v3_batches
 from extradoc.serde._models import IndexXml
 from extradoc.serde._utils import hex_to_optional_color, optional_color_to_hex
 from extradoc.transport import APIError, DocumentConflictError
 
 if TYPE_CHECKING:
-    from extradoc.api_types._generated import BatchUpdateDocumentRequest, DocumentTab
+    from extradoc.api_types._generated import DocumentTab
     from extradoc.transport import Transport
 
 logger = logging.getLogger(__name__)
@@ -358,8 +360,10 @@ def _get_reconciler_version() -> str:
         return "v2"
     if raw in {"v1", "legacy"}:
         return "v1"
+    if raw == "v3":
+        return "v3"
     raise ValueError(
-        f"Unsupported {RECONCILER_ENV_VAR} value {raw!r}; expected v1 or v2"
+        f"Unsupported {RECONCILER_ENV_VAR} value {raw!r}; expected v1, v2, or v3"
     )
 
 
@@ -372,6 +376,14 @@ def _reconcile_documents(
 ) -> list[BatchUpdateDocumentRequest]:
     if reconciler_version == "v2":
         return reconcile_v2(base, desired, transport_base=transport_base)
+    if reconciler_version == "v3":
+        base_dict = base.model_dump(by_alias=True, exclude_none=True)
+        desired_dict = desired.model_dump(by_alias=True, exclude_none=True)
+        raw_batches = reconcile_v3_batches(base_dict, desired_dict)
+        return [
+            BatchUpdateDocumentRequest.model_validate({"requests": batch})
+            for batch in raw_batches
+        ]
     return reconcile_v1(base, desired)
 
 
@@ -379,9 +391,10 @@ async def _execute_document_batches(
     transport: Transport,
     result: DiffResult,
 ) -> int:
-    if result.reconciler_version == "v2":
+    if result.reconciler_version in {"v2", "v3"}:
         if (
-            result.allow_live_refresh
+            result.reconciler_version == "v2"
+            and result.allow_live_refresh
             and result.desired_document is not None
             and result.desired_format is not None
         ):
