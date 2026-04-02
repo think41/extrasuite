@@ -39,6 +39,7 @@ executor contract::
 from __future__ import annotations
 
 import difflib
+from itertools import groupby
 from typing import Any
 
 from extradoc.indexer import utf16_len
@@ -449,7 +450,6 @@ def lower_batches(
                         desired_content=op.desired_content,
                         tab_id=op.tab_id,
                         segment_id=None,
-                        use_end_of_segment_for_body=op.story_kind == "body",
                     )
                 )
 
@@ -567,7 +567,6 @@ def _lower_story_content_update(
     desired_content: list[dict[str, Any]],
     tab_id: str,
     segment_id: str | None,
-    use_end_of_segment_for_body: bool = False,
 ) -> list[dict[str, Any]]:
     """Lower a ContentAlignment into delete/insert/update request dicts.
 
@@ -647,7 +646,6 @@ def _lower_story_content_update(
             desired_content=desired_content,
             tab_id=tab_id,
             segment_id=segment_id,
-            use_end_of_segment_for_body=use_end_of_segment_for_body,
         )
         requests.extend(insert_requests)
 
@@ -699,7 +697,6 @@ def _plan_insertions(
     desired_content: list[dict[str, Any]],
     tab_id: str,
     segment_id: str | None,
-    use_end_of_segment_for_body: bool = False,
 ) -> list[dict[str, Any]]:
     """Plan insertion requests for desired_inserts.
 
@@ -723,6 +720,8 @@ def _plan_insertions(
       startIndex < insertion_point.
 
     This gives the correct insertion index after all deletes have been applied.
+    Always uses explicit indices — the real terminal paragraph has a real
+    startIndex that is a valid insertion point.
     """
     if not alignment.desired_inserts:
         return []
@@ -742,28 +741,7 @@ def _plan_insertions(
 
     # Phase 1: Compute (insert_pos, desired_idx, element_requests) for each insert.
     # We collect them first so we can reorder within same-position groups.
-    # insert_pos == -1 is a sentinel meaning "use endOfSegmentLocation" (body end).
-    END_OF_SEGMENT = -1
     planned: list[tuple[int, int, list[dict[str, Any]]]] = []
-
-    # Pre-compute whether the base's terminal paragraph is a synthetic one
-    # (appended by _ensure_base_trailing_paragraph at startIndex ==
-    # second-to-last element's endIndex).  Inserting at this position via an
-    # explicit index fails with "index out of range" because the position
-    # equals the exclusive segment end.  We use endOfSegmentLocation instead.
-    # This only applies to body-level insertions (use_end_of_segment_for_body=True),
-    # NOT to table cell or header/footer insertions where the terminal IS a
-    # valid insertion target within the cell/segment.
-    synthetic_terminal_idx: int | None = None
-    if (
-        use_end_of_segment_for_body
-        and len(base_content) >= 2
-        and _is_terminal_paragraph(base_content[-1])
-    ):
-        prev_end = base_content[-2].get("endIndex")
-        term_start = _element_start(base_content[-1])
-        if prev_end is not None and term_start == prev_end:
-            synthetic_terminal_idx = term_start  # e.g. 157
 
     for desired_idx in sorted(alignment.desired_inserts):
         # Find the base insertion point: the startIndex of the next surviving
@@ -786,30 +764,6 @@ def _plan_insertions(
         if raw_insert_pos is None:
             # No index info — skip
             continue
-
-        # If the computed insertion position is the synthetic terminal's
-        # startIndex, that position equals the exclusive segment end.
-        # For plain paragraph insertions, using an explicit index fails with
-        # "index out of range" — use endOfSegmentLocation instead.
-        # For table/sectionBreak/pageBreak insertions, fall through to the
-        # normal path (these use different API requests and their index
-        # semantics may differ).
-        if raw_insert_pos == synthetic_terminal_idx:
-            d_el = desired_content[desired_idx]
-            if _is_terminal_paragraph(d_el):
-                # Skip re-inserting the synthetic trailing paragraph
-                continue
-            if "paragraph" in d_el and not _is_pagebreak_para(
-                d_el.get("paragraph", {})
-            ):
-                reqs = _lower_element_insert_end_of_segment(
-                    el=d_el,
-                    tab_id=tab_id,
-                    segment_id=segment_id,
-                )
-                planned.append((END_OF_SEGMENT, desired_idx, reqs))
-                continue
-            # For tables, page breaks, section breaks: fall through to index-based insert
 
         # Adjust for characters deleted before this insertion point
         offset = _deleted_chars_before(
@@ -840,34 +794,16 @@ def _plan_insertions(
     # positions are emitted in ascending position order (lower positions first),
     # which is correct because inserting at a lower position does not affect the
     # absolute position of a later insert at a higher position.
-    #
-    # END_OF_SEGMENT (-1) entries use endOfSegmentLocation; they always go last
-    # so that prior index-based insertions don't shift their target.
-    # Within the END_OF_SEGMENT group, emit in ascending desired_idx order
-    # (NOT reversed) because endOfSegmentLocation always appends — each insert
-    # goes to the END of whatever content exists, so the first-emitted element
-    # ends up first.
-    from itertools import groupby
-
     requests: list[dict[str, Any]] = []
 
-    # Separate end-of-segment entries from position-based entries
-    pos_entries = [(p, d, r) for p, d, r in planned if p != END_OF_SEGMENT]
-    eos_entries = [(p, d, r) for p, d, r in planned if p == END_OF_SEGMENT]
-
-    # Sort position-based entries by insert_pos ascending, then desired_idx ascending
-    pos_entries.sort(key=lambda t: (t[0], t[1]))
-    for _pos, group_iter in groupby(pos_entries, key=lambda t: t[0]):
+    # Sort entries by insert_pos ascending, then desired_idx ascending
+    planned.sort(key=lambda t: (t[0], t[1]))
+    for _pos, group_iter in groupby(planned, key=lambda t: t[0]):
         group = list(group_iter)
         # Within the group, emit in REVERSE desired_idx order so that the first
         # desired element ends up first after all same-position inserts land.
         for _insert_pos, _desired_idx, reqs in reversed(group):
             requests.extend(reqs)
-
-    # Emit end-of-segment entries in ASCENDING desired_idx order
-    eos_entries.sort(key=lambda t: t[1])
-    for _eos, _desired_idx, reqs in eos_entries:
-        requests.extend(reqs)
 
     return requests
 
@@ -1474,68 +1410,6 @@ def _lower_element_insert(
         )
 
 
-def _lower_element_insert_end_of_segment(
-    *,
-    el: dict[str, Any],
-    tab_id: str,
-    segment_id: str | None,
-) -> list[dict[str, Any]]:
-    """Insert a content element at the end of its body/segment.
-
-    Uses ``endOfSegmentLocation`` to avoid explicit index arithmetic when
-    the target position is the body's terminal newline (which has an index
-    equal to the exclusive end of the segment, making explicit indexing fail).
-
-    Only plain paragraphs are supported.  Tables and section breaks that land
-    at the body end still need the caller to use a different strategy.
-    """
-    if "paragraph" not in el:
-        raise NotImplementedError(
-            f"end-of-segment insertion for element kind {list(el.keys())!r} "
-            "not yet implemented"
-        )
-    para = el.get("paragraph", {})
-    text = _para_text(para)
-    if not text.endswith("\n"):
-        text = text + "\n"
-    # endOfSegmentLocation inserts just before the body's terminal \n, i.e.
-    # inside the last existing paragraph.  Prepend \n so the insertion first
-    # creates a paragraph break and then the new paragraph content follows.
-    text = "\n" + text
-
-    requests: list[dict[str, Any]] = []
-    location: dict[str, Any] = {}
-    if tab_id:
-        location["tabId"] = tab_id
-    if segment_id:
-        location["segmentId"] = segment_id
-
-    requests.append(
-        {
-            "insertText": {
-                "endOfSegmentLocation": location,
-                "text": text,
-            }
-        }
-    )
-
-    # Apply paragraph style at the insertion point.  After endOfSegmentLocation
-    # insert, the new paragraph occupies the LAST position before the terminal.
-    # We don't know the exact index without re-querying the document; skip the
-    # explicit style request.  If the paragraph only carries namedStyleType, the
-    # default (NORMAL_TEXT) is already correct for body-end paragraphs.
-    desired_ps = para.get("paragraphStyle", {})
-    non_normal = {k: v for k, v in desired_ps.items() if k != "namedStyleType"}
-    # Only emit updateParagraphStyle for non-NORMAL_TEXT headings or explicit
-    # non-default fields.  We cannot know the post-insert index, so we skip
-    # the style request for simplicity.  A follow-up re-pull will show the
-    # correct style (which defaults to NORMAL_TEXT for new paragraphs).
-    # TODO: support heading styles at end-of-body inserts by re-querying.
-    _ = non_normal  # suppress unused-variable warning
-
-    return requests
-
-
 def _lower_paragraph_insert(
     *,
     el: dict[str, Any],
@@ -1549,10 +1423,6 @@ def _lower_paragraph_insert(
     para = el.get("paragraph", {})
     text = _para_text(para)
 
-    # Ensure text ends with \n (paragraph terminator)
-    if not text.endswith("\n"):
-        text = text + "\n"
-
     requests.append(
         _make_insert_text(
             index=index,
@@ -1562,6 +1432,8 @@ def _lower_paragraph_insert(
         )
     )
 
+    text_len = utf16_len(text)
+
     # Apply paragraph style
     desired_ps = para.get("paragraphStyle", {})
     if desired_ps:
@@ -1570,13 +1442,31 @@ def _lower_paragraph_insert(
             requests.append(
                 _make_update_paragraph_style(
                     start_index=index,
-                    end_index=index + utf16_len(text),
+                    end_index=index + text_len,
                     tab_id=tab_id,
                     segment_id=segment_id,
                     paragraph_style=desired_ps,
                     fields=fields,
                 )
             )
+
+    # Apply text styles for each run
+    runs = _extract_runs(para)
+    run_offset = index
+    for text_content, style in runs:
+        run_len = utf16_len(text_content)
+        if run_len > 0 and style:
+            requests.append(
+                _make_update_text_style(
+                    start_index=run_offset,
+                    end_index=run_offset + run_len,
+                    tab_id=tab_id,
+                    segment_id=segment_id,
+                    text_style=style,
+                    fields=list(style.keys()),
+                )
+            )
+        run_offset += run_len
 
     return requests
 
@@ -1764,29 +1654,81 @@ def _lower_story_content_insert(
     """
     requests: list[dict[str, Any]] = []
 
-    # Filter out trailing terminal paragraphs (already exist in new segment)
-    content_to_insert = [el for el in content if not _is_terminal_paragraph(el)]
+    # Skip last element (terminal paragraph already exists in new segment)
+    content_to_insert = content[:-1]
+
+    # Track running offset for style requests.
+    # A freshly created header/footer/footnote has one empty paragraph at [1, 2).
+    cumulative_offset = 0
 
     for el in content_to_insert:
         if "paragraph" in el:
             para = el.get("paragraph", {})
             text = _para_text(para)
-            if not text.endswith("\n"):
-                text = text + "\n"
-            if text.strip():
-                # Use endOfSegmentLocation with deferred segment ID
-                location: dict[str, Any] = {
-                    "tabId": tab_id,
-                    "segmentId": deferred_segment_id,
-                }
-                requests.append(
-                    {
-                        "insertText": {
-                            "endOfSegmentLocation": location,
-                            "text": text,
-                        }
+            # Use endOfSegmentLocation with deferred segment ID
+            location: dict[str, Any] = {
+                "tabId": tab_id,
+                "segmentId": deferred_segment_id,
+            }
+            requests.append(
+                {
+                    "insertText": {
+                        "endOfSegmentLocation": location,
+                        "text": text,
                     }
-                )
+                }
+            )
+            # Paragraph starts at 1 + cumulative_offset in the new segment
+            para_start = 1 + cumulative_offset
+            text_len = utf16_len(text)
+
+            # Apply paragraph style
+            desired_ps = para.get("paragraphStyle", {})
+            if desired_ps:
+                fields = list(desired_ps.keys())
+                if fields:
+                    range_: dict[str, Any] = {
+                        "startIndex": para_start,
+                        "endIndex": para_start + text_len,
+                        "segmentId": deferred_segment_id,
+                    }
+                    if tab_id:
+                        range_["tabId"] = tab_id
+                    requests.append(
+                        {
+                            "updateParagraphStyle": {
+                                "range": range_,
+                                "paragraphStyle": desired_ps,
+                                "fields": ",".join(fields),
+                            }
+                        }
+                    )
+
+            # Apply text styles for each run
+            runs = _extract_runs(para)
+            run_offset = para_start
+            for text_content, style in runs:
+                run_len = utf16_len(text_content)
+                if run_len > 0 and style:
+                    run_range: dict[str, Any] = {
+                        "startIndex": run_offset,
+                        "endIndex": run_offset + run_len,
+                        "segmentId": deferred_segment_id,
+                    }
+                    if tab_id:
+                        run_range["tabId"] = tab_id
+                    requests.append(
+                        {
+                            "updateTextStyle": {
+                                "range": run_range,
+                                "textStyle": style,
+                                "fields": ",".join(style.keys()),
+                            }
+                        }
+                    )
+                run_offset += run_len
+
+            cumulative_offset += text_len
 
     return requests
 
@@ -1816,25 +1758,6 @@ def _para_text(para: dict[str, Any]) -> str:
     return "".join(
         e.get("textRun", {}).get("content", "") for e in para.get("elements", [])
     )
-
-
-def _is_terminal_paragraph(el: dict[str, Any]) -> bool:
-    """Return True if el is a paragraph whose only content is a bare newline.
-
-    A page-break paragraph has a 'pageBreak' inline element plus a '\\n' textRun
-    but is NOT a terminal paragraph — it is structural content.  We exclude
-    paragraphs that contain any non-textRun inline elements.
-    """
-    if "paragraph" not in el:
-        return False
-    para = el["paragraph"]
-    elements = para.get("elements", [])
-    # Reject if any element is not a textRun
-    for pe in elements:
-        if "textRun" not in pe:
-            return False
-    text = _para_text(para)
-    return text == "\n"
 
 
 def _style_fields(

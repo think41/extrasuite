@@ -944,13 +944,6 @@ def _normalize_raw_base_para_styles(
             # 3. Normalise paragraph styles (including TITLE/SUBTITLE mapping)
             for se in dt.body.content:
                 _normalize_structural_element_para_styles(se)
-            # 4. Ensure a trailing empty paragraph exists.
-            # Some raw API documents omit the synthetic trailing paragraph and
-            # instead have the last content paragraph's '\n' serve as the
-            # terminator.  The markdown serde (_ensure_trailing_paragraph)
-            # always adds an explicit trailing paragraph, so the base needs one
-            # too to avoid a spurious insertText "\n" at the end.
-            _ensure_base_trailing_paragraph(dt.body.content)
 
 
 def _table_text_fingerprint(se: StructuralElement) -> str | None:
@@ -1107,8 +1100,7 @@ def _strip_empty_body_paragraphs(
     Bare-\\n paragraphs that do NOT precede a table are left in place so that
     the reconciler can generate delete requests for them.
 
-    The trailing empty paragraph required by the Google Docs API is added
-    back by _ensure_base_trailing_paragraph after this call.
+    The reconciler handles the trailing paragraph via explicit index arithmetic.
     """
     result: list[StructuralElement] = []
     n = len(content)
@@ -1263,61 +1255,6 @@ def _normalize_paragraph(para: Paragraph) -> None:
                 weighted_font_family=ts.weighted_font_family,
             )
     para.elements = new_elements
-
-
-def _ensure_base_trailing_paragraph(content: list[StructuralElement]) -> None:
-    """Add a synthetic trailing empty paragraph to the base if one is absent.
-
-    Some Google Docs API responses omit the required trailing empty paragraph,
-    relying on the last content paragraph's terminal '\\n' instead.  The
-    markdown serde (_ensure_trailing_paragraph) always adds an explicit empty
-    trailing paragraph.  Without this, the LCS alignment sees one extra
-    ADDED element in the desired, generating a spurious insertText "\\n".
-
-    Special case: if the body ends with a bare empty list item (li: '\\n'), we
-    strip it before adding the synthetic paragraph.  The markdown serializer
-    skips bare '\\n' paragraphs (including list items) via _is_trailing_paragraph,
-    so the desired document never contains this element.  Since it occupies the
-    final body position it cannot be deleted via deleteContentRange — attempting
-    to do so includes the segment-final newline and the API returns 400.
-    Stripping it here makes the base consistent with the desired so the
-    reconciler never tries to delete it.
-    """
-    if not content:
-        return
-    last = content[-1]
-    if last.paragraph is None:
-        return  # Ends with a table or section break — leave as-is
-    elems = last.paragraph.elements or []
-    is_bare_newline = (
-        len(elems) == 1
-        and elems[0].text_run is not None
-        and elems[0].text_run.content == "\n"
-    )
-    if is_bare_newline:
-        if last.paragraph.bullet is None:
-            return  # Already has a plain trailing paragraph — done
-        # Bare empty list item at end: strip it so the reconciler never tries
-        # to delete the segment-final newline position.
-        content.pop()
-        last = content[-1] if content else None
-        if last is None:
-            pass  # Will add synthetic below to an empty body
-        elif last.paragraph is None:
-            return  # Body now ends with table/section-break — leave as-is
-
-    # Last paragraph is non-empty — add a synthetic trailing paragraph.
-    # Use the end_index of the last element as the start of the new paragraph.
-    ei = last.end_index if last is not None else None
-    synthetic = StructuralElement(
-        paragraph=Paragraph(
-            paragraph_style=ParagraphStyle(named_style_type="NORMAL_TEXT"),
-            elements=[ParagraphElement(text_run=TextRun(content="\n"))],
-        ),
-        start_index=ei,
-        end_index=(ei + 1) if ei is not None else None,
-    )
-    content.append(synthetic)
 
 
 def _create_pristine_zip(folder: Path) -> Path:
