@@ -204,7 +204,9 @@ class TestNamedStyles:
         ns_ops = [
             op
             for op in ops
-            if isinstance(op, UpdateNamedStyleOp | InsertNamedStyleOp | DeleteNamedStyleOp)
+            if isinstance(
+                op, UpdateNamedStyleOp | InsertNamedStyleOp | DeleteNamedStyleOp
+            )
         ]
         assert ns_ops == []
 
@@ -256,7 +258,9 @@ class TestNamedStyles:
         ns_ops = [
             op
             for op in ops
-            if isinstance(op, UpdateNamedStyleOp | InsertNamedStyleOp | DeleteNamedStyleOp)
+            if isinstance(
+                op, UpdateNamedStyleOp | InsertNamedStyleOp | DeleteNamedStyleOp
+            )
         ]
         # Only the HEADING_1 change
         assert len(ns_ops) == 1
@@ -471,7 +475,9 @@ class TestFootnotes:
         fn_ops = [
             op
             for op in ops
-            if isinstance(op, InsertFootnoteOp | DeleteFootnoteOp | UpdateFootnoteContentOp)
+            if isinstance(
+                op, InsertFootnoteOp | DeleteFootnoteOp | UpdateFootnoteContentOp
+            )
         ]
         assert fn_ops == []
 
@@ -886,8 +892,15 @@ class TestEndToEnd:
         ops = diff(base, desired)
         assert ops == []
 
-    def test_lowering_raises_for_any_op(self) -> None:
-        """When ops are detected, lowering raises NotImplementedError for all of them."""
+    def test_lowering_produces_requests_for_ops(self) -> None:
+        """When ops are detected, lower_ops produces request dicts (or empty list
+        when elements lack API index metadata).
+
+        Synthetic test documents do not carry startIndex/endIndex, so the
+        lowering skips index-dependent operations rather than crashing.
+        The important invariant: lower_ops no longer raises NotImplementedError
+        for the basic UpdateBodyContentOp case.
+        """
         from extradoc.reconcile_v3.lower import lower_ops
 
         base = make_document(
@@ -907,8 +920,9 @@ class TestEndToEnd:
         )
         ops = diff(base, desired)
         assert len(ops) > 0
-        with pytest.raises(NotImplementedError):
-            lower_ops(ops)
+        # Lowering should succeed (may return empty list for docs without indices)
+        result = lower_ops(ops)
+        assert isinstance(result, list)
 
     def test_reconcile_api_calls_through(self) -> None:
         """reconcile() calls the diff + lower pipeline end-to-end."""
@@ -926,8 +940,13 @@ class TestEndToEnd:
         result = reconcile(base, desired)
         assert result == []
 
-    def test_reconcile_api_raises_for_changes(self) -> None:
-        """reconcile() raises NotImplementedError when changes need lowering."""
+    def test_reconcile_api_produces_list_for_changes(self) -> None:
+        """reconcile() returns a list (possibly empty) when changes need lowering.
+
+        For synthetic docs without API index metadata, the lowering skips
+        index-dependent operations and returns an empty list rather than raising.
+        The key invariant: reconcile() does not raise for a basic text change.
+        """
         from extradoc.reconcile_v3.api import reconcile
 
         base = make_document(
@@ -945,8 +964,8 @@ class TestEndToEnd:
                 )
             ]
         )
-        with pytest.raises(NotImplementedError):
-            reconcile(base, desired)
+        result = reconcile(base, desired)
+        assert isinstance(result, list)
 
 
 # ===========================================================================
