@@ -155,7 +155,9 @@ class DocsClient:
             )
             written_files.append(raw_comments_path)
 
-        # Create pristine zip from the serde output
+        # Create pristine zip from the serde output.
+        # For markdown format, _serialize_markdown already wrote the pristine zip;
+        # re-writing it here ensures .raw/ is excluded regardless of format.
         pristine_path = _create_pristine_zip(document_dir)
         written_files.append(pristine_path)
 

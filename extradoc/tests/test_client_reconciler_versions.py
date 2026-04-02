@@ -297,7 +297,7 @@ def _setup_markdown_folder(
     serialize(bundle, folder, format="markdown")
 
     pristine_dir = folder / ".pristine"
-    pristine_dir.mkdir()
+    pristine_dir.mkdir(exist_ok=True)
     zip_path = pristine_dir / "document.zip"
     with zipfile.ZipFile(zip_path, "w") as zf:
         for path in sorted(folder.rglob("*")):
@@ -331,7 +331,7 @@ def _setup_xml_folder(
     serialize(bundle, folder, format="xml")
 
     pristine_dir = folder / ".pristine"
-    pristine_dir.mkdir()
+    pristine_dir.mkdir(exist_ok=True)
     zip_path = pristine_dir / "document.zip"
     with zipfile.ZipFile(zip_path, "w") as zf:
         for path in sorted(folder.rglob("*")):
@@ -1180,7 +1180,7 @@ def test_diff_v2_uses_raw_transport_base_for_iterative_markdown_batches(
     serialize(bundle, folder, format="markdown")
 
     pristine_dir = folder / ".pristine"
-    pristine_dir.mkdir()
+    pristine_dir.mkdir(exist_ok=True)
     with zipfile.ZipFile(pristine_dir / "document.zip", "w") as zf:
         for path in sorted(folder.rglob("*")):
             if (

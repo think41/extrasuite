@@ -2,13 +2,14 @@
 
 Public API:
     serialize(bundle, output_path, format='xml') → list[Path]
-    deserialize(folder) → DocumentWithComments   — auto-detects format from index.xml
+    deserialize(base, folder) → DocumentWithComments   — 3-way merge (markdown) or direct (xml)
     from_document(doc) → (IndexXml, dict[folder, TabFiles])
     to_document(tabs, document_id) → Document
 """
 
 from __future__ import annotations
 
+import zipfile
 from typing import TYPE_CHECKING, Literal, TypeVar
 
 from extradoc.api_types._generated import Document
@@ -32,6 +33,11 @@ from ._to_xml import document_to_xml
 
 if TYPE_CHECKING:
     from pathlib import Path
+
+# Directories to skip when creating the pristine zip
+_PRISTINE_DIR = ".pristine"
+_RAW_DIR = ".raw"
+_SKIP_DIRS = {_PRISTINE_DIR, _RAW_DIR}
 
 # Minimal styles.xml used when a new tab folder has no styles.xml yet.
 # This is equivalent to an empty <styles /> — no custom paragraph classes,
@@ -231,31 +237,100 @@ def _serialize_markdown(bundle: DocumentWithComments, output_path: Path) -> list
     comments_path.write_text(comments_to_xml(bundle.comments), encoding="utf-8")
     created.append(comments_path)
 
+    # Write .pristine/document.zip so deserialize can compute the 3-way merge
+    pristine_path = _write_pristine_zip(output_path)
+    created.append(pristine_path)
+
     return created
 
 
-def deserialize(folder: Path) -> DocumentWithComments:
-    """Read folder structure back into a DocumentWithComments.
-
-    Auto-detects format from index.xml (format="markdown" or default "xml").
-    Strips <comment-ref> tags from each tab's document.xml before parsing.
-    Reads comments.xml if present.
+def _write_pristine_zip(folder: Path) -> Path:
+    """Zip serde output (excluding .pristine/ and .raw/) into .pristine/document.zip.
 
     Args:
-        folder: Root directory containing index.xml and per-tab folders
+        folder: The document folder to zip
+
+    Returns:
+        Path to the created zip file
+    """
+    pristine_dir = folder / _PRISTINE_DIR
+    pristine_dir.mkdir(parents=True, exist_ok=True)
+    zip_path = pristine_dir / "document.zip"
+
+    with zipfile.ZipFile(zip_path, "w", zipfile.ZIP_DEFLATED) as zf:
+        for path in sorted(folder.rglob("*")):
+            if path.is_dir():
+                continue
+            try:
+                rel = path.relative_to(folder)
+            except ValueError:
+                continue
+            if rel.parts[0] in _SKIP_DIRS:
+                continue
+            zf.write(path, rel)
+
+    return zip_path
+
+
+def deserialize(
+    base_or_folder: DocumentWithComments | Path,
+    folder: Path | None = None,
+) -> DocumentWithComments:
+    """Read folder structure back into a DocumentWithComments.
+
+    Supports two call signatures:
+
+        # Legacy (XML format — no base needed):
+        deserialize(folder: Path) -> DocumentWithComments
+
+        # New 3-way merge (markdown format):
+        deserialize(base: DocumentWithComments, folder: Path) -> DocumentWithComments
+
+    For the **markdown format**, performs a 3-way merge:
+        ancestor = parse(.pristine/document.zip)
+        mine     = parse(current folder)
+        ops      = diff(ancestor, mine)
+        desired  = apply_ops_to_document(base, ops)
+
+    Things the markdown SERDE doesn't model (headers, footers, DocumentStyle,
+    InlineObjects, etc.) produce zero ops and are copied unchanged from base.
+
+    When .pristine/document.zip is absent (legacy or XML folders), the function
+    falls back to the old behaviour: deserializes the folder directly and returns
+    it as the result.
+
+    Args:
+        base_or_folder: Either a DocumentWithComments (new 3-way merge path)
+            or a Path (legacy single-argument path).
+        folder: Required when base_or_folder is a DocumentWithComments.
 
     Returns:
         DocumentWithComments without indices. Call reindex_document() if needed.
     """
-    index_path = folder / "index.xml"
+    # Normalise arguments
+    if isinstance(base_or_folder, DocumentWithComments):
+        base: DocumentWithComments | None = base_or_folder
+        if folder is None:
+            raise TypeError(
+                "deserialize(base, folder): folder argument is required "
+                "when base is a DocumentWithComments"
+            )
+        the_folder: Path = folder
+    else:
+        base = None
+        the_folder = base_or_folder
+
+    index_path = the_folder / "index.xml"
     index = IndexXml.from_xml_string(index_path.read_text(encoding="utf-8"))
 
     if index.format == "markdown":
-        return _deserialize_markdown(folder, index)
+        if base is not None:
+            return _deserialize_markdown_3way(base, the_folder, index)
+        return _deserialize_markdown(the_folder, index)
 
     tabs: dict[str, TabFiles] = {}
     for index_tab in index.all_tabs_flat():
-        tab_dir = folder / index_tab.folder
+        tab_dir = the_folder / index_tab.folder
         doc_path = tab_dir / "document.xml"
         styles_path = tab_dir / "styles.xml"
 
@@ -291,7 +366,7 @@ def deserialize(folder: Path) -> DocumentWithComments:
     )
 
     # Read comments.xml
-    comments_path = folder / "comments.xml"
+    comments_path = the_folder / "comments.xml"
     if comments_path.exists():
         file_comments = comments_from_xml(comments_path.read_text(encoding="utf-8"))
     else:
@@ -344,6 +419,71 @@ def _deserialize_markdown(folder: Path, index: IndexXml) -> DocumentWithComments
         file_comments = FileComments(file_id=index.id)
 
     return DocumentWithComments(document=document, comments=file_comments)
+
+
+def _deserialize_markdown_3way(
+    base: DocumentWithComments,
+    folder: Path,
+    index: IndexXml,
+) -> DocumentWithComments:
+    """3-way merge deserialize for markdown format.
+
+    Algorithm:
+        ancestor  = parse(.pristine/document.zip)
+        mine      = parse(current folder)
+        ops       = diff(ancestor, mine)
+        desired   = apply_ops_to_document(base, ops)
+
+    When .pristine/document.zip is absent, falls back to direct parse (no merge).
+    """
+    import tempfile
+
+    from extradoc.reconcile_v3.api import diff as reconcile_diff
+
+    from ._apply_ops import apply_ops_to_document
+
+    pristine_zip = folder / _PRISTINE_DIR / "document.zip"
+
+    if not pristine_zip.exists():
+        # Legacy folder: no pristine zip — fall back to direct parse
+        return _deserialize_markdown(folder, index)
+
+    # Parse current (mine) folder
+    mine_bundle = _deserialize_markdown(folder, index)
+    mine_doc_dict = mine_bundle.document.model_dump(by_alias=True, exclude_none=True)
+
+    # Extract and parse pristine (ancestor) folder
+    with tempfile.TemporaryDirectory() as tmp:
+        import zipfile as _zf
+
+        with _zf.ZipFile(pristine_zip, "r") as zf:
+            zf.extractall(tmp)
+        from pathlib import Path as _Path
+
+        pristine_folder = _Path(tmp)
+        ancestor_bundle = _deserialize_markdown(
+            pristine_folder,
+            IndexXml.from_xml_string(
+                (pristine_folder / "index.xml").read_text(encoding="utf-8")
+            ),
+        )
+    ancestor_doc_dict = ancestor_bundle.document.model_dump(
+        by_alias=True, exclude_none=True
+    )
+
+    # Compute ops: what changed from ancestor to mine?
+    ops = reconcile_diff(ancestor_doc_dict, mine_doc_dict)
+
+    # Apply ops to base (the live document)
+    base_doc_dict = base.document.model_dump(by_alias=True, exclude_none=True)
+    desired_doc_dict = apply_ops_to_document(base_doc_dict, ops)
+
+    desired_document = base.document.__class__.model_validate(desired_doc_dict)
+
+    # Merge comments: use mine's comments (they reflect the agent's edits)
+    desired_comments = mine_bundle.comments
+
+    return DocumentWithComments(document=desired_document, comments=desired_comments)
 
 
 _T = TypeVar("_T")

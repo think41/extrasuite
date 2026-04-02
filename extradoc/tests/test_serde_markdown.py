@@ -3,27 +3,28 @@
 from __future__ import annotations
 
 import textwrap
-from pathlib import Path
 from typing import TYPE_CHECKING
 
-import pytest
+if TYPE_CHECKING:
+    from pathlib import Path
 
 from extradoc.api_types._generated import (
     Body,
     Bullet,
     Document,
     DocumentTab,
-    Footer,
-    Footnote,
-    Header,
     InlineObjectElement,
     Link,
+    ListProperties,
+    NamedRange,
+    NamedRanges,
     NestingLevel,
     NestingLevelGlyphType,
     Paragraph,
     ParagraphElement,
     ParagraphStyle,
     ParagraphStyleNamedStyleType,
+    Range,
     StructuralElement,
     Tab,
     Table,
@@ -34,24 +35,11 @@ from extradoc.api_types._generated import (
     TextRun,
     TextStyle,
 )
-from extradoc.api_types._generated import (
-    NamedRange,
-    NamedRanges,
-    Range,
-    WeightedFontFamily,
-)
-from extradoc.api_types._generated import List as DocList, ListProperties
+from extradoc.api_types._generated import List as DocList
 from extradoc.reconcile._core import reindex_document
 from extradoc.serde import deserialize, serialize
 from extradoc.serde._from_markdown import markdown_to_document
-from extradoc.serde._special_elements import (
-    Blockquote,
-    Callout,
-    CodeBlock,
-    special_element_from_named_range,
-)
 from extradoc.serde._to_markdown import document_to_markdown
-
 
 # ---------------------------------------------------------------------------
 # Helpers
@@ -67,7 +55,9 @@ def _make_para(
     ps = ParagraphStyle()
     if named_style:
         ps.named_style_type = named_style
-    elements = [ParagraphElement(text_run=TextRun(content=text + "\n", text_style=text_style))]
+    elements = [
+        ParagraphElement(text_run=TextRun(content=text + "\n", text_style=text_style))
+    ]
     return StructuralElement(
         paragraph=Paragraph(elements=elements, paragraph_style=ps, bullet=bullet)
     )
@@ -150,7 +140,10 @@ class TestMarkdownRoundTrip:
         h1 = body[1].paragraph
         assert h1 is not None
         assert h1.paragraph_style is not None
-        assert h1.paragraph_style.named_style_type == ParagraphStyleNamedStyleType.HEADING_1
+        assert (
+            h1.paragraph_style.named_style_type
+            == ParagraphStyleNamedStyleType.HEADING_1
+        )
         # Heading text
         text = "".join(
             (pe.text_run.content or "").rstrip("\n")
@@ -170,7 +163,11 @@ class TestMarkdownRoundTrip:
         for se in body:
             if se.paragraph:
                 for pe in se.paragraph.elements or []:
-                    if pe.text_run and pe.text_run.text_style and pe.text_run.text_style.bold:
+                    if (
+                        pe.text_run
+                        and pe.text_run.text_style
+                        and pe.text_run.text_style.bold
+                    ):
                         bold_para = se.paragraph
                         break
         assert bold_para is not None
@@ -371,14 +368,22 @@ class TestMarkdownRoundTrip:
             table_rows=[
                 TableRow(
                     table_cells=[
-                        TableCell(content=[_make_para("A")], table_cell_style=TableCellStyle()),
-                        TableCell(content=[_make_para("B")], table_cell_style=TableCellStyle()),
+                        TableCell(
+                            content=[_make_para("A")], table_cell_style=TableCellStyle()
+                        ),
+                        TableCell(
+                            content=[_make_para("B")], table_cell_style=TableCellStyle()
+                        ),
                     ]
                 ),
                 TableRow(
                     table_cells=[
-                        TableCell(content=[_make_para("1")], table_cell_style=TableCellStyle()),
-                        TableCell(content=[_make_para("2")], table_cell_style=TableCellStyle()),
+                        TableCell(
+                            content=[_make_para("1")], table_cell_style=TableCellStyle()
+                        ),
+                        TableCell(
+                            content=[_make_para("2")], table_cell_style=TableCellStyle()
+                        ),
                     ]
                 ),
             ],
@@ -439,14 +444,16 @@ class TestMarkdownFileCycle:
         """serialize(format='markdown') → deserialize() → same Document structure."""
         doc = _make_doc(
             [
-                _make_para("Overview", named_style=ParagraphStyleNamedStyleType.HEADING_1),
+                _make_para(
+                    "Overview", named_style=ParagraphStyleNamedStyleType.HEADING_1
+                ),
                 _make_para("Normal paragraph."),
                 _make_para("Bold text", text_style=TextStyle(bold=True)),
             ]
         )
 
         out = tmp_path / "test-doc"
-        paths = serialize(doc, out, format="markdown")
+        serialize(doc, out, format="markdown")
 
         # Check files written
         assert (out / "index.xml").exists()
@@ -484,7 +491,7 @@ class TestMarkdownFileCycle:
         assert len(bold_runs) == 1
         assert "Bold text" in (bold_runs[0].content or "")
 
-    def test_markdown_string_roundtrip(self, tmp_path: Path) -> None:
+    def test_markdown_string_roundtrip(self) -> None:
         """Write markdown → Document → write markdown → same string."""
         source = ROUND_TRIP_MD
 
@@ -521,7 +528,9 @@ class TestMarkdownDiff:
             """)
 
         base_doc = markdown_to_document({"Tab_1": base_md}, document_id="x", title="T")
-        desired_doc = markdown_to_document({"Tab_1": edited_md}, document_id="x", title="T")
+        desired_doc = markdown_to_document(
+            {"Tab_1": edited_md}, document_id="x", title="T"
+        )
 
         base_idx = reindex_document(base_doc)
         desired_idx = reindex_document(desired_doc)
@@ -561,7 +570,9 @@ class TestMarkdownDiff:
             """)
 
         base_doc = markdown_to_document({"Tab_1": base_md}, document_id="x", title="T")
-        desired_doc = markdown_to_document({"Tab_1": edited_md}, document_id="x", title="T")
+        desired_doc = markdown_to_document(
+            {"Tab_1": edited_md}, document_id="x", title="T"
+        )
 
         base_idx = reindex_document(base_doc)
         desired_idx = reindex_document(desired_doc)
@@ -571,9 +582,7 @@ class TestMarkdownDiff:
 
         all_requests = [r for batch in batches for r in batch.requests]
         insert_texts = [r.insert_text for r in all_requests if r.insert_text]
-        assert any(
-            "New paragraph added" in (t.text or "") for t in insert_texts
-        )
+        assert any("New paragraph added" in (t.text or "") for t in insert_texts)
 
     def test_unchanged_content_no_style_ops(self) -> None:
         """Unchanged paragraphs produce no spurious style operations."""
@@ -593,7 +602,9 @@ class TestMarkdownDiff:
             """)
 
         base_doc = markdown_to_document({"Tab_1": base_md}, document_id="x", title="T")
-        desired_doc = markdown_to_document({"Tab_1": edited_md}, document_id="x", title="T")
+        desired_doc = markdown_to_document(
+            {"Tab_1": edited_md}, document_id="x", title="T"
+        )
 
         base_idx = reindex_document(base_doc)
         desired_idx = reindex_document(desired_doc)
@@ -633,6 +644,7 @@ class TestMarkdownDiff:
         all_requests = [r for batch in batches for r in batch.requests]
         assert len(all_requests) == 0, f"Expected no ops, got: {all_requests}"
 
+
 # ---------------------------------------------------------------------------
 # Test 4: Special elements — push path (markdown → Document)
 # ---------------------------------------------------------------------------
@@ -653,7 +665,7 @@ class TestSpecialElementsPush:
         return dt.named_ranges or {} if dt else {}
 
     def test_code_fence_creates_table(self) -> None:
-        """```python code``` → 1×1 table with Courier New font."""
+        """```python code``` → 1x1 table with Courier New font."""
         md = "```python\nprint('hello')\nx = 1\n```\n"
         doc = markdown_to_document({"Tab_1": md})
         tables = self._get_tables(doc)
@@ -698,7 +710,7 @@ class TestSpecialElementsPush:
         assert "extradoc:codeblock" in nr
 
     def test_callout_creates_table(self) -> None:
-        """> [!WARNING]\\n> be careful → 1×1 table with amber background."""
+        """> [!WARNING]\\n> be careful → 1x1 table with amber background."""
         md = "> [!WARNING]\n> Be careful here.\n"
         doc = markdown_to_document({"Tab_1": md})
         tables = self._get_tables(doc)
@@ -720,7 +732,7 @@ class TestSpecialElementsPush:
         assert "extradoc:callout:warning" in nr
 
     def test_blockquote_creates_table(self) -> None:
-        """> quoted text → 1×1 table."""
+        """> quoted text → 1x1 table."""
         md = "> This is quoted text.\n"
         doc = markdown_to_document({"Tab_1": md})
         tables = self._get_tables(doc)
@@ -775,7 +787,7 @@ def _make_doc_with_named_range_table(
     nr_name: str,
     cell_text: str = "some content",
 ) -> Document:
-    """Build a Document with a 1×1 table and an extradoc:* named range covering it."""
+    """Build a Document with a 1x1 table and an extradoc:* named range covering it."""
     cell_para = StructuralElement(
         paragraph=Paragraph(
             elements=[
@@ -992,7 +1004,7 @@ class TestSpecialElementsPull:
         assert "> Wise words" in md
 
     def test_no_named_range_is_regular_table(self) -> None:
-        """A 1×1 table WITHOUT a named range serializes as a regular GFM table."""
+        """A 1x1 table WITHOUT a named range serializes as a regular GFM table."""
         cell_para = StructuralElement(
             paragraph=Paragraph(
                 elements=[ParagraphElement(text_run=TextRun(content="data\n"))],
@@ -1027,7 +1039,9 @@ class TestSpecialElementsPull:
         """Two extradoc:callout:warning named ranges → both pulled as > [!WARNING]."""
         cell_para1 = StructuralElement(
             paragraph=Paragraph(
-                elements=[ParagraphElement(text_run=TextRun(content="First warning\n"))],
+                elements=[
+                    ParagraphElement(text_run=TextRun(content="First warning\n"))
+                ],
                 paragraph_style=ParagraphStyle(
                     named_style_type=ParagraphStyleNamedStyleType.NORMAL_TEXT
                 ),
@@ -1069,9 +1083,7 @@ class TestSpecialElementsPull:
                 )
             ],
         )
-        doc = _make_doc(
-            [StructuralElement(table=t1), StructuralElement(table=t2)]
-        )
+        doc = _make_doc([StructuralElement(table=t1), StructuralElement(table=t2)])
         doc = reindex_document(doc)
 
         tab = doc.tabs[0]  # type: ignore[index]
@@ -1157,7 +1169,9 @@ class TestSpecialElementsPull:
         assert "[read the license](LICENSE)" in md
         assert "http://LICENSE" not in md
 
-    def test_list_pull_derives_nesting_from_indent_when_bullet_level_missing(self) -> None:
+    def test_list_pull_derives_nesting_from_indent_when_bullet_level_missing(
+        self,
+    ) -> None:
         doc = reindex_document(
             markdown_to_document(
                 {"Tab_1": "- parent\n  - child\n"},
@@ -1202,7 +1216,7 @@ class TestSpecialElementsRoundTrip:
         per_tab = document_to_markdown(doc)
         result = per_tab["Tab_1"]["document.md"]
         assert "```python" in result
-        assert 'def hello():' in result
+        assert "def hello():" in result
         assert '    print("hi")' in result
         assert "After the block." in result
 
@@ -1297,9 +1311,7 @@ class TestNamedRangeDiff:
         desired_md = "# Heading\n\nSome text.\n\n```python\nprint('hi')\n```\n"
         all_reqs = self._reconcile_and_collect(base_md, desired_md)
         create_nrs = [
-            r.create_named_range
-            for r in all_reqs
-            if r.create_named_range is not None
+            r.create_named_range for r in all_reqs if r.create_named_range is not None
         ]
         assert any(
             cnr.name == "extradoc:codeblock:python" for cnr in create_nrs
@@ -1320,9 +1332,7 @@ class TestNamedRangeDiff:
         batches = reconcile(base_idx, desired_idx)
         all_reqs = [r for batch in batches for r in (batch.requests or [])]
         delete_nrs = [
-            r.delete_named_range
-            for r in all_reqs
-            if r.delete_named_range is not None
+            r.delete_named_range for r in all_reqs if r.delete_named_range is not None
         ]
         assert len(delete_nrs) >= 1, f"Expected deleteNamedRange, got: {delete_nrs}"
 
@@ -1381,6 +1391,7 @@ class TestDiffRawJsonBase:
             tab_ids={"Tab_1": "t.0"},
         )
         from extradoc.comments._types import DocumentWithComments, FileComments
+
         bundle = DocumentWithComments(
             document=doc,
             comments=FileComments(file_id=doc_id),
@@ -1389,7 +1400,7 @@ class TestDiffRawJsonBase:
 
         # Create pristine zip
         pristine_dir = folder / ".pristine"
-        pristine_dir.mkdir()
+        pristine_dir.mkdir(exist_ok=True)
         zip_path = pristine_dir / "document.zip"
         with zipfile.ZipFile(zip_path, "w") as zf:
             for p in sorted(folder.rglob("*")):
@@ -1398,9 +1409,7 @@ class TestDiffRawJsonBase:
 
         return folder
 
-    def test_uses_raw_json_base_for_deleteContentRange(
-        self, tmp_path: Path
-    ) -> None:
+    def test_uses_raw_json_base_for_deleteContentRange(self, tmp_path: Path) -> None:
         """deleteContentRange.startIndex must come from raw JSON, not mock reindex.
 
         We inflate the raw JSON's table startIndex by 100 positions to make the
@@ -1447,7 +1456,11 @@ class TestDiffRawJsonBase:
         def _inflate(obj: object) -> object:
             if isinstance(obj, dict):
                 return {
-                    k: (_inflate(v) + INFLATE if k in ("startIndex", "endIndex") and isinstance(v, int) else _inflate(v))
+                    k: (
+                        _inflate(v) + INFLATE
+                        if k in ("startIndex", "endIndex") and isinstance(v, int)
+                        else _inflate(v)
+                    )
                     for k, v in obj.items()
                 }
             if isinstance(obj, list):
@@ -1491,7 +1504,8 @@ class TestDiffRawJsonBase:
         # (since the raw JSON has every index inflated by INFLATE).
         # With mock as base, the callout cell startIndex would be much smaller.
         cell_deletes = [
-            d for d in delete_ranges
+            d
+            for d in delete_ranges
             if d.range and (d.range.start_index or 0) >= INFLATE
         ]
         assert len(cell_deletes) >= 1, (
@@ -1517,7 +1531,9 @@ class TestDiffRawJsonBase:
         assert result.document_id == "test-no-raw"
         # Should produce at least one batch with change requests
         all_reqs = [r for batch in result.batches for r in (batch.requests or [])]
-        assert len(all_reqs) > 0, "Expected diff to produce requests for changed callout"
+        assert (
+            len(all_reqs) > 0
+        ), "Expected diff to produce requests for changed callout"
 
     def test_heading_edit_with_consecutive_callouts_avoids_separator_insert(
         self, tmp_path: Path
@@ -1561,7 +1577,9 @@ class TestDiffRawJsonBase:
             Tail paragraph.
             """)
 
-        folder = self._setup_markdown_folder(tmp_path, base_md, "test-callout-separators")
+        folder = self._setup_markdown_folder(
+            tmp_path, base_md, "test-callout-separators"
+        )
 
         raw_doc = markdown_to_document(
             {"Tab_1": base_md},
@@ -1573,9 +1591,7 @@ class TestDiffRawJsonBase:
         raw_dir.mkdir()
         (raw_dir / "document.json").write_text(
             json.dumps(
-                reindex_document(raw_doc).model_dump(
-                    by_alias=True, exclude_none=True
-                )
+                reindex_document(raw_doc).model_dump(by_alias=True, exclude_none=True)
             ),
             encoding="utf-8",
         )
