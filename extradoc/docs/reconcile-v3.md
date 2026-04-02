@@ -1,0 +1,336 @@
+# Reconcile v3 — Architecture, History, and Status
+
+**Audience**: An engineer picking up where this work left off. Read this before touching any code.
+
+---
+
+## The Big Picture
+
+`extradoc` implements a pull → edit → push workflow for Google Docs:
+
+```
+pull:   API → raw/document.json → serialize(base) → folder of files
+edit:   agent edits files in the folder
+push:   deserialize(edited folder) → desired Document
+        reconcile(base, desired) → list[BatchUpdateRequest]
+        execute requests against live Google Doc
+```
+
+The reconciler is the heart of `push`. It takes two `Document` objects — `base` (what the doc looked like at pull time) and `desired` (what the agent wants it to look like) — and produces a list of `BatchUpdateDocumentRequest` batches that transform one into the other.
+
+**Why v3?** `reconcile_v2` worked, but it had a fundamental structural problem: it parsed stable IDs from the document at parse time, then ignored them at diff time, using position-based matching everywhere instead. This caused:
+- Tabs matched by position instead of `tabId` → silent failure if tab order changed
+- Footnotes matched by paragraph position instead of `footnoteId` → wrong matches on edits
+- `DocumentStyle`, `NamedStyles`, `InlineObjects` never diffed → silent data loss
+- The SERDE couldn't guarantee "things I don't understand won't be deleted" → headers/footers silently wiped on markdown push
+
+`reconcile_v3` fixes all of this with a deliberate top-down tree traversal, anchoring at stable IDs everywhere the API provides them.
+
+---
+
+## The Document Tree
+
+Google Docs is a tree. v3 traverses it top-down, matching at each level by the stable ID the API provides:
+
+```
+Document
+  └── Tab  (matched by tabId)
+        ├── DocumentStyle       (singular — diff in place)
+        ├── NamedStyles         (matched by namedStyleType enum)
+        ├── Lists               (matched by listId)
+        ├── InlineObjects       (matched by inlineObjectId)
+        ├── Headers             (matched by section slot + headerId)
+        ├── Footers             (matched by section slot + footerId)
+        ├── Footnotes           (matched by footnoteId)
+        └── Body content        (ContentAlignment DP — flat sequence)
+              └── TableCell     (recurse — same ContentAlignment DP)
+```
+
+The `content_align.py` module (proven in 90 tests, copied from v2) handles the flat-sequence matching at body, header, footer, footnote, and table cell levels. It uses an edit-distance DP with a hard terminal constraint (last paragraph never deleted).
+
+---
+
+## The SERDE Interface
+
+The SERDE (serialize/deserialize) was redesigned alongside v3 to use a **3-way merge** on deserialization:
+
+```python
+serialize(base: DocumentWithComments, folder: Path) -> None
+# Writes files to folder. Also writes .pristine/document.zip as the snapshot.
+
+deserialize(base: DocumentWithComments, folder: Path) -> DocumentWithComments
+# 3-way merge:
+#   ancestor = parse(.pristine/document.zip)
+#   mine     = parse(current folder)
+#   ops      = reconcile_v3.diff(ancestor, mine)
+#   desired  = apply_ops_in_memory(base, ops)
+#   return DocumentWithComments(document=desired, comments=mine.comments)
+```
+
+**The guarantee**: If the SERDE doesn't model something (e.g., markdown doesn't model headers/footers), the diff `ancestor → mine` produces zero ops for those fields. Base values flow through unchanged. The SERDE can focus only on what it understands, without fear of destroying what it doesn't.
+
+The shared op applier is `serde/_apply_ops.py`. Both XML and Markdown SERDEs use it.
+
+---
+
+## How We Got Here — Annotated Journey
+
+### Starting point: proven leaf-node algorithms in v2
+
+Before v3 existed, two key algorithms were proven in memory and then live:
+
+**`reconcile_v2/table_diff.py`** (commit `1da82ce`): Fuzzy LCS row matching for tables. Handles add/delete/reorder rows and columns. Proven live — 5 integration bugs fixed in `diff.py` and `lower.py` to make table row/column ops converge in one cycle without re-fetching the document.
+
+**`reconcile_v2/content_align.py`** (commit `b442d20`): Edit-distance DP for matching a flat sequence of structural elements (Paragraph, Table, TOC, SectionBreak). 90 tests. Terminal paragraph always matched (never deleted). Proven in memory only at this stage.
+
+**Index arithmetic** (commit `e5a55cf`): A `verify-table-indices` CLI command proved live that after `insertTableRow`/`deleteTableRow`/`insertTableColumn`/`deleteTableColumn`, resulting cell indices are fully deterministic without re-fetching. 16/16 cases passed.
+
+### The v3 design decision
+
+A gap analysis of `reconcile_v2` found:
+- Tabs matched by hierarchy **position** (not `tabId`)
+- Footnotes matched by **paragraph position** (not `footnoteId`)
+- Lists matched **positionally** (not by `listId`)
+- `DocumentStyle`, `NamedStyles`, `InlineObjects` have **zero handling** — changes silently dropped
+
+> *"Think of the Document as a tree. We first have tabs. Each tab has a stable id. So matching tabs is easy. Then within a Tab, we have various things. Most of them have ids that can be matched."*
+
+This led to the decision to build `reconcile_v3` as a top-down tree traversal. The interface is identical to v2:
+
+```python
+reconcile(base: Document, desired: Document) -> list[BatchUpdateDocumentRequest]
+```
+
+No `transport_base` parameter — v3 doesn't need structural re-fetches.
+
+### Building v3 — the sequential subagent pattern
+
+Each component was built in an isolated worktree by a subagent, with tests, then committed to `main`. The rule: **prove in memory first, then live**.
+
+| Commit | What | Tests added |
+|--------|------|-------------|
+| `7862345` | Top-down diff experiment — 21 ReconcileOp types, all tree levels | 51 |
+| `cf9b121` | Basic lowering + multi-batch deferred ID resolution | +28 |
+| `0e3233c` | Table cell content lowering (recursive story content) | +8 |
+| `a1d883e` | Multi-run paragraph style edits (`_diff_paragraph_runs` using `difflib`) | +12 |
+| `4a76bf9` | Footnote lowering (3-batch: create → anchor → content) | +10 |
+| `abe4d33` | Wired into `client.py` via `EXTRADOC_RECONCILER=v3` | — |
+| `8420331` | Table row/column insert/delete (ported `table_diff.py` to v3) | +13 |
+| `641f0f3` | Table cell/row/column style diffing | +11 |
+| `7b7024f` | DocumentStyle diffing and lowering | +9 |
+| `282df2e` | Inline image insert/delete | +10 |
+| `9d49fac` | Page break and section break insertion | +10 |
+
+Then the SERDE redesign:
+
+| Commit | What | Tests added |
+|--------|------|-------------|
+| `0000206` | Markdown SERDE 3-way merge + `_apply_ops.py` | +24 |
+| `2f41405` | XML SERDE 3-way merge | +34 |
+| `354926a` | Fix: reverse same-position insertions for correct order | — |
+| `9e03fcf` | Fix: skip namedStyles/documentStyle diffs for formats that don't model them | — |
+
+### Key design decisions made along the way
+
+**On the content alignment DP**: "Identical elements are always matched" is NOT a valid global DP invariant. A short identical paragraph adjacent to a large expensive element can be rationally delete+reinserted if it saves cost on a better global alignment. This is mathematically correct. In practice, agents don't reorder content blocks so this doesn't arise.
+
+**On table row/column ops**: The `table_diff.py` algorithm was already proven in v2. For v3, it was copied and adapted to work on raw API dicts instead of IR objects, returning `ReconcileOp` types instead of `SemanticEdit` types. The core fuzzy LCS logic was not changed.
+
+**On multi-run paragraph diffs**: Uses `difflib.SequenceMatcher` for character-level diffing. For equal spans with style changes: `updateTextStyle`. For deletions: `deleteContentRange`. For insertions: `insertText` + `updateTextStyle`. All ops emitted in descending index order to avoid corruption.
+
+**On the SERDE 3-way merge**: The key insight is that `deserialize` is a 3-way merge, not a straightforward parse:
+> *"Think of deserialize as a 3-way merge. The deserialization does a diff internally — markdown in .pristine and markdown that was edited. It finds out what changed. But then it superimposes the changes to the DocumentWithComments corresponding to base to get the desired DocumentWithComments. Each SERDE can then focus only on the subset of information it can truly model, but without fear of deleting things it doesn't understand."*
+
+**On `_apply_ops.py`**: Works entirely on raw dicts (not Pydantic models). For content ops (`UpdateBodyContentOp`), applies `desired_content` wholesale from the alignment — both matched and inserted elements come from `desired_content`; deleted elements are simply absent. This is correct because the 3-way merge `desired_content` represents the complete target state.
+
+---
+
+## Current Status
+
+### Test suite (as of last check)
+
+```bash
+cd extradoc && uv run pytest tests/ -q
+# 55 failed, 632 passed
+```
+
+**46 failures are in `tests/reconcile_v3/`** — mostly in `TestPageBreakSectionBreak`. These appeared after the SERDE integration commits (`354926a`, `9e03fcf`) and need to be diagnosed before live testing.
+
+**9 failures are in `tests/test_reconcile.py`** — pre-existing failures in edge cases around table insertion, unrelated to v3 work.
+
+> **ACTION REQUIRED**: Fix the 46 reconcile_v3 test failures before proceeding to live tests. Run `uv run pytest tests/reconcile_v3/ -x -v` to see the first failure with full detail.
+
+### What is and isn't implemented in lowering
+
+**Fully implemented** (emits correct API requests):
+- All tab ops (add, delete)
+- DocumentStyle (margins, page size, background, orientation)
+- NamedStyles (update, insert)
+- Headers and footers (create, delete, update content)
+- Footnotes (insert, delete, update content)
+- Body content (insert/delete/update paragraphs with multi-run style diffs)
+- Table structural ops (insert/delete row, insert/delete column)
+- Table cell/row/column styling
+- Inline image insert/delete
+- Page break and section break insertion
+
+**Intentional no-ops** (API limitations):
+- `DeleteNamedStyleOp` — Google Docs API cannot remove named styles
+- `UpdateListOp` — List definitions not editable via batchUpdate
+- `UpdateInlineObjectOp` — Image properties not editable via batchUpdate
+- `InsertInlineObjectOp` / `DeleteInlineObjectOp` in `_apply_ops.py` — deferred (index-arithmetic heavy)
+
+**Known gaps** (acceptable for now):
+- Tab reordering (`updateDocumentTabProperties`)
+- `replaceAllText` (different workflow)
+- Named ranges (rarely edited)
+- Positioned objects (rare, complex)
+
+### File map
+
+```
+src/extradoc/reconcile_v3/
+  api.py           # Public interface: reconcile(base, desired) -> list[BatchUpdateRequest]
+  diff.py          # Top-down tree diff -> list[ReconcileOp]
+  lower.py         # ReconcileOp -> list[dict] (API request dicts)
+  model.py         # 21 ReconcileOp dataclass types
+  content_align.py # DP alignment (copied from v2, proven in 90 tests)
+  table_diff.py    # Table row/col diff (adapted from v2, proven live)
+  errors.py        # UnsupportedReconcileV3Error, ReconcileV3InvariantError
+
+src/extradoc/serde/
+  _apply_ops.py    # In-memory op applier for 3-way merge deserialize
+  __init__.py      # serialize/deserialize dispatch; 3-way merge logic
+  _to_xml.py       # XML serializer
+  _from_xml.py     # XML deserializer
+  _to_markdown.py  # Markdown serializer
+  _from_markdown.py # Markdown deserializer
+
+tests/reconcile_v3/
+  test_diff.py     # 51+ tests for the diff layer
+  test_lower.py    # 80+ tests for the lowering layer (some currently failing)
+  helpers.py       # Synthetic document factory functions
+
+tests/
+  test_serde_markdown_roundtrip.py  # 24 tests: serialize → edit → deserialize
+  test_serde_xml_roundtrip.py       # 34 tests: serialize → edit → deserialize
+```
+
+---
+
+## The Testing Method
+
+We follow a strict **in-memory first, then live** discipline:
+
+### In-memory testing (unit/integration)
+
+Every new component gets a full test suite using synthetic `dict`-based documents before any live API calls. The pattern:
+
+1. Build a minimal synthetic Document dict that exercises the scenario
+2. Call the function under test
+3. Assert the output (ops list, request shapes, field values)
+
+For SERDE testing, the pattern is:
+1. Build a `DocumentWithComments` dict
+2. `serialize(base, folder)` → writes files to a temp dir
+3. Make **deterministic edits** to the files (string replace, ElementTree xpath, direct writes — you know exactly what you changed)
+4. `deserialize(base, folder)` → returns `desired: DocumentWithComments`
+5. Assert: edited things changed; unmodeled things preserved from base
+
+This is the approach in `test_serde_markdown_roundtrip.py` and `test_serde_xml_roundtrip.py`.
+
+### Live testing (end-to-end)
+
+After in-memory tests pass, live testing uses real Google Docs:
+
+```bash
+# Create a test document
+./extrasuite docs create "Title"
+
+# Pull as markdown
+EXTRADOC_RECONCILER=v3 ./extrasuite docs pull-md <url> <folder>
+
+# Edit files in <folder>
+
+# Push changes
+EXTRADOC_RECONCILER=v3 ./extrasuite docs push-md <folder>
+
+# Re-pull to verify
+EXTRADOC_RECONCILER=v3 ./extrasuite docs pull-md <url> <folder>
+```
+
+The live test sequence (to be executed once in-memory tests pass):
+
+**Phase 1 (markdown):**
+1. No-op push (serialize → push without edits → verify zero changes)
+2. Text edits (paragraph change, add, delete)
+3. Formatting (bold, italic, links)
+4. Lists (create, edit, add item)
+5. Tables (create, edit cell, add row)
+6. Multi-tab (add tab, edit one tab only)
+7. Footnotes (add, edit)
+8. Preservation test: add header via XML push → pull-md → edit body → push-md → verify header survived
+9. Multi-change stress test
+
+**Phase 2 (XML, after markdown passes):**
+Focus on things markdown doesn't model:
+1. Named style edits via `styles.xml` or `namedstyles.xml`
+2. Paragraph style edits (alignment, spacing, indentation)
+3. Header and footer content editing
+4. Document style (page margins, background)
+5. All scenarios from markdown, now via XML path
+
+**The invariant for any live test**: After push, re-pull the document and assert the expected state. Never accept "no error" as success — verify the actual Google Doc content changed correctly.
+
+### Bug discipline
+
+If a live test fails:
+1. Diagnose root cause (read the error, check request shapes, compare with API docs)
+2. Write a failing in-memory test that reproduces the bug
+3. Fix the code
+4. Verify the in-memory test passes
+5. Commit: `"Fix: <clear description>"`
+6. Re-run the live test to confirm fix
+
+**Warning from prior work**: The mock in `src/extradoc/mock/` does NOT replicate real UTF-16 index side effects. A fix proven against the mock is not proven. Live fixtures win.
+
+---
+
+## How to Activate v3
+
+```bash
+# Use reconcile_v3 for push
+EXTRADOC_RECONCILER=v3 ./extrasuite docs push-md <folder>
+EXTRADOC_RECONCILER=v3 ./extrasuite docs push <folder>
+
+# Use reconcile_v3 for pull (pulls always use the SERDE; v3 is used on push)
+EXTRADOC_RECONCILER=v3 ./extrasuite docs pull-md <url> <folder>
+```
+
+Without the env var, `reconcile_v2` is used (the default).
+
+---
+
+## Immediate Next Steps
+
+1. **Fix the 46 failing reconcile_v3 tests** — run `uv run pytest tests/reconcile_v3/ -x -v`, diagnose the `TestPageBreakSectionBreak` failures, fix them, commit.
+
+2. **Run the full in-memory suite clean** — `uv run pytest tests/ -q` should show only the 9 pre-existing `test_reconcile.py` failures (table edge cases unrelated to v3).
+
+3. **Markdown live test** — create a document, work through the Phase 1 sequence above, fix bugs as found, maintain test notes in `tmp-md-live-test/test-notes.md`.
+
+4. **XML live test** — same pattern, Phase 2 scenarios.
+
+5. **Graduate v3 to default** — once live tests pass, remove the `EXTRADOC_RECONCILER` env var requirement; make v3 the default and deprecate v2.
+
+---
+
+## The Warning to Carry Forward
+
+From the original continuation notes:
+
+> **The Mock is Not the Truth.** `src/extradoc/mock/` does not replicate real UTF-16 index side effects after structural ops. A fix proven only against the mock is not proven. Live fixtures win.
+
+And the corollary for the SERDE:
+
+> **The Pristine is the Anchor.** The `.pristine/document.zip` written by `serialize()` is what makes the 3-way merge work. If it's missing (legacy folders), the fallback is direct parse — which is the old behavior, not wrong, just without the preservation guarantee. New pulls always have the pristine.
