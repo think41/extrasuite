@@ -45,6 +45,9 @@ from extradoc.reconcile_v3.model import (
     UpdateHeaderContentOp,
     UpdateListOp,
     UpdateNamedStyleOp,
+    UpdateTableCellStyleOp,
+    UpdateTableColumnPropertiesOp,
+    UpdateTableRowStyleOp,
 )
 from tests.reconcile_v3.helpers import (
     make_doc_tab,
@@ -1044,7 +1047,10 @@ class TestTableStructuralOps:
             for op in ops
             if isinstance(
                 op,
-                InsertTableRowOp | DeleteTableRowOp | InsertTableColumnOp | DeleteTableColumnOp,
+                InsertTableRowOp
+                | DeleteTableRowOp
+                | InsertTableColumnOp
+                | DeleteTableColumnOp,
             )
         ]
         assert structural == []
@@ -1117,3 +1123,183 @@ class TestTableStructuralOps:
         # The inserted row should be below row 0 (after "hello")
         assert insert_row_ops[0].row_index == 0
         assert insert_row_ops[0].insert_below is True
+
+
+# ===========================================================================
+# Part 11: Table style diffing
+# ===========================================================================
+
+
+class TestTableStyleDiff:
+    """Tests for UpdateTableCellStyleOp, UpdateTableRowStyleOp, and
+    UpdateTableColumnPropertiesOp detection."""
+
+    def _make_doc_with_styled_table(
+        self,
+        rows: list[list[str]],
+        cell_styles: dict[tuple[int, int], dict[str, Any]] | None = None,
+        row_styles: dict[int, dict[str, Any]] | None = None,
+        col_props: list[dict[str, Any]] | None = None,
+    ) -> dict[str, Any]:
+        """Build a document with a table whose cells/rows/columns have given styles."""
+        table_rows = []
+        for row_idx, row_texts in enumerate(rows):
+            cells = []
+            for col_idx, text in enumerate(row_texts):
+                cell_style: dict[str, Any] = {}
+                if cell_styles and (row_idx, col_idx) in cell_styles:
+                    cell_style = cell_styles[(row_idx, col_idx)]
+                cells.append(
+                    {
+                        "content": [make_para_el(text), make_terminal_para()],
+                        "tableCellStyle": cell_style,
+                    }
+                )
+            row_style: dict[str, Any] = {}
+            if row_styles and row_idx in row_styles:
+                row_style = row_styles[row_idx]
+            table_rows.append({"tableCells": cells, "tableRowStyle": row_style})
+
+        table: dict[str, Any] = {
+            "tableRows": table_rows,
+            "columns": len(rows[0]) if rows else 0,
+            "rows": len(rows),
+        }
+        if col_props is not None:
+            table["tableStyle"] = {"tableColumnProperties": col_props}
+
+        body = [{"table": table}, make_terminal_para()]
+        return make_document(tabs=[make_tab("t1", body_content=body)])
+
+    def test_identical_table_no_style_ops(self) -> None:
+        """Identical tables produce no style ops."""
+        doc = self._make_doc_with_styled_table([["A", "B"]])
+        ops = diff(doc, copy.deepcopy(doc))
+        style_ops = [
+            op
+            for op in ops
+            if isinstance(
+                op,
+                UpdateTableCellStyleOp
+                | UpdateTableRowStyleOp
+                | UpdateTableColumnPropertiesOp,
+            )
+        ]
+        assert style_ops == []
+
+    def test_cell_background_color_changed(self) -> None:
+        """Changing cell background color emits UpdateTableCellStyleOp."""
+        base = self._make_doc_with_styled_table(
+            [["A", "B"]],
+            cell_styles={
+                (0, 0): {"backgroundColor": {"color": {"rgbColor": {"red": 1.0}}}}
+            },
+        )
+        desired = self._make_doc_with_styled_table(
+            [["A", "B"]],
+            cell_styles={
+                (0, 0): {"backgroundColor": {"color": {"rgbColor": {"blue": 1.0}}}}
+            },
+        )
+        ops = diff(base, desired)
+        cell_style_ops = [op for op in ops if isinstance(op, UpdateTableCellStyleOp)]
+        assert len(cell_style_ops) == 1
+        op = cell_style_ops[0]
+        assert op.row_index == 0
+        assert op.column_index == 0
+        assert "backgroundColor" in op.style_changes
+        assert "backgroundColor" in op.fields_mask
+
+    def test_row_height_changed(self) -> None:
+        """Changing row minRowHeight emits UpdateTableRowStyleOp."""
+        base = self._make_doc_with_styled_table(
+            [["A"]],
+            row_styles={0: {"minRowHeight": {"magnitude": 10.0, "unit": "PT"}}},
+        )
+        desired = self._make_doc_with_styled_table(
+            [["A"]],
+            row_styles={0: {"minRowHeight": {"magnitude": 20.0, "unit": "PT"}}},
+        )
+        ops = diff(base, desired)
+        row_style_ops = [op for op in ops if isinstance(op, UpdateTableRowStyleOp)]
+        assert len(row_style_ops) == 1
+        op = row_style_ops[0]
+        assert op.row_index == 0
+        assert op.min_row_height == {"magnitude": 20.0, "unit": "PT"}
+
+    def test_column_width_changed(self) -> None:
+        """Changing column width emits UpdateTableColumnPropertiesOp."""
+        base = self._make_doc_with_styled_table(
+            [["A", "B"]],
+            col_props=[
+                {
+                    "width": {"magnitude": 100.0, "unit": "PT"},
+                    "widthType": "FIXED_WIDTH",
+                },
+                {
+                    "width": {"magnitude": 100.0, "unit": "PT"},
+                    "widthType": "FIXED_WIDTH",
+                },
+            ],
+        )
+        desired = self._make_doc_with_styled_table(
+            [["A", "B"]],
+            col_props=[
+                {
+                    "width": {"magnitude": 200.0, "unit": "PT"},
+                    "widthType": "FIXED_WIDTH",
+                },
+                {
+                    "width": {"magnitude": 100.0, "unit": "PT"},
+                    "widthType": "FIXED_WIDTH",
+                },
+            ],
+        )
+        ops = diff(base, desired)
+        col_ops = [op for op in ops if isinstance(op, UpdateTableColumnPropertiesOp)]
+        assert len(col_ops) == 1
+        op = col_ops[0]
+        assert op.column_index == 0
+        assert op.width == {"magnitude": 200.0, "unit": "PT"}
+
+    def test_multiple_cells_with_different_styles(self) -> None:
+        """Multiple cells with changed styles produce one op per changed cell."""
+        base = self._make_doc_with_styled_table(
+            [["A", "B"], ["C", "D"]],
+            cell_styles={
+                (0, 0): {"backgroundColor": {"color": {"rgbColor": {"red": 1.0}}}},
+                (1, 1): {"backgroundColor": {"color": {"rgbColor": {"green": 1.0}}}},
+            },
+        )
+        desired = self._make_doc_with_styled_table(
+            [["A", "B"], ["C", "D"]],
+            cell_styles={
+                (0, 0): {"backgroundColor": {"color": {"rgbColor": {"blue": 1.0}}}},
+                (1, 1): {"backgroundColor": {"color": {"rgbColor": {"red": 1.0}}}},
+            },
+        )
+        ops = diff(base, desired)
+        cell_style_ops = [op for op in ops if isinstance(op, UpdateTableCellStyleOp)]
+        assert len(cell_style_ops) == 2
+        locations = {(op.row_index, op.column_index) for op in cell_style_ops}
+        assert locations == {(0, 0), (1, 1)}
+
+    def test_cell_style_and_row_insert_both_emitted(self) -> None:
+        """Cell style change + row insert in same table → both op types emitted."""
+        base = self._make_doc_with_styled_table(
+            [["A", "B"]],
+            cell_styles={
+                (0, 0): {"backgroundColor": {"color": {"rgbColor": {"red": 1.0}}}}
+            },
+        )
+        desired = self._make_doc_with_styled_table(
+            [["A", "B"], ["C", "D"]],
+            cell_styles={
+                (0, 0): {"backgroundColor": {"color": {"rgbColor": {"blue": 1.0}}}}
+            },
+        )
+        ops = diff(base, desired)
+        insert_row_ops = [op for op in ops if isinstance(op, InsertTableRowOp)]
+        cell_style_ops = [op for op in ops if isinstance(op, UpdateTableCellStyleOp)]
+        assert len(insert_row_ops) >= 1
+        assert len(cell_style_ops) == 1

@@ -70,6 +70,9 @@ from extradoc.reconcile_v3.model import (
     UpdateInlineObjectOp,
     UpdateListOp,
     UpdateNamedStyleOp,
+    UpdateTableCellStyleOp,
+    UpdateTableColumnPropertiesOp,
+    UpdateTableRowStyleOp,
 )
 
 # Slot → API type string
@@ -494,6 +497,42 @@ def lower_batches(
                     _make_delete_table_column(
                         table_start_index=op.table_start_index,
                         column_index=op.column_index,
+                        tab_id=op.tab_id,
+                    )
+                )
+
+            # ---------------------------------------------------------------- #
+            # Table style ops → batch 1
+            # ---------------------------------------------------------------- #
+            case UpdateTableCellStyleOp():
+                batch1.append(
+                    _make_update_table_cell_style(
+                        table_start_index=op.table_start_index,
+                        row_index=op.row_index,
+                        column_index=op.column_index,
+                        style_changes=op.style_changes,
+                        fields_mask=op.fields_mask,
+                        tab_id=op.tab_id,
+                    )
+                )
+
+            case UpdateTableRowStyleOp():
+                batch1.append(
+                    _make_update_table_row_style(
+                        table_start_index=op.table_start_index,
+                        row_index=op.row_index,
+                        min_row_height=op.min_row_height,
+                        tab_id=op.tab_id,
+                    )
+                )
+
+            case UpdateTableColumnPropertiesOp():
+                batch1.append(
+                    _make_update_table_column_properties(
+                        table_start_index=op.table_start_index,
+                        column_index=op.column_index,
+                        width=op.width,
+                        width_type=op.width_type,
                         tab_id=op.tab_id,
                     )
                 )
@@ -1733,5 +1772,88 @@ def _make_delete_table_column(
                 "rowIndex": 0,
                 "columnIndex": column_index,
             }
+        }
+    }
+
+
+def _make_update_table_cell_style(
+    *,
+    table_start_index: int,
+    row_index: int,
+    column_index: int,
+    style_changes: dict[str, Any],
+    fields_mask: str,
+    tab_id: str,
+) -> dict[str, Any]:
+    return {
+        "updateTableCellStyle": {
+            "tableStartLocation": _table_start_location(
+                table_start_index=table_start_index,
+                tab_id=tab_id,
+            ),
+            "tableRange": {
+                "tableCellLocation": {
+                    "tableStartLocation": _table_start_location(
+                        table_start_index=table_start_index,
+                        tab_id=tab_id,
+                    ),
+                    "rowIndex": row_index,
+                    "columnIndex": column_index,
+                },
+                "rowSpan": 1,
+                "columnSpan": 1,
+            },
+            "tableCellStyle": style_changes,
+            "fields": fields_mask,
+        }
+    }
+
+
+def _make_update_table_row_style(
+    *,
+    table_start_index: int,
+    row_index: int,
+    min_row_height: dict[str, Any] | None,
+    tab_id: str,
+) -> dict[str, Any]:
+    return {
+        "updateTableRowStyle": {
+            "tableStartLocation": _table_start_location(
+                table_start_index=table_start_index,
+                tab_id=tab_id,
+            ),
+            "rowIndices": [row_index],
+            "tableRowStyle": {"minRowHeight": min_row_height},
+            "fields": "minRowHeight",
+        }
+    }
+
+
+def _make_update_table_column_properties(
+    *,
+    table_start_index: int,
+    column_index: int,
+    width: dict[str, Any] | None,
+    width_type: str | None,
+    tab_id: str,
+) -> dict[str, Any]:
+    col_props: dict[str, Any] = {}
+    fields_parts: list[str] = []
+    if width is not None:
+        col_props["width"] = width
+        fields_parts.append("width")
+    if width_type is not None:
+        col_props["widthType"] = width_type
+        fields_parts.append("widthType")
+    fields_mask = ",".join(sorted(fields_parts)) if fields_parts else "widthType"
+    return {
+        "updateTableColumnProperties": {
+            "tableStartLocation": _table_start_location(
+                table_start_index=table_start_index,
+                tab_id=tab_id,
+            ),
+            "columnIndices": [column_index],
+            "tableColumnProperties": col_props,
+            "fields": fields_mask,
         }
     }

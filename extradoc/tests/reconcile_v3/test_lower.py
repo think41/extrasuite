@@ -35,6 +35,9 @@ from extradoc.reconcile_v3.model import (
     UpdateBodyContentOp,
     UpdateFootnoteContentOp,
     UpdateNamedStyleOp,
+    UpdateTableCellStyleOp,
+    UpdateTableColumnPropertiesOp,
+    UpdateTableRowStyleOp,
 )
 from tests.reconcile_v3.helpers import (
     make_document,
@@ -2164,3 +2167,164 @@ class TestTableStructuralLowering:
         assert (
             len(insert_row_reqs) >= 1
         ), f"Expected insertTableRow request, got: {result}"
+
+
+# ===========================================================================
+# Part 6: Table style lowering
+# ===========================================================================
+
+
+class TestTableStyleLowering:
+    """Tests for lowering of UpdateTableCellStyleOp, UpdateTableRowStyleOp,
+    and UpdateTableColumnPropertiesOp."""
+
+    def test_update_table_cell_style_request_shape(self) -> None:
+        """UpdateTableCellStyleOp lowers to a correctly-shaped updateTableCellStyle request."""
+        op = UpdateTableCellStyleOp(
+            tab_id="t1",
+            table_start_index=5,
+            row_index=1,
+            column_index=2,
+            style_changes={"backgroundColor": {"color": {"rgbColor": {"red": 1.0}}}},
+            fields_mask="backgroundColor",
+        )
+        batches = lower_batches([op])
+        # Goes into batch 1 (content batch)
+        assert len(batches) == 1
+        reqs = batches[0]
+        assert len(reqs) == 1
+        req = reqs[0]
+        assert "updateTableCellStyle" in req
+        ucs = req["updateTableCellStyle"]
+        assert ucs["fields"] == "backgroundColor"
+        assert ucs["tableCellStyle"] == {
+            "backgroundColor": {"color": {"rgbColor": {"red": 1.0}}}
+        }
+        assert ucs["tableRange"]["tableCellLocation"]["rowIndex"] == 1
+        assert ucs["tableRange"]["tableCellLocation"]["columnIndex"] == 2
+        assert ucs["tableRange"]["rowSpan"] == 1
+        assert ucs["tableRange"]["columnSpan"] == 1
+        assert ucs["tableStartLocation"]["index"] == 5
+        assert ucs["tableStartLocation"]["tabId"] == "t1"
+
+    def test_update_table_row_style_request_shape(self) -> None:
+        """UpdateTableRowStyleOp lowers to a correctly-shaped updateTableRowStyle request."""
+        op = UpdateTableRowStyleOp(
+            tab_id="t1",
+            table_start_index=5,
+            row_index=2,
+            min_row_height={"magnitude": 30.0, "unit": "PT"},
+        )
+        batches = lower_batches([op])
+        assert len(batches) == 1
+        reqs = batches[0]
+        assert len(reqs) == 1
+        req = reqs[0]
+        assert "updateTableRowStyle" in req
+        urs = req["updateTableRowStyle"]
+        assert urs["rowIndices"] == [2]
+        assert urs["fields"] == "minRowHeight"
+        assert urs["tableRowStyle"]["minRowHeight"] == {"magnitude": 30.0, "unit": "PT"}
+        assert urs["tableStartLocation"]["index"] == 5
+
+    def test_update_table_column_properties_request_shape(self) -> None:
+        """UpdateTableColumnPropertiesOp lowers to a correctly-shaped request."""
+        op = UpdateTableColumnPropertiesOp(
+            tab_id="t1",
+            table_start_index=5,
+            column_index=1,
+            width={"magnitude": 150.0, "unit": "PT"},
+            width_type="FIXED_WIDTH",
+        )
+        batches = lower_batches([op])
+        assert len(batches) == 1
+        reqs = batches[0]
+        assert len(reqs) == 1
+        req = reqs[0]
+        assert "updateTableColumnProperties" in req
+        ucp = req["updateTableColumnProperties"]
+        assert ucp["columnIndices"] == [1]
+        assert ucp["tableColumnProperties"]["width"] == {
+            "magnitude": 150.0,
+            "unit": "PT",
+        }
+        assert ucp["tableColumnProperties"]["widthType"] == "FIXED_WIDTH"
+        assert ucp["tableStartLocation"]["index"] == 5
+
+    def test_all_table_style_ops_go_into_batch_1(self) -> None:
+        """All three table style op types end up in the content batch (batch 1)."""
+        ops: list[
+            UpdateTableCellStyleOp
+            | UpdateTableRowStyleOp
+            | UpdateTableColumnPropertiesOp
+        ] = [
+            UpdateTableCellStyleOp(
+                tab_id="",
+                table_start_index=1,
+                row_index=0,
+                column_index=0,
+                style_changes={"contentAlignment": "TOP"},
+                fields_mask="contentAlignment",
+            ),
+            UpdateTableRowStyleOp(
+                tab_id="",
+                table_start_index=1,
+                row_index=0,
+                min_row_height=None,
+            ),
+            UpdateTableColumnPropertiesOp(
+                tab_id="",
+                table_start_index=1,
+                column_index=0,
+                width=None,
+                width_type="EVENLY_DISTRIBUTED",
+            ),
+        ]
+        batches = lower_batches(ops)  # type: ignore[arg-type]
+        # No structural-create ops → only batch 1 is emitted
+        assert len(batches) == 1
+        assert len(batches[0]) == 3
+
+    def test_end_to_end_reconcile_table_cell_style(self) -> None:
+        """End-to-end reconcile on a table with changed cell style produces no error."""
+        bg_red = {"backgroundColor": {"color": {"rgbColor": {"red": 1.0}}}}
+        bg_blue = {"backgroundColor": {"color": {"rgbColor": {"blue": 1.0}}}}
+
+        def _make_doc(cell_style: dict[str, Any]) -> dict[str, Any]:
+            table_el: dict[str, Any] = {
+                "startIndex": 1,
+                "endIndex": 10,
+                "table": {
+                    "tableRows": [
+                        {
+                            "tableCells": [
+                                {
+                                    "content": [
+                                        make_para_el("A\n"),
+                                        make_terminal_para(),
+                                    ],
+                                    "tableCellStyle": cell_style,
+                                }
+                            ],
+                            "tableRowStyle": {},
+                        }
+                    ],
+                    "columns": 1,
+                    "rows": 1,
+                },
+            }
+            return make_document(
+                tabs=[
+                    make_tab("t1", body_content=[table_el, make_indexed_terminal(11)])
+                ]
+            )
+
+        base = _make_doc(bg_red)
+        desired = _make_doc(bg_blue)
+
+        from extradoc.reconcile_v3.api import reconcile
+
+        result = reconcile(base, desired)
+        assert isinstance(result, list)
+        style_reqs = [r for r in result if "updateTableCellStyle" in r]
+        assert len(style_reqs) == 1

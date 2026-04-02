@@ -324,6 +324,44 @@ class DeleteTableColumnOp:
 
 
 # ---------------------------------------------------------------------------
+# Table style ops
+# ---------------------------------------------------------------------------
+
+
+@dataclass
+class UpdateTableCellStyleOp:
+    """A table cell's style changed."""
+
+    tab_id: str
+    table_start_index: int
+    row_index: int
+    column_index: int
+    style_changes: dict[str, Any]  # fields that changed
+    fields_mask: str  # comma-separated field names for the updateFields mask
+
+
+@dataclass
+class UpdateTableRowStyleOp:
+    """A table row's style changed."""
+
+    tab_id: str
+    table_start_index: int
+    row_index: int
+    min_row_height: dict[str, Any] | None  # Dimension dict or None
+
+
+@dataclass
+class UpdateTableColumnPropertiesOp:
+    """A table column's properties changed."""
+
+    tab_id: str
+    table_start_index: int
+    column_index: int
+    width: dict[str, Any] | None  # Dimension dict or None
+    width_type: str | None  # "EVENLY_DISTRIBUTED" | "FIXED_WIDTH" | None
+
+
+# ---------------------------------------------------------------------------
 # Body content
 # ---------------------------------------------------------------------------
 
@@ -369,4 +407,7 @@ ReconcileOp = (
     | DeleteTableRowOp
     | InsertTableColumnOp
     | DeleteTableColumnOp
+    | UpdateTableCellStyleOp
+    | UpdateTableRowStyleOp
+    | UpdateTableColumnPropertiesOp
 )

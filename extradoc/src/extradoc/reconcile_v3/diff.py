@@ -50,6 +50,9 @@ from extradoc.reconcile_v3.model import (
     UpdateInlineObjectOp,
     UpdateListOp,
     UpdateNamedStyleOp,
+    UpdateTableCellStyleOp,
+    UpdateTableColumnPropertiesOp,
+    UpdateTableRowStyleOp,
 )
 from extradoc.reconcile_v3.table_diff import diff_tables as _diff_tables_structural
 from extradoc.reconcile_v3.table_diff import get_matched_rows
@@ -687,6 +690,28 @@ def _diff_table_cells_in_alignment(
     return ops
 
 
+def _styles_changed(
+    base: dict[str, Any],
+    desired: dict[str, Any],
+    fields: list[str],
+) -> tuple[dict[str, Any], str] | None:
+    """Compare specific fields between base and desired dicts.
+
+    Returns (changed_fields_dict, fields_mask) if any of the given fields
+    differ between base and desired, or None if they are identical.
+    """
+    changed: dict[str, Any] = {}
+    for field in fields:
+        b_val = base.get(field)
+        d_val = desired.get(field)
+        if b_val != d_val:
+            changed[field] = d_val
+    if not changed:
+        return None
+    fields_mask = ",".join(sorted(changed.keys()))
+    return changed, fields_mask
+
+
 def _diff_table(
     tab_id: str,
     base_table: dict[str, Any],
@@ -723,25 +748,89 @@ def _diff_table(
         for col_idx, (b_cell, d_cell) in enumerate(zip(b_cells, d_cells, strict=False)):
             b_content = b_cell.get("content", [])
             d_content = d_cell.get("content", [])
-            if b_content == d_content:
-                continue
-            cell_label = f"{table_label}:r{base_row_idx}:c{col_idx}"
-            alignment = _align_content_sequence(b_content, d_content)
-            child_ops = _diff_table_cells_in_alignment(
-                tab_id=tab_id,
-                alignment=alignment,
-                base_content=b_content,
-                desired_content=d_content,
-            )
-            ops.append(
-                UpdateBodyContentOp(
+            if b_content != d_content:
+                cell_label = f"{table_label}:r{base_row_idx}:c{col_idx}"
+                alignment = _align_content_sequence(b_content, d_content)
+                child_ops = _diff_table_cells_in_alignment(
                     tab_id=tab_id,
-                    story_kind="table_cell",
-                    story_id=cell_label,
                     alignment=alignment,
                     base_content=b_content,
                     desired_content=d_content,
-                    child_ops=child_ops,
+                )
+                ops.append(
+                    UpdateBodyContentOp(
+                        tab_id=tab_id,
+                        story_kind="table_cell",
+                        story_id=cell_label,
+                        alignment=alignment,
+                        base_content=b_content,
+                        desired_content=d_content,
+                        child_ops=child_ops,
+                    )
+                )
+
+            # Phase 3: Cell style ops
+            b_cell_style = b_cell.get("tableCellStyle", {})
+            d_cell_style = d_cell.get("tableCellStyle", {})
+            _CELL_STYLE_FIELDS = [
+                "backgroundColor",
+                "borderBottom",
+                "borderLeft",
+                "borderRight",
+                "borderTop",
+                "contentAlignment",
+                "paddingBottom",
+                "paddingLeft",
+                "paddingRight",
+                "paddingTop",
+            ]
+            result = _styles_changed(b_cell_style, d_cell_style, _CELL_STYLE_FIELDS)
+            if result is not None:
+                style_changes, fields_mask = result
+                ops.append(
+                    UpdateTableCellStyleOp(
+                        tab_id=tab_id,
+                        table_start_index=table_start_index,
+                        row_index=base_row_idx,
+                        column_index=col_idx,
+                        style_changes=style_changes,
+                        fields_mask=fields_mask,
+                    )
+                )
+
+        # Phase 4: Row style ops
+        b_row_style = b_row.get("tableRowStyle", {})
+        d_row_style = d_row.get("tableRowStyle", {})
+        b_min_height = b_row_style.get("minRowHeight") if b_row_style else None
+        d_min_height = d_row_style.get("minRowHeight") if d_row_style else None
+        if b_min_height != d_min_height:
+            ops.append(
+                UpdateTableRowStyleOp(
+                    tab_id=tab_id,
+                    table_start_index=table_start_index,
+                    row_index=base_row_idx,
+                    min_row_height=d_min_height,
+                )
+            )
+
+    # Phase 5: Column properties ops
+    b_table_style = base_table.get("tableStyle", {}) or {}
+    d_table_style = desired_table.get("tableStyle", {}) or {}
+    b_col_props: list[dict[str, Any]] = b_table_style.get("tableColumnProperties") or []
+    d_col_props: list[dict[str, Any]] = d_table_style.get("tableColumnProperties") or []
+    _COL_FIELDS = ["width", "widthType"]
+    for col_idx, (b_col, d_col) in enumerate(
+        zip(b_col_props, d_col_props, strict=False)
+    ):
+        result = _styles_changed(b_col, d_col, _COL_FIELDS)
+        if result is not None:
+            ops.append(
+                UpdateTableColumnPropertiesOp(
+                    tab_id=tab_id,
+                    table_start_index=table_start_index,
+                    column_index=col_idx,
+                    width=d_col.get("width"),
+                    width_type=d_col.get("widthType"),
                 )
             )
 
