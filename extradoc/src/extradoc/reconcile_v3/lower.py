@@ -376,27 +376,67 @@ def lower_batches(
                 )
 
             # ---------------------------------------------------------------- #
-            # Footnotes → batch 2
+            # Footnotes — batch 0 (createFootnote) + batch 1 (content)
             # ---------------------------------------------------------------- #
             case InsertFootnoteOp():
-                raise NotImplementedError(
-                    f"lowering for InsertFootnoteOp not yet implemented — "
-                    f"footnote insertion requires createFootnote + content ops. "
-                    f"(tab_id={op.tab_id!r}, footnote_id={op.footnote_id!r})"
+                if op.anchor_index < 0:
+                    raise NotImplementedError(
+                        f"lowering for InsertFootnoteOp: anchor_index is unknown "
+                        f"(no footnoteReference with index found in desired body). "
+                        f"(tab_id={op.tab_id!r}, footnote_id={op.footnote_id!r})"
+                    )
+                req_index = len(batch0)
+                batch0.append(
+                    _make_create_footnote(
+                        index=op.anchor_index,
+                        tab_id=op.tab_id,
+                    )
+                )
+                deferred_fn_id: dict[str, Any] = {
+                    "placeholder": True,
+                    "batch_index": 0,
+                    "request_index": req_index,
+                    "response_path": "createFootnote.footnoteId",
+                }
+                batch1.extend(
+                    _lower_story_content_insert(
+                        content=op.desired_content,
+                        tab_id=op.tab_id,
+                        deferred_segment_id=deferred_fn_id,
+                    )
                 )
 
             case DeleteFootnoteOp():
-                raise NotImplementedError(
-                    f"lowering for DeleteFootnoteOp not yet implemented — "
-                    f"footnote deletion requires content range delete of footnote ref. "
-                    f"(tab_id={op.tab_id!r}, footnote_id={op.footnote_id!r})"
+                # Deleting a footnote is done by removing its footnoteReference
+                # element (a single character) from the base document body.
+                # The footnote story is automatically cleaned up by the API.
+                # The base_doc is not available here, so we rely on the op
+                # carrying the ref_index set by the diff layer.
+                if op.ref_index < 0:
+                    raise NotImplementedError(
+                        f"lowering for DeleteFootnoteOp: ref_index is unknown "
+                        f"(no footnoteReference with index found in base body). "
+                        f"(tab_id={op.tab_id!r}, footnote_id={op.footnote_id!r})"
+                    )
+                # footnoteReference occupies exactly 1 character
+                batch1.append(
+                    _make_delete_content_range(
+                        start_index=op.ref_index,
+                        end_index=op.ref_index + 1,
+                        tab_id=op.tab_id,
+                        segment_id=None,
+                    )
                 )
 
             case UpdateFootnoteContentOp():
-                raise NotImplementedError(
-                    f"lowering for UpdateFootnoteContentOp not yet implemented — "
-                    f"footnote content update requires index arithmetic inside footnote story. "
-                    f"(tab_id={op.tab_id!r}, footnote_id={op.footnote_id!r})"
+                batch1.extend(
+                    _lower_story_content_update(
+                        op.alignment,
+                        base_content=op.base_content,
+                        desired_content=op.desired_content,
+                        tab_id=op.tab_id,
+                        segment_id=op.footnote_id,
+                    )
                 )
 
             # ---------------------------------------------------------------- #
@@ -1433,6 +1473,18 @@ def _make_add_document_tab(
     if parent_tab_id is not None:
         tab_properties["parentTabId"] = parent_tab_id
     return {"addDocumentTab": {"tabProperties": tab_properties}}
+
+
+def _make_create_footnote(*, index: int, tab_id: str) -> dict[str, Any]:
+    """Build a createFootnote request dict."""
+    payload: dict[str, Any] = {
+        "location": {
+            "index": index,
+        }
+    }
+    if tab_id:
+        payload["location"]["tabId"] = tab_id
+    return {"createFootnote": payload}
 
 
 def _make_delete_content_range(

@@ -239,19 +239,33 @@ class UpdateFooterContentOp:
 
 @dataclass
 class InsertFootnoteOp:
-    """A footnote present in desired is absent in base (matched by footnoteId)."""
+    """A footnote present in desired is absent in base (matched by footnoteId).
+
+    ``anchor_index`` is the character offset in the body (base document
+    coordinate space) where the ``createFootnote`` request should insert the
+    footnote reference.  A value of -1 means the anchor could not be
+    determined from the available index information; lowering will raise
+    ``NotImplementedError`` in that case.
+    """
 
     tab_id: str
     footnote_id: str
     desired_content: list[dict[str, Any]]
+    anchor_index: int = -1
 
 
 @dataclass
 class DeleteFootnoteOp:
-    """A footnote present in base is absent in desired."""
+    """A footnote present in base is absent in desired.
+
+    ``ref_index`` is the character offset of the ``footnoteReference`` element
+    in the base document body.  A value of -1 means the offset could not be
+    determined; lowering will raise ``NotImplementedError`` in that case.
+    """
 
     tab_id: str
     footnote_id: str
+    ref_index: int = -1
 
 
 @dataclass

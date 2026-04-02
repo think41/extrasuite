@@ -540,6 +540,18 @@ def _diff_footnotes(
 
     ops: list[ReconcileOp] = []
 
+    # Build an index: footnoteId → body character offset from the desired body.
+    # Used to populate anchor_index on InsertFootnoteOp.
+    desired_fn_anchors = _footnote_ref_offsets_in_body(
+        desired_dt.get("body", {}).get("content", [])
+    )
+
+    # Build an index: footnoteId → body character offset from the base body.
+    # Used to populate ref_index on DeleteFootnoteOp.
+    base_fn_anchors = _footnote_ref_offsets_in_body(
+        base_dt.get("body", {}).get("content", [])
+    )
+
     for fn_id, d_fn in desired_fn.items():
         if fn_id not in base_fn:
             ops.append(
@@ -547,6 +559,7 @@ def _diff_footnotes(
                     tab_id=tab_id,
                     footnote_id=fn_id,
                     desired_content=d_fn.get("content", []),
+                    anchor_index=desired_fn_anchors.get(fn_id, -1),
                 )
             )
         else:
@@ -566,9 +579,43 @@ def _diff_footnotes(
 
     for fn_id in base_fn:
         if fn_id not in desired_fn:
-            ops.append(DeleteFootnoteOp(tab_id=tab_id, footnote_id=fn_id))
+            ops.append(
+                DeleteFootnoteOp(
+                    tab_id=tab_id,
+                    footnote_id=fn_id,
+                    ref_index=base_fn_anchors.get(fn_id, -1),
+                )
+            )
 
     return ops
+
+
+def _footnote_ref_offsets_in_body(
+    body_content: list[dict[str, Any]],
+) -> dict[str, int]:
+    """Walk body content and return a mapping of footnoteId → startIndex.
+
+    Each ``footnoteReference`` paragraph element occupies exactly one character
+    in the document.  We collect the ``startIndex`` of the element if present,
+    so that ``InsertFootnoteOp`` can carry the anchor location for
+    ``createFootnote``.
+    """
+    offsets: dict[str, int] = {}
+    for el in body_content:
+        if "paragraph" not in el:
+            continue
+        para = el["paragraph"]
+        for pe in para.get("elements", []):
+            fn_ref = pe.get("footnoteReference")
+            if fn_ref is None:
+                continue
+            fn_id = fn_ref.get("footnoteId")
+            if fn_id is None:
+                continue
+            start = pe.get("startIndex")
+            if isinstance(start, int):
+                offsets[fn_id] = start
+    return offsets
 
 
 # ---------------------------------------------------------------------------

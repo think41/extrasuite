@@ -22,17 +22,20 @@ import pytest
 from extradoc.reconcile_v3.api import diff, reconcile, reconcile_batches
 from extradoc.reconcile_v3.lower import lower_batches, lower_ops
 from extradoc.reconcile_v3.model import (
+    DeleteFootnoteOp,
     DeleteHeaderOp,
     DeleteTabOp,
     InsertFootnoteOp,
     InsertNamedStyleOp,
     InsertTabOp,
     UpdateBodyContentOp,
+    UpdateFootnoteContentOp,
     UpdateNamedStyleOp,
 )
 from tests.reconcile_v3.helpers import (
     make_document,
     make_footer,
+    make_footnote,
     make_header,
     make_named_style,
     make_para_el,
@@ -1590,3 +1593,385 @@ class TestMultiRunParagraphLowering:
                 assert (
                     rng["endIndex"] <= 7
                 ), f"Delete {rng} overlaps the unchanged 'Hello ' run at [1,7)"
+
+
+# ===========================================================================
+# Part 7: Footnote lowering
+# ===========================================================================
+
+
+def make_footnote_ref_para(
+    text_before: str,
+    footnote_id: str,
+    fn_ref_start: int,
+    para_start: int,
+) -> dict[str, Any]:
+    """Build a paragraph element containing text followed by a footnoteReference.
+
+    The paragraph has two elements:
+      - a textRun with ``text_before`` starting at ``para_start``
+      - a footnoteReference at ``fn_ref_start`` (occupies 1 char)
+
+    The paragraph endIndex = fn_ref_start + 1 + 1  (ref char + trailing \\n implied
+    by the last textRun which holds \\n).
+
+    For simplicity we store the trailing \\n as a separate textRun after the ref.
+    """
+    from extradoc.indexer import utf16_len
+
+    text_start = para_start
+    text_end = text_start + utf16_len(text_before)
+    ref_start = fn_ref_start
+    ref_end = ref_start + 1  # footnoteReference is exactly 1 character
+    newline_start = ref_end
+    newline_end = newline_start + 1  # trailing \n
+    para_end = newline_end
+
+    return {
+        "startIndex": para_start,
+        "endIndex": para_end,
+        "paragraph": {
+            "elements": [
+                {
+                    "startIndex": text_start,
+                    "endIndex": text_end,
+                    "textRun": {"content": text_before},
+                },
+                {
+                    "startIndex": ref_start,
+                    "endIndex": ref_end,
+                    "footnoteReference": {"footnoteId": footnote_id},
+                },
+                {
+                    "startIndex": newline_start,
+                    "endIndex": newline_end,
+                    "textRun": {"content": "\n"},
+                },
+            ],
+            "paragraphStyle": {"namedStyleType": "NORMAL_TEXT"},
+        },
+    }
+
+
+class TestFootnoteLowering:
+    """Footnote lowering: delete, update content, and insert."""
+
+    # -----------------------------------------------------------------------
+    # 1. Delete footnote
+    # -----------------------------------------------------------------------
+
+    def test_delete_footnote_emits_delete_content_range(self) -> None:
+        """Deleting a footnote emits deleteContentRange at the footnote ref offset."""
+        # Body: para with text "See" + footnoteRef at index 4, then terminal at 6
+        #   para_start=1, text "See" at 1..4, ref at 4..5, "\n" at 5..6
+        fn_ref_para = make_footnote_ref_para(
+            text_before="See",
+            footnote_id="fn1",
+            fn_ref_start=4,
+            para_start=1,
+        )
+        terminal = make_indexed_terminal(6)
+
+        base = make_indexed_doc(
+            body_content=[fn_ref_para, terminal],
+            footnotes={"fn1": make_footnote("fn1", "My footnote text\n")},
+        )
+        # Desired: same body paragraph without the footnoteReference, no footnote entry
+        # (Just a simple paragraph with "See\n")
+        desired = make_indexed_doc(
+            body_content=[
+                make_indexed_para("See\n", 1),
+                make_indexed_terminal(5),
+            ],
+        )
+
+        ops = diff(base, desired)
+
+        # Should detect a DeleteFootnoteOp with ref_index=4
+        delete_fn_ops = [op for op in ops if isinstance(op, DeleteFootnoteOp)]
+        assert len(delete_fn_ops) == 1
+        assert delete_fn_ops[0].footnote_id == "fn1"
+        assert delete_fn_ops[0].ref_index == 4
+
+        batches = reconcile_batches(base, desired)
+        all_reqs = [r for batch in batches for r in batch]
+        delete_reqs = [r for r in all_reqs if "deleteContentRange" in r]
+
+        # Must have a delete targeting the footnote ref at [4, 5)
+        fn_deletes = [
+            r
+            for r in delete_reqs
+            if r["deleteContentRange"]["range"]["startIndex"] == 4
+            and r["deleteContentRange"]["range"]["endIndex"] == 5
+        ]
+        assert (
+            len(fn_deletes) >= 1
+        ), f"Expected deleteContentRange at [4,5) for footnote ref, got: {delete_reqs}"
+
+    def test_delete_footnote_with_unknown_ref_index_raises(self) -> None:
+        """DeleteFootnoteOp with ref_index=-1 raises NotImplementedError on lowering."""
+        op = DeleteFootnoteOp(tab_id="t1", footnote_id="fn1", ref_index=-1)
+        with pytest.raises(NotImplementedError, match="ref_index is unknown"):
+            lower_ops([op])
+
+    # -----------------------------------------------------------------------
+    # 2. Update footnote content
+    # -----------------------------------------------------------------------
+
+    def test_update_footnote_content_emits_story_ops(self) -> None:
+        """Updating footnote content emits ops scoped to the footnote's segmentId."""
+        # Base footnote with "Old text\n" (with indices)
+        base_fn_content = [
+            {
+                "startIndex": 0,
+                "endIndex": 9,
+                "paragraph": {
+                    "elements": [{"textRun": {"content": "Old text\n"}}],
+                    "paragraphStyle": {"namedStyleType": "NORMAL_TEXT"},
+                },
+            }
+        ]
+        desired_fn_content = [
+            make_para_el("New text\n"),
+            make_terminal_para(),
+        ]
+
+        base = make_indexed_doc(
+            footnotes={"fn1": {"footnoteId": "fn1", "content": base_fn_content}},
+        )
+        desired = make_indexed_doc(
+            footnotes={"fn1": {"footnoteId": "fn1", "content": desired_fn_content}},
+        )
+
+        ops = diff(base, desired)
+        update_ops = [op for op in ops if isinstance(op, UpdateFootnoteContentOp)]
+        assert len(update_ops) == 1
+        assert update_ops[0].footnote_id == "fn1"
+
+        all_reqs = lower_ops(ops)
+
+        # All requests that reference a segmentId should use "fn1"
+        for req in all_reqs:
+            for _key, val in req.items():
+                if isinstance(val, dict):
+                    rng = val.get("range") or val.get("location", {})
+                    seg = rng.get("segmentId") if isinstance(rng, dict) else None
+                    if seg is not None:
+                        assert (
+                            seg == "fn1"
+                        ), f"Expected segmentId='fn1', got {seg!r} in {req}"
+
+    def test_update_footnote_unchanged_content_produces_no_ops(self) -> None:
+        """Unchanged footnote content produces zero ops."""
+        content = [make_para_el("Footnote text\n"), make_terminal_para()]
+        base = make_indexed_doc(
+            footnotes={"fn1": {"footnoteId": "fn1", "content": content}},
+        )
+        desired = make_indexed_doc(
+            footnotes={"fn1": {"footnoteId": "fn1", "content": content}},
+        )
+        assert reconcile(base, desired) == []
+
+    # -----------------------------------------------------------------------
+    # 3. Insert footnote
+    # -----------------------------------------------------------------------
+
+    def test_insert_footnote_emits_create_footnote_in_batch0(self) -> None:
+        """Inserting a new footnote: batch 0 contains createFootnote."""
+        # Desired body: para with "See" + footnoteRef at index 4
+        desired_fn_ref_para = make_footnote_ref_para(
+            text_before="See",
+            footnote_id="fn1",
+            fn_ref_start=4,
+            para_start=1,
+        )
+        desired = make_indexed_doc(
+            body_content=[desired_fn_ref_para, make_indexed_terminal(6)],
+            footnotes={"fn1": make_footnote("fn1", "Footnote content\n")},
+        )
+        # Base has no footnote
+        base = make_indexed_doc(
+            body_content=[
+                make_indexed_para("See\n", 1),
+                make_indexed_terminal(5),
+            ],
+        )
+
+        ops = diff(base, desired)
+        insert_ops = [op for op in ops if isinstance(op, InsertFootnoteOp)]
+        assert len(insert_ops) == 1
+        assert insert_ops[0].footnote_id == "fn1"
+        assert insert_ops[0].anchor_index == 4
+
+        batches = reconcile_batches(base, desired)
+        assert len(batches) >= 1
+
+        # batch 0 must contain createFootnote
+        batch0 = batches[0]
+        create_fn_reqs = [r for r in batch0 if "createFootnote" in r]
+        assert len(create_fn_reqs) == 1
+        cf = create_fn_reqs[0]["createFootnote"]
+        assert cf["location"]["index"] == 4
+
+    def test_insert_footnote_batch1_has_insert_text_with_deferred_id(self) -> None:
+        """Inserting a footnote: batch 1 has insertText with deferred segment ID."""
+        desired_fn_ref_para = make_footnote_ref_para(
+            text_before="Note",
+            footnote_id="fn2",
+            fn_ref_start=5,
+            para_start=1,
+        )
+        desired = make_indexed_doc(
+            body_content=[desired_fn_ref_para, make_indexed_terminal(7)],
+            footnotes={"fn2": make_footnote("fn2", "Content\n")},
+        )
+        base = make_indexed_doc(
+            body_content=[
+                make_indexed_para("Note\n", 1),
+                make_indexed_terminal(6),
+            ],
+        )
+
+        batches = reconcile_batches(base, desired)
+
+        # batch 0: createFootnote; batch 1 (or later): insertText with deferred segmentId
+        assert len(batches) >= 2
+        batch1 = batches[1]
+        insert_reqs = [r for r in batch1 if "insertText" in r]
+        assert len(insert_reqs) >= 1
+
+        # The insertText must use endOfSegmentLocation with a deferred placeholder
+        for req in insert_reqs:
+            it = req["insertText"]
+            loc = it.get("endOfSegmentLocation")
+            if loc is not None:
+                seg_id = loc.get("segmentId")
+                assert isinstance(
+                    seg_id, dict
+                ), f"Expected deferred placeholder dict for segmentId, got {seg_id!r}"
+                assert seg_id.get("placeholder") is True
+                assert seg_id.get("response_path") == "createFootnote.footnoteId"
+                break
+        else:
+            pytest.fail(
+                f"No insertText with endOfSegmentLocation found in batch1: {batch1}"
+            )
+
+    def test_insert_footnote_without_anchor_raises(self) -> None:
+        """InsertFootnoteOp with anchor_index=-1 raises NotImplementedError."""
+        op = InsertFootnoteOp(
+            tab_id="t1",
+            footnote_id="fn1",
+            desired_content=[make_para_el("text\n"), make_terminal_para()],
+            anchor_index=-1,
+        )
+        with pytest.raises(NotImplementedError, match="anchor_index is unknown"):
+            lower_ops([op])
+
+    # -----------------------------------------------------------------------
+    # 4. Multiple footnotes, one changed
+    # -----------------------------------------------------------------------
+
+    def test_multiple_footnotes_only_changed_one_updated(self) -> None:
+        """With 3 footnotes, only the changed one produces update ops."""
+        content_a = [make_para_el("Footnote A\n"), make_terminal_para()]
+        content_b_old = [
+            {
+                "startIndex": 0,
+                "endIndex": 12,
+                "paragraph": {
+                    "elements": [{"textRun": {"content": "Footnote B\n"}}],
+                    "paragraphStyle": {"namedStyleType": "NORMAL_TEXT"},
+                },
+            }
+        ]
+        content_b_new = [make_para_el("Footnote B updated\n"), make_terminal_para()]
+        content_c = [make_para_el("Footnote C\n"), make_terminal_para()]
+
+        base = make_indexed_doc(
+            footnotes={
+                "fnA": {"footnoteId": "fnA", "content": content_a},
+                "fnB": {"footnoteId": "fnB", "content": content_b_old},
+                "fnC": {"footnoteId": "fnC", "content": content_c},
+            }
+        )
+        desired = make_indexed_doc(
+            footnotes={
+                "fnA": {"footnoteId": "fnA", "content": content_a},
+                "fnB": {"footnoteId": "fnB", "content": content_b_new},
+                "fnC": {"footnoteId": "fnC", "content": content_c},
+            }
+        )
+
+        ops = diff(base, desired)
+        update_ops = [op for op in ops if isinstance(op, UpdateFootnoteContentOp)]
+        assert len(update_ops) == 1
+        assert update_ops[0].footnote_id == "fnB"
+
+        all_reqs = lower_ops(ops)
+        # Only fnB's content is updated — any segmentId present must be "fnB"
+        for req in all_reqs:
+            for _key, val in req.items():
+                if isinstance(val, dict):
+                    rng = val.get("range") or val.get("location", {})
+                    seg = rng.get("segmentId") if isinstance(rng, dict) else None
+                    if seg is not None:
+                        assert seg == "fnB", f"Unexpected segmentId {seg!r} in {req}"
+
+    # -----------------------------------------------------------------------
+    # 5. End-to-end: reconcile on a document with footnotes
+    # -----------------------------------------------------------------------
+
+    def test_end_to_end_update_footnote_content(self) -> None:
+        """reconcile() on a document with footnotes works without raising."""
+        base_content = [
+            {
+                "startIndex": 0,
+                "endIndex": 14,
+                "paragraph": {
+                    "elements": [{"textRun": {"content": "Original text\n"}}],
+                    "paragraphStyle": {"namedStyleType": "NORMAL_TEXT"},
+                },
+            }
+        ]
+        desired_content = [make_para_el("Updated text\n"), make_terminal_para()]
+
+        base = make_indexed_doc(
+            footnotes={"fn1": {"footnoteId": "fn1", "content": base_content}},
+        )
+        desired = make_indexed_doc(
+            footnotes={"fn1": {"footnoteId": "fn1", "content": desired_content}},
+        )
+
+        result = reconcile(base, desired)
+        assert isinstance(result, list)
+
+    def test_end_to_end_delete_footnote(self) -> None:
+        """reconcile() produces correct delete request for a removed footnote."""
+        fn_ref_para = make_footnote_ref_para(
+            text_before="See",
+            footnote_id="fnDel",
+            fn_ref_start=4,
+            para_start=1,
+        )
+        base = make_indexed_doc(
+            body_content=[fn_ref_para, make_indexed_terminal(6)],
+            footnotes={"fnDel": make_footnote("fnDel", "To delete\n")},
+        )
+        desired = make_indexed_doc(
+            body_content=[make_indexed_para("See\n", 1), make_indexed_terminal(5)],
+        )
+
+        result = reconcile(base, desired)
+        assert isinstance(result, list)
+        assert len(result) >= 1
+        # Must contain a deleteContentRange for the footnote reference
+        delete_reqs = [r for r in result if "deleteContentRange" in r]
+        fn_deletes = [
+            r
+            for r in delete_reqs
+            if r["deleteContentRange"]["range"]["startIndex"] == 4
+        ]
+        assert (
+            len(fn_deletes) >= 1
+        ), f"Expected delete at index 4 for footnote ref, got: {result}"
