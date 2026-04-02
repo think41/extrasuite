@@ -675,11 +675,12 @@ def _lower_element_update(
             segment_id=segment_id,
         )
     elif "table" in base_el and "table" in desired_el:
-        raise NotImplementedError(
-            "lowering for matched table update not yet implemented — "
-            "table cell content diff requires recursive lowering. "
-            "Use reconcile_v2 for table content updates."
-        )
+        # Table cell content updates are emitted as separate UpdateBodyContentOp
+        # ops with story_kind="table_cell" by the diff layer.  At the body level
+        # a matched table pair means "same table, cells may have changed" — the
+        # cell-level child ops handle the actual content edits.  No body-level
+        # request is needed here.
+        return []
     else:
         # Section breaks, TOC etc. — no content to update
         return []

@@ -685,6 +685,364 @@ class TestEndToEndRoundTrip:
         """lower_batches([]) returns an empty list."""
         assert lower_batches([]) == []
 
+
+# ===========================================================================
+# Part 6: Table cell content lowering
+# ===========================================================================
+#
+# Index arithmetic for a 2x2 table starting at body index T=1:
+#
+#   T=1  table opener (1 char)
+#   Row 0 startIndex = 2 (row opener at 2, 1 char)
+#     Cell (0,0) startIndex = 3 (cell opener, 1 char); content starts at 4
+#       "A\n" occupies 4..5 (2 chars); cell endIndex = 6
+#     Cell (0,1) startIndex = 6 (cell opener, 1 char); content starts at 7
+#       "B\n" occupies 7..8 (2 chars); cell endIndex = 9
+#   Row 0 endIndex = 9
+#   Row 1 startIndex = 9 (row opener at 9, 1 char)
+#     Cell (1,0) startIndex = 10 (cell opener, 1 char); content starts at 11
+#       "C\n" occupies 11..12; cell endIndex = 13
+#     Cell (1,1) startIndex = 13 (cell opener, 1 char); content starts at 14
+#       "D\n" occupies 14..15; cell endIndex = 16
+#   Table endIndex = 16
+#   Body terminal "\n" at 16..17
+#
+# ===========================================================================
+
+
+def make_indexed_cell(
+    text: str,
+    cell_start: int,
+) -> dict[str, Any]:
+    """Build an indexed table cell with a single paragraph and terminal.
+
+    cell_start is the startIndex of the cell element itself (the cell opener).
+    Content starts at cell_start + 1.
+    """
+    from extradoc.indexer import utf16_len
+
+    content_start = cell_start + 1  # skip cell opener
+    para_end = content_start + utf16_len(text)
+    terminal_start = para_end
+    terminal_end = terminal_start + 1  # "\n" is 1 char
+    cell_end = terminal_end
+
+    return {
+        "startIndex": cell_start,
+        "endIndex": cell_end,
+        "content": [
+            {
+                "startIndex": content_start,
+                "endIndex": para_end,
+                "paragraph": {
+                    "elements": [{"textRun": {"content": text}}],
+                    "paragraphStyle": {"namedStyleType": "NORMAL_TEXT"},
+                },
+            },
+            {
+                "startIndex": terminal_start,
+                "endIndex": terminal_end,
+                "paragraph": {
+                    "elements": [{"textRun": {"content": "\n"}}],
+                    "paragraphStyle": {"namedStyleType": "NORMAL_TEXT"},
+                },
+            },
+        ],
+        "tableCellStyle": {},
+    }
+
+
+def make_indexed_table(
+    rows: list[list[str]],
+    table_start: int,
+) -> dict[str, Any]:
+    """Build a table content element with explicit startIndex/endIndex.
+
+    Table structure (1-char openers, no closers):
+      table_start = table opener (1 char)
+      row[0] starts at table_start + 1 (row opener, 1 char)
+      cell[0][0] starts at table_start + 2 (cell opener, 1 char)
+      cell[0][0] content starts at table_start + 3
+      ...
+    """
+
+    pos = table_start + 1  # skip table opener; row[0] starts here
+    table_rows = []
+
+    for row_texts in rows:
+        row_start = pos
+        pos += 1  # row opener (1 char)
+        cells = []
+        for text in row_texts:
+            cell = make_indexed_cell(text, pos)
+            cells.append(cell)
+            pos = cell["endIndex"]
+        row_end = pos
+        table_rows.append(
+            {
+                "startIndex": row_start,
+                "endIndex": row_end,
+                "tableCells": cells,
+                "tableRowStyle": {},
+            }
+        )
+
+    table_end = pos
+    return {
+        "startIndex": table_start,
+        "endIndex": table_end,
+        "table": {
+            "rows": len(rows),
+            "columns": len(rows[0]) if rows else 0,
+            "tableRows": table_rows,
+        },
+    }
+
+
+class TestTableCellContentLowering:
+    """Table cell content lowering: produce correct delete/insert requests."""
+
+    def test_simple_cell_text_change_produces_correct_indices(self) -> None:
+        """Changing one cell's text emits delete+insert at the cell's flat indices.
+
+        Table layout (2x2, all cells "X\n" except (0,0) which is "A\n"):
+          table opener at 1
+          row 0: opener at 2
+            cell (0,0): startIndex=3, content "A\\n" at 4..5, endIndex=6
+            cell (0,1): startIndex=6, content "B\\n" at 7..8, endIndex=9
+          row 1: opener at 9
+            cell (1,0): startIndex=10, content "C\\n" at 11..12, endIndex=13
+            cell (1,1): startIndex=13, content "D\\n" at 14..15, endIndex=16
+          terminal "\n" at 16..17
+        """
+        base_table = make_indexed_table(
+            [["A\n", "B\n"], ["C\n", "D\n"]],
+            table_start=1,
+        )
+        # terminal paragraph after the table
+        base = make_indexed_doc(
+            body_content=[base_table, make_indexed_terminal(base_table["endIndex"])]
+        )
+
+        # Desired: change cell (0,0) from "A\n" to "Hello\n"
+        desired_table = make_indexed_table(
+            [["Hello\n", "B\n"], ["C\n", "D\n"]],
+            table_start=1,
+        )
+        desired = make_indexed_doc(
+            body_content=[
+                desired_table,
+                make_indexed_terminal(desired_table["endIndex"]),
+            ]
+        )
+
+        requests = lower_ops(diff(base, desired))
+
+        # Cell (0,0) content "A" starts at index 4 (cell_start=3, content=4)
+        # "A\n" → text region is [4, 5) (we delete "A" and the para text, keeping \n)
+        delete_reqs = [r for r in requests if "deleteContentRange" in r]
+        insert_reqs = [r for r in requests if "insertText" in r]
+
+        # Must have at least one delete and one insert for the changed cell
+        assert len(delete_reqs) >= 1, f"Expected delete, got: {requests}"
+        assert len(insert_reqs) >= 1, f"Expected insert, got: {requests}"
+
+        # The delete should cover the old text at index 4
+        starts = [r["deleteContentRange"]["range"]["startIndex"] for r in delete_reqs]
+        assert 4 in starts, f"Expected delete at index 4, got starts={starts}"
+
+    def test_multiple_cells_changed_in_different_rows(self) -> None:
+        """Changing cells in different rows produces ops for each changed cell."""
+        base_table = make_indexed_table(
+            [["A\n", "B\n"], ["C\n", "D\n"]],
+            table_start=1,
+        )
+        base = make_indexed_doc(
+            body_content=[base_table, make_indexed_terminal(base_table["endIndex"])]
+        )
+
+        # Change cell (0,0) and cell (1,1)
+        desired_table = make_indexed_table(
+            [["X\n", "B\n"], ["C\n", "Y\n"]],
+            table_start=1,
+        )
+        desired = make_indexed_doc(
+            body_content=[
+                desired_table,
+                make_indexed_terminal(desired_table["endIndex"]),
+            ]
+        )
+
+        requests = lower_ops(diff(base, desired))
+
+        # Both cells changed → at least 2 deletes (one per changed cell text)
+        delete_reqs = [r for r in requests if "deleteContentRange" in r]
+        insert_reqs = [r for r in requests if "insertText" in r]
+        assert len(delete_reqs) >= 2, f"Expected 2+ deletes, got: {delete_reqs}"
+        assert len(insert_reqs) >= 2, f"Expected 2+ inserts, got: {insert_reqs}"
+
+    def test_no_requests_for_table_with_identical_content(self) -> None:
+        """A table with identical content produces no requests."""
+        base_table = make_indexed_table(
+            [["A\n", "B\n"], ["C\n", "D\n"]],
+            table_start=1,
+        )
+        base = make_indexed_doc(
+            body_content=[base_table, make_indexed_terminal(base_table["endIndex"])]
+        )
+        desired = copy.deepcopy(base)
+        requests = lower_ops(diff(base, desired))
+        assert requests == []
+
+    def test_cell_text_change_uses_tab_id(self) -> None:
+        """Cell content delete/insert requests include the correct tabId."""
+        base_table = make_indexed_table([["Old\n", "B\n"]], table_start=1)
+        base = make_indexed_doc(
+            tab_id="myTab",
+            body_content=[base_table, make_indexed_terminal(base_table["endIndex"])],
+        )
+        desired_table = make_indexed_table([["New\n", "B\n"]], table_start=1)
+        desired = make_indexed_doc(
+            tab_id="myTab",
+            body_content=[
+                desired_table,
+                make_indexed_terminal(desired_table["endIndex"]),
+            ],
+        )
+        requests = lower_ops(diff(base, desired))
+        delete_reqs = [r for r in requests if "deleteContentRange" in r]
+        assert len(delete_reqs) >= 1
+        for r in delete_reqs:
+            assert r["deleteContentRange"]["range"].get("tabId") == "myTab"
+
+    def test_table_with_unchanged_cells_does_not_emit_spurious_ops(self) -> None:
+        """Only changed cells produce ops; unchanged cells produce nothing."""
+        # Change only cell (0,0); cells (0,1), (1,0), (1,1) unchanged
+        base_table = make_indexed_table(
+            [["A\n", "B\n"], ["C\n", "D\n"]],
+            table_start=1,
+        )
+        base = make_indexed_doc(
+            body_content=[base_table, make_indexed_terminal(base_table["endIndex"])]
+        )
+        desired_table = make_indexed_table(
+            [["Changed\n", "B\n"], ["C\n", "D\n"]],
+            table_start=1,
+        )
+        desired = make_indexed_doc(
+            body_content=[
+                desired_table,
+                make_indexed_terminal(desired_table["endIndex"]),
+            ]
+        )
+        requests = lower_ops(diff(base, desired))
+        insert_reqs = [r for r in requests if "insertText" in r]
+        # Only one cell changed → exactly 1 insert (for "Changed")
+        assert len(insert_reqs) == 1
+        it = insert_reqs[0]["insertText"]
+        # _lower_paragraph_update strips the trailing \n before inserting
+        # (the \n is the paragraph terminator and already exists)
+        assert it["text"].rstrip("\n") == "Changed"
+
+    def test_end_to_end_reconcile_with_table_cell_edit(self) -> None:
+        """reconcile() works end-to-end for a document with a table cell edit."""
+        base_table = make_indexed_table(
+            [["Row1Col1\n", "Row1Col2\n"], ["Row2Col1\n", "Row2Col2\n"]],
+            table_start=1,
+        )
+        base = make_indexed_doc(
+            body_content=[base_table, make_indexed_terminal(base_table["endIndex"])]
+        )
+        desired_table = make_indexed_table(
+            [["CHANGED\n", "Row1Col2\n"], ["Row2Col1\n", "Row2Col2\n"]],
+            table_start=1,
+        )
+        desired = make_indexed_doc(
+            body_content=[
+                desired_table,
+                make_indexed_terminal(desired_table["endIndex"]),
+            ]
+        )
+
+        # Should not raise NotImplementedError
+        from extradoc.reconcile_v3.api import reconcile
+
+        result = reconcile(base, desired)
+        assert isinstance(result, list)
+        assert len(result) >= 1
+
+    def test_reconcile_batches_table_cell_edit_is_single_batch(self) -> None:
+        """A table cell content edit goes into the content batch (no structural create)."""
+        base_table = make_indexed_table([["A\n"]], table_start=1)
+        base = make_indexed_doc(
+            body_content=[base_table, make_indexed_terminal(base_table["endIndex"])]
+        )
+        desired_table = make_indexed_table([["B\n"]], table_start=1)
+        desired = make_indexed_doc(
+            body_content=[
+                desired_table,
+                make_indexed_terminal(desired_table["endIndex"]),
+            ]
+        )
+        batches = reconcile_batches(base, desired)
+        # Cell edit only → single content batch
+        assert len(batches) == 1
+
+    def test_cell_text_change_correct_delete_range(self) -> None:
+        """Delete range starts at the cell paragraph's flat document startIndex.
+
+        For two tables to be matched (not deleted+inserted), the table similarity
+        must be > 0.  Table similarity is computed as the fraction of base cell
+        texts that appear unchanged in the desired table.  Changing only one cell
+        in a 2x2 table leaves 3/4 cells identical → similarity=0.75 → matched.
+
+        Table layout (2x2) starting at index 1:
+          table opener at 1
+          row[0] opener at 2 (1 char)
+          cell (0,0): startIndex=3, content "A\n" at [4, 6), endIndex=6
+          cell (0,1): startIndex=6, content "B\n" at [7, 9), endIndex=9
+          row[1] opener at 9 (1 char)
+          cell (1,0): startIndex=10, content "C\n" at [11, 13), endIndex=13
+          cell (1,1): startIndex=13, content "D\n" at [14, 16), endIndex=16
+          body terminal "\\n" at 16
+
+        We change cell (0,0) from "A\n" to "ZZZZ\n".
+        The delete must cover the old text starting at index 4 (content_start of cell 0,0).
+        """
+        base_table = make_indexed_table(
+            [["A\n", "B\n"], ["C\n", "D\n"]],
+            table_start=1,
+        )
+        # Cell (0,0): startIndex=3, content at 4
+        cell_00_content_start = 4
+
+        base = make_indexed_doc(
+            body_content=[base_table, make_indexed_terminal(base_table["endIndex"])]
+        )
+        # Change cell (0,0) only; B, C, D unchanged → 3/4 cells match → sim=0.75 → matched
+        desired_table = make_indexed_table(
+            [["ZZZZ\n", "B\n"], ["C\n", "D\n"]],
+            table_start=1,
+        )
+        desired = make_indexed_doc(
+            body_content=[
+                desired_table,
+                make_indexed_terminal(desired_table["endIndex"]),
+            ]
+        )
+
+        requests = lower_ops(diff(base, desired))
+        delete_reqs = [r for r in requests if "deleteContentRange" in r]
+        assert len(delete_reqs) >= 1, f"Expected delete requests, got: {requests}"
+
+        # The cell (0,0) paragraph starts at index 4.
+        # _lower_paragraph_update deletes [text_start, text_end) = [start, end-1)
+        # where start = paragraph startIndex = 4.
+        starts = [r["deleteContentRange"]["range"]["startIndex"] for r in delete_reqs]
+        assert (
+            cell_00_content_start in starts
+        ), f"Expected delete at index {cell_00_content_start}, got starts={starts}"
+
     def test_delete_and_insert_in_same_body(self) -> None:
         """Mixed delete + insert produces correct ordered requests."""
         # Body: [A at 1..3, B at 3..5, terminal at 5..6]
