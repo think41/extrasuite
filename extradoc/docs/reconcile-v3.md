@@ -129,6 +129,7 @@ Then the SERDE redesign:
 | `2f41405` | XML SERDE 3-way merge | +34 |
 | `354926a` | Fix: reverse same-position insertions for correct order | — |
 | `9e03fcf` | Fix: skip namedStyles/documentStyle diffs for formats that don't model them | — |
+| `a9b6cbc` | Fix: thread `pre_delete_shift` into `_lower_paragraph_update` — broken by SERDE integration commits | — |
 
 ### Key design decisions made along the way
 
@@ -151,14 +152,20 @@ Then the SERDE redesign:
 
 ```bash
 cd extradoc && uv run pytest tests/ -q
-# 55 failed, 632 passed
+# 9 failed, 678 passed
 ```
 
-**46 failures are in `tests/reconcile_v3/`** — mostly in `TestPageBreakSectionBreak`. These appeared after the SERDE integration commits (`354926a`, `9e03fcf`) and need to be diagnosed before live testing.
+**0 failures in `tests/reconcile_v3/`** — 162 tests, all passing.
 
-**9 failures are in `tests/test_reconcile.py`** — pre-existing failures in edge cases around table insertion, unrelated to v3 work.
+**9 failures in `tests/test_reconcile.py`** — pre-existing failures in edge cases around table insertion, unrelated to v3 work. These predate all reconcile_v3 development.
 
-> **ACTION REQUIRED**: Fix the 46 reconcile_v3 test failures before proceeding to live tests. Run `uv run pytest tests/reconcile_v3/ -x -v` to see the first failure with full detail.
+### A regression that was caught and fixed
+
+The SERDE integration commits (`354926a`, `9e03fcf`) modified `_lower_element_update()` in `lower.py` — adding a `pre_delete_shift` parameter so it could adjust character indices after prior deletions. But the parameter was not threaded down into `_lower_paragraph_update()`, which is the only branch that does index arithmetic. This caused `TypeError: _lower_paragraph_update() got an unexpected keyword argument 'pre_delete_shift'` across 46 tests.
+
+Fixed in `a9b6cbc`: added `pre_delete_shift: int = 0` to `_lower_paragraph_update`'s signature, and applied it as `adjusted_start = start - pre_delete_shift` before index-sensitive calls.
+
+**Lesson**: When a subagent modifies existing code to fix an issue found during SERDE integration, always run `uv run pytest tests/reconcile_v3/ -q` before committing to catch regressions in the lowering layer.
 
 ### What is and isn't implemented in lowering
 
@@ -313,11 +320,7 @@ Without the env var, `reconcile_v2` is used (the default).
 
 ## Immediate Next Steps
 
-1. **Fix the 46 failing reconcile_v3 tests** — run `uv run pytest tests/reconcile_v3/ -x -v`, diagnose the `TestPageBreakSectionBreak` failures, fix them, commit.
-
-2. **Run the full in-memory suite clean** — `uv run pytest tests/ -q` should show only the 9 pre-existing `test_reconcile.py` failures (table edge cases unrelated to v3).
-
-3. **Markdown live test** — create a document, work through the Phase 1 sequence above, fix bugs as found, maintain test notes in `tmp-md-live-test/test-notes.md`.
+1. **Markdown live test** — create a document, work through the Phase 1 sequence above, fix bugs as found, maintain test notes in `tmp-md-live-test/test-notes.md`.
 
 4. **XML live test** — same pattern, Phase 2 scenarios.
 
