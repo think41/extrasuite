@@ -131,6 +131,12 @@ Then the SERDE redesign:
 | `9e03fcf` | Fix: skip namedStyles/documentStyle diffs for formats that don't model them | — |
 | `a9b6cbc` | Fix: thread `pre_delete_shift` into `_lower_paragraph_update` — broken by SERDE integration commits | — |
 
+Then the newline compensation cleanup:
+
+| Commit | What |
+|--------|------|
+| `044062c` | Remove all newline/trailing-paragraph compensation from lower.py and client.py |
+
 ### Key design decisions made along the way
 
 **On the content alignment DP**: "Identical elements are always matched" is NOT a valid global DP invariant. A short identical paragraph adjacent to a large expensive element can be rationally delete+reinserted if it saves cost on a better global alignment. This is mathematically correct. In practice, agents don't reorder content blocks so this doesn't arise.
@@ -143,6 +149,25 @@ Then the SERDE redesign:
 > *"Think of deserialize as a 3-way merge. The deserialization does a diff internally — markdown in .pristine and markdown that was edited. It finds out what changed. But then it superimposes the changes to the DocumentWithComments corresponding to base to get the desired DocumentWithComments. Each SERDE can then focus only on the subset of information it can truly model, but without fear of deleting things it doesn't understand."*
 
 **On `_apply_ops.py`**: Works entirely on raw dicts (not Pydantic models). For content ops (`UpdateBodyContentOp`), applies `desired_content` wholesale from the alignment — both matched and inserted elements come from `desired_content`; deleted elements are simply absent. This is correct because the 3-way merge `desired_content` represents the complete target state.
+
+**On newlines and terminal paragraphs** (commit `044062c`): The reconciler must be a faithful translator — it takes `desired` from the SERDE and emits API requests, nothing else. It must not add, remove, or adjust content the SERDE didn't produce.
+
+Early in development, the SERDE always appended an explicit trailing empty paragraph (via `_ensure_trailing_paragraph`), but the live Google Docs API sometimes didn't return one as a separate element. Someone added `_ensure_base_trailing_paragraph` in `client.py` to paper over this — it injected a synthetic paragraph with `startIndex == endIndex` (no real range). That zero-width fake element then forced a cascade of compensating logic in `lower.py`:
+
+- `_is_terminal_paragraph(el)` — checked paragraph *content* to detect the synthetic terminal. Wrong: terminal = last element by *position*, not by content. Any paragraph (including a heading with real text) can be the last paragraph.
+- `_lower_element_insert_end_of_segment()` — a separate insert path that used `endOfSegmentLocation` because the synthetic terminal's `startIndex == endIndex == segment_end`, making explicit `insertText(index)` invalid.
+- `"\n" + text` prepending — needed because `endOfSegmentLocation` inserts *into* the current last paragraph rather than *before* it; prepending `\n` created a paragraph break.
+- `if not text.endswith("\n")` guards — patching paragraphs that "didn't have a trailing newline".
+- `if text.strip()` guard — skipping "empty" paragraphs the reconciler had no business skipping.
+
+All of this was removed in `044062c`. The correct model:
+
+1. The SERDE produces `desired`. The reconciler trusts it completely.
+2. Every real paragraph from the Google Docs API has a real `startIndex`. The terminal paragraph's `startIndex` is a valid insertion point — only `terminal.endIndex` (the exclusive segment end) is off-limits.
+3. All body inserts use explicit indices. No `endOfSegmentLocation` for body content.
+4. `endOfSegmentLocation` is retained *only* in `_lower_story_content_insert` for freshly-created headers/footers, where the segment ID is genuinely deferred (the header/footer was just created in batch 0 and its ID isn't resolved yet). That is a real constraint, not compensation.
+5. The terminal is identified by position (`content[:-1]` to skip it), never by inspecting content.
+6. `_diff_paragraph_runs` still strips the trailing `\n` before character-level diffing. This is *correct*, not compensation: when updating a matched paragraph in place, you never want to delete/insert its paragraph-terminating `\n` (that would merge it with the adjacent paragraph). It is not about "ensuring" a newline — it is about scoping the diff to paragraph content only.
 
 ---
 
@@ -159,13 +184,13 @@ cd extradoc && uv run pytest tests/ -q
 
 **9 failures in `tests/test_reconcile.py`** — pre-existing failures in edge cases around table insertion, unrelated to v3 work. These predate all reconcile_v3 development.
 
-### A regression that was caught and fixed
+### Regressions that were caught and fixed
 
-The SERDE integration commits (`354926a`, `9e03fcf`) modified `_lower_element_update()` in `lower.py` — adding a `pre_delete_shift` parameter so it could adjust character indices after prior deletions. But the parameter was not threaded down into `_lower_paragraph_update()`, which is the only branch that does index arithmetic. This caused `TypeError: _lower_paragraph_update() got an unexpected keyword argument 'pre_delete_shift'` across 46 tests.
-
-Fixed in `a9b6cbc`: added `pre_delete_shift: int = 0` to `_lower_paragraph_update`'s signature, and applied it as `adjusted_start = start - pre_delete_shift` before index-sensitive calls.
+**`pre_delete_shift` not threaded through** (`a9b6cbc`): The SERDE integration commits added a `pre_delete_shift` parameter to `_lower_element_update()` but forgot to thread it into `_lower_paragraph_update()`. Caused `TypeError` across 46 tests. Fixed by adding the parameter and applying it as `adjusted_start = start - pre_delete_shift`.
 
 **Lesson**: When a subagent modifies existing code to fix an issue found during SERDE integration, always run `uv run pytest tests/reconcile_v3/ -q` before committing to catch regressions in the lowering layer.
+
+**Newline compensation cascade** (`044062c`): First live test against a real Google Doc revealed that heading styles were silently dropped on new paragraph inserts. Root cause traced back to `_ensure_base_trailing_paragraph` in `client.py`, which injected a synthetic paragraph that cascaded into `endOfSegmentLocation` usage, `\n` prepending, and a content-based `_is_terminal_paragraph` check — all of which conspired to skip `updateParagraphStyle` for paragraphs inserted at body end. Removed all compensation; all inserts now use explicit indices and emit full style requests. See "On newlines and terminal paragraphs" in Key Design Decisions above.
 
 ### What is and isn't implemented in lowering
 

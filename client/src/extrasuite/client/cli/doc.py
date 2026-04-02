@@ -152,6 +152,8 @@ def cmd_doc_pull_md(args: Any) -> None:
             )
             if tmp_parent is not None:
                 dest_dir.parent.mkdir(parents=True, exist_ok=True)
+                if dest_dir.exists():
+                    shutil.rmtree(dest_dir)
                 shutil.move(str(tmp_parent / document_id), str(dest_dir))
         finally:
             await transport.close()
@@ -296,6 +298,7 @@ def _write_json(path: Path, payload: dict[str, Any]) -> None:
 # verify-table-indices — debug command
 # ---------------------------------------------------------------------------
 
+
 def cmd_doc_verify_table_indices(args: Any) -> None:
     """Verify deterministic table index prediction against the live API."""
     from extradoc import GoogleDocsTransport
@@ -331,6 +334,7 @@ def cmd_doc_verify_table_indices(args: Any) -> None:
 
 # ── Index model ─────────────────────────────────────────────────────────────
 
+
 def _extract_first_table(raw_doc: dict[str, Any]) -> dict[str, Any]:
     """Return the first table structural element from the first tab body."""
     tabs = raw_doc.get("tabs", [])
@@ -361,7 +365,9 @@ def _parse_table(element: dict[str, Any]) -> dict[str, Any]:
         cells = []
         for cell in row.get("tableCells", []):
             cells.append({"start": cell["startIndex"], "end": cell["endIndex"]})
-        rows.append({"start": row["startIndex"], "end": row["endIndex"], "cells": cells})
+        rows.append(
+            {"start": row["startIndex"], "end": row["endIndex"], "cells": cells}
+        )
     return {"start": element["startIndex"], "end": element["endIndex"], "rows": rows}
 
 
@@ -371,7 +377,10 @@ def _num_cols(table: dict[str, Any]) -> int:
 
 # ── Prediction engine ────────────────────────────────────────────────────────
 
-def _predict_insert_row(table: dict[str, Any], row_index: int, insert_below: bool) -> dict[str, Any]:
+
+def _predict_insert_row(
+    table: dict[str, Any], row_index: int, insert_below: bool
+) -> dict[str, Any]:
     """
     Predict table indices after insertTableRow.
 
@@ -416,7 +425,11 @@ def _predict_insert_row(table: dict[str, Any], row_index: int, insert_below: boo
     if insert_pos == len(rows):
         new_rows.append(new_row)
 
-    return {"start": table["start"], "end": table["end"] + new_row_span, "rows": new_rows}
+    return {
+        "start": table["start"],
+        "end": table["end"] + new_row_span,
+        "rows": new_rows,
+    }
 
 
 def _predict_delete_row(table: dict[str, Any], row_index: int) -> dict[str, Any]:
@@ -428,7 +441,11 @@ def _predict_delete_row(table: dict[str, Any], row_index: int) -> dict[str, Any]
             new_rows.append(row)
         elif i > row_index:
             new_rows.append(_shift_row(row, -deleted_span))
-    return {"start": table["start"], "end": table["end"] - deleted_span, "rows": new_rows}
+    return {
+        "start": table["start"],
+        "end": table["end"] - deleted_span,
+        "rows": new_rows,
+    }
 
 
 def _predict_insert_column(
@@ -447,7 +464,7 @@ def _predict_insert_column(
     eff_col = column_index + 1 if insert_right else column_index
     new_rows = []
     cumulative = 0  # total shift accumulated from previous rows
-    for r_idx, row in enumerate(table["rows"]):
+    for _r_idx, row in enumerate(table["rows"]):
         row_start = row["start"] + cumulative
         new_cells = []
         for c_idx, cell in enumerate(row["cells"]):
@@ -477,14 +494,18 @@ def _predict_delete_column(table: dict[str, Any], column_index: int) -> dict[str
     new_rows = []
     cumulative = 0  # negative shift from previous rows' deleted cells
     for row in table["rows"]:
-        deleted_span = row["cells"][column_index]["end"] - row["cells"][column_index]["start"]
+        deleted_span = (
+            row["cells"][column_index]["end"] - row["cells"][column_index]["start"]
+        )
         row_start = row["start"] + cumulative
         new_cells = []
         for c_idx, cell in enumerate(row["cells"]):
             if c_idx == column_index:
                 continue
             shift = cumulative if c_idx < column_index else cumulative - deleted_span
-            new_cells.append({"start": cell["start"] + shift, "end": cell["end"] + shift})
+            new_cells.append(
+                {"start": cell["start"] + shift, "end": cell["end"] + shift}
+            )
         row_end = row["end"] + cumulative - deleted_span
         new_rows.append({"start": row_start, "end": row_end, "cells": new_cells})
         cumulative -= deleted_span
@@ -495,40 +516,54 @@ def _shift_row(row: dict[str, Any], delta: int) -> dict[str, Any]:
     return {
         "start": row["start"] + delta,
         "end": row["end"] + delta,
-        "cells": [{"start": c["start"] + delta, "end": c["end"] + delta} for c in row["cells"]],
+        "cells": [
+            {"start": c["start"] + delta, "end": c["end"] + delta} for c in row["cells"]
+        ],
     }
 
 
 # ── Comparison ───────────────────────────────────────────────────────────────
 
+
 def _compare_tables(predicted: dict[str, Any], actual: dict[str, Any]) -> list[str]:
     errors: list[str] = []
     if predicted["start"] != actual["start"]:
-        errors.append(f"table.start: predicted={predicted['start']} actual={actual['start']}")
+        errors.append(
+            f"table.start: predicted={predicted['start']} actual={actual['start']}"
+        )
     if predicted["end"] != actual["end"]:
         errors.append(f"table.end: predicted={predicted['end']} actual={actual['end']}")
     prows, arows = predicted["rows"], actual["rows"]
     if len(prows) != len(arows):
         errors.append(f"num_rows: predicted={len(prows)} actual={len(arows)}")
         return errors
-    for r, (pr, ar) in enumerate(zip(prows, arows)):
+    for r, (pr, ar) in enumerate(zip(prows, arows, strict=False)):
         if pr["start"] != ar["start"]:
-            errors.append(f"row[{r}].start: predicted={pr['start']} actual={ar['start']}")
+            errors.append(
+                f"row[{r}].start: predicted={pr['start']} actual={ar['start']}"
+            )
         if pr["end"] != ar["end"]:
             errors.append(f"row[{r}].end: predicted={pr['end']} actual={ar['end']}")
         pcells, acells = pr["cells"], ar["cells"]
         if len(pcells) != len(acells):
-            errors.append(f"row[{r}] num_cells: predicted={len(pcells)} actual={len(acells)}")
+            errors.append(
+                f"row[{r}] num_cells: predicted={len(pcells)} actual={len(acells)}"
+            )
             continue
-        for c, (pc, ac) in enumerate(zip(pcells, acells)):
+        for c, (pc, ac) in enumerate(zip(pcells, acells, strict=False)):
             if pc["start"] != ac["start"]:
-                errors.append(f"cell[{r},{c}].start: predicted={pc['start']} actual={ac['start']}")
+                errors.append(
+                    f"cell[{r},{c}].start: predicted={pc['start']} actual={ac['start']}"
+                )
             if pc["end"] != ac["end"]:
-                errors.append(f"cell[{r},{c}].end: predicted={pc['end']} actual={ac['end']}")
+                errors.append(
+                    f"cell[{r},{c}].end: predicted={pc['end']} actual={ac['end']}"
+                )
     return errors
 
 
 # ── Test harness ─────────────────────────────────────────────────────────────
+
 
 async def _setup_table(
     transport: Any,
@@ -546,13 +581,18 @@ async def _setup_table(
     Insertions go bottom-to-top, right-to-left to avoid index shifts.
     """
     # Insert blank table
-    await transport.batch_update(doc_id, [{
-        "insertTable": {
-            "rows": rows,
-            "columns": cols,
-            "location": {"index": 1, "tabId": tab_id},
-        }
-    }])
+    await transport.batch_update(
+        doc_id,
+        [
+            {
+                "insertTable": {
+                    "rows": rows,
+                    "columns": cols,
+                    "location": {"index": 1, "tabId": tab_id},
+                }
+            }
+        ],
+    )
 
     # Fetch to get blank-cell indices
     raw = (await transport.get_document(doc_id)).raw
@@ -565,12 +605,14 @@ async def _setup_table(
             length = r * cols + c + 1
             text = chr(ord("a") + (r * cols + c) % 26) * length
             cell = table["rows"][r]["cells"][c]
-            fill_reqs.append({
-                "insertText": {
-                    "location": {"index": cell["start"] + 1, "tabId": tab_id},
-                    "text": text,
+            fill_reqs.append(
+                {
+                    "insertText": {
+                        "location": {"index": cell["start"] + 1, "tabId": tab_id},
+                        "text": text,
+                    }
                 }
-            })
+            )
     await transport.batch_update(doc_id, fill_reqs)
 
     # Fetch final state
@@ -585,15 +627,20 @@ async def _teardown_table(
     table: dict[str, Any],
 ) -> None:
     """Delete the table by removing its content range."""
-    await transport.batch_update(doc_id, [{
-        "deleteContentRange": {
-            "range": {
-                "startIndex": table["start"],
-                "endIndex": table["end"],
-                "tabId": tab_id,
+    await transport.batch_update(
+        doc_id,
+        [
+            {
+                "deleteContentRange": {
+                    "range": {
+                        "startIndex": table["start"],
+                        "endIndex": table["end"],
+                        "tabId": tab_id,
+                    }
+                }
             }
-        }
-    }])
+        ],
+    )
 
 
 async def _run_one(
@@ -606,7 +653,7 @@ async def _run_one(
 ) -> dict[str, Any]:
     """
     Run a single prediction scenario:
-      1. setup: insert + fill 3×3 table
+      1. setup: insert + fill 3x3 table
       2. predict: call predict_fn(table) → predicted_table
       3. apply: call request_fn(table) → API request, execute it
       4. fetch + compare
@@ -649,7 +696,7 @@ async def _run_chained(
         table = await _setup_table(transport, doc_id, tab_id, 3, 3)
         # Apply ops and predictions in sequence
         current = table
-        for predict_fn, request_fn in zip(predict_fns, request_fns):
+        for predict_fn, request_fn in zip(predict_fns, request_fns, strict=False):
             predicted = predict_fn(current)
             request = request_fn(current, tab_id)
             await transport.batch_update(doc_id, [request])
@@ -681,13 +728,17 @@ async def _verify_table_indices(transport: Any, doc_id: str) -> list[dict[str, A
             return {
                 "insertTableRow": {
                     "tableCellLocation": {
-                        "tableStartLocation": {"index": table["start"], "tabId": tab_id},
+                        "tableStartLocation": {
+                            "index": table["start"],
+                            "tabId": tab_id,
+                        },
                         "rowIndex": row_index,
                         "columnIndex": 0,
                     },
                     "insertBelow": insert_below,
                 }
             }
+
         return _make
 
     def req_delete_row(row_index: int):  # type: ignore[return]
@@ -695,12 +746,16 @@ async def _verify_table_indices(transport: Any, doc_id: str) -> list[dict[str, A
             return {
                 "deleteTableRow": {
                     "tableCellLocation": {
-                        "tableStartLocation": {"index": table["start"], "tabId": tab_id},
+                        "tableStartLocation": {
+                            "index": table["start"],
+                            "tabId": tab_id,
+                        },
                         "rowIndex": row_index,
                         "columnIndex": 0,
                     }
                 }
             }
+
         return _make
 
     def req_insert_col(col_index: int, insert_right: bool):  # type: ignore[return]
@@ -708,13 +763,17 @@ async def _verify_table_indices(transport: Any, doc_id: str) -> list[dict[str, A
             return {
                 "insertTableColumn": {
                     "tableCellLocation": {
-                        "tableStartLocation": {"index": table["start"], "tabId": tab_id},
+                        "tableStartLocation": {
+                            "index": table["start"],
+                            "tabId": tab_id,
+                        },
                         "rowIndex": 0,
                         "columnIndex": col_index,
                     },
                     "insertRight": insert_right,
                 }
             }
+
         return _make
 
     def req_delete_col(col_index: int):  # type: ignore[return]
@@ -722,109 +781,193 @@ async def _verify_table_indices(transport: Any, doc_id: str) -> list[dict[str, A
             return {
                 "deleteTableColumn": {
                     "tableCellLocation": {
-                        "tableStartLocation": {"index": table["start"], "tabId": tab_id},
+                        "tableStartLocation": {
+                            "index": table["start"],
+                            "tabId": tab_id,
+                        },
                         "rowIndex": 0,
                         "columnIndex": col_index,
                     }
                 }
             }
+
         return _make
 
     results = []
 
     # ── Row scenarios ──────────────────────────────────────────────────────
-    results.append(await _run_one(transport, doc_id, tid,
-        "insert row above first (row_index=0, insertBelow=False)",
-        lambda t: _predict_insert_row(t, 0, False),
-        req_insert_row(0, False),
-    ))
-    results.append(await _run_one(transport, doc_id, tid,
-        "insert row in middle (row_index=1, insertBelow=False)",
-        lambda t: _predict_insert_row(t, 1, False),
-        req_insert_row(1, False),
-    ))
-    results.append(await _run_one(transport, doc_id, tid,
-        "insert row at end (row_index=2, insertBelow=True)",
-        lambda t: _predict_insert_row(t, 2, True),
-        req_insert_row(2, True),
-    ))
-    results.append(await _run_one(transport, doc_id, tid,
-        "delete row at index 0",
-        lambda t: _predict_delete_row(t, 0),
-        req_delete_row(0),
-    ))
-    results.append(await _run_one(transport, doc_id, tid,
-        "delete row at index 1 (middle)",
-        lambda t: _predict_delete_row(t, 1),
-        req_delete_row(1),
-    ))
-    results.append(await _run_one(transport, doc_id, tid,
-        "delete row at index 2 (last)",
-        lambda t: _predict_delete_row(t, 2),
-        req_delete_row(2),
-    ))
+    results.append(
+        await _run_one(
+            transport,
+            doc_id,
+            tid,
+            "insert row above first (row_index=0, insertBelow=False)",
+            lambda t: _predict_insert_row(t, 0, False),
+            req_insert_row(0, False),
+        )
+    )
+    results.append(
+        await _run_one(
+            transport,
+            doc_id,
+            tid,
+            "insert row in middle (row_index=1, insertBelow=False)",
+            lambda t: _predict_insert_row(t, 1, False),
+            req_insert_row(1, False),
+        )
+    )
+    results.append(
+        await _run_one(
+            transport,
+            doc_id,
+            tid,
+            "insert row at end (row_index=2, insertBelow=True)",
+            lambda t: _predict_insert_row(t, 2, True),
+            req_insert_row(2, True),
+        )
+    )
+    results.append(
+        await _run_one(
+            transport,
+            doc_id,
+            tid,
+            "delete row at index 0",
+            lambda t: _predict_delete_row(t, 0),
+            req_delete_row(0),
+        )
+    )
+    results.append(
+        await _run_one(
+            transport,
+            doc_id,
+            tid,
+            "delete row at index 1 (middle)",
+            lambda t: _predict_delete_row(t, 1),
+            req_delete_row(1),
+        )
+    )
+    results.append(
+        await _run_one(
+            transport,
+            doc_id,
+            tid,
+            "delete row at index 2 (last)",
+            lambda t: _predict_delete_row(t, 2),
+            req_delete_row(2),
+        )
+    )
 
     # ── Column scenarios ───────────────────────────────────────────────────
-    results.append(await _run_one(transport, doc_id, tid,
-        "insert column at index 0, insertRight=False (prepend)",
-        lambda t: _predict_insert_column(t, 0, False),
-        req_insert_col(0, False),
-    ))
-    results.append(await _run_one(transport, doc_id, tid,
-        "insert column at index 1, insertRight=False (middle-left)",
-        lambda t: _predict_insert_column(t, 1, False),
-        req_insert_col(1, False),
-    ))
-    results.append(await _run_one(transport, doc_id, tid,
-        "insert column at index 2, insertRight=False (middle-right)",
-        lambda t: _predict_insert_column(t, 2, False),
-        req_insert_col(2, False),
-    ))
-    results.append(await _run_one(transport, doc_id, tid,
-        "insert column at index 2, insertRight=True (append)",
-        lambda t: _predict_insert_column(t, 2, True),
-        req_insert_col(2, True),
-    ))
-    results.append(await _run_one(transport, doc_id, tid,
-        "delete column at index 0",
-        lambda t: _predict_delete_column(t, 0),
-        req_delete_col(0),
-    ))
-    results.append(await _run_one(transport, doc_id, tid,
-        "delete column at index 1 (middle)",
-        lambda t: _predict_delete_column(t, 1),
-        req_delete_col(1),
-    ))
-    results.append(await _run_one(transport, doc_id, tid,
-        "delete column at index 2 (last)",
-        lambda t: _predict_delete_column(t, 2),
-        req_delete_col(2),
-    ))
+    results.append(
+        await _run_one(
+            transport,
+            doc_id,
+            tid,
+            "insert column at index 0, insertRight=False (prepend)",
+            lambda t: _predict_insert_column(t, 0, False),
+            req_insert_col(0, False),
+        )
+    )
+    results.append(
+        await _run_one(
+            transport,
+            doc_id,
+            tid,
+            "insert column at index 1, insertRight=False (middle-left)",
+            lambda t: _predict_insert_column(t, 1, False),
+            req_insert_col(1, False),
+        )
+    )
+    results.append(
+        await _run_one(
+            transport,
+            doc_id,
+            tid,
+            "insert column at index 2, insertRight=False (middle-right)",
+            lambda t: _predict_insert_column(t, 2, False),
+            req_insert_col(2, False),
+        )
+    )
+    results.append(
+        await _run_one(
+            transport,
+            doc_id,
+            tid,
+            "insert column at index 2, insertRight=True (append)",
+            lambda t: _predict_insert_column(t, 2, True),
+            req_insert_col(2, True),
+        )
+    )
+    results.append(
+        await _run_one(
+            transport,
+            doc_id,
+            tid,
+            "delete column at index 0",
+            lambda t: _predict_delete_column(t, 0),
+            req_delete_col(0),
+        )
+    )
+    results.append(
+        await _run_one(
+            transport,
+            doc_id,
+            tid,
+            "delete column at index 1 (middle)",
+            lambda t: _predict_delete_column(t, 1),
+            req_delete_col(1),
+        )
+    )
+    results.append(
+        await _run_one(
+            transport,
+            doc_id,
+            tid,
+            "delete column at index 2 (last)",
+            lambda t: _predict_delete_column(t, 2),
+            req_delete_col(2),
+        )
+    )
 
     # ── Multi-op chained scenarios ─────────────────────────────────────────
-    results.append(await _run_chained(transport, doc_id, tid,
-        "chain: insert row(0) then insert col(0)",
-        [
-            lambda t: _predict_insert_row(t, 0, False),
-            lambda t: _predict_insert_column(t, 0, False),
-        ],
-        [req_insert_row(0, False), req_insert_col(0, False)],
-    ))
-    results.append(await _run_chained(transport, doc_id, tid,
-        "chain: insert col(1) then delete col(1)",
-        [
-            lambda t: _predict_insert_column(t, 1, False),
-            lambda t: _predict_delete_column(t, 1),
-        ],
-        [req_insert_col(1, False), req_delete_col(1)],
-    ))
-    results.append(await _run_chained(transport, doc_id, tid,
-        "chain: insert row(2,below) then delete row(0)",
-        [
-            lambda t: _predict_insert_row(t, 2, True),
-            lambda t: _predict_delete_row(t, 0),
-        ],
-        [req_insert_row(2, True), req_delete_row(0)],
-    ))
+    results.append(
+        await _run_chained(
+            transport,
+            doc_id,
+            tid,
+            "chain: insert row(0) then insert col(0)",
+            [
+                lambda t: _predict_insert_row(t, 0, False),
+                lambda t: _predict_insert_column(t, 0, False),
+            ],
+            [req_insert_row(0, False), req_insert_col(0, False)],
+        )
+    )
+    results.append(
+        await _run_chained(
+            transport,
+            doc_id,
+            tid,
+            "chain: insert col(1) then delete col(1)",
+            [
+                lambda t: _predict_insert_column(t, 1, False),
+                lambda t: _predict_delete_column(t, 1),
+            ],
+            [req_insert_col(1, False), req_delete_col(1)],
+        )
+    )
+    results.append(
+        await _run_chained(
+            transport,
+            doc_id,
+            tid,
+            "chain: insert row(2,below) then delete row(0)",
+            [
+                lambda t: _predict_insert_row(t, 2, True),
+                lambda t: _predict_delete_row(t, 0),
+            ],
+            [req_insert_row(2, True), req_delete_row(0)],
+        )
+    )
 
     return results

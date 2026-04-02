@@ -184,12 +184,6 @@ class DocsClient:
         document_id = _read_document_id(folder)
         reconciler_version = _get_reconciler_version()
 
-        with tempfile.TemporaryDirectory() as tmp:
-            _extract_pristine_zip(folder, Path(tmp))
-            base_bundle = serde.deserialize(Path(tmp))
-
-        desired_bundle = serde.deserialize(folder)
-
         index_path = folder / "index.xml"
         index = serde.IndexXml.from_xml_string(index_path.read_text(encoding="utf-8"))
 
@@ -200,33 +194,42 @@ class DocsClient:
             raw_data = json.loads(raw_doc_path.read_text(encoding="utf-8"))
             transport_base = Document.model_validate(raw_data)
             if index.format == "markdown":
-                base = Document.model_validate(raw_data)
-                # Strip inherited paragraph style defaults from the raw JSON base
-                # so it is consistent with the markdown-serde-derived desired document.
-                # Without this, the reconciler generates spurious updateParagraphStyle
-                # requests for every unchanged paragraph (e.g. lineSpacing, direction).
-                _normalize_raw_base_para_styles(base, base_bundle.document)
+                # 3-way merge: desired = apply_ops(transport_base, diff(ancestor_md, mine_md))
+                # Fields the markdown SERDE doesn't model (lineSpacing, underline on links,
+                # inter-table separators, TITLE/SUBTITLE etc.) produce zero ops and are
+                # preserved unchanged from transport_base.  No normalisation needed.
+                with tempfile.TemporaryDirectory() as tmp:
+                    _extract_pristine_zip(folder, Path(tmp))
+                    pristine_bundle = serde.deserialize(Path(tmp))
+                transport_bundle = DocumentWithComments(
+                    document=transport_base, comments=pristine_bundle.comments
+                )
+                desired_bundle = serde.deserialize(transport_bundle, folder)
                 desired = reindex_document(desired_bundle.document)
                 batches = _reconcile_documents(
-                    base,
+                    transport_base,
                     desired,
                     reconciler_version=reconciler_version,
                     transport_base=transport_base,
                 )
                 comment_ops = diff_comments(
-                    base_bundle.comments, desired_bundle.comments
+                    pristine_bundle.comments, desired_bundle.comments
                 )
                 return DiffResult(
                     document_id=document_id,
                     batches=batches,
                     comment_ops=comment_ops,
                     reconciler_version=reconciler_version,
-                    base_revision_id=base.revision_id,
+                    base_revision_id=transport_base.revision_id,
                     desired_document=desired,
                     desired_format="markdown",
-                    allow_live_refresh=_tab_ids_subset(base, desired),
+                    allow_live_refresh=_tab_ids_subset(transport_base, desired),
                 )
 
+            with tempfile.TemporaryDirectory() as tmp:
+                _extract_pristine_zip(folder, Path(tmp))
+                base_bundle = serde.deserialize(Path(tmp))
+            desired_bundle = serde.deserialize(folder)
             base = transport_base
             desired = reindex_document(desired_bundle.document)
             batches = _reconcile_documents(
@@ -247,6 +250,10 @@ class DocsClient:
                 allow_live_refresh=_tab_ids_subset(base, desired),
             )
 
+        with tempfile.TemporaryDirectory() as tmp:
+            _extract_pristine_zip(folder, Path(tmp))
+            base_bundle = serde.deserialize(Path(tmp))
+        desired_bundle = serde.deserialize(folder)
         base = reindex_document(base_bundle.document)
         desired = reindex_document(desired_bundle.document)
         batches = _reconcile_documents(
