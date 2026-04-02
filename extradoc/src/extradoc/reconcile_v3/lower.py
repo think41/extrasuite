@@ -38,6 +38,7 @@ executor contract::
 
 from __future__ import annotations
 
+import difflib
 from typing import Any
 
 from extradoc.indexer import utf16_len
@@ -693,16 +694,18 @@ def _lower_paragraph_update(
     tab_id: str,
     segment_id: str | None,
 ) -> list[dict[str, Any]]:
-    """Replace the text content of a paragraph in place.
+    """Replace the text content of a paragraph in place using surgical ops.
 
-    Approach: delete existing text, insert desired text, then apply text styles.
+    Approach:
+    1. Compute a character-level diff on non-terminal text to find minimal edits.
+    2. For unchanged spans: emit updateTextStyle if the style changed.
+    3. For deleted spans: emit deleteContentRange.
+    4. For inserted spans: emit insertText + updateTextStyle if non-default style.
+    5. Always emit updateParagraphStyle if paragraph-level style changed.
 
-    Limitation: inline objects, footnote refs, and complex multi-run paragraphs
-    with non-uniform styles are not fully supported.  We handle the common case
-    of plain text paragraphs.
+    Operations are emitted in descending character order (highest index first)
+    so that earlier ops do not corrupt later indices.
     """
-    requests: list[dict[str, Any]] = []
-
     base_para = base_el.get("paragraph", {})
     desired_para = desired_el.get("paragraph", {})
 
@@ -710,53 +713,19 @@ def _lower_paragraph_update(
     if start is None or end is None:
         return []
 
-    # Text start = element start (after section breaks etc.)
-    # Text content region is [start, end-1) (end-1 is the \n)
-    text_start = start
-    text_end = end - 1  # exclusive, before the trailing newline
+    # Always compute run-level diff (handles text changes + text-style changes).
+    # For the same-text case this emits only updateTextStyle for changed runs.
+    # For the changed-text case this emits delete/insert/updateTextStyle as needed.
+    requests = _diff_paragraph_runs(
+        base_para=base_para,
+        desired_para=desired_para,
+        story_offset=start,
+        tab_id=tab_id,
+        segment_id=segment_id,
+    )
 
-    base_text = _para_text(base_para)
-    desired_text = _para_text(desired_para)
-
-    # If only style changed (same text), emit paragraph/text style updates
-    if base_text == desired_text:
-        reqs = _lower_para_style_update(
-            base_para=base_para,
-            desired_para=desired_para,
-            start_index=start,
-            end_index=end,
-            tab_id=tab_id,
-            segment_id=segment_id,
-        )
-        return reqs
-
-    # Text changed: delete old text and insert new text
-    if text_end > text_start:
-        requests.append(
-            _make_delete_content_range(
-                start_index=text_start,
-                end_index=text_end,
-                tab_id=tab_id,
-                segment_id=segment_id,
-            )
-        )
-
-    if desired_text and desired_text != "\n":
-        # Insert text (without trailing \n — the \n is the paragraph terminator)
-        insert_text = (
-            desired_text.rstrip("\n") if desired_text.endswith("\n") else desired_text
-        )
-        if insert_text:
-            requests.append(
-                _make_insert_text(
-                    index=text_start,
-                    tab_id=tab_id,
-                    segment_id=segment_id,
-                    text=insert_text,
-                )
-            )
-
-    # Apply paragraph style
+    # Additionally apply paragraph-level style changes (alignment, spacing, etc.)
+    # regardless of whether text changed.
     style_reqs = _lower_para_style_update(
         base_para=base_para,
         desired_para=desired_para,
@@ -768,6 +737,406 @@ def _lower_paragraph_update(
     requests.extend(style_reqs)
 
     return requests
+
+
+def _extract_runs(para: dict[str, Any]) -> list[tuple[str, dict[str, Any]]]:
+    """Return list of (text, text_style) for each textRun element in a paragraph.
+
+    Non-textRun elements (inline objects, footnote refs, etc.) are skipped.
+    """
+    runs: list[tuple[str, dict[str, Any]]] = []
+    for el in para.get("elements", []):
+        if "textRun" in el:
+            tr = el["textRun"]
+            text = tr.get("content", "")
+            style = tr.get("textStyle", {})
+            runs.append((text, style))
+    return runs
+
+
+def _runs_to_spans(
+    runs: list[tuple[str, dict[str, Any]]],
+) -> list[tuple[int, int, str, dict[str, Any]]]:
+    """Convert runs to (start, end, text, style) spans with character offsets.
+
+    Offsets are relative to the start of the paragraph (0-based).
+    """
+    spans: list[tuple[int, int, str, dict[str, Any]]] = []
+    cursor = 0
+    for text, style in runs:
+        length = utf16_len(text)
+        spans.append((cursor, cursor + length, text, style))
+        cursor += length
+    return spans
+
+
+def _styles_equal(s1: dict[str, Any], s2: dict[str, Any]) -> bool:
+    """Return True if two textStyle dicts are effectively equal.
+
+    Missing keys are treated as default (falsy/None).
+    """
+    all_keys = set(s1) | set(s2)
+    for k in all_keys:
+        v1 = s1.get(k)
+        v2 = s2.get(k)
+        if v1 != v2:
+            return False
+    return True
+
+
+def _diff_paragraph_runs(
+    *,
+    base_para: dict[str, Any],
+    desired_para: dict[str, Any],
+    story_offset: int,
+    tab_id: str,
+    segment_id: str | None,
+) -> list[dict[str, Any]]:
+    """Compute surgical API requests for a paragraph whose text changed.
+
+    Algorithm:
+    1. Extract text runs from base and desired paragraphs.
+    2. Build a plain-text string (excluding the terminal \\n) for each.
+    3. Run a character-level diff (SequenceMatcher) to find equal/insert/delete chunks.
+    4. For each chunk:
+       - 'equal': check if style changed → emit updateTextStyle if so.
+       - 'delete': emit deleteContentRange.
+       - 'insert': emit insertText + updateTextStyle if non-default style.
+       - 'replace': emit deleteContentRange + insertText + optional updateTextStyle.
+    5. All ops are collected and returned in descending character order so they
+       can be applied sequentially without index corruption.
+
+    The terminal \\n is never touched.
+    """
+    base_runs = _extract_runs(base_para)
+    desired_runs = _extract_runs(desired_para)
+
+    # Build plain text (all runs concatenated)
+    base_full_text = "".join(t for t, _ in base_runs)
+    desired_full_text = "".join(t for t, _ in desired_runs)
+
+    # Strip terminal \n for diffing (we never touch it)
+    base_body = (
+        base_full_text.rstrip("\n") if base_full_text.endswith("\n") else base_full_text
+    )
+    desired_body = (
+        desired_full_text.rstrip("\n")
+        if desired_full_text.endswith("\n")
+        else desired_full_text
+    )
+
+    # Build span maps for style lookup: char_offset → style
+    # We need to find the style at any character position in base/desired.
+    base_spans = _runs_to_spans(base_runs)
+    desired_spans = _runs_to_spans(desired_runs)
+
+    def style_at(
+        spans: list[tuple[int, int, str, dict[str, Any]]], pos: int
+    ) -> dict[str, Any]:
+        """Return the textStyle for the character at the given offset."""
+        for start, end, _text, style in spans:
+            if start <= pos < end:
+                return style
+        return {}
+
+    # Compute character-level diff
+    matcher = difflib.SequenceMatcher(None, base_body, desired_body, autojunk=False)
+    opcodes = matcher.get_opcodes()
+
+    # Collect pending ops as (abs_start, abs_end, kind, extra)
+    # kind ∈ {"delete", "insert", "update_style", "replace"}
+    # We process in reverse order (highest index first).
+
+    # Pending ops list: (sort_key, requests_list)
+    # sort_key is the document-absolute start index (for descending sort)
+    pending: list[tuple[int, list[dict[str, Any]]]] = []
+
+    for tag, i1, i2, j1, j2 in opcodes:
+        if tag == "equal":
+            # Check if style changed for this span
+            # We check style at the first char of the base span
+            if i2 <= i1:
+                continue
+            # Find all distinct style sub-ranges within this equal span
+            sub_ops = _style_update_ops_for_equal_span(
+                base_spans=base_spans,
+                desired_spans=desired_spans,
+                base_start=i1,
+                base_end=i2,
+                desired_start=j1,
+                desired_end=j2,
+                story_offset=story_offset,
+                tab_id=tab_id,
+                segment_id=segment_id,
+            )
+            for abs_start, reqs in sub_ops:
+                pending.append((abs_start, reqs))
+
+        elif tag == "delete":
+            # Delete [i1, i2) in base
+            abs_start = story_offset + i1
+            abs_end = story_offset + i2
+            pending.append(
+                (
+                    abs_start,
+                    [
+                        _make_delete_content_range(
+                            start_index=abs_start,
+                            end_index=abs_end,
+                            tab_id=tab_id,
+                            segment_id=segment_id,
+                        )
+                    ],
+                )
+            )
+
+        elif tag == "insert":
+            # Insert desired[j1:j2] at position i1 in base (after deletions)
+            # We'll compute the insertion position relative to the base document.
+            # The insertion happens at base position i1 (before any characters there).
+            # We group chars by style from desired spans.
+            insert_reqs = _insert_ops_for_span(
+                desired_spans=desired_spans,
+                desired_start=j1,
+                desired_end=j2,
+                base_pos=i1,
+                story_offset=story_offset,
+                tab_id=tab_id,
+                segment_id=segment_id,
+            )
+            if insert_reqs:
+                pending.append((story_offset + i1, insert_reqs))
+
+        elif tag == "replace":
+            # Delete base[i1:i2], insert desired[j1:j2]
+            abs_start = story_offset + i1
+            abs_end = story_offset + i2
+
+            # Deletion first (will run last since descending order)
+            del_req = _make_delete_content_range(
+                start_index=abs_start,
+                end_index=abs_end,
+                tab_id=tab_id,
+                segment_id=segment_id,
+            )
+            # Insertion at the same position (after deletion, index is abs_start)
+            insert_reqs = _insert_ops_for_span(
+                desired_spans=desired_spans,
+                desired_start=j1,
+                desired_end=j2,
+                base_pos=i1,
+                story_offset=story_offset,
+                tab_id=tab_id,
+                segment_id=segment_id,
+            )
+            # Delete and insert at the same logical position.
+            # We emit the insert first (smaller sort key → processed before delete
+            # in descending order — actually we want delete before insert when
+            # applying).  Use a tuple to break ties: (abs_start, priority) where
+            # delete=0 (higher priority = applied first in descending scan).
+            # To ensure delete comes before insert in the final request list,
+            # we emit them as a single group in delete-first order.
+            combined = [del_req, *insert_reqs]
+            pending.append((abs_start, combined))
+
+    # Sort pending ops by sort_key descending (highest document index first)
+    pending.sort(key=lambda item: item[0], reverse=True)
+
+    # Flatten
+    requests: list[dict[str, Any]] = []
+    for _key, reqs in pending:
+        requests.extend(reqs)
+
+    return requests
+
+
+def _style_update_ops_for_equal_span(
+    *,
+    base_spans: list[tuple[int, int, str, dict[str, Any]]],
+    desired_spans: list[tuple[int, int, str, dict[str, Any]]],
+    base_start: int,
+    base_end: int,
+    desired_start: int,
+    desired_end: int,
+    story_offset: int,
+    tab_id: str,
+    segment_id: str | None,
+) -> list[tuple[int, list[dict[str, Any]]]]:
+    """For an 'equal' diff chunk, emit updateTextStyle where style changed.
+
+    We walk character-by-character through the equal span and group consecutive
+    characters that share the same (base_style, desired_style) pair, then emit
+    an updateTextStyle for each group where styles differ.
+
+    Returns list of (abs_start, [request_dict]) pairs.
+    """
+    # Find all style-change sub-ranges within the equal span
+    # Group by consecutive chars with same (base_style != desired_style)
+    result: list[tuple[int, list[dict[str, Any]]]] = []
+
+    # Walk through the span and find style boundaries
+    i = base_start
+    j = desired_start
+    while i < base_end:
+        b_style = _style_at_offset(base_spans, i)
+        d_style = _style_at_offset(desired_spans, j)
+
+        # Find next boundary in either base or desired spans
+        b_next = _next_span_boundary(base_spans, i, base_end)
+        d_next = _next_span_boundary(desired_spans, j, desired_end)
+        chunk_end = min(b_next, d_next)
+
+        if not _styles_equal(b_style, d_style):
+            abs_start = story_offset + i
+            abs_end = story_offset + chunk_end
+            changed_fields = _style_fields(b_style, d_style)
+            if changed_fields:
+                result.append(
+                    (
+                        abs_start,
+                        [
+                            _make_update_text_style(
+                                start_index=abs_start,
+                                end_index=abs_end,
+                                tab_id=tab_id,
+                                segment_id=segment_id,
+                                text_style=d_style,
+                                fields=changed_fields,
+                            )
+                        ],
+                    )
+                )
+
+        step = chunk_end - i
+        i += step
+        j += step
+
+    return result
+
+
+def _style_at_offset(
+    spans: list[tuple[int, int, str, dict[str, Any]]],
+    offset: int,
+) -> dict[str, Any]:
+    """Return the textStyle for the character at the given offset within spans."""
+    for start, end, _text, style in spans:
+        if start <= offset < end:
+            return style
+    return {}
+
+
+def _next_span_boundary(
+    spans: list[tuple[int, int, str, dict[str, Any]]],
+    pos: int,
+    limit: int,
+) -> int:
+    """Return the end of the span containing pos (capped at limit)."""
+    for start, end, _text, _style in spans:
+        if start <= pos < end:
+            return min(end, limit)
+    return limit
+
+
+def _insert_ops_for_span(
+    *,
+    desired_spans: list[tuple[int, int, str, dict[str, Any]]],
+    desired_start: int,
+    desired_end: int,
+    base_pos: int,
+    story_offset: int,
+    tab_id: str,
+    segment_id: str | None,
+) -> list[dict[str, Any]]:
+    """Emit insertText + optional updateTextStyle for desired[desired_start:desired_end].
+
+    The text is inserted at base_pos (before any character at that position in base).
+    We group consecutive characters by their textStyle and emit one insertText per
+    contiguous group with the same style — but since insertText inserts at the same
+    index and text flows forward, we emit a single insertText with all the text and
+    then style each sub-range.
+    """
+    if desired_start >= desired_end:
+        return []
+
+    # Collect the full text to insert
+    full_text = ""
+    i = desired_start
+    while i < desired_end:
+        for start, end, text, _style in desired_spans:
+            if start <= i < end:
+                # Take the portion of this span in [desired_start, desired_end)
+                offset_in_span = i - start
+                take = min(end, desired_end) - i
+                full_text += text[offset_in_span : offset_in_span + take]
+                i += take
+                break
+        else:
+            break
+
+    if not full_text:
+        return []
+
+    abs_insert = story_offset + base_pos
+    reqs: list[dict[str, Any]] = [
+        _make_insert_text(
+            index=abs_insert,
+            tab_id=tab_id,
+            segment_id=segment_id,
+            text=full_text,
+        )
+    ]
+
+    # Apply styles to sub-ranges of the inserted text
+    cursor = abs_insert
+    i = desired_start
+    while i < desired_end:
+        style = _style_at_offset(desired_spans, i)
+        end_of_span = _next_span_boundary(desired_spans, i, desired_end)
+        span_len = end_of_span - i
+        if style:
+            fields = list(style.keys())
+            if fields:
+                reqs.append(
+                    _make_update_text_style(
+                        start_index=cursor,
+                        end_index=cursor + span_len,
+                        tab_id=tab_id,
+                        segment_id=segment_id,
+                        text_style=style,
+                        fields=fields,
+                    )
+                )
+        cursor += span_len
+        i = end_of_span
+
+    return reqs
+
+
+def _make_update_text_style(
+    *,
+    start_index: int,
+    end_index: int,
+    tab_id: str,
+    segment_id: str | None,
+    text_style: dict[str, Any],
+    fields: list[str],
+) -> dict[str, Any]:
+    """Build an updateTextStyle request dict."""
+    range_: dict[str, Any] = {
+        "startIndex": start_index,
+        "endIndex": end_index,
+    }
+    if tab_id:
+        range_["tabId"] = tab_id
+    if segment_id:
+        range_["segmentId"] = segment_id
+    return {
+        "updateTextStyle": {
+            "range": range_,
+            "textStyle": text_style,
+            "fields": ",".join(fields),
+        }
+    }
 
 
 def _lower_para_style_update(

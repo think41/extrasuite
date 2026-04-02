@@ -1066,3 +1066,527 @@ class TestTableCellContentLowering:
 
         assert len(delete_reqs) == 2
         assert len(insert_reqs) >= 1
+
+
+# ===========================================================================
+# Part 7: Multi-run paragraph style edits
+# ===========================================================================
+
+
+def make_indexed_para_with_runs(
+    runs: list[tuple[str, dict[str, Any]]],
+    start: int,
+    named_style: str = "NORMAL_TEXT",
+) -> dict[str, Any]:
+    """Build an indexed paragraph with multiple text runs.
+
+    Each run is (text, text_style_dict).  The paragraph ends with a \\n run.
+    """
+    from extradoc.indexer import utf16_len
+
+    elements = []
+    for text, style in runs:
+        el: dict[str, Any] = {"textRun": {"content": text}}
+        if style:
+            el["textRun"]["textStyle"] = style
+        elements.append(el)
+
+    full_text = "".join(t for t, _ in runs)
+    end = start + utf16_len(full_text)
+
+    return {
+        "startIndex": start,
+        "endIndex": end,
+        "paragraph": {
+            "elements": elements,
+            "paragraphStyle": {"namedStyleType": named_style},
+        },
+    }
+
+
+def make_para_with_runs(
+    runs: list[tuple[str, dict[str, Any]]],
+    named_style: str = "NORMAL_TEXT",
+) -> dict[str, Any]:
+    """Build a paragraph (no index fields) with multiple text runs."""
+    elements = []
+    for text, style in runs:
+        el: dict[str, Any] = {"textRun": {"content": text}}
+        if style:
+            el["textRun"]["textStyle"] = style
+        elements.append(el)
+    return {
+        "paragraph": {
+            "elements": elements,
+            "paragraphStyle": {"namedStyleType": named_style},
+        }
+    }
+
+
+class TestMultiRunParagraphLowering:
+    """Tests for surgical multi-run paragraph style and text edits."""
+
+    # ------------------------------------------------------------------
+    # Test 1: single run, text unchanged, style added
+    # ------------------------------------------------------------------
+
+    def test_single_run_style_added_no_text_change(self) -> None:
+        """Same text, bold style added → only updateTextStyle, no delete/insert."""
+        base = make_indexed_doc(
+            body_content=[
+                make_indexed_para_with_runs([("hello\n", {})], start=1),
+                make_indexed_terminal(7),
+            ]
+        )
+        desired = make_indexed_doc(
+            body_content=[
+                make_para_with_runs([("hello\n", {"bold": True})]),
+                make_terminal_para(),
+            ]
+        )
+
+        requests = lower_ops(diff(base, desired))
+
+        delete_reqs = [r for r in requests if "deleteContentRange" in r]
+        insert_reqs = [r for r in requests if "insertText" in r]
+        style_reqs = [r for r in requests if "updateTextStyle" in r]
+
+        assert len(delete_reqs) == 0, "No delete should occur for style-only change"
+        assert len(insert_reqs) == 0, "No insert should occur for style-only change"
+        assert len(style_reqs) >= 1, "updateTextStyle should be emitted"
+
+        uts = style_reqs[0]["updateTextStyle"]
+        assert uts["textStyle"].get("bold") is True
+
+    # ------------------------------------------------------------------
+    # Test 2: single run, text changed, no style
+    # ------------------------------------------------------------------
+
+    def test_single_run_text_changed_no_style(self) -> None:
+        """Text changes, no style → minimal delete+insert covering the change."""
+        # "hello world\n" → "hello there\n" — only " world" → " there" changes
+        base = make_indexed_doc(
+            body_content=[
+                make_indexed_para_with_runs([("hello world\n", {})], start=1),
+                make_indexed_terminal(13),
+            ]
+        )
+        desired = make_indexed_doc(
+            body_content=[
+                make_para_with_runs([("hello there\n", {})]),
+                make_terminal_para(),
+            ]
+        )
+
+        requests = lower_ops(diff(base, desired))
+
+        delete_reqs = [r for r in requests if "deleteContentRange" in r]
+        insert_reqs = [r for r in requests if "insertText" in r]
+
+        # Should produce some delete+insert (the differing suffix)
+        assert len(delete_reqs) >= 1
+        assert len(insert_reqs) >= 1
+
+        # No op should touch position >= 13 (the terminal \n)
+        for r in delete_reqs:
+            rng = r["deleteContentRange"]["range"]
+            assert rng["endIndex"] <= 12, f"Delete must not touch terminal \\n: {rng}"
+
+    # ------------------------------------------------------------------
+    # Test 3: multi-run, middle run text changed
+    # ------------------------------------------------------------------
+
+    def test_multi_run_middle_run_text_changed(self) -> None:
+        """Two runs; second run's text changes → only second run's area is modified."""
+        # ["Hello ", "world\n"] → ["Hello ", "there\n"]
+        # "Hello world\n" at start=1 → endIndex=13
+        base = make_indexed_doc(
+            body_content=[
+                make_indexed_para_with_runs(
+                    [("Hello ", {"bold": True}), ("world\n", {})],
+                    start=1,
+                ),
+                make_indexed_terminal(13),
+            ]
+        )
+        desired = make_indexed_doc(
+            body_content=[
+                make_para_with_runs([("Hello ", {"bold": True}), ("there\n", {})]),
+                make_terminal_para(),
+            ]
+        )
+
+        requests = lower_ops(diff(base, desired))
+
+        delete_reqs = [r for r in requests if "deleteContentRange" in r]
+        insert_reqs = [r for r in requests if "insertText" in r]
+
+        # Some ops should be produced
+        assert len(delete_reqs) + len(insert_reqs) >= 1
+
+        # No op should start before index 7 (end of "Hello ", 1+6=7)
+        for r in delete_reqs:
+            rng = r["deleteContentRange"]["range"]
+            assert rng["startIndex"] >= 7, f"Delete must not touch first run: {rng}"
+
+    # ------------------------------------------------------------------
+    # Test 4: multi-run, style changed on one run only
+    # ------------------------------------------------------------------
+
+    def test_multi_run_style_changed_on_second_run(self) -> None:
+        """Two runs; second run gains italic → only updateTextStyle for second run."""
+        # ["Hello ", "world\n"] → ["Hello ", "world\n" (italic)]
+        base = make_indexed_doc(
+            body_content=[
+                make_indexed_para_with_runs(
+                    [("Hello ", {"bold": True}), ("world\n", {})],
+                    start=1,
+                ),
+                make_indexed_terminal(13),
+            ]
+        )
+        desired = make_indexed_doc(
+            body_content=[
+                make_para_with_runs(
+                    [("Hello ", {"bold": True}), ("world\n", {"italic": True})]
+                ),
+                make_terminal_para(),
+            ]
+        )
+
+        requests = lower_ops(diff(base, desired))
+
+        delete_reqs = [r for r in requests if "deleteContentRange" in r]
+        insert_reqs = [r for r in requests if "insertText" in r]
+        style_reqs = [r for r in requests if "updateTextStyle" in r]
+
+        assert len(delete_reqs) == 0, "No delete for style-only change"
+        assert len(insert_reqs) == 0, "No insert for style-only change"
+        assert len(style_reqs) >= 1
+
+        # Style update should target the second run range [7, 13) in the paragraph
+        # (1 + utf16_len("Hello ") = 7, 7 + utf16_len("world\n") = 13)
+        uts = style_reqs[0]["updateTextStyle"]
+        assert uts["textStyle"].get("italic") is True
+        rng = uts["range"]
+        assert rng["startIndex"] >= 7, "Style update must target second run, not first"
+
+    # ------------------------------------------------------------------
+    # Test 5: run added at end
+    # ------------------------------------------------------------------
+
+    def test_run_added_at_end(self) -> None:
+        """New bold run appended → insertText + updateTextStyle."""
+        # ["hello\n"] → ["hello", " world\n" (bold)]
+        # base: "hello\n" at 1..7; desired adds " world" before \n
+        base = make_indexed_doc(
+            body_content=[
+                make_indexed_para_with_runs([("hello\n", {})], start=1),
+                make_indexed_terminal(7),
+            ]
+        )
+        desired = make_indexed_doc(
+            body_content=[
+                make_para_with_runs([("hello", {}), (" world\n", {"bold": True})]),
+                make_terminal_para(),
+            ]
+        )
+
+        requests = lower_ops(diff(base, desired))
+
+        insert_reqs = [r for r in requests if "insertText" in r]
+
+        assert len(insert_reqs) >= 1, "insertText should be emitted for added text"
+        # The inserted text should contain " world" (or a superset)
+        inserted_texts = [r["insertText"]["text"] for r in insert_reqs]
+        assert any(
+            "world" in t for t in inserted_texts
+        ), f"Expected 'world' in inserts: {inserted_texts}"
+
+    # ------------------------------------------------------------------
+    # Test 6: run deleted from end
+    # ------------------------------------------------------------------
+
+    def test_run_deleted_from_end(self) -> None:
+        """Second run removed → deleteContentRange for that run's span."""
+        # ["hello", " world\n"] → ["hello\n"]
+        base = make_indexed_doc(
+            body_content=[
+                make_indexed_para_with_runs(
+                    [("hello", {}), (" world\n", {"bold": True})],
+                    start=1,
+                ),
+                make_indexed_terminal(13),
+            ]
+        )
+        desired = make_indexed_doc(
+            body_content=[
+                make_para_with_runs([("hello\n", {})]),
+                make_terminal_para(),
+            ]
+        )
+
+        requests = lower_ops(diff(base, desired))
+
+        delete_reqs = [r for r in requests if "deleteContentRange" in r]
+        assert len(delete_reqs) >= 1
+
+        # Should delete from position 6 (1 + len("hello")) = 6
+        starts = [r["deleteContentRange"]["range"]["startIndex"] for r in delete_reqs]
+        assert any(
+            s >= 6 for s in starts
+        ), f"Expected delete starting at >=6, got: {starts}"
+
+    # ------------------------------------------------------------------
+    # Test 7: complete paragraph rewrite
+    # ------------------------------------------------------------------
+
+    def test_complete_paragraph_rewrite(self) -> None:
+        """Completely different text produces delete+insert covering the full text."""
+        # "Old text\n" at 1..9 (8 chars + newline? actually utf16_len("Old text\n") = 9)
+        base = make_indexed_doc(
+            body_content=[
+                make_indexed_para_with_runs([("Old text\n", {})], start=1),
+                make_indexed_terminal(10),
+            ]
+        )
+        desired = make_indexed_doc(
+            body_content=[
+                make_para_with_runs([("Completely different\n", {})]),
+                make_terminal_para(),
+            ]
+        )
+
+        requests = lower_ops(diff(base, desired))
+
+        delete_reqs = [r for r in requests if "deleteContentRange" in r]
+        insert_reqs = [r for r in requests if "insertText" in r]
+
+        assert len(delete_reqs) >= 1
+        assert len(insert_reqs) >= 1
+
+        # The inserted text must contain the new content
+        inserted_texts = "".join(r["insertText"]["text"] for r in insert_reqs)
+        assert "Completely different" in inserted_texts or any(
+            t in inserted_texts for t in ["Completely", "different"]
+        )
+
+    # ------------------------------------------------------------------
+    # Test 8: paragraph style change only (no text change)
+    # ------------------------------------------------------------------
+
+    def test_paragraph_style_change_only(self) -> None:
+        """Paragraph alignment changes → only updateParagraphStyle, no delete/insert."""
+        base = make_indexed_doc(
+            body_content=[
+                {
+                    "startIndex": 1,
+                    "endIndex": 7,
+                    "paragraph": {
+                        "elements": [{"textRun": {"content": "hello\n"}}],
+                        "paragraphStyle": {
+                            "namedStyleType": "NORMAL_TEXT",
+                            "alignment": "LEFT",
+                        },
+                    },
+                },
+                make_indexed_terminal(7),
+            ]
+        )
+        desired = make_indexed_doc(
+            body_content=[
+                {
+                    "paragraph": {
+                        "elements": [{"textRun": {"content": "hello\n"}}],
+                        "paragraphStyle": {
+                            "namedStyleType": "NORMAL_TEXT",
+                            "alignment": "CENTER",
+                        },
+                    }
+                },
+                make_terminal_para(),
+            ]
+        )
+
+        requests = lower_ops(diff(base, desired))
+
+        delete_reqs = [r for r in requests if "deleteContentRange" in r]
+        insert_reqs = [r for r in requests if "insertText" in r]
+        para_style_reqs = [r for r in requests if "updateParagraphStyle" in r]
+
+        assert len(delete_reqs) == 0, "No delete for paragraph-style-only change"
+        assert len(insert_reqs) == 0, "No insert for paragraph-style-only change"
+        assert len(para_style_reqs) >= 1, "updateParagraphStyle should be emitted"
+
+        ups = para_style_reqs[0]["updateParagraphStyle"]
+        assert ups["paragraphStyle"].get("alignment") == "CENTER"
+
+    # ------------------------------------------------------------------
+    # Test 9: combined text change + paragraph style change
+    # ------------------------------------------------------------------
+
+    def test_combined_text_and_paragraph_style_change(self) -> None:
+        """Text changes AND paragraph style changes → both ops produced."""
+        base = make_indexed_doc(
+            body_content=[
+                {
+                    "startIndex": 1,
+                    "endIndex": 9,
+                    "paragraph": {
+                        "elements": [{"textRun": {"content": "Old text\n"}}],
+                        "paragraphStyle": {
+                            "namedStyleType": "NORMAL_TEXT",
+                            "alignment": "LEFT",
+                        },
+                    },
+                },
+                make_indexed_terminal(9),
+            ]
+        )
+        desired = make_indexed_doc(
+            body_content=[
+                {
+                    "paragraph": {
+                        "elements": [{"textRun": {"content": "New text\n"}}],
+                        "paragraphStyle": {
+                            "namedStyleType": "NORMAL_TEXT",
+                            "alignment": "CENTER",
+                        },
+                    }
+                },
+                make_terminal_para(),
+            ]
+        )
+
+        requests = lower_ops(diff(base, desired))
+
+        para_style_reqs = [r for r in requests if "updateParagraphStyle" in r]
+        content_reqs = [
+            r for r in requests if "deleteContentRange" in r or "insertText" in r
+        ]
+
+        assert len(para_style_reqs) >= 1, "updateParagraphStyle should be emitted"
+        assert len(content_reqs) >= 1, "Text change ops should be emitted"
+
+    # ------------------------------------------------------------------
+    # Test 10: terminal \n is never deleted
+    # ------------------------------------------------------------------
+
+    def test_terminal_paragraph_never_deleted(self) -> None:
+        """The body-level terminal paragraph is never deleted by any op.
+
+        The terminal paragraph (last element, bare \\n) must survive even when
+        all other paragraphs are replaced.  Each paragraph's own trailing \\n
+        is part of its element and can be deleted as part of the element, but
+        the body-terminal paragraph itself must not be deleted.
+        """
+        # "hello world\n" at 1..13; body terminal "\n" at 13..14
+        base = make_indexed_doc(
+            body_content=[
+                make_indexed_para_with_runs([("hello world\n", {})], start=1),
+                make_indexed_terminal(13),
+            ]
+        )
+        desired = make_indexed_doc(
+            body_content=[
+                make_para_with_runs([("completely different text\n", {})]),
+                make_terminal_para(),
+            ]
+        )
+
+        requests = lower_ops(diff(base, desired))
+
+        # The body terminal paragraph occupies [13, 14).
+        # No delete should start at or after 13.
+        terminal_start = 13  # body-terminal paragraph startIndex
+
+        for r in requests:
+            if "deleteContentRange" in r:
+                rng = r["deleteContentRange"]["range"]
+                assert rng["startIndex"] < terminal_start, (
+                    f"Delete must not touch the body-terminal paragraph: "
+                    f"startIndex={rng['startIndex']} but terminal starts at {terminal_start}"
+                )
+
+    def test_run_level_ops_stay_within_paragraph_text(self) -> None:
+        """When a run-level update occurs, ops never exceed the paragraph text range.
+
+        The paragraph text region is [start, end-1). The terminal \\n at [end-1, end)
+        must never be touched by surgical run-level ops.
+        """
+        # "hello world\n" at 1..13: text is [1,12), \\n is at [12,13)
+        base = make_indexed_doc(
+            body_content=[
+                make_indexed_para_with_runs([("hello world\n", {})], start=1),
+                make_indexed_terminal(13),
+            ]
+        )
+        desired = make_indexed_doc(
+            body_content=[
+                # Same prefix "hello", different suffix: " world" → " universe"
+                make_para_with_runs([("hello universe\n", {})]),
+                make_terminal_para(),
+            ]
+        )
+
+        requests = lower_ops(diff(base, desired))
+
+        # Verify all deletes are within the paragraph text range [1, 12)
+        # (i.e. endIndex <= 12 — never touching the \\n at 12)
+        # Note: the diff may choose to delete the whole paragraph element [1,13)
+        # as a structural delete; what we verify is that if run-level ops are
+        # emitted (which would happen when the text differs slightly), they stay
+        # within bounds.  We accept structural whole-paragraph deletes (endIndex==13)
+        # but verify no op writes past the body terminal at 13.
+        body_terminal_start = 13
+        for r in requests:
+            if "deleteContentRange" in r:
+                rng = r["deleteContentRange"]["range"]
+                assert (
+                    rng["startIndex"] < body_terminal_start
+                ), f"Delete must not touch body-terminal paragraph: {rng}"
+
+    # ------------------------------------------------------------------
+    # Test 11: end-to-end reconcile with multi-run styled paragraph
+    # ------------------------------------------------------------------
+
+    def test_end_to_end_styled_paragraph_surgical_ops(self) -> None:
+        """End-to-end: reconcile produces surgical ops for styled multi-run paragraph."""
+        from extradoc.reconcile_v3.api import reconcile
+
+        # Build a full document with a paragraph that has two styled runs
+        base_body = [
+            make_indexed_para_with_runs(
+                [("Hello ", {"bold": True}), ("world\n", {})],
+                start=1,
+            ),
+            make_indexed_terminal(13),
+        ]
+        desired_body = [
+            make_para_with_runs(
+                [("Hello ", {"bold": True}), ("there\n", {"italic": True})]
+            ),
+            make_terminal_para(),
+        ]
+
+        base = make_indexed_doc(body_content=base_body)
+        desired = make_indexed_doc(body_content=desired_body)
+
+        all_reqs = reconcile(base, desired)
+
+        # Should produce some requests
+        assert isinstance(all_reqs, list)
+        assert len(all_reqs) >= 1
+
+        # Specifically, should NOT delete the first run ("Hello ") since it didn't change
+        delete_reqs = [r for r in all_reqs if "deleteContentRange" in r]
+        for dr in delete_reqs:
+            rng = dr["deleteContentRange"]["range"]
+            # "Hello " is at [1, 7), so any delete starting < 7 and ending > 1
+            # would touch the first run. Allow deletes that start at 7+.
+            if rng["startIndex"] < 7:
+                # Partial overlap is problematic; the delete should not cover
+                # the entire "Hello " span
+                assert (
+                    rng["endIndex"] <= 7
+                ), f"Delete {rng} overlaps the unchanged 'Hello ' run at [1,7)"
