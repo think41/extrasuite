@@ -1265,7 +1265,7 @@ def _ensure_base_trailing_paragraph(content: list[StructuralElement]) -> None:
     if last.paragraph is None:
         return  # Ends with a table or section break — leave as-is
     elems = last.paragraph.elements or []
-    if len(elems) == 1:
+    if len(elems) == 1 and last.paragraph.bullet is None:
         tr = elems[0].text_run
         if tr and tr.content == "\n":
             return  # Already has a trailing empty paragraph
