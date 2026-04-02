@@ -215,16 +215,14 @@ class TestSerializeWritesPristine:
         # Should NOT contain .pristine/ or .raw/ entries
         assert not any(".pristine" in n for n in names)
 
-    def test_pristine_not_written_for_xml(self, tmp_path: Path) -> None:
-        """serialize() with XML format does NOT write .pristine from serde."""
+    def test_pristine_written_for_xml(self, tmp_path: Path) -> None:
+        """serialize() with XML format also writes .pristine/document.zip."""
         doc = _make_doc(["Hello world"])
         bundle = _make_bundle(doc)
         folder = tmp_path / "doc"
         serialize(bundle, folder, format="xml")
-        # XML format: serde does not create .pristine (client.py does it)
-        # The test just verifies this is not created by serde
-        # (client.py creates it after adding .raw/)
-        assert not (folder / ".pristine" / "document.zip").exists()
+        # XML format: serde now writes .pristine zip (like markdown)
+        assert (folder / ".pristine" / "document.zip").exists()
 
 
 # ---------------------------------------------------------------------------

@@ -159,6 +159,10 @@ def serialize(
     comments_path.write_text(comments_to_xml(bundle.comments), encoding="utf-8")
     created.append(comments_path)
 
+    # Write .pristine/document.zip so deserialize can compute the 3-way merge
+    pristine_path = _write_pristine_zip(output_path)
+    created.append(pristine_path)
+
     return created
 
 
@@ -280,22 +284,24 @@ def deserialize(
 
     Supports two call signatures:
 
-        # Legacy (XML format — no base needed):
+        # Legacy (XML or markdown format — no base needed):
         deserialize(folder: Path) -> DocumentWithComments
 
-        # New 3-way merge (markdown format):
+        # New 3-way merge (xml or markdown format):
         deserialize(base: DocumentWithComments, folder: Path) -> DocumentWithComments
 
-    For the **markdown format**, performs a 3-way merge:
+    For the **3-way merge** path, performs:
         ancestor = parse(.pristine/document.zip)
         mine     = parse(current folder)
         ops      = diff(ancestor, mine)
         desired  = apply_ops_to_document(base, ops)
 
-    Things the markdown SERDE doesn't model (headers, footers, DocumentStyle,
-    InlineObjects, etc.) produce zero ops and are copied unchanged from base.
+    Things the SERDE doesn't model produce zero ops and are copied unchanged
+    from base. For the markdown SERDE this includes headers, footers,
+    DocumentStyle, InlineObjects, etc. The XML SERDE models more (named styles,
+    headers, footers via tab extras) so fewer things are left to base.
 
-    When .pristine/document.zip is absent (legacy or XML folders), the function
+    When .pristine/document.zip is absent (legacy folders), the function
     falls back to the old behaviour: deserializes the folder directly and returns
     it as the result.
 
@@ -327,6 +333,10 @@ def deserialize(
         if base is not None:
             return _deserialize_markdown_3way(base, the_folder, index)
         return _deserialize_markdown(the_folder, index)
+
+    # XML format
+    if base is not None:
+        return _deserialize_xml_3way(base, the_folder)
 
     tabs: dict[str, TabFiles] = {}
     for index_tab in index.all_tabs_flat():
@@ -373,6 +383,117 @@ def deserialize(
         file_comments = FileComments(file_id=index.id)
 
     return DocumentWithComments(document=document, comments=file_comments)
+
+
+def _deserialize_xml(folder: Path) -> DocumentWithComments:
+    """Read an XML-format folder into a DocumentWithComments (internal helper).
+
+    Mirrors the XML deserialization logic from deserialize() but is callable
+    without going through the full dispatch path.
+    """
+    index_path = folder / "index.xml"
+    index = IndexXml.from_xml_string(index_path.read_text(encoding="utf-8"))
+
+    tabs: dict[str, TabFiles] = {}
+    for index_tab in index.all_tabs_flat():
+        tab_dir = folder / index_tab.folder
+        doc_path = tab_dir / "document.xml"
+        styles_path = tab_dir / "styles.xml"
+
+        raw_xml = doc_path.read_text(encoding="utf-8")
+        clean_xml = strip_comment_refs(raw_xml)
+
+        tab_xml = TabXml.from_xml_string(clean_xml)
+        if styles_path.exists():
+            styles_xml = StylesXml.from_xml_string(
+                styles_path.read_text(encoding="utf-8")
+            )
+        else:
+            styles_xml = StylesXml.from_xml_string(_MINIMAL_STYLES_XML)
+        tf = TabFiles(tab=tab_xml, styles=styles_xml)
+
+        tf.doc_style = _read_extra(tab_dir / "docstyle.xml", DocStyleXml)
+        tf.named_styles = _read_extra(tab_dir / "namedstyles.xml", NamedStylesXml)
+        tf.inline_objects = _read_extra(tab_dir / "objects.xml", InlineObjectsXml)
+        tf.positioned_objects = _read_extra(
+            tab_dir / "positionedObjects.xml", PositionedObjectsXml
+        )
+        tf.named_ranges = _read_extra(tab_dir / "namedranges.xml", NamedRangesXml)
+
+        tabs[index_tab.folder] = tf
+
+    document = tabs_to_document(
+        tabs,
+        document_id=index.id,
+        title=index.title,
+        revision_id=index.revision,
+    )
+
+    comments_path = folder / "comments.xml"
+    if comments_path.exists():
+        file_comments = comments_from_xml(comments_path.read_text(encoding="utf-8"))
+    else:
+        file_comments = FileComments(file_id=index.id)
+
+    return DocumentWithComments(document=document, comments=file_comments)
+
+
+def _deserialize_xml_3way(
+    base: DocumentWithComments,
+    folder: Path,
+) -> DocumentWithComments:
+    """3-way merge deserialize for XML format.
+
+    Algorithm:
+        ancestor  = parse(.pristine/document.zip)
+        mine      = parse(current folder)
+        ops       = diff(ancestor, mine)
+        desired   = apply_ops_to_document(base, ops)
+
+    When .pristine/document.zip is absent (legacy folder), falls back to
+    direct parse (no merge).
+    """
+    import tempfile
+    import zipfile as _zf
+    from pathlib import Path as _Path
+
+    from extradoc.reconcile_v3.api import diff as reconcile_diff
+
+    from ._apply_ops import apply_ops_to_document
+
+    pristine_zip = folder / _PRISTINE_DIR / "document.zip"
+
+    if not pristine_zip.exists():
+        # Legacy folder: no pristine zip — fall back to direct parse
+        return _deserialize_xml(folder)
+
+    # Parse current (mine) folder
+    mine_bundle = _deserialize_xml(folder)
+    mine_doc_dict = mine_bundle.document.model_dump(by_alias=True, exclude_none=True)
+
+    # Extract and parse pristine (ancestor) folder
+    with tempfile.TemporaryDirectory() as tmp:
+        with _zf.ZipFile(pristine_zip, "r") as zf:
+            zf.extractall(tmp)
+        pristine_folder = _Path(tmp)
+        ancestor_bundle = _deserialize_xml(pristine_folder)
+    ancestor_doc_dict = ancestor_bundle.document.model_dump(
+        by_alias=True, exclude_none=True
+    )
+
+    # Compute ops: what changed from ancestor to mine?
+    ops = reconcile_diff(ancestor_doc_dict, mine_doc_dict)
+
+    # Apply ops to base (the live document)
+    base_doc_dict = base.document.model_dump(by_alias=True, exclude_none=True)
+    desired_doc_dict = apply_ops_to_document(base_doc_dict, ops)
+
+    desired_document = base.document.__class__.model_validate(desired_doc_dict)
+
+    # Merge comments: use mine's comments (they reflect the agent's edits)
+    desired_comments = mine_bundle.comments
+
+    return DocumentWithComments(document=desired_document, comments=desired_comments)
 
 
 def _deserialize_markdown(folder: Path, index: IndexXml) -> DocumentWithComments:
