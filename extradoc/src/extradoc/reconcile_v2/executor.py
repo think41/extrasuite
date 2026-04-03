@@ -34,7 +34,9 @@ def resolve_deferred_placeholders(
         current = data
         for key in path.split("."):
             if not isinstance(current, dict) or key not in current:
-                raise ValueError(f"Could not resolve deferred path {path!r} at key {key!r}")
+                raise ValueError(
+                    f"Could not resolve deferred path {path!r} at key {key!r}"
+                )
             current = current[key]
         if not isinstance(current, str):
             raise ValueError(f"Deferred path {path!r} did not resolve to a string")
@@ -54,7 +56,9 @@ def resolve_deferred_placeholders(
             batch_index = value["batch_index"]
             request_index = value["request_index"]
             if not isinstance(batch_index, int) or not isinstance(request_index, int):
-                raise ValueError("Deferred placeholder batch/request indexes must be integers")
+                raise ValueError(
+                    "Deferred placeholder batch/request indexes must be integers"
+                )
             if batch_index >= len(prior_responses):
                 raise ValueError(
                     f"Deferred placeholder references batch {batch_index}, "
@@ -67,24 +71,6 @@ def resolve_deferred_placeholders(
                     f"but batch {batch_index} has {len(replies) if isinstance(replies, list) else 0} replies"
                 )
             return extract_path(replies[request_index], value["response_path"])
-        if isinstance(value, str) and value == "__LAST_ADDED_TAB_ID__":
-            for response in reversed(prior_responses):
-                replies = response.get("replies", [])
-                if not isinstance(replies, list):
-                    continue
-                for reply in reversed(replies):
-                    if not isinstance(reply, dict):
-                        continue
-                    add_document_tab = reply.get("addDocumentTab")
-                    if not isinstance(add_document_tab, dict):
-                        continue
-                    tab_properties = add_document_tab.get("tabProperties")
-                    if not isinstance(tab_properties, dict):
-                        continue
-                    tab_id = tab_properties.get("tabId")
-                    if isinstance(tab_id, str):
-                        return tab_id
-            raise ValueError("Could not resolve __LAST_ADDED_TAB_ID__ from prior responses")
         if isinstance(value, dict):
             return {key: resolve(item) for key, item in value.items()}
         if isinstance(value, list):

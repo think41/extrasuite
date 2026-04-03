@@ -110,6 +110,12 @@ _PARA_STYLE_READONLY_FIELDS: frozenset[str] = frozenset(
     }
 )
 
+# A resolved string ID or a deferred placeholder dict that the executor
+# will substitute after an earlier batch completes.  Every builder helper
+# that constructs a range or location dict accepts this type for tab_id and
+# segment_id so that deferred IDs can flow through unchanged.
+_StrOrDeferred = str | dict[str, Any]
+
 
 # ---------------------------------------------------------------------------
 # Public entry points
@@ -200,10 +206,11 @@ def lower_batches(
                 )
                 # Batch1: insert header content
                 batch1.extend(
-                    _lower_story_content_insert(
+                    _lower_content_insert(
                         content=op.desired_content,
+                        start_index=1,
                         tab_id=op.tab_id,
-                        deferred_segment_id=deferred_id,
+                        segment_id=deferred_id,
                     )
                 )
 
@@ -232,10 +239,11 @@ def lower_batches(
                     )
                 )
                 batch1.extend(
-                    _lower_story_content_insert(
+                    _lower_content_insert(
                         content=op.desired_content,
+                        start_index=1,
                         tab_id=op.tab_id,
-                        deferred_segment_id=deferred_id,
+                        segment_id=deferred_id,
                     )
                 )
 
@@ -244,6 +252,7 @@ def lower_batches(
                 title = props.get("title", "Untitled")
                 index = props.get("index")
                 parent_tab_id = props.get("parentTabId")
+                req_index = len(batch0)
                 batch0.append(
                     _make_add_document_tab(
                         title=title,
@@ -251,6 +260,22 @@ def lower_batches(
                         parent_tab_id=parent_tab_id,
                     )
                 )
+                deferred_tab_id: dict[str, Any] = {
+                    "placeholder": True,
+                    "batch_index": 0,
+                    "request_index": req_index,
+                    "response_path": "addDocumentTab.tabProperties.tabId",
+                }
+                body_content = _extract_tab_body_content(op.desired_tab)
+                if body_content:
+                    batch1.extend(
+                        _lower_content_insert(
+                            content=body_content,
+                            start_index=1,
+                            tab_id=deferred_tab_id,
+                            segment_id=None,
+                        )
+                    )
 
             # ---------------------------------------------------------------- #
             # Structural deletes → batch 1
@@ -430,10 +455,11 @@ def lower_batches(
                     "response_path": "createFootnote.footnoteId",
                 }
                 batch1.extend(
-                    _lower_story_content_insert(
+                    _lower_content_insert(
                         content=op.desired_content,
+                        start_index=1,
                         tab_id=op.tab_id,
-                        deferred_segment_id=deferred_fn_id,
+                        segment_id=deferred_fn_id,
                     )
                 )
 
@@ -662,8 +688,8 @@ def _make_create_paragraph_bullets(
     start: int,
     end: int,
     preset: str,
-    tab_id: str,
-    segment_id: str | None,
+    tab_id: _StrOrDeferred,
+    segment_id: _StrOrDeferred | None,
 ) -> dict[str, Any]:
     """Build a createParagraphBullets request dict."""
     range_: dict[str, Any] = {"startIndex": start, "endIndex": end}
@@ -678,8 +704,8 @@ def _make_delete_paragraph_bullets(
     *,
     start: int,
     end: int,
-    tab_id: str,
-    segment_id: str | None,
+    tab_id: _StrOrDeferred,
+    segment_id: _StrOrDeferred | None,
 ) -> dict[str, Any]:
     """Build a deleteParagraphBullets request dict."""
     range_: dict[str, Any] = {"startIndex": start, "endIndex": end}
@@ -1651,8 +1677,8 @@ def _make_update_text_style(
     *,
     start_index: int,
     end_index: int,
-    tab_id: str,
-    segment_id: str | None,
+    tab_id: _StrOrDeferred,
+    segment_id: _StrOrDeferred | None,
     text_style: dict[str, Any],
     fields: list[str],
 ) -> dict[str, Any]:
@@ -1828,8 +1854,8 @@ def _lower_element_insert(
     *,
     el: dict[str, Any],
     index: int,
-    tab_id: str,
-    segment_id: str | None,
+    tab_id: _StrOrDeferred,
+    segment_id: _StrOrDeferred | None,
     desired_lists: dict[str, Any] | None = None,
 ) -> list[dict[str, Any]]:
     """Generate request(s) to insert a content element at the given index.
@@ -1875,8 +1901,8 @@ def _lower_paragraph_insert(
     *,
     el: dict[str, Any],
     index: int,
-    tab_id: str,
-    segment_id: str | None,
+    tab_id: _StrOrDeferred,
+    segment_id: _StrOrDeferred | None,
     desired_lists: dict[str, Any] | None = None,
 ) -> list[dict[str, Any]]:
     """Insert a paragraph at ``index`` via insertText + optional style.
@@ -2021,14 +2047,30 @@ def _lower_table_insert(
     *,
     el: dict[str, Any],
     index: int,
-    tab_id: str,
-    segment_id: str | None,
+    tab_id: _StrOrDeferred,
+    segment_id: _StrOrDeferred | None,
 ) -> list[dict[str, Any]]:
-    """Insert a table at ``index``.
+    """Insert a table at ``index`` and populate cell content.
 
-    Only the table dimensions are lowered — cell content requires a separate
-    pass that is not yet implemented.  Callers receive a single insertTable
-    request with the correct row/column count.
+    Emits ``insertTable`` first, then ``insertText`` + style requests for each
+    cell's desired content at the correct absolute index.
+
+    Index arithmetic
+    ----------------
+    After ``insertTable`` creates an empty table, each empty cell occupies
+    exactly 2 characters: one cell-opener character and one terminal ``\\n``.
+    When we insert ``s`` characters of content into a cell at position P+1
+    (after the cell opener at P), all subsequent cells shift right by ``s``.
+    The loop tracks this running shift via ``table_pos``.
+
+    Structural layout immediately after ``insertTable`` at ``index``::
+
+        index     : table opener  (1 char)
+        index+1   : row[0] opener (1 char)
+        index+2   : cell[0][0] opener (1 char)
+        index+3   : cell[0][0] terminal \\n (1 char) — empty
+        index+4   : cell[0][1] opener (1 char)
+        ...
     """
     table = el.get("table", {})
     rows = table.get("rows", len(table.get("tableRows", [])))
@@ -2040,7 +2082,7 @@ def _lower_table_insert(
     if segment_id:
         location["segmentId"] = segment_id
 
-    return [
+    requests: list[dict[str, Any]] = [
         {
             "insertTable": {
                 "rows": rows,
@@ -2049,6 +2091,42 @@ def _lower_table_insert(
             }
         }
     ]
+
+    # table_pos tracks the next position as it shifts with each insertion.
+    # Start at index+1 to skip the table opener; each row opener advances by 1.
+    table_pos = index + 1
+
+    for row in table.get("tableRows", []):
+        table_pos += 1  # skip row opener (1 char)
+        for cell in row.get("tableCells", []):
+            cell_content: list[dict[str, Any]] = cell.get("content", [])
+            if not cell_content:
+                # Fully empty cell (no content list at all) — skip.
+                # An empty cell still occupies 2 chars (opener + terminal \n).
+                table_pos += 2
+                continue
+
+            # First element in cell starts at table_pos + 1 (after cell opener).
+            content_start = table_pos + 1
+
+            # Compute chars we will insert (everything except terminal paragraph).
+            inserted_chars = sum(_element_size(e) for e in cell_content[:-1])
+
+            if inserted_chars > 0:
+                requests.extend(
+                    _lower_content_insert(
+                        content=cell_content,
+                        start_index=content_start,
+                        tab_id=tab_id,
+                        segment_id=segment_id,
+                    )
+                )
+
+            # Advance past this cell:
+            # originally 2 chars (opener + terminal \n), now 2 + inserted_chars.
+            table_pos += inserted_chars + 2
+
+    return requests
 
 
 def _is_pagebreak_para(para: dict[str, Any]) -> bool:
@@ -2076,7 +2154,7 @@ def _is_pagebreak_para(para: dict[str, Any]) -> bool:
 def _lower_page_break_insert(
     *,
     index: int,
-    tab_id: str,
+    tab_id: _StrOrDeferred,
 ) -> list[dict[str, Any]]:
     """Insert a page break via ``insertPageBreak`` at ``index``.
 
@@ -2094,7 +2172,7 @@ def _lower_section_break_insert(
     *,
     el: dict[str, Any],
     index: int,
-    tab_id: str,
+    tab_id: _StrOrDeferred,
 ) -> list[dict[str, Any]]:
     """Insert a section break via ``insertSectionBreak`` at ``index``.
 
@@ -2184,104 +2262,105 @@ def _lower_section_break_update(
     ]
 
 
-def _lower_story_content_insert(
+def _lower_content_insert(
     *,
     content: list[dict[str, Any]],
-    tab_id: str,
-    deferred_segment_id: dict[str, Any],
+    start_index: int,
+    tab_id: _StrOrDeferred,
+    segment_id: _StrOrDeferred | None,
+    desired_lists: dict[str, Any] | None = None,
 ) -> list[dict[str, Any]]:
-    """Insert desired content into a freshly created header or footer.
+    """Insert a list of StructuralElements starting at ``start_index``.
 
-    The segment ID is deferred (not yet known from Batch 0 response).
-    Uses ``endOfSegmentLocation`` with the deferred segment ID.
+    This is the single unified pure-insert entry point for all five content
+    containers (body, header, footer, footnote, table cell).
 
-    Only simple paragraph text is supported here.  The terminal paragraph
-    (trailing \\n) already exists in a new header/footer, so we skip it.
+    The terminal paragraph (the trailing ``\\n`` that every container already
+    has) is skipped — ``content[:-1]`` is processed.
+
+    ``tab_id`` and ``segment_id`` may be deferred placeholder dicts; they
+    flow through to ``_lower_element_insert`` and ultimately to the builder
+    helpers, where ``resolve_deferred_placeholders`` substitutes them before
+    the batch executes.
+
+    Index arithmetic
+    ----------------
+    A freshly created segment (header, footer, footnote) has one empty
+    paragraph whose ``\\n`` sits at index 1 in the segment's coordinate
+    space.  Pass ``start_index=1`` for those containers.
+
+    For a body (new tab), content also starts at index 1.
+
+    For a table cell, pass the pre-computed absolute index of the first
+    position inside the cell (cell_opener_index + 1).
     """
     requests: list[dict[str, Any]] = []
+    running_index = start_index
 
-    # Skip last element (terminal paragraph already exists in new segment)
-    content_to_insert = content[:-1]
-
-    # Track running offset for style requests.
-    # A freshly created header/footer/footnote has one empty paragraph at [1, 2).
-    cumulative_offset = 0
-
-    for el in content_to_insert:
-        if "paragraph" in el:
-            para = el.get("paragraph", {})
-            text = _para_text(para)
-            # Use endOfSegmentLocation with deferred segment ID
-            location: dict[str, Any] = {
-                "tabId": tab_id,
-                "segmentId": deferred_segment_id,
-            }
-            requests.append(
-                {
-                    "insertText": {
-                        "endOfSegmentLocation": location,
-                        "text": text,
-                    }
-                }
-            )
-            # Paragraph starts at 1 + cumulative_offset in the new segment
-            para_start = 1 + cumulative_offset
-            text_len = utf16_len(text)
-
-            # Apply paragraph style
-            desired_ps = para.get("paragraphStyle", {})
-            if desired_ps:
-                fields = list(desired_ps.keys())
-                if fields:
-                    range_: dict[str, Any] = {
-                        "startIndex": para_start,
-                        "endIndex": para_start + text_len,
-                        "segmentId": deferred_segment_id,
-                    }
-                    if tab_id:
-                        range_["tabId"] = tab_id
-                    requests.append(
-                        {
-                            "updateParagraphStyle": {
-                                "range": range_,
-                                "paragraphStyle": desired_ps,
-                                "fields": ",".join(fields),
-                            }
-                        }
-                    )
-
-            # Apply text styles for each run
-            runs = _extract_runs(para)
-            run_offset = para_start
-            for text_content, style in runs:
-                run_len = utf16_len(text_content)
-                if run_len > 0 and style:
-                    run_range: dict[str, Any] = {
-                        "startIndex": run_offset,
-                        "endIndex": run_offset + run_len,
-                        "segmentId": deferred_segment_id,
-                    }
-                    if tab_id:
-                        run_range["tabId"] = tab_id
-                    requests.append(
-                        {
-                            "updateTextStyle": {
-                                "range": run_range,
-                                "textStyle": style,
-                                "fields": ",".join(style.keys()),
-                            }
-                        }
-                    )
-                run_offset += run_len
-
-            cumulative_offset += text_len
+    for el in content[:-1]:  # skip terminal paragraph
+        reqs = _lower_element_insert(
+            el=el,
+            index=running_index,
+            tab_id=tab_id,
+            segment_id=segment_id,
+            desired_lists=desired_lists,
+        )
+        requests.extend(reqs)
+        running_index += _element_size(el)
 
     return requests
 
 
 # ---------------------------------------------------------------------------
+# Tab body extraction helper
+# ---------------------------------------------------------------------------
+
+
+def _extract_tab_body_content(tab: dict[str, Any]) -> list[dict[str, Any]]:
+    """Return the body StructuralElements from a tab dict.
+
+    Skips any leading ``sectionBreak`` element — ``addDocumentTab`` creates
+    it automatically, so it must not be re-inserted.
+
+    Returns an empty list if the body has no content beyond the terminal
+    paragraph (nothing to insert into the new tab).
+    """
+    content: list[dict[str, Any]] = (
+        tab.get("documentTab", {}).get("body", {}).get("content", [])
+    )
+    # Drop leading sectionBreak (inserted automatically by addDocumentTab)
+    filtered = [el for el in content if "sectionBreak" not in el]
+    # Nothing to do if the only remaining element is the terminal paragraph
+    if len(filtered) <= 1:
+        return []
+    return filtered
+
+
+# ---------------------------------------------------------------------------
 # Element index helpers
 # ---------------------------------------------------------------------------
+
+
+def _element_size(el: dict[str, Any]) -> int:
+    """Return the number of UTF-16 code units occupied by a StructuralElement.
+
+    For paragraphs the size is always derivable from the text content.
+    For section breaks the API allocates exactly one character.
+    For tables and other elements we read ``startIndex``/``endIndex`` if
+    present; these are set on elements that came from a real API pull.
+    """
+    if "paragraph" in el:
+        return utf16_len(_para_text(el["paragraph"]))
+    if "sectionBreak" in el:
+        return 1
+    start, end = _element_range(el)
+    if start is not None and end is not None:
+        return end - start
+    raise NotImplementedError(
+        f"Cannot compute size of element with keys {list(el.keys())!r} "
+        "without startIndex/endIndex. Ensure the desired document was "
+        "pulled from the Google API so that index information is present."
+    )
 
 
 def _element_range(el: dict[str, Any]) -> tuple[int | None, int | None]:
@@ -2390,8 +2469,8 @@ def _make_delete_content_range(
     *,
     start_index: int,
     end_index: int,
-    tab_id: str,
-    segment_id: str | None = None,
+    tab_id: _StrOrDeferred,
+    segment_id: _StrOrDeferred | None = None,
 ) -> dict[str, Any]:
     range_: dict[str, Any] = {
         "startIndex": start_index,
@@ -2407,8 +2486,8 @@ def _make_delete_content_range(
 def _make_insert_text(
     *,
     index: int,
-    tab_id: str,
-    segment_id: str | None,
+    tab_id: _StrOrDeferred,
+    segment_id: _StrOrDeferred | None,
     text: str,
 ) -> dict[str, Any]:
     location: dict[str, Any] = {"index": index}
@@ -2423,8 +2502,8 @@ def _make_update_paragraph_style(
     *,
     start_index: int,
     end_index: int,
-    tab_id: str,
-    segment_id: str | None,
+    tab_id: _StrOrDeferred,
+    segment_id: _StrOrDeferred | None,
     paragraph_style: dict[str, Any],
     fields: list[str],
 ) -> dict[str, Any]:

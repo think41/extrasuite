@@ -51,6 +51,7 @@ from tests.reconcile_v3.helpers import (
     make_named_style,
     make_para_el,
     make_tab,
+    make_table_el,
     make_terminal_para,
 )
 
@@ -439,6 +440,95 @@ class TestTabOps:
         assert len(delete_tab_reqs) == 1
         dt = delete_tab_reqs[0]["deleteDocumentTab"]
         assert dt["tabId"] == "t2"
+
+    def test_insert_tab_with_body_content_emits_content_in_batch1(self) -> None:
+        """InsertTabOp with body content emits insertText in batch 1 with deferred tab ID."""
+        base = make_document(tabs=[make_tab("t1", "Tab 1", 0)])
+        desired = make_document(
+            tabs=[
+                make_tab("t1", "Tab 1", 0),
+                make_tab(
+                    "t2",
+                    "Tab 2",
+                    1,
+                    body_content=[make_para_el("Hello\n"), make_terminal_para()],
+                ),
+            ]
+        )
+
+        batches = lower_batches(diff(base, desired))
+
+        # batch 0: addDocumentTab; batch 1: body content with deferred tab ID
+        assert len(batches) >= 2, f"Expected at least 2 batches, got {batches}"
+        batch0 = batches[0]
+        batch1 = batches[1]
+
+        add_tab_reqs = [r for r in batch0 if "addDocumentTab" in r]
+        assert len(add_tab_reqs) == 1
+
+        insert_reqs = [r for r in batch1 if "insertText" in r]
+        assert len(insert_reqs) >= 1, f"No insertText in batch1: {batch1}"
+
+        # The insertText must be at index 1 with a deferred tab ID placeholder
+        req = insert_reqs[0]["insertText"]
+        loc = req.get("location", {})
+        assert loc.get("index") == 1, f"Expected index=1, got {loc.get('index')!r}"
+        tab_id = loc.get("tabId")
+        assert (
+            isinstance(tab_id, dict) and tab_id.get("placeholder") is True
+        ), f"Expected deferred tab ID placeholder, got {tab_id!r}"
+        assert tab_id.get("response_path") == "addDocumentTab.tabProperties.tabId"
+        assert req.get("text") == "Hello\n"
+
+    def test_insert_tab_deferred_tab_id_resolves(self) -> None:
+        """Deferred tab ID in InsertTabOp body content resolves via resolve_deferred_placeholders."""
+        from extradoc.reconcile_v2.executor import resolve_deferred_placeholders
+
+        base = make_document(tabs=[make_tab("t1", "Tab 1", 0)])
+        desired = make_document(
+            tabs=[
+                make_tab("t1", "Tab 1", 0),
+                make_tab(
+                    "t2",
+                    "Tab 2",
+                    1,
+                    body_content=[make_para_el("Hello\n"), make_terminal_para()],
+                ),
+            ]
+        )
+
+        batches = lower_batches(diff(base, desired))
+        assert len(batches) >= 2
+
+        # Simulate batch 0 response: addDocumentTab returned tabId "t2-real"
+        fake_response = {
+            "replies": [{"addDocumentTab": {"tabProperties": {"tabId": "t2-real"}}}]
+        }
+        resolved = resolve_deferred_placeholders([fake_response], batches[1])
+
+        insert_reqs = [r for r in resolved if "insertText" in r]
+        assert len(insert_reqs) >= 1
+        tab_id = insert_reqs[0]["insertText"]["location"]["tabId"]
+        assert (
+            tab_id == "t2-real"
+        ), f"Expected resolved tab ID 't2-real', got {tab_id!r}"
+
+    def test_insert_tab_with_empty_body_emits_no_batch1(self) -> None:
+        """InsertTabOp with only a terminal paragraph in body emits no batch 1 content."""
+        base = make_document(tabs=[make_tab("t1", "Tab 1", 0)])
+        desired = make_document(
+            tabs=[
+                make_tab("t1", "Tab 1", 0),
+                make_tab("t2", "Tab 2", 1),  # default: only terminal paragraph
+            ]
+        )
+
+        batches = lower_batches(diff(base, desired))
+
+        # Only batch 0 (addDocumentTab); no batch 1 content requests
+        assert (
+            len(batches) == 1
+        ), f"Expected only 1 batch for empty tab body, got {len(batches)}: {batches}"
 
     def test_insert_and_delete_tab_produce_correct_requests(self) -> None:
         """Tab insert + delete produce the right request types.
@@ -1825,7 +1915,7 @@ class TestFootnoteLowering:
         assert cf["location"]["index"] == 4
 
     def test_insert_footnote_batch1_has_insert_text_with_deferred_id(self) -> None:
-        """Inserting a footnote: batch 1 has insertText with deferred segment ID."""
+        """Inserting a footnote: batch 1 has insertText at index 1 with deferred segment ID."""
         desired_fn_ref_para = make_footnote_ref_para(
             text_before="Note",
             footnote_id="fn2",
@@ -1851,21 +1941,23 @@ class TestFootnoteLowering:
         insert_reqs = [r for r in batch1 if "insertText" in r]
         assert len(insert_reqs) >= 1
 
-        # The insertText must use endOfSegmentLocation with a deferred placeholder
+        # The insertText must use location with index=1 and a deferred placeholder segmentId.
+        # (endOfSegmentLocation was the old approach; we now compute the index directly.)
         for req in insert_reqs:
             it = req["insertText"]
-            loc = it.get("endOfSegmentLocation")
+            loc = it.get("location")
             if loc is not None:
                 seg_id = loc.get("segmentId")
-                assert isinstance(
-                    seg_id, dict
-                ), f"Expected deferred placeholder dict for segmentId, got {seg_id!r}"
-                assert seg_id.get("placeholder") is True
+                if not isinstance(seg_id, dict) or not seg_id.get("placeholder"):
+                    continue
                 assert seg_id.get("response_path") == "createFootnote.footnoteId"
+                assert (
+                    loc.get("index") == 1
+                ), f"Expected insertText at index 1 in new footnote segment, got {loc.get('index')!r}"
                 break
         else:
             pytest.fail(
-                f"No insertText with endOfSegmentLocation found in batch1: {batch1}"
+                f"No insertText with deferred segmentId found in batch1: {batch1}"
             )
 
     def test_insert_footnote_without_anchor_raises(self) -> None:
@@ -2892,3 +2984,150 @@ class TestPageBreakSectionBreak:
         assert isinstance(result, list)
         pb_reqs = [r for r in result if "insertPageBreak" in r]
         assert len(pb_reqs) == 1
+
+
+# ===========================================================================
+# Part 8: Table cell content insertion (_lower_table_insert)
+# ===========================================================================
+
+
+class TestTableInsertCellContent:
+    """Tests for cell content requests emitted by _lower_table_insert.
+
+    Index arithmetic reference (table at index N):
+      N   : table opener (1 char)
+      N+1 : row[0] opener (1 char)
+      N+2 : cell[0][0] opener (1 char)
+      N+3 : cell[0][0] first content position (after opener)
+      ...
+
+    After inserting ``s`` chars of content into a cell, all subsequent cells
+    shift right by ``s``.
+    """
+
+    from extradoc.indexer import utf16_len
+
+    def _make_cell(self, text: str) -> dict[str, Any]:
+        """Cell dict with one text paragraph + terminal."""
+        return {
+            "content": [make_para_el(text), make_terminal_para()],
+            "tableCellStyle": {},
+        }
+
+    def _make_table_el(self, cells_by_row: list[list[str]]) -> dict[str, Any]:
+        """Table element where each cell text is provided as a string."""
+        return {
+            "table": {
+                "rows": len(cells_by_row),
+                "columns": len(cells_by_row[0]) if cells_by_row else 0,
+                "tableRows": [
+                    {
+                        "tableCells": [self._make_cell(t) for t in row],
+                        "tableRowStyle": {},
+                    }
+                    for row in cells_by_row
+                ],
+            }
+        }
+
+    def test_insert_table_emits_insertTable_request(self) -> None:
+        """_lower_table_insert always emits insertTable as the first request."""
+        from extradoc.reconcile_v3.lower import _lower_table_insert
+
+        el = self._make_table_el([["Hello\n", "World\n"]])
+        reqs = _lower_table_insert(el=el, index=5, tab_id="t1", segment_id=None)
+        assert reqs[0].get("insertTable") is not None
+        it = reqs[0]["insertTable"]
+        assert it["rows"] == 1
+        assert it["columns"] == 2
+        assert it["location"]["index"] == 5
+
+    def test_insert_table_1x1_cell_content_index(self) -> None:
+        """1x1 table: cell content inserts at index+3 (table+row+cell openers = 3 chars)."""
+        from extradoc.reconcile_v3.lower import _lower_table_insert
+
+        el = self._make_table_el([["Hello\n"]])
+        reqs = _lower_table_insert(el=el, index=5, tab_id="t1", segment_id=None)
+
+        insert_reqs = [r for r in reqs if "insertText" in r]
+        assert len(insert_reqs) == 1
+        loc = insert_reqs[0]["insertText"]["location"]
+        assert loc["index"] == 8, (
+            "1x1 table at 5: table opener(5) + row opener(6) + cell opener(7) "
+            f"→ content at 8, got {loc['index']}"
+        )
+        assert insert_reqs[0]["insertText"]["text"] == "Hello\n"
+
+    def test_insert_table_1x2_second_cell_index_accounts_for_first_insertion(
+        self,
+    ) -> None:
+        """1x2 table: second cell content starts after first cell's inserted chars shift it."""
+        from extradoc.indexer import utf16_len
+        from extradoc.reconcile_v3.lower import _lower_table_insert
+
+        el = self._make_table_el([["Hello\n", "World\n"]])
+        reqs = _lower_table_insert(el=el, index=5, tab_id="t1", segment_id=None)
+
+        insert_reqs = [r for r in reqs if "insertText" in r]
+        assert len(insert_reqs) == 2
+
+        # First cell: table(5) + row(6) + cell(7) → content at 8
+        assert insert_reqs[0]["insertText"]["location"]["index"] == 8
+        assert insert_reqs[0]["insertText"]["text"] == "Hello\n"
+
+        # Second cell:
+        # Original empty cell[0][0]: opener at 7, terminal at 8 → ends at 9 (2 chars).
+        # After inserting "Hello\n" (6 chars) at 8:
+        #   cell[0][0] now ends at 8+6+1 = 15.
+        #   cell[0][1] opener at 15; content at 16.
+        first_text_size = utf16_len("Hello\n")  # 6
+        expected_second_index = 8 + first_text_size + 2  # 8 + 6 + 2 = 16
+        assert (
+            insert_reqs[1]["insertText"]["location"]["index"] == expected_second_index
+        ), (
+            f"Expected second cell content at {expected_second_index}, "
+            f"got {insert_reqs[1]['insertText']['location']['index']}"
+        )
+        assert insert_reqs[1]["insertText"]["text"] == "World\n"
+
+    def test_insert_table_2x1_second_row_index(self) -> None:
+        """2x1 table: second row cell starts after first row's entire size."""
+        from extradoc.reconcile_v3.lower import _lower_table_insert
+
+        el = self._make_table_el([["A\n"], ["B\n"]])
+        reqs = _lower_table_insert(el=el, index=1, tab_id="t1", segment_id=None)
+
+        insert_reqs = [r for r in reqs if "insertText" in r]
+        assert len(insert_reqs) == 2
+
+        # Row 0, Cell 0:
+        # table at 1 → row0 at 2 → cell at 3 → content at 4
+        assert insert_reqs[0]["insertText"]["location"]["index"] == 4
+        assert insert_reqs[0]["insertText"]["text"] == "A\n"
+
+        # Row 1:
+        # table opener(1) + row0 opener(2) + cell[0][0] opener(3) = 3 chars
+        # After inserting "A\n" (2 chars) at 4:
+        #   cell[0][0]: opener(3) + "A\n"(2) + terminal(1) = 4 chars total from pos 3
+        #   cell[0][0] ends at 3+4=7
+        #   row 0 ends at 7 (no more cells)
+        #   row 1 opener at 7 → row 1 cell[0] opener at 8 → content at 9
+        # table_pos after row0: 1+1(table_opener skip)=2, +1(row0_opener)=3, +utf16_len("A\n")+2=7
+        # row1: +1(row1_opener)=8, cell: content_start=8+1=9
+        assert (
+            insert_reqs[1]["insertText"]["location"]["index"] == 9
+        ), f"Expected row-1 cell at 9, got {insert_reqs[1]['insertText']['location']['index']}"
+        assert insert_reqs[1]["insertText"]["text"] == "B\n"
+
+    def test_insert_table_empty_cells_emit_no_insertText(self) -> None:
+        """Empty cells (no text content) produce no insertText requests."""
+        from extradoc.reconcile_v3.lower import _lower_table_insert
+
+        el = make_table_el([["", ""], ["", ""]])
+        reqs = _lower_table_insert(el=el, index=1, tab_id="t1", segment_id=None)
+
+        # The key assertion: only the insertTable request exists (no content inserts
+        # for truly empty cells — make_table_el uses empty strings which have size 0).
+        assert (
+            len(reqs) == 1
+        ), f"Expected only insertTable for empty cells, got {len(reqs)} requests: {reqs}"
