@@ -101,6 +101,32 @@ files = ["src/extradoc"]
 module = "diff_match_patch"
 ignore_missing_imports = true
 
+# reconcile_v2 is the legacy reconciler; reconcile_v3 is now the default.
+# reconcile_v2.executor is still on the production path (batch execution +
+# deferred-ID resolution), but the rest of reconcile_v2 is not actively
+# maintained.  Suppress errors rather than fix them.
+[[tool.mypy.overrides]]
+module = [
+    "extradoc.reconcile",
+    "extradoc.reconcile.*",
+    "extradoc.reconcile_v2",
+    "extradoc.reconcile_v2.api",
+    "extradoc.reconcile_v2.batches",
+    "extradoc.reconcile_v2.canonical",
+    "extradoc.reconcile_v2.content_align",
+    "extradoc.reconcile_v2.diff",
+    "extradoc.reconcile_v2.ir",
+    "extradoc.reconcile_v2.layout",
+    "extradoc.reconcile_v2.lower",
+    "extradoc.reconcile_v2.parse",
+    "extradoc.reconcile_v2.requests",
+    "extradoc.reconcile_v2.table_diff",
+    "extradoc.reconcile_v2.testing",
+    "extradoc.mock",
+    "extradoc.mock.*",
+]
+ignore_errors = true
+
 [tool.pytest.ini_options]
 testpaths = ["tests"]
 addopts = "-v"
