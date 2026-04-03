@@ -143,7 +143,11 @@ class _ListSynth:
 
     def new_list(self, list_type: str) -> str:
         self._counter += 1
-        list_id = f"kix.md_list_{self._counter}"
+        # Encode list_type in the ID so that changing list type (e.g. bullet →
+        # decimal) produces a different ID.  The 3-way merge diff compares
+        # ancestor vs mine list IDs: if they differ, a DeleteListOp + InsertListOp
+        # is emitted, which correctly propagates the type change to the desired doc.
+        list_id = f"kix.md_list_{list_type}_{self._counter}"
         self._defs[list_id] = _SYNTH_LIST_PROPS.get(
             list_type, _SYNTH_LIST_PROPS["bullet"]
         )
@@ -237,10 +241,7 @@ def _parse_tab(source: str, tab_title: str, folder: str, *, tab_id: str = "") ->
     reindexed_body: list[Any] = []
     if reindexed_tabs:
         reindexed_body = (
-            reindexed_tabs[0]
-            .get("documentTab", {})
-            .get("body", {})
-            .get("content", [])
+            reindexed_tabs[0].get("documentTab", {}).get("body", {}).get("content", [])
         )
 
     # Build namedRanges dict from special positions + reindexed indices
@@ -483,17 +484,23 @@ def _parse_quote(block: Any) -> SpecialElement:
     m = _CALLOUT_RE.match(first_text)
     if m:
         variant_str = m.group(1).lower()
-        variant = variant_str if variant_str in ("warning", "info", "note", "danger", "tip") else "info"  # type: ignore[assignment]
+        variant = (
+            variant_str
+            if variant_str in ("warning", "info", "note", "danger", "tip")
+            else "info"
+        )  # type: ignore[assignment]
         # Keep only non-empty body paragraphs (mirrors old `if line` filter)
         body_paras = [
-            p for p in all_paras[1:]
+            p
+            for p in all_paras[1:]
             if any((pe.text_run and pe.text_run.content) for pe in (p.elements or []))
         ]
         return Callout(variant=variant, paragraphs=body_paras)  # type: ignore[arg-type]
 
     # Plain blockquote — keep all non-empty paragraphs
     non_empty = [
-        p for p in all_paras
+        p
+        for p in all_paras
         if any((pe.text_run and pe.text_run.content) for pe in (p.elements or []))
     ]
     return Blockquote(paragraphs=non_empty)
@@ -891,9 +898,9 @@ def _tokens_to_elements(tokens: list[Any], style: TextStyle) -> list[ParagraphEl
         elif isinstance(token, MdLink):
             target = token.target
             if target.startswith("#heading:"):
-                link_obj = DocLink(heading_id=target[len("#heading:"):])
+                link_obj = DocLink(heading_id=target[len("#heading:") :])
             elif target.startswith("#bookmark:"):
-                link_obj = DocLink(bookmark_id=target[len("#bookmark:"):])
+                link_obj = DocLink(bookmark_id=target[len("#bookmark:") :])
             else:
                 link_obj = DocLink(url=target)
             new_style = style.model_copy(update={"link": link_obj})

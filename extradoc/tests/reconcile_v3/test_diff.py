@@ -18,8 +18,6 @@ from __future__ import annotations
 import copy
 from typing import Any
 
-import pytest
-
 from extradoc.reconcile_v3.api import diff
 from extradoc.reconcile_v3.model import (
     CreateFooterOp,
@@ -397,27 +395,22 @@ class TestLists:
         assert len(delete_ops) == 1
         assert delete_ops[0].list_id == "list1"
 
-    def test_list_content_changed_emits_update_op(self) -> None:
-        """List definition changed → UpdateListOp (cannot edit via API)."""
+    def test_list_content_changed_is_silent(self) -> None:
+        """List definition changed when list exists in both → no op emitted.
+
+        Google Docs API cannot edit list definitions; when a list exists in both
+        base and desired (same listId), any difference is silently ignored.
+        createParagraphBullets handles list setup implicitly.
+        """
         base_def = self._list_def("BULLETED")
         desired_def = self._list_def("NUMBERED")
         base = make_document(tabs=[make_tab("t1", lists={"list1": base_def})])
         desired = make_document(tabs=[make_tab("t1", lists={"list1": desired_def})])
         ops = diff(base, desired)
         update_ops = [op for op in ops if isinstance(op, UpdateListOp)]
-        assert len(update_ops) == 1
-        assert update_ops[0].list_id == "list1"
-
-    def test_list_update_lowering_raises(self) -> None:
-        from extradoc.reconcile_v3.lower import lower_ops
-
-        base_def = self._list_def("BULLETED")
-        desired_def = self._list_def("NUMBERED")
-        base = make_document(tabs=[make_tab("t1", lists={"list1": base_def})])
-        desired = make_document(tabs=[make_tab("t1", lists={"list1": desired_def})])
-        ops = diff(base, desired)
-        with pytest.raises(NotImplementedError, match="UpdateListOp"):
-            lower_ops(ops)
+        assert (
+            len(update_ops) == 0
+        ), "Expected no UpdateListOp — list defs cannot be edited via API"
 
 
 # ===========================================================================

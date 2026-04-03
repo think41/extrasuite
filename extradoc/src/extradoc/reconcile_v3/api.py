@@ -31,6 +31,26 @@ if TYPE_CHECKING:
     from extradoc.reconcile_v3.model import ReconcileOp
 
 
+def _extract_lists_by_tab(doc: dict[str, Any]) -> dict[str, dict[str, Any]]:
+    """Extract tab_id → lists dict mapping from a document dict.
+
+    For legacy single-tab documents (no ``tabs`` field), uses empty string as
+    tab_id (matching the pseudo-tab convention in diff.py).
+    """
+    tabs = doc.get("tabs")
+    if tabs:
+        result: dict[str, dict[str, Any]] = {}
+        for tab in tabs:
+            props = tab.get("tabProperties") or {}
+            tab_id = str(props.get("tabId", ""))
+            doc_tab = tab.get("documentTab") or {}
+            lists = doc_tab.get("lists") or {}
+            result[tab_id] = lists
+        return result
+    # Legacy document
+    return {"": doc.get("lists") or {}}
+
+
 def reconcile(
     base: dict[str, Any],
     desired: dict[str, Any],
@@ -58,7 +78,13 @@ def reconcile(
     Use ``reconcile_batches`` for production use.
     """
     ops = diff_documents(base, desired)
-    batches = lower_batches(ops)
+    desired_lists_by_tab = _extract_lists_by_tab(desired)
+    base_lists_by_tab = _extract_lists_by_tab(base)
+    batches = lower_batches(
+        ops,
+        desired_lists_by_tab=desired_lists_by_tab,
+        base_lists_by_tab=base_lists_by_tab,
+    )
     if not batches:
         return []
     # If only one batch, return it directly (common case)
@@ -92,7 +118,13 @@ def reconcile_batches(
         ``extradoc.reconcile_v2.executor.resolve_deferred_placeholders``.
     """
     ops = diff_documents(base, desired)
-    return lower_batches(ops)
+    desired_lists_by_tab = _extract_lists_by_tab(desired)
+    base_lists_by_tab = _extract_lists_by_tab(base)
+    return lower_batches(
+        ops,
+        desired_lists_by_tab=desired_lists_by_tab,
+        base_lists_by_tab=base_lists_by_tab,
+    )
 
 
 def diff(

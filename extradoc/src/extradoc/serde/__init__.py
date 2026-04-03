@@ -599,6 +599,33 @@ def _deserialize_markdown_3way(
     base_doc_dict = base.document.model_dump(by_alias=True, exclude_none=True)
     desired_doc_dict = apply_ops_to_document(base_doc_dict, ops)
 
+    # Inject mine's list defs into desired_doc_dict.  apply_ops_to_document
+    # replaces paragraph content with mine's elements (which carry synthetic
+    # list IDs such as "kix.md_list_decimal_1"), but the lists dict still
+    # holds the real Google IDs from the base document.  The reconciler's
+    # _infer_bullet_preset falls back to BULLET_DISC_CIRCLE_SQUARE when it
+    # can't find a synthetic ID in the lists dict.  Adding mine's list defs
+    # ensures the reconciler selects the correct createParagraphBullets preset.
+    mine_tabs = mine_doc_dict.get("tabs") or []
+    desired_tabs = desired_doc_dict.get("tabs") or []
+    for mine_tab in mine_tabs:
+        mine_props = mine_tab.get("tabProperties") or {}
+        mine_tab_id = str(mine_props.get("tabId", ""))
+        mine_dt = mine_tab.get("documentTab") or {}
+        mine_lists = mine_dt.get("lists") or {}
+        if not mine_lists:
+            continue
+        # Find corresponding desired tab by tabId and add synthetic list defs
+        for d_tab in desired_tabs:
+            d_props = d_tab.get("tabProperties") or {}
+            if str(d_props.get("tabId", "")) == mine_tab_id:
+                d_dt = d_tab.setdefault("documentTab", {})
+                d_lists = d_dt.setdefault("lists", {})
+                for list_id, list_def in mine_lists.items():
+                    if list_id not in d_lists:
+                        d_lists[list_id] = list_def
+                break
+
     desired_document = base.document.__class__.model_validate(desired_doc_dict)
 
     # Merge comments: use mine's comments (they reflect the agent's edits)

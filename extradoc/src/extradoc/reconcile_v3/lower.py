@@ -38,6 +38,7 @@ executor contract::
 
 from __future__ import annotations
 
+import copy
 import difflib
 from itertools import groupby
 from typing import Any
@@ -101,6 +102,14 @@ _FOOTER_SLOT_FIELD = {
     "EVEN_PAGE": "evenPageFooterId",
 }
 
+# ParagraphStyle fields that are server-managed and cannot be set via the API.
+# Including them in an updateParagraphStyle field mask causes a 400 error.
+_PARA_STYLE_READONLY_FIELDS: frozenset[str] = frozenset(
+    {
+        "headingId",  # assigned by server when namedStyleType=HEADING_*
+    }
+)
+
 
 # ---------------------------------------------------------------------------
 # Public entry points
@@ -121,6 +130,8 @@ def lower_ops(ops: list[ReconcileOp]) -> list[dict[str, Any]]:
 
 def lower_batches(
     ops: list[ReconcileOp],
+    desired_lists_by_tab: dict[str, dict[str, Any]] | None = None,
+    base_lists_by_tab: dict[str, dict[str, Any]] | None = None,
 ) -> list[list[dict[str, Any]]]:
     """Lower ops into an ordered list of request batches.
 
@@ -132,10 +143,26 @@ def lower_batches(
 
     Deferred-ID placeholders in Batch 1 refer to Batch 0 responses and must
     be resolved via ``resolve_deferred_placeholders`` before execution.
+
+    Parameters
+    ----------
+    ops:
+        The list of ReconcileOp objects to lower.
+    desired_lists_by_tab:
+        Optional mapping of tab_id → lists dict from the desired document.
+        Used to infer bullet presets when inserting or updating bullet paragraphs.
+        If not provided, bullet presets fall back to BULLET_DISC_CIRCLE_SQUARE.
+    base_lists_by_tab:
+        Optional mapping of tab_id → lists dict from the base document.
+        Used alongside desired_lists_by_tab to detect list-type changes when
+        both base and desired have the same synthetic list ID.
     """
     batch0: list[dict[str, Any]] = []  # structural creates
     batch1: list[dict[str, Any]] = []  # content + style + structural deletes
     batch2: list[dict[str, Any]] = []  # footnotes (future)
+
+    _desired_lists_by_tab: dict[str, dict[str, Any]] = desired_lists_by_tab or {}
+    _base_lists_by_tab: dict[str, dict[str, Any]] = base_lists_by_tab or {}
 
     # Track which requests in batch0 return IDs, keyed by (kind, slot, tab_id)
     # so that batch1 content-attachment requests can reference them.
@@ -361,6 +388,8 @@ def lower_batches(
                         desired_content=op.desired_content,
                         tab_id=op.tab_id,
                         segment_id=op.header_id,
+                        desired_lists=_desired_lists_by_tab.get(op.tab_id, {}),
+                        base_lists=_base_lists_by_tab.get(op.tab_id, {}),
                     )
                 )
 
@@ -372,6 +401,8 @@ def lower_batches(
                         desired_content=op.desired_content,
                         tab_id=op.tab_id,
                         segment_id=op.footer_id,
+                        desired_lists=_desired_lists_by_tab.get(op.tab_id, {}),
+                        base_lists=_base_lists_by_tab.get(op.tab_id, {}),
                     )
                 )
 
@@ -436,6 +467,8 @@ def lower_batches(
                         desired_content=op.desired_content,
                         tab_id=op.tab_id,
                         segment_id=op.footnote_id,
+                        desired_lists=_desired_lists_by_tab.get(op.tab_id, {}),
+                        base_lists=_base_lists_by_tab.get(op.tab_id, {}),
                     )
                 )
 
@@ -450,6 +483,8 @@ def lower_batches(
                         desired_content=op.desired_content,
                         tab_id=op.tab_id,
                         segment_id=None,
+                        desired_lists=_desired_lists_by_tab.get(op.tab_id, {}),
+                        base_lists=_base_lists_by_tab.get(op.tab_id, {}),
                     )
                 )
 
@@ -556,6 +591,106 @@ def _lower_one(op: ReconcileOp) -> list[dict[str, Any]]:
 
 
 # ---------------------------------------------------------------------------
+# Bullet preset helpers (ported from reconcile/_generators.py)
+# ---------------------------------------------------------------------------
+
+# Maps level-0 glyphType to the createParagraphBullets preset string
+_GLYPH_TYPE_TO_PRESET: dict[str, str] = {
+    "DECIMAL": "NUMBERED_DECIMAL_NESTED",
+    "UPPER_ALPHA": "NUMBERED_UPPERALPHA_ALPHA_ROMAN",
+    "ALPHA": "NUMBERED_DECIMAL_ALPHA_ROMAN",
+    "UPPER_ROMAN": "NUMBERED_UPPERROMAN_UPPERALPHA_DECIMAL",
+    "ROMAN": "NUMBERED_UPPERROMAN_UPPERALPHA_DECIMAL",
+    "ZERO_DECIMAL": "NUMBERED_ZERODECIMAL_ALPHA_ROMAN",
+}
+
+# Maps level-0 glyphSymbol to the createParagraphBullets preset string
+_GLYPH_SYMBOL_TO_PRESET: dict[str, str] = {
+    "●": "BULLET_DISC_CIRCLE_SQUARE",
+    "❖": "BULLET_DIAMONDX_ARROW3D_SQUARE",
+    "☐": "BULLET_CHECKBOX",
+    "➔": "BULLET_ARROW_DIAMOND_DISC",
+    "★": "BULLET_STAR_CIRCLE_SQUARE",
+    "➢": "BULLET_ARROW3D_CIRCLE_SQUARE",
+    "◀": "BULLET_LEFTTRIANGLE_DIAMOND_DISC",
+}
+
+_DEFAULT_BULLET_PRESET = "BULLET_DISC_CIRCLE_SQUARE"
+
+
+def _infer_bullet_preset(bullet: dict[str, Any], lists: dict[str, Any]) -> str:
+    """Infer the createParagraphBullets preset from the bullet's list definition.
+
+    Reads the first NestingLevel from the lists dict to detect whether the list
+    is numbered (glyphType set), a checkbox (GLYPH_TYPE_UNSPECIFIED), or
+    unordered (glyphSymbol set).  Falls back to BULLET_DISC_CIRCLE_SQUARE for
+    any missing or unrecognised data.
+    """
+    list_id = bullet.get("listId")
+    if not list_id or not lists or list_id not in lists:
+        return _DEFAULT_BULLET_PRESET
+
+    list_obj = lists[list_id]
+    lp = list_obj.get("listProperties", {})
+    if not lp:
+        return _DEFAULT_BULLET_PRESET
+    nesting = lp.get("nestingLevels", [])
+    if not nesting:
+        return _DEFAULT_BULLET_PRESET
+
+    level_0 = nesting[0]
+    glyph_type: str = level_0.get("glyphType", "")
+    glyph_symbol: str = level_0.get("glyphSymbol", "")
+
+    # Numbered list: a real glyphType is set (not NONE / GLYPH_TYPE_UNSPECIFIED)
+    if glyph_type and glyph_type not in ("GLYPH_TYPE_UNSPECIFIED", "NONE", ""):
+        return _GLYPH_TYPE_TO_PRESET.get(glyph_type, "NUMBERED_DECIMAL_NESTED")
+
+    # Checkbox: GLYPH_TYPE_UNSPECIFIED with no glyph symbol
+    if glyph_type == "GLYPH_TYPE_UNSPECIFIED":
+        return "BULLET_CHECKBOX"
+
+    # Unordered: glyph symbol determines the preset
+    if glyph_symbol:
+        return _GLYPH_SYMBOL_TO_PRESET.get(glyph_symbol, _DEFAULT_BULLET_PRESET)
+
+    return _DEFAULT_BULLET_PRESET
+
+
+def _make_create_paragraph_bullets(
+    *,
+    start: int,
+    end: int,
+    preset: str,
+    tab_id: str,
+    segment_id: str | None,
+) -> dict[str, Any]:
+    """Build a createParagraphBullets request dict."""
+    range_: dict[str, Any] = {"startIndex": start, "endIndex": end}
+    if tab_id:
+        range_["tabId"] = tab_id
+    if segment_id:
+        range_["segmentId"] = segment_id
+    return {"createParagraphBullets": {"range": range_, "bulletPreset": preset}}
+
+
+def _make_delete_paragraph_bullets(
+    *,
+    start: int,
+    end: int,
+    tab_id: str,
+    segment_id: str | None,
+) -> dict[str, Any]:
+    """Build a deleteParagraphBullets request dict."""
+    range_: dict[str, Any] = {"startIndex": start, "endIndex": end}
+    if tab_id:
+        range_["tabId"] = tab_id
+    if segment_id:
+        range_["segmentId"] = segment_id
+    return {"deleteParagraphBullets": {"range": range_}}
+
+
+# ---------------------------------------------------------------------------
 # Content update helpers
 # ---------------------------------------------------------------------------
 
@@ -567,6 +702,8 @@ def _lower_story_content_update(
     desired_content: list[dict[str, Any]],
     tab_id: str,
     segment_id: str | None,
+    desired_lists: dict[str, Any] | None = None,
+    base_lists: dict[str, Any] | None = None,
 ) -> list[dict[str, Any]]:
     """Lower a ContentAlignment into delete/insert/update request dicts.
 
@@ -646,6 +783,7 @@ def _lower_story_content_update(
             desired_content=desired_content,
             tab_id=tab_id,
             segment_id=segment_id,
+            desired_lists=desired_lists or {},
         )
         requests.extend(insert_requests)
 
@@ -663,7 +801,20 @@ def _lower_story_content_update(
         else:
             deleted_sizes[base_idx] = 0
 
-    for match in alignment.matches:
+    # Process matched element updates in DESCENDING start-index order.
+    # Each in-place paragraph update may grow or shrink the paragraph.  If we
+    # processed in ascending order, a size change in paragraph N would shift
+    # the indices of paragraph N+1, making the pre-computed requests for N+1
+    # use stale positions.  Descending order ensures that updates to later
+    # (higher-index) elements are emitted first; a size change there only
+    # affects positions below it, which we haven't emitted yet — so they will
+    # use the correct original positions (no cumulative shift needed).
+    matches_desc = sorted(
+        alignment.matches,
+        key=lambda m: _element_start(base_content[m.base_idx]) or 0,
+        reverse=True,
+    )
+    for match in matches_desc:
         b_el = base_content[match.base_idx]
         d_el = desired_content[match.desired_idx]
         if b_el == d_el:
@@ -684,6 +835,8 @@ def _lower_story_content_update(
             tab_id=tab_id,
             segment_id=segment_id,
             pre_delete_shift=shift,
+            desired_lists=desired_lists or {},
+            base_lists=base_lists or {},
         )
         requests.extend(update_reqs)
 
@@ -697,6 +850,7 @@ def _plan_insertions(
     desired_content: list[dict[str, Any]],
     tab_id: str,
     segment_id: str | None,
+    desired_lists: dict[str, Any] | None = None,
 ) -> list[dict[str, Any]]:
     """Plan insertion requests for desired_inserts.
 
@@ -779,6 +933,7 @@ def _plan_insertions(
             index=insert_pos,
             tab_id=tab_id,
             segment_id=segment_id,
+            desired_lists=desired_lists or {},
         )
         planned.append((insert_pos, desired_idx, reqs))
 
@@ -794,18 +949,197 @@ def _plan_insertions(
     # positions are emitted in ascending position order (lower positions first),
     # which is correct because inserting at a lower position does not affect the
     # absolute position of a later insert at a higher position.
+    #
+    # Additionally, when multiple consecutive items in the same logical list are
+    # all inserted at the same position, we must emit a SINGLE createParagraphBullets
+    # covering the entire range.  Individual per-item calls create separate lists.
     requests: list[dict[str, Any]] = []
 
-    # Sort entries by insert_pos ascending, then desired_idx ascending
-    planned.sort(key=lambda t: (t[0], t[1]))
+    # Sort entries by insert_pos DESCENDING, then desired_idx ascending within a group.
+    #
+    # Rationale: requests are processed sequentially by the API.  Inserting at
+    # a lower position shifts all higher-position content rightward, which would
+    # corrupt positions in subsequent requests.  By emitting from the HIGHEST
+    # position down to the LOWEST, each group's requests run before any
+    # lower-position group can shift its content.  Within a same-position group
+    # we still need the items in their original desired_idx order (so that the
+    # final reverse-insertion trick places them correctly).
+    planned.sort(key=lambda t: (-t[0], t[1]))
     for _pos, group_iter in groupby(planned, key=lambda t: t[0]):
         group = list(group_iter)
         # Within the group, emit in REVERSE desired_idx order so that the first
         # desired element ends up first after all same-position inserts land.
-        for _insert_pos, _desired_idx, reqs in reversed(group):
-            requests.extend(reqs)
+        # We split each element's reqs into: insertText, createParagraphBullets,
+        # and style requests (updateParagraphStyle, updateTextStyle).  Same-list
+        # items have their createParagraphBullets merged into a single call.
+        requests.extend(_emit_same_position_group(group))
 
     return requests
+
+
+def _shift_request_indices(
+    reqs: list[dict[str, Any]],
+    offset: int,
+) -> list[dict[str, Any]]:
+    """Return copies of style requests with all index values shifted by ``offset``.
+
+    Only shifts ``updateParagraphStyle`` and ``updateTextStyle`` requests.
+    Other request types are returned unchanged.  The shift is applied to the
+    ``range`` dict's ``startIndex`` and ``endIndex`` fields.
+    """
+    if offset == 0:
+        return reqs
+
+    shifted: list[dict[str, Any]] = []
+    for req in reqs:
+        if "updateParagraphStyle" in req or "updateTextStyle" in req:
+            req = copy.deepcopy(req)
+            key = (
+                "updateParagraphStyle"
+                if "updateParagraphStyle" in req
+                else "updateTextStyle"
+            )
+            rng = req[key].get("range", {})
+            if "startIndex" in rng:
+                rng["startIndex"] += offset
+            if "endIndex" in rng:
+                rng["endIndex"] += offset
+        shifted.append(req)
+    return shifted
+
+
+def _emit_same_position_group(
+    group: list[tuple[int, int, list[dict[str, Any]]]],
+) -> list[dict[str, Any]]:
+    """Emit requests for a same-position insertion group.
+
+    For bullet items that all share the same preset+tab, we suppress individual
+    createParagraphBullets calls and emit a SINGLE call that covers the total
+    inserted text range.  This ensures all same-preset items land in the SAME
+    Google Docs list rather than each getting their own list.
+
+    The ordering:
+    1. All insertText calls in reverse desired_idx order (so item 1 ends up first)
+    2. One merged createParagraphBullets per distinct (preset, tabId) combination,
+       covering the full range of items in that list
+    3. All style requests (updateParagraphStyle, updateTextStyle)
+
+    Items in different lists (different presets) or non-bullet items fall back to
+    the standard per-element order within their own group.
+    """
+    if len(group) == 1:
+        # Single item — no merging needed
+        return group[0][2]
+
+    # Separate each element's requests into components.
+    # Items arrive in reverse desired_idx order (last desired item first),
+    # which is the order we insert them at position P.  After all inserts,
+    # the items appear in desired_idx order in the document:
+    #   item[desired_idx=0] at P, item[desired_idx=1] at P+len0, ...
+    #
+    # Per-element structure: (insert_req, create_bullets_req_or_None, style_reqs)
+    per_element: list[
+        tuple[dict[str, Any], dict[str, Any] | None, list[dict[str, Any]]]
+    ] = []
+
+    for _insert_pos, _desired_idx, reqs in reversed(group):
+        ins: dict[str, Any] | None = None
+        cb: dict[str, Any] | None = None
+        style_reqs: list[dict[str, Any]] = []
+        for req in reqs:
+            if "insertText" in req:
+                ins = req
+            elif "createParagraphBullets" in req:
+                cb = req
+            else:
+                style_reqs.append(req)
+        if ins is not None:
+            per_element.append((ins, cb, style_reqs))
+
+    # Now per_element[0] = LAST desired item (inserted first at P), so after all
+    # inserts, the DOCUMENT ORDER is the reverse of per_element's order.
+    # We need to compute positions in document order (ascending desired_idx).
+    # The items in document order (desired order) are: reversed(per_element).
+    desired_order = list(reversed(per_element))
+
+    # Compute each item's document position = base_pos + cumulative len of prior items.
+    # The base position is the insert_pos from the group (all items share the same pos).
+    base_pos = group[0][0]  # insert_pos from the first planned entry
+
+    combined_insert_texts: list[dict[str, Any]] = []
+    merged_create_bullets: list[dict[str, Any]] = []
+    all_style_reqs: list[dict[str, Any]] = []
+
+    # Collect insertTexts in the reversed order (as they will be emitted)
+    for ins_req, _cb, _s in per_element:
+        combined_insert_texts.append(ins_req)
+
+    # Compute merged createParagraphBullets by grouping consecutive same-preset
+    # items in DESIRED (document) order, with correct cumulative offsets.
+    #
+    # Style requests (updateParagraphStyle, updateTextStyle) from
+    # _lower_paragraph_insert were computed with index=base_pos for every item
+    # (all insertions share the same insert_pos).  After all insertText calls
+    # have run, item k actually lives at base_pos + cumulative_before_k.  We
+    # must shift every range in the style requests by that cumulative offset.
+    cumulative = 0
+    i = 0
+    while i < len(desired_order):
+        ins_req, cb_req, s_reqs = desired_order[i]
+        item_len = utf16_len(ins_req["insertText"].get("text", ""))
+        all_style_reqs.extend(_shift_request_indices(s_reqs, cumulative))
+        if cb_req is None:
+            # Non-bullet item: just advance cumulative offset
+            cumulative += item_len
+            i += 1
+            continue
+        # Start of a bullet run — collect consecutive items with the same preset
+        cb_inner = cb_req["createParagraphBullets"]
+        preset = cb_inner.get("bulletPreset", "")
+        tab_id = str(cb_inner.get("range", {}).get("tabId", ""))
+        segment_id = cb_inner.get("range", {}).get("segmentId")
+        run_start = base_pos + cumulative
+        run_len = item_len
+        j = i + 1
+        inner_cumulative = item_len  # cumulative within the bullet run
+        while j < len(desired_order):
+            next_ins, next_cb, next_s_reqs = desired_order[j]
+            if next_cb is None:
+                break
+            next_cb_inner = next_cb["createParagraphBullets"]
+            next_preset = next_cb_inner.get("bulletPreset", "")
+            next_tab = str(next_cb_inner.get("range", {}).get("tabId", ""))
+            next_seg = next_cb_inner.get("range", {}).get("segmentId")
+            if (next_preset, next_tab, next_seg) != (preset, tab_id, segment_id):
+                break
+            all_style_reqs.extend(
+                _shift_request_indices(next_s_reqs, cumulative + inner_cumulative)
+            )
+            next_item_len = utf16_len(next_ins["insertText"].get("text", ""))
+            run_len += next_item_len
+            inner_cumulative += next_item_len
+            j += 1
+        # Emit ONE createParagraphBullets for this run
+        merged: dict[str, Any] = {
+            "createParagraphBullets": {
+                "bulletPreset": preset,
+                "range": {
+                    "startIndex": run_start,
+                    "endIndex": run_start + run_len,
+                },
+            }
+        }
+        if tab_id:
+            merged["createParagraphBullets"]["range"]["tabId"] = tab_id
+        if segment_id:
+            merged["createParagraphBullets"]["range"]["segmentId"] = segment_id
+        merged_create_bullets.append(merged)
+        cumulative += run_len
+        i = j
+
+    # Emit: insertTexts first (reverse order, for correct document ordering),
+    # then merged createParagraphBullets, then style requests.
+    return combined_insert_texts + merged_create_bullets + all_style_reqs
 
 
 def _deleted_chars_before(
@@ -830,6 +1164,8 @@ def _lower_element_update(
     tab_id: str,
     segment_id: str | None,
     pre_delete_shift: int = 0,
+    desired_lists: dict[str, Any] | None = None,
+    base_lists: dict[str, Any] | None = None,
 ) -> list[dict[str, Any]]:
     """Lower an in-place element update (matched element, content changed).
 
@@ -849,6 +1185,8 @@ def _lower_element_update(
             tab_id=tab_id,
             segment_id=segment_id,
             pre_delete_shift=pre_delete_shift,
+            desired_lists=desired_lists or {},
+            base_lists=base_lists or {},
         )
     elif "table" in base_el and "table" in desired_el:
         # Table cell content updates are emitted as separate UpdateBodyContentOp
@@ -875,6 +1213,8 @@ def _lower_paragraph_update(
     tab_id: str,
     segment_id: str | None,
     pre_delete_shift: int = 0,
+    desired_lists: dict[str, Any] | None = None,
+    base_lists: dict[str, Any] | None = None,
 ) -> list[dict[str, Any]]:
     """Replace the text content of a paragraph in place using surgical ops.
 
@@ -918,6 +1258,8 @@ def _lower_paragraph_update(
         end_index=adjusted_end,
         tab_id=tab_id,
         segment_id=segment_id,
+        desired_lists=desired_lists or {},
+        base_lists=base_lists or {},
     )
     requests.extend(style_reqs)
 
@@ -1340,16 +1682,133 @@ def _lower_para_style_update(
     end_index: int,
     tab_id: str,
     segment_id: str | None,
+    desired_lists: dict[str, Any] | None = None,
+    base_lists: dict[str, Any] | None = None,
 ) -> list[dict[str, Any]]:
-    """Emit paragraphStyle / textStyle update requests if styles changed."""
+    """Emit paragraphStyle / bullet / textStyle update requests if styles changed.
+
+    Bullet handling for matched paragraphs:
+
+    Case A — paragraph gains a bullet (base has none, desired has one):
+        1. Prepend ``"\\t" * nesting_level`` tabs via insertText at start_index.
+        2. Emit createParagraphBullets covering the extended range.
+
+    Case B — paragraph loses a bullet (base has one, desired has none):
+        1. Emit deleteParagraphBullets.
+        2. Emit updateParagraphStyle clearing indentStart (deleteParagraphBullets
+           adds visual indent to preserve appearance).
+
+    Case C — nesting level or list type changes (both have bullet):
+        1. Emit deleteParagraphBullets.
+        2. Prepend new tabs at start_index.
+        3. Emit createParagraphBullets with desired preset.
+    """
     requests: list[dict[str, Any]] = []
 
+    base_bullet = base_para.get("bullet")
+    desired_bullet = desired_para.get("bullet")
+
+    if not base_bullet and desired_bullet:
+        # Case A: paragraph gains a bullet
+        nesting_level = desired_bullet.get("nestingLevel", 0) or 0
+        preset = _infer_bullet_preset(desired_bullet, desired_lists or {})
+        tabs = "\t" * nesting_level
+        tabs_len = utf16_len(tabs)
+        if tabs_len > 0:
+            requests.append(
+                _make_insert_text(
+                    index=start_index,
+                    tab_id=tab_id,
+                    segment_id=segment_id,
+                    text=tabs,
+                )
+            )
+        # createParagraphBullets covers the tabs + paragraph content
+        requests.append(
+            _make_create_paragraph_bullets(
+                start=start_index,
+                end=start_index + tabs_len + (end_index - start_index),
+                preset=preset,
+                tab_id=tab_id,
+                segment_id=segment_id,
+            )
+        )
+
+    elif base_bullet and not desired_bullet:
+        # Case B: paragraph loses a bullet
+        requests.append(
+            _make_delete_paragraph_bullets(
+                start=start_index,
+                end=end_index,
+                tab_id=tab_id,
+                segment_id=segment_id,
+            )
+        )
+        # deleteParagraphBullets adds visual indent — clear it
+        requests.append(
+            _make_update_paragraph_style(
+                start_index=start_index,
+                end_index=end_index,
+                tab_id=tab_id,
+                segment_id=segment_id,
+                paragraph_style={"indentStart": None, "indentFirstLine": None},
+                fields=["indentStart", "indentFirstLine"],
+            )
+        )
+
+    elif base_bullet and desired_bullet:
+        # Case C: both have bullet — check if nesting level or list type changed.
+        # List type change is detected by comparing the inferred bullet preset:
+        # base preset (from base_lists) vs desired preset (from desired_lists).
+        base_nesting = base_bullet.get("nestingLevel", 0) or 0
+        desired_nesting = desired_bullet.get("nestingLevel", 0) or 0
+        base_preset = _infer_bullet_preset(base_bullet, base_lists or {})
+        desired_preset = _infer_bullet_preset(desired_bullet, desired_lists or {})
+        if base_nesting != desired_nesting or base_preset != desired_preset:
+            # Delete then re-add with new nesting level / list type
+            requests.append(
+                _make_delete_paragraph_bullets(
+                    start=start_index,
+                    end=end_index,
+                    tab_id=tab_id,
+                    segment_id=segment_id,
+                )
+            )
+            preset = desired_preset
+            tabs = "\t" * desired_nesting
+            tabs_len = utf16_len(tabs)
+            if tabs_len > 0:
+                requests.append(
+                    _make_insert_text(
+                        index=start_index,
+                        tab_id=tab_id,
+                        segment_id=segment_id,
+                        text=tabs,
+                    )
+                )
+            requests.append(
+                _make_create_paragraph_bullets(
+                    start=start_index,
+                    end=start_index + tabs_len + (end_index - start_index),
+                    preset=preset,
+                    tab_id=tab_id,
+                    segment_id=segment_id,
+                )
+            )
+
+    # Paragraph style changes (beyond bullet-related indentation)
     base_ps = base_para.get("paragraphStyle", {})
     desired_ps = desired_para.get("paragraphStyle", {})
 
     if base_ps != desired_ps and desired_ps:
-        # Compute changed fields
+        # Compute changed fields — exclude bullet-managed indentation when
+        # bullet ops were already emitted above (they set indentation).
         fields = _style_fields(base_ps, desired_ps)
+        # Always exclude server-managed readonly fields from the field mask.
+        fields = [f for f in fields if f not in _PARA_STYLE_READONLY_FIELDS]
+        if base_bullet or desired_bullet:
+            # Exclude indent fields that createParagraphBullets manages
+            fields = [f for f in fields if f not in ("indentFirstLine", "indentStart")]
         if fields:
             requests.append(
                 _make_update_paragraph_style(
@@ -1371,6 +1830,7 @@ def _lower_element_insert(
     index: int,
     tab_id: str,
     segment_id: str | None,
+    desired_lists: dict[str, Any] | None = None,
 ) -> list[dict[str, Any]]:
     """Generate request(s) to insert a content element at the given index.
 
@@ -1390,6 +1850,7 @@ def _lower_element_insert(
             index=index,
             tab_id=tab_id,
             segment_id=segment_id,
+            desired_lists=desired_lists or {},
         )
     elif "table" in el:
         return _lower_table_insert(
@@ -1416,57 +1877,142 @@ def _lower_paragraph_insert(
     index: int,
     tab_id: str,
     segment_id: str | None,
+    desired_lists: dict[str, Any] | None = None,
 ) -> list[dict[str, Any]]:
-    """Insert a paragraph at ``index`` via insertText + optional style."""
+    """Insert a paragraph at ``index`` via insertText + optional style.
+
+    For bullet paragraphs, the approach is:
+    1. Prepend ``"\\t" * nesting_level`` to the text before insertText.
+    2. Emit createParagraphBullets covering the range (including tabs).
+       The API strips the tabs and sets the nesting level from them.
+    3. Style requests (updateParagraphStyle, updateTextStyle) use the
+       tab-free ``index`` as start — by the time they execute in the batch,
+       createParagraphBullets has already removed the tabs.
+    4. Net index advance for subsequent elements = len(text), not len(tabs+text).
+    """
     requests: list[dict[str, Any]] = []
 
     para = el.get("paragraph", {})
     text = _para_text(para)
-
-    requests.append(
-        _make_insert_text(
-            index=index,
-            tab_id=tab_id,
-            segment_id=segment_id,
-            text=text,
-        )
-    )
-
     text_len = utf16_len(text)
 
-    # Apply paragraph style
-    desired_ps = para.get("paragraphStyle", {})
-    if desired_ps:
-        fields = list(desired_ps.keys())
-        if fields:
-            requests.append(
-                _make_update_paragraph_style(
-                    start_index=index,
-                    end_index=index + text_len,
-                    tab_id=tab_id,
-                    segment_id=segment_id,
-                    paragraph_style=desired_ps,
-                    fields=fields,
-                )
-            )
+    bullet = para.get("bullet")
+    if bullet:
+        nesting_level = bullet.get("nestingLevel", 0) or 0
+        tabs = "\t" * nesting_level
+        preset = _infer_bullet_preset(bullet, desired_lists or {})
+        full_text = tabs + text  # text already ends with \n
 
-    # Apply text styles for each run
-    runs = _extract_runs(para)
-    run_offset = index
-    for text_content, style in runs:
-        run_len = utf16_len(text_content)
-        if run_len > 0 and style:
-            requests.append(
-                _make_update_text_style(
-                    start_index=run_offset,
-                    end_index=run_offset + run_len,
-                    tab_id=tab_id,
-                    segment_id=segment_id,
-                    text_style=style,
-                    fields=list(style.keys()),
-                )
+        # insertText with leading tabs for nesting
+        requests.append(
+            _make_insert_text(
+                index=index,
+                tab_id=tab_id,
+                segment_id=segment_id,
+                text=full_text,
             )
-        run_offset += run_len
+        )
+
+        # createParagraphBullets: range covers tabs+text before removal.
+        # After this runs, tabs are removed and the nesting level is set.
+        full_text_len = utf16_len(full_text)
+        requests.append(
+            _make_create_paragraph_bullets(
+                start=index,
+                end=index + full_text_len,
+                preset=preset,
+                tab_id=tab_id,
+                segment_id=segment_id,
+            )
+        )
+
+        # Style requests use tab-free indices: createParagraphBullets has
+        # already removed the tabs by the time these run in the batch.
+        desired_ps = para.get("paragraphStyle", {})
+        if desired_ps:
+            # Exclude indentation fields — createParagraphBullets sets them.
+            # Also exclude server-managed readonly fields (e.g. headingId).
+            ps_fields = [
+                k
+                for k in desired_ps
+                if k not in ("indentFirstLine", "indentStart")
+                and k not in _PARA_STYLE_READONLY_FIELDS
+            ]
+            if ps_fields:
+                requests.append(
+                    _make_update_paragraph_style(
+                        start_index=index,
+                        end_index=index + text_len,
+                        tab_id=tab_id,
+                        segment_id=segment_id,
+                        paragraph_style={k: desired_ps[k] for k in ps_fields},
+                        fields=ps_fields,
+                    )
+                )
+
+        # Apply text styles for each run (use tab-free index)
+        runs = _extract_runs(para)
+        run_offset = index
+        for text_content, style in runs:
+            run_len = utf16_len(text_content)
+            if run_len > 0 and style:
+                requests.append(
+                    _make_update_text_style(
+                        start_index=run_offset,
+                        end_index=run_offset + run_len,
+                        tab_id=tab_id,
+                        segment_id=segment_id,
+                        text_style=style,
+                        fields=list(style.keys()),
+                    )
+                )
+            run_offset += run_len
+
+    else:
+        # Non-bullet paragraph: plain insertText + style
+        requests.append(
+            _make_insert_text(
+                index=index,
+                tab_id=tab_id,
+                segment_id=segment_id,
+                text=text,
+            )
+        )
+
+        # Apply paragraph style
+        desired_ps = para.get("paragraphStyle", {})
+        if desired_ps:
+            # Exclude server-managed readonly fields (e.g. headingId) from mask.
+            fields = [k for k in desired_ps if k not in _PARA_STYLE_READONLY_FIELDS]
+            if fields:
+                requests.append(
+                    _make_update_paragraph_style(
+                        start_index=index,
+                        end_index=index + text_len,
+                        tab_id=tab_id,
+                        segment_id=segment_id,
+                        paragraph_style={k: desired_ps[k] for k in fields},
+                        fields=fields,
+                    )
+                )
+
+        # Apply text styles for each run
+        runs = _extract_runs(para)
+        run_offset = index
+        for text_content, style in runs:
+            run_len = utf16_len(text_content)
+            if run_len > 0 and style:
+                requests.append(
+                    _make_update_text_style(
+                        start_index=run_offset,
+                        end_index=run_offset + run_len,
+                        tab_id=tab_id,
+                        segment_id=segment_id,
+                        text_style=style,
+                        fields=list(style.keys()),
+                    )
+                )
+            run_offset += run_len
 
     return requests
 

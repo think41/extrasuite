@@ -137,6 +137,13 @@ Then the newline compensation cleanup:
 |--------|------|
 | `044062c` | Remove all newline/trailing-paragraph compensation from lower.py and client.py |
 
+Then list support and live testing:
+
+| Commit | What | Tests added |
+|--------|------|-------------|
+| (list work) | List support: `createParagraphBullets`/`deleteParagraphBullets`, tabs for nesting, `_diff_lists` fix, `base_lists_by_tab` threading | +19 |
+| (list bugs) | Fix `headingId` in fields mask; fix list-type change detection on matched paragraphs; fix same-position insertion style index drift; fix descending insertion order for different-position inserts | — |
+
 ### Key design decisions made along the way
 
 **On the content alignment DP**: "Identical elements are always matched" is NOT a valid global DP invariant. A short identical paragraph adjacent to a large expensive element can be rationally delete+reinserted if it saves cost on a better global alignment. This is mathematically correct. In practice, agents don't reorder content blocks so this doesn't arise.
@@ -177,18 +184,25 @@ All of this was removed in `044062c`. The correct model:
 
 ```bash
 cd extradoc && uv run pytest tests/ -q
-# 9 failed, 678 passed
+# 10 failed, 705 passed
 ```
 
-**0 failures in `tests/reconcile_v3/`** — 162 tests, all passing.
+**0 failures in `tests/reconcile_v3/`** — 180 tests, all passing.
 
-**9 failures in `tests/test_reconcile.py`** — pre-existing failures in edge cases around table insertion, unrelated to v3 work. These predate all reconcile_v3 development.
+**10 failures in `tests/test_reconcile.py` / `test_client_reconciler_versions.py`** — pre-existing failures in edge cases around table insertion, unrelated to v3 work. These predate all reconcile_v3 development.
 
 ### Regressions that were caught and fixed
 
 **`pre_delete_shift` not threaded through** (`a9b6cbc`): The SERDE integration commits added a `pre_delete_shift` parameter to `_lower_element_update()` but forgot to thread it into `_lower_paragraph_update()`. Caused `TypeError` across 46 tests. Fixed by adding the parameter and applying it as `adjusted_start = start - pre_delete_shift`.
 
 **Lesson**: When a subagent modifies existing code to fix an issue found during SERDE integration, always run `uv run pytest tests/reconcile_v3/ -q` before committing to catch regressions in the lowering layer.
+
+**List bugs found during live testing**:
+
+- **`headingId` in `updateParagraphStyle` fields** — `lower.py` built the fields mask directly from the desired paragraph style dict, which includes `headingId` (assigned server-side). The API rejects `headingId` in the fields list. Fix: added `_PARA_STYLE_READONLY_FIELDS` constant (`headingId`, `indentStart`, `indentFirstLine` for bullet paragraphs) and filtered it out in all three `updateParagraphStyle` emit sites.
+- **List-type change not detected on matched paragraphs** — When a matched paragraph changed from unordered to ordered (or vice versa), Case C in `_lower_para_style_update` only checked nesting level, not the bullet preset. Since both base and desired use the same synthetic list ID (`kix.md_list_1`), the list-ID comparison didn't help. Fix: thread `base_lists_by_tab` (alongside the existing `desired_lists_by_tab`) through the full call stack; Case C now computes `_infer_bullet_preset` for both base and desired and re-issues `deleteParagraphBullets` + `createParagraphBullets` when presets differ.
+- **Same-position insertion style index drift** — When multiple paragraphs were inserted at the same position (emitted in reverse for correct ordering), the style requests (`updateParagraphStyle`, `updateTextStyle`) for each item used the base insertion index. After the first item's `insertText`, subsequent items' actual document positions shifted by the cumulative byte length of earlier items. Fix: added `_shift_request_indices()` and applied cumulative offsets to each item's style requests.
+- **Wrong insertion order for different-position inserts** — Insertions at different positions were sorted in ascending order; inserting at a lower index first would shift everything above it, corrupting indices for the next insertion. Fix: sort in descending position order so higher-position inserts run first and don't affect lower-position inserts.
 
 **Newline compensation cascade** (`044062c`): First live test against a real Google Doc revealed that heading styles were silently dropped on new paragraph inserts. Root cause traced back to `_ensure_base_trailing_paragraph` in `client.py`, which injected a synthetic paragraph that cascaded into `endOfSegmentLocation` usage, `\n` prepending, and a content-based `_is_terminal_paragraph` check — all of which conspired to skip `updateParagraphStyle` for paragraphs inserted at body end. Removed all compensation; all inserts now use explicit indices and emit full style requests. See "On newlines and terminal paragraphs" in Key Design Decisions above.
 
@@ -201,6 +215,7 @@ cd extradoc && uv run pytest tests/ -q
 - Headers and footers (create, delete, update content)
 - Footnotes (insert, delete, update content)
 - Body content (insert/delete/update paragraphs with multi-run style diffs)
+- Lists (bullet/ordered/checkbox: insert via `createParagraphBullets` with tab-based nesting, delete via `deleteParagraphBullets`, list-type change on matched paragraphs)
 - Table structural ops (insert/delete row, insert/delete column)
 - Table cell/row/column styling
 - Inline image insert/delete
@@ -217,6 +232,7 @@ cd extradoc && uv run pytest tests/ -q
 - `replaceAllText` (different workflow)
 - Named ranges (rarely edited)
 - Positioned objects (rare, complex)
+- New-tab content in a single push: `InsertTabOp` goes into batch 0; body content for the new tab goes into batch 1 which is built against the pre-push base (tab not yet known). Result: first push creates the empty tab; a second push fills the content. Fix requires deferred tab-ID handling for body content, similar to the header/footer deferred-ID pattern.
 
 ### File map
 
@@ -239,8 +255,9 @@ src/extradoc/serde/
   _from_markdown.py # Markdown deserializer
 
 tests/reconcile_v3/
-  test_diff.py     # 51+ tests for the diff layer
-  test_lower.py    # 80+ tests for the lowering layer (some currently failing)
+  test_diff.py     # 72 tests for the diff layer
+  test_lower.py    # 89 tests for the lowering layer
+  test_bullets.py  # 19 tests for list/bullet support
   helpers.py       # Synthetic document factory functions
 
 tests/
@@ -294,12 +311,12 @@ EXTRADOC_RECONCILER=v3 ./extrasuite docs pull-md <url> <folder>
 The live test sequence (to be executed once in-memory tests pass):
 
 **Phase 1 (markdown):**
-1. No-op push (serialize → push without edits → verify zero changes)
-2. Text edits (paragraph change, add, delete)
-3. Formatting (bold, italic, links)
-4. Lists (create, edit, add item)
+1. ✅ No-op push (serialize → push without edits → verify zero changes)
+2. ✅ Text edits (paragraph change, add, delete)
+3. ✅ Formatting (bold, italic, links)
+4. ✅ Lists (create, edit add/remove item, bullet↔ordered conversion, nesting)
 5. Tables (create, edit cell, add row)
-6. Multi-tab (add tab, edit one tab only)
+6. Multi-tab (add tab, edit one tab only) — tab creation works; known gap: content requires second push
 7. Footnotes (add, edit)
 8. Preservation test: add header via XML push → pull-md → edit body → push-md → verify header survived
 9. Multi-change stress test
@@ -345,11 +362,13 @@ Without the env var, `reconcile_v2` is used (the default).
 
 ## Immediate Next Steps
 
-1. **Markdown live test** — create a document, work through the Phase 1 sequence above, fix bugs as found, maintain test notes in `tmp-md-live-test/test-notes.md`.
+1. **Fix new-tab content in single push** — `InsertTabOp` lands in batch 0; body content for the new tab should follow in the same push. Requires deferred tab-ID handling for the new tab's body content (analogous to the header/footer deferred-ID pattern).
 
-4. **XML live test** — same pattern, Phase 2 scenarios.
+2. **Markdown live test — remaining Phase 1 items** — Tables, footnotes, preservation test, multi-change stress test.
 
-5. **Graduate v3 to default** — once live tests pass, remove the `EXTRADOC_RECONCILER` env var requirement; make v3 the default and deprecate v2.
+3. **XML live test** — same pattern, Phase 2 scenarios.
+
+4. **Graduate v3 to default** — once live tests pass, remove the `EXTRADOC_RECONCILER` env var requirement; make v3 the default and deprecate v2.
 
 ---
 

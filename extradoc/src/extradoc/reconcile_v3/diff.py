@@ -50,7 +50,6 @@ from extradoc.reconcile_v3.model import (
     UpdateFootnoteContentOp,
     UpdateHeaderContentOp,
     UpdateInlineObjectOp,
-    UpdateListOp,
     UpdateNamedStyleOp,
     UpdateTableCellStyleOp,
     UpdateTableColumnPropertiesOp,
@@ -385,16 +384,7 @@ def _diff_lists(
     for list_id, d_def in desired_lists.items():
         if list_id not in base_lists:
             ops.append(InsertListOp(tab_id=tab_id, list_id=list_id, list_def=d_def))
-        elif base_lists[list_id] != d_def:
-            # List content changed — cannot edit via API
-            ops.append(
-                UpdateListOp(
-                    tab_id=tab_id,
-                    list_id=list_id,
-                    base_list_def=base_lists[list_id],
-                    desired_list_def=d_def,
-                )
-            )
+        # else: list exists in both — list defs cannot be changed via API, skip
 
     for list_id, b_def in base_lists.items():
         if list_id not in desired_lists:
