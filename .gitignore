@@ -96,3 +96,29 @@ logs/
 
 # Dolt database files (added by bd init)
 .dolt/
+
+# Claude Code internal state
+.claude/worktrees/
+
+# extrasuite CLI test/scratch outputs at repo root
+# (pulled documents, temp working directories from manual testing)
+tmp-*/
+md-test/
+blog-draft.md
+
+# Pulled Google Doc test fixtures (document ID directories at repo root)
+13npSHrP26v-USOla_0_22K_35UnECoE0xfV39bsqEco/
+17t6cWYlsduSbarpYT7ZJ9PK5EFf6M_wjFbTP9Esv0II/
+18OnAUj4P7Gn-aeimsC7xSNT3DtkctuIXyhwM0ZLd3BM/
+1GZ5Cdsy3ANJf94h-I5FrNdK56kpBmxtgK_Nr0albrs8/
+1KHsR_MvRc_L1WRGi5YjW2YTRA7T8WPm2MoQjfCawUXk/
+1L43gVxT9pcm3FO_TuvD68OznO4Ic0JW47UMH7ndbAk4/
+1M9QS6jEMN2QdJsiduD4WacUDBIbAs2kNXESHcfMmO7U/
+1a3X58prPAWmt_jN5992I2G3fjkm8ZyWV-1joAgkKIDQ/
+1ffZjm0TKoJ1Q5LZG228RTaCzyEI0w0wMJxiFnJIbC5k/
+1jBId3fa16lq1qAaA5s6GphZGxO3VZ6iHoDNklg751l0/
+1mE_g4n8uEf25CDCbghX_wXF3Tigsyuexy6XJQwXmNrE/
+1oKdOiYr3i8F1SP5chMLQFnp69Qw-Ew5HNcDTAB7FUzk/
+1r3hXUD0kaB6L1IBbwsAtOMWOS_XdXMGSioSl7S9nojI/
+1whUg6mNLK-1x4Z-Mkiyp_QUbzjVGDGEhEL7l7WgzPzo/
+1xkQ_h6xuKVjWhAg1c-757XrzBNRANce1EYCi2ccTyCM/
