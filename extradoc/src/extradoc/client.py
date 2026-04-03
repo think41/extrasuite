@@ -84,7 +84,7 @@ class DiffResult:
     document_id: str
     batches: list[BatchUpdateDocumentRequest]
     comment_ops: CommentOperations
-    reconciler_version: str = "v2"
+    reconciler_version: str = "v3"
     base_revision_id: str | None = None
     desired_document: Document | None = None
     desired_format: str | None = None
@@ -364,13 +364,13 @@ class DocsClient:
 
 
 def _get_reconciler_version() -> str:
-    raw = os.getenv(RECONCILER_ENV_VAR, "v2").strip().lower()
-    if raw in {"", "v2", "semantic-ir", "semantic_ir"}:
+    raw = os.getenv(RECONCILER_ENV_VAR, "v3").strip().lower()
+    if raw in {"", "v3"}:
+        return "v3"
+    if raw in {"v2", "semantic-ir", "semantic_ir"}:
         return "v2"
     if raw in {"v1", "legacy"}:
         return "v1"
-    if raw == "v3":
-        return "v3"
     raise ValueError(
         f"Unsupported {RECONCILER_ENV_VAR} value {raw!r}; expected v1, v2, or v3"
     )

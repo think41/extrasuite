@@ -1,8 +1,6 @@
 """Public interface for reconcile_v3.
 
-reconcile_v3 is a top-down tree-oriented Google Docs reconciler built as a
-self-contained in-memory experiment.  It does NOT integrate with the production
-pipeline — use reconcile_v2 for production use.
+reconcile_v3 is the active top-down tree-oriented Google Docs reconciler.
 
 Key differences from reconcile_v2:
 - No ``transport_base`` parameter: v3 does not need an initial index fetch.
