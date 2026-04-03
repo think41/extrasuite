@@ -27,7 +27,7 @@ from __future__ import annotations
 import html as _html
 import re
 from html.parser import HTMLParser
-from typing import Any
+from typing import Any, Literal, cast
 
 from mistletoe.block_token import CodeFence, Heading, HTMLBlock, Quote, ThematicBreak
 from mistletoe.block_token import Document as MdDocument
@@ -297,7 +297,7 @@ def _parse_body(
         fn_defs[m.group(1)] = m.group(2).strip()
 
     # Parse with mistletoe
-    with HtmlRenderer():
+    with HtmlRenderer():  # type: ignore[no-untyped-call]
         md_doc = MdDocument(source)
 
     body: list[StructuralElement] = []
@@ -306,7 +306,7 @@ def _parse_body(
     # Every body starts with a SectionBreak
     body.append(StructuralElement(section_break=SectionBreak()))
 
-    for block in md_doc.children:
+    for block in md_doc.children or []:
         if isinstance(block, Heading):
             body.append(_convert_heading(block))
 
@@ -327,10 +327,10 @@ def _parse_body(
 
         elif isinstance(block, Quote):
             body_pos = len(body)
-            elem = _parse_quote(block)
-            special_positions.append((body_pos, elem.named_range_name))
+            quote_elem = _parse_quote(block)
+            special_positions.append((body_pos, quote_elem.named_range_name))
             prev_is_sb = body[-1].section_break is not None
-            body.append(StructuralElement(table=elem.to_table()))
+            body.append(StructuralElement(table=quote_elem.to_table()))
             if not prev_is_sb:
                 body.append(_make_trailing_para())
 
@@ -484,18 +484,17 @@ def _parse_quote(block: Any) -> SpecialElement:
     m = _CALLOUT_RE.match(first_text)
     if m:
         variant_str = m.group(1).lower()
-        variant = (
-            variant_str
-            if variant_str in ("warning", "info", "note", "danger", "tip")
-            else "info"
-        )  # type: ignore[assignment]
+        variant = cast(
+            Literal["warning", "info", "note", "danger", "tip"],
+            variant_str if variant_str in ("warning", "info", "note", "danger", "tip") else "info",
+        )
         # Keep only non-empty body paragraphs (mirrors old `if line` filter)
         body_paras = [
             p
             for p in all_paras[1:]
             if any((pe.text_run and pe.text_run.content) for pe in (p.elements or []))
         ]
-        return Callout(variant=variant, paragraphs=body_paras)  # type: ignore[arg-type]
+        return Callout(variant=variant, paragraphs=body_paras)
 
     # Plain blockquote — keep all non-empty paragraphs
     non_empty = [
@@ -658,7 +657,7 @@ def _convert_list(
             if isinstance(child, MdList):
                 nested_lists.append(child)
             elif isinstance(child, MdParagraph):
-                inline_tokens = list(child.children)
+                inline_tokens = list(child.children or [])
             # Other block types (quotes, etc.) are skipped for simplicity
 
         elements = _tokens_to_elements(inline_tokens, TextStyle())
@@ -871,15 +870,15 @@ def _tokens_to_elements(tokens: list[Any], style: TextStyle) -> list[ParagraphEl
 
         elif isinstance(token, Strong):
             new_style = style.model_copy(update={"bold": True})
-            result.extend(_tokens_to_elements(token.children or [], new_style))
+            result.extend(_tokens_to_elements(list(token.children or []), new_style))
 
         elif isinstance(token, Emphasis):
             new_style = style.model_copy(update={"italic": True})
-            result.extend(_tokens_to_elements(token.children or [], new_style))
+            result.extend(_tokens_to_elements(list(token.children or []), new_style))
 
         elif isinstance(token, Strikethrough):
             new_style = style.model_copy(update={"strikethrough": True})
-            result.extend(_tokens_to_elements(token.children or [], new_style))
+            result.extend(_tokens_to_elements(list(token.children or []), new_style))
 
         elif isinstance(token, InlineCode):
             # Inline code → Courier New 10pt text run
@@ -904,7 +903,7 @@ def _tokens_to_elements(tokens: list[Any], style: TextStyle) -> list[ParagraphEl
             else:
                 link_obj = DocLink(url=target)
             new_style = style.model_copy(update={"link": link_obj})
-            result.extend(_tokens_to_elements(token.children or [], new_style))
+            result.extend(_tokens_to_elements(list(token.children or []), new_style))
 
         elif isinstance(token, HTMLSpan):
             content = token.content
@@ -998,8 +997,8 @@ def _parse_html_span(content: str) -> ParagraphElement | None:
     if m:
         url = m.group(1)
         title = _html.unescape(m.group(2) or "") if m.group(2) else ""
-        props = RichLinkProperties(uri=url or None, title=title or None)
-        return ParagraphElement(rich_link=RichLink(rich_link_properties=props))
+        rich_props = RichLinkProperties(uri=url or None, title=title or None)
+        return ParagraphElement(rich_link=RichLink(rich_link_properties=rich_props))
 
     if _X_COLBREAK_RE.match(content):
         return ParagraphElement(column_break=ColumnBreak())

@@ -14,7 +14,7 @@ import zipfile
 from collections import defaultdict, deque
 from dataclasses import dataclass
 from pathlib import Path
-from typing import TYPE_CHECKING
+from typing import TYPE_CHECKING, Any, Literal, cast
 
 import extradoc.serde as serde
 from extradoc.api_types._generated import (
@@ -133,7 +133,9 @@ class DocsClient:
         document_dir.mkdir(parents=True, exist_ok=True)
 
         # Serialize bundle to folder
-        written_files = serde.serialize(bundle, document_dir, format=format)
+        written_files = serde.serialize(
+            bundle, document_dir, format=cast(Literal["xml", "markdown"], format)
+        )
 
         # Raw document JSON is always materialized because the reconciler uses
         # it as transport-accurate base state during diff/push.
@@ -529,7 +531,7 @@ async def _refresh_v2_batches_after_structural_ops(
     *,
     transport: Transport,
     document_id: str,
-    _resolved_batch: list[dict],
+    _resolved_batch: list[dict[str, Any]],
     desired_document: Document,
     desired_format: str,
     current_revision_id: str | None,
@@ -582,15 +584,15 @@ async def _refresh_v2_batches_after_live_change(
     return refreshed_batches, next_revision_id
 
 
-def _should_refresh_v2_batches(batch: list[dict]) -> bool:
+def _should_refresh_v2_batches(batch: list[dict[str, Any]]) -> bool:
     return any(
         "insertTable" in request or "insertPageBreak" in request for request in batch
     )
 
 
 def _truncate_batch_for_live_refresh(
-    batch: list[dict],
-) -> tuple[list[dict], str | None]:
+    batch: list[dict[str, Any]],
+) -> tuple[list[dict[str, Any]], str | None]:
     structural_trimmed = _truncate_batch_before_post_table_para_ops(batch)
     if structural_trimmed != batch:
         return structural_trimmed, "structural"
@@ -610,7 +612,7 @@ def _is_revision_mismatch_error(exc: APIError) -> bool:
 
 def _refresh_still_contains_same_structural_shell(
     *,
-    resolved_batch: list[dict],
+    resolved_batch: list[dict[str, Any]],
     refreshed_batches: list[BatchUpdateDocumentRequest],
 ) -> bool:
     wanted = {
@@ -652,7 +654,7 @@ def _refresh_still_contains_same_structural_shell(
 
 
 def _structural_request_signature(
-    request: dict,
+    request: dict[str, Any],
 ) -> tuple[str, str | None, int | None] | None:
     if "insertTable" in request:
         payload = request["insertTable"]
@@ -665,7 +667,7 @@ def _structural_request_signature(
     return None
 
 
-def _truncate_batch_before_post_table_para_ops(batch: list[dict]) -> list[dict]:
+def _truncate_batch_before_post_table_para_ops(batch: list[dict[str, Any]]) -> list[dict[str, Any]]:
     """Keep a structural shell plus safe surrounding content before refresh.
 
     Live Docs can lag behind the shadow shape around fresh ``insertTable``
@@ -730,7 +732,7 @@ def _truncate_batch_before_post_table_para_ops(batch: list[dict]) -> list[dict]:
         if first_structural_index_by_tab[tab_id] != last_structural_index_by_tab[tab_id]
     }
 
-    trimmed: list[dict] = []
+    trimmed: list[dict[str, Any]] = []
     for index, request in enumerate(batch):
         kind = next(iter(request))
         tab_id = _request_tab_id(request)
@@ -778,7 +780,7 @@ def _truncate_batch_before_post_table_para_ops(batch: list[dict]) -> list[dict]:
     return trimmed
 
 
-def _truncate_batch_before_delete_sensitive_inserts(batch: list[dict]) -> list[dict]:
+def _truncate_batch_before_delete_sensitive_inserts(batch: list[dict[str, Any]]) -> list[dict[str, Any]]:
     """Split destructive same-tab rewrites into a delete-only live round.
 
     Some refreshed body-repair batches delete a large range and then reinsert
@@ -801,7 +803,7 @@ def _truncate_batch_before_delete_sensitive_inserts(batch: list[dict]) -> list[d
         for request in batch
     ):
         return batch
-    trimmed: list[dict] = []
+    trimmed: list[dict[str, Any]] = []
     for request in batch:
         tab_id = _request_tab_id(request)
         if tab_id not in delete_tabs:
@@ -812,37 +814,37 @@ def _truncate_batch_before_delete_sensitive_inserts(batch: list[dict]) -> list[d
     return trimmed
 
 
-def _request_tab_id(request: dict) -> str | None:
+def _request_tab_id(request: dict[str, Any]) -> str | None:
     kind = next(iter(request))
     payload = request[kind]
     if kind in {"insertTable", "insertText", "insertPageBreak"}:
-        return payload.get("location", {}).get("tabId")
+        return cast(str | None, payload.get("location", {}).get("tabId"))
     if kind in {
         "createParagraphBullets",
         "deleteContentRange",
         "updateParagraphStyle",
         "updateTextStyle",
     }:
-        return payload.get("range", {}).get("tabId")
+        return cast(str | None, payload.get("range", {}).get("tabId"))
     return None
 
 
 def _tab_ids_subset(base: Document, desired: Document) -> bool:
     base_tab_ids = {
         tab.tab_properties.tab_id
-        for tab in base.tabs
+        for tab in (base.tabs or [])
         if tab.tab_properties and tab.tab_properties.tab_id
     }
     desired_tab_ids = {
         tab.tab_properties.tab_id
-        for tab in desired.tabs
+        for tab in (desired.tabs or [])
         if tab.tab_properties and tab.tab_properties.tab_id
     }
     return desired_tab_ids <= base_tab_ids
 
 
 def _next_required_revision_id(
-    response: dict,
+    response: dict[str, Any],
     current_revision_id: str | None,
 ) -> str | None:
     write_control = response.get("writeControl")
@@ -917,7 +919,7 @@ def _normalize_raw_base_para_styles(
 
     reference_tabs: dict[str, list[StructuralElement]] = {}
     if markdown_reference is not None:
-        for ref_tab in markdown_reference.tabs:
+        for ref_tab in (markdown_reference.tabs or []):
             ref_tab_id = (
                 ref_tab.tab_properties.tab_id if ref_tab.tab_properties else None
             )
@@ -934,7 +936,7 @@ def _normalize_raw_base_para_styles(
             protected_empty_para_indices = _body_named_range_anchor_indices(dt, tab_id)
             preserve_after_table_starts = _preserved_separator_table_starts(
                 dt.body.content,
-                reference_tabs.get(tab_id, []),
+                reference_tabs.get(tab_id or "", []),
             )
             # 1. Strip inter-table separator paragraphs
             dt.body.content = _strip_inter_table_separators(
@@ -1200,7 +1202,7 @@ def _normalize_paragraph(para: Paragraph) -> None:
     ps = para.paragraph_style
     if ps:
         raw = ps.named_style_type
-        style_val = raw.value if hasattr(raw, "value") else (raw or "")
+        style_val = raw.value if raw is not None and hasattr(raw, "value") else (raw or "")
         # TITLE/SUBTITLE → HEADING_1/HEADING_2: markdown renders them as #/##
         # which parse back as HEADING_1/HEADING_2, so normalise the base too.
         remapped = _MARKDOWN_STYLE_REMAP.get(style_val, style_val) or style_val

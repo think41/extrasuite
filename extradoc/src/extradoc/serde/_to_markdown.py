@@ -144,7 +144,7 @@ def _serialize_body(doc_tab: DocumentTab, list_defs: dict[str, Any]) -> str:
                 parts.append(_serialize_inlines(se.paragraph.elements or []))
         footnote_defs[fn_id] = " ".join(p for p in parts if p)
 
-    body_content = doc_tab.body.content if doc_tab.body else []
+    body_content = (doc_tab.body.content or []) if doc_tab.body else []
     blocks = _serialize_content(body_content, list_types, list_defs, nr_spans)
 
     # Append footnote definitions
@@ -390,9 +390,9 @@ def _serialize_inline_elem(pe: ParagraphElement) -> str:
         return f'<x-person email="{email}"/>'
 
     if pe.rich_link is not None:
-        props = pe.rich_link.rich_link_properties
-        url = (props.uri or "") if props else ""
-        title = (props.title or "") if props else ""
+        rich_props = pe.rich_link.rich_link_properties
+        url = (rich_props.uri or "") if rich_props else ""
+        title = (rich_props.title or "") if rich_props else ""
         if title:
             return f'<x-chip url="{url}" title="{_html.escape(title, quote=True)}"/>'
         return f'<x-chip url="{url}"/>'

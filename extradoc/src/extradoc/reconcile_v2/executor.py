@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
-from typing import TYPE_CHECKING, Any, Protocol
+from typing import TYPE_CHECKING, Any, Protocol, cast
 
 if TYPE_CHECKING:
     from collections.abc import Sequence
@@ -91,7 +91,7 @@ def resolve_deferred_placeholders(
             return [resolve(item) for item in value]
         return value
 
-    return resolve(batch)
+    return cast(list[dict[str, Any]], resolve(batch))
 
 
 async def execute_request_batches(

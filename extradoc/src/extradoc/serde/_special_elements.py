@@ -22,7 +22,7 @@ from __future__ import annotations
 
 from abc import ABC, abstractmethod
 from dataclasses import dataclass, field
-from typing import Any, ClassVar, Literal
+from typing import Any, ClassVar, Literal, cast
 
 from extradoc.api_types._generated import (
     Paragraph,
@@ -332,8 +332,9 @@ class Callout(SpecialElement):
     def from_table(cls, table: Table, named_range_name: str) -> "Callout":
         parts = named_range_name.split(":")
         raw_variant = parts[2] if len(parts) > 2 else "info"
-        variant: Literal["warning", "info", "note", "danger", "tip"] = (
-            raw_variant if raw_variant in ("warning", "info", "note", "danger", "tip") else "info"
+        variant: Literal["warning", "info", "note", "danger", "tip"] = cast(
+            Literal["warning", "info", "note", "danger", "tip"],
+            raw_variant if raw_variant in ("warning", "info", "note", "danger", "tip") else "info",
         )
         paragraphs = _extract_cell_paragraphs(table)
         return cls(variant=variant, paragraphs=paragraphs)

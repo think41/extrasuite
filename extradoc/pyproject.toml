@@ -96,6 +96,7 @@ warn_unused_ignores = true
 disallow_untyped_defs = true
 check_untyped_defs = true
 files = ["src/extradoc"]
+plugins = ["pydantic.mypy"]
 
 [[tool.mypy.overrides]]
 module = "diff_match_patch"

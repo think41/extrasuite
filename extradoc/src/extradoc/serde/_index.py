@@ -2,9 +2,9 @@
 
 from __future__ import annotations
 
-from typing import TYPE_CHECKING
+from typing import TYPE_CHECKING, Any
 
-from ._models import IndexHeading, IndexTab, IndexXml
+from ._models import IndexHeading, IndexTab, IndexXml, ParagraphXml
 from ._utils import sanitize_tab_name
 
 if TYPE_CHECKING:
@@ -97,7 +97,7 @@ def _extract_outline(tab_xml: TabXml | None) -> list[IndexHeading]:
 
     counts: dict[str, int] = {}
     for block in tab_xml.body:
-        if not hasattr(block, "tag"):
+        if not isinstance(block, ParagraphXml):
             continue
         tag = block.tag
         if tag not in _OUTLINE_STYLES.values():
@@ -117,7 +117,7 @@ def _extract_outline(tab_xml: TabXml | None) -> list[IndexHeading]:
     return headings
 
 
-def _paragraph_text(inlines: list[object]) -> str:
+def _paragraph_text(inlines: list[Any]) -> str:
     """Extract plain text from a paragraph."""
     parts: list[str] = []
     for inline in inlines:

@@ -252,7 +252,7 @@ class GoogleDocsTransport(Transport):
     ) -> dict[str, Any]:
         """Apply batchUpdate requests to Google Docs API."""
         url = f"{API_BASE}/{document_id}:batchUpdate"
-        body = {"requests": requests}
+        body: dict[str, Any] = {"requests": requests}
         if write_control is not None:
             body["writeControl"] = write_control
         return await self._post_request(url, body)
