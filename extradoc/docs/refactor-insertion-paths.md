@@ -415,3 +415,35 @@ Priority order:
 - Updating `_lower_story_content_update` to call a shared per-element function
   for the update case — it already delegates to `_lower_element_update` and
   `_lower_element_insert`; no structural change needed there.
+
+---
+
+## Changelog
+
+### Implemented (commit `0e637a7`)
+
+All six steps from the plan were implemented:
+
+**Step 1 — Type widening**: Added `_StrOrDeferred = str | dict[str, Any]` type alias. Widened `tab_id` and `segment_id` in all `_make_*` builders (`_make_insert_text`, `_make_update_paragraph_style`, `_make_update_text_style`, `_make_create_paragraph_bullets`, `_make_delete_paragraph_bullets`, `_make_delete_content_range`) and in `_lower_element_insert`, `_lower_paragraph_insert`, `_lower_table_insert`, `_lower_section_break_insert`, `_lower_page_break_insert`.
+
+**Step 2 — `_lower_content_insert`**: Deleted `_lower_story_content_insert` (with its `endOfSegmentLocation` hack). Added `_element_size` helper (paragraph size from text, section break = 1, others from startIndex/endIndex). Added `_lower_content_insert` as the single unified pure-insert entry point. Updated `CreateHeaderOp`, `CreateFooterOp`, `InsertFootnoteOp` handlers to call `_lower_content_insert(start_index=1)`.
+
+**Step 3 — `InsertTabOp` body content**: Added `_extract_tab_body_content` (extracts body elements, skips leading sectionBreak). Extended `InsertTabOp` handler to emit body content via `_lower_content_insert` with a properly structured deferred tab ID placeholder (`response_path = "addDocumentTab.tabProperties.tabId"`).
+
+**Step 4 — `_lower_table_insert` cell content**: Rewrote `_lower_table_insert` to iterate rows and cells after `insertTable`, computing absolute content positions via running `table_pos` arithmetic. Each cell's content is inserted via `_lower_element_insert`.
+
+**Step 5 — Remove `endOfSegmentLocation`**: Gone from `lower.py` as a result of Step 2. Confirmed by grep.
+
+**Step 6 — Retire `__LAST_ADDED_TAB_ID__`**: Removed 18 lines from `reconcile_v2/executor.py`. No emitters remain.
+
+### Bug fixed during live testing (commit `TBD`)
+
+**Discovered**: Cell content from the markdown serde is `[para("Feature\n")]` — one paragraph, no separate terminal. `_lower_table_insert` used `content[:-1]` (via `_lower_content_insert`) which skipped the only element, producing zero `insertText` requests for cell content.
+
+**Root cause**: `content[:-1]` assumes a terminal paragraph is always present as the last element (which is true for body/header/footer content and for real API-pulled table cells). The markdown deserialiser produces single-paragraph cells without a terminal.
+
+**Fix**: Added `_is_cell_terminal(el)` helper that returns True if an element is a bare `\n` paragraph. In `_lower_table_insert`, replaced `_lower_content_insert(content=cell_content)` with a direct loop that filters terminal paragraphs and calls `_lower_element_insert` for each remaining element. Both cell formats now work:
+- Real API pull: `[para("Feature\n"), para("\n")]` → terminal filtered, inserts "Feature\n"
+- Markdown serde: `[para("Feature\n")]` → nothing filtered, inserts "Feature\n"
+
+**Tests added**: `test_cell_with_no_terminal_paragraph_still_inserts_content` and `test_cell_with_explicit_terminal_paragraph_is_not_double_inserted`.

@@ -2109,18 +2109,29 @@ def _lower_table_insert(
             # First element in cell starts at table_pos + 1 (after cell opener).
             content_start = table_pos + 1
 
-            # Compute chars we will insert (everything except terminal paragraph).
-            inserted_chars = sum(_element_size(e) for e in cell_content[:-1])
+            # Filter out terminal paragraphs (bare "\n").  We skip them because
+            # insertTable creates one terminal \n per cell automatically.
+            #
+            # We filter rather than blindly using content[:-1] because the
+            # markdown deserialiser produces cells with a single paragraph whose
+            # text already ends with "\n" (no separate terminal element), while a
+            # real API pull produces [content_para, terminal_para].  Both cases
+            # must work correctly.
+            insertable = [e for e in cell_content if not _is_cell_terminal(e)]
+            inserted_chars = sum(_element_size(e) for e in insertable)
 
             if inserted_chars > 0:
-                requests.extend(
-                    _lower_content_insert(
-                        content=cell_content,
-                        start_index=content_start,
-                        tab_id=tab_id,
-                        segment_id=segment_id,
+                running = content_start
+                for e in insertable:
+                    requests.extend(
+                        _lower_element_insert(
+                            el=e,
+                            index=running,
+                            tab_id=tab_id,
+                            segment_id=segment_id,
+                        )
                     )
-                )
+                    running += _element_size(e)
 
             # Advance past this cell:
             # originally 2 chars (opener + terminal \n), now 2 + inserted_chars.
@@ -2339,6 +2350,19 @@ def _extract_tab_body_content(tab: dict[str, Any]) -> list[dict[str, Any]]:
 # ---------------------------------------------------------------------------
 # Element index helpers
 # ---------------------------------------------------------------------------
+
+
+def _is_cell_terminal(el: dict[str, Any]) -> bool:
+    """Return True if ``el`` is a bare terminal paragraph (text == "\\n").
+
+    Table cells may or may not include an explicit terminal paragraph depending
+    on whether the content came from a real API pull (always has one) or from
+    the markdown/XML deserialiser (may omit it).  Either way, ``insertTable``
+    creates the terminal automatically, so we must never re-insert it.
+    """
+    if "paragraph" not in el:
+        return False
+    return _para_text(el["paragraph"]) == "\n"
 
 
 def _element_size(el: dict[str, Any]) -> int:

@@ -3131,3 +3131,55 @@ class TestTableInsertCellContent:
         assert (
             len(reqs) == 1
         ), f"Expected only insertTable for empty cells, got {len(reqs)} requests: {reqs}"
+
+    def _make_cell_no_terminal(self, text: str) -> dict[str, Any]:
+        """Cell with a single paragraph (no separate terminal) — matches markdown serde output."""
+        return {
+            "content": [make_para_el(text)],
+            "tableCellStyle": {},
+        }
+
+    def _make_table_no_terminal(self, cells_by_row: list[list[str]]) -> dict[str, Any]:
+        """Table whose cells have no separate terminal paragraph (markdown serde format)."""
+        return {
+            "table": {
+                "rows": len(cells_by_row),
+                "columns": len(cells_by_row[0]) if cells_by_row else 0,
+                "tableRows": [
+                    {
+                        "tableCells": [self._make_cell_no_terminal(t) for t in row],
+                        "tableRowStyle": {},
+                    }
+                    for row in cells_by_row
+                ],
+            }
+        }
+
+    def test_cell_with_no_terminal_paragraph_still_inserts_content(self) -> None:
+        """Cells from markdown serde have one paragraph (no separate terminal) — must still insert."""
+        from extradoc.reconcile_v3.lower import _lower_table_insert
+
+        # Markdown serde: cell = [para("Hello\n")] — no separate terminal paragraph.
+        el = self._make_table_no_terminal([["Hello\n"]])
+        reqs = _lower_table_insert(el=el, index=5, tab_id="t1", segment_id=None)
+
+        insert_reqs = [r for r in reqs if "insertText" in r]
+        assert (
+            len(insert_reqs) == 1
+        ), f"Expected insertText for cell content, got {len(insert_reqs)}: {reqs}"
+        assert insert_reqs[0]["insertText"]["text"] == "Hello\n"
+        assert insert_reqs[0]["insertText"]["location"]["index"] == 8
+
+    def test_cell_with_explicit_terminal_paragraph_is_not_double_inserted(self) -> None:
+        """Cells from a real API pull have [content, terminal_para] — terminal must not be inserted."""
+        from extradoc.reconcile_v3.lower import _lower_table_insert
+
+        # Real API format: cell = [para("Hello\n"), para("\n")]
+        el = self._make_table_el([["Hello\n"]])  # _make_table_el adds terminal
+        reqs = _lower_table_insert(el=el, index=5, tab_id="t1", segment_id=None)
+
+        insert_reqs = [r for r in reqs if "insertText" in r]
+        assert (
+            len(insert_reqs) == 1
+        ), f"Expected exactly one insertText (not double), got: {[r['insertText']['text'] for r in insert_reqs]}"
+        assert insert_reqs[0]["insertText"]["text"] == "Hello\n"
