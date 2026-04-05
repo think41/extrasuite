@@ -200,6 +200,59 @@ def table_cell_texts(doc: Document, tab_idx: int = 0) -> list[list[list[str]]]:
     return tables
 
 
+def table_dimensions(doc: Document, tab_idx: int = 0) -> list[tuple[int, int]]:
+    """Return (rows, cols) for each table in the document."""
+    dims: list[tuple[int, int]] = []
+    for se in _body_content(doc, tab_idx):
+        if se.table:
+            rows = len(se.table.table_rows or [])
+            cols = se.table.columns or 0
+            dims.append((rows, cols))
+    return dims
+
+
+def table_cell_runs(
+    doc: Document, tab_idx: int = 0, table_idx: int = 0, row: int = 0, col: int = 0
+) -> list[dict]:
+    """Extract text runs from a specific table cell.
+
+    Returns list of dicts with keys: text, bold, italic, underline, link.
+    """
+    table_count = 0
+    for se in _body_content(doc, tab_idx):
+        if not se.table:
+            continue
+        if table_count != table_idx:
+            table_count += 1
+            continue
+        rows = se.table.table_rows or []
+        assert row < len(rows), f"Row {row} out of range (table has {len(rows)} rows)"
+        cells = rows[row].table_cells or []
+        assert col < len(cells), f"Col {col} out of range (row has {len(cells)} cells)"
+        runs: list[dict] = []
+        for cell_se in cells[col].content or []:
+            if not cell_se.paragraph:
+                continue
+            for pe in cell_se.paragraph.elements or []:
+                if not pe.text_run:
+                    continue
+                content = pe.text_run.content or ""
+                if content == "\n":
+                    continue
+                ts = pe.text_run.text_style
+                runs.append(
+                    {
+                        "text": content,
+                        "bold": bool(ts and ts.bold),
+                        "italic": bool(ts and ts.italic),
+                        "underline": bool(ts and ts.underline),
+                        "link": (ts.link.url or "") if ts and ts.link else "",
+                    }
+                )
+        return runs
+    pytest.fail(f"Table index {table_idx} not found")
+
+
 def body_list_items(doc: Document, tab_idx: int = 0) -> list[dict]:
     """Extract list items with their text and list ID.
 
@@ -500,26 +553,32 @@ class TestFormattingEdits:
         bold_runs = [r for r in runs if r["bold"]]
         assert not any("bold text" in r["text"] for r in bold_runs)
 
-    def test_existing_underline_preserved(self, tmp_path: Path) -> None:
-        """Underline text survives no-op round-trip."""
+    def test_underline_preserved_after_nearby_edit(self, tmp_path: Path) -> None:
+        """Underline survives when a different paragraph is edited."""
         rt = RoundTrip(MD_GOLDEN_ID, tmp_path / "doc")
+        rt.edit_md(find="Second plain paragraph.", replace="Modified paragraph.")
         result = rt.deserialize()
+        assert_preserved(result.base.document, result.desired.document)
         runs = body_runs(result.desired.document, para_text="underlined text")
         underline_runs = [r for r in runs if r["underline"]]
         assert any("underlined" in r["text"] for r in underline_runs)
 
-    def test_existing_strikethrough_preserved(self, tmp_path: Path) -> None:
-        """Strikethrough text survives no-op round-trip."""
+    def test_strikethrough_preserved_after_nearby_edit(self, tmp_path: Path) -> None:
+        """Strikethrough survives when a different paragraph is edited."""
         rt = RoundTrip(MD_GOLDEN_ID, tmp_path / "doc")
+        rt.edit_md(find="Second plain paragraph.", replace="Modified paragraph.")
         result = rt.deserialize()
+        assert_preserved(result.base.document, result.desired.document)
         runs = body_runs(result.desired.document, para_text="strikethrough text")
         strike_runs = [r for r in runs if r["strikethrough"]]
         assert any("strikethrough" in r["text"] for r in strike_runs)
 
-    def test_existing_bold_italic_preserved(self, tmp_path: Path) -> None:
-        """Bold+italic text survives no-op round-trip."""
+    def test_bold_italic_preserved_after_nearby_edit(self, tmp_path: Path) -> None:
+        """Bold+italic survives when a different paragraph is edited."""
         rt = RoundTrip(MD_GOLDEN_ID, tmp_path / "doc")
+        rt.edit_md(find="Second plain paragraph.", replace="Modified paragraph.")
         result = rt.deserialize()
+        assert_preserved(result.base.document, result.desired.document)
         runs = body_runs(result.desired.document, para_text="bold italic text")
         bi_runs = [r for r in runs if r["bold"] and r["italic"]]
         assert any("bold italic" in r["text"] for r in bi_runs)
@@ -650,7 +709,7 @@ class TestListEdits:
 
 
 # ===========================================================================
-# Tests: Table edits
+# Tests: Table edits (existing table in golden doc)
 # ===========================================================================
 
 
@@ -662,22 +721,144 @@ class TestTableEdits:
         result = rt.deserialize()
         assert_preserved(result.base.document, result.desired.document)
         tables = table_cell_texts(result.desired.document)
-        flat = [cell for tbl in tables for row in tbl for cell in row]
-        assert "Omega" in flat
-        assert "Alpha" not in flat
+        assert len(tables) == 1
+        assert tables[0][1][0] == "Omega"  # row 1, col 0
 
     def test_table_preserved_on_noop(self, tmp_path: Path) -> None:
         """Table structure is preserved when not edited."""
         rt = RoundTrip(MD_GOLDEN_ID, tmp_path / "doc")
-        # Edit something else, not the table
         rt.edit_md(find="Second plain paragraph.", replace="Modified paragraph.")
         result = rt.deserialize()
         assert_preserved(result.base.document, result.desired.document)
+        # Exact structure check
         tables = table_cell_texts(result.desired.document)
-        assert len(tables) >= 1
-        flat = [cell for tbl in tables for row in tbl for cell in row]
-        assert "Alpha" in flat
-        assert "Name" in flat
+        assert len(tables) == 1
+        assert tables[0] == [
+            ["Name", "Value", "Description"],
+            ["Alpha", "100", "The first item"],
+            ["Beta", "200", "The second item"],
+        ]
+
+    def test_edit_header_row_cell(self, tmp_path: Path) -> None:
+        """Edit a cell in the header row of an existing table."""
+        rt = RoundTrip(MD_GOLDEN_ID, tmp_path / "doc")
+        rt.edit_md(find="| Name |", replace="| Label |")
+        result = rt.deserialize()
+        assert_preserved(result.base.document, result.desired.document)
+        tables = table_cell_texts(result.desired.document)
+        assert tables[0][0][0] == "Label"
+        # Other header cells unchanged
+        assert tables[0][0][1] == "Value"
+        assert tables[0][0][2] == "Description"
+
+    def test_edit_multiple_cells(self, tmp_path: Path) -> None:
+        """Edit multiple cells in the same table."""
+        rt = RoundTrip(MD_GOLDEN_ID, tmp_path / "doc")
+        md = rt.read_md()
+        md = md.replace("| Alpha |", "| Omega |")
+        md = md.replace("| 200 |", "| 999 |")
+        rt.write_md(md)
+        result = rt.deserialize()
+        assert_preserved(result.base.document, result.desired.document)
+        tables = table_cell_texts(result.desired.document)
+        assert tables[0][1][0] == "Omega"
+        assert tables[0][2][1] == "999"
+        # Dimensions unchanged
+        assert table_dimensions(result.desired.document) == [(3, 3)]
+
+    @pytest.mark.xfail(
+        reason=(
+            "BUG: 3-way merge rebuilds the table from markdown-parsed output "
+            "instead of preserving it from base. The GFM parser adds bold=True "
+            "to header cells, and the merge does not filter this out. Also "
+            "loses tableCellStyle, paragraphStyle, and tableColumnProperties."
+        ),
+        strict=True,
+    )
+    def test_header_row_not_bolded_after_cell_edit(self, tmp_path: Path) -> None:
+        """Editing a data cell must not introduce bold to the header row.
+
+        The GFM spec renders header cells in bold, and the markdown parser
+        models them as bold=True. But the 3-way merge should detect that the
+        header didn't change and preserve it from base (which has no bold).
+        """
+        rt = RoundTrip(MD_GOLDEN_ID, tmp_path / "doc")
+        rt.edit_md(find="| Alpha |", replace="| Omega |")
+        result = rt.deserialize()
+        # Header cells should have the same bold as base (None/False)
+        runs = table_cell_runs(result.desired.document, row=0, col=0)
+        assert runs, "Expected runs in header cell"
+        assert not runs[0]["bold"], (
+            "Header cell 'Name' gained bold=True after editing a data cell"
+        )
+
+    @pytest.mark.xfail(
+        reason=(
+            "BUG: Any edit to the document causes the 3-way merge to rebuild "
+            "the table from the markdown-parsed version, introducing spurious "
+            "bold on header cells and losing table/cell style metadata."
+        ),
+        strict=True,
+    )
+    def test_header_row_not_bolded_after_non_table_edit(self, tmp_path: Path) -> None:
+        """Editing a paragraph outside the table must not bold the header row."""
+        rt = RoundTrip(MD_GOLDEN_ID, tmp_path / "doc")
+        rt.edit_md(find="Second plain paragraph.", replace="Modified paragraph.")
+        result = rt.deserialize()
+        for ci in range(3):
+            runs = table_cell_runs(result.desired.document, row=0, col=ci)
+            assert runs
+            assert not runs[0]["bold"], (
+                f"Header cell [{ci}] gained bold after editing a non-table paragraph"
+            )
+
+    @pytest.mark.xfail(
+        reason=(
+            "BUG: 3-way merge rebuilds unchanged tables from markdown parse, "
+            "losing tableStyle.tableColumnProperties, tableCellStyle properties "
+            "(backgroundColor, padding), and paragraphStyle (direction, lineSpacing)."
+        ),
+        strict=True,
+    )
+    def test_table_structure_preserved_after_non_table_edit(
+        self, tmp_path: Path
+    ) -> None:
+        """Editing a paragraph must not alter the table's internal structure.
+
+        The table's tableStyle, tableCellStyle, and paragraphStyle should be
+        preserved from base when the table content is not edited.
+        """
+        rt = RoundTrip(MD_GOLDEN_ID, tmp_path / "doc")
+        rt.edit_md(find="Second plain paragraph.", replace="Modified paragraph.")
+        result = rt.deserialize()
+
+        def _strip_indices(obj: Any) -> Any:
+            if isinstance(obj, dict):
+                return {
+                    k: _strip_indices(v)
+                    for k, v in obj.items()
+                    if k not in ("startIndex", "endIndex")
+                }
+            if isinstance(obj, list):
+                return [_strip_indices(item) for item in obj]
+            return obj
+
+        base_table = desired_table = None
+        for se in _body_content(result.base.document):
+            if se.table:
+                base_table = _strip_indices(
+                    se.model_dump(by_alias=True, exclude_none=True)
+                )
+        for se in _body_content(result.desired.document):
+            if se.table:
+                desired_table = _strip_indices(
+                    se.model_dump(by_alias=True, exclude_none=True)
+                )
+        assert base_table is not None
+        assert desired_table is not None
+        assert base_table == desired_table, (
+            "Table structure changed after editing a non-table paragraph"
+        )
 
 
 # ===========================================================================
@@ -1028,28 +1209,13 @@ class TestThematicBreak:
 
 
 # ===========================================================================
-# Tests: Deeper table scenarios
+# Tests: Add/delete rows in existing tables
 # ===========================================================================
 
 
-class TestTableDeeper:
-    def test_edit_multiple_cells(self, tmp_path: Path) -> None:
-        """Edit multiple cells in the same table."""
-        rt = RoundTrip(MD_GOLDEN_ID, tmp_path / "doc")
-        md = rt.read_md()
-        md = md.replace("| Alpha |", "| Omega |")
-        md = md.replace("| 200 |", "| 999 |")
-        rt.write_md(md)
-        result = rt.deserialize()
-        assert_preserved(result.base.document, result.desired.document)
-        tables = table_cell_texts(result.desired.document)
-        flat = [cell for tbl in tables for row in tbl for cell in row]
-        assert "Omega" in flat
-        assert "999" in flat
-        assert "Alpha" not in flat
-
-    def test_add_table_row_via_markdown(self, tmp_path: Path) -> None:
-        """User adds a new row to a GFM table."""
+class TestTableRowEdits:
+    def test_add_table_row(self, tmp_path: Path) -> None:
+        """Add a new row to an existing GFM table."""
         rt = RoundTrip(MD_GOLDEN_ID, tmp_path / "doc")
         rt.edit_md(
             find="| Beta | 200 | The second item |",
@@ -1058,9 +1224,260 @@ class TestTableDeeper:
         result = rt.deserialize()
         assert_preserved(result.base.document, result.desired.document)
         tables = table_cell_texts(result.desired.document)
-        flat = [cell for tbl in tables for row in tbl for cell in row]
-        assert "Delta" in flat
-        assert "400" in flat
+        assert len(tables) == 1
+        assert len(tables[0]) == 4  # was 3, now 4
+        assert tables[0][3] == ["Delta", "400", "The fourth item"]
+        # Existing rows unchanged
+        assert tables[0][0] == ["Name", "Value", "Description"]
+        assert tables[0][1] == ["Alpha", "100", "The first item"]
+
+    def test_delete_table_row(self, tmp_path: Path) -> None:
+        """Delete a data row from an existing table."""
+        rt = RoundTrip(MD_GOLDEN_ID, tmp_path / "doc")
+        md = rt.read_md()
+        # Remove the Alpha row
+        lines = md.splitlines(keepends=True)
+        lines = [
+            line for line in lines if "Alpha" not in line or "| Alpha |" not in line
+        ]
+        rt.write_md("".join(lines))
+        result = rt.deserialize()
+        assert_preserved(result.base.document, result.desired.document)
+        tables = table_cell_texts(result.desired.document)
+        assert len(tables) == 1
+        assert len(tables[0]) == 2  # header + Beta only
+        assert tables[0][1][0] == "Beta"
+
+
+# ===========================================================================
+# Tests: Creating brand new tables from markdown
+# ===========================================================================
+
+
+class TestNewTableCreation:
+    def test_create_simple_table(self, tmp_path: Path) -> None:
+        """Create a brand new 2-column table from GFM markdown."""
+        rt = RoundTrip(MD_GOLDEN_ID, tmp_path / "doc")
+        new_table = (
+            "| Col A | Col B |\n| --- | --- |\n| r1c1 | r1c2 |\n| r2c1 | r2c2 |\n"
+        )
+        rt.edit_md(
+            find="Second plain paragraph.\n",
+            replace="Second plain paragraph.\n\n" + new_table,
+        )
+        result = rt.deserialize()
+        assert_preserved(result.base.document, result.desired.document)
+        tables = table_cell_texts(result.desired.document)
+        assert len(tables) == 2  # original + new
+        # Find the new table (2 cols)
+        new_tbl = [t for t in tables if len(t[0]) == 2]
+        assert len(new_tbl) == 1
+        assert new_tbl[0] == [
+            ["Col A", "Col B"],
+            ["r1c1", "r1c2"],
+            ["r2c1", "r2c2"],
+        ]
+        # Original table still intact
+        orig_tbl = [t for t in tables if len(t[0]) == 3]
+        assert len(orig_tbl) == 1
+        assert orig_tbl[0][0] == ["Name", "Value", "Description"]
+
+    def test_create_large_table(self, tmp_path: Path) -> None:
+        """Create a table with many rows and columns."""
+        rt = RoundTrip(MD_GOLDEN_ID, tmp_path / "doc")
+        header = "| A | B | C | D | E |"
+        separator = "| --- | --- | --- | --- | --- |"
+        rows = [f"| a{i} | b{i} | c{i} | d{i} | e{i} |" for i in range(1, 6)]
+        new_table = "\n".join([header, separator, *rows]) + "\n"
+        rt.edit_md(
+            find="Second plain paragraph.\n",
+            replace="Second plain paragraph.\n\n" + new_table,
+        )
+        result = rt.deserialize()
+        assert_preserved(result.base.document, result.desired.document)
+        dims = table_dimensions(result.desired.document)
+        # Should have a 5-col table (6 rows = header + 5 data)
+        assert (6, 5) in dims
+
+    def test_create_table_with_empty_cells(self, tmp_path: Path) -> None:
+        """Create a table where some cells are empty."""
+        rt = RoundTrip(MD_GOLDEN_ID, tmp_path / "doc")
+        new_table = "| H1 | H2 | H3 |\n| --- | --- | --- |\n| a |  | c |\n|  | b |  |\n"
+        rt.edit_md(
+            find="Second plain paragraph.\n",
+            replace="Second plain paragraph.\n\n" + new_table,
+        )
+        result = rt.deserialize()
+        assert_preserved(result.base.document, result.desired.document)
+        tables = table_cell_texts(result.desired.document)
+        # Find the new 3-col, 3-row table (not the original which is also 3-col)
+        new_tbls = [t for t in tables if len(t) == 3 and t[0] == ["H1", "H2", "H3"]]
+        assert len(new_tbls) == 1
+        assert new_tbls[0][1] == ["a", "", "c"]
+        assert new_tbls[0][2] == ["", "b", ""]
+
+    def test_create_table_after_heading(self, tmp_path: Path) -> None:
+        """Create a new table immediately after a heading."""
+        rt = RoundTrip(MD_GOLDEN_ID, tmp_path / "doc")
+        new_table = "| Key | Val |\n| --- | --- |\n| x | 1 |\n"
+        rt.edit_md(
+            find="# Second Major Section\n",
+            replace="# Second Major Section\n\n" + new_table,
+        )
+        result = rt.deserialize()
+        assert_preserved(result.base.document, result.desired.document)
+        tables = table_cell_texts(result.desired.document)
+        new_tbl = [t for t in tables if len(t[0]) == 2 and t[0] == ["Key", "Val"]]
+        assert len(new_tbl) == 1
+        assert new_tbl[0][1] == ["x", "1"]
+
+    def test_create_single_row_table(self, tmp_path: Path) -> None:
+        """Create a table with only a header row and one data row."""
+        rt = RoundTrip(MD_GOLDEN_ID, tmp_path / "doc")
+        new_table = "| Only |\n| --- |\n| single |\n"
+        rt.edit_md(
+            find="Second plain paragraph.\n",
+            replace="Second plain paragraph.\n\n" + new_table,
+        )
+        result = rt.deserialize()
+        assert_preserved(result.base.document, result.desired.document)
+        tables = table_cell_texts(result.desired.document)
+        single_col_tables = [t for t in tables if len(t[0]) == 1]
+        assert len(single_col_tables) == 1
+        assert single_col_tables[0] == [["Only"], ["single"]]
+
+
+# ===========================================================================
+# Tests: Table cell formatting (bold, italic, links)
+# ===========================================================================
+
+
+class TestTableCellFormatting:
+    def test_bold_text_in_cell(self, tmp_path: Path) -> None:
+        """Add bold formatting to a table cell."""
+        rt = RoundTrip(MD_GOLDEN_ID, tmp_path / "doc")
+        rt.edit_md(find="| Alpha |", replace="| **Alpha** |")
+        result = rt.deserialize()
+        assert_preserved(result.base.document, result.desired.document)
+        runs = table_cell_runs(result.desired.document, row=1, col=0)
+        assert any(r["text"].strip() == "Alpha" and r["bold"] for r in runs)
+
+    def test_italic_text_in_cell(self, tmp_path: Path) -> None:
+        """Add italic formatting to a table cell."""
+        rt = RoundTrip(MD_GOLDEN_ID, tmp_path / "doc")
+        rt.edit_md(find="| Alpha |", replace="| *Alpha* |")
+        result = rt.deserialize()
+        assert_preserved(result.base.document, result.desired.document)
+        runs = table_cell_runs(result.desired.document, row=1, col=0)
+        assert any(r["text"].strip() == "Alpha" and r["italic"] for r in runs)
+
+    def test_link_in_cell(self, tmp_path: Path) -> None:
+        """Add a hyperlink to a table cell."""
+        rt = RoundTrip(MD_GOLDEN_ID, tmp_path / "doc")
+        rt.edit_md(
+            find="| Alpha |",
+            replace="| [Alpha](https://alpha.com) |",
+        )
+        result = rt.deserialize()
+        assert_preserved(result.base.document, result.desired.document)
+        runs = table_cell_runs(result.desired.document, row=1, col=0)
+        assert any("Alpha" in r["text"] and "alpha.com" in r["link"] for r in runs)
+
+    def test_new_table_with_bold_cells(self, tmp_path: Path) -> None:
+        """Create a brand new table with bold text in cells."""
+        rt = RoundTrip(MD_GOLDEN_ID, tmp_path / "doc")
+        new_table = (
+            "| Item | Status |\n"
+            "| --- | --- |\n"
+            "| Task A | **Done** |\n"
+            "| Task B | Pending |\n"
+        )
+        rt.edit_md(
+            find="Second plain paragraph.\n",
+            replace="Second plain paragraph.\n\n" + new_table,
+        )
+        result = rt.deserialize()
+        assert_preserved(result.base.document, result.desired.document)
+        tables = table_cell_texts(result.desired.document)
+        new_tbls = [t for t in tables if len(t[0]) == 2 and t[0] == ["Item", "Status"]]
+        assert len(new_tbls) == 1
+        # Find the new table index
+        all_tables = table_cell_texts(result.desired.document)
+        for ti, tbl in enumerate(all_tables):
+            if tbl[0] == ["Item", "Status"]:
+                runs = table_cell_runs(
+                    result.desired.document, table_idx=ti, row=1, col=1
+                )
+                assert any(r["text"].strip() == "Done" and r["bold"] for r in runs)
+                break
+
+    def test_new_table_with_links(self, tmp_path: Path) -> None:
+        """Create a brand new table with links in cells."""
+        rt = RoundTrip(MD_GOLDEN_ID, tmp_path / "doc")
+        new_table = (
+            "| Site | URL |\n"
+            "| --- | --- |\n"
+            "| [Example](https://example.com) | Production |\n"
+        )
+        rt.edit_md(
+            find="Second plain paragraph.\n",
+            replace="Second plain paragraph.\n\n" + new_table,
+        )
+        result = rt.deserialize()
+        assert_preserved(result.base.document, result.desired.document)
+        all_tables = table_cell_texts(result.desired.document)
+        for ti, tbl in enumerate(all_tables):
+            if len(tbl[0]) == 2 and tbl[0] == ["Site", "URL"]:
+                runs = table_cell_runs(
+                    result.desired.document, table_idx=ti, row=1, col=0
+                )
+                assert any("example.com" in r["link"] for r in runs)
+                break
+        else:
+            pytest.fail("New table with links not found")
+
+
+# ===========================================================================
+# Tests: Table deletion
+# ===========================================================================
+
+
+class TestTableDeletion:
+    def test_delete_table(self, tmp_path: Path) -> None:
+        """Delete an entire table from markdown."""
+        rt = RoundTrip(MD_GOLDEN_ID, tmp_path / "doc")
+        md = rt.read_md()
+        # Remove the entire GFM table (header + separator + data rows)
+        md = re.sub(
+            r"\| Name \|.*?\| Beta \| 200 \| The second item \|\n",
+            "",
+            md,
+            flags=re.DOTALL,
+        )
+        rt.write_md(md)
+        result = rt.deserialize()
+        assert_preserved(result.base.document, result.desired.document)
+        tables = table_cell_texts(result.desired.document)
+        assert len(tables) == 0
+
+    def test_delete_table_preserves_surrounding_content(self, tmp_path: Path) -> None:
+        """Deleting a table doesn't affect paragraphs before/after it."""
+        rt = RoundTrip(MD_GOLDEN_ID, tmp_path / "doc")
+        md = rt.read_md()
+        md = re.sub(
+            r"\| Name \|.*?\| Beta \| 200 \| The second item \|\n",
+            "",
+            md,
+            flags=re.DOTALL,
+        )
+        rt.write_md(md)
+        result = rt.deserialize()
+        assert_preserved(result.base.document, result.desired.document)
+        texts = body_texts(result.desired.document)
+        # Content before and after the table should survive
+        assert "Deep nested heading content." in texts
+        assert "Text near the end." in texts
+        assert "Final paragraph of the document." in texts
 
 
 # ===========================================================================
@@ -1182,18 +1599,20 @@ class TestBodyContentPreservation:
             f"SE count changed: {base_count} → {desired_count}"
         )
 
-    def test_table_row_count_preserved(self, tmp_path: Path) -> None:
-        """No-op round-trip preserves table row counts."""
+    def test_table_content_preserved(self, tmp_path: Path) -> None:
+        """No-op round-trip preserves exact table content."""
         rt = RoundTrip(MD_GOLDEN_ID, tmp_path / "doc")
         result = rt.deserialize()
         base_tables = table_cell_texts(result.base.document)
         desired_tables = table_cell_texts(result.desired.document)
-        assert len(base_tables) == len(desired_tables)
-        for i, (bt, dt) in enumerate(zip(base_tables, desired_tables, strict=True)):
-            assert len(bt) == len(dt), f"Table {i} row count changed"
+        assert base_tables == desired_tables
+        # Also verify dimensions
+        assert table_dimensions(result.base.document) == table_dimensions(
+            result.desired.document
+        )
 
-    def test_list_item_count_preserved(self, tmp_path: Path) -> None:
-        """No-op round-trip preserves list item counts."""
+    def test_list_items_preserved(self, tmp_path: Path) -> None:
+        """No-op round-trip preserves exact list item text and count."""
         rt = RoundTrip(MD_GOLDEN_ID, tmp_path / "doc")
         result = rt.deserialize()
         base_items = body_list_items(result.base.document)
