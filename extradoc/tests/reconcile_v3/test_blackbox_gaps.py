@@ -486,11 +486,6 @@ class TestDeferredIDs:
         batch0_types = _collect_request_types([batches[0]])
         assert "addDocumentTab" in batch0_types
 
-    @pytest.mark.xfail(
-        raises=NotImplementedError,
-        reason="InsertFootnoteOp requires anchor_index from footnoteReference in body — "
-        "diff layer cannot determine it when the footnote ref is in desired but has no startIndex",
-    )
     def test_header_footer_and_footnote_three_deferred_ids(self) -> None:
         """Creating header + footer + footnote needs 3 deferred IDs in batch 0."""
 
@@ -586,9 +581,6 @@ class TestUtf16Indexing:
         all_text = "".join(r.insert_text.text for r in insert_reqs)
         assert "\U0001f600" in all_text
 
-    @pytest.mark.xfail(
-        reason="Char-level diff on emoji paragraph computes wrong delete range — delete starts at 3 instead of 4 (emoji is 2 UTF-16 units)"
-    )
     def test_emoji_edit_correct_indices(self) -> None:
         """Editing text after an emoji must account for UTF-16 surrogate pair."""
         from extradoc.indexer import utf16_len
@@ -748,9 +740,6 @@ class TestComplexTables:
         delete_reqs = [r for r in reqs if r.delete_content_range is not None]
         assert len(delete_reqs) >= 1
 
-    @pytest.mark.xfail(
-        reason="Simultaneous row+column changes not supported — table_diff only does one axis"
-    )
     def test_table_add_row_and_column_simultaneously(self) -> None:
         """Adding both a row and column in the same reconcile."""
         base = _single_doc(
@@ -1063,9 +1052,6 @@ class TestParagraphElements:
                     "Horizontal rule paragraph was deleted"
                 )
 
-    @pytest.mark.xfail(
-        reason="RichLink and Person elements not tracked by diff — will be dropped on round-trip"
-    )
     def test_rich_link_preservation(self) -> None:
         """Paragraph containing a RichLink should survive text edits."""
         base = _single_doc(
@@ -1722,11 +1708,6 @@ class TestNamedRanges:
 class TestNewTabWithTable:
     """Creating a new tab whose body contains a table with cell content."""
 
-    @pytest.mark.xfail(
-        raises=NotImplementedError,
-        reason="_element_size cannot compute table size without startIndex/endIndex — "
-        "new tab content is synthetic (no API indices), so inserting a table into a new tab fails",
-    )
     def test_new_tab_with_table(self) -> None:
         """New tab with a 2x2 table should produce addDocumentTab + insertTable + insertText for cells."""
         base = _doc(_tab("t1", [_terminal(1)]))
@@ -1763,10 +1744,6 @@ class TestNewTabWithTable:
                 f"Cell text {cell_text!r} not found in inserted text: {all_text!r}"
             )
 
-    @pytest.mark.xfail(
-        raises=NotImplementedError,
-        reason="_element_size cannot compute table size without startIndex/endIndex",
-    )
     def test_new_tab_with_table_only(self) -> None:
         """New tab whose only content is a table (no leading paragraph)."""
         base = _doc(_tab("t1", [_terminal(1)]))
@@ -1796,10 +1773,6 @@ class TestNewTabWithTable:
                 f"Cell text {cell_text!r} not found: {all_text!r}"
             )
 
-    @pytest.mark.xfail(
-        raises=NotImplementedError,
-        reason="_element_size cannot compute table size without startIndex/endIndex",
-    )
     def test_new_tab_with_multi_paragraph_table_cell(self) -> None:
         """New tab with a table cell containing multiple paragraphs."""
         base = _doc(_tab("t1", [_terminal(1)]))
@@ -2028,10 +2001,6 @@ class TestElementSizeCascade:
     contains a table: new header, new footer, new footnote, new tab.
     """
 
-    @pytest.mark.xfail(
-        raises=NotImplementedError,
-        reason="_element_size cannot compute table size — new header with table fails",
-    )
     def test_new_header_with_table_content(self) -> None:
         """Creating a new header whose content is a table."""
         base = _single_doc([_terminal(1)])
@@ -2054,10 +2023,6 @@ class TestElementSizeCascade:
         assert "createHeader" in req_types
         assert "insertTable" in req_types
 
-    @pytest.mark.xfail(
-        raises=NotImplementedError,
-        reason="_element_size cannot compute table size — new footer with table fails",
-    )
     def test_new_footer_with_table_content(self) -> None:
         """Creating a new footer whose content is a table."""
         base = _single_doc([_terminal(1)])
@@ -2080,10 +2045,6 @@ class TestElementSizeCascade:
         assert "createFooter" in req_types
         assert "insertTable" in req_types
 
-    @pytest.mark.xfail(
-        raises=NotImplementedError,
-        reason="_element_size cannot compute table size — new footnote with table fails",
-    )
     def test_new_footnote_with_table_content(self) -> None:
         """Creating a new footnote whose body contains a table."""
         base = _single_doc(
@@ -2126,11 +2087,6 @@ class TestElementSizeCascade:
         assert "createFootnote" in req_types
         assert "insertTable" in req_types
 
-    @pytest.mark.xfail(
-        raises=NotImplementedError,
-        reason="_element_size cannot compute table size — "
-        "new tab with paragraph then table then paragraph fails",
-    )
     def test_new_tab_para_table_para(self) -> None:
         """New tab: paragraph → table → paragraph. Running index breaks on table."""
         base = _doc(_tab("t1", [_terminal(1)]))
@@ -2171,10 +2127,6 @@ class TestUtf16DiffDivergence:
     growing offset divergence.
     """
 
-    @pytest.mark.xfail(
-        reason="SequenceMatcher indices are code-point-based, not UTF-16 — "
-        "delete/insert after emoji hits wrong position"
-    )
     def test_append_text_after_emoji(self) -> None:
         """Appending text after an emoji: insert index must account for surrogate."""
 
@@ -2204,10 +2156,6 @@ class TestUtf16DiffDivergence:
                     f"Insert at {ir.insert_text.location.index}, expected 3 (after emoji)"
                 )
 
-    @pytest.mark.xfail(
-        reason="Multiple emoji cause cumulative index drift — "
-        "each emoji adds +1 divergence between code-point and UTF-16 offsets"
-    )
     def test_multiple_emoji_cumulative_drift(self) -> None:
         """Two emoji followed by text edit: cumulative +2 divergence."""
         from extradoc.indexer import utf16_len
@@ -2392,11 +2340,6 @@ class TestNewHeaderMixedContent:
         assert "Header line 1" in all_text
         assert "Header line 2" in all_text
 
-    @pytest.mark.xfail(
-        raises=NotImplementedError,
-        reason="_element_size fails on table — paragraph BEFORE table inserts fine, "
-        "but running_index computation breaks when it hits the table element",
-    )
     def test_new_header_text_then_table(self) -> None:
         """New header: paragraph then table. Paragraph works, table breaks."""
         base = _single_doc([_terminal(1)])
@@ -2492,11 +2435,6 @@ class TestTableInsertExistingBody:
 class TestNonTextRunOnlyParagraphs:
     """Paragraphs containing only non-textRun elements."""
 
-    @pytest.mark.xfail(
-        reason="Paragraph with only footnote ref + trailing newline — "
-        "_extract_runs skips footnote ref, so char diff sees "
-        "only the newline, potentially corrupting index math"
-    )
     def test_paragraph_with_only_footnote_ref(self) -> None:
         """A paragraph whose only content is a footnote reference + \\n."""
         base = _single_doc(
@@ -2723,11 +2661,6 @@ class TestDeleteAllContent:
 class TestCompleteTextRewrite:
     """Completely rewriting paragraph text."""
 
-    @pytest.mark.xfail(
-        reason="Content alignment Jaccard < 0.3 for completely different text — "
-        "paragraph is not matched, so it becomes delete + insert instead of "
-        "surgical in-place replace. This is a delete+re-insert pattern.",
-    )
     def test_completely_different_text_is_surgical(self) -> None:
         """When text is 100% different, content alignment doesn't match paragraphs.
 

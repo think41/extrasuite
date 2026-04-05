@@ -547,14 +547,6 @@ class TestHeadingIdLoss:
     from mine, losing the ID.
     """
 
-    @pytest.mark.xfail(
-        reason=(
-            "BUG: _convert_heading creates headings without headingId. "
-            "When heading text is edited, diff sees the heading changed and "
-            "replaces it from mine. The headingId from base is lost."
-        ),
-        strict=True,
-    )
     def test_bug_heading_id_lost_after_text_edit(self, tmp_path: Path) -> None:
         """Editing heading text should preserve the heading ID."""
         rt = RoundTrip(MD_GOLDEN_ID, tmp_path / "doc")

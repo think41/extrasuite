@@ -273,13 +273,10 @@ def diff_tables(
       - Unmatched base rows → DeleteTableRowOp (highest index first).
       - Unmatched desired rows → InsertTableRowOp.
 
-    Phase 2 — Column alignment (only when no row structural changes):
-      - Column structural changes are only computed when rows are stable.
-      - When rows are stable: compute column hashes and emit
-        DeleteTableColumnOp / InsertTableColumnOp.
-
-    Key constraint: Row structural changes and column structural changes are
-    never emitted in the same diff call.
+    Phase 2 — Column alignment (independent of row changes):
+      - Compute column hashes and emit DeleteTableColumnOp /
+        InsertTableColumnOp when column count differs.
+      - Row and column structural changes can be emitted in the same call.
     """
     base_rows = base.table_rows or []
     desired_rows = desired.table_rows or []
@@ -302,8 +299,6 @@ def diff_tables(
         i for i in range(len(desired_rows)) if i not in anchored_desired_rows
     ]
 
-    has_row_structural_changes = bool(deleted_rows or inserted_desired_rows)
-
     # -----------------------------------------------------------------------
     # Phase 2: Column alignment (only when rows are structurally identical)
     # -----------------------------------------------------------------------
@@ -316,44 +311,37 @@ def diff_tables(
     deleted_cols: list[int] = []
     inserted_desired_cols: list[int] = []
 
-    if not has_row_structural_changes:
-        if base_col_count != desired_col_count:
+    if base_col_count != desired_col_count:
 
-            def _base_col_hash(col: int) -> str:
-                return "\n".join(
-                    cell_text_hash((base_rows[r].table_cells or [])[col])
-                    if col < len(base_rows[r].table_cells or [])
-                    else ""
-                    for r in range(len(base_rows))
-                )
-
-            def _desired_col_hash(col: int) -> str:
-                return "\n".join(
-                    cell_text_hash((desired_rows[r].table_cells or [])[col])
-                    if col < len(desired_rows[r].table_cells or [])
-                    else ""
-                    for r in range(len(desired_rows))
-                )
-
-            base_col_hashes = [_base_col_hash(c) for c in range(base_col_count)]
-            desired_col_hashes = [
-                _desired_col_hash(c) for c in range(desired_col_count)
-            ]
-            col_lcs = _lcs_indices(base_col_hashes, desired_col_hashes)
-
-            deleted_cols = sorted(
-                [i for i in range(base_col_count) if i not in {b for b, _d in col_lcs}],
-                reverse=True,
+        def _base_col_hash(col: int) -> str:
+            return "\n".join(
+                cell_text_hash((base_rows[r].table_cells or [])[col])
+                if col < len(base_rows[r].table_cells or [])
+                else ""
+                for r in range(len(base_rows))
             )
-            inserted_desired_cols = [
-                i for i in range(desired_col_count) if i not in {d for _b, d in col_lcs}
-            ]
-        else:
-            # Same column count: positional matching for cell content edits only.
-            min_cols = min(base_col_count, desired_col_count)
-            col_lcs = [(i, i) for i in range(min_cols)]
+
+        def _desired_col_hash(col: int) -> str:
+            return "\n".join(
+                cell_text_hash((desired_rows[r].table_cells or [])[col])
+                if col < len(desired_rows[r].table_cells or [])
+                else ""
+                for r in range(len(desired_rows))
+            )
+
+        base_col_hashes = [_base_col_hash(c) for c in range(base_col_count)]
+        desired_col_hashes = [_desired_col_hash(c) for c in range(desired_col_count)]
+        col_lcs = _lcs_indices(base_col_hashes, desired_col_hashes)
+
+        deleted_cols = sorted(
+            [i for i in range(base_col_count) if i not in {b for b, _d in col_lcs}],
+            reverse=True,
+        )
+        inserted_desired_cols = [
+            i for i in range(desired_col_count) if i not in {d for _b, d in col_lcs}
+        ]
     else:
-        # Row structural changes present: only match columns positionally for cell edits.
+        # Same column count: positional matching for cell content edits only.
         min_cols = min(base_col_count, desired_col_count)
         col_lcs = [(i, i) for i in range(min_cols)]
 

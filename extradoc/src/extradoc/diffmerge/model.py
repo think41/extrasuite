@@ -25,6 +25,7 @@ if TYPE_CHECKING:
         InlineObject,
         List,
         NamedStyle,
+        Range,
         Size,
         StructuralElement,
         Tab,
@@ -419,6 +420,34 @@ class UpdateTableColumnPropertiesOp:
 
 
 # ---------------------------------------------------------------------------
+# Named Ranges
+# ---------------------------------------------------------------------------
+
+
+@dataclass
+class InsertNamedRangeOp:
+    """A named range present in desired is absent in base (or has changed spans).
+
+    One request per Range in ``ranges`` must be emitted
+    (``createNamedRange`` does not accept multiple spans at once).
+    """
+
+    tab_id: str
+    name: str
+    named_range_id: str  # from the desired document
+    ranges: list[Range]  # the spans to create
+
+
+@dataclass
+class DeleteNamedRangeOp:
+    """A named range present in base is absent in desired (or has changed spans)."""
+
+    tab_id: str
+    named_range_id: str  # from the base document
+    name: str  # for diagnostic clarity
+
+
+# ---------------------------------------------------------------------------
 # Body content
 # ---------------------------------------------------------------------------
 
@@ -459,6 +488,8 @@ ReconcileOp = (
     | InsertFootnoteOp
     | DeleteFootnoteOp
     | UpdateFootnoteContentOp
+    | InsertNamedRangeOp
+    | DeleteNamedRangeOp
     | UpdateBodyContentOp
     | InsertTableRowOp
     | DeleteTableRowOp

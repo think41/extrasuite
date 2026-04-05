@@ -89,6 +89,15 @@ MIN_PARA_MATCH_SIMILARITY: float = 0.3
 MIN_LIST_MATCH_SIMILARITY: float = 0.3
 """Minimum item-text similarity for two lists of different kinds to be matchable."""
 
+MIN_TABLE_MATCH_SIMILARITY: float = 0.25
+"""Minimum fuzzy cell-text similarity for two tables to be matchable.
+
+Set slightly below the paragraph threshold (0.3) because table similarity
+is diluted across multiple cells.  Must be high enough to avoid matching
+completely unrelated tables (e.g. callout with fully rewritten text) yet
+low enough to match tables where cells share structural markers like
+footnote reference placeholders."""
+
 INFINITE_PENALTY: float = math.inf
 """Penalty applied to the terminal element so it is never deleted/inserted."""
 
@@ -157,11 +166,36 @@ class ContentNode:
 
 
 def _extract_para_text(para: Paragraph) -> str:
-    """Return concatenated text from a Paragraph model."""
-    return "".join(
-        (e.text_run.content if e.text_run and e.text_run.content else "")
-        for e in (para.elements or [])
-    )
+    """Return concatenated text from a Paragraph model.
+
+    Non-textRun elements (footnote refs, rich links, inline objects, etc.)
+    are represented as type-specific placeholder tokens so that paragraphs
+    sharing the same non-text elements have higher word-level Jaccard
+    similarity and are more likely to be matched by the DP aligner.
+    """
+    parts: list[str] = []
+    for e in para.elements or []:
+        if e.text_run and e.text_run.content:
+            parts.append(e.text_run.content)
+        elif e.footnote_reference is not None:
+            parts.append(" FOOTNOTE_REF ")
+        elif e.rich_link is not None:
+            parts.append(" RICH_LINK ")
+        elif e.inline_object_element is not None:
+            parts.append(" INLINE_OBJ ")
+        elif e.person is not None:
+            parts.append(" PERSON ")
+        elif e.auto_text is not None:
+            parts.append(" AUTO_TEXT ")
+        elif e.equation is not None:
+            parts.append(" EQUATION ")
+        elif e.page_break is not None:
+            parts.append(" PAGE_BREAK ")
+        elif e.column_break is not None:
+            parts.append(" COLUMN_BREAK ")
+        elif e.horizontal_rule is not None:
+            parts.append(" HORIZONTAL_RULE ")
+    return "".join(parts)
 
 
 def _count_para_inline_objects(para: Paragraph) -> int:
@@ -373,14 +407,34 @@ def text_similarity(a: str, b: str) -> float:
 def _table_sim(base: ContentNode, desired: ContentNode) -> float:
     """Return similarity of two table nodes based on their cell texts.
 
-    Computed as |intersection of cell text multiset| / |base cell count|.
+    For each base cell, we find the best word-Jaccard match among desired
+    cells (consumed greedily).  The score is the average of per-cell best
+    similarities, so minor text edits inside a cell still yield a high
+    overall score and allow the tables to be matched.
+
     Empty base → 1.0.
     """
     if not base.table_cell_texts:
         return 1.0
-    desired_set = set(desired.table_cell_texts)
-    intersection = sum(1 for t in base.table_cell_texts if t in desired_set)
-    return intersection / len(base.table_cell_texts)
+
+    # Build a pool of desired cell texts (allow each desired cell to be
+    # consumed at most once via greedy best-match).
+    remaining_desired = list(desired.table_cell_texts)
+    total_sim = 0.0
+
+    for b_text in base.table_cell_texts:
+        best_sim = 0.0
+        best_idx = -1
+        for idx, d_text in enumerate(remaining_desired):
+            sim = text_similarity(b_text, d_text)
+            if sim > best_sim:
+                best_sim = sim
+                best_idx = idx
+        total_sim += best_sim
+        if best_idx >= 0:
+            remaining_desired.pop(best_idx)
+
+    return total_sim / len(base.table_cell_texts)
 
 
 # ---------------------------------------------------------------------------
@@ -405,7 +459,7 @@ def matchable(base: ContentNode, desired: ContentNode) -> bool:
     -----
     - Kinds must be identical (paragraph↔paragraph, table↔table, …).
     - Paragraphs: token Jaccard ≥ MIN_PARA_MATCH_SIMILARITY.
-    - Tables: cell-text similarity > 0.
+    - Tables: fuzzy cell-text similarity ≥ MIN_TABLE_MATCH_SIMILARITY.
     - Lists: same list_kind, OR item-text similarity > MIN_LIST_MATCH_SIMILARITY.
     - SectionBreak, PageBreak, TOC, Opaque: always matchable with the same kind.
     """
@@ -414,7 +468,7 @@ def matchable(base: ContentNode, desired: ContentNode) -> bool:
     if base.kind == NodeKind.PARAGRAPH:
         return text_similarity(base.text, desired.text) >= MIN_PARA_MATCH_SIMILARITY
     if base.kind == NodeKind.TABLE:
-        return _table_sim(base, desired) > 0.0
+        return _table_sim(base, desired) >= MIN_TABLE_MATCH_SIMILARITY
     if base.kind == NodeKind.LIST:
         if base.list_kind == desired.list_kind:
             return True
@@ -598,6 +652,11 @@ def align_content(
 
     prefix_alignment = _dp_align(prefix_base, prefix_desired)
 
+    # Positional fallback: promote unmatched same-kind elements in 1:1 gaps
+    prefix_alignment = _positional_fallback(
+        prefix_alignment, prefix_base, prefix_desired
+    )
+
     # Combine prefix result with terminal match.
     all_matches = [*prefix_alignment.matches, terminal_match]
     total_cost = (
@@ -609,6 +668,107 @@ def align_content(
         base_deletes=prefix_alignment.base_deletes,
         desired_inserts=prefix_alignment.desired_inserts,
         total_cost=total_cost,
+    )
+
+
+def _tables_share_content(a: ContentNode, b: ContentNode) -> bool:
+    """Return True if two table nodes share at least one non-empty cell text.
+
+    Used by the positional fallback to allow matching tables with large size
+    differentials (e.g., 5x5→1x1) where _table_sim falls below the threshold
+    but the smaller table's content is a subset of the larger table's.
+    """
+    a_texts = {t.strip() for t in a.table_cell_texts if t.strip()}
+    b_texts = {t.strip() for t in b.table_cell_texts if t.strip()}
+    if not a_texts or not b_texts:
+        # If either table has no non-empty cells, allow match (both empty)
+        return not a_texts and not b_texts
+    return bool(a_texts & b_texts)
+
+
+def _positional_fallback(
+    alignment: ContentAlignment,
+    base: list[ContentNode],
+    desired: list[ContentNode],
+) -> ContentAlignment:
+    """Promote unmatched elements to matches when they are the sole same-kind
+    pair in a gap between consecutive matched anchors.
+
+    This handles the "complete text rewrite" case: when a paragraph's text is
+    100% different (Jaccard = 0), the DP can't match it. But if it's the only
+    unmatched paragraph in a gap (structurally pinned), it should be matched
+    for in-place surgical editing rather than delete + reinsert.
+
+    A "gap" is the region between two consecutive matched pairs (or the
+    start/end of the sequence and the first/last match). Within each gap,
+    if there is exactly one unmatched base element and one unmatched desired
+    element of the same kind, promote them to a match.
+    """
+    if not alignment.base_deletes or not alignment.desired_inserts:
+        return alignment
+
+    deleted_set = set(alignment.base_deletes)
+    inserted_set = set(alignment.desired_inserts)
+
+    # Build sorted list of match anchors as (base_idx, desired_idx)
+    anchors = [(m.base_idx, m.desired_idx) for m in alignment.matches]
+
+    # Add sentinel boundaries: (-1, -1) before and (len, len) after
+    boundaries = [(-1, -1), *anchors, (len(base), len(desired))]
+
+    new_matches: list[ContentMatch] = []
+
+    for k in range(len(boundaries) - 1):
+        b_lo, d_lo = boundaries[k]
+        b_hi, d_hi = boundaries[k + 1]
+
+        # Unmatched base indices in this gap
+        gap_base = [i for i in range(b_lo + 1, b_hi) if i in deleted_set]
+        # Unmatched desired indices in this gap
+        gap_desired = [j for j in range(d_lo + 1, d_hi) if j in inserted_set]
+
+        # Only promote when there's exactly 1 unmatched on each side and same kind.
+        # Paragraphs: always promote (handles complete text rewrites).
+        # Tables: promote only when they share at least some cell content,
+        # so large contractions (5x5→1x1) are matched for structural ops
+        # rather than delete+reinsert, while completely unrelated tables
+        # (e.g., callout with fully rewritten text) are not matched.
+        if len(gap_base) == 1 and len(gap_desired) == 1:
+            bi = gap_base[0]
+            di = gap_desired[0]
+            if base[bi].kind == desired[di].kind:
+                if base[bi].kind == NodeKind.PARAGRAPH:
+                    new_matches.append(ContentMatch(base_idx=bi, desired_idx=di))
+                elif base[bi].kind == NodeKind.TABLE:
+                    # For tables, require that the smaller table's cells are
+                    # a subset of the larger table's cells (at least one
+                    # non-empty cell text in common).
+                    if _tables_share_content(base[bi], desired[di]):
+                        new_matches.append(ContentMatch(base_idx=bi, desired_idx=di))
+
+    if not new_matches:
+        return alignment
+
+    # Merge new matches into the alignment
+    promoted_base = {m.base_idx for m in new_matches}
+    promoted_desired = {m.desired_idx for m in new_matches}
+
+    all_matches = sorted(
+        [*alignment.matches, *new_matches],
+        key=lambda m: (m.base_idx, m.desired_idx),
+    )
+    new_base_deletes = sorted(
+        i for i in alignment.base_deletes if i not in promoted_base
+    )
+    new_desired_inserts = sorted(
+        j for j in alignment.desired_inserts if j not in promoted_desired
+    )
+
+    return ContentAlignment(
+        matches=all_matches,
+        base_deletes=new_base_deletes,
+        desired_inserts=new_desired_inserts,
+        total_cost=alignment.total_cost,  # approximate — cost doesn't change much
     )
 
 

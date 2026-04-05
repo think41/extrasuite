@@ -45,12 +45,14 @@ from extradoc.api_types._generated import (
     CreateFooterRequestType,
     CreateFootnoteRequest,
     CreateHeaderRequest,
+    CreateNamedRangeRequest,
     CreateParagraphBulletsRequest,
     CreateParagraphBulletsRequestBulletPreset,
     DeferredID,
     DeleteContentRangeRequest,
     DeleteFooterRequest,
     DeleteHeaderRequest,
+    DeleteNamedRangeRequest,
     DeleteParagraphBulletsRequest,
     DeleteTableColumnRequest,
     DeleteTableRowRequest,
@@ -66,12 +68,14 @@ from extradoc.api_types._generated import (
     Location,
     NamedStyle,
     Paragraph,
+    ParagraphElement,
     ParagraphStyle,
     Range,
     Request,
     SectionStyle,
     StructuralElement,
     Tab,
+    Table,
     TableCellLocation,
     TableCellStyle,
     TableColumnProperties,
@@ -122,6 +126,7 @@ from extradoc.diffmerge import (
     UpdateTableColumnPropertiesOp,
     UpdateTableRowStyleOp,
 )
+from extradoc.diffmerge.model import DeleteNamedRangeOp, InsertNamedRangeOp
 from extradoc.indexer import utf16_len
 
 # Slot → API type string
@@ -210,7 +215,7 @@ def lower_batches(
     """
     batch0: list[Request] = []  # structural creates
     batch1: list[Request] = []  # content + style + structural deletes
-    batch2: list[Request] = []  # footnotes (future)
+    batch2: list[Request] = []  # named ranges (after content, so indices are stable)
 
     _desired_lists_by_tab: dict[str, dict[str, DocList]] = desired_lists_by_tab or {}
     _base_lists_by_tab: dict[str, dict[str, DocList]] = base_lists_by_tab or {}
@@ -633,6 +638,30 @@ def lower_batches(
                         width=op.width,
                         width_type=op.width_type,
                         tab_id=op.tab_id,
+                    )
+                )
+
+            # ---------------------------------------------------------------- #
+            # Named ranges → batch 2 (after content, so indices are stable)
+            # ---------------------------------------------------------------- #
+            case InsertNamedRangeOp():
+                # createNamedRange accepts exactly one Range per request.
+                for rng in op.ranges:
+                    batch2.append(
+                        Request(
+                            create_named_range=CreateNamedRangeRequest(
+                                name=op.name,
+                                range=rng,
+                            )
+                        )
+                    )
+
+            case DeleteNamedRangeOp():
+                batch2.append(
+                    Request(
+                        delete_named_range=DeleteNamedRangeRequest(
+                            named_range_id=op.named_range_id,
+                        )
                     )
                 )
 
@@ -1371,13 +1400,54 @@ def _lower_paragraph_update(
 
 _EMPTY_TEXT_STYLE = TextStyle()
 
+# Sentinel character used to represent non-textRun paragraph elements
+# (footnote refs, rich links, inline objects, etc.) in the character-level diff.
+# U+FFFC (OBJECT REPLACEMENT CHARACTER) is the standard Unicode placeholder for
+# embedded objects that occupy space but whose content is opaque to text processing.
+_OPAQUE_ELEMENT_CHAR = "\ufffc"
+
+# Sentinel TextStyle used to tag opaque placeholder runs so that
+# _diff_paragraph_runs can recognise them and avoid generating text-level
+# API requests (delete / insert / updateTextStyle) for those positions.
+_OPAQUE_SENTINEL_STYLE = TextStyle(bold=None, italic=None)
+_OPAQUE_SENTINEL_STYLE.__dict__["__opaque__"] = True
+
+
+def _is_opaque_style(style: TextStyle) -> bool:
+    """Return True if *style* is the opaque-element sentinel."""
+    return bool(getattr(style, "__dict__", {}).get("__opaque__"))
+
+
+def _non_text_element_size(el: ParagraphElement) -> int:
+    """Return the character size of a non-textRun ParagraphElement.
+
+    If the element carries startIndex/endIndex, use those.
+    Otherwise fall back to 1 — correct for footnoteReference, autoText,
+    pageBreak, columnBreak, equation, horizontalRule, inlineObjectElement,
+    and person.  For richLink, try the title length; default to 1.
+    """
+    start = el.start_index
+    end = el.end_index
+    if isinstance(start, int) and isinstance(end, int):
+        return end - start
+    # Try richLink title length
+    if el.rich_link is not None:
+        props = el.rich_link.rich_link_properties
+        if props is not None and props.title:
+            return utf16_len(props.title)
+    return 1
+
 
 def _extract_runs(
     para: Paragraph,
 ) -> list[tuple[str, TextStyle]]:
-    """Return list of (text, TextStyle) for each textRun element in a paragraph.
+    """Return list of (text, TextStyle) for each element in a paragraph.
 
-    Non-textRun elements (inline objects, footnote refs, etc.) are skipped.
+    textRun elements produce their normal (text, style) tuple.
+    Non-textRun elements (footnote refs, rich links, inline objects, etc.)
+    produce a placeholder string of ``_OPAQUE_ELEMENT_CHAR`` repeated to the
+    element's character size, paired with the ``_OPAQUE_SENTINEL_STYLE``.
+    This ensures the character-level diff sees the correct index space.
     """
     runs: list[tuple[str, TextStyle]] = []
     for el in para.elements or []:
@@ -1386,6 +1456,9 @@ def _extract_runs(
             text = tr.content or ""
             style = tr.text_style or _EMPTY_TEXT_STYLE
             runs.append((text, style))
+        else:
+            size = _non_text_element_size(el)
+            runs.append((_OPAQUE_ELEMENT_CHAR * size, _OPAQUE_SENTINEL_STYLE))
     return runs
 
 
@@ -1394,15 +1467,32 @@ def _runs_to_spans(
 ) -> list[tuple[int, int, str, TextStyle]]:
     """Convert runs to (start, end, text, style) spans with character offsets.
 
-    Offsets are relative to the start of the paragraph (0-based).
+    Offsets are code-point-based (matching SequenceMatcher output), relative
+    to the start of the paragraph (0-based).
     """
     spans: list[tuple[int, int, str, TextStyle]] = []
     cursor = 0
     for text, style in runs:
-        length = utf16_len(text)
+        length = len(text)
         spans.append((cursor, cursor + length, text, style))
         cursor += length
     return spans
+
+
+def _build_cp_to_utf16(text: str) -> list[int]:
+    """Build a mapping from code-point index to UTF-16 offset.
+
+    Returns a list of length ``len(text) + 1`` where entry ``i`` is the
+    UTF-16 offset corresponding to code-point index ``i``.  The final
+    entry gives the total UTF-16 length.
+    """
+    result: list[int] = []
+    utf16_pos = 0
+    for ch in text:
+        result.append(utf16_pos)
+        utf16_pos += 2 if ord(ch) > 0xFFFF else 1
+    result.append(utf16_pos)
+    return result
 
 
 def _styles_equal(s1: TextStyle, s2: TextStyle) -> bool:
@@ -1413,6 +1503,64 @@ def _styles_equal(s1: TextStyle, s2: TextStyle) -> bool:
     return s1.model_dump(by_alias=True, exclude_none=True) == s2.model_dump(
         by_alias=True, exclude_none=True
     )
+
+
+def _delete_ops_skipping_opaque(
+    *,
+    base_body: str,
+    rel_start: int,
+    rel_end: int,
+    story_offset: int,
+    tab_id: _StrOrDeferred,
+    segment_id: str | None,
+    cp_to_utf16: list[int] | None = None,
+) -> list[tuple[int, list[Request]]]:
+    """Split a delete range around opaque placeholder characters.
+
+    Scans ``base_body[rel_start:rel_end]`` and emits deleteContentRange
+    requests only for sub-ranges of real text, skipping any positions
+    occupied by ``_OPAQUE_ELEMENT_CHAR`` (non-textRun elements).
+
+    If *cp_to_utf16* is provided, code-point offsets are translated to
+    UTF-16 offsets before adding *story_offset*.
+
+    Returns a list of ``(abs_start, [Request])`` pairs for each contiguous
+    real-text sub-range.
+    """
+
+    def _abs(cp_idx: int) -> int:
+        if cp_to_utf16 is not None:
+            return story_offset + cp_to_utf16[cp_idx]
+        return story_offset + cp_idx
+
+    result: list[tuple[int, list[Request]]] = []
+    i = rel_start
+    while i < rel_end:
+        # Skip opaque chars
+        if base_body[i] == _OPAQUE_ELEMENT_CHAR:
+            i += 1
+            continue
+        # Find the end of the contiguous real-text run
+        j = i + 1
+        while j < rel_end and base_body[j] != _OPAQUE_ELEMENT_CHAR:
+            j += 1
+        abs_start = _abs(i)
+        abs_end = _abs(j)
+        result.append(
+            (
+                abs_start,
+                [
+                    _make_delete_content_range(
+                        start_index=abs_start,
+                        end_index=abs_end,
+                        tab_id=tab_id,
+                        segment_id=segment_id,
+                    )
+                ],
+            )
+        )
+        i = j
+    return result
 
 
 def _diff_paragraph_runs(
@@ -1458,8 +1606,15 @@ def _diff_paragraph_runs(
 
     # Build span maps for style lookup: char_offset → style
     # We need to find the style at any character position in base/desired.
+    # Spans use code-point offsets (matching SequenceMatcher output).
     base_spans = _runs_to_spans(base_runs)
     desired_spans = _runs_to_spans(desired_runs)
+
+    # Build code-point → UTF-16 offset maps so that we translate
+    # SequenceMatcher indices (code-point-based) into UTF-16 offsets
+    # required by the Google Docs API.  Characters outside the BMP
+    # (emoji, mathematical bold, etc.) are 1 code point but 2 UTF-16 units.
+    base_cp_to_utf16 = _build_cp_to_utf16(base_body)
 
     # Compute character-level diff
     matcher = difflib.SequenceMatcher(None, base_body, desired_body, autojunk=False)
@@ -1490,27 +1645,25 @@ def _diff_paragraph_runs(
                 story_offset=story_offset,
                 tab_id=tab_id,
                 segment_id=segment_id,
+                cp_to_utf16=base_cp_to_utf16,
             )
             for abs_start, reqs in sub_ops:
                 pending.append((abs_start, reqs))
 
         elif tag == "delete":
-            # Delete [i1, i2) in base
-            abs_start = story_offset + i1
-            abs_end = story_offset + i2
-            pending.append(
-                (
-                    abs_start,
-                    [
-                        _make_delete_content_range(
-                            start_index=abs_start,
-                            end_index=abs_end,
-                            tab_id=tab_id,
-                            segment_id=segment_id,
-                        )
-                    ],
-                )
+            # Delete [i1, i2) in base, but skip over opaque placeholder
+            # chars (non-textRun elements that can't be deleted via text ops).
+            del_reqs = _delete_ops_skipping_opaque(
+                base_body=base_body,
+                rel_start=i1,
+                rel_end=i2,
+                story_offset=story_offset,
+                tab_id=tab_id,
+                segment_id=segment_id,
+                cp_to_utf16=base_cp_to_utf16,
             )
+            for abs_pos, reqs in del_reqs:
+                pending.append((abs_pos, reqs))
 
         elif tag == "insert":
             # Insert desired[j1:j2] at position i1 in base (after deletions)
@@ -1525,22 +1678,29 @@ def _diff_paragraph_runs(
                 story_offset=story_offset,
                 tab_id=tab_id,
                 segment_id=segment_id,
+                base_cp_to_utf16=base_cp_to_utf16,
             )
             if insert_reqs:
-                pending.append((story_offset + i1, insert_reqs))
+                pending.append((story_offset + base_cp_to_utf16[i1], insert_reqs))
 
         elif tag == "replace":
             # Delete base[i1:i2], insert desired[j1:j2]
-            abs_start = story_offset + i1
-            abs_end = story_offset + i2
+            abs_start = story_offset + base_cp_to_utf16[i1]
 
-            # Deletion first (will run last since descending order)
-            del_req = _make_delete_content_range(
-                start_index=abs_start,
-                end_index=abs_end,
+            # Deletion (skipping opaque chars)
+            replace_del_ops = _delete_ops_skipping_opaque(
+                base_body=base_body,
+                rel_start=i1,
+                rel_end=i2,
+                story_offset=story_offset,
                 tab_id=tab_id,
                 segment_id=segment_id,
+                cp_to_utf16=base_cp_to_utf16,
             )
+            flat_del_reqs: list[Request] = []
+            for _pos, dreqs in replace_del_ops:
+                flat_del_reqs.extend(dreqs)
+
             # Insertion at the same position (after deletion, index is abs_start)
             insert_reqs = _insert_ops_for_span(
                 desired_spans=desired_spans,
@@ -1550,6 +1710,7 @@ def _diff_paragraph_runs(
                 story_offset=story_offset,
                 tab_id=tab_id,
                 segment_id=segment_id,
+                base_cp_to_utf16=base_cp_to_utf16,
             )
             # Delete and insert at the same logical position.
             # We emit the insert first (smaller sort key → processed before delete
@@ -1558,8 +1719,9 @@ def _diff_paragraph_runs(
             # delete=0 (higher priority = applied first in descending scan).
             # To ensure delete comes before insert in the final request list,
             # we emit them as a single group in delete-first order.
-            combined = [del_req, *insert_reqs]
-            pending.append((abs_start, combined))
+            combined: list[Request] = [*flat_del_reqs, *insert_reqs]
+            if combined:
+                pending.append((abs_start, combined))
 
     # Sort pending ops by sort_key descending (highest document index first)
     pending.sort(key=lambda item: item[0], reverse=True)
@@ -1583,6 +1745,7 @@ def _style_update_ops_for_equal_span(
     story_offset: int,
     tab_id: str,
     segment_id: str | None,
+    cp_to_utf16: list[int] | None = None,
 ) -> list[tuple[int, list[Request]]]:
     """For an 'equal' diff chunk, emit updateTextStyle where style changed.
 
@@ -1590,8 +1753,17 @@ def _style_update_ops_for_equal_span(
     characters that share the same (base_style, desired_style) pair, then emit
     an updateTextStyle for each group where styles differ.
 
+    If *cp_to_utf16* is provided, code-point offsets are translated to
+    UTF-16 offsets before adding *story_offset*.
+
     Returns list of (abs_start, [Request]) pairs.
     """
+
+    def _abs(cp_idx: int) -> int:
+        if cp_to_utf16 is not None:
+            return story_offset + cp_to_utf16[cp_idx]
+        return story_offset + cp_idx
+
     # Find all style-change sub-ranges within the equal span
     # Group by consecutive chars with same (base_style != desired_style)
     result: list[tuple[int, list[Request]]] = []
@@ -1617,9 +1789,13 @@ def _style_update_ops_for_equal_span(
             break
         chunk_end = i + step
 
-        if not _styles_equal(b_style, d_style):
-            abs_start = story_offset + i
-            abs_end = story_offset + chunk_end
+        if (
+            not _styles_equal(b_style, d_style)
+            and not _is_opaque_style(b_style)
+            and not _is_opaque_style(d_style)
+        ):
+            abs_start = _abs(i)
+            abs_end = _abs(chunk_end)
             changed_fields = _text_style_changed_fields(b_style, d_style)
             if changed_fields:
                 result.append(
@@ -1676,6 +1852,7 @@ def _insert_ops_for_span(
     story_offset: int,
     tab_id: str,
     segment_id: str | None,
+    base_cp_to_utf16: list[int] | None = None,
 ) -> list[Request]:
     """Emit insertText + optional updateTextStyle for desired[desired_start:desired_end].
 
@@ -1684,11 +1861,14 @@ def _insert_ops_for_span(
     contiguous group with the same style — but since insertText inserts at the same
     index and text flows forward, we emit a single insertText with all the text and
     then style each sub-range.
+
+    If *base_cp_to_utf16* is provided, *base_pos* is translated from code-point
+    offset to UTF-16 offset before adding *story_offset*.
     """
     if desired_start >= desired_end:
         return []
 
-    # Collect the full text to insert
+    # Collect the full text to insert, skipping opaque placeholder chars
     full_text = ""
     i = desired_start
     while i < desired_end:
@@ -1697,7 +1877,11 @@ def _insert_ops_for_span(
                 # Take the portion of this span in [desired_start, desired_end)
                 offset_in_span = i - start
                 take = min(end, desired_end) - i
-                full_text += text[offset_in_span : offset_in_span + take]
+                chunk = text[offset_in_span : offset_in_span + take]
+                # Skip opaque placeholder characters — they represent non-textRun
+                # elements and must not be emitted as insertText.
+                if not _is_opaque_style(_style):
+                    full_text += chunk
                 i += take
                 break
         else:
@@ -1706,7 +1890,10 @@ def _insert_ops_for_span(
     if not full_text:
         return []
 
-    abs_insert = story_offset + base_pos
+    if base_cp_to_utf16 is not None:
+        abs_insert = story_offset + base_cp_to_utf16[base_pos]
+    else:
+        abs_insert = story_offset + base_pos
     reqs: list[Request] = [
         _make_insert_text(
             index=abs_insert,
@@ -1716,27 +1903,43 @@ def _insert_ops_for_span(
         )
     ]
 
-    # Apply styles to sub-ranges of the inserted text
+    # Apply styles to sub-ranges of the inserted text.
+    # cursor tracks the absolute UTF-16 position within the newly inserted
+    # text.  span_len is in code-point space, so we compute the UTF-16
+    # length of each text chunk for cursor advancement.
     cursor = abs_insert
     i = desired_start
     while i < desired_end:
         style = _style_at_offset(desired_spans, i)
         end_of_span = _next_span_boundary(desired_spans, i, desired_end)
-        span_len = end_of_span - i
+        span_cp_len = end_of_span - i
+        # Compute the UTF-16 length of this span's text for correct cursor
+        # advancement.  We need the actual text, not just the code-point count.
+        span_text = ""
+        for s_start, s_end, s_text, _ in desired_spans:
+            if s_start <= i < s_end:
+                offset_in = i - s_start
+                span_text = s_text[offset_in : offset_in + span_cp_len]
+                break
+        span_utf16_len = utf16_len(span_text) if span_text else span_cp_len
+        # Skip opaque spans (non-textRun elements)
+        if _is_opaque_style(style):
+            i = end_of_span
+            continue
         style_dict = style.model_dump(by_alias=True, exclude_none=True)
         if style_dict:
             fields = list(style_dict.keys())
             reqs.append(
                 _make_update_text_style(
                     start_index=cursor,
-                    end_index=cursor + span_len,
+                    end_index=cursor + span_utf16_len,
                     tab_id=tab_id,
                     segment_id=segment_id,
                     text_style=style,
                     fields=fields,
                 )
             )
-        cursor += span_len
+        cursor += span_utf16_len
         i = end_of_span
 
     return reqs
@@ -2489,24 +2692,64 @@ def _is_cell_terminal(el: StructuralElement) -> bool:
     return _para_text(el.paragraph) == "\n"
 
 
+def _paragraph_size(para: Paragraph) -> int:
+    """Return the total character size of a paragraph including non-textRun elements.
+
+    Each textRun contributes its UTF-16 content length.
+    Non-textRun elements (footnote refs, rich links, inline objects, etc.)
+    each contribute their character size (usually 1, computed from indices
+    or element properties).
+    """
+    total = 0
+    for e in para.elements or []:
+        if e.text_run is not None and e.text_run.content is not None:
+            total += utf16_len(e.text_run.content)
+        elif e.text_run is None:
+            # Non-textRun element
+            total += _non_text_element_size(e)
+    return total
+
+
+def _table_size(table: Table) -> int:
+    """Compute table size recursively from cell contents.
+
+    Google Docs index model for tables:
+    1 (table opener) + per_row(1 (row opener) + per_cell(1 (cell opener) +
+    content_size)) + 1 (trailing newline after last row).
+    """
+    size = 1  # table opener
+    for row in table.table_rows or []:
+        size += 1  # row opener
+        for cell in row.table_cells or []:
+            size += 1  # cell opener
+            for content_el in cell.content or []:
+                size += _element_size(content_el)
+    size += 1  # trailing newline after last row
+    return size
+
+
 def _element_size(el: StructuralElement) -> int:
     """Return the number of UTF-16 code units occupied by a StructuralElement.
 
-    For paragraphs the size is always derivable from the text content.
+    For paragraphs the size is derived from all elements (text runs + non-text).
     For section breaks the API allocates exactly one character.
-    For tables and other elements we read ``startIndex``/``endIndex`` if
-    present; these are set on elements that came from a real API pull.
+    For tables, the size is computed recursively from cell contents.
+    For other elements we read ``startIndex``/``endIndex`` if present.
     """
     if el.paragraph is not None:
-        return utf16_len(_para_text(el.paragraph))
+        return _paragraph_size(el.paragraph)
     if el.section_break is not None:
         return 1
+    if el.table is not None:
+        # Try indices first (from API pull), fall back to recursive computation
+        start, end = _element_range(el)
+        if start is not None and end is not None:
+            return end - start
+        return _table_size(el.table)
     start, end = _element_range(el)
     if start is not None and end is not None:
         return end - start
     el_keys = []
-    if el.table is not None:
-        el_keys.append("table")
     if el.table_of_contents is not None:
         el_keys.append("tableOfContents")
     raise NotImplementedError(

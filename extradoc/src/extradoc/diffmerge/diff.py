@@ -30,10 +30,12 @@ from extradoc.api_types._generated import (
     Header,
     InlineObject,
     List,
+    NamedRanges,
     NamedStyle,
     NamedStyles,
     Paragraph,
     ParagraphElement,
+    Range,
     StructuralElement,
     Tab,
     Table,
@@ -59,11 +61,13 @@ from extradoc.diffmerge.model import (
     DeleteHeaderOp,
     DeleteInlineObjectOp,
     DeleteListOp,
+    DeleteNamedRangeOp,
     DeleteNamedStyleOp,
     DeleteTabOp,
     InsertFootnoteOp,
     InsertInlineObjectOp,
     InsertListOp,
+    InsertNamedRangeOp,
     InsertNamedStyleOp,
     InsertTabOp,
     ReconcileOp,
@@ -271,6 +275,7 @@ def _diff_tab(
     ops.extend(_diff_headers(tab_id, base_dt, desired_dt))
     ops.extend(_diff_footers(tab_id, base_dt, desired_dt))
     ops.extend(_diff_footnotes(tab_id, base_dt, desired_dt))
+    ops.extend(_diff_named_ranges(tab_id, base_dt, desired_dt))
     ops.extend(_diff_body(tab_id, base_dt, desired_dt))
 
     return ops
@@ -690,6 +695,51 @@ def _diff_footnotes(
     return ops
 
 
+def _walk_table_for_footnotes(
+    table: Table,
+    cursor: int,
+    offsets: dict[str, int],
+) -> int:
+    """Walk table cells recursively, collecting footnote ref offsets.
+
+    Returns the cursor position after the table.
+
+    Table structure in Google Docs index space:
+      1 char for table opener
+      per row: 1 char for row opener
+        per cell: 1 char for cell opener + cell content
+      1 char trailing newline after table
+    """
+    cursor += 1  # table opener
+    for row in table.table_rows or []:
+        cursor += 1  # row opener
+        for cell in row.table_cells or []:
+            cursor += 1  # cell opener
+            for content_el in cell.content or []:
+                if content_el.paragraph is not None:
+                    para = content_el.paragraph
+                    for pe in para.elements or []:
+                        fn_ref = pe.footnote_reference
+                        if fn_ref is not None and fn_ref.footnote_id is not None:
+                            offsets[fn_ref.footnote_id] = cursor
+                            cursor += 1
+                        elif (
+                            pe.text_run is not None and pe.text_run.content is not None
+                        ):
+                            cursor += len(pe.text_run.content)
+                        else:
+                            cursor += 1
+                elif content_el.table is not None:
+                    # Nested table
+                    cursor = _walk_table_for_footnotes(
+                        content_el.table, cursor, offsets
+                    )
+                else:
+                    cursor += 1
+    cursor += 1  # trailing newline after table
+    return cursor
+
+
 def _footnote_ref_offsets_in_body(
     body_content: list[StructuralElement],
 ) -> dict[str, int]:
@@ -699,23 +749,174 @@ def _footnote_ref_offsets_in_body(
     in the document.  We collect the ``startIndex`` of the element if present,
     so that ``InsertFootnoteOp`` can carry the anchor location for
     ``createFootnote``.
+
+    When ``startIndex`` is not available on the ParagraphElement (e.g. in a
+    desired document constructed without API indices), we compute positions by
+    walking the body content and counting character sizes.  The body starts at
+    index 0 (or the first element's startIndex if available).
     """
     offsets: dict[str, int] = {}
+
+    # First pass: try to collect from explicit startIndex values.
+    # Walk into table cells recursively to find footnote refs there too.
+    def _collect_from_indices(elements: list[StructuralElement]) -> None:
+        for el in elements:
+            if el.paragraph is not None:
+                for pe in el.paragraph.elements or []:
+                    fn_ref = pe.footnote_reference
+                    if fn_ref is None:
+                        continue
+                    fn_id = fn_ref.footnote_id
+                    if fn_id is None:
+                        continue
+                    start = pe.start_index
+                    if isinstance(start, int):
+                        offsets[fn_id] = start
+            elif el.table is not None:
+                for row in el.table.table_rows or []:
+                    for cell in row.table_cells or []:
+                        _collect_from_indices(cell.content or [])
+
+    _collect_from_indices(body_content)
+
+    if offsets:
+        return offsets
+
+    # Second pass: compute positions by walking body content
+    # Determine start offset from the first element, or default to 1
+    # (body content typically starts at index 1 after the section break)
+    cursor = 1
+    if body_content and isinstance(body_content[0].start_index, int):
+        cursor = body_content[0].start_index
+
     for el in body_content:
-        if el.paragraph is None:
-            continue
-        para: Paragraph = el.paragraph
-        for pe in para.elements or []:
-            fn_ref = pe.footnote_reference
-            if fn_ref is None:
-                continue
-            fn_id = fn_ref.footnote_id
-            if fn_id is None:
-                continue
-            start = pe.start_index
-            if isinstance(start, int):
-                offsets[fn_id] = start
+        if el.paragraph is not None:
+            para = el.paragraph
+            for pe in para.elements or []:
+                fn_ref = pe.footnote_reference
+                if fn_ref is not None and fn_ref.footnote_id is not None:
+                    offsets[fn_ref.footnote_id] = cursor
+                    cursor += 1  # footnote ref occupies 1 character
+                elif pe.text_run is not None and pe.text_run.content is not None:
+                    cursor += len(pe.text_run.content)
+                else:
+                    cursor += 1  # other non-text elements occupy 1 character
+        elif el.section_break is not None:
+            cursor += 1
+        elif el.table is not None:
+            # Use startIndex/endIndex if available, otherwise walk into
+            # the table cells recursively to find footnote refs.
+            start, end = el.start_index, el.end_index
+            if isinstance(start, int) and isinstance(end, int):
+                # Walk into cells to find footnote refs even when indices
+                # are available (use the known start to position cursor).
+                cursor = _walk_table_for_footnotes(el.table, start, offsets)
+                cursor = end
+            else:
+                # No indices: walk recursively and compute positions.
+                cursor = _walk_table_for_footnotes(el.table, cursor, offsets)
+        else:
+            cursor += 1
+
     return offsets
+
+
+# ---------------------------------------------------------------------------
+# 7b. Named Ranges
+# ---------------------------------------------------------------------------
+
+
+def _diff_named_ranges(
+    tab_id: str,
+    base_dt: DocumentTab,
+    desired_dt: DocumentTab,
+) -> list[ReconcileOp]:
+    """Diff named ranges between base and desired DocumentTab.
+
+    Named ranges are keyed by name in the ``namedRanges`` dict, but each
+    ``NamedRanges`` object may contain multiple ``NamedRange`` entries (each
+    with its own ``namedRangeId``).  We match at the ``namedRangeId`` level.
+
+    - ID only in desired → ``InsertNamedRangeOp``
+    - ID only in base → ``DeleteNamedRangeOp``
+    - Same ID, different ranges → ``DeleteNamedRangeOp`` + ``InsertNamedRangeOp``
+    - Same ID, identical ranges → no op
+
+    If the desired tab has ``named_ranges=None`` we treat it as "preserve
+    whatever the base has" (no ops).  If desired has ``{}`` we treat it as
+    "delete everything in base".
+    """
+    # If the desired doc doesn't model named ranges at all, leave base untouched.
+    if desired_dt.named_ranges is None:
+        return []
+
+    base_nr_dict: dict[str, NamedRanges] = base_dt.named_ranges or {}
+    desired_nr_dict: dict[str, NamedRanges] = desired_dt.named_ranges or {}
+
+    # Flatten to id→(name, ranges) for both sides.
+    def _flatten(
+        nr_dict: dict[str, NamedRanges],
+    ) -> dict[str, tuple[str, list[Range]]]:
+        result: dict[str, tuple[str, list[Range]]] = {}
+        for _name, named_ranges_obj in nr_dict.items():
+            for nr in named_ranges_obj.named_ranges or []:
+                nr_id = nr.named_range_id
+                name = nr.name or _name
+                ranges = list(nr.ranges or [])
+                if nr_id:
+                    result[nr_id] = (name, ranges)
+        return result
+
+    base_flat = _flatten(base_nr_dict)
+    desired_flat = _flatten(desired_nr_dict)
+
+    ops: list[ReconcileOp] = []
+
+    # Present in desired but not in base → insert
+    for nr_id, (name, ranges) in desired_flat.items():
+        if nr_id not in base_flat:
+            ops.append(
+                InsertNamedRangeOp(
+                    tab_id=tab_id,
+                    name=name,
+                    named_range_id=nr_id,
+                    ranges=ranges,
+                )
+            )
+        else:
+            # Same ID: compare ranges
+            base_ranges = base_flat[nr_id][1]
+            if ranges != base_ranges:
+                # Delete old, create new
+                ops.append(
+                    DeleteNamedRangeOp(
+                        tab_id=tab_id,
+                        named_range_id=nr_id,
+                        name=base_flat[nr_id][0],
+                    )
+                )
+                ops.append(
+                    InsertNamedRangeOp(
+                        tab_id=tab_id,
+                        name=name,
+                        named_range_id=nr_id,
+                        ranges=ranges,
+                    )
+                )
+            # else: identical — no op
+
+    # Present in base but not in desired → delete
+    for nr_id, (name, _ranges) in base_flat.items():
+        if nr_id not in desired_flat:
+            ops.append(
+                DeleteNamedRangeOp(
+                    tab_id=tab_id,
+                    named_range_id=nr_id,
+                    name=name,
+                )
+            )
+
+    return ops
 
 
 # ---------------------------------------------------------------------------
