@@ -708,8 +708,9 @@ def _fix_deferred_batch_index(req: Request, target_batch_index: int) -> None:
                 object.__setattr__(obj, "batch_index", target_batch_index)
             return
         # Walk Pydantic model fields
-        if hasattr(type(obj), "model_fields"):
-            for field_name in type(obj).model_fields:
+        model_fields = getattr(type(obj), "model_fields", None)
+        if model_fields is not None:
+            for field_name in model_fields:
                 val = getattr(obj, field_name, None)
                 if val is not None:
                     _walk(val)
