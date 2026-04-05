@@ -919,12 +919,13 @@ def _lower_story_content_update(
     # alignment: find the last matched base element whose base_idx < the
     # "virtual" position and use its endIndex (adjusted for prior deletions).
 
+    insert_metadata: list[tuple[int, int]] = []
     if alignment.desired_inserts:
         # Build a map from desired_idx → base insertion point (startIndex of
         # the NEXT surviving base element after where we want to insert).
         # For the simple case, we insert before the next matched element or
         # before the terminal.
-        insert_requests = _plan_insertions(
+        insert_requests, insert_metadata = _plan_insertions(
             alignment=alignment,
             base_content=base_content,
             desired_content=desired_content,
@@ -976,12 +977,21 @@ def _lower_story_content_update(
             if b_el_start is not None
             else 0
         )
+        post_insert_shift = (
+            _inserted_chars_before_or_at(
+                insert_metadata=insert_metadata,
+                before_pos=b_el_start,
+            )
+            if b_el_start is not None
+            else 0
+        )
         update_reqs = _lower_element_update(
             base_el=b_el,
             desired_el=d_el,
             tab_id=tab_id,
             segment_id=segment_id,
             pre_delete_shift=shift,
+            post_insert_shift=post_insert_shift,
             desired_lists=desired_lists or {},
             base_lists=base_lists or {},
         )
@@ -998,7 +1008,7 @@ def _plan_insertions(
     tab_id: str,
     segment_id: str | None,
     desired_lists: dict[str, DocList] | None = None,
-) -> list[Request]:
+) -> tuple[list[Request], list[tuple[int, int]]]:
     """Plan insertion requests for desired_inserts.
 
     For each desired index to insert, we determine the insertion position in
@@ -1025,7 +1035,7 @@ def _plan_insertions(
     startIndex that is a valid insertion point.
     """
     if not alignment.desired_inserts:
-        return []
+        return [], []
 
     # Build sorted list of matched (base_idx, desired_idx) pairs
     matches_sorted = sorted(alignment.matches, key=lambda m: m.desired_idx)
@@ -1043,6 +1053,10 @@ def _plan_insertions(
     # Phase 1: Compute (insert_pos, desired_idx, element_requests) for each insert.
     # We collect them first so we can reorder within same-position groups.
     planned: list[tuple[int, int, list[Request]]] = []
+    # Metadata for post_insert_shift computation: list of
+    # (raw_insert_pos, insert_size) — one tuple per planned insert, where
+    # raw_insert_pos is in BASE coordinates (before delete shift).
+    insert_metadata: list[tuple[int, int]] = []
 
     for desired_idx in sorted(alignment.desired_inserts):
         # Find the base insertion point: the startIndex of the next surviving
@@ -1083,6 +1097,7 @@ def _plan_insertions(
             desired_lists=desired_lists or {},
         )
         planned.append((insert_pos, desired_idx, reqs))
+        insert_metadata.append((raw_insert_pos, _batch_insert_size_from_reqs(reqs)))
 
     # Phase 2: Emit requests in the correct order.
     #
@@ -1121,7 +1136,7 @@ def _plan_insertions(
         # items have their createParagraphBullets merged into a single call.
         requests.extend(_emit_same_position_group(group))
 
-    return requests
+    return requests, insert_metadata
 
 
 def _shift_request_indices(
@@ -1201,6 +1216,34 @@ def _final_doc_size_from_reqs(reqs: list[Request]) -> int:
             # (1) + rows * (row opener (1) + cols * (cell opener (1) +
             # terminal \n (1))) + trailing \n (1).
             total += 2 + rows * (1 + cols * 2) + 1
+        elif req.insert_page_break is not None:
+            total += 2
+        elif req.insert_section_break is not None:
+            total += 1
+    return total
+
+
+def _batch_insert_size_from_reqs(reqs: list[Request]) -> int:
+    """Compute the net UTF-16 size added to the story segment by this element's
+    requests, measured as the sum of each insert request's own contribution.
+
+    Differs from ``_final_doc_size_from_reqs`` in how ``insertTable`` is
+    counted: here we count only the table skeleton as the API delta
+    (``1 + rows * (1 + cols * 2)``), matching the request-level accounting
+    used by the matched-element post_insert_shift.  We do NOT add the
+    pre-paragraph \\n or trailing carrier paragraph here — those are either
+    absorbed into the existing paragraph structure or emitted as separate
+    ``insertText`` requests already counted above.
+    """
+    total = 0
+    for req in reqs:
+        if req.insert_text is not None:
+            total += utf16_len(req.insert_text.text or "")
+        elif req.insert_table is not None:
+            it = req.insert_table
+            rows = it.rows or 0
+            cols = it.columns or 0
+            total += 1 + rows * (1 + cols * 2)
         elif req.insert_page_break is not None:
             total += 2
         elif req.insert_section_break is not None:
@@ -1450,6 +1493,21 @@ def _deleted_chars_before(
     return total
 
 
+def _inserted_chars_before_or_at(
+    *,
+    insert_metadata: list[tuple[int, int]],
+    before_pos: int,
+) -> int:
+    """Return total character count inserted at raw positions <= before_pos.
+
+    Used to shift matched-element update indices by the size of whole-element
+    inserts that run BEFORE the update in the same batch.  An insert whose
+    raw (base-coordinate) insertion point is `<= before_pos` lands at or
+    before the matched element's position, pushing its content forward.
+    """
+    return sum(size for raw_pos, size in insert_metadata if raw_pos <= before_pos)
+
+
 def _lower_element_update(
     *,
     base_el: StructuralElement,
@@ -1457,6 +1515,7 @@ def _lower_element_update(
     tab_id: str,
     segment_id: str | None,
     pre_delete_shift: int = 0,
+    post_insert_shift: int = 0,
     desired_lists: dict[str, DocList] | None = None,
     base_lists: dict[str, DocList] | None = None,
 ) -> list[Request]:
@@ -1479,6 +1538,7 @@ def _lower_element_update(
             tab_id=tab_id,
             segment_id=segment_id,
             pre_delete_shift=pre_delete_shift,
+            post_insert_shift=post_insert_shift,
             desired_lists=desired_lists or {},
             base_lists=base_lists or {},
         )
@@ -1494,6 +1554,8 @@ def _lower_element_update(
             base_el=base_el,
             desired_el=desired_el,
             tab_id=tab_id,
+            pre_delete_shift=pre_delete_shift,
+            post_insert_shift=post_insert_shift,
         )
     else:
         # TOC etc. — no content to update
@@ -1507,6 +1569,7 @@ def _lower_paragraph_update(
     tab_id: str,
     segment_id: str | None,
     pre_delete_shift: int = 0,
+    post_insert_shift: int = 0,
     desired_lists: dict[str, DocList] | None = None,
     base_lists: dict[str, DocList] | None = None,
 ) -> list[Request]:
@@ -1531,22 +1594,16 @@ def _lower_paragraph_update(
     if start is None or end is None:
         return []
 
-    adjusted_start = start - pre_delete_shift
-    adjusted_end = end - pre_delete_shift
+    adjusted_start = start - pre_delete_shift + post_insert_shift
+    adjusted_end = end - pre_delete_shift + post_insert_shift
 
-    # Always compute run-level diff (handles text changes + text-style changes).
-    # For the same-text case this emits only updateTextStyle for changed runs.
-    # For the changed-text case this emits delete/insert/updateTextStyle as needed.
-    requests = _diff_paragraph_runs(
-        base_para=base_para,
-        desired_para=desired_para,
-        story_offset=adjusted_start,
-        tab_id=tab_id,
-        segment_id=segment_id,
-    )
-
-    # Additionally apply paragraph-level style changes (alignment, spacing, etc.)
-    # regardless of whether text changed.
+    # Paragraph-level style changes (alignment, spacing, namedStyleType, etc.)
+    # are emitted FIRST — before the text-level diff ops — so the style range
+    # [adjusted_start..adjusted_end) is still valid.  If we emitted them after
+    # the diff ops, a shrinking diff (e.g. body replaced with shorter text)
+    # would leave the style range pointing past the paragraph's new end, which
+    # the API rejects with "Index X must be less than the end index of the
+    # referenced segment".
     style_reqs = _lower_para_style_update(
         base_para=base_para,
         desired_para=desired_para,
@@ -1557,9 +1614,19 @@ def _lower_paragraph_update(
         desired_lists=desired_lists or {},
         base_lists=base_lists or {},
     )
-    requests.extend(style_reqs)
 
-    return requests
+    # Run-level diff (handles text changes + text-style changes).
+    # For the same-text case this emits only updateTextStyle for changed runs.
+    # For the changed-text case this emits delete/insert/updateTextStyle as needed.
+    diff_reqs = _diff_paragraph_runs(
+        base_para=base_para,
+        desired_para=desired_para,
+        story_offset=adjusted_start,
+        tab_id=tab_id,
+        segment_id=segment_id,
+    )
+
+    return style_reqs + diff_reqs
 
 
 _EMPTY_TEXT_STYLE = TextStyle()
@@ -2718,6 +2785,8 @@ def _lower_section_break_update(
     base_el: StructuralElement,
     desired_el: StructuralElement,
     tab_id: str,
+    pre_delete_shift: int = 0,
+    post_insert_shift: int = 0,
 ) -> list[Request]:
     """Emit ``updateSectionStyle`` when a matched section break's style changed.
 
@@ -2747,12 +2816,15 @@ def _lower_section_break_update(
     if start is None or end is None:
         return []
 
+    adjusted_start = start - pre_delete_shift + post_insert_shift
+    adjusted_end = end - pre_delete_shift + post_insert_shift
+
     return [
         Request(
             update_section_style=UpdateSectionStyleRequest(
                 range=Range(
-                    start_index=start,
-                    end_index=end,
+                    start_index=adjusted_start,
+                    end_index=adjusted_end,
                     tab_id=tab_id if tab_id else None,
                 ),
                 section_style=SectionStyle.model_validate(desired_style),
