@@ -638,6 +638,39 @@ def lower_batches(
                         tab_id=op.tab_id,
                     )
                 )
+                # Populate the newly-created cells with the desired text.
+                # ``insertTableColumn`` creates one empty 2-byte cell per row
+                # (1 cell-overhead + 1 "\n" paragraph). Offsets are computed
+                # off each row's anchor cell boundary in the BASE doc, shifted
+                # by ``row_idx * _EMPTY_CELL_SIZE`` to account for earlier
+                # rows' new cells. Emitted in reverse row order so each
+                # insertText only shifts offsets we've already processed.
+                #
+                # Safety guard: the BASE anchor indices are only valid when
+                # no prior structural column op on this table has shifted
+                # per-row cell boundaries. Prior ``insertTableColumn`` ops
+                # add a variable-sized run of cell-text inserts between the
+                # structural op and this one, whose cumulative row deltas we
+                # can't reconstruct from the lowered request list alone;
+                # ``deleteTableColumn`` likewise removes a variable-sized
+                # cell. In either case we fall back to emitting the
+                # structural ``insertTableColumn`` alone and letting the new
+                # cells land empty (matching the pre-fix behavior, and
+                # matching ``InsertTableRowOp``'s analogous limitation for
+                # multi-row-append). The common "append one column" and
+                # "append one row" cases — which are what users actually hit
+                # — populate cells correctly.
+                if not _has_prior_table_structural_column_op(
+                    batch1, table_start_index=op.table_start_index, tab_id=op.tab_id
+                ):
+                    batch1.extend(
+                        _make_new_column_cell_text_inserts(
+                            new_cell_anchor_indices=op.new_cell_anchor_indices,
+                            new_cell_texts=op.new_cell_texts,
+                            insert_right=op.insert_right,
+                            tab_id=op.tab_id,
+                        )
+                    )
 
             case DeleteTableColumnOp():
                 batch1.append(
@@ -3420,6 +3453,103 @@ def _make_new_row_cell_text_inserts(
             + col_idx * _EMPTY_CELL_SIZE
             + 1  # cell start-overhead
         )
+        requests.append(
+            _make_insert_text(
+                index=p1_index,
+                tab_id=tab_id,
+                segment_id=None,
+                text=text,
+            )
+        )
+    return requests
+
+
+def _has_prior_table_structural_column_op(
+    batch: list[Request],
+    *,
+    table_start_index: int,
+    tab_id: str,
+) -> bool:
+    """Return True if ``batch`` already contains a column-level structural
+    op (``insertTableColumn`` or ``deleteTableColumn``) on the same table.
+
+    The just-appended ``insertTableColumn`` for the CURRENT op lives at
+    ``batch[-1]`` and is excluded — its per-row shift is already accounted
+    for in the cell-text offset formula. Requests before it are genuine
+    prior ops whose byte impact on per-row cell boundaries we can't
+    reconstruct cleanly (prior column inserts are interleaved with
+    variable-sized text fills; prior deletes remove variable-sized cell
+    content). In either case we skip the cell-text inserts for this op.
+    """
+    for req in batch[:-1]:
+        for child in (req.insert_table_column, req.delete_table_column):
+            if child is None:
+                continue
+            loc = child.table_cell_location
+            if loc is None:
+                continue
+            start = loc.table_start_location
+            if start is None:
+                continue
+            if start.index == table_start_index and start.tab_id == tab_id:
+                return True
+    return False
+
+
+def _make_new_column_cell_text_inserts(
+    *,
+    new_cell_anchor_indices: list[int | None],
+    new_cell_texts: list[str],
+    insert_right: bool,
+    tab_id: str,
+) -> list[Request]:
+    """Emit ``insertText`` requests populating an empty, just-inserted column.
+
+    After ``insertTableColumn``, each base row has gained one new
+    ``_EMPTY_CELL_SIZE``-byte cell (1 cell-overhead + 1 ``\\n`` paragraph —
+    same layout as rows created by ``insertTableRow``). The new cell's
+    position in each row is determined by the anchor cell's boundary in the
+    BASE document: for ``insert_right=True`` the anchor is that cell's
+    ``end_index``; for ``insert_right=False`` the anchor is its
+    ``start_index``. Because every earlier base row has also gained a new
+    cell, row ``R``'s anchor must be shifted by ``R * _EMPTY_CELL_SIZE`` to
+    land on the POST-insert absolute byte index.
+
+    We emit one ``insertText`` per non-empty cell, targeting the cell's
+    ``\\n`` paragraph, in REVERSE row order so each insert only shifts byte
+    offsets at strictly greater indices (which we've already processed).
+    """
+    if not new_cell_texts:
+        return []
+    if len(new_cell_anchor_indices) != len(new_cell_texts):
+        raise ValueError(
+            "InsertTableColumnOp: new_cell_anchor_indices and new_cell_texts "
+            "must have the same length"
+        )
+
+    requests: list[Request] = []
+    # Iterate rows bottom-up so each emitted insert does not shift offsets of
+    # subsequent (higher-row) inserts we still need to emit.
+    for row_idx in reversed(range(len(new_cell_texts))):
+        text = new_cell_texts[row_idx]
+        if not text:
+            continue
+        anchor = new_cell_anchor_indices[row_idx]
+        if anchor is None:
+            raise ValueError(
+                f"InsertTableColumnOp: row {row_idx} has non-empty "
+                f"new_cell_text but no anchor index; cannot compute byte offset"
+            )
+        # Post-insert absolute index of the new cell's first (only) paragraph:
+        #   anchor + row_idx * _EMPTY_CELL_SIZE  (cumulative shift from this
+        #     op's earlier rows' new cells)
+        #   + 1                                  (the new cell's start-overhead)
+        # For insert_right=True, anchor = base_cell.end_index → the new cell
+        # begins exactly at that byte. For insert_right=False, anchor =
+        # base_cell.start_index → the new cell is inserted BEFORE the anchor,
+        # and begins at that byte too. Both paths share the same formula.
+        _ = insert_right  # kept for documentation symmetry; formula identical
+        p1_index = anchor + row_idx * _EMPTY_CELL_SIZE + 1
         requests.append(
             _make_insert_text(
                 index=p1_index,

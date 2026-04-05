@@ -386,12 +386,41 @@ class DeleteTableRowOp:
 
 @dataclass
 class InsertTableColumnOp:
-    """Insert a new column into an existing table."""
+    """Insert a new column into an existing table.
+
+    ``new_cell_texts`` carries the desired text for each of the new column's
+    cells, one entry per base row in row order. ``new_cell_anchor_indices``
+    carries the corresponding BASE byte index of the anchor cell's boundary
+    used to compute each new cell's paragraph offset after
+    ``insertTableColumn`` executes:
+
+    - For ``insert_right=True`` this is the anchor cell's ``end_index``.
+    - For ``insert_right=False`` this is the anchor cell's ``start_index``.
+
+    Lowering converts each (anchor, row_idx) pair into the post-insert
+    absolute byte index of that new cell's ``\\n`` paragraph (shifted by
+    ``row_idx * _EMPTY_CELL_SIZE`` bytes for the earlier rows' new cells) and
+    emits an ``insertText`` per non-empty cell in reverse row order so earlier
+    inserts do not invalidate later offsets.
+
+    ``new_cell_anchor_indices`` is populated whenever the base table carries
+    API-assigned indices. Synthetic unit-test tables without index info leave
+    it as an empty list; in that case ``new_cell_texts`` is also empty and
+    lowering emits only the structural ``insertTableColumn`` request.
+    """
 
     tab_id: str
     table_start_index: int
     column_index: int  # where to insert (0-based, refers to base column)
     insert_right: bool  # True = insert after column_index, False = insert before
+    # Per-base-row anchor byte indices (from the base document). Same length as
+    # ``new_cell_texts`` when populated, empty otherwise. Each entry's value
+    # is the base cell's ``end_index`` (insert_right=True) or ``start_index``
+    # (insert_right=False). ``None`` at a given row means that specific row
+    # had no index info — lowering will raise if any cell at that row has
+    # non-empty text.
+    new_cell_anchor_indices: list[int | None] = field(default_factory=list)
+    new_cell_texts: list[str] = field(default_factory=list)  # one text per base row
 
 
 @dataclass

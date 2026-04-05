@@ -423,6 +423,8 @@ def diff_tables(
         lcs_pairs=col_lcs,
         tab_id=tab_id,
         table_start_index=table_start_index,
+        base_rows=base_rows,
+        desired_rows=desired_rows,
     )
 
     return ops
@@ -527,25 +529,88 @@ def _emit_col_insertions(
     lcs_pairs: list[tuple[int, int]],
     tab_id: str,
     table_start_index: int,
+    base_rows: list[TableRow],
+    desired_rows: list[TableRow],
 ) -> None:
-    """Emit InsertTableColumnOp for each unmatched desired column."""
+    """Emit InsertTableColumnOp for each unmatched desired column.
+
+    Each emitted op carries ``new_cell_texts`` (the desired text for each of
+    the new column's cells, one per base row in row order) and
+    ``new_cell_anchor_indices`` (per-row BASE byte indices identifying where
+    the new cell lands in each row). The lowering layer uses both to emit
+    ``insertText`` requests that populate the newly-created cells.
+    """
     if not inserted_desired_indices:
         return
 
-    def make_insert_above(d_idx: int) -> ReconcileOp:  # noqa: ARG001
+    def _desired_cell_texts(d_col: int) -> list[str]:
+        # Pull the desired column's cell texts aligned to the BASE rows.
+        # When base and desired row counts match (the common case — column
+        # inserts happen on structurally-identical row sets) this is just the
+        # desired_rows[r].cells[d_col] text for each r. When counts differ,
+        # fall back to pulling from whichever desired row exists; if the
+        # desired table has fewer rows than base, pad with "".
+        out: list[str] = []
+        for r in range(len(base_rows)):
+            if r >= len(desired_rows):
+                out.append("")
+                continue
+            cells = desired_rows[r].table_cells or []
+            if d_col >= len(cells):
+                out.append("")
+                continue
+            out.append(_cell_plain_text(cells[d_col]))
+        return out
+
+    def _anchor_indices_insert_right(base_col: int) -> list[int | None]:
+        """End-index of each base row's cell at ``base_col``."""
+        out: list[int | None] = []
+        for row in base_rows:
+            cells = row.table_cells or []
+            if base_col >= len(cells):
+                out.append(None)
+            else:
+                out.append(cells[base_col].end_index)
+        return out
+
+    def _anchor_indices_insert_left(base_col: int) -> list[int | None]:
+        """Start-index of each base row's cell at ``base_col``."""
+        out: list[int | None] = []
+        for row in base_rows:
+            cells = row.table_cells or []
+            if base_col >= len(cells):
+                out.append(None)
+            else:
+                out.append(cells[base_col].start_index)
+        return out
+
+    def _has_any_index(anchors: list[int | None]) -> bool:
+        return any(a is not None for a in anchors)
+
+    def make_insert_above(d_idx: int) -> ReconcileOp:
+        # Prepend: new column goes to the LEFT of base col 0.
+        anchors = _anchor_indices_insert_left(0)
+        populated = _has_any_index(anchors)
         return InsertTableColumnOp(
             tab_id=tab_id,
             table_start_index=table_start_index,
             column_index=0,
             insert_right=False,
+            new_cell_anchor_indices=anchors if populated else [],
+            new_cell_texts=_desired_cell_texts(d_idx) if populated else [],
         )
 
-    def make_insert_below(d_idx: int, base_anchor: int) -> ReconcileOp:  # noqa: ARG001
+    def make_insert_below(d_idx: int, base_anchor: int) -> ReconcileOp:
+        # Insert to the RIGHT of base column ``base_anchor``.
+        anchors = _anchor_indices_insert_right(base_anchor)
+        populated = _has_any_index(anchors)
         return InsertTableColumnOp(
             tab_id=tab_id,
             table_start_index=table_start_index,
             column_index=base_anchor,
             insert_right=True,
+            new_cell_anchor_indices=anchors if populated else [],
+            new_cell_texts=_desired_cell_texts(d_idx) if populated else [],
         )
 
     _emit_insertions(
