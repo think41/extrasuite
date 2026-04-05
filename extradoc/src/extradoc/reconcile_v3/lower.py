@@ -162,6 +162,18 @@ _PARA_STYLE_READONLY_FIELDS: frozenset[str] = frozenset(
     }
 )
 
+# ParagraphStyle fields that Google Docs rejects with HTTP 400 when the target
+# range sits inside a table, header, footer, or footnote.  These "unsupported
+# regions" are documented on ``ParagraphStyle.pageBreakBefore`` — attempting
+# to update the field there returns
+#   "Cannot update page-break-before when the range contains paragraphs in a table."
+# Drop the field from the updateParagraphStyle mask in those contexts.
+_PARA_STYLE_FORBIDDEN_IN_UNSUPPORTED_REGIONS: frozenset[str] = frozenset(
+    {
+        "pageBreakBefore",
+    }
+)
+
 # A resolved string ID or a DeferredID placeholder that the executor
 # will substitute after an earlier batch completes.
 _StrOrDeferred = str | DeferredID
@@ -267,6 +279,7 @@ def lower_batches(
                         start_index=1,
                         tab_id=op.tab_id,
                         segment_id=deferred_id,
+                        in_unsupported_region=True,
                     )
                 )
 
@@ -300,6 +313,7 @@ def lower_batches(
                         start_index=1,
                         tab_id=op.tab_id,
                         segment_id=deferred_id,
+                        in_unsupported_region=True,
                     )
                 )
 
@@ -471,6 +485,7 @@ def lower_batches(
                         segment_id=op.header_id,
                         desired_lists=_desired_lists_by_tab.get(op.tab_id, {}),
                         base_lists=_base_lists_by_tab.get(op.tab_id, {}),
+                        in_unsupported_region=True,
                     )
                 )
 
@@ -484,6 +499,7 @@ def lower_batches(
                         segment_id=op.footer_id,
                         desired_lists=_desired_lists_by_tab.get(op.tab_id, {}),
                         base_lists=_base_lists_by_tab.get(op.tab_id, {}),
+                        in_unsupported_region=True,
                     )
                 )
 
@@ -519,6 +535,7 @@ def lower_batches(
                         start_index=1,
                         tab_id=op.tab_id,
                         segment_id=deferred_fn_id,
+                        in_unsupported_region=True,
                     )
                 )
 
@@ -554,6 +571,7 @@ def lower_batches(
                         segment_id=op.footnote_id,
                         desired_lists=_desired_lists_by_tab.get(op.tab_id, {}),
                         base_lists=_base_lists_by_tab.get(op.tab_id, {}),
+                        in_unsupported_region=True,
                     )
                 )
 
@@ -570,6 +588,7 @@ def lower_batches(
                         segment_id=None,
                         desired_lists=_desired_lists_by_tab.get(op.tab_id, {}),
                         base_lists=_base_lists_by_tab.get(op.tab_id, {}),
+                        in_unsupported_region=(op.story_kind == "table_cell"),
                     )
                 )
 
@@ -851,6 +870,7 @@ def _lower_story_content_update(
     segment_id: str | None,
     desired_lists: dict[str, DocList] | None = None,
     base_lists: dict[str, DocList] | None = None,
+    in_unsupported_region: bool = False,
 ) -> list[Request]:
     """Lower a ContentAlignment into delete/insert/update Request objects.
 
@@ -932,6 +952,7 @@ def _lower_story_content_update(
             tab_id=tab_id,
             segment_id=segment_id,
             desired_lists=desired_lists or {},
+            in_unsupported_region=in_unsupported_region,
         )
         requests.extend(insert_requests)
 
@@ -994,6 +1015,7 @@ def _lower_story_content_update(
             post_insert_shift=post_insert_shift,
             desired_lists=desired_lists or {},
             base_lists=base_lists or {},
+            in_unsupported_region=in_unsupported_region,
         )
         requests.extend(update_reqs)
 
@@ -1008,6 +1030,7 @@ def _plan_insertions(
     tab_id: str,
     segment_id: str | None,
     desired_lists: dict[str, DocList] | None = None,
+    in_unsupported_region: bool = False,
 ) -> tuple[list[Request], list[tuple[int, int]]]:
     """Plan insertion requests for desired_inserts.
 
@@ -1095,6 +1118,7 @@ def _plan_insertions(
             tab_id=tab_id,
             segment_id=segment_id,
             desired_lists=desired_lists or {},
+            in_unsupported_region=in_unsupported_region,
         )
         planned.append((insert_pos, desired_idx, reqs))
         insert_metadata.append((raw_insert_pos, _batch_insert_size_from_reqs(reqs)))
@@ -1518,6 +1542,7 @@ def _lower_element_update(
     post_insert_shift: int = 0,
     desired_lists: dict[str, DocList] | None = None,
     base_lists: dict[str, DocList] | None = None,
+    in_unsupported_region: bool = False,
 ) -> list[Request]:
     """Lower an in-place element update (matched element, content changed).
 
@@ -1541,6 +1566,7 @@ def _lower_element_update(
             post_insert_shift=post_insert_shift,
             desired_lists=desired_lists or {},
             base_lists=base_lists or {},
+            in_unsupported_region=in_unsupported_region,
         )
     elif base_el.table is not None and desired_el.table is not None:
         # Table cell content updates are emitted as separate UpdateBodyContentOp
@@ -1572,6 +1598,7 @@ def _lower_paragraph_update(
     post_insert_shift: int = 0,
     desired_lists: dict[str, DocList] | None = None,
     base_lists: dict[str, DocList] | None = None,
+    in_unsupported_region: bool = False,
 ) -> list[Request]:
     """Replace the text content of a paragraph in place using surgical ops.
 
@@ -1613,6 +1640,7 @@ def _lower_paragraph_update(
         segment_id=segment_id,
         desired_lists=desired_lists or {},
         base_lists=base_lists or {},
+        in_unsupported_region=in_unsupported_region,
     )
 
     # Run-level diff (handles text changes + text-style changes).
@@ -2210,6 +2238,7 @@ def _lower_para_style_update(
     segment_id: str | None,
     desired_lists: dict[str, DocList] | None = None,
     base_lists: dict[str, DocList] | None = None,
+    in_unsupported_region: bool = False,
 ) -> list[Request]:
     """Emit paragraphStyle / bullet / textStyle update requests if styles changed.
 
@@ -2342,6 +2371,15 @@ def _lower_para_style_update(
         fields = _dict_changed_fields(base_ps, desired_ps)
         # Always exclude server-managed readonly fields from the field mask.
         fields = [f for f in fields if f not in _PARA_STYLE_READONLY_FIELDS]
+        if in_unsupported_region:
+            # Inside tables, headers, footers, footnotes: certain paragraph
+            # fields (pageBreakBefore) return 400 from the API.  Drop them
+            # from the mask — the value change is discarded silently.
+            fields = [
+                f
+                for f in fields
+                if f not in _PARA_STYLE_FORBIDDEN_IN_UNSUPPORTED_REGIONS
+            ]
         if base_bullet or desired_bullet:
             # Exclude indent fields that createParagraphBullets manages
             fields = [f for f in fields if f not in ("indentFirstLine", "indentStart")]
@@ -2367,6 +2405,7 @@ def _lower_element_insert(
     tab_id: _StrOrDeferred,
     segment_id: _StrOrDeferred | None,
     desired_lists: dict[str, DocList] | None = None,
+    in_unsupported_region: bool = False,
 ) -> list[Request]:
     """Generate request(s) to insert a content element at the given index.
 
@@ -2387,6 +2426,7 @@ def _lower_element_insert(
             tab_id=tab_id,
             segment_id=segment_id,
             desired_lists=desired_lists or {},
+            in_unsupported_region=in_unsupported_region,
         )
     elif el.table is not None:
         return _lower_table_insert(
@@ -2423,6 +2463,7 @@ def _lower_paragraph_insert(
     tab_id: _StrOrDeferred,
     segment_id: _StrOrDeferred | None,
     desired_lists: dict[str, DocList] | None = None,
+    in_unsupported_region: bool = False,
 ) -> list[Request]:
     """Insert a paragraph at ``index`` via insertText + optional style.
 
@@ -2488,6 +2529,12 @@ def _lower_paragraph_insert(
                 if k not in ("indentFirstLine", "indentStart")
                 and k not in _PARA_STYLE_READONLY_FIELDS
             ]
+            if in_unsupported_region:
+                ps_fields = [
+                    f
+                    for f in ps_fields
+                    if f not in _PARA_STYLE_FORBIDDEN_IN_UNSUPPORTED_REGIONS
+                ]
             if ps_fields:
                 requests.append(
                     _make_update_paragraph_style(
@@ -2539,6 +2586,12 @@ def _lower_paragraph_insert(
         if desired_ps:
             # Exclude server-managed readonly fields (e.g. headingId) from mask.
             fields = [k for k in desired_ps if k not in _PARA_STYLE_READONLY_FIELDS]
+            if in_unsupported_region:
+                fields = [
+                    f
+                    for f in fields
+                    if f not in _PARA_STYLE_FORBIDDEN_IN_UNSUPPORTED_REGIONS
+                ]
             if fields:
                 requests.append(
                     _make_update_paragraph_style(
@@ -2665,6 +2718,7 @@ def _lower_table_insert(
                             index=running,
                             tab_id=tab_id,
                             segment_id=segment_id,
+                            in_unsupported_region=True,
                         )
                     )
                     running += _element_size(e)
@@ -2841,6 +2895,7 @@ def _lower_content_insert(
     tab_id: _StrOrDeferred,
     segment_id: _StrOrDeferred | None,
     desired_lists: dict[str, DocList] | None = None,
+    in_unsupported_region: bool = False,
 ) -> list[Request]:
     """Insert a list of StructuralElements starting at ``start_index``.
 
@@ -2876,6 +2931,7 @@ def _lower_content_insert(
             tab_id=tab_id,
             segment_id=segment_id,
             desired_lists=desired_lists,
+            in_unsupported_region=in_unsupported_region,
         )
         requests.extend(reqs)
         running_index += _element_size(el)

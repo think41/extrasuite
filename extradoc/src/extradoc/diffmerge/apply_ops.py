@@ -1153,8 +1153,15 @@ def _merge_table_cell(raw_cell: dict[str, Any], d_cell: Any) -> None:
         for d_cse in d_cell_content[len(raw_cell_content) :]:
             raw_cell_content.append(d_cse.model_dump(by_alias=True, exclude_none=True))
     elif len(d_cell_content) < len(raw_cell_content):
-        # Paragraphs removed
-        del raw_cell_content[len(d_cell_content) :]
+        # The desired content has fewer paragraphs than the raw base cell.
+        # This is almost always because the editable format (e.g. GFM
+        # markdown tables) only models a single paragraph per cell, while
+        # Google Docs cells may contain trailing empty paragraphs carrying
+        # border/padding style.  Dropping those trailing paragraphs causes
+        # the reconciler to emit cascading delete+insert ops across cells,
+        # which fail with stale index errors on the real API.  Preserve the
+        # trailing raw paragraphs unchanged.
+        pass
 
     raw_cell["content"] = raw_cell_content
 
