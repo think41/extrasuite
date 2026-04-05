@@ -6,5 +6,7 @@
 			"source.fixAll": "explicit",
 			"source.organizeImports": "explicit"
 		}
-	}
+	},
+	"python.analysis.typeCheckingMode": "off",
+	"mypy-type-checker.args": ["--config-file=pyproject.toml"]
 }
