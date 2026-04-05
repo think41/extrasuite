@@ -83,13 +83,14 @@ from extradoc.api_types._generated import (
     Link as DocLink,
 )
 from extradoc.mock.reindex import reindex_and_normalize_all_tabs
-from extradoc.serde._special_elements import (
+
+from .._utils import hex_to_optional_color
+from ._special_elements import (
     Blockquote,
     Callout,
     CodeBlock,
     SpecialElement,
 )
-from extradoc.serde._utils import hex_to_optional_color
 
 # Callout detection regex: matches [!WARNING], [!INFO], etc.
 _CALLOUT_RE = re.compile(r"^\[!(WARNING|INFO|NOTE|DANGER|TIP)\]$", re.IGNORECASE)
@@ -485,8 +486,10 @@ def _parse_quote(block: Any) -> SpecialElement:
     if m:
         variant_str = m.group(1).lower()
         variant = cast(
-            Literal["warning", "info", "note", "danger", "tip"],
-            variant_str if variant_str in ("warning", "info", "note", "danger", "tip") else "info",
+            "Literal['warning', 'info', 'note', 'danger', 'tip']",
+            variant_str
+            if variant_str in ("warning", "info", "note", "danger", "tip")
+            else "info",
         )
         # Keep only non-empty body paragraphs (mirrors old `if line` filter)
         body_paras = [

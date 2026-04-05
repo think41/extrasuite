@@ -11,10 +11,12 @@ import shutil
 from pathlib import Path
 from typing import TYPE_CHECKING, Any
 
-from extradoc.serde import deserialize, serialize
+from extradoc.serde.xml import XmlSerde
 
 if TYPE_CHECKING:
     from extradoc.api_types._generated import Document, StructuralElement
+
+_xml_serde = XmlSerde()
 
 
 def _write_xml_folder(
@@ -156,7 +158,7 @@ def test_deserialize_xml_parses_expected_body_structure(tmp_path: Path) -> None:
 """,
     )
 
-    document = deserialize(folder).document
+    document = _xml_serde._parse(folder).document
     tab = document.tabs[0]
     doc_tab = tab.document_tab
     assert doc_tab is not None
@@ -217,7 +219,7 @@ def test_deserialize_xml_parses_segments_and_footnote_refs(tmp_path: Path) -> No
 """,
     )
 
-    document = deserialize(folder).document
+    document = _xml_serde._parse(folder).document
     doc_tab = document.tabs[0].document_tab
     assert doc_tab is not None
 
@@ -247,10 +249,10 @@ def test_deserialize_xml_roundtrip_semantics_are_stable_for_live_fixture(
     working = tmp_path / "xml-live-fixture"
     shutil.copytree(fixture, working)
 
-    initial_bundle = deserialize(working)
+    initial_bundle = _xml_serde._parse(working)
     roundtrip = tmp_path / "xml-live-fixture-roundtrip"
-    serialize(initial_bundle, roundtrip, format="xml")
-    reparsed_bundle = deserialize(roundtrip)
+    _xml_serde.serialize(initial_bundle, roundtrip)
+    reparsed_bundle = _xml_serde.deserialize(roundtrip).desired
 
     assert _document_signature(reparsed_bundle.document) == _document_signature(
         initial_bundle.document

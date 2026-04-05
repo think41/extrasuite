@@ -8,7 +8,7 @@ from __future__ import annotations
 import json
 from typing import TYPE_CHECKING
 
-from ._models import (
+from .._models import (
     AutoTextNode,
     BlockNode,
     CellXml,
@@ -37,7 +37,7 @@ from ._models import (
     TNode,
     TocXml,
 )
-from ._styles import (
+from .._styles import (
     NamedStyleDefaults,
     StyleCollector,
     determine_link_href,
@@ -49,14 +49,14 @@ from ._styles import (
     extract_row_style,
     extract_text_style,
 )
-from ._tab_extras import (
+from .._tab_extras import (
     DocStyleXml,
     InlineObjectsXml,
     NamedRangesXml,
     NamedStylesXml,
     PositionedObjectsXml,
 )
-from ._utils import dim_to_str, sanitize_tab_name
+from .._utils import dim_to_str, sanitize_tab_name
 
 if TYPE_CHECKING:
     from extradoc.api_types._generated import (

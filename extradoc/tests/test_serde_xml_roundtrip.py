@@ -2,7 +2,7 @@
 
 Tests cover:
 - serialize() writes .pristine/document.zip for XML format
-- deserialize(base, folder) performs 3-way merge for XML format
+- _xml_serde.deserialize(folder) performs 3-way merge for XML format
 - Body content changes propagate correctly
 - Table changes (cell edits, row add/delete)
 - Things the XML SERDE models are carried through (named styles, styles.xml)
@@ -14,7 +14,6 @@ Tests cover:
 from __future__ import annotations
 
 import json
-import zipfile
 from typing import TYPE_CHECKING
 from xml.etree import ElementTree as ET
 
@@ -51,7 +50,9 @@ from extradoc.api_types._generated import (
     List as DocList,
 )
 from extradoc.comments._types import DocumentWithComments, FileComments
-from extradoc.serde import deserialize, serialize
+from extradoc.serde.xml import XmlSerde
+
+_xml_serde = XmlSerde()
 
 # ---------------------------------------------------------------------------
 # Helpers
@@ -201,34 +202,6 @@ def _write_styles_xml(folder: Path, content: str, tab_folder: str = "Tab_1") -> 
 
 
 # ---------------------------------------------------------------------------
-# Test Group: serialize writes .pristine/document.zip for XML
-# ---------------------------------------------------------------------------
-
-
-class TestSerializeWritesPristineXml:
-    def test_pristine_zip_created_for_xml(self, tmp_path: Path) -> None:
-        """serialize() with XML format writes .pristine/document.zip."""
-        doc = _make_doc(["Hello world"])
-        bundle = _make_bundle(doc)
-        folder = tmp_path / "doc"
-        serialize(bundle, folder, format="xml")
-        assert (folder / ".pristine" / "document.zip").exists()
-
-    def test_pristine_contains_xml_files(self, tmp_path: Path) -> None:
-        """The pristine zip contains document.xml, styles.xml, index.xml."""
-        doc = _make_doc(["Hello world"])
-        bundle = _make_bundle(doc)
-        folder = tmp_path / "doc"
-        serialize(bundle, folder, format="xml")
-        zip_path = folder / ".pristine" / "document.zip"
-        with zipfile.ZipFile(zip_path) as zf:
-            names = zf.namelist()
-        assert any("document.xml" in n for n in names)
-        assert any("styles.xml" in n for n in names)
-        assert "index.xml" in names
-        # Should NOT contain .pristine/ or .raw/ entries
-        assert not any(".pristine" in n for n in names)
-        assert not any(".raw" in n for n in names)
 
 
 # ---------------------------------------------------------------------------
@@ -242,13 +215,13 @@ class TestBodyContentChanges:
         base_doc = _make_doc(["Hello world", "Second para"])
         base = _make_bundle(base_doc)
         folder = tmp_path / "doc"
-        serialize(base, folder, format="xml")
+        _xml_serde.serialize(base, folder)
 
         xml = _read_doc_xml(folder)
         xml = xml.replace(">Hello world<", ">Hello there<")
         _write_doc_xml(folder, xml)
 
-        desired = deserialize(base, folder)
+        desired = _xml_serde.deserialize(folder).desired
         texts = _body_texts(desired.document)
         assert "Hello there" in texts
         assert "Second para" in texts
@@ -258,7 +231,7 @@ class TestBodyContentChanges:
         base_doc = _make_doc(["First para", "Second para"])
         base = _make_bundle(base_doc)
         folder = tmp_path / "doc"
-        serialize(base, folder, format="xml")
+        _xml_serde.serialize(base, folder)
 
         xml = _read_doc_xml(folder)
         # Insert after the first <p>...</p> block
@@ -268,7 +241,7 @@ class TestBodyContentChanges:
         )
         _write_doc_xml(folder, xml)
 
-        desired = deserialize(base, folder)
+        desired = _xml_serde.deserialize(folder).desired
         texts = _body_texts(desired.document)
         assert "New inserted para" in texts
         assert "First para" in texts
@@ -279,7 +252,7 @@ class TestBodyContentChanges:
         base_doc = _make_doc(["Keep this", "Delete this", "Also keep"])
         base = _make_bundle(base_doc)
         folder = tmp_path / "doc"
-        serialize(base, folder, format="xml")
+        _xml_serde.serialize(base, folder)
 
         xml = _read_doc_xml(folder)
         # Remove the Delete this paragraph
@@ -295,7 +268,7 @@ class TestBodyContentChanges:
             body.remove(to_remove)
         _write_doc_xml(folder, ET.tostring(tree, encoding="unicode"))
 
-        desired = deserialize(base, folder)
+        desired = _xml_serde.deserialize(folder).desired
         texts = _body_texts(desired.document)
         assert "Delete this" not in texts
         assert "Keep this" in texts
@@ -306,14 +279,14 @@ class TestBodyContentChanges:
         base_doc = _make_doc(["Normal text"])
         base = _make_bundle(base_doc)
         folder = tmp_path / "doc"
-        serialize(base, folder, format="xml")
+        _xml_serde.serialize(base, folder)
 
         xml = _read_doc_xml(folder)
         # Wrap the text in <b>
         xml = xml.replace("<t>Normal text</t>", "<t><b>Bold text</b></t>")
         _write_doc_xml(folder, xml)
 
-        desired = deserialize(base, folder)
+        desired = _xml_serde.deserialize(folder).desired
         tab = desired.document.tabs[0]  # type: ignore[index]
         body_content = tab.document_tab.body.content or []  # type: ignore[union-attr]
         found_bold = False
@@ -333,10 +306,10 @@ class TestBodyContentChanges:
         base_doc = _make_doc(["Hello world", "Second para"])
         base = _make_bundle(base_doc)
         folder = tmp_path / "doc"
-        serialize(base, folder, format="xml")
+        _xml_serde.serialize(base, folder)
 
         # No edits
-        desired = deserialize(base, folder)
+        desired = _xml_serde.deserialize(folder).desired
         desired_texts = _body_texts(desired.document)
         base_texts = _body_texts(base_doc)
         assert desired_texts == base_texts
@@ -354,13 +327,13 @@ class TestTableChanges:
         base_doc = _make_doc([], extra_content=[table_se])
         base = _make_bundle(base_doc)
         folder = tmp_path / "doc"
-        serialize(base, folder, format="xml")
+        _xml_serde.serialize(base, folder)
 
         xml = _read_doc_xml(folder)
         xml = xml.replace(">Value1<", ">Updated1<")
         _write_doc_xml(folder, xml)
 
-        desired = deserialize(base, folder)
+        desired = _xml_serde.deserialize(folder).desired
         cell_data = _cell_texts(desired.document)
         flat_cells = [cell for row in cell_data for cell in row]
         assert "Updated1" in flat_cells
@@ -371,7 +344,7 @@ class TestTableChanges:
         base_doc = _make_doc([], extra_content=[table_se])
         base = _make_bundle(base_doc)
         folder = tmp_path / "doc"
-        serialize(base, folder, format="xml")
+        _xml_serde.serialize(base, folder)
 
         xml = _read_doc_xml(folder)
         # Append a new row before closing </table>
@@ -379,7 +352,7 @@ class TestTableChanges:
         xml = xml.replace("</table>", new_row + "\n    </table>")
         _write_doc_xml(folder, xml)
 
-        desired = deserialize(base, folder)
+        desired = _xml_serde.deserialize(folder).desired
         cell_data = _cell_texts(desired.document)
         assert len(cell_data) >= 3
         flat_cells = [cell for row in cell_data for cell in row]
@@ -392,7 +365,7 @@ class TestTableChanges:
         base_doc = _make_doc([], extra_content=[table_se])
         base = _make_bundle(base_doc)
         folder = tmp_path / "doc"
-        serialize(base, folder, format="xml")
+        _xml_serde.serialize(base, folder)
 
         xml = _read_doc_xml(folder)
         tree = ET.fromstring(xml)
@@ -406,7 +379,7 @@ class TestTableChanges:
         table.remove(rows[1])
         _write_doc_xml(folder, ET.tostring(tree, encoding="unicode"))
 
-        desired = deserialize(base, folder)
+        desired = _xml_serde.deserialize(folder).desired
         cell_data = _cell_texts(desired.document)
         flat_cells = [cell for row in cell_data for cell in row]
         assert "C" not in flat_cells
@@ -435,14 +408,14 @@ class TestXmlSerdeModels:
         base_doc = _make_doc(["Body text"], named_styles=ns)
         base = _make_bundle(base_doc)
         folder = tmp_path / "doc"
-        serialize(base, folder, format="xml")
+        _xml_serde.serialize(base, folder)
 
         # Edit body only
         xml = _read_doc_xml(folder)
         xml = xml.replace(">Body text<", ">Changed body<")
         _write_doc_xml(folder, xml)
 
-        desired = deserialize(base, folder)
+        desired = _xml_serde.deserialize(folder).desired
         dt = desired.document.tabs[0].document_tab  # type: ignore[index]
         assert dt.named_styles is not None
         types = [s.named_style_type for s in (dt.named_styles.styles or [])]
@@ -461,7 +434,7 @@ class TestXmlSerdeModels:
         base_doc = _make_doc(["Body text"], named_styles=ns)
         base = _make_bundle(base_doc)
         folder = tmp_path / "doc"
-        serialize(base, folder, format="xml")
+        _xml_serde.serialize(base, folder)
 
         # Edit namedstyles.xml: add italic=True to HEADING_1
         ns_path = folder / "Tab_1" / "namedstyles.xml"
@@ -473,7 +446,7 @@ class TestXmlSerdeModels:
         tree.text = json.dumps(raw_data, separators=(",", ":"))
         ns_path.write_text(ET.tostring(tree, encoding="unicode"), encoding="utf-8")
 
-        desired = deserialize(base, folder)
+        desired = _xml_serde.deserialize(folder).desired
         dt = desired.document.tabs[0].document_tab  # type: ignore[index]
         assert dt.named_styles is not None
         h1_style = next(
@@ -520,10 +493,10 @@ class TestXmlSerdeModels:
         )
         base = _make_bundle(base_doc)
         folder = tmp_path / "doc"
-        serialize(base, folder, format="xml")
+        _xml_serde.serialize(base, folder)
 
         # No edits
-        desired = deserialize(base, folder)
+        desired = _xml_serde.deserialize(folder).desired
         dt = desired.document.tabs[0].document_tab  # type: ignore[index]
         for se in dt.body.content or []:  # type: ignore[union-attr]
             if se.paragraph:
@@ -573,14 +546,14 @@ class TestXmlSerdeModels:
         )
         base = _make_bundle(base_doc)
         folder = tmp_path / "doc"
-        serialize(base, folder, format="xml")
+        _xml_serde.serialize(base, folder)
 
         # Verify styles.xml was written
         styles_xml = _read_styles_xml(folder)
         assert "24.0pt" in styles_xml
 
         # No edits, verify round-trip
-        desired = deserialize(base, folder)
+        desired = _xml_serde.deserialize(folder).desired
         dt = desired.document.tabs[0].document_tab  # type: ignore[index]
         for se in dt.body.content or []:  # type: ignore[union-attr]
             if se.paragraph:
@@ -625,14 +598,14 @@ class TestXmlSerdeModels:
         )
         base = _make_bundle(base_doc)
         folder = tmp_path / "doc"
-        serialize(base, folder, format="xml")
+        _xml_serde.serialize(base, folder)
 
         # Edit styles.xml: change 12.0pt to 18.0pt
         styles_xml = _read_styles_xml(folder)
         styles_xml = styles_xml.replace('size="12.0pt"', 'size="18.0pt"')
         _write_styles_xml(folder, styles_xml)
 
-        desired = deserialize(base, folder)
+        desired = _xml_serde.deserialize(folder).desired
         dt = desired.document.tabs[0].document_tab  # type: ignore[index]
         for se in dt.body.content or []:  # type: ignore[union-attr]
             if se.paragraph:
@@ -656,10 +629,10 @@ class TestPreservationFromBase:
         base_doc = _make_doc(["Body text"], document_style=doc_style)
         base = _make_bundle(base_doc)
         folder = tmp_path / "doc"
-        serialize(base, folder, format="xml")
+        _xml_serde.serialize(base, folder)
 
         # No edits
-        desired = deserialize(base, folder)
+        desired = _xml_serde.deserialize(folder).desired
         dt = desired.document.tabs[0].document_tab  # type: ignore[index]
         # documentStyle is serialized to docstyle.xml — round-trips through JSON
         # The margin_left should be present (either from docstyle.xml or base)
@@ -676,14 +649,14 @@ class TestPreservationFromBase:
         )
         base = _make_bundle(base_doc)
         folder = tmp_path / "doc"
-        serialize(base, folder, format="xml")
+        _xml_serde.serialize(base, folder)
 
         # Edit body text
         xml = _read_doc_xml(folder)
         xml = xml.replace(">Body text<", ">Changed text<")
         _write_doc_xml(folder, xml)
 
-        desired = deserialize(base, folder)
+        desired = _xml_serde.deserialize(folder).desired
         dt = desired.document.tabs[0].document_tab  # type: ignore[index]
         # Inline objects dict should be preserved from base
         assert dt.inline_objects is not None
@@ -714,14 +687,14 @@ class TestPreservationFromBase:
         )
         base = _make_bundle(base_doc)
         folder = tmp_path / "doc"
-        serialize(base, folder, format="xml")
+        _xml_serde.serialize(base, folder)
 
         # Edit body only
         xml = _read_doc_xml(folder)
         xml = xml.replace(">Body text<", ">Changed body<")
         _write_doc_xml(folder, xml)
 
-        desired = deserialize(base, folder)
+        desired = _xml_serde.deserialize(folder).desired
         dt = desired.document.tabs[0].document_tab  # type: ignore[index]
         # Header should be preserved from base (or serialized via docstyle extras)
         assert dt.headers is not None
@@ -752,9 +725,9 @@ class TestPreservationFromBase:
         )
         base = _make_bundle(base_doc)
         folder = tmp_path / "doc"
-        serialize(base, folder, format="xml")
+        _xml_serde.serialize(base, folder)
 
-        desired = deserialize(base, folder)
+        desired = _xml_serde.deserialize(folder).desired
         dt = desired.document.tabs[0].document_tab  # type: ignore[index]
         assert dt.footers is not None
         assert "ftr-1" in dt.footers
@@ -786,7 +759,7 @@ class TestComments:
             comments=FileComments(file_id="test-cmt", comments=[base_comment]),
         )
         folder = tmp_path / "doc"
-        serialize(base, folder, format="xml")
+        _xml_serde.serialize(base, folder)
 
         # Overwrite comments.xml with a mine comment
         mine_comment = Comment(
@@ -803,7 +776,7 @@ class TestComments:
             comments_to_xml(mine_comments), encoding="utf-8"
         )
 
-        desired = deserialize(base, folder)
+        desired = _xml_serde.deserialize(folder).desired
         comment_ids = [c.id for c in desired.comments.comments]
         assert "mine-c1" in comment_ids
 
@@ -826,10 +799,10 @@ class TestComments:
             comments=FileComments(file_id="test-cmt2", comments=[comment]),
         )
         folder = tmp_path / "doc"
-        serialize(base, folder, format="xml")
+        _xml_serde.serialize(base, folder)
 
         # No edits
-        desired = deserialize(base, folder)
+        desired = _xml_serde.deserialize(folder).desired
         comment_ids = [c.id for c in desired.comments.comments]
         assert "c-1" in comment_ids
 
@@ -862,14 +835,14 @@ class TestMultiTab:
         base_doc = self._make_multitab_doc()
         base = _make_bundle(base_doc)
         folder = tmp_path / "doc"
-        serialize(base, folder, format="xml")
+        _xml_serde.serialize(base, folder)
 
         # Edit Tab_1 only
         xml1 = _read_doc_xml(folder, "Tab_1")
         xml1 = xml1.replace(">Tab1 Para1<", ">Tab1 Changed<")
         _write_doc_xml(folder, xml1, "Tab_1")
 
-        desired = deserialize(base, folder)
+        desired = _xml_serde.deserialize(folder).desired
         texts1 = _body_texts(desired.document, tab_idx=0)
         texts2 = _body_texts(desired.document, tab_idx=1)
 
@@ -882,10 +855,10 @@ class TestMultiTab:
         base_doc = self._make_multitab_doc()
         base = _make_bundle(base_doc)
         folder = tmp_path / "doc"
-        serialize(base, folder, format="xml")
+        _xml_serde.serialize(base, folder)
 
         # No edits
-        desired = deserialize(base, folder)
+        desired = _xml_serde.deserialize(folder).desired
         assert desired.document.tabs is not None
         assert len(desired.document.tabs) == 2
         tab_ids = [
@@ -904,7 +877,7 @@ class TestMultiTab:
 class TestLists:
     def _make_list_doc(self) -> Document:
         """Create a doc with a bullet list (via XML deserialization)."""
-        from extradoc.serde._from_markdown import markdown_to_document
+        from extradoc.serde.markdown._from_markdown import markdown_to_document
 
         md = "- Item one\n- Item two\n- Item three\n"
         return markdown_to_document({"Tab_1": md}, document_id="list-doc", title="List")
@@ -914,13 +887,13 @@ class TestLists:
         base_doc = self._make_list_doc()
         base = _make_bundle(base_doc)
         folder = tmp_path / "doc"
-        serialize(base, folder, format="xml")
+        _xml_serde.serialize(base, folder)
 
         xml = _read_doc_xml(folder)
         xml = xml.replace(">Item one<", ">Item one edited<")
         _write_doc_xml(folder, xml)
 
-        desired = deserialize(base, folder)
+        desired = _xml_serde.deserialize(folder).desired
         texts = _body_texts(desired.document)
         assert any("Item one edited" in t for t in texts)
 
@@ -929,7 +902,7 @@ class TestLists:
         base_doc = self._make_list_doc()
         base = _make_bundle(base_doc)
         folder = tmp_path / "doc"
-        serialize(base, folder, format="xml")
+        _xml_serde.serialize(base, folder)
 
         # Find the list id from the serialized XML, then append a new <li>
         xml = _read_doc_xml(folder)
@@ -954,7 +927,7 @@ class TestLists:
         body.insert(last_li_idx + 1, new_li)
         _write_doc_xml(folder, ET.tostring(tree, encoding="unicode"))
 
-        desired = deserialize(base, folder)
+        desired = _xml_serde.deserialize(folder).desired
         texts = _body_texts(desired.document)
         assert any("New fourth item" in t for t in texts)
 
@@ -1003,13 +976,13 @@ class TestFootnotes:
         )
         base = _make_bundle(base_doc)
         folder = tmp_path / "doc"
-        serialize(base, folder, format="xml")
+        _xml_serde.serialize(base, folder)
 
         xml = _read_doc_xml(folder)
         xml = xml.replace(">Old footnote text<", ">New footnote text<")
         _write_doc_xml(folder, xml)
 
-        desired = deserialize(base, folder)
+        desired = _xml_serde.deserialize(folder).desired
         dt = desired.document.tabs[0].document_tab  # type: ignore[index]
         footnotes = dt.footnotes or {}
         found = False
@@ -1064,14 +1037,14 @@ class TestStylesXml:
         )
         base = _make_bundle(base_doc)
         folder = tmp_path / "doc"
-        serialize(base, folder, format="xml")
+        _xml_serde.serialize(base, folder)
 
         # The heading should be serialized as <h1> in document.xml
         xml = _read_doc_xml(folder)
         assert "<h1>" in xml
 
         # No edits
-        desired = deserialize(base, folder)
+        desired = _xml_serde.deserialize(folder).desired
         dt = desired.document.tabs[0].document_tab  # type: ignore[index]
         for se in dt.body.content or []:  # type: ignore[union-attr]
             if se.paragraph:
@@ -1117,13 +1090,13 @@ class TestStylesXml:
         )
         base = _make_bundle(base_doc)
         folder = tmp_path / "doc"
-        serialize(base, folder, format="xml")
+        _xml_serde.serialize(base, folder)
 
         # Verify <i> sugar tag in document.xml
         xml = _read_doc_xml(folder)
         assert "<i>" in xml
 
-        desired = deserialize(base, folder)
+        desired = _xml_serde.deserialize(folder).desired
         dt = desired.document.tabs[0].document_tab  # type: ignore[index]
         found_italic = False
         for se in dt.body.content or []:  # type: ignore[union-attr]
@@ -1149,8 +1122,8 @@ class TestEdgeCases:
         base_doc = _make_doc([])
         base = _make_bundle(base_doc)
         folder = tmp_path / "doc"
-        serialize(base, folder, format="xml")
-        desired = deserialize(base, folder)
+        _xml_serde.serialize(base, folder)
+        desired = _xml_serde.deserialize(folder).desired
         assert desired.document is not None
 
     def test_no_changes_zero_ops(self, tmp_path: Path) -> None:
@@ -1158,41 +1131,40 @@ class TestEdgeCases:
         base_doc = _make_doc(["Hello world", "Second para"])
         base = _make_bundle(base_doc)
         folder = tmp_path / "doc"
-        serialize(base, folder, format="xml")
+        _xml_serde.serialize(base, folder)
 
         # No edits → deserialize
-        desired = deserialize(base, folder)
+        desired = _xml_serde.deserialize(folder).desired
 
         base_texts = _body_texts(base_doc)
         desired_texts = _body_texts(desired.document)
         assert desired_texts == base_texts
 
     def test_legacy_folder_no_pristine(self, tmp_path: Path) -> None:
-        """When .pristine/document.zip is absent for XML, falls back to direct parse."""
+        """When .pristine/document.zip is absent, deserialize raises FileNotFoundError."""
+        import pytest
+
         base_doc = _make_doc(["Hello world"])
         base = _make_bundle(base_doc)
         folder = tmp_path / "doc"
-        serialize(base, folder, format="xml")
+        _xml_serde.serialize(base, folder)
 
         # Remove the pristine zip to simulate a legacy folder
         pristine_zip = folder / ".pristine" / "document.zip"
         pristine_zip.unlink()
 
-        # Should not crash and should return a document
-        desired = deserialize(base, folder)
-        assert desired.document is not None
-        texts = _body_texts(desired.document)
-        assert "Hello world" in texts
+        # deserialize requires .pristine/document.zip — should raise
+        with pytest.raises(FileNotFoundError):
+            _xml_serde.deserialize(folder)
 
-    def test_deserialize_legacy_single_arg(self, tmp_path: Path) -> None:
-        """Legacy single-argument deserialize(folder) still works for XML format."""
+    def test_parse_single_arg(self, tmp_path: Path) -> None:
+        """parse(folder) reads XML folder without 3-way merge."""
         base_doc = _make_doc(["Hello world"])
         bundle = _make_bundle(base_doc)
         folder = tmp_path / "doc"
-        serialize(bundle, folder, format="xml")
+        _xml_serde.serialize(bundle, folder)
 
-        # Legacy call: deserialize(folder)
-        result = deserialize(folder)
+        result = _xml_serde._parse(folder)
         assert result.document is not None
 
     def test_multiple_edits_in_one_pass(self, tmp_path: Path) -> None:
@@ -1200,14 +1172,14 @@ class TestEdgeCases:
         base_doc = _make_doc(["Para A", "Para B", "Para C"])
         base = _make_bundle(base_doc)
         folder = tmp_path / "doc"
-        serialize(base, folder, format="xml")
+        _xml_serde.serialize(base, folder)
 
         xml = _read_doc_xml(folder)
         xml = xml.replace(">Para A<", ">Changed A<")
         xml = xml.replace(">Para C<", ">Changed C<")
         _write_doc_xml(folder, xml)
 
-        desired = deserialize(base, folder)
+        desired = _xml_serde.deserialize(folder).desired
         texts = _body_texts(desired.document)
         assert "Changed A" in texts
         assert "Para B" in texts
@@ -1235,14 +1207,14 @@ class TestEdgeCases:
         )
         base = _make_bundle(base_doc)
         folder = tmp_path / "doc"
-        serialize(base, folder, format="xml")
+        _xml_serde.serialize(base, folder)
 
         # Edit only Tab_1
         xml = _read_doc_xml(folder, "Tab_1")
         xml = xml.replace(">Tab1 content<", ">Tab1 edited<")
         _write_doc_xml(folder, xml, "Tab_1")
 
-        desired = deserialize(base, folder)
+        desired = _xml_serde.deserialize(folder).desired
         assert desired.document.tabs is not None
         assert len(desired.document.tabs) == 2
         texts_tab2 = _body_texts(desired.document, tab_idx=1)

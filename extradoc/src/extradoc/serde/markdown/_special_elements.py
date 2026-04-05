@@ -5,7 +5,7 @@ fenced code blocks, callout panels, and block quotations.
 
 Each element:
   - Knows its canonical named range name (extradoc:<type>[:<variant>])
-  - Knows how to build a styled 1×1 Google Docs Table (to_table)
+  - Knows how to build a styled 1x1 Google Docs Table (to_table)
   - Knows how to render itself as a markdown string (to_markdown)
   - Knows how to reconstruct itself from a named-range-annotated table (from_table)
 
@@ -37,8 +37,8 @@ from extradoc.api_types._generated import (
     TextRun,
     TextStyle,
 )
-from extradoc.serde._utils import hex_to_optional_color, serialize_text_run, str_to_cell_border
 
+from .._utils import hex_to_optional_color, serialize_text_run, str_to_cell_border
 
 # ---------------------------------------------------------------------------
 # Shared helpers
@@ -81,7 +81,7 @@ def _make_1x1_table(
     bg_hex: str | None = None,
     border_left: str | None = None,
 ) -> Table:
-    """Build a 1×1 Google Docs Table from a list of Paragraphs.
+    """Build a 1x1 Google Docs Table from a list of Paragraphs.
 
     Adds a trailing paragraph to the cell content if not already present.
     Applies background color and/or left border if specified.
@@ -109,7 +109,9 @@ def _make_1x1_table(
     style_d: dict[str, Any] = {}
     if bg_hex:
         opt_color = hex_to_optional_color(bg_hex)
-        style_d["backgroundColor"] = opt_color.model_dump(by_alias=True, exclude_none=True)
+        style_d["backgroundColor"] = opt_color.model_dump(
+            by_alias=True, exclude_none=True
+        )
     if border_left:
         border = str_to_cell_border(border_left)
         if border:
@@ -132,7 +134,7 @@ def _make_1x1_table(
 
 
 def _extract_cell_text_lines(table: Table) -> list[str]:
-    """Extract text lines from the first cell of a 1×1 table.
+    """Extract text lines from the first cell of a 1x1 table.
 
     Each paragraph becomes one line, including blank-line paragraphs inside
     code blocks (empty string → blank line in the fenced block).  Only
@@ -173,7 +175,7 @@ def _extract_cell_text_lines(table: Table) -> list[str]:
 
 
 def _extract_cell_paragraphs(table: Table) -> list[Paragraph]:
-    """Extract paragraphs from the first cell of a 1×1 table.
+    """Extract paragraphs from the first cell of a 1x1 table.
 
     Returns raw Paragraph objects (preserving link styles, bold, etc.) with
     trailing empty paragraphs stripped.  Used by Callout and Blockquote so
@@ -193,7 +195,9 @@ def _extract_cell_paragraphs(table: Table) -> list[Paragraph]:
     # may carry an inherited style that prevents the usual content=="\n" check.
     while paras:
         all_text = "".join(
-            (pe.text_run.content or "") for pe in (paras[-1].elements or []) if pe.text_run
+            (pe.text_run.content or "")
+            for pe in (paras[-1].elements or [])
+            if pe.text_run
         ).strip()
         if not all_text:
             paras.pop()
@@ -218,7 +222,7 @@ def _code_text_style() -> TextStyle:
 
 
 class SpecialElement(ABC):
-    """A markdown element that maps to a named-range-annotated 1×1 Table."""
+    """A markdown element that maps to a named-range-annotated 1x1 Table."""
 
     @property
     @abstractmethod
@@ -227,7 +231,7 @@ class SpecialElement(ABC):
 
     @abstractmethod
     def to_table(self) -> Table:
-        """Build a 1×1 Google Docs Table with canonical content and visual styling."""
+        """Build a 1x1 Google Docs Table with canonical content and visual styling."""
 
     @abstractmethod
     def to_markdown(self) -> str:
@@ -235,7 +239,7 @@ class SpecialElement(ABC):
 
     @classmethod
     @abstractmethod
-    def from_table(cls, table: Table, named_range_name: str) -> "SpecialElement":
+    def from_table(cls, table: Table, named_range_name: str) -> SpecialElement:
         """Reconstruct from a named-range-annotated table on pull."""
 
 
@@ -248,7 +252,7 @@ class SpecialElement(ABC):
 class CodeBlock(SpecialElement):
     """A fenced code block: ```lang\\ncode\\n```."""
 
-    language: str = ""          # e.g. "python", "" for language-less
+    language: str = ""  # e.g. "python", "" for language-less
     lines: list[str] = field(default_factory=list)
 
     @property
@@ -267,7 +271,7 @@ class CodeBlock(SpecialElement):
         return _make_1x1_table(paragraphs, bg_hex="#f3f3f3")
 
     @classmethod
-    def from_table(cls, table: Table, named_range_name: str) -> "CodeBlock":
+    def from_table(cls, table: Table, named_range_name: str) -> CodeBlock:
         parts = named_range_name.split(":")
         language = parts[2] if len(parts) > 2 else ""
         lines = _extract_cell_text_lines(table)
@@ -288,19 +292,19 @@ class Callout(SpecialElement):
 
     _BG: ClassVar[dict[str, str]] = {
         "warning": "#fff3cd",
-        "info":    "#d1ecf1",
-        "note":    "#d1ecf1",  # same as info
-        "danger":  "#f8d7da",
-        "tip":     "#d4edda",
+        "info": "#d1ecf1",
+        "note": "#d1ecf1",  # same as info
+        "danger": "#f8d7da",
+        "tip": "#d4edda",
     }
 
     # Left border accent color per variant (darker than bg for contrast)
     _BORDER: ClassVar[dict[str, str]] = {
         "warning": "#ffc107",
-        "info":    "#17a2b8",
-        "note":    "#17a2b8",
-        "danger":  "#dc3545",
-        "tip":     "#28a745",
+        "info": "#17a2b8",
+        "note": "#17a2b8",
+        "danger": "#dc3545",
+        "tip": "#28a745",
     }
 
     @property
@@ -317,7 +321,7 @@ class Callout(SpecialElement):
                 if pe.text_run is not None
             )
             body.append(f"> {line}")
-        return "\n".join([header] + body)
+        return "\n".join([header, *body])
 
     def to_table(self) -> Table:
         bg = self._BG.get(self.variant, "#d1ecf1")
@@ -329,12 +333,14 @@ class Callout(SpecialElement):
         )
 
     @classmethod
-    def from_table(cls, table: Table, named_range_name: str) -> "Callout":
+    def from_table(cls, table: Table, named_range_name: str) -> Callout:
         parts = named_range_name.split(":")
         raw_variant = parts[2] if len(parts) > 2 else "info"
         variant: Literal["warning", "info", "note", "danger", "tip"] = cast(
-            Literal["warning", "info", "note", "danger", "tip"],
-            raw_variant if raw_variant in ("warning", "info", "note", "danger", "tip") else "info",
+            "Literal['warning', 'info', 'note', 'danger', 'tip']",
+            raw_variant
+            if raw_variant in ("warning", "info", "note", "danger", "tip")
+            else "info",
         )
         paragraphs = _extract_cell_paragraphs(table)
         return cls(variant=variant, paragraphs=paragraphs)
@@ -372,7 +378,7 @@ class Blockquote(SpecialElement):
         )
 
     @classmethod
-    def from_table(cls, table: Table, named_range_name: str) -> "Blockquote":
+    def from_table(cls, table: Table, named_range_name: str) -> Blockquote:
         paragraphs = _extract_cell_paragraphs(table)
         return cls(paragraphs=paragraphs)
 

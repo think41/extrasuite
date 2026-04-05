@@ -58,12 +58,7 @@ from extradoc.api_types._generated import (
 from extradoc.api_types._generated import (
     List as DocList,
 )
-from extradoc.serde import (
-    deserialize,
-    from_document,
-    serialize,
-    to_document,
-)
+from extradoc.comments._types import DocumentWithComments, FileComments
 from extradoc.serde._models import (
     IndexHeading,
     IndexTab,
@@ -88,6 +83,9 @@ from extradoc.serde._utils import (
     sanitize_tab_name,
     str_to_dim,
 )
+from extradoc.serde.xml import XmlSerde, from_document, to_document
+
+_xml_serde = XmlSerde()
 
 # ---------------------------------------------------------------------------
 # Helper: build a minimal Document with paragraphs
@@ -1073,8 +1071,8 @@ class TestFileRoundTrip:
         )
 
         output = tmp_path / "test-doc"
-        paths = serialize(doc, output)
-        assert len(paths) >= 3  # index.xml + document.xml + styles.xml
+        bundle = DocumentWithComments(document=doc, comments=FileComments(file_id=""))
+        _xml_serde.serialize(bundle, output)
 
         # Check files exist
         assert (output / "index.xml").exists()
@@ -1082,7 +1080,7 @@ class TestFileRoundTrip:
         assert (output / "Tab_1" / "styles.xml").exists()
 
         # Deserialize and verify
-        bundle2 = deserialize(output)
+        bundle2 = _xml_serde._parse(output)
         _assert_text_content(bundle2.document, ["Title", "Body text", "Bold words"])
 
     def test_styled_file_roundtrip(self, tmp_path: Path) -> None:
@@ -1109,8 +1107,9 @@ class TestFileRoundTrip:
         )
 
         output = tmp_path / "styled-doc"
-        serialize(doc, output)
-        doc2 = deserialize(output).document
+        bundle = DocumentWithComments(document=doc, comments=FileComments(file_id=""))
+        _xml_serde.serialize(bundle, output)
+        doc2 = _xml_serde._parse(output).document
 
         tab = doc2.tabs[0]  # type: ignore
         dt = tab.document_tab

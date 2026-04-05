@@ -29,7 +29,9 @@ from typing import Any
 from extradoc.markdown_compare import compare_markdown_tabs, load_markdown_tabs
 from extradoc.reconcile import reindex_document
 from extradoc.reconcile_v2.diff import diff_documents, summarize_semantic_edits
-from extradoc.serde import deserialize
+from extradoc.serde.xml import XmlSerde
+
+_xml_serde = XmlSerde()
 
 REPO_ROOT = Path(__file__).resolve().parents[2]
 EXTRASUITE = REPO_ROOT / "extrasuite"
@@ -475,8 +477,8 @@ def _run_xml_structural_scenario(artifacts_dir: Path) -> ScenarioResult:
 
 
 def _compare_xml_folders(desired_folder: Path, actual_folder: Path) -> dict[str, Any]:
-    desired_bundle = deserialize(desired_folder)
-    actual_bundle = deserialize(actual_folder)
+    desired_bundle = _xml_serde._parse(desired_folder)
+    actual_bundle = _xml_serde._parse(actual_folder)
     desired_doc = reindex_document(desired_bundle.document)
     actual_doc = reindex_document(actual_bundle.document)
     edits = diff_documents(actual_doc, desired_doc)
@@ -545,14 +547,22 @@ def _rewrite_index_xml(path: Path, tabs: dict[str, str]) -> None:
 
 
 def _author_xml_folder(folder: Path, document_xml: str) -> None:
-    tab_dirs = [path for path in folder.iterdir() if path.is_dir() and not path.name.startswith(".")]
+    tab_dirs = [
+        path
+        for path in folder.iterdir()
+        if path.is_dir() and not path.name.startswith(".")
+    ]
     if len(tab_dirs) != 1:
-        raise ValueError(f"Expected exactly one tab folder under {folder}, found {tab_dirs!r}")
+        raise ValueError(
+            f"Expected exactly one tab folder under {folder}, found {tab_dirs!r}"
+        )
     tab_dir = tab_dirs[0]
     (tab_dir / "document.xml").write_text(document_xml, encoding="utf-8")
     styles_path = tab_dir / "styles.xml"
     if not styles_path.exists():
-        styles_path.write_text('<?xml version="1.0" encoding="UTF-8"?>\n<styles />\n', encoding="utf-8")
+        styles_path.write_text(
+            '<?xml version="1.0" encoding="UTF-8"?>\n<styles />\n', encoding="utf-8"
+        )
 
 
 def _pull_md(doc_url: str, output_dir: Path) -> Path:
@@ -595,7 +605,9 @@ def _push_xml(folder: Path) -> None:
 
 def _create_empty_doc(title: str) -> str:
     result = _run([str(EXTRASUITE), "docs", "create-empty", title])
-    match = re.search(r"^URL:\s*(https://docs.google.com/document/d/[^\s]+)$", result.stdout, re.M)
+    match = re.search(
+        r"^URL:\s*(https://docs.google.com/document/d/[^\s]+)$", result.stdout, re.M
+    )
     if match is None:
         raise RuntimeError(f"Could not parse doc URL from output:\n{result.stdout}")
     return match.group(1)

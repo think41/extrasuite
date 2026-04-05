@@ -36,10 +36,13 @@ from extradoc.api_types._generated import (
     TextStyle,
 )
 from extradoc.api_types._generated import List as DocList
+from extradoc.comments._types import DocumentWithComments, FileComments
 from extradoc.reconcile._core import reindex_document
-from extradoc.serde import deserialize, serialize
-from extradoc.serde._from_markdown import markdown_to_document
-from extradoc.serde._to_markdown import document_to_markdown
+from extradoc.serde.markdown import MarkdownSerde
+from extradoc.serde.markdown._from_markdown import markdown_to_document
+from extradoc.serde.markdown._to_markdown import document_to_markdown
+
+_md_serde = MarkdownSerde()
 
 # ---------------------------------------------------------------------------
 # Helpers
@@ -225,8 +228,7 @@ class TestMarkdownRoundTrip:
         doc = markdown_to_document(
             {
                 "Tab_1": (
-                    "Paragraph with footnote.[^note]\n\n"
-                    "[^note]: Footnote body text.\n"
+                    "Paragraph with footnote.[^note]\n\n[^note]: Footnote body text.\n"
                 )
             },
             document_id="x",
@@ -453,7 +455,10 @@ class TestMarkdownFileCycle:
         )
 
         out = tmp_path / "test-doc"
-        serialize(doc, out, format="markdown")
+        bundle = DocumentWithComments(
+            document=doc, comments=FileComments(file_id="test-doc")
+        )
+        _md_serde.serialize(bundle, out)
 
         # Check files written
         assert (out / "index.xml").exists()
@@ -472,14 +477,14 @@ class TestMarkdownFileCycle:
         assert "# Overview" in index_md
 
         # Deserialize
-        bundle = deserialize(out)
-        texts = _tab_body_text(bundle.document)
+        result = _md_serde.deserialize(out)
+        texts = _tab_body_text(result.desired.document)
         assert "Overview" in texts
         assert "Normal paragraph." in texts
         assert "Bold text" in texts
 
         # Check bold survived
-        tab = bundle.document.tabs[0]  # type: ignore[index]
+        tab = result.desired.document.tabs[0]  # type: ignore[index]
         body = tab.document_tab.body.content  # type: ignore[union-attr]
         bold_runs = [
             pe.text_run
@@ -1175,11 +1180,6 @@ class TestDiffRawJsonBase:
         doc_id: str = "test-doc-id",
     ) -> Path:
         """Create a markdown folder structure (as pull-md would produce)."""
-        import zipfile
-
-        from extradoc.serde import serialize
-        from extradoc.serde._from_markdown import markdown_to_document
-
         folder = tmp_path / doc_id
         folder.mkdir()
 
@@ -1189,22 +1189,11 @@ class TestDiffRawJsonBase:
             title="Test",
             tab_ids={"Tab_1": "t.0"},
         )
-        from extradoc.comments._types import DocumentWithComments, FileComments
-
         bundle = DocumentWithComments(
             document=doc,
             comments=FileComments(file_id=doc_id),
         )
-        serialize(bundle, folder, format="markdown")
-
-        # Create pristine zip
-        pristine_dir = folder / ".pristine"
-        pristine_dir.mkdir(exist_ok=True)
-        zip_path = pristine_dir / "document.zip"
-        with zipfile.ZipFile(zip_path, "w") as zf:
-            for p in sorted(folder.rglob("*")):
-                if p.is_file() and ".pristine" not in str(p) and ".raw" not in str(p):
-                    zf.write(p, p.relative_to(folder))
+        _md_serde.serialize(bundle, folder)
 
         return folder
 
@@ -1220,7 +1209,6 @@ class TestDiffRawJsonBase:
 
         from extradoc.client import DocsClient
         from extradoc.reconcile._core import reindex_document
-        from extradoc.serde._from_markdown import markdown_to_document
 
         INFLATE = 100  # Simulated real-API offset
 
@@ -1269,7 +1257,7 @@ class TestDiffRawJsonBase:
         inflated_dict = _inflate(raw_dict)
 
         raw_dir = folder / ".raw"
-        raw_dir.mkdir()
+        raw_dir.mkdir(exist_ok=True)
         (raw_dir / "document.json").write_text(
             json.dumps(inflated_dict), encoding="utf-8"
         )
@@ -1330,9 +1318,9 @@ class TestDiffRawJsonBase:
         assert result.document_id == "test-no-raw"
         # Should produce at least one batch with change requests
         all_reqs = [r for batch in result.batches for r in (batch.requests or [])]
-        assert (
-            len(all_reqs) > 0
-        ), "Expected diff to produce requests for changed callout"
+        assert len(all_reqs) > 0, (
+            "Expected diff to produce requests for changed callout"
+        )
 
     def test_heading_edit_with_consecutive_callouts_avoids_separator_insert(
         self, tmp_path: Path
@@ -1387,7 +1375,7 @@ class TestDiffRawJsonBase:
             tab_ids={"Tab_1": "t.0"},
         )
         raw_dir = folder / ".raw"
-        raw_dir.mkdir()
+        raw_dir.mkdir(exist_ok=True)
         (raw_dir / "document.json").write_text(
             json.dumps(
                 reindex_document(raw_doc).model_dump(by_alias=True, exclude_none=True)

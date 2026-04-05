@@ -33,7 +33,10 @@ from typing import Any
 import pytest
 
 from extradoc.api_types._generated import Document
-from extradoc.serde import deserialize, from_document, serialize, to_document
+from extradoc.comments._types import DocumentWithComments, FileComments
+from extradoc.serde.xml import XmlSerde, from_document, to_document
+
+_xml_serde = XmlSerde()
 
 GOLDEN_DIR = Path(__file__).parent / "golden"
 
@@ -542,10 +545,13 @@ class TestGoldenRoundTrip:
 
         # Step 1: Document → XML folder (serialize to disk)
         output_dir = tmp_path / "doc"
-        serialize(original_doc, output_dir)
+        bundle = DocumentWithComments(
+            document=original_doc, comments=FileComments(file_id="")
+        )
+        _xml_serde.serialize(bundle, output_dir)
 
         # Step 2: XML folder → Document (deserialize from disk)
-        roundtrip_bundle = deserialize(output_dir)
+        roundtrip_bundle = _xml_serde._parse(output_dir)
         roundtrip_doc = roundtrip_bundle.document
 
         # Step 3: Compare

@@ -25,13 +25,13 @@ from __future__ import annotations
 import html as _html
 from typing import TYPE_CHECKING, Any
 
-from extradoc.serde._special_elements import special_element_from_named_range
-from extradoc.serde._utils import (
+from .._utils import (
     _style_has_attrs,
     optional_color_to_hex,
     sanitize_tab_name,
     serialize_text_run,
 )
+from ._special_elements import special_element_from_named_range
 
 if TYPE_CHECKING:
     from extradoc.api_types._generated import (
@@ -98,8 +98,8 @@ def _build_named_range_index(doc_tab: DocumentTab) -> list[tuple[int, int, str]]
     for name, group in (doc_tab.named_ranges or {}).items():
         if not name.startswith("extradoc:"):
             continue
-        for nr in (group.named_ranges or []):
-            for r in (nr.ranges or []):
+        for nr in group.named_ranges or []:
+            for r in nr.ranges or []:
                 si = r.start_index
                 ei = r.end_index
                 if si is not None and ei is not None:
@@ -108,9 +108,7 @@ def _build_named_range_index(doc_tab: DocumentTab) -> list[tuple[int, int, str]]
     return spans
 
 
-def _find_annotation(
-    nr_spans: list[tuple[int, int, str]], table_si: int
-) -> str | None:
+def _find_annotation(nr_spans: list[tuple[int, int, str]], table_si: int) -> str | None:
     """Return the extradoc:* name whose span contains table_si, or None.
 
     The real Google Docs API may assign table startIndex values that drift by a
@@ -353,7 +351,10 @@ def _list_item_nesting_level(para: Paragraph, list_def: Any) -> int:
         level_indent = level.indent_start
         if not level_indent or level_indent.magnitude is None:
             continue
-        if level_indent.magnitude == target_magnitude and (level_indent.unit or "PT") == target_unit:
+        if (
+            level_indent.magnitude == target_magnitude
+            and (level_indent.unit or "PT") == target_unit
+        ):
             return index
     return 0
 

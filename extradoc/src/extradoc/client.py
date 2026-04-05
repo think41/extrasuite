@@ -7,13 +7,10 @@ from __future__ import annotations
 
 import json
 import logging
-import tempfile
-import zipfile
 from dataclasses import dataclass
 from pathlib import Path
-from typing import TYPE_CHECKING, Literal, cast
+from typing import TYPE_CHECKING
 
-import extradoc.serde as serde
 from extradoc.api_types._generated import (
     BatchUpdateDocumentRequest,
     Document,
@@ -28,16 +25,16 @@ from extradoc.reconcile import reindex_document
 from extradoc.reconcile_v2.executor import execute_request_batches
 from extradoc.reconcile_v3.api import reconcile_batches as reconcile_v3_batches
 from extradoc.serde._models import IndexXml
+from extradoc.serde.markdown import MarkdownSerde
+from extradoc.serde.xml import XmlSerde
 
 if TYPE_CHECKING:
+    from extradoc.serde import Serde
     from extradoc.transport import Transport
 
 logger = logging.getLogger(__name__)
 
-# Directory / file constants
 RAW_DIR = ".raw"
-PRISTINE_DIR = ".pristine"
-PRISTINE_ZIP = "document.zip"
 
 
 @dataclass
@@ -65,8 +62,15 @@ class DiffResult:
 class DocsClient:
     """Main client for Google Docs pull/diff/push operations."""
 
+    _xml_serde: Serde = XmlSerde()
+    _md_serde: Serde = MarkdownSerde()
+
     def __init__(self, transport: Transport) -> None:
         self._transport = transport
+
+    def _get_serde(self, format: str) -> Serde:
+        """Return the appropriate serde for the given format."""
+        return self._md_serde if format == "markdown" else self._xml_serde
 
     async def pull(
         self,
@@ -75,23 +79,18 @@ class DocsClient:
         *,
         save_raw: bool = True,
         format: str = "xml",
-    ) -> list[Path]:
+    ) -> None:
         """Pull a document from Google Docs to local files.
 
         Args:
             document_id: The document identifier
             output_path: Parent directory for the output folder
-            save_raw: Whether to save optional raw sidecars such as comments.json.
-                The raw document JSON is always written because diff/push now
-                treat ``.raw/document.json`` as required transport state.
+            save_raw: Whether to save optional raw sidecars such as comments.json
             format: Output format — "xml" (default) or "markdown"
-
-        Returns:
-            List of file paths written
         """
         output_path = Path(output_path)
 
-        # Fetch document and comments in parallel
+        # Fetch document and comments
         document_data = await self._transport.get_document(document_id)
         raw_comments = await self._transport.list_comments(document_id)
 
@@ -101,51 +100,23 @@ class DocsClient:
         bundle = DocumentWithComments(document=doc, comments=file_comments)
 
         document_dir = output_path / document_id
-        document_dir.mkdir(parents=True, exist_ok=True)
+        serde_impl = self._get_serde(format)
+        serde_impl.serialize(bundle, document_dir)
 
-        # Serialize bundle to folder
-        written_files = serde.serialize(
-            bundle, document_dir, format=cast("Literal['xml', 'markdown']", format)
-        )
-
-        # Raw document JSON is always materialized because the reconciler uses
-        # it as transport-accurate base state during diff/push.
-        raw_dir = document_dir / RAW_DIR
-        raw_dir.mkdir(parents=True, exist_ok=True)
-
-        raw_doc_path = raw_dir / "document.json"
-        raw_doc_path.write_text(
-            json.dumps(document_data.raw, indent=2, ensure_ascii=False),
-            encoding="utf-8",
-        )
-        written_files.append(raw_doc_path)
-
+        # Optional: save raw comments JSON for debugging
         if save_raw and raw_comments:
+            raw_dir = document_dir / RAW_DIR
+            raw_dir.mkdir(parents=True, exist_ok=True)
             raw_comments_path = raw_dir / "comments.json"
             raw_comments_path.write_text(
                 json.dumps({"comments": raw_comments}, indent=2, ensure_ascii=False),
                 encoding="utf-8",
             )
-            written_files.append(raw_comments_path)
-
-        # Create pristine zip from the serde output.
-        # For markdown format, _serialize_markdown already wrote the pristine zip;
-        # re-writing it here ensures .raw/ is excluded regardless of format.
-        pristine_path = _create_pristine_zip(document_dir)
-        written_files.append(pristine_path)
-
-        return written_files
 
     def diff(self, folder: str | Path) -> DiffResult:
         """Compare current files against pristine and generate batch requests.
 
         This is local-only and does not make any API calls.
-
-        When `.raw/document.json` exists, it is treated as the authoritative
-        live transport base for reconciliation. XML/markdown semantic
-        correctness is still validated at the serde boundary, but the
-        reconciler itself runs against the pulled raw document so requests are
-        anchored to real Docs indices/story state.
 
         Args:
             folder: Path to document folder (containing index.xml)
@@ -157,68 +128,21 @@ class DocsClient:
         document_id = _read_document_id(folder)
 
         index_path = folder / "index.xml"
-        index = serde.IndexXml.from_xml_string(index_path.read_text(encoding="utf-8"))
+        index = IndexXml.from_xml_string(index_path.read_text(encoding="utf-8"))
+        serde_impl = self._get_serde(index.format or "xml")
 
-        # Prefer the raw API JSON as transport base so generated requests carry
-        # real Docs indices rather than reconstructed approximations.
-        raw_doc_path = folder / RAW_DIR / "document.json"
-        if raw_doc_path.exists():
-            raw_data = json.loads(raw_doc_path.read_text(encoding="utf-8"))
-            transport_base = Document.model_validate(raw_data)
-            if index.format == "markdown":
-                # 3-way merge: desired = apply_ops(transport_base, diff(ancestor_md, mine_md))
-                # Fields the markdown SERDE doesn't model (lineSpacing, underline on links,
-                # inter-table separators, TITLE/SUBTITLE etc.) produce zero ops and are
-                # preserved unchanged from transport_base.  No normalisation needed.
-                with tempfile.TemporaryDirectory() as tmp:
-                    _extract_pristine_zip(folder, Path(tmp))
-                    pristine_bundle = serde.deserialize(Path(tmp))
-                transport_bundle = DocumentWithComments(
-                    document=transport_base, comments=pristine_bundle.comments
-                )
-                desired_bundle = serde.deserialize(transport_bundle, folder)
-                desired = reindex_document(desired_bundle.document)
-                batches = _reconcile_documents(transport_base, desired)
-                comment_ops = diff_comments(
-                    pristine_bundle.comments, desired_bundle.comments
-                )
-                return DiffResult(
-                    document_id=document_id,
-                    batches=batches,
-                    comment_ops=comment_ops,
-                    base_revision_id=transport_base.revision_id,
-                )
+        result = serde_impl.deserialize(folder)
 
-            with tempfile.TemporaryDirectory() as tmp:
-                _extract_pristine_zip(folder, Path(tmp))
-                base_bundle = serde.deserialize(Path(tmp))
-            desired_bundle = serde.deserialize(folder)
-            base = transport_base
-            desired = reindex_document(desired_bundle.document)
-            batches = _reconcile_documents(base, desired)
-            comment_ops = diff_comments(base_bundle.comments, desired_bundle.comments)
-            return DiffResult(
-                document_id=document_id,
-                batches=batches,
-                comment_ops=comment_ops,
-                base_revision_id=transport_base.revision_id,
-            )
-
-        with tempfile.TemporaryDirectory() as tmp:
-            _extract_pristine_zip(folder, Path(tmp))
-            base_bundle = serde.deserialize(Path(tmp))
-        desired_bundle = serde.deserialize(folder)
-        base = reindex_document(base_bundle.document)
-        desired = reindex_document(desired_bundle.document)
-        batches = _reconcile_documents(base, desired)
-
-        comment_ops = diff_comments(base_bundle.comments, desired_bundle.comments)
+        base = result.base
+        desired_doc = reindex_document(result.desired.document)
+        batches = _reconcile_documents(base.document, desired_doc)
+        comment_ops = diff_comments(base.comments, result.desired.comments)
 
         return DiffResult(
             document_id=document_id,
             batches=batches,
             comment_ops=comment_ops,
-            base_revision_id=base.revision_id,
+            base_revision_id=base.document.revision_id,
         )
 
     async def push(self, folder: str | Path, *, force: bool = False) -> PushResult:
@@ -342,68 +266,10 @@ async def _execute_document_batches(
     return sum(len(batch) for batch in request_batches)
 
 
-# ---------------------------------------------------------------------------
-# Helper functions
-# ---------------------------------------------------------------------------
-
-
-def _create_pristine_zip(folder: Path) -> Path:
-    """Zip the entire serde output (excluding .pristine/ and .raw/) into pristine zip.
-
-    Args:
-        folder: The document folder to zip
-
-    Returns:
-        Path to the created zip file
-    """
-    pristine_dir = folder / PRISTINE_DIR
-    pristine_dir.mkdir(parents=True, exist_ok=True)
-    zip_path = pristine_dir / PRISTINE_ZIP
-
-    _skip_dirs = {PRISTINE_DIR, RAW_DIR}
-
-    with zipfile.ZipFile(zip_path, "w", zipfile.ZIP_DEFLATED) as zf:
-        for path in sorted(folder.rglob("*")):
-            if path.is_dir():
-                continue
-            # Skip anything inside .pristine/ or .raw/
-            try:
-                rel = path.relative_to(folder)
-            except ValueError:
-                continue
-            if rel.parts[0] in _skip_dirs:
-                continue
-            zf.write(path, rel)
-
-    return zip_path
-
-
-def _extract_pristine_zip(folder: Path, dest: Path) -> None:
-    """Extract the pristine zip into dest directory.
-
-    Args:
-        folder: The document folder containing .pristine/document.zip
-        dest: Destination directory to extract into
-    """
-    zip_path = folder / PRISTINE_DIR / PRISTINE_ZIP
-    if not zip_path.exists():
-        raise FileNotFoundError(f"Pristine zip not found: {zip_path}")
-    with zipfile.ZipFile(zip_path, "r") as zf:
-        zf.extractall(dest)
-
-
 def _read_document_id(folder: Path) -> str:
-    """Read the document ID from index.xml.
-
-    Args:
-        folder: The document folder containing index.xml
-
-    Returns:
-        The document ID string
-    """
+    """Read the document ID from index.xml."""
     index_path = folder / "index.xml"
     if not index_path.exists():
-        # Fall back to folder name
         return folder.name
     index = IndexXml.from_xml_string(index_path.read_text(encoding="utf-8"))
     return index.id or folder.name

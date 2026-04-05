@@ -19,7 +19,7 @@ from extradoc.api_types._generated import (
     Table,
 )
 
-from ._models import (
+from .._models import (
     AutoTextNode,
     BlockNode,
     ColumnBreakNode,
@@ -42,7 +42,7 @@ from ._models import (
     TNode,
     TocXml,
 )
-from ._styles import (
+from .._styles import (
     StylesXml,
     resolve_cell_style,
     resolve_col_style,
