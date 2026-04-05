@@ -37,6 +37,37 @@ from extradoc.diffmerge.model import (
 # ---------------------------------------------------------------------------
 
 
+def _cell_plain_text(cell: TableCell) -> str:
+    """Concatenate a cell's paragraph text verbatim, trimming the trailing "\\n".
+
+    Unlike :func:`cell_text_hash`, this does not add extra paragraph
+    delimiters: each paragraph's ``textRun`` content is appended in order,
+    then a single trailing newline (the cell's mandatory final "\\n") is
+    stripped. Suitable for reconstructing the desired text to insert into a
+    freshly-created cell with ``insertText``.
+    """
+    parts: list[str] = []
+    for el in cell.content or []:
+        para = el.paragraph
+        if para is None:
+            continue
+        for inline in para.elements or []:
+            text_run = inline.text_run
+            if text_run is not None:
+                parts.append(text_run.content or "")
+    text = "".join(parts)
+    # A cell's paragraphs each end in "\n". The final paragraph of a cell is
+    # always a bare "\n" (the cell's structural terminator), and the
+    # penultimate paragraph carries the user text ending in its own "\n".
+    # So the concatenation ends in up to two trailing "\n"s that do NOT
+    # belong to the user-visible cell text. Strip up to two.
+    if text.endswith("\n"):
+        text = text[:-1]
+    if text.endswith("\n"):
+        text = text[:-1]
+    return text
+
+
 def cell_text_hash(cell: TableCell) -> str:
     """Return a normalized plain-text string for a cell's content.
 
@@ -367,6 +398,8 @@ def diff_tables(
         tab_id=tab_id,
         table_start_index=table_start_index,
         base_col_count=base_col_count,
+        base_rows=base_rows,
+        desired_rows=desired_rows,
     )
 
     # -----------------------------------------------------------------------
@@ -420,27 +453,63 @@ def _emit_row_insertions(
     tab_id: str,
     table_start_index: int,
     base_col_count: int,
+    base_rows: list[TableRow],
+    desired_rows: list[TableRow],
 ) -> None:
-    """Emit InsertTableRowOp for each unmatched desired row."""
+    """Emit InsertTableRowOp for each unmatched desired row.
+
+    Each emitted op carries ``new_cell_texts`` (the desired text for each new
+    cell, in column order) and ``new_row_start_index`` (the byte index in the
+    base document where the new row's first char will land after
+    ``insertTableRow`` executes). The lowering layer uses both to emit
+    ``insertText`` requests that populate the newly-created cells.
+    """
     if not inserted_desired_indices:
         return
 
-    def make_insert_above(d_idx: int) -> ReconcileOp:  # noqa: ARG001
+    def _desired_cell_texts(d_idx: int) -> list[str]:
+        cells = desired_rows[d_idx].table_cells or []
+        return [_cell_plain_text(c) for c in cells]
+
+    def _anchor_row_end(base_row_idx: int) -> int | None:
+        """Byte index where a row inserted BELOW base_rows[base_row_idx] begins.
+
+        Returns ``None`` when the row has no index info (e.g. in synthetic
+        unit tests without API indices). In that case the emitted
+        ``InsertTableRowOp`` carries an empty ``new_cell_texts`` — the
+        structural row insert still happens, but no cell-text inserts are
+        emitted by lowering.
+        """
+        return base_rows[base_row_idx].end_index
+
+    def _anchor_row_start(base_row_idx: int) -> int | None:
+        """Byte index where a row inserted ABOVE base_rows[base_row_idx] begins."""
+        return base_rows[base_row_idx].start_index
+
+    def make_insert_above(d_idx: int) -> ReconcileOp:
+        # ``_emit_insertions`` calls make_insert_above only when there is no
+        # preceding anchor — the new row is prepended above base row 0.
+        anchor_idx = _anchor_row_start(0)
         return InsertTableRowOp(
             tab_id=tab_id,
             table_start_index=table_start_index,
             row_index=0,
             insert_below=False,
             column_count=base_col_count,
+            new_row_start_index=anchor_idx,
+            new_cell_texts=_desired_cell_texts(d_idx) if anchor_idx is not None else [],
         )
 
-    def make_insert_below(d_idx: int, base_anchor: int) -> ReconcileOp:  # noqa: ARG001
+    def make_insert_below(d_idx: int, base_anchor: int) -> ReconcileOp:
+        anchor_idx = _anchor_row_end(base_anchor)
         return InsertTableRowOp(
             tab_id=tab_id,
             table_start_index=table_start_index,
             row_index=base_anchor,
             insert_below=True,
             column_count=base_col_count,
+            new_row_start_index=anchor_idx,
+            new_cell_texts=_desired_cell_texts(d_idx) if anchor_idx is not None else [],
         )
 
     _emit_insertions(

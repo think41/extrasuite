@@ -344,13 +344,35 @@ class UpdateFootnoteContentOp:
 
 @dataclass
 class InsertTableRowOp:
-    """Insert a new row into an existing table."""
+    """Insert a new row into an existing table.
+
+    ``new_cell_texts`` carries the desired text for each of the new row's cells
+    (one entry per column, in column order). The lowering layer uses this to
+    emit ``insertText`` requests that populate the newly-created (otherwise
+    empty) cells. When the desired row has no text content, each entry is the
+    empty string.
+
+    ``new_row_start_index`` is the byte index in the BASE document where the
+    new row will begin after ``insertTableRow`` executes. For ``insert_below``
+    this is the anchor row's ``end_index``; for ``insert_above`` it is the
+    anchor row's ``start_index``. It is used by lowering to compute the byte
+    offsets of each new cell's first paragraph for the ``insertText`` calls.
+    """
 
     tab_id: str
     table_start_index: int  # startIndex of the table in the flat doc space
     row_index: int  # where to insert (0-based, refers to base row)
     insert_below: bool  # True = insert after row_index, False = insert before
     column_count: int  # needed to create blank cells
+    # ``new_row_start_index`` is the byte index where the new row will begin
+    # after ``insertTableRow`` executes. It is populated whenever the base
+    # anchor row carries API-assigned indices (i.e. when reconciling real
+    # pulled documents). Synthetic unit-test tables without index info leave
+    # this unset; in that case ``new_cell_texts`` is also empty and lowering
+    # emits only the structural ``insertTableRow`` request (no cell-text
+    # population).
+    new_row_start_index: int | None = None
+    new_cell_texts: list[str] = field(default_factory=list)  # one text per column
 
 
 @dataclass

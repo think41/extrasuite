@@ -604,6 +604,21 @@ def lower_batches(
                         tab_id=op.tab_id,
                     )
                 )
+                # Populate the newly-created cells with the desired text.
+                # ``insertTableRow`` creates an empty row with default cell
+                # layout (per cell: 1 start-overhead byte + "\n" paragraph +
+                # trailing "\n" paragraph = 3 bytes); plus 1 row-overhead byte.
+                # The new cells' first-paragraph positions are computed off
+                # ``op.new_row_start_index`` (a BASE byte index that is valid
+                # at this point in the batch because all subsequent matched
+                # cell edits operate at strictly lower indices).
+                batch1.extend(
+                    _make_new_row_cell_text_inserts(
+                        new_row_start_index=op.new_row_start_index,
+                        new_cell_texts=op.new_cell_texts,
+                        tab_id=op.tab_id,
+                    )
+                )
 
             case DeleteTableRowOp():
                 batch1.append(
@@ -3351,6 +3366,69 @@ def _make_insert_table_row(
             insert_below=insert_below,
         )
     )
+
+
+# Per-cell overhead in a newly-inserted (empty) table row, in bytes:
+#   1 byte: cell start-overhead
+#   1 byte: one empty paragraph ("\n")
+# Note: rows created by ``insertTableRow`` contain exactly ONE paragraph per
+# cell (observed on the live Google Docs API). This differs from cells
+# authored via ``insertTable`` (which carry two paragraphs per cell).
+_EMPTY_CELL_SIZE = 2
+# One-byte row-overhead prefix each new row carries.
+_ROW_OVERHEAD = 1
+
+
+def _make_new_row_cell_text_inserts(
+    *,
+    new_row_start_index: int | None,
+    new_cell_texts: list[str],
+    tab_id: str,
+) -> list[Request]:
+    """Emit ``insertText`` requests that populate an empty, just-inserted row.
+
+    After ``insertTableRow``, the new row exists at ``new_row_start_index``
+    with predictable byte layout (each cell is ``_EMPTY_CELL_SIZE`` bytes;
+    rows have a ``_ROW_OVERHEAD`` byte prefix). We emit one ``insertText`` per
+    non-empty cell, targeting the cell's first paragraph. We emit them in
+    REVERSE column order so each insert does not invalidate the byte offsets
+    computed for earlier (lower-column) cells.
+    """
+    if not new_cell_texts:
+        return []
+    if new_row_start_index is None:
+        # Synthetic docs without API indices: diff emits an empty
+        # ``new_cell_texts`` in that case, so reaching this branch with a
+        # populated list would be an invariant violation.
+        raise ValueError(
+            "InsertTableRowOp carries new_cell_texts but no "
+            "new_row_start_index; cannot compute cell byte offsets"
+        )
+
+    # Position of cell ``c``'s first paragraph (the empty "\n" inserted by
+    # insertTableRow): new_row_start + row_overhead + c * cell_size + cell_overhead
+    # The cell_overhead is 1, so the first paragraph sits at:
+    #     new_row_start + 1 + c * 3 + 1
+    requests: list[Request] = []
+    for col_idx in reversed(range(len(new_cell_texts))):
+        text = new_cell_texts[col_idx]
+        if not text:
+            continue
+        p1_index = (
+            new_row_start_index
+            + _ROW_OVERHEAD
+            + col_idx * _EMPTY_CELL_SIZE
+            + 1  # cell start-overhead
+        )
+        requests.append(
+            _make_insert_text(
+                index=p1_index,
+                tab_id=tab_id,
+                segment_id=None,
+                text=text,
+            )
+        )
+    return requests
 
 
 def _make_delete_table_row(
