@@ -3451,11 +3451,14 @@ class TestTableInsertIntoBody:
         assert len(insert_text_reqs) >= 1
         first_text_idx = insert_text_reqs[0].insert_text.location.index  # type: ignore[union-attr]
 
-        # After insertTable, the real Google Docs API creates cells where
-        # the paragraph starts at table_idx + 4 (not +3 as the lowering code
-        # assumes). The extra character is the cell's own structural overhead.
-        # The lowering code currently produces table_idx + 3, which the real
-        # API rejects. This test asserts the correct offset (+4).
+        # Empirically verified: insertTable(location.index=I) inserts the
+        # table AFTER the paragraph containing index I. The table starts at
+        # I+1 (not I). Cell paragraphs are at table_start+3. Therefore cell
+        # content insertText must target I+1+3 = I+4.
+        #
+        # Evidence: insertTable(index=41) on a doc where [41-42] is a
+        # paragraph → table created at [42-54], cell (0,0) paragraph at [45].
+        # So insertText must go to 41+4=45, not 41+3=44.
         assert first_text_idx == table_idx + 4, (
             f"First cell insertText should be at table_idx+4={table_idx + 4}, "
             f"got {first_text_idx} (table_idx+{first_text_idx - table_idx})"
