@@ -24,8 +24,6 @@ from __future__ import annotations
 
 from typing import Any
 
-import pytest
-
 from extradoc.api_types._generated import (
     BatchUpdateDocumentRequest,
     Body,
@@ -1631,69 +1629,46 @@ class TestLargeDocument:
 
 
 # ===========================================================================
-# 15. Named ranges (not supported)
+# 15. Named ranges — superseded by tests/reconcile_v3/test_named_ranges.py
 # ===========================================================================
 
 
 class TestNamedRanges:
-    """Named ranges are a document feature the reconciler doesn't handle."""
+    """Kept for historical reference; full coverage is in test_named_ranges.py."""
 
-    @pytest.mark.xfail(
-        reason="Named ranges (createNamedRange/deleteNamedRange) not supported by reconciler"
-    )
     def test_named_range_not_silently_dropped(self) -> None:
-        """Adding a named range should either work or raise explicitly."""
-        base = _doc(
-            Tab(
-                tab_properties=TabProperties(tab_id="t1", title="Tab", index=0),
-                document_tab=DocumentTab(
-                    body=Body(
-                        content=[
-                            _indexed_para("Hello World\n", 1),
-                            _terminal(13),
-                        ]
-                    ),
-                    headers={},
-                    footers={},
-                    footnotes={},
-                    lists={},
-                    named_styles=NamedStyles(styles=[]),
-                    document_style={},
-                    inline_objects={},
-                    named_ranges={},
-                ),
-            )
-        )
+        """Adding a named range should produce a createNamedRange request."""
+        from extradoc.api_types._generated import NamedRange, NamedRanges, Range
 
-        desired = _doc(
-            Tab(
-                tab_properties=TabProperties(tab_id="t1", title="Tab", index=0),
-                document_tab=DocumentTab(
-                    body=Body(
-                        content=[
-                            _indexed_para("Hello World\n", 1),
-                            _terminal(13),
-                        ]
-                    ),
-                    headers={},
-                    footers={},
-                    footnotes={},
-                    lists={},
-                    named_styles=NamedStyles(styles=[]),
-                    document_style={},
-                    inline_objects={},
-                    named_ranges={
-                        "nr1": {
-                            "named_range_id": "nr1",
-                            "name": "my_range",
-                            "ranges": [
-                                {"start_index": 1, "end_index": 6, "segment_id": ""},
-                            ],
-                        },
-                    },
-                ),
-            )
+        base = _doc(_tab("t1", [_indexed_para("Hello World\n", 1), _terminal(13)]))
+        desired_tab = Tab(
+            tab_properties=TabProperties(tab_id="t1", title="Tab", index=0),
+            document_tab=DocumentTab(
+                body=Body(content=[_indexed_para("Hello World\n", 1), _terminal(13)]),
+                headers={},
+                footers={},
+                footnotes={},
+                lists={},
+                named_styles=NamedStyles(styles=[]),
+                document_style={},
+                inline_objects={},
+                named_ranges={
+                    "my_range": NamedRanges(
+                        name="my_range",
+                        named_ranges=[
+                            NamedRange(
+                                name="my_range",
+                                named_range_id="nr1",
+                                ranges=[
+                                    Range(start_index=1, end_index=6, segment_id="")
+                                ],
+                            )
+                        ],
+                    )
+                },
+            ),
         )
+        desired = _doc(desired_tab)
 
         batches = reconcile_batches(base, desired)
         req_types = _collect_request_types(batches)
