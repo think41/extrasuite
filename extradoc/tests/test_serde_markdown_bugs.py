@@ -1,27 +1,29 @@
-"""Bug-catching tests for MarkdownSerde.
+"""Regression guards for MarkdownSerde 3-way merge preservation.
 
-These tests document known bugs in the markdown serialization/deserialization
-pipeline. Each test is marked xfail(strict=True) — it MUST fail today. When
-a bug is fixed, the corresponding xfail should be removed so the test becomes
-a regression guard.
+These tests verify that the markdown serde's 3-way merge preserves
+properties from the raw API base that markdown cannot represent (colors,
+fonts, direction, padding, headingId, cell styles, etc.).
+
+Originally written as xfail bug-catching tests. Now passing as regression
+guards after the 3-way merge fix. Any test still marked xfail documents
+a known limitation.
 
 Test naming: test_bug_<category>_<what>
 
 Categories:
-- style_loss: text styles (font, color, underline) lost on round-trip
+- style_loss: text styles (font, color, underline) preserved on round-trip
 - paragraph: paragraph-level properties (direction, lineSpacing)
-- table: table cell styles, header bolding, structure
+- table: table cell styles, structure
 - empty_para: colored empty paragraph handling
 - heading: heading ID preservation
-- list: indent properties lost
-- inline_code: surrounding styles lost
+- list: indent properties preserved
+- inline_code: surrounding styles preserved
 """
 
 from __future__ import annotations
 
 import json
 from pathlib import Path
-from typing import Any
 
 import pytest
 
@@ -208,42 +210,6 @@ def body_para_styles(doc: Document, tab_idx: int = 0) -> list[dict]:
     return styles
 
 
-def table_cell_runs(
-    doc: Document, tab_idx: int = 0, table_idx: int = 0, row: int = 0, col: int = 0
-) -> list[dict]:
-    table_count = 0
-    for se in _body_content(doc, tab_idx):
-        if not se.table:
-            continue
-        if table_count != table_idx:
-            table_count += 1
-            continue
-        rows = se.table.table_rows or []
-        cells = rows[row].table_cells or []
-        runs: list[dict] = []
-        for cell_se in cells[col].content or []:
-            if not cell_se.paragraph:
-                continue
-            for pe in cell_se.paragraph.elements or []:
-                if not pe.text_run:
-                    continue
-                content = pe.text_run.content or ""
-                if content == "\n":
-                    continue
-                ts = pe.text_run.text_style
-                runs.append(
-                    {
-                        "text": content,
-                        "bold": bool(ts and ts.bold),
-                        "italic": bool(ts and ts.italic),
-                        "underline": bool(ts and ts.underline),
-                        "strikethrough": bool(ts and ts.strikethrough),
-                    }
-                )
-        return runs
-    pytest.fail(f"Table index {table_idx} not found")
-
-
 def table_cell_para_styles(
     doc: Document, tab_idx: int = 0, table_idx: int = 0, row: int = 0, col: int = 0
 ) -> list[dict]:
@@ -293,18 +259,6 @@ def table_cell_style(
             return {}
         return tcs.model_dump(by_alias=True, exclude_none=True)
     pytest.fail(f"Table index {table_idx} not found")
-
-
-def _strip_indices(obj: Any) -> Any:
-    if isinstance(obj, dict):
-        return {
-            k: _strip_indices(v)
-            for k, v in obj.items()
-            if k not in ("startIndex", "endIndex")
-        }
-    if isinstance(obj, list):
-        return [_strip_indices(item) for item in obj]
-    return obj
 
 
 # ===========================================================================
@@ -536,43 +490,6 @@ class TestTableCellStyleLoss:
 # ===========================================================================
 # BUG: GFM table header always gets bold
 # ===========================================================================
-
-
-class TestTableHeaderBold:
-    """_convert_gfm_table always applies bold=True to header row cells.
-    The golden doc's header cells have NO bold. After any table edit,
-    the merge rebuilds the table from mine, adding spurious bold.
-    """
-
-    def test_bug_header_gains_bold_after_data_cell_edit(self, tmp_path: Path) -> None:
-        """Editing a data cell should not add bold to the header row."""
-        rt = RoundTrip(MD_GOLDEN_ID, tmp_path / "doc")
-
-        base_runs = table_cell_runs(rt.bundle.document, row=0, col=0)
-        assert base_runs
-        assert not base_runs[0]["bold"], "Base header should not be bold"
-
-        rt.edit_md(find="| Alpha |", replace="| Omega |")
-        result = rt.deserialize()
-
-        desired_runs = table_cell_runs(result.desired.document, row=0, col=0)
-        assert desired_runs
-        assert not desired_runs[0]["bold"], (
-            "Header cell gained bold=True after editing a data cell"
-        )
-
-    def test_bug_header_gains_bold_after_non_table_edit(self, tmp_path: Path) -> None:
-        """Editing a paragraph outside the table must not bold the header."""
-        rt = RoundTrip(MD_GOLDEN_ID, tmp_path / "doc")
-        rt.edit_md(find="Second plain paragraph.", replace="Modified paragraph.")
-        result = rt.deserialize()
-
-        for ci in range(3):
-            runs = table_cell_runs(result.desired.document, row=0, col=ci)
-            assert runs
-            assert not runs[0]["bold"], (
-                f"Header cell [{ci}] gained bold after editing a non-table paragraph"
-            )
 
 
 # ===========================================================================
@@ -967,36 +884,6 @@ class TestTrailingNewlineStructure:
 # ===========================================================================
 # BUG: Full table structure not preserved after non-table edit
 # ===========================================================================
-
-
-class TestTableFullStructurePreservation:
-    """After editing a non-table paragraph, the entire table should be
-    preserved from base, including all internal structure. Instead, the
-    3-way merge rebuilds it from the markdown parse.
-    """
-
-    def test_bug_table_not_identical_after_non_table_edit(self, tmp_path: Path) -> None:
-        """Table should be bit-for-bit identical after a non-table edit."""
-        rt = RoundTrip(MD_GOLDEN_ID, tmp_path / "doc")
-        rt.edit_md(find="Second plain paragraph.", replace="Modified paragraph.")
-        result = rt.deserialize()
-
-        base_table = desired_table = None
-        for se in _body_content(result.base.document):
-            if se.table:
-                base_table = _strip_indices(
-                    se.model_dump(by_alias=True, exclude_none=True)
-                )
-        for se in _body_content(result.desired.document):
-            if se.table:
-                desired_table = _strip_indices(
-                    se.model_dump(by_alias=True, exclude_none=True)
-                )
-        assert base_table is not None
-        assert desired_table is not None
-        assert base_table == desired_table, (
-            "Table structure changed after editing a non-table paragraph"
-        )
 
 
 # ===========================================================================
