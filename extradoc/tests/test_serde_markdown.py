@@ -407,6 +407,39 @@ class TestMarkdownRoundTrip:
         assert "1. x\n" in md
         assert "2. y\n" in md
 
+    def test_document_to_md_numbered_list_nested_levels(self) -> None:
+        """Each nesting level gets its own counter; re-entering restarts at 1."""
+        lists = {
+            "kix.list1": DocList(
+                list_properties=ListProperties(
+                    nesting_levels=[
+                        NestingLevel(glyph_type=NestingLevelGlyphType.DECIMAL),
+                        NestingLevel(glyph_type=NestingLevelGlyphType.DECIMAL),
+                    ]
+                )
+            )
+        }
+        doc = _make_doc(
+            [
+                _make_para("A", bullet=Bullet(list_id="kix.list1", nesting_level=0)),
+                _make_para("A.i", bullet=Bullet(list_id="kix.list1", nesting_level=1)),
+                _make_para("A.ii", bullet=Bullet(list_id="kix.list1", nesting_level=1)),
+                _make_para("B", bullet=Bullet(list_id="kix.list1", nesting_level=0)),
+                _make_para("B.i", bullet=Bullet(list_id="kix.list1", nesting_level=1)),
+                _make_para("C", bullet=Bullet(list_id="kix.list1", nesting_level=0)),
+            ],
+            lists=lists,
+        )
+        per_tab = document_to_markdown(doc)
+        md = per_tab["Tab_1"]["document.md"]
+        assert "1. A\n" in md
+        assert "  1. A.i\n" in md
+        assert "  2. A.ii\n" in md
+        assert "2. B\n" in md
+        # re-entering level 1 restarts at 1
+        assert "  1. B.i\n" in md
+        assert "3. C\n" in md
+
     def test_document_to_md_numbered_list_resets_after_non_list(self) -> None:
         """Leaving a list and re-entering with a new list_id restarts numbering."""
         lists = {
