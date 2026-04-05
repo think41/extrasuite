@@ -3282,3 +3282,181 @@ class TestTableInsertCellContent:
             f"Expected exactly one insertText (not double), got: {[r.insert_text.text for r in insert_reqs]}"
         )  # type: ignore[union-attr]
         assert insert_reqs[0].insert_text.text == "Hello\n"  # type: ignore[union-attr]
+
+
+class TestTableInsertIntoBody:
+    """End-to-end: reconcile empty→table, checking generated requests
+    are valid for the real Google Docs API.
+
+    The Google Docs API's insertTable creates a table where cell paragraphs
+    start at a specific offset from the table location. The lowering code
+    must compute this offset correctly so that subsequent insertText requests
+    land inside an existing paragraph.
+    """
+
+    @pytest.mark.xfail(
+        reason=(
+            "BUG: After insertTable, the lowering code computes the first "
+            "cell paragraph at table_index+3 (table+row+cell openers). The "
+            "real API rejects insertText at this index with 'insertion index "
+            "must be inside the bounds of an existing paragraph'."
+        ),
+        strict=True,
+    )
+    def test_insert_table_into_empty_body_cell_index_valid(self) -> None:
+        """Adding a table to an empty doc: the insertText for cell content
+        must reference a valid paragraph index after insertTable executes.
+
+        Reproduces: push-md with a table generates insertTable at index 1
+        followed by insertText at index 4 (1+3). The real API returns 400:
+        'insertion index must be inside the bounds of an existing paragraph.'
+        Also reproduced with tables added to non-empty docs (e.g. index 41).
+        """
+        base = make_indexed_doc(
+            body_content=[make_indexed_terminal(1)],
+        )
+
+        table_el = StructuralElement(
+            start_index=1,
+            end_index=18,
+            table=Table(
+                rows=2,
+                columns=2,
+                table_rows=[
+                    TableRow(
+                        table_cells=[
+                            TableCell(
+                                content=[
+                                    StructuralElement(
+                                        paragraph=Paragraph(
+                                            elements=[
+                                                ParagraphElement(
+                                                    text_run=TextRun(content="A\n")
+                                                )
+                                            ],
+                                            paragraph_style=ParagraphStyle(
+                                                named_style_type="NORMAL_TEXT"
+                                            ),
+                                        )
+                                    ),
+                                    StructuralElement(
+                                        paragraph=Paragraph(
+                                            elements=[
+                                                ParagraphElement(
+                                                    text_run=TextRun(content="\n")
+                                                )
+                                            ],
+                                        )
+                                    ),
+                                ]
+                            ),
+                            TableCell(
+                                content=[
+                                    StructuralElement(
+                                        paragraph=Paragraph(
+                                            elements=[
+                                                ParagraphElement(
+                                                    text_run=TextRun(content="B\n")
+                                                )
+                                            ],
+                                            paragraph_style=ParagraphStyle(
+                                                named_style_type="NORMAL_TEXT"
+                                            ),
+                                        )
+                                    ),
+                                    StructuralElement(
+                                        paragraph=Paragraph(
+                                            elements=[
+                                                ParagraphElement(
+                                                    text_run=TextRun(content="\n")
+                                                )
+                                            ],
+                                        )
+                                    ),
+                                ]
+                            ),
+                        ]
+                    ),
+                    TableRow(
+                        table_cells=[
+                            TableCell(
+                                content=[
+                                    StructuralElement(
+                                        paragraph=Paragraph(
+                                            elements=[
+                                                ParagraphElement(
+                                                    text_run=TextRun(content="1\n")
+                                                )
+                                            ],
+                                            paragraph_style=ParagraphStyle(
+                                                named_style_type="NORMAL_TEXT"
+                                            ),
+                                        )
+                                    ),
+                                    StructuralElement(
+                                        paragraph=Paragraph(
+                                            elements=[
+                                                ParagraphElement(
+                                                    text_run=TextRun(content="\n")
+                                                )
+                                            ],
+                                        )
+                                    ),
+                                ]
+                            ),
+                            TableCell(
+                                content=[
+                                    StructuralElement(
+                                        paragraph=Paragraph(
+                                            elements=[
+                                                ParagraphElement(
+                                                    text_run=TextRun(content="2\n")
+                                                )
+                                            ],
+                                            paragraph_style=ParagraphStyle(
+                                                named_style_type="NORMAL_TEXT"
+                                            ),
+                                        )
+                                    ),
+                                    StructuralElement(
+                                        paragraph=Paragraph(
+                                            elements=[
+                                                ParagraphElement(
+                                                    text_run=TextRun(content="\n")
+                                                )
+                                            ],
+                                        )
+                                    ),
+                                ]
+                            ),
+                        ]
+                    ),
+                ],
+            ),
+        )
+        desired = make_indexed_doc(
+            body_content=[table_el, make_indexed_terminal(18)],
+        )
+
+        batches = reconcile_batches(base, desired)
+        assert len(batches) >= 1
+
+        reqs = _get_batch_requests(batches[0])
+        insert_table_reqs = [r for r in reqs if r.insert_table is not None]
+        insert_text_reqs = [r for r in reqs if r.insert_text is not None]
+
+        assert len(insert_table_reqs) == 1
+        table_idx = insert_table_reqs[0].insert_table.location.index  # type: ignore[union-attr]
+
+        assert len(insert_text_reqs) >= 1
+        first_text_idx = insert_text_reqs[0].insert_text.location.index  # type: ignore[union-attr]
+
+        # After insertTable, the real Google Docs API creates cells where
+        # the paragraph starts at table_idx + 4 (not +3 as the lowering code
+        # assumes). The extra character is the cell's own structural overhead.
+        # The lowering code currently produces table_idx + 3, which the real
+        # API rejects. This test asserts the correct offset (+4).
+        assert first_text_idx == table_idx + 4, (
+            f"First cell insertText should be at table_idx+4={table_idx + 4}, "
+            f"got {first_text_idx} (table_idx+{first_text_idx - table_idx})"
+        )
