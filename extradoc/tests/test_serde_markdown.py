@@ -1215,9 +1215,9 @@ class TestDiffRawJsonBase:
         """
         import json
 
+        from extradoc.api_types._generated import Document
         from extradoc.client import DocsClient
         from extradoc.mock.reindex import reindex_and_normalize_all_tabs
-from extradoc.api_types._generated import Document
 
         INFLATE = 100  # Simulated real-API offset
 
