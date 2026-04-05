@@ -2012,3 +2012,776 @@ class TestFootnoteContent:
             for r in reqs
         )
         assert found_fn, "No request targets footnote segment fn1"
+
+
+# ===========================================================================
+# 18. Deeper: _element_size failure cascades
+#     The table-in-new-tab bug generalizes to ANY structural creation path
+#     that inserts content containing a table.
+# ===========================================================================
+
+
+class TestElementSizeCascade:
+    """_element_size can't compute table size without indices.
+
+    This affects every path through _lower_content_insert when the content
+    contains a table: new header, new footer, new footnote, new tab.
+    """
+
+    @pytest.mark.xfail(
+        raises=NotImplementedError,
+        reason="_element_size cannot compute table size — new header with table fails",
+    )
+    def test_new_header_with_table_content(self) -> None:
+        """Creating a new header whose content is a table."""
+        base = _single_doc([_terminal(1)])
+        desired = _single_doc(
+            [_terminal()],
+            headers={
+                "h1": Header(
+                    header_id="h1",
+                    content=[
+                        _table([["Header Col 1", "Header Col 2"]]),
+                        _terminal(),
+                    ],
+                ),
+            },
+            document_style={"default_header_id": "h1"},
+        )
+
+        batches = reconcile_batches(base, desired)
+        req_types = _collect_request_types(batches)
+        assert "createHeader" in req_types
+        assert "insertTable" in req_types
+
+    @pytest.mark.xfail(
+        raises=NotImplementedError,
+        reason="_element_size cannot compute table size — new footer with table fails",
+    )
+    def test_new_footer_with_table_content(self) -> None:
+        """Creating a new footer whose content is a table."""
+        base = _single_doc([_terminal(1)])
+        desired = _single_doc(
+            [_terminal()],
+            footers={
+                "f1": Footer(
+                    footer_id="f1",
+                    content=[
+                        _table([["Footer Left", "Footer Right"]]),
+                        _terminal(),
+                    ],
+                ),
+            },
+            document_style={"default_footer_id": "f1"},
+        )
+
+        batches = reconcile_batches(base, desired)
+        req_types = _collect_request_types(batches)
+        assert "createFooter" in req_types
+        assert "insertTable" in req_types
+
+    @pytest.mark.xfail(
+        raises=NotImplementedError,
+        reason="_element_size cannot compute table size — new footnote with table fails",
+    )
+    def test_new_footnote_with_table_content(self) -> None:
+        """Creating a new footnote whose body contains a table."""
+        base = _single_doc(
+            [
+                _indexed_para("Text\n", 1),
+                _terminal(6),
+            ]
+        )
+        desired = _single_doc(
+            [
+                StructuralElement(
+                    paragraph=Paragraph(
+                        elements=[
+                            ParagraphElement(text_run=TextRun(content="Text")),
+                            ParagraphElement(
+                                footnote_reference=FootnoteReference(
+                                    footnote_id="fn1",
+                                )
+                            ),
+                            ParagraphElement(text_run=TextRun(content="\n")),
+                        ],
+                        paragraph_style=ParagraphStyle(named_style_type="NORMAL_TEXT"),
+                    ),
+                ),
+                _terminal(),
+            ],
+            footnotes={
+                "fn1": Footnote(
+                    footnote_id="fn1",
+                    content=[
+                        _table([["A", "B"]]),
+                        _terminal(),
+                    ],
+                ),
+            },
+        )
+
+        batches = reconcile_batches(base, desired)
+        req_types = _collect_request_types(batches)
+        assert "createFootnote" in req_types
+        assert "insertTable" in req_types
+
+    @pytest.mark.xfail(
+        raises=NotImplementedError,
+        reason="_element_size cannot compute table size — "
+        "new tab with paragraph then table then paragraph fails",
+    )
+    def test_new_tab_para_table_para(self) -> None:
+        """New tab: paragraph → table → paragraph. Running index breaks on table."""
+        base = _doc(_tab("t1", [_terminal(1)]))
+        desired = _doc(
+            _tab("t1", [_terminal(1)]),
+            _tab(
+                "t2",
+                [
+                    _para("Before table\n"),
+                    _table([["Cell"]]),
+                    _para("After table\n"),
+                    _terminal(),
+                ],
+            ),
+        )
+
+        batches = reconcile_batches(base, desired)
+        reqs = _flat_requests(batches)
+        insert_texts = [r for r in reqs if r.insert_text is not None]
+        all_text = "".join(r.insert_text.text or "" for r in insert_texts)
+        assert "Before table" in all_text
+        assert "After table" in all_text
+
+
+# ===========================================================================
+# 19. Deeper: UTF-16 diff index divergence
+#     The SequenceMatcher uses Python str indices (code points) but requests
+#     need UTF-16 indices. Any char outside BMP (surrogate pair) shifts all
+#     subsequent indices by 1 per char.
+# ===========================================================================
+
+
+class TestUtf16DiffDivergence:
+    """SequenceMatcher operates on Python code-point indices.
+
+    Request indices must be UTF-16. Any character outside the BMP (emoji,
+    some CJK extensions) is 1 code point but 2 UTF-16 units, causing a
+    growing offset divergence.
+    """
+
+    @pytest.mark.xfail(
+        reason="SequenceMatcher indices are code-point-based, not UTF-16 — "
+        "delete/insert after emoji hits wrong position"
+    )
+    def test_append_text_after_emoji(self) -> None:
+        """Appending text after an emoji: insert index must account for surrogate."""
+
+        # "😀\n" — emoji is 2 UTF-16 units, \n is 1 → 3 total
+        base = _single_doc(
+            [
+                _indexed_para("\U0001f600\n", 1),  # indices 1..4 (2+1=3 chars)
+                _terminal(4),
+            ]
+        )
+        desired = _single_doc(
+            [
+                _para("\U0001f600 appended\n"),
+                _terminal(),
+            ]
+        )
+
+        batches = reconcile_batches(base, desired)
+        reqs = _flat_requests(batches)
+
+        insert_reqs = [r for r in reqs if r.insert_text is not None]
+        assert len(insert_reqs) >= 1
+        # The insert should be at index 3 (after the 2-unit emoji)
+        for ir in insert_reqs:
+            if " appended" in (ir.insert_text.text or ""):
+                assert ir.insert_text.location.index == 3, (
+                    f"Insert at {ir.insert_text.location.index}, expected 3 (after emoji)"
+                )
+
+    @pytest.mark.xfail(
+        reason="Multiple emoji cause cumulative index drift — "
+        "each emoji adds +1 divergence between code-point and UTF-16 offsets"
+    )
+    def test_multiple_emoji_cumulative_drift(self) -> None:
+        """Two emoji followed by text edit: cumulative +2 divergence."""
+        from extradoc.indexer import utf16_len
+
+        # "😀😀 Hello\n" = 2+2+1+5+1 = 11 UTF-16 units
+        text = "\U0001f600\U0001f600 Hello\n"
+        assert utf16_len(text) == 11
+
+        base = _single_doc(
+            [
+                _indexed_para(text, 1),
+                _terminal(12),
+            ]
+        )
+        desired = _single_doc(
+            [
+                _para("\U0001f600\U0001f600 World\n"),
+                _terminal(),
+            ]
+        )
+
+        batches = reconcile_batches(base, desired)
+        reqs = _flat_requests(batches)
+
+        delete_reqs = [r for r in reqs if r.delete_content_range is not None]
+        # "Hello" starts at UTF-16 index 6 (1 + 2 + 2 + 1 = 6)
+        for dr in delete_reqs:
+            rng = dr.delete_content_range.range
+            assert rng.start_index >= 6, (
+                f"Delete at {rng.start_index}, expected >= 6 "
+                f"(1 base + 2 emoji + 2 emoji + 1 space)"
+            )
+
+    def test_bmp_cjk_no_drift(self) -> None:
+        """CJK characters are BMP (1 UTF-16 unit each) — no index drift.
+
+        Note: content alignment may not match paragraphs with low Jaccard
+        similarity (CJK tokens differ). Use a paragraph with enough shared
+        prefix to guarantee matching.
+        """
+        from extradoc.indexer import utf16_len
+
+        # Enough shared content to ensure Jaccard >= 0.3
+        text = "你好世界 Hello World\n"
+        tlen = utf16_len(text)
+
+        base = _single_doc(
+            [
+                _indexed_para(text, 1),
+                _terminal(1 + tlen),
+            ]
+        )
+        desired = _single_doc(
+            [
+                _para("你好地球 Hello World\n"),
+                _terminal(),
+            ]
+        )
+
+        batches = reconcile_batches(base, desired)
+        reqs = _flat_requests(batches)
+
+        # Should produce surgical edit for "世界" → "地球" (BMP, no drift)
+        delete_reqs = [r for r in reqs if r.delete_content_range is not None]
+        assert len(delete_reqs) >= 1
+        # The delete should be small (just "世界" = 2 chars), not the whole paragraph
+        for dr in delete_reqs:
+            rng = dr.delete_content_range.range
+            delete_size = rng.end_index - rng.start_index
+            assert delete_size <= 4, (
+                f"Delete size {delete_size} too large for CJK surgical edit"
+            )
+
+
+# ===========================================================================
+# 20. Deeper: Content insertion ordering for body inserts (not new tab)
+#     When inserting multiple elements at the same position in an existing
+#     body, the order matters — inserts push content upward.
+# ===========================================================================
+
+
+class TestInsertionOrdering:
+    """Multiple inserts at the same position must appear in correct document order."""
+
+    def test_two_paragraphs_inserted_at_same_position(self) -> None:
+        """Inserting two paragraphs before the terminal — order must be preserved."""
+        base = _single_doc([_terminal(1)])
+        desired = _single_doc(
+            [
+                _para("First\n"),
+                _para("Second\n"),
+                _terminal(),
+            ]
+        )
+
+        batches = reconcile_batches(base, desired)
+        reqs = _flat_requests(batches)
+
+        insert_reqs = [r for r in reqs if r.insert_text is not None]
+        texts = [r.insert_text.text for r in insert_reqs]
+        # After all inserts execute, "First" should come before "Second"
+        # Because inserts at same position push content up, they must be
+        # emitted in REVERSE order: "Second" first, then "First"
+        assert len(texts) >= 2
+        assert "Second\n" in texts
+        assert "First\n" in texts
+        # "Second" should be emitted before "First" in the request list
+        second_idx = texts.index("Second\n")
+        first_idx = texts.index("First\n")
+        assert second_idx < first_idx, (
+            f"'Second' at request index {second_idx}, 'First' at {first_idx} — "
+            f"expected reverse order for same-position inserts"
+        )
+
+    def test_three_paragraphs_inserted_maintain_order(self) -> None:
+        """Three paragraphs inserted — final document order must be A, B, C."""
+        base = _single_doc([_terminal(1)])
+        desired = _single_doc(
+            [
+                _para("A\n"),
+                _para("B\n"),
+                _para("C\n"),
+                _terminal(),
+            ]
+        )
+
+        batches = reconcile_batches(base, desired)
+        reqs = _flat_requests(batches)
+
+        insert_reqs = [r for r in reqs if r.insert_text is not None]
+        texts = [r.insert_text.text for r in insert_reqs]
+
+        # All three must be present
+        assert "A\n" in texts
+        assert "B\n" in texts
+        assert "C\n" in texts
+
+        # Reverse emission order: C first, then B, then A
+        c_idx = texts.index("C\n")
+        b_idx = texts.index("B\n")
+        a_idx = texts.index("A\n")
+        assert c_idx < b_idx < a_idx, (
+            f"Expected emission order C({c_idx}) < B({b_idx}) < A({a_idx})"
+        )
+
+
+# ===========================================================================
+# 21. Deeper: New header with text+table mixed content
+#     Even text-only header works, but text THEN table fails because
+#     _lower_content_insert processes elements sequentially and needs
+#     running_index from the table.
+# ===========================================================================
+
+
+class TestNewHeaderMixedContent:
+    """New header/footer with mixed content (paragraph + table)."""
+
+    def test_new_header_text_only(self) -> None:
+        """New header with only text — should work (no table size issue)."""
+        base = _single_doc([_terminal(1)])
+        desired = _single_doc(
+            [_terminal()],
+            headers={
+                "h1": Header(
+                    header_id="h1",
+                    content=[
+                        _para("Header line 1\n"),
+                        _para("Header line 2\n"),
+                        _terminal(),
+                    ],
+                ),
+            },
+            document_style={"default_header_id": "h1"},
+        )
+
+        batches = reconcile_batches(base, desired)
+        req_types = _collect_request_types(batches)
+        assert "createHeader" in req_types
+
+        insert_texts = _get_requests_of_type(batches, "insert_text")
+        all_text = "".join(r.text or "" for r in insert_texts)
+        assert "Header line 1" in all_text
+        assert "Header line 2" in all_text
+
+    @pytest.mark.xfail(
+        raises=NotImplementedError,
+        reason="_element_size fails on table — paragraph BEFORE table inserts fine, "
+        "but running_index computation breaks when it hits the table element",
+    )
+    def test_new_header_text_then_table(self) -> None:
+        """New header: paragraph then table. Paragraph works, table breaks."""
+        base = _single_doc([_terminal(1)])
+        desired = _single_doc(
+            [_terminal()],
+            headers={
+                "h1": Header(
+                    header_id="h1",
+                    content=[
+                        _para("Header title\n"),
+                        _table([["Col A", "Col B"]]),
+                        _terminal(),
+                    ],
+                ),
+            },
+            document_style={"default_header_id": "h1"},
+        )
+
+        batches = reconcile_batches(base, desired)
+        req_types = _collect_request_types(batches)
+        assert "createHeader" in req_types
+        assert "insertTable" in req_types
+
+
+# ===========================================================================
+# 22. Deeper: Inserting table into existing body (not new segment)
+#     This path uses _plan_insertions → _lower_element_insert, NOT
+#     _lower_content_insert. Does it handle multiple tables?
+# ===========================================================================
+
+
+class TestTableInsertExistingBody:
+    """Inserting tables into an existing body (not a new segment)."""
+
+    def test_insert_table_between_paragraphs(self) -> None:
+        """Insert a table between two existing paragraphs."""
+        base = _single_doc(
+            [
+                _indexed_para("Before\n", 1),
+                _indexed_para("After\n", 8),
+                _terminal(14),
+            ]
+        )
+        desired = _single_doc(
+            [
+                _para("Before\n"),
+                _table([["Cell 1", "Cell 2"]]),
+                _para("After\n"),
+                _terminal(),
+            ]
+        )
+
+        batches = reconcile_batches(base, desired)
+        reqs = _flat_requests(batches)
+
+        insert_table_reqs = [r for r in reqs if r.insert_table is not None]
+        assert len(insert_table_reqs) == 1
+        assert insert_table_reqs[0].insert_table.rows == 1
+        assert insert_table_reqs[0].insert_table.columns == 2
+
+    def test_insert_two_tables(self) -> None:
+        """Insert two tables into an existing body."""
+        base = _single_doc(
+            [
+                _indexed_para("Content\n", 1),
+                _terminal(9),
+            ]
+        )
+        desired = _single_doc(
+            [
+                _para("Content\n"),
+                _table([["T1"]]),
+                _table([["T2"]]),
+                _terminal(),
+            ]
+        )
+
+        batches = reconcile_batches(base, desired)
+        reqs = _flat_requests(batches)
+
+        insert_table_reqs = [r for r in reqs if r.insert_table is not None]
+        assert len(insert_table_reqs) == 2
+
+
+# ===========================================================================
+# 23. Deeper: Paragraph with ONLY non-textRun elements
+#     _extract_runs skips non-textRun elements. What if a paragraph has
+#     ONLY a footnote ref or image? _para_text returns "" and the diff
+#     sees it as empty.
+# ===========================================================================
+
+
+class TestNonTextRunOnlyParagraphs:
+    """Paragraphs containing only non-textRun elements."""
+
+    @pytest.mark.xfail(
+        reason="Paragraph with only footnote ref + trailing newline — "
+        "_extract_runs skips footnote ref, so char diff sees "
+        "only the newline, potentially corrupting index math"
+    )
+    def test_paragraph_with_only_footnote_ref(self) -> None:
+        """A paragraph whose only content is a footnote reference + \\n."""
+        base = _single_doc(
+            [
+                StructuralElement(
+                    start_index=1,
+                    end_index=3,
+                    paragraph=Paragraph(
+                        elements=[
+                            ParagraphElement(
+                                start_index=1,
+                                end_index=2,
+                                footnote_reference=FootnoteReference(
+                                    footnote_id="fn1",
+                                ),
+                            ),
+                            ParagraphElement(
+                                start_index=2,
+                                end_index=3,
+                                text_run=TextRun(content="\n"),
+                            ),
+                        ],
+                        paragraph_style=ParagraphStyle(named_style_type="NORMAL_TEXT"),
+                    ),
+                ),
+                _terminal(3),
+            ],
+            footnotes={
+                "fn1": Footnote(
+                    footnote_id="fn1",
+                    content=[_indexed_para("Note\n", 0), _indexed_para("\n", 5)],
+                ),
+            },
+        )
+
+        # Add text before the footnote ref
+        desired = _single_doc(
+            [
+                StructuralElement(
+                    paragraph=Paragraph(
+                        elements=[
+                            ParagraphElement(text_run=TextRun(content="See ")),
+                            ParagraphElement(
+                                footnote_reference=FootnoteReference(
+                                    footnote_id="fn1",
+                                ),
+                            ),
+                            ParagraphElement(text_run=TextRun(content="\n")),
+                        ],
+                        paragraph_style=ParagraphStyle(named_style_type="NORMAL_TEXT"),
+                    ),
+                ),
+                _terminal(),
+            ],
+            footnotes={
+                "fn1": Footnote(
+                    footnote_id="fn1",
+                    content=[_para("Note\n"), _terminal()],
+                ),
+            },
+        )
+
+        batches = reconcile_batches(base, desired)
+        reqs = _flat_requests(batches)
+
+        # Should insert "See " at index 1 (before footnote ref at 1)
+        insert_reqs = [r for r in reqs if r.insert_text is not None]
+        assert any("See" in (r.insert_text.text or "") for r in insert_reqs)
+
+        # Must NOT delete the footnote ref
+        for r in reqs:
+            if r.delete_content_range is not None:
+                rng = r.delete_content_range.range
+                assert not (rng.start_index <= 1 < rng.end_index), (
+                    f"Delete [{rng.start_index}, {rng.end_index}) covers footnote ref"
+                )
+
+
+# ===========================================================================
+# 24. Deeper: Paragraph style + heading changes
+#     Changing namedStyleType from NORMAL_TEXT to HEADING_1 is a style
+#     change. The headingId field is server-managed (readonly). Verify
+#     we exclude it from the field mask.
+# ===========================================================================
+
+
+class TestHeadingChanges:
+    """Paragraph heading changes and headingId readonly field handling."""
+
+    def test_normal_to_heading(self) -> None:
+        """Promoting NORMAL_TEXT to HEADING_1 should not include headingId in mask."""
+        base = _single_doc(
+            [
+                _indexed_para("Title\n", 1),
+                _terminal(7),
+            ]
+        )
+        desired = _single_doc(
+            [
+                _para("Title\n", style="HEADING_1"),
+                _terminal(),
+            ]
+        )
+
+        batches = reconcile_batches(base, desired)
+        reqs = _flat_requests(batches)
+
+        style_reqs = [r for r in reqs if r.update_paragraph_style is not None]
+        assert len(style_reqs) >= 1
+
+        for sr in style_reqs:
+            fields = sr.update_paragraph_style.fields or ""
+            assert "headingId" not in fields, f"headingId in field mask: {fields}"
+
+    def test_heading_to_normal(self) -> None:
+        """Demoting HEADING_1 to NORMAL_TEXT."""
+        base = _single_doc(
+            [
+                _indexed_para("Title\n", 1, style="HEADING_1"),
+                _terminal(7),
+            ]
+        )
+        desired = _single_doc(
+            [
+                _para("Title\n", style="NORMAL_TEXT"),
+                _terminal(),
+            ]
+        )
+
+        batches = reconcile_batches(base, desired)
+        reqs = _flat_requests(batches)
+
+        style_reqs = [r for r in reqs if r.update_paragraph_style is not None]
+        assert len(style_reqs) >= 1
+
+        ps = style_reqs[0].update_paragraph_style.paragraph_style
+        assert ps is not None
+        assert ps.named_style_type == "NORMAL_TEXT"
+
+
+# ===========================================================================
+# 25. Deeper: Delete all content leaving only terminal
+#     Edge case: what if base has many paragraphs and desired has only
+#     the terminal? All deletes must be in descending index order.
+# ===========================================================================
+
+
+class TestDeleteAllContent:
+    """Deleting all paragraphs must produce deletes in descending order."""
+
+    def test_delete_order_is_descending(self) -> None:
+        """Deletes must be emitted highest-index-first."""
+        base = _single_doc(
+            [
+                _indexed_para("Para 1\n", 1),
+                _indexed_para("Para 2\n", 8),
+                _indexed_para("Para 3\n", 15),
+                _terminal(22),
+            ]
+        )
+        desired = _single_doc([_terminal(1)])
+
+        batches = reconcile_batches(base, desired)
+        reqs = _flat_requests(batches)
+
+        delete_reqs = [r for r in reqs if r.delete_content_range is not None]
+        assert len(delete_reqs) >= 1
+
+        # Verify descending order of start indices
+        starts = [r.delete_content_range.range.start_index for r in delete_reqs]
+        assert starts == sorted(starts, reverse=True), (
+            f"Deletes not in descending order: {starts}"
+        )
+
+    def test_delete_mixed_with_table(self) -> None:
+        """Delete paragraphs and a table — all in descending order."""
+        base = _single_doc(
+            [
+                _indexed_para("Before\n", 1),
+                StructuralElement(
+                    start_index=8,
+                    end_index=20,
+                    table=Table(
+                        table_rows=[
+                            TableRow(
+                                table_cells=[
+                                    TableCell(
+                                        content=[
+                                            _indexed_para("Cell\n", 10),
+                                            _indexed_para("\n", 15),
+                                        ]
+                                    )
+                                ]
+                            )
+                        ],
+                        columns=1,
+                        rows=1,
+                    ),
+                ),
+                _indexed_para("After\n", 20),
+                _terminal(26),
+            ]
+        )
+        desired = _single_doc([_terminal(1)])
+
+        batches = reconcile_batches(base, desired)
+        reqs = _flat_requests(batches)
+
+        delete_reqs = [r for r in reqs if r.delete_content_range is not None]
+        starts = [r.delete_content_range.range.start_index for r in delete_reqs]
+        assert starts == sorted(starts, reverse=True), (
+            f"Deletes not in descending order: {starts}"
+        )
+
+
+# ===========================================================================
+# 26. Deeper: Replace entire paragraph text (complete rewrite)
+#     When paragraph text is completely different, the diff should still
+#     use surgical replace (delete old + insert new), NOT delete para +
+#     insert para (which would be two whole-element ops).
+# ===========================================================================
+
+
+class TestCompleteTextRewrite:
+    """Completely rewriting paragraph text."""
+
+    @pytest.mark.xfail(
+        reason="Content alignment Jaccard < 0.3 for completely different text — "
+        "paragraph is not matched, so it becomes delete + insert instead of "
+        "surgical in-place replace. This is a delete+re-insert pattern.",
+    )
+    def test_completely_different_text_is_surgical(self) -> None:
+        """When text is 100% different, content alignment doesn't match paragraphs.
+
+        Instead of in-place replace, it deletes the old paragraph and inserts
+        the new one. This is a delete+re-insert pattern that the user wants
+        to avoid.
+        """
+        base = _single_doc(
+            [
+                _indexed_para("The quick brown fox jumps\n", 1),
+                _terminal(27),
+            ]
+        )
+        desired = _single_doc(
+            [
+                _para("A lazy dog sleeps quietly here\n"),
+                _terminal(),
+            ]
+        )
+
+        batches = reconcile_batches(base, desired)
+        reqs = _flat_requests(batches)
+
+        # There should be NO delete that covers the entire paragraph range [1, 27)
+        for r in reqs:
+            if r.delete_content_range is not None:
+                rng = r.delete_content_range.range
+                assert not (rng.start_index == 1 and rng.end_index == 27), (
+                    "Entire paragraph deleted — should use in-place surgical replace"
+                )
+
+    def test_mostly_similar_text_is_surgical(self) -> None:
+        """When text shares enough tokens (Jaccard >= 0.3), it IS matched and surgical."""
+        base = _single_doc(
+            [
+                _indexed_para("The quick brown fox jumps over the lazy dog\n", 1),
+                _terminal(45),
+            ]
+        )
+        desired = _single_doc(
+            [
+                _para("The quick red fox jumps over the happy dog\n"),
+                _terminal(),
+            ]
+        )
+
+        batches = reconcile_batches(base, desired)
+        reqs = _flat_requests(batches)
+
+        # Should NOT delete the entire paragraph — should be surgical
+        for r in reqs:
+            if r.delete_content_range is not None:
+                rng = r.delete_content_range.range
+                delete_size = rng.end_index - rng.start_index
+                assert delete_size < 30, (
+                    f"Delete size {delete_size} too large — expected surgical edit"
+                )
