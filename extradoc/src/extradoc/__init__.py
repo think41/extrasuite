@@ -17,8 +17,8 @@ from extradoc.transport import (
 __all__ = [
     "APIError",
     "AuthenticationError",
-    "DocumentConflictError",
     "DocsClient",
+    "DocumentConflictError",
     "GoogleDocsTransport",
     "LocalFileTransport",
     "NotFoundError",

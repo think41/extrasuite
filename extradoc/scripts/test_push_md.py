@@ -15,7 +15,6 @@ from __future__ import annotations
 
 import json
 import re
-import shutil
 import subprocess
 import sys
 import tempfile
@@ -30,6 +29,7 @@ _failures: list[str] = []
 
 
 # ── CLI helpers ──────────────────────────────────────────────────────────────
+
 
 def run(cmd: list[str], check: bool = True) -> subprocess.CompletedProcess:
     result = subprocess.run(cmd, capture_output=True, text=True)
@@ -83,6 +83,7 @@ def get_raw_doc(folder: Path) -> dict[str, Any]:
 
 # ── Doc inspection ───────────────────────────────────────────────────────────
 
+
 def body_content(raw: dict[str, Any]) -> list[dict[str, Any]]:
     return raw["tabs"][0]["documentTab"]["body"]["content"]
 
@@ -103,8 +104,7 @@ def describe(raw: dict[str, Any]) -> list[str]:
         elif "paragraph" in elem:
             p = elem["paragraph"]
             text = "".join(
-                e.get("textRun", {}).get("content", "")
-                for e in p.get("elements", [])
+                e.get("textRun", {}).get("content", "") for e in p.get("elements", [])
             )
             style = p.get("paragraphStyle", {}).get("namedStyleType", "NORMAL_TEXT")
             lines.append(f"P({style},{text!r})")
@@ -112,6 +112,7 @@ def describe(raw: dict[str, Any]) -> list[str]:
 
 
 # ── Assertion helpers ────────────────────────────────────────────────────────
+
 
 def check(label: str, cond: bool, detail: str = "") -> None:
     if cond:
@@ -124,7 +125,9 @@ def check(label: str, cond: bool, detail: str = "") -> None:
         print(msg)
 
 
-def assert_body(raw: dict[str, Any], expected_types: list[str], label: str = "") -> None:
+def assert_body(
+    raw: dict[str, Any], expected_types: list[str], label: str = ""
+) -> None:
     """Assert body element types (SB/Table/Para) match expected pattern."""
     desc = describe(raw)
     # Match loosely: check expected_types appear in order
@@ -155,8 +158,7 @@ def count_stray_paras_before_first_table(raw: dict[str, Any]) -> int:
         if "paragraph" in elem:
             p = elem["paragraph"]
             text = "".join(
-                e.get("textRun", {}).get("content", "")
-                for e in p.get("elements", [])
+                e.get("textRun", {}).get("content", "") for e in p.get("elements", [])
             )
             if text.strip() == "":
                 count += 1
@@ -173,8 +175,10 @@ def count_paras_between_tables(raw: dict[str, Any]) -> list[int]:
             if last_table_idx is not None:
                 between = content[last_table_idx + 1 : i]
                 empty = sum(
-                    1 for e in between
-                    if "paragraph" in e and all(
+                    1
+                    for e in between
+                    if "paragraph" in e
+                    and all(
                         (el.get("textRun", {}).get("content", "")).strip() == ""
                         for el in e["paragraph"].get("elements", [])
                     )
@@ -185,6 +189,7 @@ def count_paras_between_tables(raw: dict[str, Any]) -> list[int]:
 
 
 # ── Scenarios ────────────────────────────────────────────────────────────────
+
 
 def scenario(name: str, md: str, assertions_fn) -> None:
     print(f"\n── {name} ──")
@@ -289,7 +294,11 @@ def main() -> None:
             for name, group in named_ranges(raw).items()
             if name.startswith("extradoc:codeblock")
         )
-        check("S4: 2 named ranges for codeblocks", codeblock_count == 2, f"got {codeblock_count}")
+        check(
+            "S4: 2 named ranges for codeblocks",
+            codeblock_count == 2,
+            f"got {codeblock_count}",
+        )
 
     scenario(
         "S4: consecutive code blocks + heading",
@@ -301,9 +310,10 @@ def main() -> None:
     def s5(raw):
         desc = describe(raw)
         check("S5: has 1 table", sum(1 for e in body_content(raw) if "table" in e) == 1)
-        check("S5: NORMAL_TEXT para before table", any(
-            "NORMAL_TEXT" in d and "Before" in d for d in desc
-        ))
+        check(
+            "S5: NORMAL_TEXT para before table",
+            any("NORMAL_TEXT" in d and "Before" in d for d in desc),
+        )
         check("S5: HEADING_1 after table", any("HEADING_1" in d for d in desc))
 
     scenario(
