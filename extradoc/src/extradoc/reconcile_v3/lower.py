@@ -1,6 +1,6 @@
 """Op → typed Request translation for reconcile_v3.
 
-Translates ``ReconcileOp`` objects produced by ``diff.py`` into typed
+Translates ``DiffOp`` objects produced by ``diff.py`` into typed
 ``Request`` objects from ``api_types._generated`` suitable for batchUpdate.
 
 Strategy
@@ -102,6 +102,7 @@ from extradoc.diffmerge import (
     DeleteTableColumnOp,
     DeleteTableRowOp,
     DeleteTabOp,
+    DiffOp,
     InsertFootnoteOp,
     InsertInlineObjectOp,
     InsertListOp,
@@ -120,9 +121,6 @@ from extradoc.diffmerge import (
     UpdateTableCellStyleOp,
     UpdateTableColumnPropertiesOp,
     UpdateTableRowStyleOp,
-)
-from extradoc.diffmerge import (
-    DiffOp as ReconcileOp,
 )
 from extradoc.indexer import utf16_len
 
@@ -169,8 +167,8 @@ _StrOrDeferred = str | DeferredID
 # ---------------------------------------------------------------------------
 
 
-def lower_ops(ops: list[ReconcileOp]) -> list[Request]:
-    """Lower a list of ReconcileOps to typed Request objects (single batch).
+def lower_ops(ops: list[DiffOp]) -> list[Request]:
+    """Lower a list of DiffOps to typed Request objects (single batch).
 
     For ops whose lowering is not yet implemented, raises ``NotImplementedError``
     with a message identifying the op type and confirming the op was detected.
@@ -182,7 +180,7 @@ def lower_ops(ops: list[ReconcileOp]) -> list[Request]:
 
 
 def lower_batches(
-    ops: list[ReconcileOp],
+    ops: list[DiffOp],
     desired_lists_by_tab: dict[str, dict[str, DocList]] | None = None,
     base_lists_by_tab: dict[str, dict[str, DocList]] | None = None,
 ) -> list[list[Request]]:
@@ -200,7 +198,7 @@ def lower_batches(
     Parameters
     ----------
     ops:
-        The list of ReconcileOp objects to lower.
+        The list of DiffOp objects to lower.
     desired_lists_by_tab:
         Optional mapping of tab_id → lists dict from the desired document.
         Used to infer bullet presets when inserting or updating bullet paragraphs.
@@ -653,7 +651,7 @@ def lower_batches(
     return batches
 
 
-def _lower_one(op: ReconcileOp) -> list[Request]:
+def _lower_one(op: DiffOp) -> list[Request]:
     """Lower a single op to zero or more Request objects (single-batch mode).
 
     This is a convenience wrapper around ``lower_batches`` that flattens all
