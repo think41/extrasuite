@@ -2441,8 +2441,10 @@ def _lower_table_insert(
     ]
 
     # table_pos tracks the next position as it shifts with each insertion.
-    # Start at index+1 to skip the table opener; each row opener advances by 1.
-    table_pos = index + 1
+    # insertTable inserts a \n at ``index`` and places the table opener at
+    # ``index+1``, so we start at ``index+2`` to skip both. Subsequent
+    # increments account for row openers and cell openers.
+    table_pos = index + 2
 
     for row in table_rows:
         table_pos += 1  # skip row opener (1 char)

@@ -3158,7 +3158,11 @@ class TestTableInsertCellContent:
         assert it.location.index == 5
 
     def test_insert_table_1x1_cell_content_index(self) -> None:
-        """1x1 table: cell content inserts at index+3 (table+row+cell openers = 3 chars)."""
+        """1x1 table: cell content inserts at index+4.
+
+        ``insertTable(index=I)`` inserts a pre-table ``\\n`` at I and places
+        the table opener at I+1. So table(I+1) + row(I+2) + cell(I+3) → content at I+4.
+        """
         from extradoc.reconcile_v3.lower import _lower_table_insert
 
         el = self._make_table_el([["Hello\n"]])
@@ -3168,9 +3172,9 @@ class TestTableInsertCellContent:
         assert len(insert_reqs) == 1
         loc = insert_reqs[0].insert_text.location  # type: ignore[union-attr]
         assert loc is not None
-        assert loc.index == 8, (
-            "1x1 table at 5: table opener(5) + row opener(6) + cell opener(7) "
-            f"→ content at 8, got {loc.index}"
+        assert loc.index == 9, (
+            "1x1 table at 5: pre-table \\n(5) + table opener(6) + row opener(7) "
+            f"+ cell opener(8) → content at 9, got {loc.index}"
         )
         assert insert_reqs[0].insert_text.text == "Hello\n"  # type: ignore[union-attr]
 
@@ -3187,12 +3191,12 @@ class TestTableInsertCellContent:
         insert_reqs = [r for r in reqs if r.insert_text is not None]
         assert len(insert_reqs) == 2
 
-        # First cell: table(5) + row(6) + cell(7) → content at 8
-        assert insert_reqs[0].insert_text.location.index == 8  # type: ignore[union-attr]
+        # First cell: pre-\n(5) + table(6) + row(7) + cell(8) → content at 9
+        assert insert_reqs[0].insert_text.location.index == 9  # type: ignore[union-attr]
         assert insert_reqs[0].insert_text.text == "Hello\n"  # type: ignore[union-attr]
 
         first_text_size = utf16_len("Hello\n")  # 6
-        expected_second_index = 8 + first_text_size + 2  # 8 + 6 + 2 = 16
+        expected_second_index = 9 + first_text_size + 2  # 9 + 6 + 2 = 17
         assert (
             insert_reqs[1].insert_text.location.index == expected_second_index  # type: ignore[union-attr]
         ), (
@@ -3212,13 +3216,13 @@ class TestTableInsertCellContent:
         assert len(insert_reqs) == 2
 
         # Row 0, Cell 0:
-        # table at 1 → row0 at 2 → cell at 3 → content at 4
-        assert insert_reqs[0].insert_text.location.index == 4  # type: ignore[union-attr]
+        # pre-\n at 1 → table at 2 → row0 at 3 → cell at 4 → content at 5
+        assert insert_reqs[0].insert_text.location.index == 5  # type: ignore[union-attr]
         assert insert_reqs[0].insert_text.text == "A\n"  # type: ignore[union-attr]
 
         assert (
-            insert_reqs[1].insert_text.location.index == 9  # type: ignore[union-attr]
-        ), f"Expected row-1 cell at 9, got {insert_reqs[1].insert_text.location.index}"  # type: ignore[union-attr]
+            insert_reqs[1].insert_text.location.index == 10  # type: ignore[union-attr]
+        ), f"Expected row-1 cell at 10, got {insert_reqs[1].insert_text.location.index}"  # type: ignore[union-attr]
         assert insert_reqs[1].insert_text.text == "B\n"  # type: ignore[union-attr]
 
     def test_insert_table_empty_cells_emit_no_insertText(self) -> None:
@@ -3267,7 +3271,7 @@ class TestTableInsertCellContent:
             f"Expected insertText for cell content, got {len(insert_reqs)}: {reqs}"
         )
         assert insert_reqs[0].insert_text.text == "Hello\n"  # type: ignore[union-attr]
-        assert insert_reqs[0].insert_text.location.index == 8  # type: ignore[union-attr]
+        assert insert_reqs[0].insert_text.location.index == 9  # type: ignore[union-attr]
 
     def test_cell_with_explicit_terminal_paragraph_is_not_double_inserted(self) -> None:
         """Cells from a real API pull have [content, terminal_para] — terminal must not be inserted."""
@@ -3294,15 +3298,6 @@ class TestTableInsertIntoBody:
     land inside an existing paragraph.
     """
 
-    @pytest.mark.xfail(
-        reason=(
-            "BUG: After insertTable, the lowering code computes the first "
-            "cell paragraph at table_index+3 (table+row+cell openers). The "
-            "real API rejects insertText at this index with 'insertion index "
-            "must be inside the bounds of an existing paragraph'."
-        ),
-        strict=True,
-    )
     def test_insert_table_into_empty_body_cell_index_valid(self) -> None:
         """Adding a table to an empty doc: the insertText for cell content
         must reference a valid paragraph index after insertTable executes.
