@@ -1,6 +1,6 @@
 ## Overview
 
-Python library that transforms Google Docs into an XML or markdown folder
+Python library that transforms Google Docs into a markdown or XML folder
 structure for LLM-assisted editing, using a pull → edit → push workflow
 orchestrated by `DocsClient` (`src/extradoc/client.py`).
 
@@ -20,34 +20,36 @@ get a composite `DocumentWithComments`.
 - Public exports: `src/extradoc/comments/__init__.py`
 
 **SERDE** converts `DocumentWithComments` into a folder in a SERDE-specific
-format that is suitable for LLM agents to edit (markdown or xml).
+format that is suitable for LLM agents to edit (markdown or XML).
 
-- Public interface: `serialize()`, `deserialize()` — `src/extradoc/serde/__init__.py`
-- XML models: `src/extradoc/serde/_models.py`
-- XML serialization: `src/extradoc/serde/_to_xml.py`, `src/extradoc/serde/_from_xml.py`
-- Markdown serialization: `src/extradoc/serde/_to_markdown.py`, `src/extradoc/serde/_from_markdown.py`
+- Public interface: `Serde` protocol, `serialize()`, `deserialize()` — `src/extradoc/serde/__init__.py`
+- Implementations: `MarkdownSerde` (`serde/markdown/`), `XmlSerde` (`serde/xml/`)
+- 3-way merge engine: `src/extradoc/serde/_apply_ops.py`
+- Shared models: `src/extradoc/serde/_models.py`
 - Style handling: `src/extradoc/serde/_styles.py`
+
+**The core promise:** The serde will not corrupt anything it doesn't understand.
+Markdown/XML are inherently lossy, but the 3-way merge ensures that properties
+the format cannot represent pass through untouched from base to desired. See
+`src/extradoc/serde/CLAUDE.md` for the full explanation.
 
 **LLM agent edits** outside our boundary and calls push.
 
-**SERDE inspects the folder**, figures out what changed, then applies those
-changes to an in-memory `DocumentWithComments` with base as the starting point.
-This version of `DocumentWithComments` is referred to as **desired**.
+**SERDE deserialize** reads the edited folder, diffs it against the pristine
+snapshot saved at serialize time, and applies only the detected changes to the
+transport-accurate base document via 3-way merge. This produces a `desired`
+`DocumentWithComments`.
 
 - 3-way merge: `src/extradoc/serde/_apply_ops.py` (`apply_ops_to_document()`)
 
-**Reconciler** — we have various versions, currently at v3 — diffs base and
-desired `DocumentWithComments` and creates a list of `BatchUpdateRequests`.
+**Reconciler** — diffs base and desired `DocumentWithComments` and creates a
+list of `BatchUpdateRequests`.
 
 The Reconciler works as a tree. A `Document` is actually a tree. It has Tabs.
 Tabs have Headers, Footers, Body. There are 5 things that have "content" —
 header, footer, body, footnote, table cell. The content is a list of
 `StructuralElement`s — which is one of 4 things: `TableOfContents`, `Paragraph`,
 `Table`, `PageBreak`. So there is recursion involved.
-
-In v3 the reconciler proved out a few things: we can decompose the tree, we can
-diff the list of structural elements, we can diff a table, a list, a paragraph.
-So we seem to have the building blocks correctly working.
 
 - Public interface: `diff()`, `reconcile()`, `reconcile_batches()` — `src/extradoc/reconcile_v3/api.py`
 - Op types: `src/extradoc/reconcile_v3/model.py`
@@ -122,15 +124,24 @@ One cycle of live testing involves: pull a document → edit it on disk → push
 pull again to confirm the round trip. Use `./extrasuite doc create` if you don't
 have a doc yet.
 
+**Serde tests** validate the core promise — "will not corrupt anything it
+doesn't understand" — via a consistent pattern: load a real API response →
+serialize → edit files → deserialize → assert what changed is correct AND
+nothing else changed. See `docs/serde-testing-philosophy.md` for the full
+approach. The `assert_preserved` helper automates the "nothing else changed"
+check.
+
 **Tests that cover the public abstractions:**
 
 | Abstraction | Test file |
 |-------------|-----------|
+| Serde markdown (black-box, golden docs) | `tests/test_serde_markdown_blackbox.py` |
+| Serde markdown (hand-crafted) | `tests/test_serde_markdown_roundtrip.py` |
+| Serde markdown (bug regressions) | `tests/test_serde_markdown_bugs.py` |
+| Serde XML round-trip | `tests/test_serde_xml_roundtrip.py` |
+| Serde golden files | `tests/test_serde_golden.py` |
 | Reconcile v3 diff | `tests/reconcile_v3/test_diff.py` |
 | Reconcile v3 lowering (incl. deferred IDs) | `tests/reconcile_v3/test_lower.py` |
-| SERDE round-trip (XML) | `tests/test_serde_xml_roundtrip.py` |
-| SERDE round-trip (markdown) | `tests/test_serde_markdown_roundtrip.py` |
-| SERDE golden files | `tests/test_serde_golden.py` |
 | DocsClient integration | `tests/test_client_reconciler_versions.py` |
 
 Test helpers (factory functions for constructing test documents):
@@ -140,7 +151,9 @@ Test helpers (factory functions for constructing test documents):
 
 | Package | Purpose |
 |---------|---------|
-| `src/extradoc/serde/` | `DocumentWithComments ↔ XML folder` |
+| `src/extradoc/serde/` | `Serde` protocol; `MarkdownSerde` and `XmlSerde` implementations; 3-way merge engine |
+| `src/extradoc/serde/markdown/` | Markdown serialization (`_to_markdown.py`) and deserialization (`_from_markdown.py`) |
+| `src/extradoc/serde/xml/` | XML serialization (`_to_xml.py`) and deserialization (`_from_xml.py`) |
 | `src/extradoc/reconcile_v3/` | `Document` diff -> `BatchUpdateDocumentRequest` batches; includes executor |
 | `src/extradoc/comments/` | `comments.xml`, inline `comment-ref`, and comment diffs |
 | `src/extradoc/mock/` | In-process mock of the Docs `batchUpdate` API |
@@ -151,6 +164,7 @@ Test helpers (factory functions for constructing test documents):
 ## Documentation
 
 - `docs/on-disk-format.md` — authoritative file/folder/XML format
+- `docs/serde-testing-philosophy.md` — testing approach for serde
 - `docs/comment-anchoring-limitation.md` — Drive API limitation for anchored comments
 - `docs/googledocs/` — local reference material for Google Docs API behavior
 

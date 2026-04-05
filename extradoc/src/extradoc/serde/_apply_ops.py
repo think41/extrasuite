@@ -899,9 +899,15 @@ def _merge_changed_paragraph(
         base_ps["namedStyleType"] = str(d_ps.named_style_type)
     para["paragraphStyle"] = base_ps
 
-    # Merge bullet: if desired has a bullet, use it; if not, remove it
+    # Merge bullet: if desired has a bullet, merge with base's bullet
+    # (preserve textStyle from base, take listId/nestingLevel from desired);
+    # if desired has no bullet, remove it.
     if d_para.bullet is not None:
         bullet_d = d_para.bullet.model_dump(by_alias=True, exclude_none=True)
+        base_bullet = para.get("bullet") or {}
+        # Preserve textStyle from base bullet (markdown can't represent it)
+        if "textStyle" in base_bullet and "textStyle" not in bullet_d:
+            bullet_d["textStyle"] = base_bullet["textStyle"]
         para["bullet"] = bullet_d
     else:
         para.pop("bullet", None)
@@ -1060,44 +1066,73 @@ def _merge_changed_table(
     raw_rows = raw_table.get("tableRows") or []
     d_rows = d_table.table_rows or []
 
-    if len(raw_rows) != len(d_rows):
-        # Structural change — fall back to desired
-        return desired_el.model_dump(by_alias=True, exclude_none=True)
+    # Merge overlapping rows; append/trim for structural changes.
+    # This preserves tableStyle, tableCellStyle, and paragraph styles on
+    # existing cells even when rows or columns are added/removed.
+    common_rows = min(len(raw_rows), len(d_rows))
+    for row_i in range(common_rows):
+        raw_row = raw_rows[row_i]
+        d_row = d_rows[row_i]
+        _merge_table_row(raw_row, d_row)
 
-    for raw_row, d_row in zip(raw_rows, d_rows, strict=False):
-        raw_cells = raw_row.get("tableCells") or []
-        d_cells = d_row.table_cells or []
-        if len(raw_cells) != len(d_cells):
-            # Column count changed — fall back to desired for this row
-            raw_row["tableCells"] = [
-                c.model_dump(by_alias=True, exclude_none=True) for c in d_cells
-            ]
-            continue
-
-        for raw_cell, d_cell in zip(raw_cells, d_cells, strict=False):
-            # Preserve tableCellStyle from base
-            # Update cell content paragraphs' text from desired
-            raw_cell_content = raw_cell.get("content") or []
-            d_cell_content = d_cell.content or []
-
-            # If same paragraph count, merge each paragraph
-            if len(raw_cell_content) == len(d_cell_content):
-                for raw_cse, d_cse in zip(
-                    raw_cell_content, d_cell_content, strict=False
-                ):
-                    if "paragraph" in raw_cse and d_cse.paragraph is not None:
-                        merged = _merge_changed_paragraph(
-                            {"paragraph": raw_cse["paragraph"]}, d_cse
-                        )
-                        raw_cse["paragraph"] = merged["paragraph"]
-            else:
-                # Different paragraph count — use desired content but keep cell style
-                raw_cell["content"] = [
-                    cse.model_dump(by_alias=True, exclude_none=True)
-                    for cse in d_cell_content
-                ]
+    if len(d_rows) > len(raw_rows):
+        # New rows added — append from desired
+        for d_row in d_rows[len(raw_rows) :]:
+            raw_rows.append(d_row.model_dump(by_alias=True, exclude_none=True))
+        raw_table["rows"] = len(d_rows)
+    elif len(d_rows) < len(raw_rows):
+        # Rows removed
+        del raw_rows[len(d_rows) :]
+        raw_table["rows"] = len(d_rows)
 
     return result
+
+
+def _merge_table_row(raw_row: dict[str, Any], d_row: Any) -> None:
+    """Merge a single table row: preserve base cell styles, update content."""
+    raw_cells = raw_row.get("tableCells") or []
+    d_cells = d_row.table_cells or []
+
+    common_cols = min(len(raw_cells), len(d_cells))
+    for col_i in range(common_cols):
+        _merge_table_cell(raw_cells[col_i], d_cells[col_i])
+
+    if len(d_cells) > len(raw_cells):
+        # New columns added — append from desired
+        for d_cell in d_cells[len(raw_cells) :]:
+            raw_cells.append(d_cell.model_dump(by_alias=True, exclude_none=True))
+    elif len(d_cells) < len(raw_cells):
+        # Columns removed
+        del raw_cells[len(d_cells) :]
+
+    raw_row["tableCells"] = raw_cells
+
+
+def _merge_table_cell(raw_cell: dict[str, Any], d_cell: Any) -> None:
+    """Merge a single table cell: preserve tableCellStyle, update content."""
+    raw_cell_content = raw_cell.get("content") or []
+    d_cell_content = d_cell.content or []
+
+    # Merge paragraphs at matching positions
+    common_paras = min(len(raw_cell_content), len(d_cell_content))
+    for para_i in range(common_paras):
+        raw_cse = raw_cell_content[para_i]
+        d_cse = d_cell_content[para_i]
+        if "paragraph" in raw_cse and d_cse.paragraph is not None:
+            merged = _merge_changed_paragraph(
+                {"paragraph": raw_cse["paragraph"]}, d_cse
+            )
+            raw_cse["paragraph"] = merged["paragraph"]
+
+    if len(d_cell_content) > len(raw_cell_content):
+        # New paragraphs added — append from desired
+        for d_cse in d_cell_content[len(raw_cell_content) :]:
+            raw_cell_content.append(d_cse.model_dump(by_alias=True, exclude_none=True))
+    elif len(d_cell_content) < len(raw_cell_content):
+        # Paragraphs removed
+        del raw_cell_content[len(d_cell_content) :]
+
+    raw_cell["content"] = raw_cell_content
 
 
 def _merge_changed_element(

@@ -13,11 +13,12 @@ Test naming: test_bug_<category>_<what>
 Categories:
 - style_loss: text styles (font, color, underline) preserved on round-trip
 - paragraph: paragraph-level properties (direction, lineSpacing)
-- table: table cell styles, structure
+- table: table cell styles, structure, row addition
 - empty_para: colored empty paragraph handling
 - heading: heading ID preservation
 - list: indent properties preserved
 - inline_code: surrounding styles preserved
+- bullet: bullet textStyle preservation
 """
 
 from __future__ import annotations
