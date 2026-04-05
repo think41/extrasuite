@@ -19,6 +19,46 @@ from extrasuite.client.cli._common import (
 )
 
 
+def _assert_safe_to_replace(dest_dir: Path) -> None:
+    """Abort if ``dest_dir`` is not a safe directory to delete.
+
+    ``pull-md`` replaces the output directory atomically by removing the
+    existing one and moving a freshly-pulled temp directory into place.
+    That is catastrophic when the user passes ``.`` or any other directory
+    that isn't an extrasuite-pull folder — we'd silently wipe their
+    project.
+
+    A directory is only considered safe to replace if EITHER:
+      1. It is empty, OR
+      2. It contains an ``index.md`` or ``index.xml`` marker file at its
+         root (indicating it was created by a previous extrasuite pull).
+
+    Additionally, refuse to delete the current working directory or any
+    ancestor of it — deleting the cwd out from under the running process
+    is never what the user wants.
+    """
+    dest_abs = dest_dir.resolve()
+    cwd_abs = Path.cwd().resolve()
+    if dest_abs == cwd_abs or dest_abs in cwd_abs.parents:
+        raise SystemExit(
+            f"Refusing to overwrite {dest_dir} — it is the current working "
+            "directory or an ancestor of it. Pass a dedicated output folder "
+            "(e.g. the document id) instead of '.'."
+        )
+
+    entries = list(dest_abs.iterdir())
+    if not entries:
+        return
+    if (dest_abs / "index.md").exists() or (dest_abs / "index.xml").exists():
+        return
+    raise SystemExit(
+        f"Refusing to overwrite {dest_dir} — it is not empty and does not "
+        "look like a previously-pulled extrasuite folder (no index.md / "
+        "index.xml at its root). Remove the directory manually or choose a "
+        "different output path."
+    )
+
+
 def cmd_doc_pull(args: Any) -> None:
     """Pull a Google Doc."""
     from extradoc import DocsClient, GoogleDocsTransport
@@ -171,6 +211,7 @@ def cmd_doc_pull_md(args: Any) -> None:
             if tmp_parent is not None:
                 dest_dir.parent.mkdir(parents=True, exist_ok=True)
                 if dest_dir.exists():
+                    _assert_safe_to_replace(dest_dir)
                     shutil.rmtree(dest_dir)
                 shutil.move(str(tmp_parent / document_id), str(dest_dir))
         finally:
