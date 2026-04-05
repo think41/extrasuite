@@ -1848,8 +1848,8 @@ class TestFootnoteLowering:
     # 3. Insert footnote
     # -----------------------------------------------------------------------
 
-    def test_insert_footnote_emits_create_footnote_in_batch0(self) -> None:
-        """Inserting a new footnote: batch 0 contains createFootnote."""
+    def test_insert_footnote_emits_create_footnote_after_body_content(self) -> None:
+        """Inserting a new footnote: createFootnote is in a batch after body content."""
         desired_fn_ref_para = make_footnote_ref_para(
             text_before="See",
             footnote_id="fn1",
@@ -1877,9 +1877,11 @@ class TestFootnoteLowering:
         batches = reconcile_batches(base, desired)
         assert len(batches) >= 1
 
-        # batch 0 must contain createFootnote
-        batch0 = _get_batch_requests(batches[0])
-        create_fn_reqs = [r for r in batch0 if r.create_footnote is not None]
+        # Find the batch containing createFootnote
+        all_reqs = []
+        for b in batches:
+            all_reqs.extend(_get_batch_requests(b))
+        create_fn_reqs = [r for r in all_reqs if r.create_footnote is not None]
         assert len(create_fn_reqs) == 1
         cf = create_fn_reqs[0].create_footnote
         assert cf is not None
@@ -1942,6 +1944,71 @@ class TestFootnoteLowering:
         )
         with pytest.raises(NotImplementedError, match="anchor_index is unknown"):
             lower_ops([op])
+
+    # -----------------------------------------------------------------------
+    # 3b. Insert footnote into empty doc (body text also inserted)
+    # -----------------------------------------------------------------------
+
+    def test_insert_footnote_into_empty_doc_anchor_index_valid(self) -> None:
+        """When body text AND footnote are both new, createFootnote must not
+        reference an index beyond the base document size.
+
+        Reproduces: push-md to empty doc with markdown containing a footnote
+        generates createFootnote at index 30 in batch0, but the doc only has
+        2 characters (single newline). batch0 runs first → API 400.
+        """
+        # Base: empty doc (just the terminal paragraph)
+        base = make_indexed_doc(
+            body_content=[make_indexed_terminal(1)],
+        )
+
+        # Desired: body text "A paragraph with a footnote." + footnoteRef + \n
+        # Then the terminal paragraph.
+        #   index 1: "A paragraph with a footnote." (29 chars) → ends at 30
+        #   index 30: footnoteRef (1 char) → ends at 31
+        #   index 31: "\n" → ends at 32
+        #   index 32: terminal "\n" → ends at 33
+        fn_ref_para = make_footnote_ref_para(
+            text_before="A paragraph with a footnote.",
+            footnote_id="fn_new",
+            fn_ref_start=30,
+            para_start=1,
+        )
+        desired = make_indexed_doc(
+            body_content=[fn_ref_para, make_indexed_terminal(32)],
+            footnotes={"fn_new": make_footnote("fn_new", "This is the footnote.\n")},
+        )
+
+        batches = reconcile_batches(base, desired)
+        assert len(batches) >= 1
+
+        # The base doc has only 2 characters (index 0 and 1, the trailing \n).
+        # Any createFootnote in batch0 must have location.index <= 1,
+        # because batch0 runs against the base doc state (before body text
+        # insertions in batch1).
+        batch0 = _get_batch_requests(batches[0])
+        create_fn_reqs = [r for r in batch0 if r.create_footnote is not None]
+
+        if create_fn_reqs:
+            # If createFootnote is in batch0, the index must be valid for the
+            # base document (which only has the terminal newline at index 1).
+            for req in create_fn_reqs:
+                cf = req.create_footnote
+                assert cf is not None
+                assert cf.location is not None
+                assert cf.location.index <= 2, (
+                    f"createFootnote in batch0 has index {cf.location.index} "
+                    f"which exceeds the base doc size of 2. "
+                    f"batch0 runs before body text is inserted."
+                )
+        else:
+            # createFootnote is not in batch0 — it must be in a later batch,
+            # which means body text was inserted first. This is correct.
+            all_reqs = []
+            for b in batches:
+                all_reqs.extend(_get_batch_requests(b))
+            create_fn_any = [r for r in all_reqs if r.create_footnote is not None]
+            assert len(create_fn_any) == 1, "Expected exactly one createFootnote request"
 
     # -----------------------------------------------------------------------
     # 4. Multiple footnotes, one changed

@@ -397,9 +397,13 @@ def _parse_body(
     footnotes: dict[str, Any] = {}
     for fn_id, fn_text in fn_defs.items():
         fn_para = _make_text_para(fn_text)
+        fn_terminal = _make_trailing_para()
         fn_obj = {
             "footnoteId": fn_id,
-            "content": [fn_para.model_dump(by_alias=True, exclude_none=True)],
+            "content": [
+                fn_para.model_dump(by_alias=True, exclude_none=True),
+                fn_terminal.model_dump(by_alias=True, exclude_none=True),
+            ],
         }
         footnotes[fn_id] = fn_obj
 

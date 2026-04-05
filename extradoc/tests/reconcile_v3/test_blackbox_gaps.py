@@ -485,7 +485,11 @@ class TestDeferredIDs:
         assert "addDocumentTab" in batch0_types
 
     def test_header_footer_and_footnote_three_deferred_ids(self) -> None:
-        """Creating header + footer + footnote needs 3 deferred IDs in batch 0."""
+        """Creating header + footer + footnote needs 3 deferred IDs across batches.
+
+        Header and footer are created in batch 0 (structural creates).
+        Footnote is created in a later batch (after body content insertions).
+        """
 
         # Base: simple body with text and a trailing paragraph
         base = _single_doc(

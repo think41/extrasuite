@@ -215,6 +215,8 @@ def lower_batches(
     """
     batch0: list[Request] = []  # structural creates
     batch1: list[Request] = []  # content + style + structural deletes
+    batch1b: list[Request] = []  # createFootnote (after body content, before named ranges)
+    batch1b_content: list[Request] = []  # footnote content insertions (after createFootnote)
     batch2: list[Request] = []  # named ranges (after content, so indices are stable)
 
     _desired_lists_by_tab: dict[str, dict[str, DocList]] = desired_lists_by_tab or {}
@@ -482,7 +484,8 @@ def lower_batches(
                 )
 
             # ---------------------------------------------------------------- #
-            # Footnotes — batch 0 (createFootnote) + batch 1 (content)
+            # Footnotes — batch 1b (createFootnote, after body content)
+            #           + batch 1b_content (footnote content insertions)
             # ---------------------------------------------------------------- #
             case InsertFootnoteOp():
                 if op.anchor_index < 0:
@@ -491,8 +494,8 @@ def lower_batches(
                         f"(no footnoteReference with index found in desired body). "
                         f"(tab_id={op.tab_id!r}, footnote_id={op.footnote_id!r})"
                     )
-                req_index = len(batch0)
-                batch0.append(
+                req_index = len(batch1b)
+                batch1b.append(
                     _make_create_footnote(
                         index=op.anchor_index,
                         tab_id=op.tab_id,
@@ -500,11 +503,13 @@ def lower_batches(
                 )
                 deferred_fn_id = DeferredID(
                     placeholder=f"footnote_{req_index}",
-                    batch_index=0,
+                    # batch_index is set to a sentinel; will be resolved below
+                    # once we know which actual batch index batch1b lands on.
+                    batch_index=-1,
                     request_index=req_index,
                     response_path="createFootnote.footnoteId",
                 )
-                batch1.extend(
+                batch1b_content.extend(
                     _lower_content_insert(
                         content=op.desired_content,
                         start_index=1,
@@ -675,9 +680,44 @@ def lower_batches(
         batches.append(batch0)
     if batch1:
         batches.append(batch1)
+    if batch1b:
+        # Resolve the sentinel batch_index on DeferredIDs in batch1b_content
+        # now that we know which batch index batch1b will occupy.
+        batch1b_index = len(batches)
+        for req in batch1b_content:
+            _fix_deferred_batch_index(req, batch1b_index)
+        batches.append(batch1b)
+    if batch1b_content:
+        batches.append(batch1b_content)
     if batch2:
         batches.append(batch2)
     return batches
+
+
+def _fix_deferred_batch_index(req: Request, target_batch_index: int) -> None:
+    """Walk a Request and fix any DeferredID with batch_index == -1.
+
+    Used to resolve the sentinel batch_index on DeferredID placeholders
+    created for createFootnote requests, once we know the actual batch index.
+    """
+
+    def _walk(obj: object) -> None:
+        if isinstance(obj, DeferredID):
+            if obj.batch_index == -1:
+                # DeferredID is frozen; use object.__setattr__ to bypass
+                object.__setattr__(obj, "batch_index", target_batch_index)
+            return
+        # Walk Pydantic model fields
+        if hasattr(type(obj), "model_fields"):
+            for field_name in type(obj).model_fields:
+                val = getattr(obj, field_name, None)
+                if val is not None:
+                    _walk(val)
+        elif isinstance(obj, list):
+            for item in obj:
+                _walk(item)
+
+    _walk(req)
 
 
 def _lower_one(op: DiffOp) -> list[Request]:
