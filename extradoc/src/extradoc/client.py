@@ -237,33 +237,20 @@ def _reconcile_documents(
     base: Document,
     desired: Document,
 ) -> list[BatchUpdateDocumentRequest]:
-    base_dict = base.model_dump(by_alias=True, exclude_none=True)
-    desired_dict = desired.model_dump(by_alias=True, exclude_none=True)
-    raw_batches = reconcile_v3_batches(base_dict, desired_dict)
-    return [
-        BatchUpdateDocumentRequest.model_validate({"requests": batch})
-        for batch in raw_batches
-    ]
+    return reconcile_v3_batches(base, desired)
 
 
 async def _execute_document_batches(
     transport: Transport,
     result: DiffResult,
 ) -> int:
-    request_batches = [
-        [
-            request.model_dump(by_alias=True, exclude_none=True)
-            for request in (batch.requests or [])
-        ]
-        for batch in result.batches
-    ]
     await execute_request_batches(
         transport,
         document_id=result.document_id,
-        request_batches=request_batches,
+        request_batches=result.batches,
         initial_revision_id=result.base_revision_id,
     )
-    return sum(len(batch) for batch in request_batches)
+    return sum(len(batch.requests or []) for batch in result.batches)
 
 
 def _read_document_id(folder: Path) -> str:

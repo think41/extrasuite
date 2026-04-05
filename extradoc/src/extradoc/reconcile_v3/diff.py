@@ -15,18 +15,43 @@ stable IDs wherever the Google Docs API provides them:
           └── Body content    (ContentAlignment DP)
                 └── TableCell (recursive ContentAlignment DP)
 
-No live API calls.  All computation is pure in-memory over raw dicts.
+No live API calls.  All computation is pure in-memory over typed Pydantic models.
 """
 
 from __future__ import annotations
 
 from typing import Any
 
+from extradoc.api_types._generated import (
+    Body,
+    Document,
+    DocumentStyle,
+    DocumentTab,
+    Footer,
+    Footnote,
+    Header,
+    InlineObject,
+    List,
+    NamedStyle,
+    NamedStyles,
+    Paragraph,
+    ParagraphElement,
+    StructuralElement,
+    Tab,
+    Table,
+    TableCell,
+    TableCellStyle,
+    TableColumnProperties,
+    TableRow,
+    TableRowStyle,
+    TableStyle,
+    TabProperties,
+)
 from extradoc.reconcile_v3.content_align import (
     ContentAlignment,
     ContentNode,
     align_content,
-    content_node_from_raw,
+    content_node_from_element,
 )
 from extradoc.reconcile_v3.model import (
     CreateFooterOp,
@@ -64,23 +89,24 @@ from extradoc.reconcile_v3.table_diff import get_matched_rows
 
 
 def diff_documents(
-    base: dict[str, Any],
-    desired: dict[str, Any],
+    base: Document,
+    desired: Document,
 ) -> list[ReconcileOp]:
     """Return the full op list to transform base → desired.
 
     Parameters
     ----------
     base:
-        Raw Google Docs API document dict (as returned by documents.get).
+        Current state of the document.
     desired:
-        The desired target document dict.
+        Target state of the document.
 
     Returns
     -------
     list[ReconcileOp]
         Ordered list of ops covering every detected difference, top-down.
     """
+
     ops: list[ReconcileOp] = []
 
     base_tabs = _get_tabs(base)
@@ -102,48 +128,47 @@ def diff_documents(
 # ---------------------------------------------------------------------------
 
 
-def _get_tabs(doc: dict[str, Any]) -> list[dict[str, Any]]:
-    """Return the tabs list from a document dict.
+def _get_tabs(doc: Document) -> list[Tab]:
+    """Return the tabs list from a Document model.
 
     For legacy single-tab documents (no ``tabs`` field), synthesises a single
-    pseudo-tab dict wrapping the top-level body/headers/etc. fields.
+    pseudo-tab wrapping the top-level body/headers/etc. fields.
     """
-    tabs = doc.get("tabs")
-    if tabs:
-        return list(tabs)
+    if doc.tabs:
+        return list(doc.tabs)
     # Legacy document: wrap top-level content as a pseudo-tab
-    pseudo_tab: dict[str, Any] = {
-        "tabProperties": {"tabId": "", "title": "Tab 1", "index": 0},
-        "documentTab": {
-            "body": doc.get("body", {"content": []}),
-            "headers": doc.get("headers", {}),
-            "footers": doc.get("footers", {}),
-            "footnotes": doc.get("footnotes", {}),
-            "lists": doc.get("lists", {}),
-            "namedStyles": doc.get("namedStyles", {"styles": []}),
-            "documentStyle": doc.get("documentStyle", {}),
-            "inlineObjects": doc.get("inlineObjects", {}),
-        },
-    }
+    pseudo_tab = Tab(
+        tab_properties=TabProperties(tab_id="", title="Tab 1", index=0),
+        document_tab=DocumentTab(
+            body=doc.body or Body(content=[]),
+            headers=doc.headers or {},
+            footers=doc.footers or {},
+            footnotes=doc.footnotes or {},
+            lists=doc.lists or {},
+            named_styles=doc.named_styles or NamedStyles(styles=[]),
+            document_style=doc.document_style or DocumentStyle(),
+            inline_objects=doc.inline_objects or {},
+        ),
+    )
     return [pseudo_tab]
 
 
-def _tab_id(tab: dict[str, Any]) -> str:
-    """Extract tabId from a tab dict (empty string for legacy pseudo-tabs)."""
-    props: dict[str, Any] = tab.get("tabProperties") or {}
-    return str(props.get("tabId", ""))
+def _tab_id(tab: Tab) -> str:
+    """Extract tabId from a Tab model (empty string for legacy pseudo-tabs)."""
+    if tab.tab_properties is None:
+        return ""
+    return tab.tab_properties.tab_id or ""
 
 
-def _doc_tab(tab: dict[str, Any]) -> dict[str, Any]:
-    """Return the documentTab portion of a tab dict."""
-    result: dict[str, Any] = tab.get("documentTab") or {}
-    return result
+def _doc_tab(tab: Tab) -> DocumentTab:
+    """Return the DocumentTab portion of a Tab model."""
+    return tab.document_tab or DocumentTab()
 
 
 def _match_tabs(
-    base_tabs: list[dict[str, Any]],
-    desired_tabs: list[dict[str, Any]],
-) -> tuple[list[tuple[dict[str, Any], dict[str, Any]]], list[ReconcileOp]]:
+    base_tabs: list[Tab],
+    desired_tabs: list[Tab],
+) -> tuple[list[tuple[Tab, Tab]], list[ReconcileOp]]:
     """Match base tabs to desired tabs by tabId, with positional fallback.
 
     Returns
@@ -154,16 +179,16 @@ def _match_tabs(
         InsertTabOp and DeleteTabOp for unmatched tabs.
     """
     ops: list[ReconcileOp] = []
-    pairs: list[tuple[dict[str, Any], dict[str, Any]]] = []
+    pairs: list[tuple[Tab, Tab]] = []
 
     # Build lookup by tabId (skip empty IDs — positional only)
-    base_by_id: dict[str, dict[str, Any]] = {}
+    base_by_id: dict[str, Tab] = {}
     for t in base_tabs:
         tid = _tab_id(t)
         if tid:
             base_by_id[tid] = t
 
-    desired_by_id: dict[str, dict[str, Any]] = {}
+    desired_by_id: dict[str, Tab] = {}
     for t in desired_tabs:
         tid = _tab_id(t)
         if tid:
@@ -192,23 +217,35 @@ def _match_tabs(
     extra_desired = unmatched_desired[len(unmatched_base) :]
 
     for b_tab in extra_base:
+        b_props = b_tab.tab_properties
         ops.append(
             DeleteTabOp(
                 base_tab_id=_tab_id(b_tab),
-                base_tab_index=b_tab.get("tabProperties", {}).get("index", 0),
+                base_tab_index=b_props.index
+                if b_props and b_props.index is not None
+                else 0,
             )
         )
 
     for d_tab in extra_desired:
+        d_props = d_tab.tab_properties
         ops.append(
             InsertTabOp(
-                desired_tab_index=d_tab.get("tabProperties", {}).get("index", 0),
+                desired_tab_index=d_props.index
+                if d_props and d_props.index is not None
+                else 0,
                 desired_tab=d_tab,
             )
         )
 
     # Sort pairs to preserve desired ordering
-    pairs.sort(key=lambda p: p[1].get("tabProperties", {}).get("index", 0))
+    def _tab_index(pair: tuple[Tab, Tab]) -> int:
+        props = pair[1].tab_properties
+        if props and props.index is not None:
+            return props.index
+        return 0
+
+    pairs.sort(key=_tab_index)
 
     return pairs, ops
 
@@ -219,8 +256,8 @@ def _match_tabs(
 
 
 def _diff_tab(
-    base_tab: dict[str, Any],
-    desired_tab: dict[str, Any],
+    base_tab: Tab,
+    desired_tab: Tab,
 ) -> list[ReconcileOp]:
     """Diff all tree levels within a matched tab pair."""
     tab_id = _tab_id(base_tab)
@@ -259,6 +296,8 @@ _HEADER_FOOTER_ID_FIELDS: frozenset[str] = frozenset(
 
 # Writable DocumentStyle fields that can be applied via updateDocumentStyle.
 # Header/footer ID fields are excluded — they're managed by structural ops.
+# These are camelCase (API alias names) because they go directly into API
+# request dicts.
 _WRITABLE_DOC_STYLE_FIELDS: list[str] = [
     "background",
     "flipPageOrientation",
@@ -277,18 +316,22 @@ _WRITABLE_DOC_STYLE_FIELDS: list[str] = [
 
 def _diff_document_style(
     tab_id: str,
-    base_dt: dict[str, Any],
-    desired_dt: dict[str, Any],
+    base_dt: DocumentTab,
+    desired_dt: DocumentTab,
 ) -> list[ReconcileOp]:
-    # If the desired document has no "documentStyle" key (e.g. markdown
+    # If the desired document has no "documentStyle" (e.g. markdown
     # format does not model document style), leave the existing style
     # untouched.
-    if "documentStyle" not in desired_dt:
+    if desired_dt.document_style is None:
         return []
-    base_style = base_dt.get("documentStyle", {})
-    desired_style = desired_dt.get("documentStyle", {})
+    base_style = base_dt.document_style or DocumentStyle()
+    desired_style = desired_dt.document_style
 
-    result = _styles_changed(base_style, desired_style, _WRITABLE_DOC_STYLE_FIELDS)
+    # Convert to camelCase dicts for field-level comparison and API request
+    base_dict = base_style.model_dump(by_alias=True, exclude_none=True)
+    desired_dict = desired_style.model_dump(by_alias=True, exclude_none=True)
+
+    result = _styles_changed(base_dict, desired_dict, _WRITABLE_DOC_STYLE_FIELDS)
     if result is None:
         return []
 
@@ -309,21 +352,24 @@ def _diff_document_style(
 
 def _diff_named_styles(
     tab_id: str,
-    base_dt: dict[str, Any],
-    desired_dt: dict[str, Any],
+    base_dt: DocumentTab,
+    desired_dt: DocumentTab,
 ) -> list[ReconcileOp]:
-    base_styles = base_dt.get("namedStyles", {}).get("styles", [])
-    # When the desired document has no "namedStyles" key at all (e.g. the
+    base_ns = base_dt.named_styles
+    base_styles: list[NamedStyle] = (base_ns.styles or []) if base_ns else []
+
+    # When the desired document has no "namedStyles" at all (e.g. the
     # markdown format does not model named styles), treat it as "preserve
     # whatever the base has" — neither update nor delete anything.
-    desired_named_styles_present = "namedStyles" in desired_dt
-    desired_styles = desired_dt.get("namedStyles", {}).get("styles", [])
+    desired_named_styles_present = desired_dt.named_styles is not None
+    desired_ns = desired_dt.named_styles
+    desired_styles: list[NamedStyle] = (desired_ns.styles or []) if desired_ns else []
 
-    base_by_type: dict[str, dict[str, Any]] = {
-        s["namedStyleType"]: s for s in base_styles if "namedStyleType" in s
+    base_by_type: dict[str, NamedStyle] = {
+        s.named_style_type: s for s in base_styles if s.named_style_type is not None
     }
-    desired_by_type: dict[str, dict[str, Any]] = {
-        s["namedStyleType"]: s for s in desired_styles if "namedStyleType" in s
+    desired_by_type: dict[str, NamedStyle] = {
+        s.named_style_type: s for s in desired_styles if s.named_style_type is not None
     }
 
     ops: list[ReconcileOp] = []
@@ -373,11 +419,11 @@ def _diff_named_styles(
 
 def _diff_lists(
     tab_id: str,
-    base_dt: dict[str, Any],
-    desired_dt: dict[str, Any],
+    base_dt: DocumentTab,
+    desired_dt: DocumentTab,
 ) -> list[ReconcileOp]:
-    base_lists: dict[str, Any] = base_dt.get("lists", {}) or {}
-    desired_lists: dict[str, Any] = desired_dt.get("lists", {}) or {}
+    base_lists: dict[str, List] = base_dt.lists or {}
+    desired_lists: dict[str, List] = desired_dt.lists or {}
 
     ops: list[ReconcileOp] = []
 
@@ -402,11 +448,11 @@ def _diff_lists(
 
 def _diff_inline_objects(
     tab_id: str,
-    base_dt: dict[str, Any],
-    desired_dt: dict[str, Any],
+    base_dt: DocumentTab,
+    desired_dt: DocumentTab,
 ) -> list[ReconcileOp]:
-    base_objs: dict[str, Any] = base_dt.get("inlineObjects", {}) or {}
-    desired_objs: dict[str, Any] = desired_dt.get("inlineObjects", {}) or {}
+    base_objs: dict[str, InlineObject] = base_dt.inline_objects or {}
+    desired_objs: dict[str, InlineObject] = desired_dt.inline_objects or {}
 
     ops: list[ReconcileOp] = []
 
@@ -431,15 +477,17 @@ def _diff_inline_objects(
 
 def _diff_headers(
     tab_id: str,
-    base_dt: dict[str, Any],
-    desired_dt: dict[str, Any],
+    base_dt: DocumentTab,
+    desired_dt: DocumentTab,
 ) -> list[ReconcileOp]:
-    base_headers: dict[str, Any] = base_dt.get("headers", {}) or {}
-    desired_headers: dict[str, Any] = desired_dt.get("headers", {}) or {}
+    base_headers: dict[str, Header] = base_dt.headers or {}
+    desired_headers: dict[str, Header] = desired_dt.headers or {}
 
     # Build slot→headerId maps from documentStyle
-    base_slots = _header_slots_from_doc_style(base_dt.get("documentStyle", {}))
-    desired_slots = _header_slots_from_doc_style(desired_dt.get("documentStyle", {}))
+    base_slots = _header_slots_from_doc_style(base_dt.document_style or DocumentStyle())
+    desired_slots = _header_slots_from_doc_style(
+        desired_dt.document_style or DocumentStyle()
+    )
 
     ops: list[ReconcileOp] = []
 
@@ -450,13 +498,14 @@ def _diff_headers(
 
         if b_id is None and d_id is not None:
             # New header
-            d_header = desired_headers.get(d_id, {})
+            d_header = desired_headers.get(d_id)
+            d_content = (d_header.content or []) if d_header else []
             ops.append(
                 CreateHeaderOp(
                     tab_id=tab_id,
                     section_slot=slot,
                     desired_header_id=d_id,
-                    desired_content=d_header.get("content", []),
+                    desired_content=d_content,
                 )
             )
         elif b_id is not None and d_id is None:
@@ -465,12 +514,16 @@ def _diff_headers(
                 DeleteHeaderOp(tab_id=tab_id, section_slot=slot, base_header_id=b_id)
             )
         elif b_id is not None and d_id is not None:
-            b_header = base_headers.get(b_id, {})
-            d_header = desired_headers.get(d_id, {})
-            b_content = b_header.get("content", [])
-            d_content = d_header.get("content", [])
-            if b_content != d_content:
-                alignment = _align_content_sequence(b_content, d_content)
+            b_header = base_headers.get(b_id)
+            d_header = desired_headers.get(d_id)
+            b_content: list[StructuralElement] = (
+                (b_header.content or []) if b_header else []
+            )
+            d_content_list: list[StructuralElement] = (
+                (d_header.content or []) if d_header else []
+            )
+            if b_content != d_content_list:
+                alignment = _align_content_sequence(b_content, d_content_list)
                 ops.append(
                     UpdateHeaderContentOp(
                         tab_id=tab_id,
@@ -478,22 +531,22 @@ def _diff_headers(
                         header_id=b_id,
                         alignment=alignment,
                         base_content=b_content,
-                        desired_content=d_content,
+                        desired_content=d_content_list,
                     )
                 )
 
     return ops
 
 
-def _header_slots_from_doc_style(doc_style: dict[str, Any]) -> dict[str, str]:
-    """Extract slot→headerId mapping from a documentStyle dict."""
+def _header_slots_from_doc_style(doc_style: DocumentStyle) -> dict[str, str]:
+    """Extract slot→headerId mapping from a DocumentStyle model."""
     slots: dict[str, str] = {}
-    if "defaultHeaderId" in doc_style:
-        slots["DEFAULT"] = doc_style["defaultHeaderId"]
-    if "firstPageHeaderId" in doc_style:
-        slots["FIRST_PAGE"] = doc_style["firstPageHeaderId"]
-    if "evenPageHeaderId" in doc_style:
-        slots["EVEN_PAGE"] = doc_style["evenPageHeaderId"]
+    if doc_style.default_header_id is not None:
+        slots["DEFAULT"] = doc_style.default_header_id
+    if doc_style.first_page_header_id is not None:
+        slots["FIRST_PAGE"] = doc_style.first_page_header_id
+    if doc_style.even_page_header_id is not None:
+        slots["EVEN_PAGE"] = doc_style.even_page_header_id
     return slots
 
 
@@ -504,14 +557,16 @@ def _header_slots_from_doc_style(doc_style: dict[str, Any]) -> dict[str, str]:
 
 def _diff_footers(
     tab_id: str,
-    base_dt: dict[str, Any],
-    desired_dt: dict[str, Any],
+    base_dt: DocumentTab,
+    desired_dt: DocumentTab,
 ) -> list[ReconcileOp]:
-    base_footers: dict[str, Any] = base_dt.get("footers", {}) or {}
-    desired_footers: dict[str, Any] = desired_dt.get("footers", {}) or {}
+    base_footers: dict[str, Footer] = base_dt.footers or {}
+    desired_footers: dict[str, Footer] = desired_dt.footers or {}
 
-    base_slots = _footer_slots_from_doc_style(base_dt.get("documentStyle", {}))
-    desired_slots = _footer_slots_from_doc_style(desired_dt.get("documentStyle", {}))
+    base_slots = _footer_slots_from_doc_style(base_dt.document_style or DocumentStyle())
+    desired_slots = _footer_slots_from_doc_style(
+        desired_dt.document_style or DocumentStyle()
+    )
 
     ops: list[ReconcileOp] = []
 
@@ -521,13 +576,14 @@ def _diff_footers(
         d_id = desired_slots.get(slot)
 
         if b_id is None and d_id is not None:
-            d_footer = desired_footers.get(d_id, {})
+            d_footer = desired_footers.get(d_id)
+            d_content = (d_footer.content or []) if d_footer else []
             ops.append(
                 CreateFooterOp(
                     tab_id=tab_id,
                     section_slot=slot,
                     desired_footer_id=d_id,
-                    desired_content=d_footer.get("content", []),
+                    desired_content=d_content,
                 )
             )
         elif b_id is not None and d_id is None:
@@ -535,12 +591,16 @@ def _diff_footers(
                 DeleteFooterOp(tab_id=tab_id, section_slot=slot, base_footer_id=b_id)
             )
         elif b_id is not None and d_id is not None:
-            b_footer = base_footers.get(b_id, {})
-            d_footer = desired_footers.get(d_id, {})
-            b_content = b_footer.get("content", [])
-            d_content = d_footer.get("content", [])
-            if b_content != d_content:
-                alignment = _align_content_sequence(b_content, d_content)
+            b_footer = base_footers.get(b_id)
+            d_footer = desired_footers.get(d_id)
+            b_content: list[StructuralElement] = (
+                (b_footer.content or []) if b_footer else []
+            )
+            d_content_list: list[StructuralElement] = (
+                (d_footer.content or []) if d_footer else []
+            )
+            if b_content != d_content_list:
+                alignment = _align_content_sequence(b_content, d_content_list)
                 ops.append(
                     UpdateFooterContentOp(
                         tab_id=tab_id,
@@ -548,21 +608,21 @@ def _diff_footers(
                         footer_id=b_id,
                         alignment=alignment,
                         base_content=b_content,
-                        desired_content=d_content,
+                        desired_content=d_content_list,
                     )
                 )
 
     return ops
 
 
-def _footer_slots_from_doc_style(doc_style: dict[str, Any]) -> dict[str, str]:
+def _footer_slots_from_doc_style(doc_style: DocumentStyle) -> dict[str, str]:
     slots: dict[str, str] = {}
-    if "defaultFooterId" in doc_style:
-        slots["DEFAULT"] = doc_style["defaultFooterId"]
-    if "firstPageFooterId" in doc_style:
-        slots["FIRST_PAGE"] = doc_style["firstPageFooterId"]
-    if "evenPageFooterId" in doc_style:
-        slots["EVEN_PAGE"] = doc_style["evenPageFooterId"]
+    if doc_style.default_footer_id is not None:
+        slots["DEFAULT"] = doc_style.default_footer_id
+    if doc_style.first_page_footer_id is not None:
+        slots["FIRST_PAGE"] = doc_style.first_page_footer_id
+    if doc_style.even_page_footer_id is not None:
+        slots["EVEN_PAGE"] = doc_style.even_page_footer_id
     return slots
 
 
@@ -573,39 +633,39 @@ def _footer_slots_from_doc_style(doc_style: dict[str, Any]) -> dict[str, str]:
 
 def _diff_footnotes(
     tab_id: str,
-    base_dt: dict[str, Any],
-    desired_dt: dict[str, Any],
+    base_dt: DocumentTab,
+    desired_dt: DocumentTab,
 ) -> list[ReconcileOp]:
-    base_fn: dict[str, Any] = base_dt.get("footnotes", {}) or {}
-    desired_fn: dict[str, Any] = desired_dt.get("footnotes", {}) or {}
+    base_fn: dict[str, Footnote] = base_dt.footnotes or {}
+    desired_fn: dict[str, Footnote] = desired_dt.footnotes or {}
 
     ops: list[ReconcileOp] = []
 
     # Build an index: footnoteId → body character offset from the desired body.
     # Used to populate anchor_index on InsertFootnoteOp.
-    desired_fn_anchors = _footnote_ref_offsets_in_body(
-        desired_dt.get("body", {}).get("content", [])
-    )
+    desired_body = desired_dt.body
+    desired_body_content = (desired_body.content or []) if desired_body else []
+    desired_fn_anchors = _footnote_ref_offsets_in_body(desired_body_content)
 
     # Build an index: footnoteId → body character offset from the base body.
     # Used to populate ref_index on DeleteFootnoteOp.
-    base_fn_anchors = _footnote_ref_offsets_in_body(
-        base_dt.get("body", {}).get("content", [])
-    )
+    base_body = base_dt.body
+    base_body_content = (base_body.content or []) if base_body else []
+    base_fn_anchors = _footnote_ref_offsets_in_body(base_body_content)
 
     for fn_id, d_fn in desired_fn.items():
+        d_content = d_fn.content or []
         if fn_id not in base_fn:
             ops.append(
                 InsertFootnoteOp(
                     tab_id=tab_id,
                     footnote_id=fn_id,
-                    desired_content=d_fn.get("content", []),
+                    desired_content=d_content,
                     anchor_index=desired_fn_anchors.get(fn_id, -1),
                 )
             )
         else:
-            b_content = base_fn[fn_id].get("content", [])
-            d_content = d_fn.get("content", [])
+            b_content = base_fn[fn_id].content or []
             if b_content != d_content:
                 alignment = _align_content_sequence(b_content, d_content)
                 ops.append(
@@ -632,7 +692,7 @@ def _diff_footnotes(
 
 
 def _footnote_ref_offsets_in_body(
-    body_content: list[dict[str, Any]],
+    body_content: list[StructuralElement],
 ) -> dict[str, int]:
     """Walk body content and return a mapping of footnoteId → startIndex.
 
@@ -643,17 +703,17 @@ def _footnote_ref_offsets_in_body(
     """
     offsets: dict[str, int] = {}
     for el in body_content:
-        if "paragraph" not in el:
+        if el.paragraph is None:
             continue
-        para = el["paragraph"]
-        for pe in para.get("elements", []):
-            fn_ref = pe.get("footnoteReference")
+        para: Paragraph = el.paragraph
+        for pe in para.elements or []:
+            fn_ref = pe.footnote_reference
             if fn_ref is None:
                 continue
-            fn_id = fn_ref.get("footnoteId")
+            fn_id = fn_ref.footnote_id
             if fn_id is None:
                 continue
-            start = pe.get("startIndex")
+            start = pe.start_index
             if isinstance(start, int):
                 offsets[fn_id] = start
     return offsets
@@ -666,17 +726,21 @@ def _footnote_ref_offsets_in_body(
 
 def _diff_body(
     tab_id: str,
-    base_dt: dict[str, Any],
-    desired_dt: dict[str, Any],
+    base_dt: DocumentTab,
+    desired_dt: DocumentTab,
 ) -> list[ReconcileOp]:
-    b_content = base_dt.get("body", {}).get("content", [])
-    d_content = desired_dt.get("body", {}).get("content", [])
+    base_body = base_dt.body
+    desired_body = desired_dt.body
+    b_content: list[StructuralElement] = (base_body.content or []) if base_body else []
+    d_content: list[StructuralElement] = (
+        (desired_body.content or []) if desired_body else []
+    )
 
     if b_content == d_content:
         return []
 
-    desired_inline_objects: dict[str, Any] = desired_dt.get("inlineObjects", {}) or {}
-    base_inline_objects: dict[str, Any] = base_dt.get("inlineObjects", {}) or {}
+    desired_inline_objects: dict[str, InlineObject] = desired_dt.inline_objects or {}
+    base_inline_objects: dict[str, InlineObject] = base_dt.inline_objects or {}
     alignment = _align_content_sequence(b_content, d_content)
     child_ops = _diff_table_cells_in_alignment(
         tab_id=tab_id,
@@ -707,10 +771,10 @@ def _diff_body(
 def _diff_table_cells_in_alignment(
     tab_id: str,
     alignment: ContentAlignment,
-    base_content: list[dict[str, Any]],
-    desired_content: list[dict[str, Any]],
-    desired_inline_objects: dict[str, Any] | None = None,
-    base_inline_objects: dict[str, Any] | None = None,
+    base_content: list[StructuralElement],
+    desired_content: list[StructuralElement],
+    desired_inline_objects: dict[str, InlineObject] | None = None,
+    base_inline_objects: dict[str, InlineObject] | None = None,
 ) -> list[ReconcileOp]:
     """For matched element pairs, recurse into table cells and check inline images."""
     ops: list[ReconcileOp] = []
@@ -719,26 +783,26 @@ def _diff_table_cells_in_alignment(
     for match in alignment.matches:
         b_el = base_content[match.base_idx]
         d_el = desired_content[match.desired_idx]
-        if "table" in b_el and "table" in d_el:
+        if b_el.table is not None and d_el.table is not None:
             # Extract the table's startIndex from the base element for lowering
-            table_start_index: int = b_el.get("startIndex", 0)
+            table_start_index: int = b_el.start_index or 0
             ops.extend(
                 _diff_table(
                     tab_id=tab_id,
-                    base_table=b_el["table"],
-                    desired_table=d_el["table"],
+                    base_table=b_el.table,
+                    desired_table=d_el.table,
                     table_label=f"body_table_{match.base_idx}",
                     table_start_index=table_start_index,
                     desired_inline_objects=_desired_objs,
                     base_inline_objects=_base_objs,
                 )
             )
-        elif "paragraph" in b_el and "paragraph" in d_el:
+        elif b_el.paragraph is not None and d_el.paragraph is not None:
             ops.extend(
                 _diff_paragraph_inline_images(
                     tab_id=tab_id,
-                    base_para=b_el["paragraph"],
-                    desired_para=d_el["paragraph"],
+                    base_para=b_el.paragraph,
+                    desired_para=d_el.paragraph,
                     desired_inline_objects=_desired_objs,
                     base_inline_objects=_base_objs,
                 )
@@ -748,10 +812,10 @@ def _diff_table_cells_in_alignment(
 
 def _diff_paragraph_inline_images(
     tab_id: str,
-    base_para: dict[str, Any],
-    desired_para: dict[str, Any],
-    desired_inline_objects: dict[str, Any],
-    base_inline_objects: dict[str, Any],  # noqa: ARG001 — reserved for future use
+    base_para: Paragraph,
+    desired_para: Paragraph,
+    desired_inline_objects: dict[str, InlineObject],
+    base_inline_objects: dict[str, InlineObject],  # noqa: ARG001 — reserved for future use
 ) -> list[ReconcileOp]:
     """Detect inline images added or removed in a matched paragraph pair.
 
@@ -766,41 +830,45 @@ def _diff_paragraph_inline_images(
     """
     ops: list[ReconcileOp] = []
 
-    base_elements = base_para.get("elements", [])
-    desired_elements = desired_para.get("elements", [])
+    base_elements: list[ParagraphElement] = base_para.elements or []
+    desired_elements: list[ParagraphElement] = desired_para.elements or []
 
     # Collect inlineObjectIds present in each paragraph
     base_image_ids: set[str] = set()
     for pe in base_elements:
-        ioe = pe.get("inlineObjectElement")
+        ioe = pe.inline_object_element
         if ioe is not None:
-            obj_id = ioe.get("inlineObjectId")
+            obj_id = ioe.inline_object_id
             if obj_id:
                 base_image_ids.add(obj_id)
 
     desired_image_ids: set[str] = set()
     # Also build a map from id → element for index lookup
-    desired_image_elements: dict[str, dict[str, Any]] = {}
+    desired_image_elements: dict[str, ParagraphElement] = {}
     for pe in desired_elements:
-        ioe = pe.get("inlineObjectElement")
+        ioe = pe.inline_object_element
         if ioe is not None:
-            obj_id = ioe.get("inlineObjectId")
+            obj_id = ioe.inline_object_id
             if obj_id:
                 desired_image_ids.add(obj_id)
                 desired_image_elements[obj_id] = pe
 
     # Images added: present in desired but not in base
     for obj_id in desired_image_ids - base_image_ids:
-        inline_obj = desired_inline_objects.get(obj_id, {})
-        props = inline_obj.get("inlineObjectProperties", {})
-        embedded = props.get("embeddedObject", {})
-        image_props = embedded.get("imageProperties", {})
-        content_uri: str = image_props.get("contentUri", "")
-        object_size: dict[str, Any] | None = embedded.get("size") or None
+        inline_obj = desired_inline_objects.get(obj_id)
+        if inline_obj is None:
+            content_uri = ""
+            object_size = None
+        else:
+            props = inline_obj.inline_object_properties
+            embedded = props.embedded_object if props else None
+            image_props = embedded.image_properties if embedded else None
+            content_uri = (image_props.content_uri or "") if image_props else ""
+            object_size = embedded.size if embedded else None
 
         # Get the insert_index from the desired paragraph element
         pe = desired_image_elements[obj_id]
-        insert_index: int = pe.get("startIndex", 0)
+        insert_index: int = pe.start_index or 0
 
         ops.append(
             InsertInlineObjectOp(
@@ -814,13 +882,13 @@ def _diff_paragraph_inline_images(
 
     # Images deleted: present in base but not in desired
     for pe in base_elements:
-        ioe = pe.get("inlineObjectElement")
+        ioe = pe.inline_object_element
         if ioe is None:
             continue
-        obj_id = ioe.get("inlineObjectId")
+        obj_id = ioe.inline_object_id
         if not obj_id or obj_id in desired_image_ids:
             continue
-        delete_index: int = pe.get("startIndex", 0)
+        delete_index: int = pe.start_index or 0
         ops.append(
             DeleteInlineObjectOp(
                 tab_id=tab_id,
@@ -841,6 +909,9 @@ def _styles_changed(
 
     Returns (changed_fields_dict, fields_mask) if any of the given fields
     differ between base and desired, or None if they are identical.
+
+    Both ``base`` and ``desired`` should be camelCase-keyed dicts (e.g. from
+    ``model.model_dump(by_alias=True, exclude_none=True)``).
     """
     changed: dict[str, Any] = {}
     for field in fields:
@@ -856,12 +927,12 @@ def _styles_changed(
 
 def _diff_table(
     tab_id: str,
-    base_table: dict[str, Any],
-    desired_table: dict[str, Any],
+    base_table: Table,
+    desired_table: Table,
     table_label: str,
     table_start_index: int = 0,
-    desired_inline_objects: dict[str, Any] | None = None,
-    base_inline_objects: dict[str, Any] | None = None,
+    desired_inline_objects: dict[str, InlineObject] | None = None,
+    base_inline_objects: dict[str, InlineObject] | None = None,
 ) -> list[ReconcileOp]:
     """Diff two matched tables: emit structural row/column ops + cell content ops."""
     ops: list[ReconcileOp] = []
@@ -879,21 +950,21 @@ def _diff_table(
 
     # Phase 2: Cell content ops for matched rows (fuzzy LCS matching)
     row_matches = get_matched_rows(base_table, desired_table)
-    base_rows = base_table.get("tableRows", [])
-    desired_rows = desired_table.get("tableRows", [])
+    base_rows: list[TableRow] = base_table.table_rows or []
+    desired_rows: list[TableRow] = desired_table.table_rows or []
 
     for base_row_idx, desired_row_idx in row_matches:
-        b_row = base_rows[base_row_idx]
-        d_row = desired_rows[desired_row_idx]
-        b_cells = b_row.get("tableCells", [])
-        d_cells = d_row.get("tableCells", [])
+        b_row: TableRow = base_rows[base_row_idx]
+        d_row: TableRow = desired_rows[desired_row_idx]
+        b_cells: list[TableCell] = b_row.table_cells or []
+        d_cells: list[TableCell] = d_row.table_cells or []
         # Only emit cell content ops when row column counts match
         # (mismatched counts will be fixed by column structural ops in a later pass)
         if len(b_cells) != len(d_cells):
             continue
         for col_idx, (b_cell, d_cell) in enumerate(zip(b_cells, d_cells, strict=False)):
-            b_content = b_cell.get("content", [])
-            d_content = d_cell.get("content", [])
+            b_content: list[StructuralElement] = b_cell.content or []
+            d_content: list[StructuralElement] = d_cell.content or []
             if b_content != d_content:
                 cell_label = f"{table_label}:r{base_row_idx}:c{col_idx}"
                 alignment = _align_content_sequence(b_content, d_content)
@@ -918,8 +989,8 @@ def _diff_table(
                 )
 
             # Phase 3: Cell style ops
-            b_cell_style = b_cell.get("tableCellStyle", {})
-            d_cell_style = d_cell.get("tableCellStyle", {})
+            b_cell_style: TableCellStyle = b_cell.table_cell_style or TableCellStyle()
+            d_cell_style: TableCellStyle = d_cell.table_cell_style or TableCellStyle()
             _CELL_STYLE_FIELDS = [
                 "backgroundColor",
                 "borderBottom",
@@ -932,7 +1003,9 @@ def _diff_table(
                 "paddingRight",
                 "paddingTop",
             ]
-            result = _styles_changed(b_cell_style, d_cell_style, _CELL_STYLE_FIELDS)
+            b_cell_dict = b_cell_style.model_dump(by_alias=True, exclude_none=True)
+            d_cell_dict = d_cell_style.model_dump(by_alias=True, exclude_none=True)
+            result = _styles_changed(b_cell_dict, d_cell_dict, _CELL_STYLE_FIELDS)
             if result is not None:
                 style_changes, fields_mask = result
                 ops.append(
@@ -947,10 +1020,10 @@ def _diff_table(
                 )
 
         # Phase 4: Row style ops
-        b_row_style = b_row.get("tableRowStyle", {})
-        d_row_style = d_row.get("tableRowStyle", {})
-        b_min_height = b_row_style.get("minRowHeight") if b_row_style else None
-        d_min_height = d_row_style.get("minRowHeight") if d_row_style else None
+        b_row_style: TableRowStyle | None = b_row.table_row_style
+        d_row_style: TableRowStyle | None = d_row.table_row_style
+        b_min_height = b_row_style.min_row_height if b_row_style else None
+        d_min_height = d_row_style.min_row_height if d_row_style else None
         if b_min_height != d_min_height:
             ops.append(
                 UpdateTableRowStyleOp(
@@ -962,23 +1035,29 @@ def _diff_table(
             )
 
     # Phase 5: Column properties ops
-    b_table_style = base_table.get("tableStyle", {}) or {}
-    d_table_style = desired_table.get("tableStyle", {}) or {}
-    b_col_props: list[dict[str, Any]] = b_table_style.get("tableColumnProperties") or []
-    d_col_props: list[dict[str, Any]] = d_table_style.get("tableColumnProperties") or []
+    b_table_style: TableStyle | None = base_table.table_style
+    d_table_style: TableStyle | None = desired_table.table_style
+    b_col_props: list[TableColumnProperties] = (
+        (b_table_style.table_column_properties or []) if b_table_style else []
+    )
+    d_col_props: list[TableColumnProperties] = (
+        (d_table_style.table_column_properties or []) if d_table_style else []
+    )
     _COL_FIELDS = ["width", "widthType"]
     for col_idx, (b_col, d_col) in enumerate(
         zip(b_col_props, d_col_props, strict=False)
     ):
-        result = _styles_changed(b_col, d_col, _COL_FIELDS)
+        b_col_dict = b_col.model_dump(by_alias=True, exclude_none=True)
+        d_col_dict = d_col.model_dump(by_alias=True, exclude_none=True)
+        result = _styles_changed(b_col_dict, d_col_dict, _COL_FIELDS)
         if result is not None:
             ops.append(
                 UpdateTableColumnPropertiesOp(
                     tab_id=tab_id,
                     table_start_index=table_start_index,
                     column_index=col_idx,
-                    width=d_col.get("width"),
-                    width_type=d_col.get("widthType"),
+                    width=d_col.width,
+                    width_type=d_col.width_type,
                 )
             )
 
@@ -991,17 +1070,17 @@ def _diff_table(
 
 
 def _align_content_sequence(
-    base_content: list[dict[str, Any]],
-    desired_content: list[dict[str, Any]],
+    base_content: list[StructuralElement],
+    desired_content: list[StructuralElement],
 ) -> ContentAlignment:
-    """Convert raw content lists to ContentNodes and run alignment DP."""
+    """Convert typed content lists to ContentNodes and run alignment DP."""
     if not base_content and not desired_content:
         return ContentAlignment(
             matches=[], base_deletes=[], desired_inserts=[], total_cost=0.0
         )
 
-    def _nodes(content: list[dict[str, Any]]) -> list[ContentNode]:
-        nodes = [content_node_from_raw(el) for el in content]
+    def _nodes(content: list[StructuralElement]) -> list[ContentNode]:
+        nodes = [content_node_from_element(el) for el in content]
         if nodes:
             nodes[-1].is_terminal = True
         return nodes

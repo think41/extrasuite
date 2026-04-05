@@ -1,17 +1,16 @@
 """Heuristic table structural diff for reconcile_v3.
 
 This module implements:
-- cell_text_hash: extract plain text from a raw table cell dict
+- cell_text_hash: extract plain text from a typed TableCell model
 - table_similarity: 0.0-1.0 measure of how similar two tables are
 - match_tables: greedy bipartite match of base vs desired tables
 - diff_tables: minimal sequence of row/column structural + cell content ops
 
-Adapted from reconcile_v2/table_diff.py.  This version operates directly on
-raw Google Docs API dict objects rather than IR objects, and returns v3
-ReconcileOp types instead of v2 SemanticEdit types.
+Adapted from reconcile_v2/table_diff.py.  This version operates on typed
+Pydantic models from api_types._generated, and returns v3 ReconcileOp types.
 
 Design principles:
-- No Google API calls; pure in-memory computation over raw dicts.
+- No Google API calls; pure in-memory computation over typed models.
 - May import from model.py but NOT from diff.py or lower.py.
 - Deterministic: same input → same output.
 - Handles multi-row and multi-column changes (unlimited).
@@ -19,11 +18,12 @@ Design principles:
 
 from __future__ import annotations
 
-from typing import TYPE_CHECKING, Any
+from typing import TYPE_CHECKING
 
 if TYPE_CHECKING:
     from collections.abc import Callable
 
+    from extradoc.api_types._generated import Table, TableCell, TableRow
 from extradoc.reconcile_v3.model import (
     DeleteTableColumnOp,
     DeleteTableRowOp,
@@ -37,21 +37,21 @@ from extradoc.reconcile_v3.model import (
 # ---------------------------------------------------------------------------
 
 
-def cell_text_hash(cell: dict[str, Any]) -> str:
+def cell_text_hash(cell: TableCell) -> str:
     """Return a normalized plain-text string for a cell's content.
 
     Formatting is ignored; only text content is used.  The result is suitable
     as a dictionary key for set-intersection comparisons.
     """
     parts: list[str] = []
-    for el in cell.get("content", []):
-        para = el.get("paragraph")
+    for el in cell.content or []:
+        para = el.paragraph
         if para is None:
             continue
-        for inline in para.get("elements", []):
-            text_run = inline.get("textRun")
+        for inline in para.elements or []:
+            text_run = inline.text_run
             if text_run is not None:
-                content = text_run.get("content", "")
+                content = text_run.content or ""
                 parts.append(content)
         parts.append("\n")
     return "".join(parts).rstrip("\n")
@@ -62,7 +62,7 @@ def cell_text_hash(cell: dict[str, Any]) -> str:
 # ---------------------------------------------------------------------------
 
 
-def table_similarity(base: dict[str, Any], desired: dict[str, Any]) -> float:
+def table_similarity(base: Table, desired: Table) -> float:
     """Return a similarity score in [0.0, 1.0].
 
     Computed as:  |intersection of cell text hashes| / |base cell count|
@@ -71,15 +71,15 @@ def table_similarity(base: dict[str, Any], desired: dict[str, Any]) -> float:
     """
     base_hashes: list[str] = [
         cell_text_hash(cell)
-        for row in base.get("tableRows", [])
-        for cell in row.get("tableCells", [])
+        for row in base.table_rows or []
+        for cell in row.table_cells or []
     ]
     if not base_hashes:
         return 1.0
     desired_hashes: set[str] = {
         cell_text_hash(cell)
-        for row in desired.get("tableRows", [])
-        for cell in row.get("tableCells", [])
+        for row in desired.table_rows or []
+        for cell in row.table_cells or []
     }
     intersection = sum(1 for h in base_hashes if h in desired_hashes)
     return intersection / len(base_hashes)
@@ -91,8 +91,8 @@ def table_similarity(base: dict[str, Any], desired: dict[str, Any]) -> float:
 
 
 def match_tables(
-    base_tables: list[dict[str, Any]],
-    desired_tables: list[dict[str, Any]],
+    base_tables: list[Table],
+    desired_tables: list[Table],
 ) -> list[tuple[int, int]]:
     """Match base tables to desired tables using greedy similarity.
 
@@ -155,8 +155,8 @@ def _lcs_indices(base_seq: list[str], desired_seq: list[str]) -> list[tuple[int,
 
 
 def _fuzzy_lcs_indices(
-    base_rows: list[dict[str, Any]],
-    desired_rows: list[dict[str, Any]],
+    base_rows: list[TableRow],
+    desired_rows: list[TableRow],
     *,
     match_threshold: float = 0.5,
 ) -> list[tuple[int, int]]:
@@ -171,11 +171,10 @@ def _fuzzy_lcs_indices(
     n = len(desired_rows)
 
     base_sets: list[frozenset[str]] = [
-        frozenset(cell_text_hash(c) for c in row.get("tableCells", []))
-        for row in base_rows
+        frozenset(cell_text_hash(c) for c in row.table_cells or []) for row in base_rows
     ]
     desired_sets: list[frozenset[str]] = [
-        frozenset(cell_text_hash(c) for c in row.get("tableCells", []))
+        frozenset(cell_text_hash(c) for c in row.table_cells or [])
         for row in desired_rows
     ]
 
@@ -239,8 +238,8 @@ def _fuzzy_lcs_indices(
 
 
 def diff_tables(
-    base: dict[str, Any],
-    desired: dict[str, Any],
+    base: Table,
+    desired: Table,
     *,
     tab_id: str,
     table_start_index: int,
@@ -250,9 +249,9 @@ def diff_tables(
     Parameters
     ----------
     base:
-        Raw ``table`` dict from the Google Docs API.
+        Typed ``Table`` model from the Google Docs API.
     desired:
-        The desired target ``table`` dict.
+        The desired target ``Table`` model.
     tab_id:
         The tab identifier for emitted ops.
     table_start_index:
@@ -282,8 +281,8 @@ def diff_tables(
     Key constraint: Row structural changes and column structural changes are
     never emitted in the same diff call.
     """
-    base_rows = base.get("tableRows", [])
-    desired_rows = desired.get("tableRows", [])
+    base_rows = base.table_rows or []
+    desired_rows = desired.table_rows or []
 
     ops: list[ReconcileOp] = []
 
@@ -308,11 +307,9 @@ def diff_tables(
     # -----------------------------------------------------------------------
     # Phase 2: Column alignment (only when rows are structurally identical)
     # -----------------------------------------------------------------------
-    base_col_count = max(
-        (len(row.get("tableCells", [])) for row in base_rows), default=0
-    )
+    base_col_count = max((len(row.table_cells or []) for row in base_rows), default=0)
     desired_col_count = max(
-        (len(row.get("tableCells", [])) for row in desired_rows), default=0
+        (len(row.table_cells or []) for row in desired_rows), default=0
     )
 
     col_lcs: list[tuple[int, int]] = []
@@ -324,16 +321,16 @@ def diff_tables(
 
             def _base_col_hash(col: int) -> str:
                 return "\n".join(
-                    cell_text_hash(base_rows[r].get("tableCells", [])[col])
-                    if col < len(base_rows[r].get("tableCells", []))
+                    cell_text_hash((base_rows[r].table_cells or [])[col])
+                    if col < len(base_rows[r].table_cells or [])
                     else ""
                     for r in range(len(base_rows))
                 )
 
             def _desired_col_hash(col: int) -> str:
                 return "\n".join(
-                    cell_text_hash(desired_rows[r].get("tableCells", [])[col])
-                    if col < len(desired_rows[r].get("tableCells", []))
+                    cell_text_hash((desired_rows[r].table_cells or [])[col])
+                    if col < len(desired_rows[r].table_cells or [])
                     else ""
                     for r in range(len(desired_rows))
                 )
@@ -411,15 +408,15 @@ def diff_tables(
 
 
 def get_matched_rows(
-    base: dict[str, Any],
-    desired: dict[str, Any],
+    base: Table,
+    desired: Table,
 ) -> list[tuple[int, int]]:
     """Return the fuzzy-LCS row matches for base and desired tables.
 
     Used by the caller to iterate over matched rows for cell content diffing.
     """
-    base_rows = base.get("tableRows", [])
-    desired_rows = desired.get("tableRows", [])
+    base_rows = base.table_rows or []
+    desired_rows = desired.table_rows or []
     return _fuzzy_lcs_indices(base_rows, desired_rows)
 
 

@@ -58,7 +58,14 @@ from __future__ import annotations
 
 import math
 from dataclasses import dataclass, field
-from typing import Any
+from typing import TYPE_CHECKING, Any
+
+if TYPE_CHECKING:
+    from extradoc.api_types._generated import (
+        Paragraph,
+        StructuralElement,
+        Table,
+    )
 
 # ---------------------------------------------------------------------------
 # Tunable constants (all in one place)
@@ -141,7 +148,7 @@ class ContentNode:
     list_kind: str | None = None
     table_cell_texts: list[str] = field(default_factory=list)
     is_terminal: bool = False
-    original: Any = None
+    original: StructuralElement | Any = None
 
 
 # ---------------------------------------------------------------------------
@@ -149,50 +156,51 @@ class ContentNode:
 # ---------------------------------------------------------------------------
 
 
-def _extract_para_text(para: dict[str, Any]) -> str:
-    """Return concatenated text from a paragraph element dict."""
+def _extract_para_text(para: Paragraph) -> str:
+    """Return concatenated text from a Paragraph model."""
     return "".join(
-        e.get("textRun", {}).get("content", "") for e in para.get("elements", [])
+        (e.text_run.content if e.text_run and e.text_run.content else "")
+        for e in (para.elements or [])
     )
 
 
-def _count_para_inline_objects(para: dict[str, Any]) -> int:
-    """Count non-text inline elements in a paragraph dict."""
+def _count_para_inline_objects(para: Paragraph) -> int:
+    """Count non-text inline elements in a Paragraph model."""
     return sum(
         1
-        for e in para.get("elements", [])
-        if "inlineObjectElement" in e or "footnoteReference" in e
+        for e in (para.elements or [])
+        if e.inline_object_element is not None or e.footnote_reference is not None
     )
 
 
-def _extract_table_cell_texts(table: dict[str, Any]) -> list[str]:
-    """Extract flat list of cell texts from a table element dict."""
+def _extract_table_cell_texts(table: Table) -> list[str]:
+    """Extract flat list of cell texts from a Table model."""
     texts: list[str] = []
-    for row in table.get("tableRows", []):
-        for cell in row.get("tableCells", []):
+    for row in table.table_rows or []:
+        for cell in row.table_cells or []:
             cell_text = ""
-            for content_el in cell.get("content", []):
-                if "paragraph" in content_el:
-                    cell_text += _extract_para_text(content_el["paragraph"])
+            for content_el in cell.content or []:
+                if content_el.paragraph is not None:
+                    cell_text += _extract_para_text(content_el.paragraph)
             texts.append(cell_text.rstrip("\n"))
     return texts
 
 
-def content_node_from_raw(
-    element: dict[str, Any],
+def content_node_from_element(
+    element: StructuralElement,
     *,
     is_terminal: bool = False,
 ) -> ContentNode:
-    """Build a ``ContentNode`` from a raw Google Docs API content element dict.
+    """Build a ``ContentNode`` from a typed ``StructuralElement`` model.
 
     This is used by fixture and golden-file tests that work directly with
-    raw API JSON rather than going through the full IR pipeline.
+    API models rather than going through the full IR pipeline.
     """
-    if "paragraph" in element:
-        para = element["paragraph"]
+    if element.paragraph is not None:
+        para = element.paragraph
         text = _extract_para_text(para)
-        has_bullet = "bullet" in para
-        list_id = para.get("bullet", {}).get("listId") if has_bullet else None
+        has_bullet = para.bullet is not None
+        list_id = para.bullet.list_id if has_bullet and para.bullet else None
         inline_count = _count_para_inline_objects(para)
         if has_bullet and list_id is not None:
             # Bullet paragraphs are represented as single-item lists when
@@ -213,10 +221,10 @@ def content_node_from_raw(
             is_terminal=is_terminal,
             original=element,
         )
-    elif "table" in element:
-        table = element["table"]
-        rows = table.get("tableRows", [])
-        num_cells = sum(len(row.get("tableCells", [])) for row in rows)
+    elif element.table is not None:
+        table = element.table
+        rows = table.table_rows or []
+        num_cells = sum(len(row.table_cells or []) for row in rows)
         cell_texts = _extract_table_cell_texts(table)
         return ContentNode(
             kind=NodeKind.TABLE,
@@ -225,13 +233,13 @@ def content_node_from_raw(
             is_terminal=is_terminal,
             original=element,
         )
-    elif "sectionBreak" in element:
+    elif element.section_break is not None:
         return ContentNode(
             kind=NodeKind.SECTION_BREAK,
             is_terminal=is_terminal,
             original=element,
         )
-    elif "tableOfContents" in element:
+    elif element.table_of_contents is not None:
         return ContentNode(
             kind=NodeKind.TOC,
             is_terminal=is_terminal,
@@ -758,27 +766,3 @@ def _dp_align(
 # ---------------------------------------------------------------------------
 # Convenience: build sequences from raw Google Docs API JSON
 # ---------------------------------------------------------------------------
-
-
-def sequence_from_doc_json(doc: dict[str, Any]) -> list[ContentNode]:
-    """Extract a ``ContentNode`` list from a raw Google Docs API document dict.
-
-    Uses the first tab's body (or the legacy single-tab body).
-
-    The last element of the returned sequence is marked ``is_terminal=True``.
-    """
-    tabs = doc.get("tabs", [])
-    body: dict[str, Any] = (
-        tabs[0]["documentTab"]["body"] if tabs else doc.get("body", {})
-    )
-
-    elements: list[dict[str, Any]] = body.get("content", [])
-    if not elements:
-        return []
-
-    nodes: list[ContentNode] = [
-        content_node_from_raw(el, is_terminal=False) for el in elements
-    ]
-    if nodes:
-        nodes[-1].is_terminal = True
-    return nodes

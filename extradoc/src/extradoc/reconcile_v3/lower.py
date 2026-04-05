@@ -1,7 +1,7 @@
-"""Op → request dict translation for reconcile_v3.
+"""Op → typed Request translation for reconcile_v3.
 
-Translates ``ReconcileOp`` objects produced by ``diff.py`` into raw Google
-Docs API request dicts suitable for batchUpdate.
+Translates ``ReconcileOp`` objects produced by ``diff.py`` into typed
+``Request`` objects from ``api_types._generated`` suitable for batchUpdate.
 
 Strategy
 --------
@@ -24,16 +24,8 @@ Deferred IDs
 ------------
 When a header/footer is created in Batch 1, its ID is not yet known.  The
 ``updateSectionStyle`` request in Batch 2 that attaches the header uses a
-deferred-ID placeholder dict that ``resolve_deferred_placeholders`` resolves
-after Batch 1 executes.  The placeholder format matches the existing v2
-executor contract::
-
-    {
-        "placeholder": True,
-        "batch_index": 0,        # index into prior_responses
-        "request_index": N,      # index of the createHeader request
-        "response_path": "createHeader.headerId",
-    }
+``DeferredID`` placeholder that ``resolve_deferred_placeholders`` resolves
+after Batch 1 executes.
 """
 
 from __future__ import annotations
@@ -43,6 +35,58 @@ import difflib
 from itertools import groupby
 from typing import Any
 
+from extradoc.api_types._generated import (
+    AddDocumentTabRequest,
+    Bullet,
+    CreateFooterRequest,
+    CreateFooterRequestType,
+    CreateFootnoteRequest,
+    CreateHeaderRequest,
+    CreateParagraphBulletsRequest,
+    CreateParagraphBulletsRequestBulletPreset,
+    DeferredID,
+    DeleteContentRangeRequest,
+    DeleteFooterRequest,
+    DeleteHeaderRequest,
+    DeleteParagraphBulletsRequest,
+    DeleteTableColumnRequest,
+    DeleteTableRowRequest,
+    DeleteTabRequest,
+    DocumentStyle,
+    InsertInlineImageRequest,
+    InsertPageBreakRequest,
+    InsertSectionBreakRequest,
+    InsertTableColumnRequest,
+    InsertTableRequest,
+    InsertTableRowRequest,
+    InsertTextRequest,
+    Location,
+    NamedStyle,
+    Paragraph,
+    ParagraphStyle,
+    Range,
+    Request,
+    SectionStyle,
+    StructuralElement,
+    Tab,
+    TableCellLocation,
+    TableCellStyle,
+    TableColumnProperties,
+    TableRange,
+    TableRowStyle,
+    TabProperties,
+    TextStyle,
+    UpdateDocumentStyleRequest,
+    UpdateParagraphStyleRequest,
+    UpdateSectionStyleRequest,
+    UpdateTableCellStyleRequest,
+    UpdateTableColumnPropertiesRequest,
+    UpdateTableRowStyleRequest,
+    UpdateTextStyleRequest,
+)
+from extradoc.api_types._generated import (
+    List as DocList,
+)
 from extradoc.indexer import utf16_len
 from extradoc.reconcile_v3.model import (
     CreateFooterOp,
@@ -110,11 +154,9 @@ _PARA_STYLE_READONLY_FIELDS: frozenset[str] = frozenset(
     }
 )
 
-# A resolved string ID or a deferred placeholder dict that the executor
-# will substitute after an earlier batch completes.  Every builder helper
-# that constructs a range or location dict accepts this type for tab_id and
-# segment_id so that deferred IDs can flow through unchanged.
-_StrOrDeferred = str | dict[str, Any]
+# A resolved string ID or a DeferredID placeholder that the executor
+# will substitute after an earlier batch completes.
+_StrOrDeferred = str | DeferredID
 
 
 # ---------------------------------------------------------------------------
@@ -122,13 +164,13 @@ _StrOrDeferred = str | dict[str, Any]
 # ---------------------------------------------------------------------------
 
 
-def lower_ops(ops: list[ReconcileOp]) -> list[dict[str, Any]]:
-    """Lower a list of ReconcileOps to raw API request dicts (single batch).
+def lower_ops(ops: list[ReconcileOp]) -> list[Request]:
+    """Lower a list of ReconcileOps to typed Request objects (single batch).
 
     For ops whose lowering is not yet implemented, raises ``NotImplementedError``
     with a message identifying the op type and confirming the op was detected.
     """
-    requests: list[dict[str, Any]] = []
+    requests: list[Request] = []
     for op in ops:
         requests.extend(_lower_one(op))
     return requests
@@ -136,9 +178,9 @@ def lower_ops(ops: list[ReconcileOp]) -> list[dict[str, Any]]:
 
 def lower_batches(
     ops: list[ReconcileOp],
-    desired_lists_by_tab: dict[str, dict[str, Any]] | None = None,
-    base_lists_by_tab: dict[str, dict[str, Any]] | None = None,
-) -> list[list[dict[str, Any]]]:
+    desired_lists_by_tab: dict[str, dict[str, DocList]] | None = None,
+    base_lists_by_tab: dict[str, dict[str, DocList]] | None = None,
+) -> list[list[Request]]:
     """Lower ops into an ordered list of request batches.
 
     Batch 0: Structural creation (createHeader, createFooter, addDocumentTab).
@@ -163,12 +205,12 @@ def lower_batches(
         Used alongside desired_lists_by_tab to detect list-type changes when
         both base and desired have the same synthetic list ID.
     """
-    batch0: list[dict[str, Any]] = []  # structural creates
-    batch1: list[dict[str, Any]] = []  # content + style + structural deletes
-    batch2: list[dict[str, Any]] = []  # footnotes (future)
+    batch0: list[Request] = []  # structural creates
+    batch1: list[Request] = []  # content + style + structural deletes
+    batch2: list[Request] = []  # footnotes (future)
 
-    _desired_lists_by_tab: dict[str, dict[str, Any]] = desired_lists_by_tab or {}
-    _base_lists_by_tab: dict[str, dict[str, Any]] = base_lists_by_tab or {}
+    _desired_lists_by_tab: dict[str, dict[str, DocList]] = desired_lists_by_tab or {}
+    _base_lists_by_tab: dict[str, dict[str, DocList]] = base_lists_by_tab or {}
 
     # Track which requests in batch0 return IDs, keyed by (kind, slot, tab_id)
     # so that batch1 content-attachment requests can reference them.
@@ -190,12 +232,12 @@ def lower_batches(
                     )
                 )
                 # Batch1: attach header via updateSectionStyle with deferred ID
-                deferred_id: dict[str, Any] = {
-                    "placeholder": True,
-                    "batch_index": 0,
-                    "request_index": req_index,
-                    "response_path": "createHeader.headerId",
-                }
+                deferred_id = DeferredID(
+                    placeholder=f"header_{req_index}",
+                    batch_index=0,
+                    request_index=req_index,
+                    response_path="createHeader.headerId",
+                )
                 field_name = _HEADER_SLOT_FIELD[op.section_slot]
                 batch1.append(
                     _make_update_section_style_deferred(
@@ -224,12 +266,12 @@ def lower_batches(
                         footer_type=_FOOTER_TYPE[op.section_slot],
                     )
                 )
-                deferred_id = {
-                    "placeholder": True,
-                    "batch_index": 0,
-                    "request_index": req_index,
-                    "response_path": "createFooter.footerId",
-                }
+                deferred_id = DeferredID(
+                    placeholder=f"footer_{req_index}",
+                    batch_index=0,
+                    request_index=req_index,
+                    response_path="createFooter.footerId",
+                )
                 field_name = _FOOTER_SLOT_FIELD[op.section_slot]
                 batch1.append(
                     _make_update_section_style_deferred(
@@ -248,10 +290,15 @@ def lower_batches(
                 )
 
             case InsertTabOp():
-                props = op.desired_tab.get("tabProperties", {})
-                title = props.get("title", "Untitled")
-                index = props.get("index")
-                parent_tab_id = props.get("parentTabId")
+                tab = (
+                    op.desired_tab
+                    if isinstance(op.desired_tab, Tab)
+                    else Tab.model_validate(op.desired_tab)
+                )
+                props = tab.tab_properties
+                title = props.title if props and props.title else "Untitled"
+                index = props.index if props else None
+                parent_tab_id = props.parent_tab_id if props else None
                 req_index = len(batch0)
                 batch0.append(
                     _make_add_document_tab(
@@ -260,13 +307,13 @@ def lower_batches(
                         parent_tab_id=parent_tab_id,
                     )
                 )
-                deferred_tab_id: dict[str, Any] = {
-                    "placeholder": True,
-                    "batch_index": 0,
-                    "request_index": req_index,
-                    "response_path": "addDocumentTab.tabProperties.tabId",
-                }
-                body_content = _extract_tab_body_content(op.desired_tab)
+                deferred_tab_id = DeferredID(
+                    placeholder=f"tab_{req_index}",
+                    batch_index=0,
+                    request_index=req_index,
+                    response_path="addDocumentTab.tabProperties.tabId",
+                )
+                body_content = _extract_tab_body_content(tab)
                 if body_content:
                     batch1.extend(
                         _lower_content_insert(
@@ -333,15 +380,16 @@ def lower_batches(
             case UpdateDocumentStyleOp():
                 # op.changed_fields already excludes header/footer ID fields
                 # (those are managed structurally by CreateHeader/Footer ops).
-                req: dict[str, Any] = {
-                    "updateDocumentStyle": {
-                        "documentStyle": op.changed_fields,
-                        "fields": op.fields_mask,
-                    }
-                }
-                if op.tab_id:
-                    req["updateDocumentStyle"]["tabId"] = op.tab_id
-                batch1.append(req)
+                doc_style = DocumentStyle.model_validate(op.changed_fields)
+                batch1.append(
+                    Request(
+                        update_document_style=UpdateDocumentStyleRequest(
+                            document_style=doc_style,
+                            fields=op.fields_mask,
+                            tab_id=op.tab_id if op.tab_id else None,
+                        )
+                    )
+                )
 
             # ---------------------------------------------------------------- #
             # Lists — InsertListOp is handled implicitly via paragraph bullets;
@@ -377,18 +425,18 @@ def lower_batches(
 
             case InsertInlineObjectOp():
                 # Insert an inline image via insertInlineImage → batch 1
-                insert_req: dict[str, Any] = {
-                    "insertInlineImage": {
-                        "uri": op.content_uri,
-                        "location": {
-                            "index": op.insert_index,
-                            "segmentId": op.tab_id,
-                        },
-                    }
-                }
-                if op.object_size is not None:
-                    insert_req["insertInlineImage"]["objectSize"] = op.object_size
-                batch1.append(insert_req)
+                batch1.append(
+                    Request(
+                        insert_inline_image=InsertInlineImageRequest(
+                            uri=op.content_uri,
+                            location=Location(
+                                index=op.insert_index,
+                                segment_id=op.tab_id if op.tab_id else None,
+                            ),
+                            object_size=op.object_size,
+                        )
+                    )
+                )
 
             case DeleteInlineObjectOp():
                 # Delete the inlineObjectElement (occupies exactly 1 character)
@@ -448,12 +496,12 @@ def lower_batches(
                         tab_id=op.tab_id,
                     )
                 )
-                deferred_fn_id: dict[str, Any] = {
-                    "placeholder": True,
-                    "batch_index": 0,
-                    "request_index": req_index,
-                    "response_path": "createFootnote.footnoteId",
-                }
+                deferred_fn_id = DeferredID(
+                    placeholder=f"footnote_{req_index}",
+                    batch_index=0,
+                    request_index=req_index,
+                    response_path="createFootnote.footnoteId",
+                )
                 batch1.extend(
                     _lower_content_insert(
                         content=op.desired_content,
@@ -596,7 +644,7 @@ def lower_batches(
                     f"lowering for op type {type(op).__name__!r} not yet implemented"
                 )
 
-    batches: list[list[dict[str, Any]]] = []
+    batches: list[list[Request]] = []
     if batch0:
         batches.append(batch0)
     if batch1:
@@ -606,8 +654,8 @@ def lower_batches(
     return batches
 
 
-def _lower_one(op: ReconcileOp) -> list[dict[str, Any]]:
-    """Lower a single op to zero or more request dicts (single-batch mode).
+def _lower_one(op: ReconcileOp) -> list[Request]:
+    """Lower a single op to zero or more Request objects (single-batch mode).
 
     This is a convenience wrapper around ``lower_batches`` that flattens all
     batches into one list.  It raises for ops that cannot be lowered.
@@ -642,6 +690,38 @@ _GLYPH_SYMBOL_TO_PRESET: dict[str, str] = {
 }
 
 _DEFAULT_BULLET_PRESET = "BULLET_DISC_CIRCLE_SQUARE"
+
+
+def _infer_bullet_preset_from_model(bullet: Bullet, lists: dict[str, DocList]) -> str:
+    """Infer the createParagraphBullets preset from a typed Bullet and lists."""
+    list_id = bullet.list_id
+    if not list_id or not lists or list_id not in lists:
+        return _DEFAULT_BULLET_PRESET
+
+    list_obj = lists[list_id]
+    lp = list_obj.list_properties
+    if not lp:
+        return _DEFAULT_BULLET_PRESET
+    nesting = lp.nesting_levels
+    if not nesting:
+        return _DEFAULT_BULLET_PRESET
+    level_0 = nesting[0]
+    glyph_type: str = level_0.glyph_type or ""
+    glyph_symbol: str = level_0.glyph_symbol or ""
+
+    # Numbered list: a real glyphType is set (not NONE / GLYPH_TYPE_UNSPECIFIED)
+    if glyph_type and glyph_type not in ("GLYPH_TYPE_UNSPECIFIED", "NONE", ""):
+        return _GLYPH_TYPE_TO_PRESET.get(glyph_type, "NUMBERED_DECIMAL_NESTED")
+
+    # Checkbox: GLYPH_TYPE_UNSPECIFIED with no glyph symbol
+    if glyph_type == "GLYPH_TYPE_UNSPECIFIED":
+        return "BULLET_CHECKBOX"
+
+    # Unordered: glyph symbol determines the preset
+    if glyph_symbol:
+        return _GLYPH_SYMBOL_TO_PRESET.get(glyph_symbol, _DEFAULT_BULLET_PRESET)
+
+    return _DEFAULT_BULLET_PRESET
 
 
 def _infer_bullet_preset(bullet: dict[str, Any], lists: dict[str, Any]) -> str:
@@ -690,14 +770,19 @@ def _make_create_paragraph_bullets(
     preset: str,
     tab_id: _StrOrDeferred,
     segment_id: _StrOrDeferred | None,
-) -> dict[str, Any]:
-    """Build a createParagraphBullets request dict."""
-    range_: dict[str, Any] = {"startIndex": start, "endIndex": end}
-    if tab_id:
-        range_["tabId"] = tab_id
-    if segment_id:
-        range_["segmentId"] = segment_id
-    return {"createParagraphBullets": {"range": range_, "bulletPreset": preset}}
+) -> Request:
+    """Build a createParagraphBullets Request."""
+    return Request(
+        create_paragraph_bullets=CreateParagraphBulletsRequest(
+            range=Range(
+                start_index=start,
+                end_index=end,
+                tab_id=tab_id if tab_id else None,
+                segment_id=segment_id if segment_id else None,
+            ),
+            bullet_preset=CreateParagraphBulletsRequestBulletPreset(preset),
+        )
+    )
 
 
 def _make_delete_paragraph_bullets(
@@ -706,14 +791,18 @@ def _make_delete_paragraph_bullets(
     end: int,
     tab_id: _StrOrDeferred,
     segment_id: _StrOrDeferred | None,
-) -> dict[str, Any]:
-    """Build a deleteParagraphBullets request dict."""
-    range_: dict[str, Any] = {"startIndex": start, "endIndex": end}
-    if tab_id:
-        range_["tabId"] = tab_id
-    if segment_id:
-        range_["segmentId"] = segment_id
-    return {"deleteParagraphBullets": {"range": range_}}
+) -> Request:
+    """Build a deleteParagraphBullets Request."""
+    return Request(
+        delete_paragraph_bullets=DeleteParagraphBulletsRequest(
+            range=Range(
+                start_index=start,
+                end_index=end,
+                tab_id=tab_id if tab_id else None,
+                segment_id=segment_id if segment_id else None,
+            ),
+        )
+    )
 
 
 # ---------------------------------------------------------------------------
@@ -724,14 +813,14 @@ def _make_delete_paragraph_bullets(
 def _lower_story_content_update(
     alignment: Any,
     *,
-    base_content: list[dict[str, Any]],
-    desired_content: list[dict[str, Any]],
+    base_content: list[StructuralElement],
+    desired_content: list[StructuralElement],
     tab_id: str,
     segment_id: str | None,
-    desired_lists: dict[str, Any] | None = None,
-    base_lists: dict[str, Any] | None = None,
-) -> list[dict[str, Any]]:
-    """Lower a ContentAlignment into delete/insert/update request dicts.
+    desired_lists: dict[str, DocList] | None = None,
+    base_lists: dict[str, DocList] | None = None,
+) -> list[Request]:
+    """Lower a ContentAlignment into delete/insert/update Request objects.
 
     Strategy
     --------
@@ -759,7 +848,7 @@ def _lower_story_content_update(
     matched.  Insertions before the terminal are handled by inserting before
     the terminal's startIndex.
     """
-    requests: list[dict[str, Any]] = []
+    requests: list[Request] = []
 
     # Sort deletes in descending base_idx order so each delete does not
     # invalidate indices for subsequent deletes.
@@ -872,12 +961,12 @@ def _lower_story_content_update(
 def _plan_insertions(
     *,
     alignment: Any,
-    base_content: list[dict[str, Any]],
-    desired_content: list[dict[str, Any]],
+    base_content: list[StructuralElement],
+    desired_content: list[StructuralElement],
     tab_id: str,
     segment_id: str | None,
-    desired_lists: dict[str, Any] | None = None,
-) -> list[dict[str, Any]]:
+    desired_lists: dict[str, DocList] | None = None,
+) -> list[Request]:
     """Plan insertion requests for desired_inserts.
 
     For each desired index to insert, we determine the insertion position in
@@ -921,7 +1010,7 @@ def _plan_insertions(
 
     # Phase 1: Compute (insert_pos, desired_idx, element_requests) for each insert.
     # We collect them first so we can reorder within same-position groups.
-    planned: list[tuple[int, int, list[dict[str, Any]]]] = []
+    planned: list[tuple[int, int, list[Request]]] = []
 
     for desired_idx in sorted(alignment.desired_inserts):
         # Find the base insertion point: the startIndex of the next surviving
@@ -979,7 +1068,7 @@ def _plan_insertions(
     # Additionally, when multiple consecutive items in the same logical list are
     # all inserted at the same position, we must emit a SINGLE createParagraphBullets
     # covering the entire range.  Individual per-item calls create separate lists.
-    requests: list[dict[str, Any]] = []
+    requests: list[Request] = []
 
     # Sort entries by insert_pos DESCENDING, then desired_idx ascending within a group.
     #
@@ -1004,39 +1093,64 @@ def _plan_insertions(
 
 
 def _shift_request_indices(
-    reqs: list[dict[str, Any]],
+    reqs: list[Request],
     offset: int,
-) -> list[dict[str, Any]]:
+) -> list[Request]:
     """Return copies of style requests with all index values shifted by ``offset``.
 
     Only shifts ``updateParagraphStyle`` and ``updateTextStyle`` requests.
     Other request types are returned unchanged.  The shift is applied to the
-    ``range`` dict's ``startIndex`` and ``endIndex`` fields.
+    ``range`` field's ``startIndex`` and ``endIndex``.
     """
     if offset == 0:
         return reqs
 
-    shifted: list[dict[str, Any]] = []
+    shifted: list[Request] = []
     for req in reqs:
-        if "updateParagraphStyle" in req or "updateTextStyle" in req:
+        if req.update_paragraph_style is not None or req.update_text_style is not None:
             req = copy.deepcopy(req)
-            key = (
-                "updateParagraphStyle"
-                if "updateParagraphStyle" in req
-                else "updateTextStyle"
-            )
-            rng = req[key].get("range", {})
-            if "startIndex" in rng:
-                rng["startIndex"] += offset
-            if "endIndex" in rng:
-                rng["endIndex"] += offset
+            inner = req.update_paragraph_style or req.update_text_style
+            assert inner is not None
+            rng = inner.range
+            if rng is not None:
+                if rng.start_index is not None:
+                    rng.start_index += offset
+                if rng.end_index is not None:
+                    rng.end_index += offset
         shifted.append(req)
     return shifted
 
 
+def _get_insert_text_content(req: Request) -> str | None:
+    """Extract the text from an insertText request, or None."""
+    if req.insert_text is not None and req.insert_text.text is not None:
+        return req.insert_text.text
+    return None
+
+
+def _get_create_bullets_info(
+    req: Request,
+) -> tuple[str, str, str | DeferredID | None] | None:
+    """Extract (preset, tab_id_str, segment_id) from a createParagraphBullets request.
+
+    Returns None if the request is not createParagraphBullets.
+    """
+    if req.create_paragraph_bullets is None:
+        return None
+    cb = req.create_paragraph_bullets
+    preset = str(cb.bullet_preset) if cb.bullet_preset else ""
+    tab_id = ""
+    segment_id = None
+    if cb.range is not None:
+        tab_id_val = cb.range.tab_id
+        tab_id = str(tab_id_val) if tab_id_val is not None else ""
+        segment_id = cb.range.segment_id
+    return (preset, tab_id, segment_id)
+
+
 def _emit_same_position_group(
-    group: list[tuple[int, int, list[dict[str, Any]]]],
-) -> list[dict[str, Any]]:
+    group: list[tuple[int, int, list[Request]]],
+) -> list[Request]:
     """Emit requests for a same-position insertion group.
 
     For bullet items that all share the same preset+tab, we suppress individual
@@ -1064,18 +1178,16 @@ def _emit_same_position_group(
     #   item[desired_idx=0] at P, item[desired_idx=1] at P+len0, ...
     #
     # Per-element structure: (insert_req, create_bullets_req_or_None, style_reqs)
-    per_element: list[
-        tuple[dict[str, Any], dict[str, Any] | None, list[dict[str, Any]]]
-    ] = []
+    per_element: list[tuple[Request, Request | None, list[Request]]] = []
 
     for _insert_pos, _desired_idx, reqs in reversed(group):
-        ins: dict[str, Any] | None = None
-        cb: dict[str, Any] | None = None
-        style_reqs: list[dict[str, Any]] = []
+        ins: Request | None = None
+        cb: Request | None = None
+        style_reqs: list[Request] = []
         for req in reqs:
-            if "insertText" in req:
+            if req.insert_text is not None:
                 ins = req
-            elif "createParagraphBullets" in req:
+            elif req.create_paragraph_bullets is not None:
                 cb = req
             else:
                 style_reqs.append(req)
@@ -1092,9 +1204,9 @@ def _emit_same_position_group(
     # The base position is the insert_pos from the group (all items share the same pos).
     base_pos = group[0][0]  # insert_pos from the first planned entry
 
-    combined_insert_texts: list[dict[str, Any]] = []
-    merged_create_bullets: list[dict[str, Any]] = []
-    all_style_reqs: list[dict[str, Any]] = []
+    combined_insert_texts: list[Request] = []
+    merged_create_bullets: list[Request] = []
+    all_style_reqs: list[Request] = []
 
     # Collect insertTexts in the reversed order (as they will be emitted)
     for ins_req, _cb, _s in per_element:
@@ -1112,7 +1224,8 @@ def _emit_same_position_group(
     i = 0
     while i < len(desired_order):
         ins_req, cb_req, s_reqs = desired_order[i]
-        item_len = utf16_len(ins_req["insertText"].get("text", ""))
+        text_content = _get_insert_text_content(ins_req)
+        item_len = utf16_len(text_content) if text_content else 0
         all_style_reqs.extend(_shift_request_indices(s_reqs, cumulative))
         if cb_req is None:
             # Non-bullet item: just advance cumulative offset
@@ -1120,10 +1233,9 @@ def _emit_same_position_group(
             i += 1
             continue
         # Start of a bullet run — collect consecutive items with the same preset
-        cb_inner = cb_req["createParagraphBullets"]
-        preset = cb_inner.get("bulletPreset", "")
-        tab_id = str(cb_inner.get("range", {}).get("tabId", ""))
-        segment_id = cb_inner.get("range", {}).get("segmentId")
+        cb_info = _get_create_bullets_info(cb_req)
+        assert cb_info is not None
+        preset, tab_id_str, segment_id = cb_info
         run_start = base_pos + cumulative
         run_len = item_len
         j = i + 1
@@ -1132,34 +1244,38 @@ def _emit_same_position_group(
             next_ins, next_cb, next_s_reqs = desired_order[j]
             if next_cb is None:
                 break
-            next_cb_inner = next_cb["createParagraphBullets"]
-            next_preset = next_cb_inner.get("bulletPreset", "")
-            next_tab = str(next_cb_inner.get("range", {}).get("tabId", ""))
-            next_seg = next_cb_inner.get("range", {}).get("segmentId")
-            if (next_preset, next_tab, next_seg) != (preset, tab_id, segment_id):
+            next_cb_info = _get_create_bullets_info(next_cb)
+            assert next_cb_info is not None
+            next_preset, next_tab, next_seg = next_cb_info
+            if (next_preset, next_tab, str(next_seg) if next_seg else None) != (
+                preset,
+                tab_id_str,
+                str(segment_id) if segment_id else None,
+            ):
                 break
             all_style_reqs.extend(
                 _shift_request_indices(next_s_reqs, cumulative + inner_cumulative)
             )
-            next_item_len = utf16_len(next_ins["insertText"].get("text", ""))
+            next_text = _get_insert_text_content(next_ins)
+            next_item_len = utf16_len(next_text) if next_text else 0
             run_len += next_item_len
             inner_cumulative += next_item_len
             j += 1
         # Emit ONE createParagraphBullets for this run
-        merged: dict[str, Any] = {
-            "createParagraphBullets": {
-                "bulletPreset": preset,
-                "range": {
-                    "startIndex": run_start,
-                    "endIndex": run_start + run_len,
-                },
-            }
-        }
-        if tab_id:
-            merged["createParagraphBullets"]["range"]["tabId"] = tab_id
-        if segment_id:
-            merged["createParagraphBullets"]["range"]["segmentId"] = segment_id
-        merged_create_bullets.append(merged)
+        merged_range = Range(
+            start_index=run_start,
+            end_index=run_start + run_len,
+            tab_id=tab_id_str if tab_id_str else None,
+            segment_id=segment_id if segment_id else None,
+        )
+        merged_create_bullets.append(
+            Request(
+                create_paragraph_bullets=CreateParagraphBulletsRequest(
+                    bullet_preset=CreateParagraphBulletsRequestBulletPreset(preset),
+                    range=merged_range,
+                )
+            )
+        )
         cumulative += run_len
         i = j
 
@@ -1171,7 +1287,7 @@ def _emit_same_position_group(
 def _deleted_chars_before(
     *,
     deleted_sizes: dict[int, int],
-    base_content: list[dict[str, Any]],
+    base_content: list[StructuralElement],
     before_pos: int,
 ) -> int:
     """Return total character count deleted from positions < before_pos."""
@@ -1185,18 +1301,19 @@ def _deleted_chars_before(
 
 def _lower_element_update(
     *,
-    base_el: dict[str, Any],
-    desired_el: dict[str, Any],
+    base_el: StructuralElement,
+    desired_el: StructuralElement,
     tab_id: str,
     segment_id: str | None,
     pre_delete_shift: int = 0,
-    desired_lists: dict[str, Any] | None = None,
-    base_lists: dict[str, Any] | None = None,
-) -> list[dict[str, Any]]:
+    desired_lists: dict[str, DocList] | None = None,
+    base_lists: dict[str, DocList] | None = None,
+) -> list[Request]:
     """Lower an in-place element update (matched element, content changed).
 
     For paragraphs: replace text runs.
     For tables: raise NotImplementedError (complex; not yet implemented).
+
     For structural elements: no-op (cannot change their content).
 
     ``pre_delete_shift`` is the total number of characters removed by
@@ -1204,7 +1321,7 @@ def _lower_element_update(
     startIndex.  All generated request indices are shifted down by this
     amount to account for the prior deletions.
     """
-    if "paragraph" in base_el and "paragraph" in desired_el:
+    if base_el.paragraph is not None and desired_el.paragraph is not None:
         return _lower_paragraph_update(
             base_el=base_el,
             desired_el=desired_el,
@@ -1214,14 +1331,14 @@ def _lower_element_update(
             desired_lists=desired_lists or {},
             base_lists=base_lists or {},
         )
-    elif "table" in base_el and "table" in desired_el:
+    elif base_el.table is not None and desired_el.table is not None:
         # Table cell content updates are emitted as separate UpdateBodyContentOp
         # ops with story_kind="table_cell" by the diff layer.  At the body level
         # a matched table pair means "same table, cells may have changed" — the
         # cell-level child ops handle the actual content edits.  No body-level
         # request is needed here.
         return []
-    elif "sectionBreak" in base_el and "sectionBreak" in desired_el:
+    elif base_el.section_break is not None and desired_el.section_break is not None:
         return _lower_section_break_update(
             base_el=base_el,
             desired_el=desired_el,
@@ -1234,14 +1351,14 @@ def _lower_element_update(
 
 def _lower_paragraph_update(
     *,
-    base_el: dict[str, Any],
-    desired_el: dict[str, Any],
+    base_el: StructuralElement,
+    desired_el: StructuralElement,
     tab_id: str,
     segment_id: str | None,
     pre_delete_shift: int = 0,
-    desired_lists: dict[str, Any] | None = None,
-    base_lists: dict[str, Any] | None = None,
-) -> list[dict[str, Any]]:
+    desired_lists: dict[str, DocList] | None = None,
+    base_lists: dict[str, DocList] | None = None,
+) -> list[Request]:
     """Replace the text content of a paragraph in place using surgical ops.
 
     Approach:
@@ -1254,8 +1371,10 @@ def _lower_paragraph_update(
     Operations are emitted in descending character order (highest index first)
     so that earlier ops do not corrupt later indices.
     """
-    base_para = base_el.get("paragraph", {})
-    desired_para = desired_el.get("paragraph", {})
+    assert base_el.paragraph is not None
+    assert desired_el.paragraph is not None
+    base_para = base_el.paragraph
+    desired_para = desired_el.paragraph
 
     start, end = _element_range(base_el)
     if start is None or end is None:
@@ -1292,17 +1411,24 @@ def _lower_paragraph_update(
     return requests
 
 
-def _extract_runs(para: dict[str, Any]) -> list[tuple[str, dict[str, Any]]]:
-    """Return list of (text, text_style) for each textRun element in a paragraph.
+def _extract_runs(
+    para: Paragraph,
+) -> list[tuple[str, dict[str, Any]]]:
+    """Return list of (text, text_style_dict) for each textRun element in a paragraph.
 
     Non-textRun elements (inline objects, footnote refs, etc.) are skipped.
+    The text_style is dumped to dict for comparison purposes.
     """
     runs: list[tuple[str, dict[str, Any]]] = []
-    for el in para.get("elements", []):
-        if "textRun" in el:
-            tr = el["textRun"]
-            text = tr.get("content", "")
-            style = tr.get("textStyle", {})
+    for el in para.elements or []:
+        if el.text_run is not None:
+            tr = el.text_run
+            text = tr.content or ""
+            style = (
+                tr.text_style.model_dump(by_alias=True, exclude_none=True)
+                if tr.text_style
+                else {}
+            )
             runs.append((text, style))
     return runs
 
@@ -1339,12 +1465,12 @@ def _styles_equal(s1: dict[str, Any], s2: dict[str, Any]) -> bool:
 
 def _diff_paragraph_runs(
     *,
-    base_para: dict[str, Any],
-    desired_para: dict[str, Any],
+    base_para: Paragraph,
+    desired_para: Paragraph,
     story_offset: int,
     tab_id: str,
     segment_id: str | None,
-) -> list[dict[str, Any]]:
+) -> list[Request]:
     """Compute surgical API requests for a paragraph whose text changed.
 
     Algorithm:
@@ -1383,15 +1509,6 @@ def _diff_paragraph_runs(
     base_spans = _runs_to_spans(base_runs)
     desired_spans = _runs_to_spans(desired_runs)
 
-    def style_at(
-        spans: list[tuple[int, int, str, dict[str, Any]]], pos: int
-    ) -> dict[str, Any]:
-        """Return the textStyle for the character at the given offset."""
-        for start, end, _text, style in spans:
-            if start <= pos < end:
-                return style
-        return {}
-
     # Compute character-level diff
     matcher = difflib.SequenceMatcher(None, base_body, desired_body, autojunk=False)
     opcodes = matcher.get_opcodes()
@@ -1402,7 +1519,7 @@ def _diff_paragraph_runs(
 
     # Pending ops list: (sort_key, requests_list)
     # sort_key is the document-absolute start index (for descending sort)
-    pending: list[tuple[int, list[dict[str, Any]]]] = []
+    pending: list[tuple[int, list[Request]]] = []
 
     for tag, i1, i2, j1, j2 in opcodes:
         if tag == "equal":
@@ -1446,7 +1563,7 @@ def _diff_paragraph_runs(
         elif tag == "insert":
             # Insert desired[j1:j2] at position i1 in base (after deletions)
             # We'll compute the insertion position relative to the base document.
-            # The insertion happens at base position i1 (before any characters there).
+            # The insertion happens at base position i1 (before any character there).
             # We group chars by style from desired spans.
             insert_reqs = _insert_ops_for_span(
                 desired_spans=desired_spans,
@@ -1496,7 +1613,7 @@ def _diff_paragraph_runs(
     pending.sort(key=lambda item: item[0], reverse=True)
 
     # Flatten
-    requests: list[dict[str, Any]] = []
+    requests: list[Request] = []
     for _key, reqs in pending:
         requests.extend(reqs)
 
@@ -1514,18 +1631,18 @@ def _style_update_ops_for_equal_span(
     story_offset: int,
     tab_id: str,
     segment_id: str | None,
-) -> list[tuple[int, list[dict[str, Any]]]]:
+) -> list[tuple[int, list[Request]]]:
     """For an 'equal' diff chunk, emit updateTextStyle where style changed.
 
     We walk character-by-character through the equal span and group consecutive
     characters that share the same (base_style, desired_style) pair, then emit
     an updateTextStyle for each group where styles differ.
 
-    Returns list of (abs_start, [request_dict]) pairs.
+    Returns list of (abs_start, [Request]) pairs.
     """
     # Find all style-change sub-ranges within the equal span
     # Group by consecutive chars with same (base_style != desired_style)
-    result: list[tuple[int, list[dict[str, Any]]]] = []
+    result: list[tuple[int, list[Request]]] = []
 
     # Walk through the span and find style boundaries
     i = base_start
@@ -1607,7 +1724,7 @@ def _insert_ops_for_span(
     story_offset: int,
     tab_id: str,
     segment_id: str | None,
-) -> list[dict[str, Any]]:
+) -> list[Request]:
     """Emit insertText + optional updateTextStyle for desired[desired_start:desired_end].
 
     The text is inserted at base_pos (before any character at that position in base).
@@ -1638,7 +1755,7 @@ def _insert_ops_for_span(
         return []
 
     abs_insert = story_offset + base_pos
-    reqs: list[dict[str, Any]] = [
+    reqs: list[Request] = [
         _make_insert_text(
             index=abs_insert,
             tab_id=tab_id,
@@ -1681,36 +1798,33 @@ def _make_update_text_style(
     segment_id: _StrOrDeferred | None,
     text_style: dict[str, Any],
     fields: list[str],
-) -> dict[str, Any]:
-    """Build an updateTextStyle request dict."""
-    range_: dict[str, Any] = {
-        "startIndex": start_index,
-        "endIndex": end_index,
-    }
-    if tab_id:
-        range_["tabId"] = tab_id
-    if segment_id:
-        range_["segmentId"] = segment_id
-    return {
-        "updateTextStyle": {
-            "range": range_,
-            "textStyle": text_style,
-            "fields": ",".join(fields),
-        }
-    }
+) -> Request:
+    """Build an updateTextStyle Request."""
+    return Request(
+        update_text_style=UpdateTextStyleRequest(
+            range=Range(
+                start_index=start_index,
+                end_index=end_index,
+                tab_id=tab_id if tab_id else None,
+                segment_id=segment_id if segment_id else None,
+            ),
+            text_style=TextStyle.model_validate(text_style),
+            fields=",".join(fields),
+        )
+    )
 
 
 def _lower_para_style_update(
     *,
-    base_para: dict[str, Any],
-    desired_para: dict[str, Any],
+    base_para: Paragraph,
+    desired_para: Paragraph,
     start_index: int,
     end_index: int,
     tab_id: str,
     segment_id: str | None,
-    desired_lists: dict[str, Any] | None = None,
-    base_lists: dict[str, Any] | None = None,
-) -> list[dict[str, Any]]:
+    desired_lists: dict[str, DocList] | None = None,
+    base_lists: dict[str, DocList] | None = None,
+) -> list[Request]:
     """Emit paragraphStyle / bullet / textStyle update requests if styles changed.
 
     Bullet handling for matched paragraphs:
@@ -1729,15 +1843,15 @@ def _lower_para_style_update(
         2. Prepend new tabs at start_index.
         3. Emit createParagraphBullets with desired preset.
     """
-    requests: list[dict[str, Any]] = []
+    requests: list[Request] = []
 
-    base_bullet = base_para.get("bullet")
-    desired_bullet = desired_para.get("bullet")
+    base_bullet = base_para.bullet
+    desired_bullet = desired_para.bullet
 
     if not base_bullet and desired_bullet:
         # Case A: paragraph gains a bullet
-        nesting_level = desired_bullet.get("nestingLevel", 0) or 0
-        preset = _infer_bullet_preset(desired_bullet, desired_lists or {})
+        nesting_level = desired_bullet.nesting_level or 0
+        preset = _infer_bullet_preset_from_model(desired_bullet, desired_lists or {})
         tabs = "\t" * nesting_level
         tabs_len = utf16_len(tabs)
         if tabs_len > 0:
@@ -1786,10 +1900,12 @@ def _lower_para_style_update(
         # Case C: both have bullet — check if nesting level or list type changed.
         # List type change is detected by comparing the inferred bullet preset:
         # base preset (from base_lists) vs desired preset (from desired_lists).
-        base_nesting = base_bullet.get("nestingLevel", 0) or 0
-        desired_nesting = desired_bullet.get("nestingLevel", 0) or 0
-        base_preset = _infer_bullet_preset(base_bullet, base_lists or {})
-        desired_preset = _infer_bullet_preset(desired_bullet, desired_lists or {})
+        base_nesting = base_bullet.nesting_level or 0
+        desired_nesting = desired_bullet.nesting_level or 0
+        base_preset = _infer_bullet_preset_from_model(base_bullet, base_lists or {})
+        desired_preset = _infer_bullet_preset_from_model(
+            desired_bullet, desired_lists or {}
+        )
         if base_nesting != desired_nesting or base_preset != desired_preset:
             # Delete then re-add with new nesting level / list type
             requests.append(
@@ -1823,8 +1939,16 @@ def _lower_para_style_update(
             )
 
     # Paragraph style changes (beyond bullet-related indentation)
-    base_ps = base_para.get("paragraphStyle", {})
-    desired_ps = desired_para.get("paragraphStyle", {})
+    base_ps = (
+        base_para.paragraph_style.model_dump(by_alias=True, exclude_none=True)
+        if base_para.paragraph_style
+        else {}
+    )
+    desired_ps = (
+        desired_para.paragraph_style.model_dump(by_alias=True, exclude_none=True)
+        if desired_para.paragraph_style
+        else {}
+    )
 
     if base_ps != desired_ps and desired_ps:
         # Compute changed fields — exclude bullet-managed indentation when
@@ -1852,12 +1976,12 @@ def _lower_para_style_update(
 
 def _lower_element_insert(
     *,
-    el: dict[str, Any],
+    el: StructuralElement,
     index: int,
     tab_id: _StrOrDeferred,
     segment_id: _StrOrDeferred | None,
-    desired_lists: dict[str, Any] | None = None,
-) -> list[dict[str, Any]]:
+    desired_lists: dict[str, DocList] | None = None,
+) -> list[Request]:
     """Generate request(s) to insert a content element at the given index.
 
     For page break paragraphs: insertPageBreak.
@@ -1865,12 +1989,12 @@ def _lower_element_insert(
     For tables: insertTable (dimensions only; cell content not yet supported).
     For section breaks: insertSectionBreak + optional updateSectionStyle.
     """
-    if "paragraph" in el and _is_pagebreak_para(el["paragraph"]):
+    if el.paragraph is not None and _is_pagebreak_para(el.paragraph):
         return _lower_page_break_insert(
             index=index,
             tab_id=tab_id,
         )
-    elif "paragraph" in el:
+    elif el.paragraph is not None:
         return _lower_paragraph_insert(
             el=el,
             index=index,
@@ -1878,33 +2002,42 @@ def _lower_element_insert(
             segment_id=segment_id,
             desired_lists=desired_lists or {},
         )
-    elif "table" in el:
+    elif el.table is not None:
         return _lower_table_insert(
             el=el,
             index=index,
             tab_id=tab_id,
             segment_id=segment_id,
         )
-    elif "sectionBreak" in el:
+    elif el.section_break is not None:
         return _lower_section_break_insert(
             el=el,
             index=index,
             tab_id=tab_id,
         )
     else:
+        el_keys = []
+        if el.paragraph is not None:
+            el_keys.append("paragraph")
+        if el.table is not None:
+            el_keys.append("table")
+        if el.section_break is not None:
+            el_keys.append("sectionBreak")
+        if el.table_of_contents is not None:
+            el_keys.append("tableOfContents")
         raise NotImplementedError(
-            f"lowering for insertion of element kind {list(el.keys())!r} not yet implemented"
+            f"lowering for insertion of element kind {el_keys!r} not yet implemented"
         )
 
 
 def _lower_paragraph_insert(
     *,
-    el: dict[str, Any],
+    el: StructuralElement,
     index: int,
     tab_id: _StrOrDeferred,
     segment_id: _StrOrDeferred | None,
-    desired_lists: dict[str, Any] | None = None,
-) -> list[dict[str, Any]]:
+    desired_lists: dict[str, DocList] | None = None,
+) -> list[Request]:
     """Insert a paragraph at ``index`` via insertText + optional style.
 
     For bullet paragraphs, the approach is:
@@ -1916,17 +2049,18 @@ def _lower_paragraph_insert(
        createParagraphBullets has already removed the tabs.
     4. Net index advance for subsequent elements = len(text), not len(tabs+text).
     """
-    requests: list[dict[str, Any]] = []
+    requests: list[Request] = []
 
-    para = el.get("paragraph", {})
+    assert el.paragraph is not None
+    para = el.paragraph
     text = _para_text(para)
     text_len = utf16_len(text)
 
-    bullet = para.get("bullet")
+    bullet = para.bullet
     if bullet:
-        nesting_level = bullet.get("nestingLevel", 0) or 0
+        nesting_level = bullet.nesting_level or 0
         tabs = "\t" * nesting_level
-        preset = _infer_bullet_preset(bullet, desired_lists or {})
+        preset = _infer_bullet_preset_from_model(bullet, desired_lists or {})
         full_text = tabs + text  # text already ends with \n
 
         # insertText with leading tabs for nesting
@@ -1954,7 +2088,11 @@ def _lower_paragraph_insert(
 
         # Style requests use tab-free indices: createParagraphBullets has
         # already removed the tabs by the time these run in the batch.
-        desired_ps = para.get("paragraphStyle", {})
+        desired_ps = (
+            para.paragraph_style.model_dump(by_alias=True, exclude_none=True)
+            if para.paragraph_style
+            else {}
+        )
         if desired_ps:
             # Exclude indentation fields — createParagraphBullets sets them.
             # Also exclude server-managed readonly fields (e.g. headingId).
@@ -2006,7 +2144,11 @@ def _lower_paragraph_insert(
         )
 
         # Apply paragraph style
-        desired_ps = para.get("paragraphStyle", {})
+        desired_ps = (
+            para.paragraph_style.model_dump(by_alias=True, exclude_none=True)
+            if para.paragraph_style
+            else {}
+        )
         if desired_ps:
             # Exclude server-managed readonly fields (e.g. headingId) from mask.
             fields = [k for k in desired_ps if k not in _PARA_STYLE_READONLY_FIELDS]
@@ -2045,11 +2187,11 @@ def _lower_paragraph_insert(
 
 def _lower_table_insert(
     *,
-    el: dict[str, Any],
+    el: StructuralElement,
     index: int,
     tab_id: _StrOrDeferred,
     segment_id: _StrOrDeferred | None,
-) -> list[dict[str, Any]]:
+) -> list[Request]:
     """Insert a table at ``index`` and populate cell content.
 
     Emits ``insertTable`` first, then ``insertText`` + style requests for each
@@ -2072,34 +2214,38 @@ def _lower_table_insert(
         index+4   : cell[0][1] opener (1 char)
         ...
     """
-    table = el.get("table", {})
-    rows = table.get("rows", len(table.get("tableRows", [])))
-    cols = table.get("columns", 0)
-    if cols == 0 and table.get("tableRows"):
-        cols = len(table["tableRows"][0].get("tableCells", []))
+    assert el.table is not None
+    table = el.table
+    table_rows = table.table_rows or []
+    rows = table.rows or len(table_rows)
+    cols = table.columns or 0
+    if cols == 0 and table_rows:
+        cols = len(table_rows[0].table_cells or [])
 
-    location: dict[str, Any] = {"index": index, "tabId": tab_id}
-    if segment_id:
-        location["segmentId"] = segment_id
+    loc = Location(
+        index=index,
+        tab_id=tab_id if tab_id else None,
+        segment_id=segment_id if segment_id else None,
+    )
 
-    requests: list[dict[str, Any]] = [
-        {
-            "insertTable": {
-                "rows": rows,
-                "columns": cols,
-                "location": location,
-            }
-        }
+    requests: list[Request] = [
+        Request(
+            insert_table=InsertTableRequest(
+                rows=rows,
+                columns=cols,
+                location=loc,
+            )
+        )
     ]
 
     # table_pos tracks the next position as it shifts with each insertion.
     # Start at index+1 to skip the table opener; each row opener advances by 1.
     table_pos = index + 1
 
-    for row in table.get("tableRows", []):
+    for row in table_rows:
         table_pos += 1  # skip row opener (1 char)
-        for cell in row.get("tableCells", []):
-            cell_content: list[dict[str, Any]] = cell.get("content", [])
+        for cell in row.table_cells or []:
+            cell_content: list[StructuralElement] = cell.content or []
             if not cell_content:
                 # Fully empty cell (no content list at all) — skip.
                 # An empty cell still occupies 2 chars (opener + terminal \n).
@@ -2140,19 +2286,19 @@ def _lower_table_insert(
     return requests
 
 
-def _is_pagebreak_para(para: dict[str, Any]) -> bool:
-    """Return True if a paragraph dict's only content element(s) include a pageBreak.
+def _is_pagebreak_para(para: Paragraph) -> bool:
+    """Return True if a Paragraph's only content element(s) include a pageBreak.
 
     A page break paragraph has a ``pageBreak`` element among its elements (plus
     an optional terminal ``\\n`` textRun).  Such paragraphs must be inserted via
     ``insertPageBreak``, not ``insertText``.
     """
     has_page_break = False
-    for elem in para.get("elements", []):
-        if "pageBreak" in elem:
+    for elem in para.elements or []:
+        if elem.page_break is not None:
             has_page_break = True
-        elif "textRun" in elem:
-            content = elem["textRun"].get("content", "")
+        elif elem.text_run is not None:
+            content = elem.text_run.content or ""
             if content not in ("", "\n"):
                 # Real text alongside the page break — not a pure page break para
                 return False
@@ -2166,71 +2312,79 @@ def _lower_page_break_insert(
     *,
     index: int,
     tab_id: _StrOrDeferred,
-) -> list[dict[str, Any]]:
+) -> list[Request]:
     """Insert a page break via ``insertPageBreak`` at ``index``.
 
     ``insertPageBreak`` inserts two characters (pageBreak element + newline).
     The ``segmentId`` field must be omitted — the API only allows page breaks
     in the document body.
     """
-    location: dict[str, Any] = {"index": index}
-    if tab_id:
-        location["tabId"] = tab_id
-    return [{"insertPageBreak": {"location": location}}]
+    return [
+        Request(
+            insert_page_break=InsertPageBreakRequest(
+                location=Location(
+                    index=index,
+                    tab_id=tab_id if tab_id else None,
+                ),
+            )
+        )
+    ]
 
 
 def _lower_section_break_insert(
     *,
-    el: dict[str, Any],
+    el: StructuralElement,
     index: int,
     tab_id: _StrOrDeferred,
-) -> list[dict[str, Any]]:
+) -> list[Request]:
     """Insert a section break via ``insertSectionBreak`` at ``index``.
 
-    Reads ``sectionType`` from ``el["sectionBreak"]["sectionStyle"]["sectionType"]``;
+    Reads ``sectionType`` from ``el.section_break.section_style.section_type``;
     defaults to ``"NEXT_PAGE"`` if absent.
 
     If the ``sectionStyle`` contains additional style fields beyond
     ``sectionType``, emits a follow-up ``updateSectionStyle`` request covering
     the newly inserted section break character.
     """
-    section_break = el.get("sectionBreak", {})
-    section_style = section_break.get("sectionStyle", {})
-    section_type = section_style.get("sectionType", "NEXT_PAGE")
+    assert el.section_break is not None
+    section_style = el.section_break.section_style
+    section_style_dict = (
+        section_style.model_dump(by_alias=True, exclude_none=True)
+        if section_style
+        else {}
+    )
+    section_type = section_style_dict.get("sectionType", "NEXT_PAGE")
 
-    location: dict[str, Any] = {"index": index}
-    if tab_id:
-        location["tabId"] = tab_id
-
-    requests: list[dict[str, Any]] = [
-        {
-            "insertSectionBreak": {
-                "location": location,
-                "sectionType": section_type,
-            }
-        }
+    requests: list[Request] = [
+        Request(
+            insert_section_break=InsertSectionBreakRequest(
+                location=Location(
+                    index=index,
+                    tab_id=tab_id if tab_id else None,
+                ),
+                section_type=section_type,
+            )
+        )
     ]
 
     # Emit updateSectionStyle for any non-default style fields.
     # insertSectionBreak inserts 2 characters (newline + section break element),
     # so the section break lands at index+1 in the post-insert document.
-    style_fields = [k for k in section_style if k != "sectionType"]
-    if style_fields and section_style:
-        style_to_apply = {k: section_style[k] for k in style_fields}
-        range_: dict[str, Any] = {
-            "startIndex": index + 1,
-            "endIndex": index + 2,
-        }
-        if tab_id:
-            range_["tabId"] = tab_id
+    style_fields = [k for k in section_style_dict if k != "sectionType"]
+    if style_fields and section_style_dict:
+        style_to_apply = {k: section_style_dict[k] for k in style_fields}
         requests.append(
-            {
-                "updateSectionStyle": {
-                    "range": range_,
-                    "sectionStyle": style_to_apply,
-                    "fields": ",".join(sorted(style_fields)),
-                }
-            }
+            Request(
+                update_section_style=UpdateSectionStyleRequest(
+                    range=Range(
+                        start_index=index + 1,
+                        end_index=index + 2,
+                        tab_id=tab_id if tab_id else None,
+                    ),
+                    section_style=SectionStyle.model_validate(style_to_apply),
+                    fields=",".join(sorted(style_fields)),
+                )
+            )
         )
 
     return requests
@@ -2238,17 +2392,29 @@ def _lower_section_break_insert(
 
 def _lower_section_break_update(
     *,
-    base_el: dict[str, Any],
-    desired_el: dict[str, Any],
+    base_el: StructuralElement,
+    desired_el: StructuralElement,
     tab_id: str,
-) -> list[dict[str, Any]]:
+) -> list[Request]:
     """Emit ``updateSectionStyle`` when a matched section break's style changed.
 
     The range covers the section break character itself (startIndex → endIndex).
     If ``sectionStyle`` is identical, returns an empty list.
     """
-    base_style = base_el.get("sectionBreak", {}).get("sectionStyle", {})
-    desired_style = desired_el.get("sectionBreak", {}).get("sectionStyle", {})
+    assert base_el.section_break is not None
+    assert desired_el.section_break is not None
+    base_style = (
+        base_el.section_break.section_style.model_dump(by_alias=True, exclude_none=True)
+        if base_el.section_break.section_style
+        else {}
+    )
+    desired_style = (
+        desired_el.section_break.section_style.model_dump(
+            by_alias=True, exclude_none=True
+        )
+        if desired_el.section_break.section_style
+        else {}
+    )
 
     changed_fields = _style_fields(base_style, desired_style)
     if not changed_fields:
@@ -2258,29 +2424,29 @@ def _lower_section_break_update(
     if start is None or end is None:
         return []
 
-    range_: dict[str, Any] = {"startIndex": start, "endIndex": end}
-    if tab_id:
-        range_["tabId"] = tab_id
-
     return [
-        {
-            "updateSectionStyle": {
-                "range": range_,
-                "sectionStyle": desired_style,
-                "fields": ",".join(sorted(changed_fields)),
-            }
-        }
+        Request(
+            update_section_style=UpdateSectionStyleRequest(
+                range=Range(
+                    start_index=start,
+                    end_index=end,
+                    tab_id=tab_id if tab_id else None,
+                ),
+                section_style=SectionStyle.model_validate(desired_style),
+                fields=",".join(sorted(changed_fields)),
+            )
+        )
     ]
 
 
 def _lower_content_insert(
     *,
-    content: list[dict[str, Any]],
+    content: list[StructuralElement],
     start_index: int,
     tab_id: _StrOrDeferred,
     segment_id: _StrOrDeferred | None,
-    desired_lists: dict[str, Any] | None = None,
-) -> list[dict[str, Any]]:
+    desired_lists: dict[str, DocList] | None = None,
+) -> list[Request]:
     """Insert a list of StructuralElements starting at ``start_index``.
 
     This is the single unified pure-insert entry point for all five content
@@ -2289,7 +2455,7 @@ def _lower_content_insert(
     The terminal paragraph (the trailing ``\\n`` that every container already
     has) is skipped — ``content[:-1]`` is processed.
 
-    ``tab_id`` and ``segment_id`` may be deferred placeholder dicts; they
+    ``tab_id`` and ``segment_id`` may be DeferredID placeholders; they
     flow through to ``_lower_element_insert`` and ultimately to the builder
     helpers, where ``resolve_deferred_placeholders`` substitutes them before
     the batch executes.
@@ -2305,7 +2471,7 @@ def _lower_content_insert(
     For a table cell, pass the pre-computed absolute index of the first
     position inside the cell (cell_opener_index + 1).
     """
-    requests: list[dict[str, Any]] = []
+    requests: list[Request] = []
     running_index = start_index
 
     for el in content[:-1]:  # skip terminal paragraph
@@ -2327,8 +2493,8 @@ def _lower_content_insert(
 # ---------------------------------------------------------------------------
 
 
-def _extract_tab_body_content(tab: dict[str, Any]) -> list[dict[str, Any]]:
-    """Return the body StructuralElements from a tab dict.
+def _extract_tab_body_content(tab: Tab) -> list[StructuralElement]:
+    """Return the body StructuralElements from a Tab.
 
     Skips any leading ``sectionBreak`` element — ``addDocumentTab`` creates
     it automatically, so it must not be re-inserted.
@@ -2336,11 +2502,15 @@ def _extract_tab_body_content(tab: dict[str, Any]) -> list[dict[str, Any]]:
     Returns an empty list if the body has no content beyond the terminal
     paragraph (nothing to insert into the new tab).
     """
-    content: list[dict[str, Any]] = (
-        tab.get("documentTab", {}).get("body", {}).get("content", [])
-    )
+    doc_tab = tab.document_tab
+    if doc_tab is None:
+        return []
+    body = doc_tab.body
+    if body is None:
+        return []
+    content: list[StructuralElement] = body.content or []
     # Drop leading sectionBreak (inserted automatically by addDocumentTab)
-    filtered = [el for el in content if "sectionBreak" not in el]
+    filtered = [el for el in content if el.section_break is None]
     # Nothing to do if the only remaining element is the terminal paragraph
     if len(filtered) <= 1:
         return []
@@ -2352,7 +2522,7 @@ def _extract_tab_body_content(tab: dict[str, Any]) -> list[dict[str, Any]]:
 # ---------------------------------------------------------------------------
 
 
-def _is_cell_terminal(el: dict[str, Any]) -> bool:
+def _is_cell_terminal(el: StructuralElement) -> bool:
     """Return True if ``el`` is a bare terminal paragraph (text == "\\n").
 
     Table cells may or may not include an explicit terminal paragraph depending
@@ -2360,12 +2530,12 @@ def _is_cell_terminal(el: dict[str, Any]) -> bool:
     the markdown/XML deserialiser (may omit it).  Either way, ``insertTable``
     creates the terminal automatically, so we must never re-insert it.
     """
-    if "paragraph" not in el:
+    if el.paragraph is None:
         return False
-    return _para_text(el["paragraph"]) == "\n"
+    return _para_text(el.paragraph) == "\n"
 
 
-def _element_size(el: dict[str, Any]) -> int:
+def _element_size(el: StructuralElement) -> int:
     """Return the number of UTF-16 code units occupied by a StructuralElement.
 
     For paragraphs the size is always derivable from the text content.
@@ -2373,40 +2543,47 @@ def _element_size(el: dict[str, Any]) -> int:
     For tables and other elements we read ``startIndex``/``endIndex`` if
     present; these are set on elements that came from a real API pull.
     """
-    if "paragraph" in el:
-        return utf16_len(_para_text(el["paragraph"]))
-    if "sectionBreak" in el:
+    if el.paragraph is not None:
+        return utf16_len(_para_text(el.paragraph))
+    if el.section_break is not None:
         return 1
     start, end = _element_range(el)
     if start is not None and end is not None:
         return end - start
+    el_keys = []
+    if el.table is not None:
+        el_keys.append("table")
+    if el.table_of_contents is not None:
+        el_keys.append("tableOfContents")
     raise NotImplementedError(
-        f"Cannot compute size of element with keys {list(el.keys())!r} "
+        f"Cannot compute size of element with keys {el_keys!r} "
         "without startIndex/endIndex. Ensure the desired document was "
         "pulled from the Google API so that index information is present."
     )
 
 
-def _element_range(el: dict[str, Any]) -> tuple[int | None, int | None]:
-    """Return (startIndex, endIndex) from a content element dict, or (None, None)."""
-    start = el.get("startIndex")
-    end = el.get("endIndex")
+def _element_range(el: StructuralElement) -> tuple[int | None, int | None]:
+    """Return (startIndex, endIndex) from a StructuralElement, or (None, None)."""
+    start = el.start_index
+    end = el.end_index
     if isinstance(start, int) and isinstance(end, int):
         return start, end
     return None, None
 
 
-def _element_start(el: dict[str, Any]) -> int | None:
-    """Return startIndex from a content element dict, or None."""
-    start = el.get("startIndex")
+def _element_start(el: StructuralElement) -> int | None:
+    """Return startIndex from a StructuralElement, or None."""
+    start = el.start_index
     return start if isinstance(start, int) else None
 
 
-def _para_text(para: dict[str, Any]) -> str:
-    """Return concatenated text from a paragraph dict."""
-    return "".join(
-        e.get("textRun", {}).get("content", "") for e in para.get("elements", [])
-    )
+def _para_text(para: Paragraph) -> str:
+    """Return concatenated text from a Paragraph."""
+    texts: list[str] = []
+    for e in para.elements or []:
+        if e.text_run is not None and e.text_run.content is not None:
+            texts.append(e.text_run.content)
+    return "".join(texts)
 
 
 def _style_fields(
@@ -2427,40 +2604,52 @@ def _make_create_header(
     *,
     tab_id: str,
     header_type: str,
-) -> dict[str, Any]:
-    payload: dict[str, Any] = {"type": header_type}
-    if tab_id:
-        payload["sectionBreakLocation"] = {"index": 0, "tabId": tab_id}
-    return {"createHeader": payload}
+) -> Request:
+    section_break_loc = Location(index=0, tab_id=tab_id) if tab_id else None
+    return Request(
+        create_header=CreateHeaderRequest(
+            type=CreateFooterRequestType(header_type),
+            section_break_location=section_break_loc,
+        )
+    )
 
 
 def _make_create_footer(
     *,
     tab_id: str,
     footer_type: str,
-) -> dict[str, Any]:
-    payload: dict[str, Any] = {"type": footer_type}
-    if tab_id:
-        payload["sectionBreakLocation"] = {"index": 0, "tabId": tab_id}
-    return {"createFooter": payload}
+) -> Request:
+    section_break_loc = Location(index=0, tab_id=tab_id) if tab_id else None
+    return Request(
+        create_footer=CreateFooterRequest(
+            type=CreateFooterRequestType(footer_type),
+            section_break_location=section_break_loc,
+        )
+    )
 
 
-def _make_delete_header(*, header_id: str, tab_id: str) -> dict[str, Any]:
-    req: dict[str, Any] = {"headerId": header_id}
-    if tab_id:
-        req["tabId"] = tab_id
-    return {"deleteHeader": req}
+def _make_delete_header(*, header_id: str, tab_id: str) -> Request:
+    return Request(
+        delete_header=DeleteHeaderRequest(
+            header_id=header_id,
+            tab_id=tab_id if tab_id else None,
+        )
+    )
 
 
-def _make_delete_footer(*, footer_id: str, tab_id: str) -> dict[str, Any]:
-    req: dict[str, Any] = {"footerId": footer_id}
-    if tab_id:
-        req["tabId"] = tab_id
-    return {"deleteFooter": req}
+def _make_delete_footer(*, footer_id: str, tab_id: str) -> Request:
+    return Request(
+        delete_footer=DeleteFooterRequest(
+            footer_id=footer_id,
+            tab_id=tab_id if tab_id else None,
+        )
+    )
 
 
-def _make_delete_tab(*, tab_id: str) -> dict[str, Any]:
-    return {"deleteDocumentTab": {"tabId": tab_id}}
+def _make_delete_tab(*, tab_id: str) -> Request:
+    return Request(
+        delete_tab=DeleteTabRequest(tab_id=tab_id),
+    )
 
 
 def _make_add_document_tab(
@@ -2468,25 +2657,28 @@ def _make_add_document_tab(
     title: str,
     index: int | None = None,
     parent_tab_id: str | None = None,
-) -> dict[str, Any]:
-    tab_properties: dict[str, Any] = {"title": title}
-    if index is not None:
-        tab_properties["index"] = index
-    if parent_tab_id is not None:
-        tab_properties["parentTabId"] = parent_tab_id
-    return {"addDocumentTab": {"tabProperties": tab_properties}}
+) -> Request:
+    return Request(
+        add_document_tab=AddDocumentTabRequest(
+            tab_properties=TabProperties(
+                title=title,
+                index=index,
+                parent_tab_id=parent_tab_id,
+            ),
+        )
+    )
 
 
-def _make_create_footnote(*, index: int, tab_id: str) -> dict[str, Any]:
-    """Build a createFootnote request dict."""
-    payload: dict[str, Any] = {
-        "location": {
-            "index": index,
-        }
-    }
-    if tab_id:
-        payload["location"]["tabId"] = tab_id
-    return {"createFootnote": payload}
+def _make_create_footnote(*, index: int, tab_id: str) -> Request:
+    """Build a createFootnote Request."""
+    return Request(
+        create_footnote=CreateFootnoteRequest(
+            location=Location(
+                index=index,
+                tab_id=tab_id if tab_id else None,
+            ),
+        )
+    )
 
 
 def _make_delete_content_range(
@@ -2495,16 +2687,17 @@ def _make_delete_content_range(
     end_index: int,
     tab_id: _StrOrDeferred,
     segment_id: _StrOrDeferred | None = None,
-) -> dict[str, Any]:
-    range_: dict[str, Any] = {
-        "startIndex": start_index,
-        "endIndex": end_index,
-    }
-    if tab_id:
-        range_["tabId"] = tab_id
-    if segment_id:
-        range_["segmentId"] = segment_id
-    return {"deleteContentRange": {"range": range_}}
+) -> Request:
+    return Request(
+        delete_content_range=DeleteContentRangeRequest(
+            range=Range(
+                start_index=start_index,
+                end_index=end_index,
+                tab_id=tab_id if tab_id else None,
+                segment_id=segment_id if segment_id else None,
+            ),
+        )
+    )
 
 
 def _make_insert_text(
@@ -2513,13 +2706,17 @@ def _make_insert_text(
     tab_id: _StrOrDeferred,
     segment_id: _StrOrDeferred | None,
     text: str,
-) -> dict[str, Any]:
-    location: dict[str, Any] = {"index": index}
-    if tab_id:
-        location["tabId"] = tab_id
-    if segment_id:
-        location["segmentId"] = segment_id
-    return {"insertText": {"location": location, "text": text}}
+) -> Request:
+    return Request(
+        insert_text=InsertTextRequest(
+            location=Location(
+                index=index,
+                tab_id=tab_id if tab_id else None,
+                segment_id=segment_id if segment_id else None,
+            ),
+            text=text,
+        )
+    )
 
 
 def _make_update_paragraph_style(
@@ -2530,68 +2727,88 @@ def _make_update_paragraph_style(
     segment_id: _StrOrDeferred | None,
     paragraph_style: dict[str, Any],
     fields: list[str],
-) -> dict[str, Any]:
-    range_: dict[str, Any] = {
-        "startIndex": start_index,
-        "endIndex": end_index,
-    }
-    if tab_id:
-        range_["tabId"] = tab_id
-    if segment_id:
-        range_["segmentId"] = segment_id
-    return {
-        "updateParagraphStyle": {
-            "range": range_,
-            "paragraphStyle": paragraph_style,
-            "fields": ",".join(fields),
-        }
-    }
+) -> Request:
+    return Request(
+        update_paragraph_style=UpdateParagraphStyleRequest(
+            range=Range(
+                start_index=start_index,
+                end_index=end_index,
+                tab_id=tab_id if tab_id else None,
+                segment_id=segment_id if segment_id else None,
+            ),
+            paragraph_style=ParagraphStyle.model_validate(paragraph_style),
+            fields=",".join(fields),
+        )
+    )
 
 
 def _make_update_named_style(
     *,
     tab_id: str,
-    style: dict[str, Any],
-) -> dict[str, Any]:
-    """Emit an updateDocumentStyle request to update/insert a single named style."""
-    payload: dict[str, Any] = {
+    style: NamedStyle | dict[str, Any],
+) -> Request:
+    """Emit an updateDocumentStyle request to update/insert a single named style.
+
+    The Google Docs API uses ``updateDocumentStyle`` with a ``namedStyles``
+    payload to update named styles.  Since the typed ``UpdateDocumentStyleRequest``
+    model doesn't have a ``namedStyles`` field, we use ``model_validate`` with
+    the raw dict to leverage ``extra="allow"`` on the model.
+    """
+    if isinstance(style, NamedStyle):
+        style_dict = style.model_dump(by_alias=True, exclude_none=True)
+    else:
+        style_dict = style
+    inner: dict[str, Any] = {
         "namedStyles": {
-            "styles": [style],
-        }
-    }
-    req: dict[str, Any] = {
-        "namedStyles": payload["namedStyles"],
+            "styles": [style_dict],
+        },
         "fields": "namedStyles",
     }
     if tab_id:
-        req["tabId"] = tab_id
-    return {"updateDocumentStyle": req}
+        inner["tabId"] = tab_id
+    return Request(
+        update_document_style=UpdateDocumentStyleRequest.model_validate(inner),
+    )
 
 
 def _make_update_section_style_deferred(
     *,
     tab_id: str,
     field_name: str,
-    deferred_id: dict[str, Any],
-) -> dict[str, Any]:
+    deferred_id: DeferredID,
+) -> Request:
     """Emit an updateSectionStyle that attaches a freshly created header/footer.
 
-    The header/footer ID is a deferred-ID placeholder resolved after Batch 0.
+    The header/footer ID is a DeferredID placeholder resolved after Batch 0.
     We use a full-document range (0→1) which is the typical pattern for
     applying a header/footer to the DEFAULT slot.
     """
-    range_: dict[str, Any] = {"startIndex": 0, "endIndex": 1}
-    if tab_id:
-        range_["tabId"] = tab_id
-    return {
-        "updateSectionStyle": {
-            "range": range_,
-            "sectionStyle": {
-                field_name: deferred_id,
-            },
-            "fields": field_name,
-        }
+    # The field_name is a camelCase alias (e.g. "defaultHeaderId") and the
+    # value is a DeferredID.  SectionStyle's typed fields are str | None,
+    # so we use model_construct to bypass validation and inject the DeferredID.
+    # Map camelCase alias → snake_case Python field name.
+    _ALIAS_TO_FIELD = {
+        "defaultHeaderId": "default_header_id",
+        "firstPageHeaderId": "first_page_header_id",
+        "evenPageHeaderId": "even_page_header_id",
+        "defaultFooterId": "default_footer_id",
+        "firstPageFooterId": "first_page_footer_id",
+        "evenPageFooterId": "even_page_footer_id",
     }
+    python_field = _ALIAS_TO_FIELD.get(field_name, field_name)
+    # Deliberately inject DeferredID into a str field; resolved before execution.
+    section_style = SectionStyle.model_construct(**{python_field: deferred_id})  # type: ignore[arg-type]
+    return Request(
+        update_section_style=UpdateSectionStyleRequest(
+            range=Range(
+                start_index=0,
+                end_index=1,
+                tab_id=tab_id if tab_id else None,
+            ),
+            section_style=section_style,
+            fields=field_name,
+        )
+    )
 
 
 # ---------------------------------------------------------------------------
@@ -2603,11 +2820,11 @@ def _table_start_location(
     *,
     table_start_index: int,
     tab_id: str,
-) -> dict[str, Any]:
-    loc: dict[str, Any] = {"index": table_start_index}
-    if tab_id:
-        loc["tabId"] = tab_id
-    return loc
+) -> Location:
+    return Location(
+        index=table_start_index,
+        tab_id=tab_id if tab_id else None,
+    )
 
 
 def _make_insert_table_row(
@@ -2616,20 +2833,20 @@ def _make_insert_table_row(
     row_index: int,
     insert_below: bool,
     tab_id: str,
-) -> dict[str, Any]:
-    return {
-        "insertTableRow": {
-            "tableCellLocation": {
-                "tableStartLocation": _table_start_location(
+) -> Request:
+    return Request(
+        insert_table_row=InsertTableRowRequest(
+            table_cell_location=TableCellLocation(
+                table_start_location=_table_start_location(
                     table_start_index=table_start_index,
                     tab_id=tab_id,
                 ),
-                "rowIndex": row_index,
-                "columnIndex": 0,
-            },
-            "insertBelow": insert_below,
-        }
-    }
+                row_index=row_index,
+                column_index=0,
+            ),
+            insert_below=insert_below,
+        )
+    )
 
 
 def _make_delete_table_row(
@@ -2637,19 +2854,19 @@ def _make_delete_table_row(
     table_start_index: int,
     row_index: int,
     tab_id: str,
-) -> dict[str, Any]:
-    return {
-        "deleteTableRow": {
-            "tableCellLocation": {
-                "tableStartLocation": _table_start_location(
+) -> Request:
+    return Request(
+        delete_table_row=DeleteTableRowRequest(
+            table_cell_location=TableCellLocation(
+                table_start_location=_table_start_location(
                     table_start_index=table_start_index,
                     tab_id=tab_id,
                 ),
-                "rowIndex": row_index,
-                "columnIndex": 0,
-            }
-        }
-    }
+                row_index=row_index,
+                column_index=0,
+            ),
+        )
+    )
 
 
 def _make_insert_table_column(
@@ -2658,20 +2875,20 @@ def _make_insert_table_column(
     column_index: int,
     insert_right: bool,
     tab_id: str,
-) -> dict[str, Any]:
-    return {
-        "insertTableColumn": {
-            "tableCellLocation": {
-                "tableStartLocation": _table_start_location(
+) -> Request:
+    return Request(
+        insert_table_column=InsertTableColumnRequest(
+            table_cell_location=TableCellLocation(
+                table_start_location=_table_start_location(
                     table_start_index=table_start_index,
                     tab_id=tab_id,
                 ),
-                "rowIndex": 0,
-                "columnIndex": column_index,
-            },
-            "insertRight": insert_right,
-        }
-    }
+                row_index=0,
+                column_index=column_index,
+            ),
+            insert_right=insert_right,
+        )
+    )
 
 
 def _make_delete_table_column(
@@ -2679,19 +2896,19 @@ def _make_delete_table_column(
     table_start_index: int,
     column_index: int,
     tab_id: str,
-) -> dict[str, Any]:
-    return {
-        "deleteTableColumn": {
-            "tableCellLocation": {
-                "tableStartLocation": _table_start_location(
+) -> Request:
+    return Request(
+        delete_table_column=DeleteTableColumnRequest(
+            table_cell_location=TableCellLocation(
+                table_start_location=_table_start_location(
                     table_start_index=table_start_index,
                     tab_id=tab_id,
                 ),
-                "rowIndex": 0,
-                "columnIndex": column_index,
-            }
-        }
-    }
+                row_index=0,
+                column_index=column_index,
+            ),
+        )
+    )
 
 
 def _make_update_table_cell_style(
@@ -2702,76 +2919,79 @@ def _make_update_table_cell_style(
     style_changes: dict[str, Any],
     fields_mask: str,
     tab_id: str,
-) -> dict[str, Any]:
-    return {
-        "updateTableCellStyle": {
-            "tableStartLocation": _table_start_location(
-                table_start_index=table_start_index,
-                tab_id=tab_id,
-            ),
-            "tableRange": {
-                "tableCellLocation": {
-                    "tableStartLocation": _table_start_location(
+) -> Request:
+    loc = _table_start_location(
+        table_start_index=table_start_index,
+        tab_id=tab_id,
+    )
+    return Request(
+        update_table_cell_style=UpdateTableCellStyleRequest(
+            table_start_location=loc,
+            table_range=TableRange(
+                table_cell_location=TableCellLocation(
+                    table_start_location=_table_start_location(
                         table_start_index=table_start_index,
                         tab_id=tab_id,
                     ),
-                    "rowIndex": row_index,
-                    "columnIndex": column_index,
-                },
-                "rowSpan": 1,
-                "columnSpan": 1,
-            },
-            "tableCellStyle": style_changes,
-            "fields": fields_mask,
-        }
-    }
+                    row_index=row_index,
+                    column_index=column_index,
+                ),
+                row_span=1,
+                column_span=1,
+            ),
+            table_cell_style=TableCellStyle.model_validate(style_changes),
+            fields=fields_mask,
+        )
+    )
 
 
 def _make_update_table_row_style(
     *,
     table_start_index: int,
     row_index: int,
-    min_row_height: dict[str, Any] | None,
+    min_row_height: Any,
     tab_id: str,
-) -> dict[str, Any]:
-    return {
-        "updateTableRowStyle": {
-            "tableStartLocation": _table_start_location(
+) -> Request:
+    return Request(
+        update_table_row_style=UpdateTableRowStyleRequest(
+            table_start_location=_table_start_location(
                 table_start_index=table_start_index,
                 tab_id=tab_id,
             ),
-            "rowIndices": [row_index],
-            "tableRowStyle": {"minRowHeight": min_row_height},
-            "fields": "minRowHeight",
-        }
-    }
+            row_indices=[row_index],
+            table_row_style=TableRowStyle(min_row_height=min_row_height),
+            fields="minRowHeight",
+        )
+    )
 
 
 def _make_update_table_column_properties(
     *,
     table_start_index: int,
     column_index: int,
-    width: dict[str, Any] | None,
+    width: Any,
     width_type: str | None,
     tab_id: str,
-) -> dict[str, Any]:
-    col_props: dict[str, Any] = {}
+) -> Request:
+    col_props_dict: dict[str, Any] = {}
     fields_parts: list[str] = []
     if width is not None:
-        col_props["width"] = width
+        col_props_dict["width"] = width
         fields_parts.append("width")
     if width_type is not None:
-        col_props["widthType"] = width_type
+        col_props_dict["widthType"] = width_type
         fields_parts.append("widthType")
     fields_mask = ",".join(sorted(fields_parts)) if fields_parts else "widthType"
-    return {
-        "updateTableColumnProperties": {
-            "tableStartLocation": _table_start_location(
+    return Request(
+        update_table_column_properties=UpdateTableColumnPropertiesRequest(
+            table_start_location=_table_start_location(
                 table_start_index=table_start_index,
                 tab_id=tab_id,
             ),
-            "columnIndices": [column_index],
-            "tableColumnProperties": col_props,
-            "fields": fields_mask,
-        }
-    }
+            column_indices=[column_index],
+            table_column_properties=TableColumnProperties.model_validate(
+                col_props_dict
+            ),
+            fields=fields_mask,
+        )
+    )

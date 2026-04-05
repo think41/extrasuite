@@ -2,26 +2,31 @@
 
 reconcile_v3 is the active top-down tree-oriented Google Docs reconciler.
 
-Key differences from reconcile_v2:
-- No ``transport_base`` parameter: v3 does not need an initial index fetch.
-- Works directly with raw document dicts (no IR parse step).
+- Works directly with typed ``Document`` models (no raw dict step).
 - Top-down traversal with stable-ID matching at every tree level.
 - Lowering produces one or more request batches; later batches use
   deferred-ID placeholders referencing earlier batch responses.
 
 Multi-batch output
 ------------------
-``reconcile_batches`` returns a list of request-batch lists.  Each batch is a
-list of raw batchUpdate request dicts.  Batches must be executed in order; any
-deferred-ID placeholders in a later batch must be resolved against the
-responses from all prior batches using
+``reconcile_batches`` returns a list of ``BatchUpdateDocumentRequest`` objects.
+Batches must be executed in order; any deferred-ID placeholders in a later
+batch must be resolved against the responses from all prior batches using
 ``extradoc.reconcile_v2.executor.resolve_deferred_placeholders``.
 """
 
 from __future__ import annotations
 
-from typing import TYPE_CHECKING, Any
+from typing import TYPE_CHECKING
 
+from extradoc.api_types._generated import (
+    BatchUpdateDocumentRequest,
+    Document,
+    Request,
+)
+from extradoc.api_types._generated import (
+    List as DocList,
+)
 from extradoc.reconcile_v3.diff import diff_documents
 from extradoc.reconcile_v3.lower import lower_batches
 
@@ -29,44 +34,44 @@ if TYPE_CHECKING:
     from extradoc.reconcile_v3.model import ReconcileOp
 
 
-def _extract_lists_by_tab(doc: dict[str, Any]) -> dict[str, dict[str, Any]]:
-    """Extract tab_id → lists dict mapping from a document dict.
+def _extract_lists_by_tab(doc: Document) -> dict[str, dict[str, DocList]]:
+    """Extract tab_id → lists dict mapping from a Document.
 
     For legacy single-tab documents (no ``tabs`` field), uses empty string as
     tab_id (matching the pseudo-tab convention in diff.py).
     """
-    tabs = doc.get("tabs")
-    if tabs:
-        result: dict[str, dict[str, Any]] = {}
-        for tab in tabs:
-            props = tab.get("tabProperties") or {}
-            tab_id = str(props.get("tabId", ""))
-            doc_tab = tab.get("documentTab") or {}
-            lists = doc_tab.get("lists") or {}
+    if doc.tabs:
+        result: dict[str, dict[str, DocList]] = {}
+        for tab in doc.tabs:
+            tab_id = ""
+            if tab.tab_properties and tab.tab_properties.tab_id:
+                tab_id = tab.tab_properties.tab_id
+            doc_tab = tab.document_tab
+            lists = (doc_tab.lists if doc_tab else None) or {}
             result[tab_id] = lists
         return result
     # Legacy document
-    return {"": doc.get("lists") or {}}
+    return {"": doc.lists or {}}
 
 
 def reconcile(
-    base: dict[str, Any],
-    desired: dict[str, Any],
-) -> list[dict[str, Any]]:
+    base: Document,
+    desired: Document,
+) -> list[Request]:
     """Top-down tree reconciler — single flat request list (first batch only).
 
     Parameters
     ----------
     base:
-        Raw Google Docs API document dict (current state).
+        Current state of the document.
     desired:
-        Raw Google Docs API document dict (target state).
+        Target state of the document.
 
     Returns
     -------
-    list[dict[str, Any]]
-        Flat list of raw batchUpdate request dicts for the first (and usually
-        only) batch.  If structural creation is needed (headers, tabs), call
+    list[Request]
+        Flat list of typed request objects for the first (and usually only)
+        batch.  If structural creation is needed (headers, tabs), call
         ``reconcile_batches`` instead to get the full multi-batch sequence.
 
     Notes
@@ -85,7 +90,6 @@ def reconcile(
     )
     if not batches:
         return []
-    # If only one batch, return it directly (common case)
     if len(batches) == 1:
         return batches[0]
     # Multiple batches: flatten for callers that expect a single list.
@@ -95,21 +99,21 @@ def reconcile(
 
 
 def reconcile_batches(
-    base: dict[str, Any],
-    desired: dict[str, Any],
-) -> list[list[dict[str, Any]]]:
+    base: Document,
+    desired: Document,
+) -> list[BatchUpdateDocumentRequest]:
     """Top-down tree reconciler — multi-batch sequence.
 
     Parameters
     ----------
     base:
-        Raw Google Docs API document dict (current state).
+        Current state of the document.
     desired:
-        Raw Google Docs API document dict (target state).
+        Target state of the document.
 
     Returns
     -------
-    list[list[dict[str, Any]]]
+    list[BatchUpdateDocumentRequest]
         Ordered list of request batches.  Each batch must be executed in order.
         Deferred-ID placeholders in later batches are resolved against prior
         batch responses via
@@ -118,16 +122,17 @@ def reconcile_batches(
     ops = diff_documents(base, desired)
     desired_lists_by_tab = _extract_lists_by_tab(desired)
     base_lists_by_tab = _extract_lists_by_tab(base)
-    return lower_batches(
+    raw_batches = lower_batches(
         ops,
         desired_lists_by_tab=desired_lists_by_tab,
         base_lists_by_tab=base_lists_by_tab,
     )
+    return [BatchUpdateDocumentRequest(requests=batch) for batch in raw_batches]
 
 
 def diff(
-    base: dict[str, Any],
-    desired: dict[str, Any],
+    base: Document,
+    desired: Document,
 ) -> list[ReconcileOp]:
     """Return the full op list for base → desired without lowering.
 

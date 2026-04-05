@@ -12,10 +12,28 @@ from __future__ import annotations
 
 from typing import Any
 
+from extradoc.api_types._generated import (
+    Bullet,
+    Dimension,
+    ListProperties,
+    NestingLevel,
+    Paragraph,
+    ParagraphElement,
+    ParagraphStyle,
+    Request,
+    StructuralElement,
+    TextRun,
+    TextStyle,
+)
+from extradoc.api_types._generated import (
+    List as DocList,
+)
 from extradoc.reconcile_v3.api import diff, reconcile
 from extradoc.reconcile_v3.model import UpdateListOp
 from tests.reconcile_v3.helpers import (
     make_document,
+    make_indexed_para,
+    make_indexed_terminal,
     make_para_el,
     make_tab,
     make_terminal_para,
@@ -25,37 +43,37 @@ from tests.reconcile_v3.helpers import (
 # Shared list definition (mimics what createParagraphBullets would produce)
 # ---------------------------------------------------------------------------
 
-_BULLET_LIST_DEF: dict[str, Any] = {
-    "listProperties": {
-        "nestingLevels": [
-            {
-                "bulletAlignment": "START",
-                "glyphSymbol": "●",
-                "glyphFormat": "%0",
-                "indentFirstLine": {"magnitude": 18, "unit": "PT"},
-                "indentStart": {"magnitude": 36, "unit": "PT"},
-                "startNumber": 1,
-                "textStyle": {"underline": False},
-            }
+_BULLET_LIST_DEF = DocList(
+    list_properties=ListProperties(
+        nesting_levels=[
+            NestingLevel(
+                bullet_alignment="START",
+                glyph_symbol="\u25cf",
+                glyph_format="%0",
+                indent_first_line=Dimension(magnitude=18, unit="PT"),
+                indent_start=Dimension(magnitude=36, unit="PT"),
+                start_number=1,
+                text_style=TextStyle(underline=False),
+            )
         ]
-    }
-}
+    )
+)
 
-_NUMBERED_LIST_DEF: dict[str, Any] = {
-    "listProperties": {
-        "nestingLevels": [
-            {
-                "bulletAlignment": "START",
-                "glyphType": "DECIMAL",
-                "glyphFormat": "%0.",
-                "indentFirstLine": {"magnitude": 18, "unit": "PT"},
-                "indentStart": {"magnitude": 36, "unit": "PT"},
-                "startNumber": 1,
-                "textStyle": {"underline": False},
-            }
+_NUMBERED_LIST_DEF = DocList(
+    list_properties=ListProperties(
+        nesting_levels=[
+            NestingLevel(
+                bullet_alignment="START",
+                glyph_type="DECIMAL",
+                glyph_format="%0.",
+                indent_first_line=Dimension(magnitude=18, unit="PT"),
+                indent_start=Dimension(magnitude=36, unit="PT"),
+                start_number=1,
+                text_style=TextStyle(underline=False),
+            )
         ]
-    }
-}
+    )
+)
 
 
 # ---------------------------------------------------------------------------
@@ -67,26 +85,26 @@ def make_bullet_para(
     text: str,
     list_id: str = "list1",
     nesting_level: int = 0,
-) -> dict[str, Any]:
-    """Return a paragraph element dict with a bullet."""
+) -> StructuralElement:
+    """Return a paragraph element with a bullet."""
     if not text.endswith("\n"):
         text = text + "\n"
-    bullet: dict[str, Any] = {"listId": list_id}
+    bullet = Bullet(list_id=list_id)
     if nesting_level > 0:
-        bullet["nestingLevel"] = nesting_level
+        bullet = Bullet(list_id=list_id, nesting_level=nesting_level)
     il = 18 + nesting_level * 36
     is_ = 36 + nesting_level * 36
-    return {
-        "paragraph": {
-            "elements": [{"textRun": {"content": text}}],
-            "bullet": bullet,
-            "paragraphStyle": {
-                "namedStyleType": "NORMAL_TEXT",
-                "indentFirstLine": {"magnitude": il, "unit": "PT"},
-                "indentStart": {"magnitude": is_, "unit": "PT"},
-            },
-        }
-    }
+    return StructuralElement(
+        paragraph=Paragraph(
+            elements=[ParagraphElement(text_run=TextRun(content=text))],
+            bullet=bullet,
+            paragraph_style=ParagraphStyle(
+                named_style_type="NORMAL_TEXT",
+                indent_first_line=Dimension(magnitude=il, unit="PT"),
+                indent_start=Dimension(magnitude=is_, unit="PT"),
+            ),
+        )
+    )
 
 
 def make_indexed_bullet_para(
@@ -94,60 +112,39 @@ def make_indexed_bullet_para(
     start: int,
     list_id: str = "list1",
     nesting_level: int = 0,
-) -> dict[str, Any]:
-    """Return an indexed paragraph element dict with a bullet."""
+) -> StructuralElement:
+    """Return an indexed paragraph element with a bullet."""
     from extradoc.indexer import utf16_len
 
     if not text.endswith("\n"):
         text = text + "\n"
     end = start + utf16_len(text)
-    bullet: dict[str, Any] = {"listId": list_id}
+    bullet = Bullet(list_id=list_id)
     if nesting_level > 0:
-        bullet["nestingLevel"] = nesting_level
+        bullet = Bullet(list_id=list_id, nesting_level=nesting_level)
     il = 18 + nesting_level * 36
     is_ = 36 + nesting_level * 36
-    return {
-        "startIndex": start,
-        "endIndex": end,
-        "paragraph": {
-            "elements": [{"textRun": {"content": text}}],
-            "bullet": bullet,
-            "paragraphStyle": {
-                "namedStyleType": "NORMAL_TEXT",
-                "indentFirstLine": {"magnitude": il, "unit": "PT"},
-                "indentStart": {"magnitude": is_, "unit": "PT"},
-            },
-        },
-    }
-
-
-def make_indexed_para(
-    text: str, start: int, named_style: str = "NORMAL_TEXT"
-) -> dict[str, Any]:
-    """Return an indexed paragraph element (no bullet)."""
-    from extradoc.indexer import utf16_len
-
-    end = start + utf16_len(text)
-    return {
-        "startIndex": start,
-        "endIndex": end,
-        "paragraph": {
-            "elements": [{"textRun": {"content": text}}],
-            "paragraphStyle": {"namedStyleType": named_style},
-        },
-    }
-
-
-def make_indexed_terminal(start: int) -> dict[str, Any]:
-    return make_indexed_para("\n", start)
+    return StructuralElement(
+        start_index=start,
+        end_index=end,
+        paragraph=Paragraph(
+            elements=[ParagraphElement(text_run=TextRun(content=text))],
+            bullet=bullet,
+            paragraph_style=ParagraphStyle(
+                named_style_type="NORMAL_TEXT",
+                indent_first_line=Dimension(magnitude=il, unit="PT"),
+                indent_start=Dimension(magnitude=is_, unit="PT"),
+            ),
+        ),
+    )
 
 
 def make_doc_with_lists(
     tab_id: str,
-    body_content: list[dict[str, Any]],
-    lists: dict[str, Any],
-) -> dict[str, Any]:
-    """Build a document dict with explicit body content and lists."""
+    body_content: list[StructuralElement],
+    lists: dict[str, DocList],
+) -> Any:
+    """Build a document with explicit body content and lists."""
     return make_document(
         tabs=[
             make_tab(
@@ -164,24 +161,24 @@ def make_doc_with_lists(
 # ---------------------------------------------------------------------------
 
 
-def _get_insert_text_requests(reqs: list[dict[str, Any]]) -> list[dict[str, Any]]:
-    return [r for r in reqs if "insertText" in r]
+def _get_insert_text_requests(reqs: list[Request]) -> list[Request]:
+    return [r for r in reqs if r.insert_text is not None]
 
 
-def _get_create_bullets_requests(reqs: list[dict[str, Any]]) -> list[dict[str, Any]]:
-    return [r for r in reqs if "createParagraphBullets" in r]
+def _get_create_bullets_requests(reqs: list[Request]) -> list[Request]:
+    return [r for r in reqs if r.create_paragraph_bullets is not None]
 
 
-def _get_delete_bullets_requests(reqs: list[dict[str, Any]]) -> list[dict[str, Any]]:
-    return [r for r in reqs if "deleteParagraphBullets" in r]
+def _get_delete_bullets_requests(reqs: list[Request]) -> list[Request]:
+    return [r for r in reqs if r.delete_paragraph_bullets is not None]
 
 
-def _get_update_para_style_requests(reqs: list[dict[str, Any]]) -> list[dict[str, Any]]:
-    return [r for r in reqs if "updateParagraphStyle" in r]
+def _get_update_para_style_requests(reqs: list[Request]) -> list[Request]:
+    return [r for r in reqs if r.update_paragraph_style is not None]
 
 
-def _get_delete_content_requests(reqs: list[dict[str, Any]]) -> list[dict[str, Any]]:
-    return [r for r in reqs if "deleteContentRange" in r]
+def _get_delete_content_requests(reqs: list[Request]) -> list[Request]:
+    return [r for r in reqs if r.delete_content_range is not None]
 
 
 # ===========================================================================
@@ -223,7 +220,7 @@ class TestInsertBulletParagraph:
         assert len(bullet_reqs) == 1, "Should have exactly one createParagraphBullets"
 
         # Verify the preset is correct
-        preset = bullet_reqs[0]["createParagraphBullets"]["bulletPreset"]
+        preset = bullet_reqs[0].create_paragraph_bullets.bullet_preset
         assert preset == "BULLET_DISC_CIRCLE_SQUARE"
 
     def test_add_bullet_nested_level_1(self) -> None:
@@ -256,13 +253,13 @@ class TestInsertBulletParagraph:
         assert len(bullet_reqs) == 1, "Should have exactly one createParagraphBullets"
 
         # One of the insertText requests should have a leading tab
-        texts_inserted = [r["insertText"]["text"] for r in insert_reqs]
-        assert any(
-            t.startswith("\t") for t in texts_inserted
-        ), f"Expected leading tab in one of: {texts_inserted}"
+        texts_inserted = [r.insert_text.text for r in insert_reqs]
+        assert any(t.startswith("\t") for t in texts_inserted), (
+            f"Expected leading tab in one of: {texts_inserted}"
+        )
 
     def test_add_bullet_nested_level_2(self) -> None:
-        """Desired has bullet paragraph at nesting_level=2 → two leading tabs."""
+        """Desired has bullet paragraph at nesting_level=2 -> two leading tabs."""
         base = make_document(
             tabs=[
                 make_tab(
@@ -286,10 +283,10 @@ class TestInsertBulletParagraph:
         bullet_reqs = _get_create_bullets_requests(reqs)
 
         assert len(bullet_reqs) == 1
-        texts_inserted = [r["insertText"]["text"] for r in insert_reqs]
-        assert any(
-            t.startswith("\t\t") for t in texts_inserted
-        ), f"Expected two leading tabs in one of: {texts_inserted}"
+        texts_inserted = [r.insert_text.text for r in insert_reqs]
+        assert any(t.startswith("\t\t") for t in texts_inserted), (
+            f"Expected two leading tabs in one of: {texts_inserted}"
+        )
 
     def test_bullet_list_multiple_items(self) -> None:
         """Desired has 3 bullet items. Assert correct number of createParagraphBullets."""
@@ -345,7 +342,7 @@ class TestInsertBulletParagraph:
 
         bullet_reqs = _get_create_bullets_requests(reqs)
         assert len(bullet_reqs) == 1
-        preset = bullet_reqs[0]["createParagraphBullets"]["bulletPreset"]
+        preset = bullet_reqs[0].create_paragraph_bullets.bullet_preset
         assert preset == "NUMBERED_DECIMAL_NESTED"
 
 
@@ -415,15 +412,18 @@ class TestMatchedParagraphBulletChanges:
         reqs = reconcile(base, desired)
 
         delete_bullet_reqs = _get_delete_bullets_requests(reqs)
-        assert (
-            len(delete_bullet_reqs) == 1
-        ), f"Expected deleteParagraphBullets, got: {reqs}"
+        assert len(delete_bullet_reqs) == 1, (
+            f"Expected deleteParagraphBullets, got: {reqs}"
+        )
 
         # Should also clear indentation
         para_style_reqs = _get_update_para_style_requests(reqs)
         assert any(
-            "indentStart" in r["updateParagraphStyle"]["fields"]
-            or "indentFirstLine" in r["updateParagraphStyle"]["fields"]
+            r.update_paragraph_style.fields is not None
+            and (
+                "indentStart" in r.update_paragraph_style.fields
+                or "indentFirstLine" in r.update_paragraph_style.fields
+            )
             for r in para_style_reqs
         ), f"Expected indent clear in updateParagraphStyle, got: {para_style_reqs}"
 
@@ -454,12 +454,12 @@ class TestMatchedParagraphBulletChanges:
         delete_bullet_reqs = _get_delete_bullets_requests(reqs)
         create_bullet_reqs = _get_create_bullets_requests(reqs)
 
-        assert (
-            len(delete_bullet_reqs) == 1
-        ), f"Expected deleteParagraphBullets, got: {reqs}"
-        assert (
-            len(create_bullet_reqs) == 1
-        ), f"Expected createParagraphBullets, got: {reqs}"
+        assert len(delete_bullet_reqs) == 1, (
+            f"Expected deleteParagraphBullets, got: {reqs}"
+        )
+        assert len(create_bullet_reqs) == 1, (
+            f"Expected createParagraphBullets, got: {reqs}"
+        )
 
 
 # ===========================================================================
@@ -512,7 +512,7 @@ class TestNoOpBullet:
     """Identical bullet paragraphs produce no requests."""
 
     def test_no_op_bullet(self) -> None:
-        """Identical bullet paragraph in base and desired → no requests."""
+        """Identical bullet paragraph in base and desired -> no requests."""
         base = make_doc_with_lists(
             "t1",
             body_content=[
@@ -533,9 +533,9 @@ class TestNoOpBullet:
 
         reqs = reconcile(base, desired)
 
-        assert (
-            reqs == []
-        ), f"Expected no requests for identical bullet docs, got: {reqs}"
+        assert reqs == [], (
+            f"Expected no requests for identical bullet docs, got: {reqs}"
+        )
 
 
 # ===========================================================================
@@ -549,7 +549,7 @@ class TestBulletTextEdit:
     def test_bullet_text_edit(self) -> None:
         """Matched bullet paragraph, same bullet, different text.
 
-        Assert: text diff requests only (no bullet requests — bullet unchanged).
+        Assert: text diff requests only (no bullet requests -- bullet unchanged).
         """
         base = make_doc_with_lists(
             "t1",
@@ -570,20 +570,20 @@ class TestBulletTextEdit:
 
         reqs = reconcile(base, desired)
 
-        # Should NOT have createParagraphBullets — bullet is unchanged
-        assert (
-            _get_create_bullets_requests(reqs) == []
-        ), f"Expected no createParagraphBullets for same-bullet text edit, got: {reqs}"
+        # Should NOT have createParagraphBullets -- bullet is unchanged
+        assert _get_create_bullets_requests(reqs) == [], (
+            f"Expected no createParagraphBullets for same-bullet text edit, got: {reqs}"
+        )
         # Should NOT have deleteParagraphBullets
-        assert (
-            _get_delete_bullets_requests(reqs) == []
-        ), f"Expected no deleteParagraphBullets, got: {reqs}"
+        assert _get_delete_bullets_requests(reqs) == [], (
+            f"Expected no deleteParagraphBullets, got: {reqs}"
+        )
         # Should have some text modification request
         assert len(reqs) > 0, "Should have at least one request for text change"
 
 
 # ===========================================================================
-# Test 6: _diff_lists fix — no UpdateListOp
+# Test 6: _diff_lists fix -- no UpdateListOp
 # ===========================================================================
 
 
@@ -600,25 +600,29 @@ class TestDiffListsNoUpdateListOp:
             "t1",
             body_content=[make_indexed_terminal(1)],
             lists={
-                "list1": {"listProperties": {"nestingLevels": [{"glyphSymbol": "●"}]}}
+                "list1": DocList(
+                    list_properties=ListProperties(
+                        nesting_levels=[NestingLevel(glyph_symbol="\u25cf")]
+                    )
+                )
             },
         )
         desired = make_doc_with_lists(
             "t1",
             body_content=[make_terminal_para()],
             lists={
-                "list1": {
-                    "listProperties": {
-                        "nestingLevels": [
-                            {
-                                "glyphSymbol": "●",
-                                "bulletAlignment": "START",
-                                "indentFirstLine": {"magnitude": 18, "unit": "PT"},
-                                "indentStart": {"magnitude": 36, "unit": "PT"},
-                            }
+                "list1": DocList(
+                    list_properties=ListProperties(
+                        nesting_levels=[
+                            NestingLevel(
+                                glyph_symbol="\u25cf",
+                                bullet_alignment="START",
+                                indent_first_line=Dimension(magnitude=18, unit="PT"),
+                                indent_start=Dimension(magnitude=36, unit="PT"),
+                            )
                         ]
-                    }
-                }
+                    )
+                )
             },
         )
 
@@ -626,9 +630,9 @@ class TestDiffListsNoUpdateListOp:
         # With the fix, it should return empty ops (no list change to lower).
         ops = diff(base, desired)
         update_list_ops = [op for op in ops if isinstance(op, UpdateListOp)]
-        assert (
-            update_list_ops == []
-        ), f"Expected no UpdateListOp, got: {update_list_ops}"
+        assert update_list_ops == [], (
+            f"Expected no UpdateListOp, got: {update_list_ops}"
+        )
 
         # Should not raise
         reqs = reconcile(base, desired)
@@ -681,15 +685,17 @@ class TestBulletPresetInference:
     """_infer_bullet_preset correctly maps list defs to preset strings."""
 
     def test_disc_bullet_preset(self) -> None:
-        """glyphSymbol '●' → BULLET_DISC_CIRCLE_SQUARE."""
+        """glyphSymbol '\u25cf' -> BULLET_DISC_CIRCLE_SQUARE."""
         from extradoc.reconcile_v3.lower import _infer_bullet_preset
 
         bullet = {"listId": "list1"}
-        lists = {"list1": {"listProperties": {"nestingLevels": [{"glyphSymbol": "●"}]}}}
+        lists = {
+            "list1": {"listProperties": {"nestingLevels": [{"glyphSymbol": "\u25cf"}]}}
+        }
         assert _infer_bullet_preset(bullet, lists) == "BULLET_DISC_CIRCLE_SQUARE"
 
     def test_decimal_numbered_preset(self) -> None:
-        """glyphType 'DECIMAL' → NUMBERED_DECIMAL_NESTED."""
+        """glyphType 'DECIMAL' -> NUMBERED_DECIMAL_NESTED."""
         from extradoc.reconcile_v3.lower import _infer_bullet_preset
 
         bullet = {"listId": "list1"}
@@ -699,7 +705,7 @@ class TestBulletPresetInference:
         assert _infer_bullet_preset(bullet, lists) == "NUMBERED_DECIMAL_NESTED"
 
     def test_checkbox_preset(self) -> None:
-        """glyphType 'GLYPH_TYPE_UNSPECIFIED' → BULLET_CHECKBOX."""
+        """glyphType 'GLYPH_TYPE_UNSPECIFIED' -> BULLET_CHECKBOX."""
         from extradoc.reconcile_v3.lower import _infer_bullet_preset
 
         bullet = {"listId": "list1"}
@@ -713,14 +719,14 @@ class TestBulletPresetInference:
         assert _infer_bullet_preset(bullet, lists) == "BULLET_CHECKBOX"
 
     def test_missing_list_falls_back_to_disc(self) -> None:
-        """Missing list_id → BULLET_DISC_CIRCLE_SQUARE fallback."""
+        """Missing list_id -> BULLET_DISC_CIRCLE_SQUARE fallback."""
         from extradoc.reconcile_v3.lower import _infer_bullet_preset
 
         bullet = {"listId": "missing_list"}
         assert _infer_bullet_preset(bullet, {}) == "BULLET_DISC_CIRCLE_SQUARE"
 
     def test_empty_lists_falls_back_to_disc(self) -> None:
-        """No lists dict → BULLET_DISC_CIRCLE_SQUARE fallback."""
+        """No lists dict -> BULLET_DISC_CIRCLE_SQUARE fallback."""
         from extradoc.reconcile_v3.lower import _infer_bullet_preset
 
         bullet = {"listId": "list1"}

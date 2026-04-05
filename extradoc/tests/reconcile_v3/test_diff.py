@@ -18,6 +18,13 @@ from __future__ import annotations
 import copy
 from typing import Any
 
+from extradoc.api_types._generated import (
+    Dimension,
+    Document,
+    Size,
+    Tab,
+    TabProperties,
+)
 from extradoc.reconcile_v3.api import diff
 from extradoc.reconcile_v3.model import (
     CreateFooterOp,
@@ -130,16 +137,16 @@ class TestTabMatching:
 
     def test_positional_fallback_no_ids(self) -> None:
         """Documents with empty tabIds fall back to positional matching."""
-        base_tab: dict[str, Any] = {
-            "tabProperties": {"tabId": "", "title": "Tab 1", "index": 0},
-            "documentTab": make_doc_tab(),
-        }
-        desired_tab: dict[str, Any] = {
-            "tabProperties": {"tabId": "", "title": "Tab 1", "index": 0},
-            "documentTab": make_doc_tab(),
-        }
-        base = {"documentId": "doc1", "tabs": [base_tab]}
-        desired = {"documentId": "doc1", "tabs": [desired_tab]}
+        base_tab = Tab(
+            tab_properties=TabProperties(tab_id="", title="Tab 1", index=0),
+            document_tab=make_doc_tab(),
+        )
+        desired_tab = Tab(
+            tab_properties=TabProperties(tab_id="", title="Tab 1", index=0),
+            document_tab=make_doc_tab(),
+        )
+        base = Document(document_id="doc1", tabs=[base_tab])
+        desired = Document(document_id="doc1", tabs=[desired_tab])
         ops = diff(base, desired)
         assert ops == []
 
@@ -355,7 +362,7 @@ class TestNamedStyles:
 
 
 class TestLists:
-    def _list_def(self, kind: str = "BULLETED") -> dict[str, Any]:
+    def _list_def(self, kind: str = "DECIMAL") -> dict[str, Any]:
         return {
             "listProperties": {
                 "nestingLevels": [
@@ -402,15 +409,15 @@ class TestLists:
         base and desired (same listId), any difference is silently ignored.
         createParagraphBullets handles list setup implicitly.
         """
-        base_def = self._list_def("BULLETED")
-        desired_def = self._list_def("NUMBERED")
+        base_def = self._list_def("DECIMAL")
+        desired_def = self._list_def("UPPER_ALPHA")
         base = make_document(tabs=[make_tab("t1", lists={"list1": base_def})])
         desired = make_document(tabs=[make_tab("t1", lists={"list1": desired_def})])
         ops = diff(base, desired)
         update_ops = [op for op in ops if isinstance(op, UpdateListOp)]
-        assert (
-            len(update_ops) == 0
-        ), "Expected no UpdateListOp — list defs cannot be edited via API"
+        assert len(update_ops) == 0, (
+            "Expected no UpdateListOp — list defs cannot be edited via API"
+        )
 
 
 # ===========================================================================
@@ -837,7 +844,7 @@ class TestEndToEnd:
         f1_base = make_footer("f1", "Base footer")
         fn1_base = make_footnote("fn1", "Footnote one")
         fn2_base = make_footnote("fn2", "Footnote two")
-        list_def = {"listProperties": {"nestingLevels": [{"glyphType": "BULLETED"}]}}
+        list_def = {"listProperties": {"nestingLevels": [{"glyphType": "DECIMAL"}]}}
         ns_normal = make_named_style("NORMAL_TEXT")
         ns_h1 = make_named_style("HEADING_1", bold=True)
 
@@ -1294,7 +1301,7 @@ class TestTableStyleDiff:
         assert len(row_style_ops) == 1
         op = row_style_ops[0]
         assert op.row_index == 0
-        assert op.min_row_height == {"magnitude": 20.0, "unit": "PT"}
+        assert op.min_row_height == Dimension(magnitude=20.0, unit="PT")
 
     def test_column_width_changed(self) -> None:
         """Changing column width emits UpdateTableColumnPropertiesOp."""
@@ -1329,7 +1336,7 @@ class TestTableStyleDiff:
         assert len(col_ops) == 1
         op = col_ops[0]
         assert op.column_index == 0
-        assert op.width == {"magnitude": 200.0, "unit": "PT"}
+        assert op.width == Dimension(magnitude=200.0, unit="PT")
 
     def test_multiple_cells_with_different_styles(self) -> None:
         """Multiple cells with changed styles produce one op per changed cell."""
@@ -1547,10 +1554,10 @@ class TestInlineImageDiff:
         op = insert_ops[0]
         assert op.inline_object_id == obj_id
         assert op.content_uri == content_uri
-        assert op.object_size == {
-            "width": {"magnitude": 100, "unit": "PT"},
-            "height": {"magnitude": 80, "unit": "PT"},
-        }
+        assert op.object_size == Size(
+            width=Dimension(magnitude=100, unit="PT"),
+            height=Dimension(magnitude=80, unit="PT"),
+        )
 
     def test_image_removed_from_paragraph(self) -> None:
         """Base paragraph has an inlineObjectElement absent in desired → DeleteInlineObjectOp.

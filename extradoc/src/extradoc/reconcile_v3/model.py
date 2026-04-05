@@ -19,6 +19,17 @@ from dataclasses import dataclass, field
 from typing import TYPE_CHECKING, Any
 
 if TYPE_CHECKING:
+    from extradoc.api_types._generated import (
+        Dimension,
+        InlineObject,
+        List,
+        NamedStyle,
+        Size,
+        StructuralElement,
+        Tab,
+    )
+
+if TYPE_CHECKING:
     from extradoc.reconcile_v3.content_align import ContentAlignment
 
 # ---------------------------------------------------------------------------
@@ -31,7 +42,7 @@ class InsertTabOp:
     """Insert a new tab at the given position."""
 
     desired_tab_index: int
-    desired_tab: dict[str, Any]
+    desired_tab: Tab
 
 
 @dataclass
@@ -75,8 +86,8 @@ class UpdateNamedStyleOp:
 
     tab_id: str
     named_style_type: str
-    base_style: dict[str, Any]
-    desired_style: dict[str, Any]
+    base_style: NamedStyle
+    desired_style: NamedStyle
 
 
 @dataclass
@@ -85,7 +96,7 @@ class InsertNamedStyleOp:
 
     tab_id: str
     named_style_type: str
-    desired_style: dict[str, Any]
+    desired_style: NamedStyle
 
 
 @dataclass
@@ -94,7 +105,7 @@ class DeleteNamedStyleOp:
 
     tab_id: str
     named_style_type: str
-    base_style: dict[str, Any]
+    base_style: NamedStyle
 
 
 # ---------------------------------------------------------------------------
@@ -108,7 +119,7 @@ class InsertListOp:
 
     tab_id: str
     list_id: str
-    list_def: dict[str, Any]
+    list_def: List
 
 
 @dataclass
@@ -117,7 +128,7 @@ class DeleteListOp:
 
     tab_id: str
     list_id: str
-    base_list_def: dict[str, Any]
+    base_list_def: List
 
 
 @dataclass
@@ -129,8 +140,8 @@ class UpdateListOp:
 
     tab_id: str
     list_id: str
-    base_list_def: dict[str, Any]
-    desired_list_def: dict[str, Any]
+    base_list_def: List
+    desired_list_def: List
 
 
 # ---------------------------------------------------------------------------
@@ -147,8 +158,8 @@ class UpdateInlineObjectOp:
 
     tab_id: str
     inline_object_id: str
-    base_obj: dict[str, Any]
-    desired_obj: dict[str, Any]
+    base_obj: InlineObject
+    desired_obj: InlineObject
 
 
 @dataclass
@@ -182,7 +193,7 @@ class InsertInlineObjectOp:
     inline_object_id: str
     content_uri: str
     insert_index: int
-    object_size: dict[str, Any] | None = None
+    object_size: Size | None = None
 
 
 @dataclass
@@ -223,7 +234,7 @@ class CreateHeaderOp:
     tab_id: str
     section_slot: str  # e.g. "DEFAULT", "FIRST_PAGE", "EVEN_PAGE"
     desired_header_id: str
-    desired_content: list[dict[str, Any]]
+    desired_content: list[StructuralElement]
 
 
 @dataclass
@@ -243,8 +254,8 @@ class UpdateHeaderContentOp:
     section_slot: str
     header_id: str
     alignment: ContentAlignment
-    base_content: list[dict[str, Any]]
-    desired_content: list[dict[str, Any]]
+    base_content: list[StructuralElement]
+    desired_content: list[StructuralElement]
 
 
 @dataclass
@@ -254,7 +265,7 @@ class CreateFooterOp:
     tab_id: str
     section_slot: str
     desired_footer_id: str
-    desired_content: list[dict[str, Any]]
+    desired_content: list[StructuralElement]
 
 
 @dataclass
@@ -274,8 +285,8 @@ class UpdateFooterContentOp:
     section_slot: str
     footer_id: str
     alignment: ContentAlignment
-    base_content: list[dict[str, Any]]
-    desired_content: list[dict[str, Any]]
+    base_content: list[StructuralElement]
+    desired_content: list[StructuralElement]
 
 
 # ---------------------------------------------------------------------------
@@ -296,7 +307,7 @@ class InsertFootnoteOp:
 
     tab_id: str
     footnote_id: str
-    desired_content: list[dict[str, Any]]
+    desired_content: list[StructuralElement]
     anchor_index: int = -1
 
 
@@ -321,8 +332,8 @@ class UpdateFootnoteContentOp:
     tab_id: str
     footnote_id: str
     alignment: ContentAlignment
-    base_content: list[dict[str, Any]]
-    desired_content: list[dict[str, Any]]
+    base_content: list[StructuralElement]
+    desired_content: list[StructuralElement]
 
 
 # ---------------------------------------------------------------------------
@@ -393,7 +404,7 @@ class UpdateTableRowStyleOp:
     tab_id: str
     table_start_index: int
     row_index: int
-    min_row_height: dict[str, Any] | None  # Dimension dict or None
+    min_row_height: Dimension | None  # Dimension or None
 
 
 @dataclass
@@ -403,7 +414,7 @@ class UpdateTableColumnPropertiesOp:
     tab_id: str
     table_start_index: int
     column_index: int
-    width: dict[str, Any] | None  # Dimension dict or None
+    width: Dimension | None  # Dimension or None
     width_type: str | None  # "EVENLY_DISTRIBUTED" | "FIXED_WIDTH" | None
 
 
@@ -420,8 +431,8 @@ class UpdateBodyContentOp:
     story_kind: str  # "body" | "header" | "footer" | "footnote" | "table_cell"
     story_id: str  # for scoping; e.g. header_id, footnote_id, "r{r}:c{c}"
     alignment: ContentAlignment
-    base_content: list[dict[str, Any]]
-    desired_content: list[dict[str, Any]]
+    base_content: list[StructuralElement]
+    desired_content: list[StructuralElement]
     child_ops: list[Any] = field(default_factory=list)
 
 

@@ -3,7 +3,9 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
-from typing import TYPE_CHECKING, Any, Protocol, cast
+from typing import TYPE_CHECKING, Any, Protocol
+
+from extradoc.api_types._generated import BatchUpdateDocumentRequest, WriteControl
 
 if TYPE_CHECKING:
     from collections.abc import Sequence
@@ -13,8 +15,7 @@ class BatchUpdateTransport(Protocol):
     async def batch_update(
         self,
         document_id: str,
-        requests: list[dict[str, Any]],
-        write_control: dict[str, Any] | None = None,
+        batch: BatchUpdateDocumentRequest,
     ) -> dict[str, Any]: ...
 
 
@@ -26,9 +27,14 @@ class BatchExecutionResult:
 
 def resolve_deferred_placeholders(
     prior_responses: Sequence[dict[str, Any]],
-    batch: list[dict[str, Any]],
-) -> list[dict[str, Any]]:
-    """Resolve DeferredID-style placeholder dicts inside raw request payloads."""
+    batch: BatchUpdateDocumentRequest,
+) -> BatchUpdateDocumentRequest:
+    """Resolve DeferredID-style placeholder dicts inside a typed batch request.
+
+    Strategy: serialize the batch to a dict via model_dump, walk the dict to
+    resolve placeholder dicts (which is how DeferredID dataclasses serialize),
+    then validate back into a BatchUpdateDocumentRequest.
+    """
 
     def extract_path(data: Any, path: str) -> str:
         current = data
@@ -77,28 +83,31 @@ def resolve_deferred_placeholders(
             return [resolve(item) for item in value]
         return value
 
-    return cast(list[dict[str, Any]], resolve(batch))
+    # Serialize to dict, resolve placeholders, validate back
+    raw = batch.model_dump(by_alias=True, mode="python")
+    resolved_raw = resolve(raw)
+    return BatchUpdateDocumentRequest.model_validate(resolved_raw)
 
 
 async def execute_request_batches(
     transport: BatchUpdateTransport,
     *,
     document_id: str,
-    request_batches: Sequence[list[dict[str, Any]]],
+    request_batches: Sequence[BatchUpdateDocumentRequest],
     initial_revision_id: str | None,
 ) -> BatchExecutionResult:
     """Execute request batches, carrying forward returned requiredRevisionId."""
     revision_id = initial_revision_id
     responses: list[dict[str, Any]] = []
     for batch in request_batches:
-        requests = resolve_deferred_placeholders(responses, list(batch))
-        write_control = None
+        resolved = resolve_deferred_placeholders(responses, batch)
         if revision_id is not None:
-            write_control = {"requiredRevisionId": revision_id}
+            resolved.write_control = WriteControl(
+                required_revision_id=revision_id,
+            )
         response = await transport.batch_update(
             document_id,
-            list(requests),
-            write_control=write_control,
+            resolved,
         )
         responses.append(response)
         revision_id = _next_required_revision_id(response, revision_id)

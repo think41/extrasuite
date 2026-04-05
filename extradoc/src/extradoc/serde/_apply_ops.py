@@ -213,12 +213,15 @@ def _apply_update_named_style(doc: dict[str, Any], op: Any) -> None:
     else:
         desired_style = op.desired_style  # InsertNamedStyleOp
 
+    # Convert typed model to dict for the raw dict document tree
+    desired_dict = desired_style.model_dump(by_alias=True, exclude_none=True)
+
     style_type = op.named_style_type
     for i, s in enumerate(styles):
         if s.get("namedStyleType") == style_type:
-            styles[i] = copy.deepcopy(desired_style)
+            styles[i] = copy.deepcopy(desired_dict)
             return
-    styles.append(copy.deepcopy(desired_style))
+    styles.append(copy.deepcopy(desired_dict))
 
 
 def _apply_delete_named_style(doc: dict[str, Any], op: Any) -> None:

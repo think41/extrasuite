@@ -19,6 +19,29 @@ from typing import Any, ClassVar
 
 import pytest
 
+from extradoc.api_types._generated import (
+    BatchUpdateDocumentRequest,
+    DeferredID,
+    Dimension,
+    Document,
+    Footnote,
+    FootnoteReference,
+    InlineObject,
+    InlineObjectElement,
+    PageBreak,
+    Paragraph,
+    ParagraphElement,
+    ParagraphStyle,
+    SectionBreak,
+    SectionStyle,
+    Size,
+    StructuralElement,
+    Table,
+    TableCell,
+    TableRow,
+    TextRun,
+    TextStyle,
+)
 from extradoc.reconcile_v3.api import diff, reconcile, reconcile_batches
 from extradoc.reconcile_v3.lower import lower_batches, lower_ops
 from extradoc.reconcile_v3.model import (
@@ -48,6 +71,9 @@ from tests.reconcile_v3.helpers import (
     make_footer,
     make_footnote,
     make_header,
+    make_indexed_doc,
+    make_indexed_para,
+    make_indexed_terminal,
     make_named_style,
     make_para_el,
     make_tab,
@@ -61,66 +87,15 @@ from tests.reconcile_v3.helpers import (
 # ---------------------------------------------------------------------------
 
 
-def make_indexed_para(
-    text: str,
-    start: int,
-    named_style: str = "NORMAL_TEXT",
-) -> dict[str, Any]:
-    """Return a paragraph content element with Google Docs API index fields."""
-    from extradoc.indexer import utf16_len
-
-    end = start + utf16_len(text)
-    return {
-        "startIndex": start,
-        "endIndex": end,
-        "paragraph": {
-            "elements": [{"textRun": {"content": text}}],
-            "paragraphStyle": {"namedStyleType": named_style},
-        },
-    }
-
-
-def make_indexed_terminal(start: int) -> dict[str, Any]:
-    """Return a terminal paragraph element (bare '\\n') with index fields."""
-    return make_indexed_para("\n", start)
-
-
-def make_indexed_body(*paragraphs: tuple[str, int]) -> list[dict[str, Any]]:
+def make_indexed_body(*paragraphs: tuple[str, int]) -> list[StructuralElement]:
     """Build an indexed body from (text, start_index) tuples.
 
     The last entry is always the terminal.
     """
-    content: list[dict[str, Any]] = []
+    content: list[StructuralElement] = []
     for text, start in paragraphs:
         content.append(make_indexed_para(text, start))
     return content
-
-
-def make_indexed_doc(
-    tab_id: str = "t1",
-    body_content: list[dict[str, Any]] | None = None,
-    headers: dict[str, Any] | None = None,
-    footers: dict[str, Any] | None = None,
-    footnotes: dict[str, Any] | None = None,
-    document_style: dict[str, Any] | None = None,
-    named_styles: list[dict[str, Any]] | None = None,
-) -> dict[str, Any]:
-    """Build a minimal indexed document for lowering tests."""
-    if body_content is None:
-        body_content = [make_indexed_terminal(1)]
-    return make_document(
-        tabs=[
-            make_tab(
-                tab_id,
-                body_content=body_content,
-                headers=headers,
-                footers=footers,
-                footnotes=footnotes,
-                document_style=document_style,
-                named_styles=named_styles,
-            )
-        ]
-    )
 
 
 # ===========================================================================
@@ -146,12 +121,14 @@ class TestSimpleContentOps:
         assert any(isinstance(op, UpdateBodyContentOp) for op in ops)
 
         requests = lower_ops(ops)
-        delete_reqs = [r for r in requests if "deleteContentRange" in r]
+        delete_reqs = [r for r in requests if r.delete_content_range is not None]
         assert len(delete_reqs) == 1
 
-        dcr = delete_reqs[0]["deleteContentRange"]["range"]
-        assert dcr["startIndex"] == 1
-        assert dcr["endIndex"] == 7  # "Hello\n" is 6 chars → end=7
+        dcr = delete_reqs[0].delete_content_range
+        assert dcr is not None
+        assert dcr.range is not None
+        assert dcr.range.start_index == 1
+        assert dcr.range.end_index == 7  # "Hello\n" is 6 chars → end=7
 
     def test_insert_paragraph_produces_insert_text(self) -> None:
         """Inserting a paragraph emits insertText at the correct position."""
@@ -167,12 +144,13 @@ class TestSimpleContentOps:
         assert any(isinstance(op, UpdateBodyContentOp) for op in ops)
 
         requests = lower_ops(ops)
-        insert_reqs = [r for r in requests if "insertText" in r]
+        insert_reqs = [r for r in requests if r.insert_text is not None]
         assert len(insert_reqs) >= 1
         # Should insert before the terminal at index 1
-        it = insert_reqs[0]["insertText"]
-        assert "location" in it
-        assert it["location"]["index"] == 1
+        it = insert_reqs[0].insert_text
+        assert it is not None
+        assert it.location is not None
+        assert it.location.index == 1
 
     def test_no_requests_for_identical_documents(self) -> None:
         """Identical documents produce zero requests."""
@@ -205,8 +183,8 @@ class TestSimpleContentOps:
         ops = diff(base, desired)
         requests = lower_ops(ops)
 
-        delete_reqs = [r for r in requests if "deleteContentRange" in r]
-        insert_reqs = [r for r in requests if "insertText" in r]
+        delete_reqs = [r for r in requests if r.delete_content_range is not None]
+        insert_reqs = [r for r in requests if r.insert_text is not None]
 
         # Should have a delete for the old text and an insert for new text
         assert len(delete_reqs) >= 1
@@ -226,10 +204,12 @@ class TestSimpleContentOps:
         )
 
         requests = lower_ops(diff(base, desired))
-        delete_reqs = [r for r in requests if "deleteContentRange" in r]
+        delete_reqs = [r for r in requests if r.delete_content_range is not None]
         assert len(delete_reqs) >= 1
-        dcr = delete_reqs[0]["deleteContentRange"]["range"]
-        assert dcr.get("tabId") == "myTab"
+        dcr = delete_reqs[0].delete_content_range
+        assert dcr is not None
+        assert dcr.range is not None
+        assert dcr.range.tab_id == "myTab"
 
     def test_delete_in_reverse_order_for_multiple_deletes(self) -> None:
         """Multiple deletes are ordered highest-index-first to avoid index shift."""
@@ -244,11 +224,14 @@ class TestSimpleContentOps:
         desired = make_indexed_doc(body_content=[make_indexed_terminal(1)])
 
         requests = lower_ops(diff(base, desired))
-        delete_reqs = [r for r in requests if "deleteContentRange" in r]
+        delete_reqs = [r for r in requests if r.delete_content_range is not None]
         assert len(delete_reqs) == 2
 
         # Deletes should be in descending startIndex order (para2 before para1)
-        starts = [r["deleteContentRange"]["range"]["startIndex"] for r in delete_reqs]
+        starts = [
+            r.delete_content_range.range.start_index  # type: ignore[union-attr]
+            for r in delete_reqs
+        ]
         assert starts == sorted(starts, reverse=True)
 
     def test_elements_without_indices_are_skipped_not_crashed(self) -> None:
@@ -280,6 +263,11 @@ class TestSimpleContentOps:
 # ===========================================================================
 
 
+def _get_batch_requests(batch: BatchUpdateDocumentRequest) -> list[Any]:
+    """Extract the requests list from a BatchUpdateDocumentRequest."""
+    return batch.requests or []
+
+
 class TestStructuralCreationMultiBatch:
     """Header/footer creation uses deferred IDs across batches."""
 
@@ -297,27 +285,28 @@ class TestStructuralCreationMultiBatch:
 
         assert len(batches) == 2, f"Expected 2 batches, got {len(batches)}: {batches}"
 
-        batch0 = batches[0]
-        batch1 = batches[1]
+        batch0 = _get_batch_requests(batches[0])
+        batch1 = _get_batch_requests(batches[1])
 
         # Batch 0 must contain createHeader
-        create_header_reqs = [r for r in batch0 if "createHeader" in r]
+        create_header_reqs = [r for r in batch0 if r.create_header is not None]
         assert len(create_header_reqs) == 1
-        ch = create_header_reqs[0]["createHeader"]
-        assert ch["type"] == "DEFAULT"
+        ch = create_header_reqs[0].create_header
+        assert ch is not None
+        assert ch.type == "DEFAULT"
 
         # Batch 1 must contain updateSectionStyle with deferred ID
-        section_style_reqs = [r for r in batch1 if "updateSectionStyle" in r]
+        section_style_reqs = [r for r in batch1 if r.update_section_style is not None]
         assert len(section_style_reqs) >= 1
-        us = section_style_reqs[0]["updateSectionStyle"]
-        assert "sectionStyle" in us
-        # The ID is a deferred placeholder dict (not yet resolved)
-        deferred = us["sectionStyle"].get("defaultHeaderId")
+        us = section_style_reqs[0].update_section_style
+        assert us is not None
+        assert us.section_style is not None
+        # The ID is a deferred placeholder (DeferredID)
+        deferred = us.section_style.default_header_id
         assert deferred is not None
-        assert isinstance(deferred, dict)
-        assert deferred.get("placeholder") is True
-        assert deferred.get("batch_index") == 0
-        assert "response_path" in deferred
+        assert isinstance(deferred, DeferredID)
+        assert deferred.batch_index == 0
+        assert deferred.response_path is not None
 
     def test_create_header_deferred_placeholder_is_resolvable(self) -> None:
         """Deferred placeholder references correct batch/request index."""
@@ -331,18 +320,30 @@ class TestStructuralCreationMultiBatch:
         assert len(batches) == 2
 
         # Find the deferred ID in batch 1
-        batch1 = batches[1]
+        batch0 = _get_batch_requests(batches[0])
+        batch1 = _get_batch_requests(batches[1])
         for req in batch1:
-            if "updateSectionStyle" in req:
-                ss = req["updateSectionStyle"]["sectionStyle"]
-                for _field, val in ss.items():
-                    if isinstance(val, dict) and val.get("placeholder"):
+            if req.update_section_style is not None:
+                ss = req.update_section_style.section_style
+                if ss is None:
+                    continue
+                # Check all fields that could be DeferredIDs
+                for field_name in [
+                    "default_header_id",
+                    "default_footer_id",
+                    "even_page_header_id",
+                    "even_page_footer_id",
+                    "first_page_header_id",
+                    "first_page_footer_id",
+                ]:
+                    val = getattr(ss, field_name, None)
+                    if isinstance(val, DeferredID):
                         # Must reference batch_index=0
-                        assert val["batch_index"] == 0
+                        assert val.batch_index == 0
                         # request_index must be valid in batch0
-                        assert val["request_index"] < len(batches[0])
+                        assert val.request_index < len(batch0)
                         # response_path must mention headerId
-                        assert "headerId" in val["response_path"]
+                        assert "headerId" in val.response_path
 
     def test_delete_header_emits_delete_header_request(self) -> None:
         """Deleting a header emits deleteHeader in the content batch."""
@@ -357,12 +358,12 @@ class TestStructuralCreationMultiBatch:
         assert len(delete_ops) == 1
 
         batches = reconcile_batches(base, desired)
-        # Only content batch (no structural creation)
-        all_reqs = [req for batch in batches for req in batch]
-        delete_header_reqs = [r for r in all_reqs if "deleteHeader" in r]
+        all_reqs = [req for batch in batches for req in _get_batch_requests(batch)]
+        delete_header_reqs = [r for r in all_reqs if r.delete_header is not None]
         assert len(delete_header_reqs) == 1
-        dh = delete_header_reqs[0]["deleteHeader"]
-        assert dh["headerId"] == "h1"
+        dh = delete_header_reqs[0].delete_header
+        assert dh is not None
+        assert dh.header_id == "h1"
 
     def test_create_footer_produces_two_batches(self) -> None:
         """Creating a footer: Batch 0 = createFooter, Batch 1 = updateSectionStyle."""
@@ -375,20 +376,22 @@ class TestStructuralCreationMultiBatch:
         batches = reconcile_batches(base, desired)
         assert len(batches) == 2
 
-        batch0 = batches[0]
-        batch1 = batches[1]
+        batch0 = _get_batch_requests(batches[0])
+        batch1 = _get_batch_requests(batches[1])
 
-        create_footer_reqs = [r for r in batch0 if "createFooter" in r]
+        create_footer_reqs = [r for r in batch0 if r.create_footer is not None]
         assert len(create_footer_reqs) == 1
-        cf = create_footer_reqs[0]["createFooter"]
-        assert cf["type"] == "DEFAULT"
+        cf = create_footer_reqs[0].create_footer
+        assert cf is not None
+        assert cf.type == "DEFAULT"
 
-        section_style_reqs = [r for r in batch1 if "updateSectionStyle" in r]
+        section_style_reqs = [r for r in batch1 if r.update_section_style is not None]
         assert len(section_style_reqs) >= 1
-        us = section_style_reqs[0]["updateSectionStyle"]
-        deferred = us["sectionStyle"].get("defaultFooterId")
-        assert isinstance(deferred, dict)
-        assert deferred.get("placeholder") is True
+        us = section_style_reqs[0].update_section_style
+        assert us is not None
+        assert us.section_style is not None
+        deferred = us.section_style.default_footer_id
+        assert isinstance(deferred, DeferredID)
 
 
 # ===========================================================================
@@ -415,10 +418,12 @@ class TestTabOps:
         # Batch 0 should have addDocumentTab
         assert len(batches) >= 1
         batch0 = batches[0]
-        add_tab_reqs = [r for r in batch0 if "addDocumentTab" in r]
+        add_tab_reqs = [r for r in batch0 if r.add_document_tab is not None]
         assert len(add_tab_reqs) == 1
-        at = add_tab_reqs[0]["addDocumentTab"]
-        assert at["tabProperties"]["title"] == "Tab 2"
+        at = add_tab_reqs[0].add_document_tab
+        assert at is not None
+        assert at.tab_properties is not None
+        assert at.tab_properties.title == "Tab 2"
 
     def test_delete_tab_emits_delete_document_tab(self) -> None:
         """DeleteTabOp emits deleteDocumentTab in the content batch."""
@@ -436,10 +441,11 @@ class TestTabOps:
 
         batches = lower_batches(ops)
         all_reqs = [req for batch in batches for req in batch]
-        delete_tab_reqs = [r for r in all_reqs if "deleteDocumentTab" in r]
+        delete_tab_reqs = [r for r in all_reqs if r.delete_tab is not None]
         assert len(delete_tab_reqs) == 1
-        dt = delete_tab_reqs[0]["deleteDocumentTab"]
-        assert dt["tabId"] == "t2"
+        dt = delete_tab_reqs[0].delete_tab
+        assert dt is not None
+        assert dt.tab_id == "t2"
 
     def test_insert_tab_with_body_content_emits_content_in_batch1(self) -> None:
         """InsertTabOp with body content emits insertText in batch 1 with deferred tab ID."""
@@ -463,22 +469,24 @@ class TestTabOps:
         batch0 = batches[0]
         batch1 = batches[1]
 
-        add_tab_reqs = [r for r in batch0 if "addDocumentTab" in r]
+        add_tab_reqs = [r for r in batch0 if r.add_document_tab is not None]
         assert len(add_tab_reqs) == 1
 
-        insert_reqs = [r for r in batch1 if "insertText" in r]
+        insert_reqs = [r for r in batch1 if r.insert_text is not None]
         assert len(insert_reqs) >= 1, f"No insertText in batch1: {batch1}"
 
         # The insertText must be at index 1 with a deferred tab ID placeholder
-        req = insert_reqs[0]["insertText"]
-        loc = req.get("location", {})
-        assert loc.get("index") == 1, f"Expected index=1, got {loc.get('index')!r}"
-        tab_id = loc.get("tabId")
-        assert (
-            isinstance(tab_id, dict) and tab_id.get("placeholder") is True
-        ), f"Expected deferred tab ID placeholder, got {tab_id!r}"
-        assert tab_id.get("response_path") == "addDocumentTab.tabProperties.tabId"
-        assert req.get("text") == "Hello\n"
+        req = insert_reqs[0].insert_text
+        assert req is not None
+        loc = req.location
+        assert loc is not None
+        assert loc.index == 1, f"Expected index=1, got {loc.index!r}"
+        tab_id = loc.tab_id
+        assert isinstance(tab_id, DeferredID), (
+            f"Expected deferred tab ID placeholder, got {tab_id!r}"
+        )
+        assert tab_id.response_path == "addDocumentTab.tabProperties.tabId"
+        assert req.text == "Hello\n"
 
     def test_insert_tab_deferred_tab_id_resolves(self) -> None:
         """Deferred tab ID in InsertTabOp body content resolves via resolve_deferred_placeholders."""
@@ -504,14 +512,17 @@ class TestTabOps:
         fake_response = {
             "replies": [{"addDocumentTab": {"tabProperties": {"tabId": "t2-real"}}}]
         }
-        resolved = resolve_deferred_placeholders([fake_response], batches[1])
+        # Wrap list[Request] in BatchUpdateDocumentRequest for resolver
+        batch1_wrapped = BatchUpdateDocumentRequest(requests=batches[1])
+        resolved = resolve_deferred_placeholders([fake_response], batch1_wrapped)
 
-        insert_reqs = [r for r in resolved if "insertText" in r]
+        resolved_reqs = resolved.requests or []
+        insert_reqs = [r for r in resolved_reqs if r.insert_text is not None]
         assert len(insert_reqs) >= 1
-        tab_id = insert_reqs[0]["insertText"]["location"]["tabId"]
-        assert (
-            tab_id == "t2-real"
-        ), f"Expected resolved tab ID 't2-real', got {tab_id!r}"
+        tab_id = insert_reqs[0].insert_text.location.tab_id  # type: ignore[union-attr]
+        assert tab_id == "t2-real", (
+            f"Expected resolved tab ID 't2-real', got {tab_id!r}"
+        )
 
     def test_insert_tab_with_empty_body_emits_no_batch1(self) -> None:
         """InsertTabOp with only a terminal paragraph in body emits no batch 1 content."""
@@ -526,9 +537,9 @@ class TestTabOps:
         batches = lower_batches(diff(base, desired))
 
         # Only batch 0 (addDocumentTab); no batch 1 content requests
-        assert (
-            len(batches) == 1
-        ), f"Expected only 1 batch for empty tab body, got {len(batches)}: {batches}"
+        assert len(batches) == 1, (
+            f"Expected only 1 batch for empty tab body, got {len(batches)}: {batches}"
+        )
 
     def test_insert_and_delete_tab_produce_correct_requests(self) -> None:
         """Tab insert + delete produce the right request types.
@@ -538,16 +549,6 @@ class TestTabOps:
         addDocumentTab in the structural batch, and the matching pair
         produces no structural ops (only content ops if content differs).
         """
-        # Base: t1 (matched), t2 (no match in desired → DeleteTabOp via _match_tabs
-        # only if desired has strictly fewer unmatched tabs; here desired has t1 +
-        # one extra t3 → t2 pairs positionally with t3 via positional fallback,
-        # so no DeleteTabOp/InsertTabOp unless base has *more* or *fewer* tabs).
-        #
-        # The cleanest way to test insert+delete independently: use explicit IDs.
-        # Delete: base has t1+t2, desired has only t1.
-        # Insert: base has t1, desired has t1+t2.
-        # Here we test the insert case (1 existing + 1 new).
-
         base_with_one = make_document(tabs=[make_tab("t1", "Tab 1", 0)])
         desired_with_two = make_document(
             tabs=[
@@ -561,7 +562,7 @@ class TestTabOps:
 
         # addDocumentTab must be in the structural batch
         batch0 = batches[0]
-        add_reqs = [r for r in batch0 if "addDocumentTab" in r]
+        add_reqs = [r for r in batch0 if r.add_document_tab is not None]
         assert len(add_reqs) == 1
 
         # Delete case
@@ -575,7 +576,7 @@ class TestTabOps:
 
         batches2 = lower_batches(diff(base_with_two, desired_with_one))
         all_reqs = [req for batch in batches2 for req in batch]
-        delete_reqs = [r for r in all_reqs if "deleteDocumentTab" in r]
+        delete_reqs = [r for r in all_reqs if r.delete_tab is not None]
         assert len(delete_reqs) == 1
 
 
@@ -598,14 +599,17 @@ class TestNamedStyleOps:
         assert len(named_style_ops) == 1
 
         requests = lower_ops(ops)
-        style_reqs = [r for r in requests if "updateDocumentStyle" in r]
+        style_reqs = [r for r in requests if r.update_document_style is not None]
         assert len(style_reqs) >= 1
 
-        uds = style_reqs[0]["updateDocumentStyle"]
-        assert "namedStyles" in uds
-        assert "styles" in uds["namedStyles"]
-        style_in_req = uds["namedStyles"]["styles"][0]
-        assert style_in_req["namedStyleType"] == "HEADING_1"
+        uds = style_reqs[0].update_document_style
+        assert uds is not None
+        # Named style updates use the extra "namedStyles" field on the request
+        # (not document_style), so check the serialized form.
+        uds_dict = uds.model_dump(by_alias=True, exclude_none=True)
+        assert "namedStyles" in uds_dict
+        styles = uds_dict["namedStyles"]["styles"]
+        assert styles[0]["namedStyleType"] == "HEADING_1"
 
     def test_insert_named_style_emits_update_document_style(self) -> None:
         """InsertNamedStyleOp emits updateDocumentStyle to add the new style."""
@@ -619,7 +623,7 @@ class TestNamedStyleOps:
         assert len(insert_ops) == 1
 
         requests = lower_ops(ops)
-        style_reqs = [r for r in requests if "updateDocumentStyle" in r]
+        style_reqs = [r for r in requests if r.update_document_style is not None]
         assert len(style_reqs) >= 1
 
     def test_delete_named_style_raises_not_implemented(self) -> None:
@@ -696,7 +700,7 @@ class TestEndToEndRoundTrip:
         )
         result = reconcile(base, desired)
         assert isinstance(result, list)
-        insert_reqs = [r for r in result if "insertText" in r]
+        insert_reqs = [r for r in result if r.insert_text is not None]
         assert len(insert_reqs) >= 1
 
     def test_reconcile_batches_single_batch_for_content_only(self) -> None:
@@ -728,48 +732,39 @@ class TestEndToEndRoundTrip:
 
     def test_reconcile_legacy_document_no_tabs(self) -> None:
         """reconcile() works for legacy documents without a 'tabs' field."""
-        base: dict[str, Any] = {
-            "documentId": "legacyDoc",
-            "body": {
-                "content": [
-                    make_indexed_para("Hello\n", 1),
-                    make_indexed_terminal(7),
-                ]
-            },
-            "headers": {},
-            "footers": {},
-            "footnotes": {},
-            "lists": {},
-            "namedStyles": {"styles": []},
-            "documentStyle": {},
-        }
-        desired: dict[str, Any] = {
-            "documentId": "legacyDoc",
-            "body": {
-                "content": [
-                    make_para_el("Hello changed\n"),
-                    make_terminal_para(),
-                ]
-            },
-            "headers": {},
-            "footers": {},
-            "footnotes": {},
-            "lists": {},
-            "namedStyles": {"styles": []},
-            "documentStyle": {},
-        }
+
+        from tests.reconcile_v3.helpers import make_legacy_document
+
+        base = make_legacy_document(
+            document_id="legacyDoc",
+            body_content=[
+                make_indexed_para("Hello\n", 1),
+                make_indexed_terminal(7),
+            ],
+            named_styles=[],
+        )
+        desired = make_legacy_document(
+            document_id="legacyDoc",
+            body_content=[
+                make_para_el("Hello changed\n"),
+                make_terminal_para(),
+            ],
+            named_styles=[],
+        )
         result = reconcile(base, desired)
         assert isinstance(result, list)
 
     def test_unsupported_ops_raise_not_implemented(self) -> None:
         """Ops that cannot be lowered raise NotImplementedError."""
+        from extradoc.api_types._generated import List as DocList
+        from extradoc.api_types._generated import ListProperties
         from extradoc.reconcile_v3.model import UpdateListOp
 
         op = UpdateListOp(
             tab_id="t1",
             list_id="list1",
-            base_list_def={"listProperties": {}},
-            desired_list_def={"listProperties": {"changed": True}},
+            base_list_def=DocList(list_properties=ListProperties()),
+            desired_list_def=DocList(list_properties=ListProperties()),
         )
         with pytest.raises(NotImplementedError, match="UpdateListOp"):
             lower_ops([op])
@@ -817,7 +812,7 @@ class TestEndToEndRoundTrip:
 def make_indexed_cell(
     text: str,
     cell_start: int,
-) -> dict[str, Any]:
+) -> TableCell:
     """Build an indexed table cell with a single paragraph and terminal.
 
     cell_start is the startIndex of the cell element itself (the cell opener).
@@ -829,37 +824,35 @@ def make_indexed_cell(
     para_end = content_start + utf16_len(text)
     terminal_start = para_end
     terminal_end = terminal_start + 1  # "\n" is 1 char
-    cell_end = terminal_end
 
-    return {
-        "startIndex": cell_start,
-        "endIndex": cell_end,
-        "content": [
-            {
-                "startIndex": content_start,
-                "endIndex": para_end,
-                "paragraph": {
-                    "elements": [{"textRun": {"content": text}}],
-                    "paragraphStyle": {"namedStyleType": "NORMAL_TEXT"},
-                },
-            },
-            {
-                "startIndex": terminal_start,
-                "endIndex": terminal_end,
-                "paragraph": {
-                    "elements": [{"textRun": {"content": "\n"}}],
-                    "paragraphStyle": {"namedStyleType": "NORMAL_TEXT"},
-                },
-            },
+    return TableCell(
+        start_index=cell_start,
+        end_index=terminal_end,
+        content=[
+            StructuralElement(
+                start_index=content_start,
+                end_index=para_end,
+                paragraph=Paragraph(
+                    elements=[ParagraphElement(text_run=TextRun(content=text))],
+                    paragraph_style=ParagraphStyle(named_style_type="NORMAL_TEXT"),
+                ),
+            ),
+            StructuralElement(
+                start_index=terminal_start,
+                end_index=terminal_end,
+                paragraph=Paragraph(
+                    elements=[ParagraphElement(text_run=TextRun(content="\n"))],
+                    paragraph_style=ParagraphStyle(named_style_type="NORMAL_TEXT"),
+                ),
+            ),
         ],
-        "tableCellStyle": {},
-    }
+    )
 
 
 def make_indexed_table(
     rows: list[list[str]],
     table_start: int,
-) -> dict[str, Any]:
+) -> StructuralElement:
     """Build a table content element with explicit startIndex/endIndex.
 
     Table structure (1-char openers, no closers):
@@ -879,53 +872,41 @@ def make_indexed_table(
         cells = []
         for text in row_texts:
             cell = make_indexed_cell(text, pos)
+            pos = cell.end_index  # type: ignore[assignment]
             cells.append(cell)
-            pos = cell["endIndex"]
         row_end = pos
         table_rows.append(
-            {
-                "startIndex": row_start,
-                "endIndex": row_end,
-                "tableCells": cells,
-                "tableRowStyle": {},
-            }
+            TableRow(
+                start_index=row_start,
+                end_index=row_end,
+                table_cells=cells,
+            )
         )
 
     table_end = pos
-    return {
-        "startIndex": table_start,
-        "endIndex": table_end,
-        "table": {
-            "rows": len(rows),
-            "columns": len(rows[0]) if rows else 0,
-            "tableRows": table_rows,
-        },
-    }
+    return StructuralElement(
+        start_index=table_start,
+        end_index=table_end,
+        table=Table(
+            rows=len(rows),
+            columns=len(rows[0]) if rows else 0,
+            table_rows=table_rows,
+        ),
+    )
 
 
 class TestTableCellContentLowering:
     """Table cell content lowering: produce correct delete/insert requests."""
 
     def test_simple_cell_text_change_produces_correct_indices(self) -> None:
-        """Changing one cell's text emits delete+insert at the cell's flat indices.
-
-        Table layout (2x2, all cells "X\n" except (0,0) which is "A\n"):
-          table opener at 1
-          row 0: opener at 2
-            cell (0,0): startIndex=3, content "A\\n" at 4..5, endIndex=6
-            cell (0,1): startIndex=6, content "B\\n" at 7..8, endIndex=9
-          row 1: opener at 9
-            cell (1,0): startIndex=10, content "C\\n" at 11..12, endIndex=13
-            cell (1,1): startIndex=13, content "D\\n" at 14..15, endIndex=16
-          terminal "\n" at 16..17
-        """
+        """Changing one cell's text emits delete+insert at the cell's flat indices."""
         base_table = make_indexed_table(
             [["A\n", "B\n"], ["C\n", "D\n"]],
             table_start=1,
         )
         # terminal paragraph after the table
         base = make_indexed_doc(
-            body_content=[base_table, make_indexed_terminal(base_table["endIndex"])]
+            body_content=[base_table, make_indexed_terminal(base_table.end_index)]
         )
 
         # Desired: change cell (0,0) from "A\n" to "Hello\n"
@@ -936,7 +917,7 @@ class TestTableCellContentLowering:
         desired = make_indexed_doc(
             body_content=[
                 desired_table,
-                make_indexed_terminal(desired_table["endIndex"]),
+                make_indexed_terminal(desired_table.end_index),
             ]
         )
 
@@ -944,15 +925,18 @@ class TestTableCellContentLowering:
 
         # Cell (0,0) content "A" starts at index 4 (cell_start=3, content=4)
         # "A\n" → text region is [4, 5) (we delete "A" and the para text, keeping \n)
-        delete_reqs = [r for r in requests if "deleteContentRange" in r]
-        insert_reqs = [r for r in requests if "insertText" in r]
+        delete_reqs = [r for r in requests if r.delete_content_range is not None]
+        insert_reqs = [r for r in requests if r.insert_text is not None]
 
         # Must have at least one delete and one insert for the changed cell
         assert len(delete_reqs) >= 1, f"Expected delete, got: {requests}"
         assert len(insert_reqs) >= 1, f"Expected insert, got: {requests}"
 
         # The delete should cover the old text at index 4
-        starts = [r["deleteContentRange"]["range"]["startIndex"] for r in delete_reqs]
+        starts = [
+            r.delete_content_range.range.start_index  # type: ignore[union-attr]
+            for r in delete_reqs
+        ]
         assert 4 in starts, f"Expected delete at index 4, got starts={starts}"
 
     def test_multiple_cells_changed_in_different_rows(self) -> None:
@@ -962,7 +946,7 @@ class TestTableCellContentLowering:
             table_start=1,
         )
         base = make_indexed_doc(
-            body_content=[base_table, make_indexed_terminal(base_table["endIndex"])]
+            body_content=[base_table, make_indexed_terminal(base_table.end_index)]
         )
 
         # Change cell (0,0) and cell (1,1)
@@ -973,15 +957,15 @@ class TestTableCellContentLowering:
         desired = make_indexed_doc(
             body_content=[
                 desired_table,
-                make_indexed_terminal(desired_table["endIndex"]),
+                make_indexed_terminal(desired_table.end_index),
             ]
         )
 
         requests = lower_ops(diff(base, desired))
 
         # Both cells changed → at least 2 deletes (one per changed cell text)
-        delete_reqs = [r for r in requests if "deleteContentRange" in r]
-        insert_reqs = [r for r in requests if "insertText" in r]
+        delete_reqs = [r for r in requests if r.delete_content_range is not None]
+        insert_reqs = [r for r in requests if r.insert_text is not None]
         assert len(delete_reqs) >= 2, f"Expected 2+ deletes, got: {delete_reqs}"
         assert len(insert_reqs) >= 2, f"Expected 2+ inserts, got: {insert_reqs}"
 
@@ -992,7 +976,7 @@ class TestTableCellContentLowering:
             table_start=1,
         )
         base = make_indexed_doc(
-            body_content=[base_table, make_indexed_terminal(base_table["endIndex"])]
+            body_content=[base_table, make_indexed_terminal(base_table.end_index)]
         )
         desired = copy.deepcopy(base)
         requests = lower_ops(diff(base, desired))
@@ -1003,21 +987,23 @@ class TestTableCellContentLowering:
         base_table = make_indexed_table([["Old\n", "B\n"]], table_start=1)
         base = make_indexed_doc(
             tab_id="myTab",
-            body_content=[base_table, make_indexed_terminal(base_table["endIndex"])],
+            body_content=[base_table, make_indexed_terminal(base_table.end_index)],
         )
         desired_table = make_indexed_table([["New\n", "B\n"]], table_start=1)
         desired = make_indexed_doc(
             tab_id="myTab",
             body_content=[
                 desired_table,
-                make_indexed_terminal(desired_table["endIndex"]),
+                make_indexed_terminal(desired_table.end_index),
             ],
         )
         requests = lower_ops(diff(base, desired))
-        delete_reqs = [r for r in requests if "deleteContentRange" in r]
+        delete_reqs = [r for r in requests if r.delete_content_range is not None]
         assert len(delete_reqs) >= 1
         for r in delete_reqs:
-            assert r["deleteContentRange"]["range"].get("tabId") == "myTab"
+            assert r.delete_content_range is not None
+            assert r.delete_content_range.range is not None
+            assert r.delete_content_range.range.tab_id == "myTab"
 
     def test_table_with_unchanged_cells_does_not_emit_spurious_ops(self) -> None:
         """Only changed cells produce ops; unchanged cells produce nothing."""
@@ -1027,7 +1013,7 @@ class TestTableCellContentLowering:
             table_start=1,
         )
         base = make_indexed_doc(
-            body_content=[base_table, make_indexed_terminal(base_table["endIndex"])]
+            body_content=[base_table, make_indexed_terminal(base_table.end_index)]
         )
         desired_table = make_indexed_table(
             [["Changed\n", "B\n"], ["C\n", "D\n"]],
@@ -1036,17 +1022,19 @@ class TestTableCellContentLowering:
         desired = make_indexed_doc(
             body_content=[
                 desired_table,
-                make_indexed_terminal(desired_table["endIndex"]),
+                make_indexed_terminal(desired_table.end_index),
             ]
         )
         requests = lower_ops(diff(base, desired))
-        insert_reqs = [r for r in requests if "insertText" in r]
+        insert_reqs = [r for r in requests if r.insert_text is not None]
         # Only one cell changed → exactly 1 insert (for "Changed")
         assert len(insert_reqs) == 1
-        it = insert_reqs[0]["insertText"]
+        it = insert_reqs[0].insert_text
+        assert it is not None
         # _lower_paragraph_update strips the trailing \n before inserting
         # (the \n is the paragraph terminator and already exists)
-        assert it["text"].rstrip("\n") == "Changed"
+        assert it.text is not None
+        assert it.text.rstrip("\n") == "Changed"
 
     def test_end_to_end_reconcile_with_table_cell_edit(self) -> None:
         """reconcile() works end-to-end for a document with a table cell edit."""
@@ -1055,7 +1043,7 @@ class TestTableCellContentLowering:
             table_start=1,
         )
         base = make_indexed_doc(
-            body_content=[base_table, make_indexed_terminal(base_table["endIndex"])]
+            body_content=[base_table, make_indexed_terminal(base_table.end_index)]
         )
         desired_table = make_indexed_table(
             [["CHANGED\n", "Row1Col2\n"], ["Row2Col1\n", "Row2Col2\n"]],
@@ -1064,7 +1052,7 @@ class TestTableCellContentLowering:
         desired = make_indexed_doc(
             body_content=[
                 desired_table,
-                make_indexed_terminal(desired_table["endIndex"]),
+                make_indexed_terminal(desired_table.end_index),
             ]
         )
 
@@ -1079,13 +1067,13 @@ class TestTableCellContentLowering:
         """A table cell content edit goes into the content batch (no structural create)."""
         base_table = make_indexed_table([["A\n"]], table_start=1)
         base = make_indexed_doc(
-            body_content=[base_table, make_indexed_terminal(base_table["endIndex"])]
+            body_content=[base_table, make_indexed_terminal(base_table.end_index)]
         )
         desired_table = make_indexed_table([["B\n"]], table_start=1)
         desired = make_indexed_doc(
             body_content=[
                 desired_table,
-                make_indexed_terminal(desired_table["endIndex"]),
+                make_indexed_terminal(desired_table.end_index),
             ]
         )
         batches = reconcile_batches(base, desired)
@@ -1093,26 +1081,7 @@ class TestTableCellContentLowering:
         assert len(batches) == 1
 
     def test_cell_text_change_correct_delete_range(self) -> None:
-        """Delete range starts at the cell paragraph's flat document startIndex.
-
-        For two tables to be matched (not deleted+inserted), the table similarity
-        must be > 0.  Table similarity is computed as the fraction of base cell
-        texts that appear unchanged in the desired table.  Changing only one cell
-        in a 2x2 table leaves 3/4 cells identical → similarity=0.75 → matched.
-
-        Table layout (2x2) starting at index 1:
-          table opener at 1
-          row[0] opener at 2 (1 char)
-          cell (0,0): startIndex=3, content "A\n" at [4, 6), endIndex=6
-          cell (0,1): startIndex=6, content "B\n" at [7, 9), endIndex=9
-          row[1] opener at 9 (1 char)
-          cell (1,0): startIndex=10, content "C\n" at [11, 13), endIndex=13
-          cell (1,1): startIndex=13, content "D\n" at [14, 16), endIndex=16
-          body terminal "\\n" at 16
-
-        We change cell (0,0) from "A\n" to "ZZZZ\n".
-        The delete must cover the old text starting at index 4 (content_start of cell 0,0).
-        """
+        """Delete range starts at the cell paragraph's flat document startIndex."""
         base_table = make_indexed_table(
             [["A\n", "B\n"], ["C\n", "D\n"]],
             table_start=1,
@@ -1121,7 +1090,7 @@ class TestTableCellContentLowering:
         cell_00_content_start = 4
 
         base = make_indexed_doc(
-            body_content=[base_table, make_indexed_terminal(base_table["endIndex"])]
+            body_content=[base_table, make_indexed_terminal(base_table.end_index)]
         )
         # Change cell (0,0) only; B, C, D unchanged → 3/4 cells match → sim=0.75 → matched
         desired_table = make_indexed_table(
@@ -1131,21 +1100,21 @@ class TestTableCellContentLowering:
         desired = make_indexed_doc(
             body_content=[
                 desired_table,
-                make_indexed_terminal(desired_table["endIndex"]),
+                make_indexed_terminal(desired_table.end_index),
             ]
         )
 
         requests = lower_ops(diff(base, desired))
-        delete_reqs = [r for r in requests if "deleteContentRange" in r]
+        delete_reqs = [r for r in requests if r.delete_content_range is not None]
         assert len(delete_reqs) >= 1, f"Expected delete requests, got: {requests}"
 
-        # The cell (0,0) paragraph starts at index 4.
-        # _lower_paragraph_update deletes [text_start, text_end) = [start, end-1)
-        # where start = paragraph startIndex = 4.
-        starts = [r["deleteContentRange"]["range"]["startIndex"] for r in delete_reqs]
-        assert (
-            cell_00_content_start in starts
-        ), f"Expected delete at index {cell_00_content_start}, got starts={starts}"
+        starts = [
+            r.delete_content_range.range.start_index  # type: ignore[union-attr]
+            for r in delete_reqs
+        ]
+        assert cell_00_content_start in starts, (
+            f"Expected delete at index {cell_00_content_start}, got starts={starts}"
+        )
 
     def test_delete_and_insert_in_same_body(self) -> None:
         """Mixed delete + insert produces correct ordered requests."""
@@ -1165,8 +1134,8 @@ class TestTableCellContentLowering:
             ]
         )
         requests = lower_ops(diff(base, desired))
-        delete_reqs = [r for r in requests if "deleteContentRange" in r]
-        insert_reqs = [r for r in requests if "insertText" in r]
+        delete_reqs = [r for r in requests if r.delete_content_range is not None]
+        insert_reqs = [r for r in requests if r.insert_text is not None]
 
         assert len(delete_reqs) == 2
         assert len(insert_reqs) >= 1
@@ -1181,7 +1150,7 @@ def make_indexed_para_with_runs(
     runs: list[tuple[str, dict[str, Any]]],
     start: int,
     named_style: str = "NORMAL_TEXT",
-) -> dict[str, Any]:
+) -> StructuralElement:
     """Build an indexed paragraph with multiple text runs.
 
     Each run is (text, text_style_dict).  The paragraph ends with a \\n run.
@@ -1190,41 +1159,39 @@ def make_indexed_para_with_runs(
 
     elements = []
     for text, style in runs:
-        el: dict[str, Any] = {"textRun": {"content": text}}
-        if style:
-            el["textRun"]["textStyle"] = style
+        ts = TextStyle(**style) if style else None
+        el = ParagraphElement(text_run=TextRun(content=text, text_style=ts))
         elements.append(el)
 
     full_text = "".join(t for t, _ in runs)
     end = start + utf16_len(full_text)
 
-    return {
-        "startIndex": start,
-        "endIndex": end,
-        "paragraph": {
-            "elements": elements,
-            "paragraphStyle": {"namedStyleType": named_style},
-        },
-    }
+    return StructuralElement(
+        start_index=start,
+        end_index=end,
+        paragraph=Paragraph(
+            elements=elements,
+            paragraph_style=ParagraphStyle(named_style_type=named_style),
+        ),
+    )
 
 
 def make_para_with_runs(
     runs: list[tuple[str, dict[str, Any]]],
     named_style: str = "NORMAL_TEXT",
-) -> dict[str, Any]:
+) -> StructuralElement:
     """Build a paragraph (no index fields) with multiple text runs."""
     elements = []
     for text, style in runs:
-        el: dict[str, Any] = {"textRun": {"content": text}}
-        if style:
-            el["textRun"]["textStyle"] = style
+        ts = TextStyle(**style) if style else None
+        el = ParagraphElement(text_run=TextRun(content=text, text_style=ts))
         elements.append(el)
-    return {
-        "paragraph": {
-            "elements": elements,
-            "paragraphStyle": {"namedStyleType": named_style},
-        }
-    }
+    return StructuralElement(
+        paragraph=Paragraph(
+            elements=elements,
+            paragraph_style=ParagraphStyle(named_style_type=named_style),
+        )
+    )
 
 
 class TestMultiRunParagraphLowering:
@@ -1251,16 +1218,18 @@ class TestMultiRunParagraphLowering:
 
         requests = lower_ops(diff(base, desired))
 
-        delete_reqs = [r for r in requests if "deleteContentRange" in r]
-        insert_reqs = [r for r in requests if "insertText" in r]
-        style_reqs = [r for r in requests if "updateTextStyle" in r]
+        delete_reqs = [r for r in requests if r.delete_content_range is not None]
+        insert_reqs = [r for r in requests if r.insert_text is not None]
+        style_reqs = [r for r in requests if r.update_text_style is not None]
 
         assert len(delete_reqs) == 0, "No delete should occur for style-only change"
         assert len(insert_reqs) == 0, "No insert should occur for style-only change"
         assert len(style_reqs) >= 1, "updateTextStyle should be emitted"
 
-        uts = style_reqs[0]["updateTextStyle"]
-        assert uts["textStyle"].get("bold") is True
+        uts = style_reqs[0].update_text_style
+        assert uts is not None
+        assert uts.text_style is not None
+        assert uts.text_style.bold is True
 
     # ------------------------------------------------------------------
     # Test 2: single run, text changed, no style
@@ -1284,8 +1253,8 @@ class TestMultiRunParagraphLowering:
 
         requests = lower_ops(diff(base, desired))
 
-        delete_reqs = [r for r in requests if "deleteContentRange" in r]
-        insert_reqs = [r for r in requests if "insertText" in r]
+        delete_reqs = [r for r in requests if r.delete_content_range is not None]
+        insert_reqs = [r for r in requests if r.insert_text is not None]
 
         # Should produce some delete+insert (the differing suffix)
         assert len(delete_reqs) >= 1
@@ -1293,8 +1262,8 @@ class TestMultiRunParagraphLowering:
 
         # No op should touch position >= 13 (the terminal \n)
         for r in delete_reqs:
-            rng = r["deleteContentRange"]["range"]
-            assert rng["endIndex"] <= 12, f"Delete must not touch terminal \\n: {rng}"
+            rng = r.delete_content_range.range  # type: ignore[union-attr]
+            assert rng.end_index <= 12, f"Delete must not touch terminal \\n: {rng}"
 
     # ------------------------------------------------------------------
     # Test 3: multi-run, middle run text changed
@@ -1322,16 +1291,16 @@ class TestMultiRunParagraphLowering:
 
         requests = lower_ops(diff(base, desired))
 
-        delete_reqs = [r for r in requests if "deleteContentRange" in r]
-        insert_reqs = [r for r in requests if "insertText" in r]
+        delete_reqs = [r for r in requests if r.delete_content_range is not None]
+        insert_reqs = [r for r in requests if r.insert_text is not None]
 
         # Some ops should be produced
         assert len(delete_reqs) + len(insert_reqs) >= 1
 
         # No op should start before index 7 (end of "Hello ", 1+6=7)
         for r in delete_reqs:
-            rng = r["deleteContentRange"]["range"]
-            assert rng["startIndex"] >= 7, f"Delete must not touch first run: {rng}"
+            rng = r.delete_content_range.range  # type: ignore[union-attr]
+            assert rng.start_index >= 7, f"Delete must not touch first run: {rng}"
 
     # ------------------------------------------------------------------
     # Test 4: multi-run, style changed on one run only
@@ -1360,20 +1329,23 @@ class TestMultiRunParagraphLowering:
 
         requests = lower_ops(diff(base, desired))
 
-        delete_reqs = [r for r in requests if "deleteContentRange" in r]
-        insert_reqs = [r for r in requests if "insertText" in r]
-        style_reqs = [r for r in requests if "updateTextStyle" in r]
+        delete_reqs = [r for r in requests if r.delete_content_range is not None]
+        insert_reqs = [r for r in requests if r.insert_text is not None]
+        style_reqs = [r for r in requests if r.update_text_style is not None]
 
         assert len(delete_reqs) == 0, "No delete for style-only change"
         assert len(insert_reqs) == 0, "No insert for style-only change"
         assert len(style_reqs) >= 1
 
         # Style update should target the second run range [7, 13) in the paragraph
-        # (1 + utf16_len("Hello ") = 7, 7 + utf16_len("world\n") = 13)
-        uts = style_reqs[0]["updateTextStyle"]
-        assert uts["textStyle"].get("italic") is True
-        rng = uts["range"]
-        assert rng["startIndex"] >= 7, "Style update must target second run, not first"
+        uts = style_reqs[0].update_text_style
+        assert uts is not None
+        assert uts.text_style is not None
+        assert uts.text_style.italic is True
+        assert uts.range is not None
+        assert uts.range.start_index >= 7, (
+            "Style update must target second run, not first"
+        )
 
     # ------------------------------------------------------------------
     # Test 5: run added at end
@@ -1398,13 +1370,15 @@ class TestMultiRunParagraphLowering:
 
         requests = lower_ops(diff(base, desired))
 
-        insert_reqs = [r for r in requests if "insertText" in r]
+        insert_reqs = [r for r in requests if r.insert_text is not None]
 
         assert len(insert_reqs) >= 1, "insertText should be emitted for added text"
         # The inserted text should contain " world" (or a superset)
-        inserted_texts = [r["insertText"]["text"] for r in insert_reqs]
+        inserted_texts = [r.insert_text.text for r in insert_reqs]  # type: ignore[union-attr]
         assert any(
-            "world" in t for t in inserted_texts
+            "world" in t
+            for t in inserted_texts
+            if t  # type: ignore[operator]
         ), f"Expected 'world' in inserts: {inserted_texts}"
 
     # ------------------------------------------------------------------
@@ -1432,14 +1406,17 @@ class TestMultiRunParagraphLowering:
 
         requests = lower_ops(diff(base, desired))
 
-        delete_reqs = [r for r in requests if "deleteContentRange" in r]
+        delete_reqs = [r for r in requests if r.delete_content_range is not None]
         assert len(delete_reqs) >= 1
 
         # Should delete from position 6 (1 + len("hello")) = 6
-        starts = [r["deleteContentRange"]["range"]["startIndex"] for r in delete_reqs]
-        assert any(
-            s >= 6 for s in starts
-        ), f"Expected delete starting at >=6, got: {starts}"
+        starts = [
+            r.delete_content_range.range.start_index  # type: ignore[union-attr]
+            for r in delete_reqs
+        ]
+        assert any(s >= 6 for s in starts), (
+            f"Expected delete starting at >=6, got: {starts}"
+        )
 
     # ------------------------------------------------------------------
     # Test 7: complete paragraph rewrite
@@ -1447,7 +1424,6 @@ class TestMultiRunParagraphLowering:
 
     def test_complete_paragraph_rewrite(self) -> None:
         """Completely different text produces delete+insert covering the full text."""
-        # "Old text\n" at 1..9 (8 chars + newline? actually utf16_len("Old text\n") = 9)
         base = make_indexed_doc(
             body_content=[
                 make_indexed_para_with_runs([("Old text\n", {})], start=1),
@@ -1463,14 +1439,18 @@ class TestMultiRunParagraphLowering:
 
         requests = lower_ops(diff(base, desired))
 
-        delete_reqs = [r for r in requests if "deleteContentRange" in r]
-        insert_reqs = [r for r in requests if "insertText" in r]
+        delete_reqs = [r for r in requests if r.delete_content_range is not None]
+        insert_reqs = [r for r in requests if r.insert_text is not None]
 
         assert len(delete_reqs) >= 1
         assert len(insert_reqs) >= 1
 
         # The inserted text must contain the new content
-        inserted_texts = "".join(r["insertText"]["text"] for r in insert_reqs)
+        inserted_texts = "".join(
+            r.insert_text.text
+            for r in insert_reqs
+            if r.insert_text and r.insert_text.text  # type: ignore[arg-type]
+        )
         assert "Completely different" in inserted_texts or any(
             t in inserted_texts for t in ["Completely", "different"]
         )
@@ -1483,47 +1463,53 @@ class TestMultiRunParagraphLowering:
         """Paragraph alignment changes → only updateParagraphStyle, no delete/insert."""
         base = make_indexed_doc(
             body_content=[
-                {
-                    "startIndex": 1,
-                    "endIndex": 7,
-                    "paragraph": {
-                        "elements": [{"textRun": {"content": "hello\n"}}],
-                        "paragraphStyle": {
-                            "namedStyleType": "NORMAL_TEXT",
-                            "alignment": "LEFT",
-                        },
-                    },
-                },
+                StructuralElement(
+                    start_index=1,
+                    end_index=7,
+                    paragraph=Paragraph(
+                        elements=[
+                            ParagraphElement(text_run=TextRun(content="hello\n"))
+                        ],
+                        paragraph_style=ParagraphStyle(
+                            named_style_type="NORMAL_TEXT",
+                            alignment="START",
+                        ),
+                    ),
+                ),
                 make_indexed_terminal(7),
             ]
         )
         desired = make_indexed_doc(
             body_content=[
-                {
-                    "paragraph": {
-                        "elements": [{"textRun": {"content": "hello\n"}}],
-                        "paragraphStyle": {
-                            "namedStyleType": "NORMAL_TEXT",
-                            "alignment": "CENTER",
-                        },
-                    }
-                },
+                StructuralElement(
+                    paragraph=Paragraph(
+                        elements=[
+                            ParagraphElement(text_run=TextRun(content="hello\n"))
+                        ],
+                        paragraph_style=ParagraphStyle(
+                            named_style_type="NORMAL_TEXT",
+                            alignment="CENTER",
+                        ),
+                    ),
+                ),
                 make_terminal_para(),
             ]
         )
 
         requests = lower_ops(diff(base, desired))
 
-        delete_reqs = [r for r in requests if "deleteContentRange" in r]
-        insert_reqs = [r for r in requests if "insertText" in r]
-        para_style_reqs = [r for r in requests if "updateParagraphStyle" in r]
+        delete_reqs = [r for r in requests if r.delete_content_range is not None]
+        insert_reqs = [r for r in requests if r.insert_text is not None]
+        para_style_reqs = [r for r in requests if r.update_paragraph_style is not None]
 
         assert len(delete_reqs) == 0, "No delete for paragraph-style-only change"
         assert len(insert_reqs) == 0, "No insert for paragraph-style-only change"
         assert len(para_style_reqs) >= 1, "updateParagraphStyle should be emitted"
 
-        ups = para_style_reqs[0]["updateParagraphStyle"]
-        assert ups["paragraphStyle"].get("alignment") == "CENTER"
+        ups = para_style_reqs[0].update_paragraph_style
+        assert ups is not None
+        assert ups.paragraph_style is not None
+        assert ups.paragraph_style.alignment == "CENTER"
 
     # ------------------------------------------------------------------
     # Test 9: combined text change + paragraph style change
@@ -1533,40 +1519,46 @@ class TestMultiRunParagraphLowering:
         """Text changes AND paragraph style changes → both ops produced."""
         base = make_indexed_doc(
             body_content=[
-                {
-                    "startIndex": 1,
-                    "endIndex": 9,
-                    "paragraph": {
-                        "elements": [{"textRun": {"content": "Old text\n"}}],
-                        "paragraphStyle": {
-                            "namedStyleType": "NORMAL_TEXT",
-                            "alignment": "LEFT",
-                        },
-                    },
-                },
+                StructuralElement(
+                    start_index=1,
+                    end_index=9,
+                    paragraph=Paragraph(
+                        elements=[
+                            ParagraphElement(text_run=TextRun(content="Old text\n"))
+                        ],
+                        paragraph_style=ParagraphStyle(
+                            named_style_type="NORMAL_TEXT",
+                            alignment="START",
+                        ),
+                    ),
+                ),
                 make_indexed_terminal(9),
             ]
         )
         desired = make_indexed_doc(
             body_content=[
-                {
-                    "paragraph": {
-                        "elements": [{"textRun": {"content": "New text\n"}}],
-                        "paragraphStyle": {
-                            "namedStyleType": "NORMAL_TEXT",
-                            "alignment": "CENTER",
-                        },
-                    }
-                },
+                StructuralElement(
+                    paragraph=Paragraph(
+                        elements=[
+                            ParagraphElement(text_run=TextRun(content="New text\n"))
+                        ],
+                        paragraph_style=ParagraphStyle(
+                            named_style_type="NORMAL_TEXT",
+                            alignment="CENTER",
+                        ),
+                    ),
+                ),
                 make_terminal_para(),
             ]
         )
 
         requests = lower_ops(diff(base, desired))
 
-        para_style_reqs = [r for r in requests if "updateParagraphStyle" in r]
+        para_style_reqs = [r for r in requests if r.update_paragraph_style is not None]
         content_reqs = [
-            r for r in requests if "deleteContentRange" in r or "insertText" in r
+            r
+            for r in requests
+            if r.delete_content_range is not None or r.insert_text is not None
         ]
 
         assert len(para_style_reqs) >= 1, "updateParagraphStyle should be emitted"
@@ -1577,13 +1569,7 @@ class TestMultiRunParagraphLowering:
     # ------------------------------------------------------------------
 
     def test_terminal_paragraph_never_deleted(self) -> None:
-        """The body-level terminal paragraph is never deleted by any op.
-
-        The terminal paragraph (last element, bare \\n) must survive even when
-        all other paragraphs are replaced.  Each paragraph's own trailing \\n
-        is part of its element and can be deleted as part of the element, but
-        the body-terminal paragraph itself must not be deleted.
-        """
+        """The body-level terminal paragraph is never deleted by any op."""
         # "hello world\n" at 1..13; body terminal "\n" at 13..14
         base = make_indexed_doc(
             body_content=[
@@ -1605,19 +1591,16 @@ class TestMultiRunParagraphLowering:
         terminal_start = 13  # body-terminal paragraph startIndex
 
         for r in requests:
-            if "deleteContentRange" in r:
-                rng = r["deleteContentRange"]["range"]
-                assert rng["startIndex"] < terminal_start, (
+            if r.delete_content_range is not None:
+                rng = r.delete_content_range.range
+                assert rng is not None
+                assert rng.start_index < terminal_start, (
                     f"Delete must not touch the body-terminal paragraph: "
-                    f"startIndex={rng['startIndex']} but terminal starts at {terminal_start}"
+                    f"startIndex={rng.start_index} but terminal starts at {terminal_start}"
                 )
 
     def test_run_level_ops_stay_within_paragraph_text(self) -> None:
-        """When a run-level update occurs, ops never exceed the paragraph text range.
-
-        The paragraph text region is [start, end-1). The terminal \\n at [end-1, end)
-        must never be touched by surgical run-level ops.
-        """
+        """When a run-level update occurs, ops never exceed the paragraph text range."""
         # "hello world\n" at 1..13: text is [1,12), \\n is at [12,13)
         base = make_indexed_doc(
             body_content=[
@@ -1635,20 +1618,14 @@ class TestMultiRunParagraphLowering:
 
         requests = lower_ops(diff(base, desired))
 
-        # Verify all deletes are within the paragraph text range [1, 12)
-        # (i.e. endIndex <= 12 — never touching the \\n at 12)
-        # Note: the diff may choose to delete the whole paragraph element [1,13)
-        # as a structural delete; what we verify is that if run-level ops are
-        # emitted (which would happen when the text differs slightly), they stay
-        # within bounds.  We accept structural whole-paragraph deletes (endIndex==13)
-        # but verify no op writes past the body terminal at 13.
         body_terminal_start = 13
         for r in requests:
-            if "deleteContentRange" in r:
-                rng = r["deleteContentRange"]["range"]
-                assert (
-                    rng["startIndex"] < body_terminal_start
-                ), f"Delete must not touch body-terminal paragraph: {rng}"
+            if r.delete_content_range is not None:
+                rng = r.delete_content_range.range
+                assert rng is not None
+                assert rng.start_index < body_terminal_start, (
+                    f"Delete must not touch body-terminal paragraph: {rng}"
+                )
 
     # ------------------------------------------------------------------
     # Test 11: end-to-end reconcile with multi-run styled paragraph
@@ -1683,17 +1660,17 @@ class TestMultiRunParagraphLowering:
         assert len(all_reqs) >= 1
 
         # Specifically, should NOT delete the first run ("Hello ") since it didn't change
-        delete_reqs = [r for r in all_reqs if "deleteContentRange" in r]
+        delete_reqs = [r for r in all_reqs if r.delete_content_range is not None]
         for dr in delete_reqs:
-            rng = dr["deleteContentRange"]["range"]
+            rng = dr.delete_content_range.range  # type: ignore[union-attr]
             # "Hello " is at [1, 7), so any delete starting < 7 and ending > 1
             # would touch the first run. Allow deletes that start at 7+.
-            if rng["startIndex"] < 7:
+            if rng.start_index < 7:
                 # Partial overlap is problematic; the delete should not cover
                 # the entire "Hello " span
-                assert (
-                    rng["endIndex"] <= 7
-                ), f"Delete {rng} overlaps the unchanged 'Hello ' run at [1,7)"
+                assert rng.end_index <= 7, (
+                    f"Delete {rng} overlaps the unchanged 'Hello ' run at [1,7)"
+                )
 
 
 # ===========================================================================
@@ -1706,18 +1683,8 @@ def make_footnote_ref_para(
     footnote_id: str,
     fn_ref_start: int,
     para_start: int,
-) -> dict[str, Any]:
-    """Build a paragraph element containing text followed by a footnoteReference.
-
-    The paragraph has two elements:
-      - a textRun with ``text_before`` starting at ``para_start``
-      - a footnoteReference at ``fn_ref_start`` (occupies 1 char)
-
-    The paragraph endIndex = fn_ref_start + 1 + 1  (ref char + trailing \\n implied
-    by the last textRun which holds \\n).
-
-    For simplicity we store the trailing \\n as a separate textRun after the ref.
-    """
+) -> StructuralElement:
+    """Build a paragraph element containing text followed by a footnoteReference."""
     from extradoc.indexer import utf16_len
 
     text_start = para_start
@@ -1728,30 +1695,30 @@ def make_footnote_ref_para(
     newline_end = newline_start + 1  # trailing \n
     para_end = newline_end
 
-    return {
-        "startIndex": para_start,
-        "endIndex": para_end,
-        "paragraph": {
-            "elements": [
-                {
-                    "startIndex": text_start,
-                    "endIndex": text_end,
-                    "textRun": {"content": text_before},
-                },
-                {
-                    "startIndex": ref_start,
-                    "endIndex": ref_end,
-                    "footnoteReference": {"footnoteId": footnote_id},
-                },
-                {
-                    "startIndex": newline_start,
-                    "endIndex": newline_end,
-                    "textRun": {"content": "\n"},
-                },
+    return StructuralElement(
+        start_index=para_start,
+        end_index=para_end,
+        paragraph=Paragraph(
+            elements=[
+                ParagraphElement(
+                    start_index=text_start,
+                    end_index=text_end,
+                    text_run=TextRun(content=text_before),
+                ),
+                ParagraphElement(
+                    start_index=ref_start,
+                    end_index=ref_end,
+                    footnote_reference=FootnoteReference(footnote_id=footnote_id),
+                ),
+                ParagraphElement(
+                    start_index=newline_start,
+                    end_index=newline_end,
+                    text_run=TextRun(content="\n"),
+                ),
             ],
-            "paragraphStyle": {"namedStyleType": "NORMAL_TEXT"},
-        },
-    }
+            paragraph_style=ParagraphStyle(named_style_type="NORMAL_TEXT"),
+        ),
+    )
 
 
 class TestFootnoteLowering:
@@ -1763,8 +1730,6 @@ class TestFootnoteLowering:
 
     def test_delete_footnote_emits_delete_content_range(self) -> None:
         """Deleting a footnote emits deleteContentRange at the footnote ref offset."""
-        # Body: para with text "See" + footnoteRef at index 4, then terminal at 6
-        #   para_start=1, text "See" at 1..4, ref at 4..5, "\n" at 5..6
         fn_ref_para = make_footnote_ref_para(
             text_before="See",
             footnote_id="fn1",
@@ -1778,7 +1743,6 @@ class TestFootnoteLowering:
             footnotes={"fn1": make_footnote("fn1", "My footnote text\n")},
         )
         # Desired: same body paragraph without the footnoteReference, no footnote entry
-        # (Just a simple paragraph with "See\n")
         desired = make_indexed_doc(
             body_content=[
                 make_indexed_para("See\n", 1),
@@ -1795,19 +1759,19 @@ class TestFootnoteLowering:
         assert delete_fn_ops[0].ref_index == 4
 
         batches = reconcile_batches(base, desired)
-        all_reqs = [r for batch in batches for r in batch]
-        delete_reqs = [r for r in all_reqs if "deleteContentRange" in r]
+        all_reqs = [r for batch in batches for r in _get_batch_requests(batch)]
+        delete_reqs = [r for r in all_reqs if r.delete_content_range is not None]
 
         # Must have a delete targeting the footnote ref at [4, 5)
         fn_deletes = [
             r
             for r in delete_reqs
-            if r["deleteContentRange"]["range"]["startIndex"] == 4
-            and r["deleteContentRange"]["range"]["endIndex"] == 5
+            if r.delete_content_range.range.start_index == 4  # type: ignore[union-attr]
+            and r.delete_content_range.range.end_index == 5  # type: ignore[union-attr]
         ]
-        assert (
-            len(fn_deletes) >= 1
-        ), f"Expected deleteContentRange at [4,5) for footnote ref, got: {delete_reqs}"
+        assert len(fn_deletes) >= 1, (
+            f"Expected deleteContentRange at [4,5) for footnote ref, got: {delete_reqs}"
+        )
 
     def test_delete_footnote_with_unknown_ref_index_raises(self) -> None:
         """DeleteFootnoteOp with ref_index=-1 raises NotImplementedError on lowering."""
@@ -1823,14 +1787,14 @@ class TestFootnoteLowering:
         """Updating footnote content emits ops scoped to the footnote's segmentId."""
         # Base footnote with "Old text\n" (with indices)
         base_fn_content = [
-            {
-                "startIndex": 0,
-                "endIndex": 9,
-                "paragraph": {
-                    "elements": [{"textRun": {"content": "Old text\n"}}],
-                    "paragraphStyle": {"namedStyleType": "NORMAL_TEXT"},
-                },
-            }
+            StructuralElement(
+                start_index=0,
+                end_index=9,
+                paragraph=Paragraph(
+                    elements=[ParagraphElement(text_run=TextRun(content="Old text\n"))],
+                    paragraph_style=ParagraphStyle(named_style_type="NORMAL_TEXT"),
+                ),
+            )
         ]
         desired_fn_content = [
             make_para_el("New text\n"),
@@ -1838,10 +1802,10 @@ class TestFootnoteLowering:
         ]
 
         base = make_indexed_doc(
-            footnotes={"fn1": {"footnoteId": "fn1", "content": base_fn_content}},
+            footnotes={"fn1": Footnote(footnote_id="fn1", content=base_fn_content)},
         )
         desired = make_indexed_doc(
-            footnotes={"fn1": {"footnoteId": "fn1", "content": desired_fn_content}},
+            footnotes={"fn1": Footnote(footnote_id="fn1", content=desired_fn_content)},
         )
 
         ops = diff(base, desired)
@@ -1853,23 +1817,24 @@ class TestFootnoteLowering:
 
         # All requests that reference a segmentId should use "fn1"
         for req in all_reqs:
-            for _key, val in req.items():
+            req_dict = req.model_dump(by_alias=True, exclude_none=True)
+            for _key, val in req_dict.items():
                 if isinstance(val, dict):
                     rng = val.get("range") or val.get("location", {})
                     seg = rng.get("segmentId") if isinstance(rng, dict) else None
                     if seg is not None:
-                        assert (
-                            seg == "fn1"
-                        ), f"Expected segmentId='fn1', got {seg!r} in {req}"
+                        assert seg == "fn1", (
+                            f"Expected segmentId='fn1', got {seg!r} in {req}"
+                        )
 
     def test_update_footnote_unchanged_content_produces_no_ops(self) -> None:
         """Unchanged footnote content produces zero ops."""
         content = [make_para_el("Footnote text\n"), make_terminal_para()]
         base = make_indexed_doc(
-            footnotes={"fn1": {"footnoteId": "fn1", "content": content}},
+            footnotes={"fn1": Footnote(footnote_id="fn1", content=content)},
         )
         desired = make_indexed_doc(
-            footnotes={"fn1": {"footnoteId": "fn1", "content": content}},
+            footnotes={"fn1": Footnote(footnote_id="fn1", content=content)},
         )
         assert reconcile(base, desired) == []
 
@@ -1879,7 +1844,6 @@ class TestFootnoteLowering:
 
     def test_insert_footnote_emits_create_footnote_in_batch0(self) -> None:
         """Inserting a new footnote: batch 0 contains createFootnote."""
-        # Desired body: para with "See" + footnoteRef at index 4
         desired_fn_ref_para = make_footnote_ref_para(
             text_before="See",
             footnote_id="fn1",
@@ -1908,11 +1872,13 @@ class TestFootnoteLowering:
         assert len(batches) >= 1
 
         # batch 0 must contain createFootnote
-        batch0 = batches[0]
-        create_fn_reqs = [r for r in batch0 if "createFootnote" in r]
+        batch0 = _get_batch_requests(batches[0])
+        create_fn_reqs = [r for r in batch0 if r.create_footnote is not None]
         assert len(create_fn_reqs) == 1
-        cf = create_fn_reqs[0]["createFootnote"]
-        assert cf["location"]["index"] == 4
+        cf = create_fn_reqs[0].create_footnote
+        assert cf is not None
+        assert cf.location is not None
+        assert cf.location.index == 4
 
     def test_insert_footnote_batch1_has_insert_text_with_deferred_id(self) -> None:
         """Inserting a footnote: batch 1 has insertText at index 1 with deferred segment ID."""
@@ -1937,23 +1903,23 @@ class TestFootnoteLowering:
 
         # batch 0: createFootnote; batch 1 (or later): insertText with deferred segmentId
         assert len(batches) >= 2
-        batch1 = batches[1]
-        insert_reqs = [r for r in batch1 if "insertText" in r]
+        batch1 = _get_batch_requests(batches[1])
+        insert_reqs = [r for r in batch1 if r.insert_text is not None]
         assert len(insert_reqs) >= 1
 
         # The insertText must use location with index=1 and a deferred placeholder segmentId.
-        # (endOfSegmentLocation was the old approach; we now compute the index directly.)
         for req in insert_reqs:
-            it = req["insertText"]
-            loc = it.get("location")
+            it = req.insert_text
+            assert it is not None
+            loc = it.location
             if loc is not None:
-                seg_id = loc.get("segmentId")
-                if not isinstance(seg_id, dict) or not seg_id.get("placeholder"):
+                seg_id = loc.segment_id
+                if not isinstance(seg_id, DeferredID):
                     continue
-                assert seg_id.get("response_path") == "createFootnote.footnoteId"
-                assert (
-                    loc.get("index") == 1
-                ), f"Expected insertText at index 1 in new footnote segment, got {loc.get('index')!r}"
+                assert seg_id.response_path == "createFootnote.footnoteId"
+                assert loc.index == 1, (
+                    f"Expected insertText at index 1 in new footnote segment, got {loc.index!r}"
+                )
                 break
         else:
             pytest.fail(
@@ -1979,30 +1945,32 @@ class TestFootnoteLowering:
         """With 3 footnotes, only the changed one produces update ops."""
         content_a = [make_para_el("Footnote A\n"), make_terminal_para()]
         content_b_old = [
-            {
-                "startIndex": 0,
-                "endIndex": 12,
-                "paragraph": {
-                    "elements": [{"textRun": {"content": "Footnote B\n"}}],
-                    "paragraphStyle": {"namedStyleType": "NORMAL_TEXT"},
-                },
-            }
+            StructuralElement(
+                start_index=0,
+                end_index=12,
+                paragraph=Paragraph(
+                    elements=[
+                        ParagraphElement(text_run=TextRun(content="Footnote B\n"))
+                    ],
+                    paragraph_style=ParagraphStyle(named_style_type="NORMAL_TEXT"),
+                ),
+            )
         ]
         content_b_new = [make_para_el("Footnote B updated\n"), make_terminal_para()]
         content_c = [make_para_el("Footnote C\n"), make_terminal_para()]
 
         base = make_indexed_doc(
             footnotes={
-                "fnA": {"footnoteId": "fnA", "content": content_a},
-                "fnB": {"footnoteId": "fnB", "content": content_b_old},
-                "fnC": {"footnoteId": "fnC", "content": content_c},
+                "fnA": Footnote(footnote_id="fnA", content=content_a),
+                "fnB": Footnote(footnote_id="fnB", content=content_b_old),
+                "fnC": Footnote(footnote_id="fnC", content=content_c),
             }
         )
         desired = make_indexed_doc(
             footnotes={
-                "fnA": {"footnoteId": "fnA", "content": content_a},
-                "fnB": {"footnoteId": "fnB", "content": content_b_new},
-                "fnC": {"footnoteId": "fnC", "content": content_c},
+                "fnA": Footnote(footnote_id="fnA", content=content_a),
+                "fnB": Footnote(footnote_id="fnB", content=content_b_new),
+                "fnC": Footnote(footnote_id="fnC", content=content_c),
             }
         )
 
@@ -2014,7 +1982,8 @@ class TestFootnoteLowering:
         all_reqs = lower_ops(ops)
         # Only fnB's content is updated — any segmentId present must be "fnB"
         for req in all_reqs:
-            for _key, val in req.items():
+            req_dict = req.model_dump(by_alias=True, exclude_none=True)
+            for _key, val in req_dict.items():
                 if isinstance(val, dict):
                     rng = val.get("range") or val.get("location", {})
                     seg = rng.get("segmentId") if isinstance(rng, dict) else None
@@ -2028,22 +1997,24 @@ class TestFootnoteLowering:
     def test_end_to_end_update_footnote_content(self) -> None:
         """reconcile() on a document with footnotes works without raising."""
         base_content = [
-            {
-                "startIndex": 0,
-                "endIndex": 14,
-                "paragraph": {
-                    "elements": [{"textRun": {"content": "Original text\n"}}],
-                    "paragraphStyle": {"namedStyleType": "NORMAL_TEXT"},
-                },
-            }
+            StructuralElement(
+                start_index=0,
+                end_index=14,
+                paragraph=Paragraph(
+                    elements=[
+                        ParagraphElement(text_run=TextRun(content="Original text\n"))
+                    ],
+                    paragraph_style=ParagraphStyle(named_style_type="NORMAL_TEXT"),
+                ),
+            )
         ]
         desired_content = [make_para_el("Updated text\n"), make_terminal_para()]
 
         base = make_indexed_doc(
-            footnotes={"fn1": {"footnoteId": "fn1", "content": base_content}},
+            footnotes={"fn1": Footnote(footnote_id="fn1", content=base_content)},
         )
         desired = make_indexed_doc(
-            footnotes={"fn1": {"footnoteId": "fn1", "content": desired_content}},
+            footnotes={"fn1": Footnote(footnote_id="fn1", content=desired_content)},
         )
 
         result = reconcile(base, desired)
@@ -2069,15 +2040,15 @@ class TestFootnoteLowering:
         assert isinstance(result, list)
         assert len(result) >= 1
         # Must contain a deleteContentRange for the footnote reference
-        delete_reqs = [r for r in result if "deleteContentRange" in r]
+        delete_reqs = [r for r in result if r.delete_content_range is not None]
         fn_deletes = [
             r
             for r in delete_reqs
-            if r["deleteContentRange"]["range"]["startIndex"] == 4
+            if r.delete_content_range.range.start_index == 4  # type: ignore[union-attr]
         ]
-        assert (
-            len(fn_deletes) >= 1
-        ), f"Expected delete at index 4 for footnote ref, got: {result}"
+        assert len(fn_deletes) >= 1, (
+            f"Expected delete at index 4 for footnote ref, got: {result}"
+        )
 
 
 # ===========================================================================
@@ -2105,14 +2076,16 @@ class TestTableStructuralLowering:
         reqs = batches[0]
         assert len(reqs) == 1
         req = reqs[0]
-        assert "insertTableRow" in req
-        itr = req["insertTableRow"]
-        loc = itr["tableCellLocation"]
-        assert loc["tableStartLocation"]["index"] == self.TABLE_START
-        assert loc["tableStartLocation"]["tabId"] == self.TAB_ID
-        assert loc["rowIndex"] == 1
-        assert loc["columnIndex"] == 0
-        assert itr["insertBelow"] is True
+        assert req.insert_table_row is not None
+        itr = req.insert_table_row
+        assert itr.table_cell_location is not None
+        loc = itr.table_cell_location
+        assert loc.table_start_location is not None
+        assert loc.table_start_location.index == self.TABLE_START
+        assert loc.table_start_location.tab_id == self.TAB_ID
+        assert loc.row_index == 1
+        assert loc.column_index == 0
+        assert itr.insert_below is True
 
     def test_delete_table_row_request_shape(self) -> None:
         """DeleteTableRowOp → correct deleteTableRow request shape."""
@@ -2126,13 +2099,15 @@ class TestTableStructuralLowering:
         reqs = batches[0]
         assert len(reqs) == 1
         req = reqs[0]
-        assert "deleteTableRow" in req
-        dtr = req["deleteTableRow"]
-        loc = dtr["tableCellLocation"]
-        assert loc["tableStartLocation"]["index"] == self.TABLE_START
-        assert loc["tableStartLocation"]["tabId"] == self.TAB_ID
-        assert loc["rowIndex"] == 2
-        assert loc["columnIndex"] == 0
+        assert req.delete_table_row is not None
+        dtr = req.delete_table_row
+        assert dtr.table_cell_location is not None
+        loc = dtr.table_cell_location
+        assert loc.table_start_location is not None
+        assert loc.table_start_location.index == self.TABLE_START
+        assert loc.table_start_location.tab_id == self.TAB_ID
+        assert loc.row_index == 2
+        assert loc.column_index == 0
 
     def test_insert_table_column_request_shape(self) -> None:
         """InsertTableColumnOp → correct insertTableColumn request shape."""
@@ -2147,14 +2122,16 @@ class TestTableStructuralLowering:
         reqs = batches[0]
         assert len(reqs) == 1
         req = reqs[0]
-        assert "insertTableColumn" in req
-        itc = req["insertTableColumn"]
-        loc = itc["tableCellLocation"]
-        assert loc["tableStartLocation"]["index"] == self.TABLE_START
-        assert loc["tableStartLocation"]["tabId"] == self.TAB_ID
-        assert loc["rowIndex"] == 0
-        assert loc["columnIndex"] == 1
-        assert itc["insertRight"] is True
+        assert req.insert_table_column is not None
+        itc = req.insert_table_column
+        assert itc.table_cell_location is not None
+        loc = itc.table_cell_location
+        assert loc.table_start_location is not None
+        assert loc.table_start_location.index == self.TABLE_START
+        assert loc.table_start_location.tab_id == self.TAB_ID
+        assert loc.row_index == 0
+        assert loc.column_index == 1
+        assert itc.insert_right is True
 
     def test_delete_table_column_request_shape(self) -> None:
         """DeleteTableColumnOp → correct deleteTableColumn request shape."""
@@ -2168,18 +2145,18 @@ class TestTableStructuralLowering:
         reqs = batches[0]
         assert len(reqs) == 1
         req = reqs[0]
-        assert "deleteTableColumn" in req
-        dtc = req["deleteTableColumn"]
-        loc = dtc["tableCellLocation"]
-        assert loc["tableStartLocation"]["index"] == self.TABLE_START
-        assert loc["tableStartLocation"]["tabId"] == self.TAB_ID
-        assert loc["rowIndex"] == 0
-        assert loc["columnIndex"] == 0
+        assert req.delete_table_column is not None
+        dtc = req.delete_table_column
+        assert dtc.table_cell_location is not None
+        loc = dtc.table_cell_location
+        assert loc.table_start_location is not None
+        assert loc.table_start_location.index == self.TABLE_START
+        assert loc.table_start_location.tab_id == self.TAB_ID
+        assert loc.row_index == 0
+        assert loc.column_index == 0
 
     def test_table_ops_go_into_content_batch_not_batch_0(self) -> None:
         """Table structural ops go into batch 1 (content batch), not batch 0."""
-        # A CreateHeaderOp forces batch 0 to be non-empty so we can verify
-        # table ops don't end up there.
         from extradoc.reconcile_v3.model import CreateHeaderOp
 
         ops: list[Any] = [
@@ -2200,69 +2177,114 @@ class TestTableStructuralLowering:
         batches = lower_batches(ops)
         # Batch 0 should have createHeader; batch 1 should have insertTableRow
         assert len(batches) >= 2
-        batch0_keys = {next(iter(r.keys())) for r in batches[0]}
-        assert "createHeader" in batch0_keys
-        batch1_keys = {next(iter(r.keys())) for r in batches[1]}
-        assert "insertTableRow" in batch1_keys
+        batch0_types = {_get_request_type(r) for r in batches[0]}
+        assert "create_header" in batch0_types
+        batch1_types = {_get_request_type(r) for r in batches[1]}
+        assert "insert_table_row" in batch1_types
 
     def test_end_to_end_table_gains_row(self) -> None:
-        """reconcile(base, desired) on a doc where a table gains a row.
-
-        The result must not raise NotImplementedError and must contain at
-        least one insertTableRow request.
-        """
-        # Build a simple document with an indexed table (startIndex=1)
-        table_el = {
-            "startIndex": 1,
-            "endIndex": 20,
-            "table": {
-                "tableRows": [
-                    {
-                        "tableCells": [
-                            {"content": [make_para_el("A\n")], "tableCellStyle": {}}
+        """reconcile(base, desired) on a doc where a table gains a row."""
+        table_el = StructuralElement(
+            start_index=1,
+            end_index=20,
+            table=Table(
+                table_rows=[
+                    TableRow(
+                        table_cells=[
+                            TableCell(
+                                content=[make_para_el("A\n")],
+                            )
                         ],
-                        "tableRowStyle": {},
-                    }
+                    )
                 ],
-                "columns": 1,
-                "rows": 1,
-            },
-        }
+                columns=1,
+                rows=1,
+            ),
+        )
         terminal = make_indexed_terminal(21)
         base = make_indexed_doc(body_content=[table_el, terminal])
 
         # Desired: two rows
-        table_el_desired = {
-            "startIndex": 1,
-            "endIndex": 30,
-            "table": {
-                "tableRows": [
-                    {
-                        "tableCells": [
-                            {"content": [make_para_el("A\n")], "tableCellStyle": {}}
+        table_el_desired = StructuralElement(
+            start_index=1,
+            end_index=30,
+            table=Table(
+                table_rows=[
+                    TableRow(
+                        table_cells=[
+                            TableCell(
+                                content=[make_para_el("A\n")],
+                            )
                         ],
-                        "tableRowStyle": {},
-                    },
-                    {
-                        "tableCells": [
-                            {"content": [make_para_el("B\n")], "tableCellStyle": {}}
+                    ),
+                    TableRow(
+                        table_cells=[
+                            TableCell(
+                                content=[make_para_el("B\n")],
+                            )
                         ],
-                        "tableRowStyle": {},
-                    },
+                    ),
                 ],
-                "columns": 1,
-                "rows": 2,
-            },
-        }
+                columns=1,
+                rows=2,
+            ),
+        )
         terminal_desired = make_indexed_terminal(31)
         desired = make_indexed_doc(body_content=[table_el_desired, terminal_desired])
 
         result = reconcile(base, desired)
         assert isinstance(result, list)
-        insert_row_reqs = [r for r in result if "insertTableRow" in r]
-        assert (
-            len(insert_row_reqs) >= 1
-        ), f"Expected insertTableRow request, got: {result}"
+        insert_row_reqs = [r for r in result if r.insert_table_row is not None]
+        assert len(insert_row_reqs) >= 1, (
+            f"Expected insertTableRow request, got: {result}"
+        )
+
+
+def _get_request_type(req: Any) -> str:
+    """Return the field name of the set request type."""
+    for field_name in [
+        "add_document_tab",
+        "create_footer",
+        "create_footnote",
+        "create_header",
+        "create_named_range",
+        "create_paragraph_bullets",
+        "delete_content_range",
+        "delete_footer",
+        "delete_header",
+        "delete_named_range",
+        "delete_paragraph_bullets",
+        "delete_positioned_object",
+        "delete_tab",
+        "delete_table_column",
+        "delete_table_row",
+        "insert_date",
+        "insert_inline_image",
+        "insert_page_break",
+        "insert_person",
+        "insert_section_break",
+        "insert_table",
+        "insert_table_column",
+        "insert_table_row",
+        "insert_text",
+        "merge_table_cells",
+        "pin_table_header_rows",
+        "replace_all_text",
+        "replace_image",
+        "replace_named_range_content",
+        "unmerge_table_cells",
+        "update_document_style",
+        "update_document_tab_properties",
+        "update_paragraph_style",
+        "update_section_style",
+        "update_table_cell_style",
+        "update_table_column_properties",
+        "update_table_row_style",
+        "update_text_style",
+    ]:
+        if getattr(req, field_name, None) is not None:
+            return field_name
+    return "unknown"
 
 
 # ===========================================================================
@@ -2285,23 +2307,27 @@ class TestTableStyleLowering:
             fields_mask="backgroundColor",
         )
         batches = lower_batches([op])
-        # Goes into batch 1 (content batch)
         assert len(batches) == 1
         reqs = batches[0]
         assert len(reqs) == 1
         req = reqs[0]
-        assert "updateTableCellStyle" in req
-        ucs = req["updateTableCellStyle"]
-        assert ucs["fields"] == "backgroundColor"
-        assert ucs["tableCellStyle"] == {
+        assert req.update_table_cell_style is not None
+        ucs = req.update_table_cell_style
+        assert ucs.fields == "backgroundColor"
+        # Check via dict for nested structure
+        ucs_dict = ucs.model_dump(by_alias=True, exclude_none=True)
+        assert ucs_dict["tableCellStyle"] == {
             "backgroundColor": {"color": {"rgbColor": {"red": 1.0}}}
         }
-        assert ucs["tableRange"]["tableCellLocation"]["rowIndex"] == 1
-        assert ucs["tableRange"]["tableCellLocation"]["columnIndex"] == 2
-        assert ucs["tableRange"]["rowSpan"] == 1
-        assert ucs["tableRange"]["columnSpan"] == 1
-        assert ucs["tableStartLocation"]["index"] == 5
-        assert ucs["tableStartLocation"]["tabId"] == "t1"
+        assert ucs.table_range is not None
+        assert ucs.table_range.table_cell_location is not None
+        assert ucs.table_range.table_cell_location.row_index == 1
+        assert ucs.table_range.table_cell_location.column_index == 2
+        assert ucs.table_range.row_span == 1
+        assert ucs.table_range.column_span == 1
+        assert ucs.table_start_location is not None
+        assert ucs.table_start_location.index == 5
+        assert ucs.table_start_location.tab_id == "t1"
 
     def test_update_table_row_style_request_shape(self) -> None:
         """UpdateTableRowStyleOp lowers to a correctly-shaped updateTableRowStyle request."""
@@ -2309,19 +2335,22 @@ class TestTableStyleLowering:
             tab_id="t1",
             table_start_index=5,
             row_index=2,
-            min_row_height={"magnitude": 30.0, "unit": "PT"},
+            min_row_height=Dimension(magnitude=30.0, unit="PT"),
         )
         batches = lower_batches([op])
         assert len(batches) == 1
         reqs = batches[0]
         assert len(reqs) == 1
         req = reqs[0]
-        assert "updateTableRowStyle" in req
-        urs = req["updateTableRowStyle"]
-        assert urs["rowIndices"] == [2]
-        assert urs["fields"] == "minRowHeight"
-        assert urs["tableRowStyle"]["minRowHeight"] == {"magnitude": 30.0, "unit": "PT"}
-        assert urs["tableStartLocation"]["index"] == 5
+        assert req.update_table_row_style is not None
+        urs = req.update_table_row_style
+        assert urs.row_indices == [2]
+        assert urs.fields == "minRowHeight"
+        assert urs.table_row_style is not None
+        assert urs.table_row_style.min_row_height is not None
+        assert urs.table_row_style.min_row_height.magnitude == 30.0
+        assert urs.table_start_location is not None
+        assert urs.table_start_location.index == 5
 
     def test_update_table_column_properties_request_shape(self) -> None:
         """UpdateTableColumnPropertiesOp lowers to a correctly-shaped request."""
@@ -2329,7 +2358,7 @@ class TestTableStyleLowering:
             tab_id="t1",
             table_start_index=5,
             column_index=1,
-            width={"magnitude": 150.0, "unit": "PT"},
+            width=Dimension(magnitude=150.0, unit="PT"),
             width_type="FIXED_WIDTH",
         )
         batches = lower_batches([op])
@@ -2337,15 +2366,15 @@ class TestTableStyleLowering:
         reqs = batches[0]
         assert len(reqs) == 1
         req = reqs[0]
-        assert "updateTableColumnProperties" in req
-        ucp = req["updateTableColumnProperties"]
-        assert ucp["columnIndices"] == [1]
-        assert ucp["tableColumnProperties"]["width"] == {
-            "magnitude": 150.0,
-            "unit": "PT",
-        }
-        assert ucp["tableColumnProperties"]["widthType"] == "FIXED_WIDTH"
-        assert ucp["tableStartLocation"]["index"] == 5
+        assert req.update_table_column_properties is not None
+        ucp = req.update_table_column_properties
+        assert ucp.column_indices == [1]
+        assert ucp.table_column_properties is not None
+        assert ucp.table_column_properties.width is not None
+        assert ucp.table_column_properties.width.magnitude == 150.0
+        assert ucp.table_column_properties.width_type == "FIXED_WIDTH"
+        assert ucp.table_start_location is not None
+        assert ucp.table_start_location.index == 5
 
     def test_all_table_style_ops_go_into_batch_1(self) -> None:
         """All three table style op types end up in the content batch (batch 1)."""
@@ -2386,29 +2415,28 @@ class TestTableStyleLowering:
         bg_red = {"backgroundColor": {"color": {"rgbColor": {"red": 1.0}}}}
         bg_blue = {"backgroundColor": {"color": {"rgbColor": {"blue": 1.0}}}}
 
-        def _make_doc(cell_style: dict[str, Any]) -> dict[str, Any]:
-            table_el: dict[str, Any] = {
-                "startIndex": 1,
-                "endIndex": 10,
-                "table": {
-                    "tableRows": [
-                        {
-                            "tableCells": [
-                                {
-                                    "content": [
+        def _make_doc(cell_style: dict[str, Any]) -> Document:
+            table_el = StructuralElement(
+                start_index=1,
+                end_index=10,
+                table=Table(
+                    table_rows=[
+                        TableRow(
+                            table_cells=[
+                                TableCell(
+                                    content=[
                                         make_para_el("A\n"),
                                         make_terminal_para(),
                                     ],
-                                    "tableCellStyle": cell_style,
-                                }
+                                    table_cell_style=cell_style,
+                                )
                             ],
-                            "tableRowStyle": {},
-                        }
+                        )
                     ],
-                    "columns": 1,
-                    "rows": 1,
-                },
-            }
+                    columns=1,
+                    rows=1,
+                ),
+            )
             return make_document(
                 tabs=[
                     make_tab("t1", body_content=[table_el, make_indexed_terminal(11)])
@@ -2422,7 +2450,7 @@ class TestTableStyleLowering:
 
         result = reconcile(base, desired)
         assert isinstance(result, list)
-        style_reqs = [r for r in result if "updateTableCellStyle" in r]
+        style_reqs = [r for r in result if r.update_table_cell_style is not None]
         assert len(style_reqs) == 1
 
 
@@ -2444,11 +2472,14 @@ class TestDocumentStyleLowering:
         reqs = lower_ops([op])
         assert len(reqs) == 1
         req = reqs[0]
-        assert "updateDocumentStyle" in req
-        body = req["updateDocumentStyle"]
-        assert body["documentStyle"] == {"marginTop": {"magnitude": 36, "unit": "PT"}}
-        assert body["fields"] == "marginTop"
-        assert body["tabId"] == "t1"
+        assert req.update_document_style is not None
+        body = req.update_document_style
+        body_dict = body.model_dump(by_alias=True, exclude_none=True)
+        assert body_dict["documentStyle"] == {
+            "marginTop": {"magnitude": 36, "unit": "PT"}
+        }
+        assert body.fields == "marginTop"
+        assert body.tab_id == "t1"
 
     def test_lower_op_fields_mask_is_correct(self) -> None:
         """fields_mask is passed through verbatim."""
@@ -2462,8 +2493,9 @@ class TestDocumentStyleLowering:
         )
         reqs = lower_ops([op])
         assert len(reqs) == 1
-        body = reqs[0]["updateDocumentStyle"]
-        assert body["fields"] == "marginTop,pageNumberStart"
+        body = reqs[0].update_document_style
+        assert body is not None
+        assert body.fields == "marginTop,pageNumberStart"
 
     def test_lower_op_legacy_tab_no_tab_id_in_request(self) -> None:
         """Legacy pseudo-tabs (empty tab_id) omit tabId from the request."""
@@ -2474,8 +2506,10 @@ class TestDocumentStyleLowering:
         )
         reqs = lower_ops([op])
         assert len(reqs) == 1
-        body = reqs[0]["updateDocumentStyle"]
-        assert "tabId" not in body
+        body = reqs[0].update_document_style
+        assert body is not None
+        # tab_id should be None or empty for legacy docs
+        assert not body.tab_id  # empty string or None
 
     def test_end_to_end_changed_margins(self) -> None:
         """End-to-end: document with changed margins reconciles without error."""
@@ -2507,12 +2541,21 @@ class TestDocumentStyleLowering:
         )
         result = reconcile(base, desired)
         assert isinstance(result, list)
-        style_reqs = [r for r in result if "updateDocumentStyle" in r]
+        style_reqs = [r for r in result if r.update_document_style is not None]
         assert len(style_reqs) == 1
-        body = style_reqs[0]["updateDocumentStyle"]
-        assert body["documentStyle"]["marginTop"] == {"magnitude": 36, "unit": "PT"}
-        assert body["documentStyle"]["marginBottom"] == {"magnitude": 36, "unit": "PT"}
-        assert set(body["fields"].split(",")) == {"marginTop", "marginBottom"}
+        body = style_reqs[0].update_document_style
+        assert body is not None
+        body_dict = body.model_dump(by_alias=True, exclude_none=True)
+        assert body_dict["documentStyle"]["marginTop"] == {
+            "magnitude": 36,
+            "unit": "PT",
+        }
+        assert body_dict["documentStyle"]["marginBottom"] == {
+            "magnitude": 36,
+            "unit": "PT",
+        }
+        assert body.fields is not None
+        assert set(body.fields.split(",")) == {"marginTop", "marginBottom"}
 
 
 # ===========================================================================
@@ -2524,10 +2567,10 @@ class TestInlineImageLowering:
     """Tests for lowering InsertInlineObjectOp and DeleteInlineObjectOp."""
 
     _content_uri = "https://lh3.googleusercontent.com/img123"
-    _object_size: ClassVar[dict[str, Any]] = {
-        "width": {"magnitude": 200, "unit": "PT"},
-        "height": {"magnitude": 150, "unit": "PT"},
-    }
+    _object_size: ClassVar[Size] = Size(
+        width=Dimension(magnitude=200, unit="PT"),
+        height=Dimension(magnitude=150, unit="PT"),
+    )
 
     def test_insert_inline_object_request_shape(self) -> None:
         """InsertInlineObjectOp → insertInlineImage with correct fields."""
@@ -2544,12 +2587,14 @@ class TestInlineImageLowering:
         reqs = batches[0]
         assert len(reqs) == 1
         req = reqs[0]
-        assert "insertInlineImage" in req
-        body = req["insertInlineImage"]
-        assert body["uri"] == self._content_uri
-        assert body["location"]["index"] == 5
-        assert body["location"]["segmentId"] == "t1"
-        assert body["objectSize"] == self._object_size
+        assert req.insert_inline_image is not None
+        body = req.insert_inline_image
+        assert body.uri == self._content_uri
+        assert body.location is not None
+        assert body.location.index == 5
+        # segment_id holds tab_id for inline image requests
+        assert body.location.segment_id == "t1"
+        assert body.object_size is not None
 
     def test_insert_inline_object_without_size(self) -> None:
         """InsertInlineObjectOp without object_size → no objectSize field."""
@@ -2563,7 +2608,8 @@ class TestInlineImageLowering:
         batches = lower_batches([op])
         assert len(batches) == 1
         req = batches[0][0]
-        assert "objectSize" not in req["insertInlineImage"]
+        assert req.insert_inline_image is not None
+        assert req.insert_inline_image.object_size is None
 
     def test_delete_inline_object_request_shape(self) -> None:
         """DeleteInlineObjectOp → deleteContentRange of 1 character."""
@@ -2577,11 +2623,12 @@ class TestInlineImageLowering:
         reqs = batches[0]
         assert len(reqs) == 1
         req = reqs[0]
-        assert "deleteContentRange" in req
-        rng = req["deleteContentRange"]["range"]
-        assert rng["startIndex"] == 7
-        assert rng["endIndex"] == 8  # exactly 1 character
-        assert rng["tabId"] == "t1"
+        assert req.delete_content_range is not None
+        rng = req.delete_content_range.range
+        assert rng is not None
+        assert rng.start_index == 7
+        assert rng.end_index == 8  # exactly 1 character
+        assert rng.tab_id == "t1"
 
     def test_insert_and_delete_both_go_to_batch_1(self) -> None:
         """Both insert and delete ops land in the same batch (batch 1)."""
@@ -2600,8 +2647,8 @@ class TestInlineImageLowering:
         assert len(batches) == 1  # only batch 1, no batch 0
         reqs = batches[0]
         assert len(reqs) == 2
-        assert "insertInlineImage" in reqs[0]
-        assert "deleteContentRange" in reqs[1]
+        assert reqs[0].insert_inline_image is not None
+        assert reqs[1].delete_content_range is not None
 
     def test_update_inline_object_raises(self) -> None:
         """UpdateInlineObjectOp raises NotImplementedError (API limitation)."""
@@ -2610,8 +2657,8 @@ class TestInlineImageLowering:
         op = UpdateInlineObjectOp(
             tab_id="t1",
             inline_object_id="kix.existing",
-            base_obj={},
-            desired_obj={"changed": True},
+            base_obj=InlineObject(),
+            desired_obj=InlineObject(),
         )
         with pytest.raises(NotImplementedError, match="batchUpdate"):
             lower_batches([op])
@@ -2639,28 +2686,27 @@ class TestInlineImageLowering:
         )
 
         # Desired: same paragraph but now with an image element prepended
-        desired_para: dict[str, Any] = {
-            "startIndex": 1,
-            "endIndex": 8,
-            "paragraph": {
-                "elements": [
-                    {
-                        "startIndex": 1,
-                        "endIndex": 2,
-                        "inlineObjectElement": {
-                            "inlineObjectId": obj_id,
-                            "textStyle": {},
-                        },
-                    },
-                    {
-                        "startIndex": 2,
-                        "endIndex": 8,
-                        "textRun": {"content": "Hello\n", "textStyle": {}},
-                    },
+        desired_para = StructuralElement(
+            start_index=1,
+            end_index=8,
+            paragraph=Paragraph(
+                elements=[
+                    ParagraphElement(
+                        start_index=1,
+                        end_index=2,
+                        inline_object_element=InlineObjectElement(
+                            inline_object_id=obj_id,
+                        ),
+                    ),
+                    ParagraphElement(
+                        start_index=2,
+                        end_index=8,
+                        text_run=TextRun(content="Hello\n", text_style=TextStyle()),
+                    ),
                 ],
-                "paragraphStyle": {"namedStyleType": "NORMAL_TEXT"},
-            },
-        }
+                paragraph_style=ParagraphStyle(named_style_type="NORMAL_TEXT"),
+            ),
+        )
         desired = make_document(
             tabs=[
                 make_tab(
@@ -2673,9 +2719,9 @@ class TestInlineImageLowering:
 
         result = reconcile(base, desired)
         assert isinstance(result, list)
-        insert_reqs = [r for r in result if "insertInlineImage" in r]
+        insert_reqs = [r for r in result if r.insert_inline_image is not None]
         assert len(insert_reqs) == 1
-        assert insert_reqs[0]["insertInlineImage"]["uri"] == content_uri
+        assert insert_reqs[0].insert_inline_image.uri == content_uri  # type: ignore[union-attr]
 
 
 # ===========================================================================
@@ -2683,42 +2729,32 @@ class TestInlineImageLowering:
 # ===========================================================================
 
 
-def make_indexed_page_break(start: int) -> dict[str, Any]:
-    """Return a page break paragraph element with index fields.
-
-    A page break paragraph contains a ``pageBreak`` ParagraphElement and a
-    terminal newline textRun.  insertPageBreak inserts 2 characters, so
-    endIndex = start + 2.
-    """
-    return {
-        "startIndex": start,
-        "endIndex": start + 2,
-        "paragraph": {
-            "elements": [
-                {"pageBreak": {}},
-                {"textRun": {"content": "\n"}},
+def make_indexed_page_break(start: int) -> StructuralElement:
+    """Return a page break paragraph element with index fields."""
+    return StructuralElement(
+        start_index=start,
+        end_index=start + 2,
+        paragraph=Paragraph(
+            elements=[
+                ParagraphElement(page_break=PageBreak()),
+                ParagraphElement(text_run=TextRun(content="\n")),
             ],
-            "paragraphStyle": {"namedStyleType": "NORMAL_TEXT"},
-        },
-    }
+            paragraph_style=ParagraphStyle(named_style_type="NORMAL_TEXT"),
+        ),
+    )
 
 
 def make_indexed_section_break(
     start: int,
     section_style: dict[str, Any] | None = None,
-) -> dict[str, Any]:
-    """Return a section break structural element with index fields.
-
-    A section break occupies 1 character (endIndex = start + 1).
-    ``section_style`` defaults to a minimal style with ``sectionType=NEXT_PAGE``.
-    """
-    return {
-        "startIndex": start,
-        "endIndex": start + 1,
-        "sectionBreak": {
-            "sectionStyle": section_style or {"sectionType": "NEXT_PAGE"},
-        },
-    }
+) -> StructuralElement:
+    """Return a section break structural element with index fields."""
+    ss = SectionStyle(**(section_style or {"section_type": "NEXT_PAGE"}))
+    return StructuralElement(
+        start_index=start,
+        end_index=start + 1,
+        section_break=SectionBreak(section_style=ss),
+    )
 
 
 class TestPageBreakSectionBreak:
@@ -2734,24 +2770,24 @@ class TestPageBreakSectionBreak:
         desired = make_indexed_doc(
             body_content=[
                 # Page break paragraph (no index — desired docs may lack indices)
-                {
-                    "paragraph": {
-                        "elements": [
-                            {"pageBreak": {}},
-                            {"textRun": {"content": "\n"}},
+                StructuralElement(
+                    paragraph=Paragraph(
+                        elements=[
+                            ParagraphElement(page_break=PageBreak()),
+                            ParagraphElement(text_run=TextRun(content="\n")),
                         ],
-                        "paragraphStyle": {"namedStyleType": "NORMAL_TEXT"},
-                    }
-                },
+                        paragraph_style=ParagraphStyle(named_style_type="NORMAL_TEXT"),
+                    ),
+                ),
                 make_terminal_para(),
             ]
         )
 
         requests = lower_ops(diff(base, desired))
-        pb_reqs = [r for r in requests if "insertPageBreak" in r]
+        pb_reqs = [r for r in requests if r.insert_page_break is not None]
         assert len(pb_reqs) == 1
-        loc = pb_reqs[0]["insertPageBreak"]["location"]
-        assert loc["index"] == 1  # Insert before terminal at index 1
+        assert pb_reqs[0].insert_page_break.location is not None  # type: ignore[union-attr]
+        assert pb_reqs[0].insert_page_break.location.index == 1  # type: ignore[union-attr]
 
     def test_insert_page_break_uses_tab_id(self) -> None:
         """insertPageBreak request carries the correct tabId."""
@@ -2759,31 +2795,26 @@ class TestPageBreakSectionBreak:
         desired = make_indexed_doc(
             tab_id="myTab",
             body_content=[
-                {
-                    "paragraph": {
-                        "elements": [
-                            {"pageBreak": {}},
-                            {"textRun": {"content": "\n"}},
+                StructuralElement(
+                    paragraph=Paragraph(
+                        elements=[
+                            ParagraphElement(page_break=PageBreak()),
+                            ParagraphElement(text_run=TextRun(content="\n")),
                         ],
-                        "paragraphStyle": {"namedStyleType": "NORMAL_TEXT"},
-                    }
-                },
+                        paragraph_style=ParagraphStyle(named_style_type="NORMAL_TEXT"),
+                    ),
+                ),
                 make_terminal_para(),
             ],
         )
 
         requests = lower_ops(diff(base, desired))
-        pb_reqs = [r for r in requests if "insertPageBreak" in r]
+        pb_reqs = [r for r in requests if r.insert_page_break is not None]
         assert len(pb_reqs) == 1
-        assert pb_reqs[0]["insertPageBreak"]["location"]["tabId"] == "myTab"
+        assert pb_reqs[0].insert_page_break.location.tab_id == "myTab"  # type: ignore[union-attr]
 
     def test_page_break_delete_uses_delete_content_range(self) -> None:
-        """Base has a page break, desired doesn't → deleteContentRange (existing path).
-
-        The alignment algorithm treats the page break paragraph as a PARAGRAPH
-        node.  When it is unmatched in desired, the lowering emits a
-        deleteContentRange covering the element's startIndex..endIndex.
-        """
+        """Base has a page break, desired doesn't → deleteContentRange."""
         base = make_indexed_doc(
             body_content=[
                 make_indexed_page_break(1),  # page break para at 1..3
@@ -2793,11 +2824,13 @@ class TestPageBreakSectionBreak:
         desired = make_indexed_doc(body_content=[make_indexed_terminal(1)])
 
         requests = lower_ops(diff(base, desired))
-        delete_reqs = [r for r in requests if "deleteContentRange" in r]
+        delete_reqs = [r for r in requests if r.delete_content_range is not None]
         assert len(delete_reqs) == 1
-        dcr = delete_reqs[0]["deleteContentRange"]["range"]
-        assert dcr["startIndex"] == 1
-        assert dcr["endIndex"] == 3
+        dcr = delete_reqs[0].delete_content_range
+        assert dcr is not None
+        assert dcr.range is not None
+        assert dcr.range.start_index == 1
+        assert dcr.range.end_index == 3
 
     # ------------------------------------------------------------------
     # Section break insertion
@@ -2808,40 +2841,42 @@ class TestPageBreakSectionBreak:
         base = make_indexed_doc(body_content=[make_indexed_terminal(1)])
         desired = make_indexed_doc(
             body_content=[
-                {
-                    "sectionBreak": {
-                        "sectionStyle": {"sectionType": "NEXT_PAGE"},
-                    }
-                },
+                StructuralElement(
+                    section_break=SectionBreak(
+                        section_style=SectionStyle(section_type="NEXT_PAGE"),
+                    ),
+                ),
                 make_terminal_para(),
             ]
         )
 
         requests = lower_ops(diff(base, desired))
-        sb_reqs = [r for r in requests if "insertSectionBreak" in r]
+        sb_reqs = [r for r in requests if r.insert_section_break is not None]
         assert len(sb_reqs) == 1
-        req = sb_reqs[0]["insertSectionBreak"]
-        assert req["sectionType"] == "NEXT_PAGE"
-        assert req["location"]["index"] == 1
+        req = sb_reqs[0].insert_section_break
+        assert req is not None
+        assert req.section_type == "NEXT_PAGE"
+        assert req.location is not None
+        assert req.location.index == 1
 
     def test_insert_section_break_custom_section_type(self) -> None:
         """sectionType from sectionStyle is preserved in the request."""
         base = make_indexed_doc(body_content=[make_indexed_terminal(1)])
         desired = make_indexed_doc(
             body_content=[
-                {
-                    "sectionBreak": {
-                        "sectionStyle": {"sectionType": "CONTINUOUS"},
-                    }
-                },
+                StructuralElement(
+                    section_break=SectionBreak(
+                        section_style=SectionStyle(section_type="CONTINUOUS"),
+                    ),
+                ),
                 make_terminal_para(),
             ]
         )
 
         requests = lower_ops(diff(base, desired))
-        sb_reqs = [r for r in requests if "insertSectionBreak" in r]
+        sb_reqs = [r for r in requests if r.insert_section_break is not None]
         assert len(sb_reqs) == 1
-        assert sb_reqs[0]["insertSectionBreak"]["sectionType"] == "CONTINUOUS"
+        assert sb_reqs[0].insert_section_break.section_type == "CONTINUOUS"  # type: ignore[union-attr]
 
     def test_insert_section_break_missing_section_type_defaults_to_next_page(
         self,
@@ -2850,15 +2885,19 @@ class TestPageBreakSectionBreak:
         base = make_indexed_doc(body_content=[make_indexed_terminal(1)])
         desired = make_indexed_doc(
             body_content=[
-                {"sectionBreak": {"sectionStyle": {}}},
+                StructuralElement(
+                    section_break=SectionBreak(
+                        section_style=SectionStyle(),
+                    ),
+                ),
                 make_terminal_para(),
             ]
         )
 
         requests = lower_ops(diff(base, desired))
-        sb_reqs = [r for r in requests if "insertSectionBreak" in r]
+        sb_reqs = [r for r in requests if r.insert_section_break is not None]
         assert len(sb_reqs) == 1
-        assert sb_reqs[0]["insertSectionBreak"]["sectionType"] == "NEXT_PAGE"
+        assert sb_reqs[0].insert_section_break.section_type == "NEXT_PAGE"  # type: ignore[union-attr]
 
     def test_insert_section_break_with_extra_style_emits_update_section_style(
         self,
@@ -2867,25 +2906,27 @@ class TestPageBreakSectionBreak:
         base = make_indexed_doc(body_content=[make_indexed_terminal(1)])
         desired = make_indexed_doc(
             body_content=[
-                {
-                    "sectionBreak": {
-                        "sectionStyle": {
-                            "sectionType": "NEXT_PAGE",
-                            "columnCount": 2,
-                        }
-                    }
-                },
+                StructuralElement(
+                    section_break=SectionBreak(
+                        section_style=SectionStyle(
+                            section_type="NEXT_PAGE",
+                            column_count=2,
+                        ),
+                    ),
+                ),
                 make_terminal_para(),
             ]
         )
 
         requests = lower_ops(diff(base, desired))
-        sb_reqs = [r for r in requests if "insertSectionBreak" in r]
-        uss_reqs = [r for r in requests if "updateSectionStyle" in r]
+        sb_reqs = [r for r in requests if r.insert_section_break is not None]
+        uss_reqs = [r for r in requests if r.update_section_style is not None]
         assert len(sb_reqs) == 1
         assert len(uss_reqs) >= 1
-        uss = uss_reqs[-1]["updateSectionStyle"]
-        assert "columnCount" in uss["sectionStyle"]
+        uss = uss_reqs[-1].update_section_style
+        assert uss is not None
+        assert uss.section_style is not None
+        assert uss.section_style.column_count is not None
 
     # ------------------------------------------------------------------
     # Section break style update (matched section breaks, style changed)
@@ -2905,24 +2946,27 @@ class TestPageBreakSectionBreak:
         )
         desired = make_indexed_doc(
             body_content=[
-                {
-                    "sectionBreak": {
-                        "sectionStyle": {
-                            "sectionType": "NEXT_PAGE",
-                            "columnCount": 2,
-                        }
-                    }
-                },
+                StructuralElement(
+                    section_break=SectionBreak(
+                        section_style=SectionStyle(
+                            section_type="NEXT_PAGE",
+                            column_count=2,
+                        ),
+                    ),
+                ),
                 make_terminal_para(),
             ]
         )
 
         requests = lower_ops(diff(base, desired))
-        uss_reqs = [r for r in requests if "updateSectionStyle" in r]
+        uss_reqs = [r for r in requests if r.update_section_style is not None]
         assert len(uss_reqs) >= 1
-        uss = uss_reqs[0]["updateSectionStyle"]
-        assert uss["sectionStyle"]["columnCount"] == 2
-        assert "columnCount" in uss["fields"]
+        uss = uss_reqs[0].update_section_style
+        assert uss is not None
+        assert uss.section_style is not None
+        assert uss.section_style.column_count == 2
+        assert uss.fields is not None
+        assert "columnCount" in uss.fields
 
     def test_matched_section_breaks_identical_style_produces_no_request(self) -> None:
         """Identical section break styles produce no updateSectionStyle request."""
@@ -2934,19 +2978,25 @@ class TestPageBreakSectionBreak:
         )
         desired = make_indexed_doc(
             body_content=[
-                {"sectionBreak": {"sectionStyle": {"sectionType": "NEXT_PAGE"}}},
+                StructuralElement(
+                    section_break=SectionBreak(
+                        section_style=SectionStyle(section_type="NEXT_PAGE"),
+                    ),
+                ),
                 make_indexed_terminal(2),
             ]
         )
 
         requests = lower_ops(diff(base, desired))
-        uss_reqs = [r for r in requests if "updateSectionStyle" in r]
+        uss_reqs = [r for r in requests if r.update_section_style is not None]
         # No header/footer created → no deferred updateSectionStyle
-        # Only checking that no content-diff updateSectionStyle is emitted.
         content_uss = [
             r
             for r in uss_reqs
-            if r["updateSectionStyle"].get("range", {}).get("startIndex", -1) > 0
+            if r.update_section_style is not None
+            and r.update_section_style.range is not None
+            and r.update_section_style.range.start_index is not None
+            and r.update_section_style.range.start_index > 0
         ]
         assert content_uss == []
 
@@ -2967,22 +3017,22 @@ class TestPageBreakSectionBreak:
         desired = make_indexed_doc(
             body_content=[
                 make_para_el("First paragraph\n"),
-                {
-                    "paragraph": {
-                        "elements": [
-                            {"pageBreak": {}},
-                            {"textRun": {"content": "\n"}},
+                StructuralElement(
+                    paragraph=Paragraph(
+                        elements=[
+                            ParagraphElement(page_break=PageBreak()),
+                            ParagraphElement(text_run=TextRun(content="\n")),
                         ],
-                        "paragraphStyle": {"namedStyleType": "NORMAL_TEXT"},
-                    }
-                },
+                        paragraph_style=ParagraphStyle(named_style_type="NORMAL_TEXT"),
+                    ),
+                ),
                 make_terminal_para(),
             ]
         )
 
         result = reconcile(base, desired)
         assert isinstance(result, list)
-        pb_reqs = [r for r in result if "insertPageBreak" in r]
+        pb_reqs = [r for r in result if r.insert_page_break is not None]
         assert len(pb_reqs) == 1
 
 
@@ -2992,43 +3042,30 @@ class TestPageBreakSectionBreak:
 
 
 class TestTableInsertCellContent:
-    """Tests for cell content requests emitted by _lower_table_insert.
-
-    Index arithmetic reference (table at index N):
-      N   : table opener (1 char)
-      N+1 : row[0] opener (1 char)
-      N+2 : cell[0][0] opener (1 char)
-      N+3 : cell[0][0] first content position (after opener)
-      ...
-
-    After inserting ``s`` chars of content into a cell, all subsequent cells
-    shift right by ``s``.
-    """
+    """Tests for cell content requests emitted by _lower_table_insert."""
 
     from extradoc.indexer import utf16_len
 
-    def _make_cell(self, text: str) -> dict[str, Any]:
-        """Cell dict with one text paragraph + terminal."""
-        return {
-            "content": [make_para_el(text), make_terminal_para()],
-            "tableCellStyle": {},
-        }
+    def _make_cell(self, text: str) -> TableCell:
+        """Cell with one text paragraph + terminal."""
+        return TableCell(
+            content=[make_para_el(text), make_terminal_para()],
+        )
 
-    def _make_table_el(self, cells_by_row: list[list[str]]) -> dict[str, Any]:
+    def _make_table_el(self, cells_by_row: list[list[str]]) -> StructuralElement:
         """Table element where each cell text is provided as a string."""
-        return {
-            "table": {
-                "rows": len(cells_by_row),
-                "columns": len(cells_by_row[0]) if cells_by_row else 0,
-                "tableRows": [
-                    {
-                        "tableCells": [self._make_cell(t) for t in row],
-                        "tableRowStyle": {},
-                    }
+        return StructuralElement(
+            table=Table(
+                rows=len(cells_by_row),
+                columns=len(cells_by_row[0]) if cells_by_row else 0,
+                table_rows=[
+                    TableRow(
+                        table_cells=[self._make_cell(t) for t in row],
+                    )
                     for row in cells_by_row
                 ],
-            }
-        }
+            )
+        )
 
     def test_insert_table_emits_insertTable_request(self) -> None:
         """_lower_table_insert always emits insertTable as the first request."""
@@ -3036,11 +3073,12 @@ class TestTableInsertCellContent:
 
         el = self._make_table_el([["Hello\n", "World\n"]])
         reqs = _lower_table_insert(el=el, index=5, tab_id="t1", segment_id=None)
-        assert reqs[0].get("insertTable") is not None
-        it = reqs[0]["insertTable"]
-        assert it["rows"] == 1
-        assert it["columns"] == 2
-        assert it["location"]["index"] == 5
+        assert reqs[0].insert_table is not None
+        it = reqs[0].insert_table
+        assert it.rows == 1
+        assert it.columns == 2
+        assert it.location is not None
+        assert it.location.index == 5
 
     def test_insert_table_1x1_cell_content_index(self) -> None:
         """1x1 table: cell content inserts at index+3 (table+row+cell openers = 3 chars)."""
@@ -3049,14 +3087,15 @@ class TestTableInsertCellContent:
         el = self._make_table_el([["Hello\n"]])
         reqs = _lower_table_insert(el=el, index=5, tab_id="t1", segment_id=None)
 
-        insert_reqs = [r for r in reqs if "insertText" in r]
+        insert_reqs = [r for r in reqs if r.insert_text is not None]
         assert len(insert_reqs) == 1
-        loc = insert_reqs[0]["insertText"]["location"]
-        assert loc["index"] == 8, (
+        loc = insert_reqs[0].insert_text.location  # type: ignore[union-attr]
+        assert loc is not None
+        assert loc.index == 8, (
             "1x1 table at 5: table opener(5) + row opener(6) + cell opener(7) "
-            f"→ content at 8, got {loc['index']}"
+            f"→ content at 8, got {loc.index}"
         )
-        assert insert_reqs[0]["insertText"]["text"] == "Hello\n"
+        assert insert_reqs[0].insert_text.text == "Hello\n"  # type: ignore[union-attr]
 
     def test_insert_table_1x2_second_cell_index_accounts_for_first_insertion(
         self,
@@ -3068,27 +3107,22 @@ class TestTableInsertCellContent:
         el = self._make_table_el([["Hello\n", "World\n"]])
         reqs = _lower_table_insert(el=el, index=5, tab_id="t1", segment_id=None)
 
-        insert_reqs = [r for r in reqs if "insertText" in r]
+        insert_reqs = [r for r in reqs if r.insert_text is not None]
         assert len(insert_reqs) == 2
 
         # First cell: table(5) + row(6) + cell(7) → content at 8
-        assert insert_reqs[0]["insertText"]["location"]["index"] == 8
-        assert insert_reqs[0]["insertText"]["text"] == "Hello\n"
+        assert insert_reqs[0].insert_text.location.index == 8  # type: ignore[union-attr]
+        assert insert_reqs[0].insert_text.text == "Hello\n"  # type: ignore[union-attr]
 
-        # Second cell:
-        # Original empty cell[0][0]: opener at 7, terminal at 8 → ends at 9 (2 chars).
-        # After inserting "Hello\n" (6 chars) at 8:
-        #   cell[0][0] now ends at 8+6+1 = 15.
-        #   cell[0][1] opener at 15; content at 16.
         first_text_size = utf16_len("Hello\n")  # 6
         expected_second_index = 8 + first_text_size + 2  # 8 + 6 + 2 = 16
         assert (
-            insert_reqs[1]["insertText"]["location"]["index"] == expected_second_index
+            insert_reqs[1].insert_text.location.index == expected_second_index  # type: ignore[union-attr]
         ), (
             f"Expected second cell content at {expected_second_index}, "
-            f"got {insert_reqs[1]['insertText']['location']['index']}"
+            f"got {insert_reqs[1].insert_text.location.index}"  # type: ignore[union-attr]
         )
-        assert insert_reqs[1]["insertText"]["text"] == "World\n"
+        assert insert_reqs[1].insert_text.text == "World\n"  # type: ignore[union-attr]
 
     def test_insert_table_2x1_second_row_index(self) -> None:
         """2x1 table: second row cell starts after first row's entire size."""
@@ -3097,27 +3131,18 @@ class TestTableInsertCellContent:
         el = self._make_table_el([["A\n"], ["B\n"]])
         reqs = _lower_table_insert(el=el, index=1, tab_id="t1", segment_id=None)
 
-        insert_reqs = [r for r in reqs if "insertText" in r]
+        insert_reqs = [r for r in reqs if r.insert_text is not None]
         assert len(insert_reqs) == 2
 
         # Row 0, Cell 0:
         # table at 1 → row0 at 2 → cell at 3 → content at 4
-        assert insert_reqs[0]["insertText"]["location"]["index"] == 4
-        assert insert_reqs[0]["insertText"]["text"] == "A\n"
+        assert insert_reqs[0].insert_text.location.index == 4  # type: ignore[union-attr]
+        assert insert_reqs[0].insert_text.text == "A\n"  # type: ignore[union-attr]
 
-        # Row 1:
-        # table opener(1) + row0 opener(2) + cell[0][0] opener(3) = 3 chars
-        # After inserting "A\n" (2 chars) at 4:
-        #   cell[0][0]: opener(3) + "A\n"(2) + terminal(1) = 4 chars total from pos 3
-        #   cell[0][0] ends at 3+4=7
-        #   row 0 ends at 7 (no more cells)
-        #   row 1 opener at 7 → row 1 cell[0] opener at 8 → content at 9
-        # table_pos after row0: 1+1(table_opener skip)=2, +1(row0_opener)=3, +utf16_len("A\n")+2=7
-        # row1: +1(row1_opener)=8, cell: content_start=8+1=9
         assert (
-            insert_reqs[1]["insertText"]["location"]["index"] == 9
-        ), f"Expected row-1 cell at 9, got {insert_reqs[1]['insertText']['location']['index']}"
-        assert insert_reqs[1]["insertText"]["text"] == "B\n"
+            insert_reqs[1].insert_text.location.index == 9  # type: ignore[union-attr]
+        ), f"Expected row-1 cell at 9, got {insert_reqs[1].insert_text.location.index}"  # type: ignore[union-attr]
+        assert insert_reqs[1].insert_text.text == "B\n"  # type: ignore[union-attr]
 
     def test_insert_table_empty_cells_emit_no_insertText(self) -> None:
         """Empty cells (no text content) produce no insertText requests."""
@@ -3126,49 +3151,46 @@ class TestTableInsertCellContent:
         el = make_table_el([["", ""], ["", ""]])
         reqs = _lower_table_insert(el=el, index=1, tab_id="t1", segment_id=None)
 
-        # The key assertion: only the insertTable request exists (no content inserts
-        # for truly empty cells — make_table_el uses empty strings which have size 0).
-        assert (
-            len(reqs) == 1
-        ), f"Expected only insertTable for empty cells, got {len(reqs)} requests: {reqs}"
+        assert len(reqs) == 1, (
+            f"Expected only insertTable for empty cells, got {len(reqs)} requests: {reqs}"
+        )
 
-    def _make_cell_no_terminal(self, text: str) -> dict[str, Any]:
-        """Cell with a single paragraph (no separate terminal) — matches markdown serde output."""
-        return {
-            "content": [make_para_el(text)],
-            "tableCellStyle": {},
-        }
+    def _make_cell_no_terminal(self, text: str) -> TableCell:
+        """Cell with a single paragraph (no separate terminal)."""
+        return TableCell(
+            content=[make_para_el(text)],
+        )
 
-    def _make_table_no_terminal(self, cells_by_row: list[list[str]]) -> dict[str, Any]:
-        """Table whose cells have no separate terminal paragraph (markdown serde format)."""
-        return {
-            "table": {
-                "rows": len(cells_by_row),
-                "columns": len(cells_by_row[0]) if cells_by_row else 0,
-                "tableRows": [
-                    {
-                        "tableCells": [self._make_cell_no_terminal(t) for t in row],
-                        "tableRowStyle": {},
-                    }
+    def _make_table_no_terminal(
+        self, cells_by_row: list[list[str]]
+    ) -> StructuralElement:
+        """Table whose cells have no separate terminal paragraph."""
+        return StructuralElement(
+            table=Table(
+                rows=len(cells_by_row),
+                columns=len(cells_by_row[0]) if cells_by_row else 0,
+                table_rows=[
+                    TableRow(
+                        table_cells=[self._make_cell_no_terminal(t) for t in row],
+                    )
                     for row in cells_by_row
                 ],
-            }
-        }
+            )
+        )
 
     def test_cell_with_no_terminal_paragraph_still_inserts_content(self) -> None:
         """Cells from markdown serde have one paragraph (no separate terminal) — must still insert."""
         from extradoc.reconcile_v3.lower import _lower_table_insert
 
-        # Markdown serde: cell = [para("Hello\n")] — no separate terminal paragraph.
         el = self._make_table_no_terminal([["Hello\n"]])
         reqs = _lower_table_insert(el=el, index=5, tab_id="t1", segment_id=None)
 
-        insert_reqs = [r for r in reqs if "insertText" in r]
-        assert (
-            len(insert_reqs) == 1
-        ), f"Expected insertText for cell content, got {len(insert_reqs)}: {reqs}"
-        assert insert_reqs[0]["insertText"]["text"] == "Hello\n"
-        assert insert_reqs[0]["insertText"]["location"]["index"] == 8
+        insert_reqs = [r for r in reqs if r.insert_text is not None]
+        assert len(insert_reqs) == 1, (
+            f"Expected insertText for cell content, got {len(insert_reqs)}: {reqs}"
+        )
+        assert insert_reqs[0].insert_text.text == "Hello\n"  # type: ignore[union-attr]
+        assert insert_reqs[0].insert_text.location.index == 8  # type: ignore[union-attr]
 
     def test_cell_with_explicit_terminal_paragraph_is_not_double_inserted(self) -> None:
         """Cells from a real API pull have [content, terminal_para] — terminal must not be inserted."""
@@ -3178,8 +3200,8 @@ class TestTableInsertCellContent:
         el = self._make_table_el([["Hello\n"]])  # _make_table_el adds terminal
         reqs = _lower_table_insert(el=el, index=5, tab_id="t1", segment_id=None)
 
-        insert_reqs = [r for r in reqs if "insertText" in r]
-        assert (
-            len(insert_reqs) == 1
-        ), f"Expected exactly one insertText (not double), got: {[r['insertText']['text'] for r in insert_reqs]}"
-        assert insert_reqs[0]["insertText"]["text"] == "Hello\n"
+        insert_reqs = [r for r in reqs if r.insert_text is not None]
+        assert len(insert_reqs) == 1, (
+            f"Expected exactly one insertText (not double), got: {[r.insert_text.text for r in insert_reqs]}"
+        )  # type: ignore[union-attr]
+        assert insert_reqs[0].insert_text.text == "Hello\n"  # type: ignore[union-attr]

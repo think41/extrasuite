@@ -254,11 +254,9 @@ def _three_way_merge(
 
     from .._apply_ops import apply_ops_to_document
 
-    ancestor_dict = ancestor.document.model_dump(by_alias=True, exclude_none=True)
-    mine_dict = mine.document.model_dump(by_alias=True, exclude_none=True)
     base_dict = base.document.model_dump(by_alias=True, exclude_none=True)
 
-    ops = reconcile_diff(ancestor_dict, mine_dict)
+    ops = reconcile_diff(ancestor.document, mine.document)
     desired_dict = apply_ops_to_document(base_dict, ops)
     desired_document = base.document.__class__.model_validate(desired_dict)
 
