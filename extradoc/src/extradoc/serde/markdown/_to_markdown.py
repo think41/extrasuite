@@ -334,7 +334,12 @@ def _serialize_list_item(
     list_id = bullet.list_id or ""
     nesting = _list_item_nesting_level(para, list_defs.get(list_id))
     list_type = list_types.get(list_id, "bullet")
-    indent = "  " * nesting
+    # 4 spaces per nesting level: CommonMark requires nested-list indentation
+    # to reach the content column of the parent item's marker.  "1. " puts
+    # content at column 3, "10. " at column 4, so 2-space indentation silently
+    # flattens ordered sub-lists.  4 spaces is safe for both ordered and
+    # unordered lists and for marker widths up to "99. ".
+    indent = "    " * nesting
 
     if list_type == "decimal":
         return f"{indent}{ordinal}. {inline}"

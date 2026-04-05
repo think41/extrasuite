@@ -287,6 +287,64 @@ class TestInsertBulletParagraph:
             f"Expected two leading tabs in one of: {texts_inserted}"
         )
 
+    def test_mixed_nested_ordered_then_bullet(self) -> None:
+        """Insert an ordered nested list followed by a bullet nested list.
+
+        Regression: _emit_same_position_group must account for tabs stripped
+        by an earlier createParagraphBullets when computing the start index
+        of the next createParagraphBullets and when shifting style-request
+        ranges.  Before the fix, the second createParagraphBullets ran off
+        the end of the segment because its range still counted bytes the
+        first call had already stripped.
+        """
+        base = make_document(
+            tabs=[
+                make_tab(
+                    "t1",
+                    body_content=[make_indexed_terminal(1)],
+                )
+            ]
+        )
+        desired = make_doc_with_lists(
+            "t1",
+            body_content=[
+                # Ordered list with a nested item
+                make_bullet_para("Apple\n", list_id="ord", nesting_level=0),
+                make_bullet_para("Fuji\n", list_id="ord", nesting_level=1),
+                make_bullet_para("Gala\n", list_id="ord", nesting_level=1),
+                make_bullet_para("Cherry\n", list_id="ord", nesting_level=0),
+                # Bullet list with a nested item
+                make_bullet_para("Red\n", list_id="blt", nesting_level=0),
+                make_bullet_para("Crimson\n", list_id="blt", nesting_level=1),
+                make_bullet_para("Blue\n", list_id="blt", nesting_level=0),
+                make_terminal_para(),
+            ],
+            lists={"ord": _NUMBERED_LIST_DEF, "blt": _BULLET_LIST_DEF},
+        )
+
+        reqs = reconcile(base, desired)
+
+        bullet_reqs = _get_create_bullets_requests(reqs)
+        # One merged call per distinct preset
+        assert len(bullet_reqs) == 2
+        presets = [r.create_paragraph_bullets.bullet_preset for r in bullet_reqs]
+        assert presets == ["NUMBERED_DECIMAL_NESTED", "BULLET_DISC_CIRCLE_SQUARE"]
+
+        # The two ranges must be contiguous in POST-STRIP coordinates: the
+        # second run's start_index equals the first run's end_index minus the
+        # number of tabs the first run strips.
+        ord_range = bullet_reqs[0].create_paragraph_bullets.range
+        blt_range = bullet_reqs[1].create_paragraph_bullets.range
+        # Ordered run: "Apple\n" (6) + "\tFuji\n" (6) + "\tGala\n" (6) +
+        # "Cherry\n" (7) = 25 chars, 2 leading tabs to strip.
+        assert ord_range.start_index == 1
+        assert ord_range.end_index == 26
+        # Bullet run post-strip start = 26 - 2 = 24.
+        # Pre-strip-of-own-run length: "Red\n" (4) + "\tCrimson\n" (9) +
+        # "Blue\n" (5) = 18.
+        assert blt_range.start_index == 24
+        assert blt_range.end_index == 24 + 18
+
     def test_bullet_list_multiple_items(self) -> None:
         """Desired has 3 bullet items. Assert correct number of createParagraphBullets."""
         base = make_document(

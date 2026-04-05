@@ -1323,6 +1323,18 @@ def _get_insert_text_content(req: Request) -> str | None:
     return None
 
 
+def _count_leading_tabs(text: str) -> int:
+    """Count leading '\\t' characters in ``text``.
+
+    Used to predict how many characters createParagraphBullets will strip from
+    a paragraph when converting it to a list item at a given nesting level.
+    """
+    n = 0
+    while n < len(text) and text[n] == "\t":
+        n += 1
+    return n
+
+
 def _get_create_bullets_info(
     req: Request,
 ) -> tuple[str, str, str | DeferredID | None] | None:
@@ -1557,31 +1569,54 @@ def _emit_same_position_group(
     # Compute merged createParagraphBullets by grouping consecutive same-preset
     # items in DESIRED (document) order, with correct cumulative offsets.
     #
-    # Style requests (updateParagraphStyle, updateTextStyle) from
-    # _lower_paragraph_insert were computed with index=base_pos for every item
-    # (all insertions share the same insert_pos).  After all insertText calls
-    # have run, item k actually lives at base_pos + cumulative_before_k.  We
-    # must shift every range in the style requests by that cumulative offset.
-    cumulative = 0
+    # Index bookkeeping accounts for leading-tab stripping performed by
+    # createParagraphBullets: bullet items with nesting > 0 are inserted with
+    # "\t" * nesting at the start; createParagraphBullets removes those tabs
+    # and sets the nesting level from them.  That shortens the document.
+    #
+    #   cumulative_tabbed    — sum of insert_text lengths (tabs included) for
+    #                          all items processed so far, expressed in the
+    #                          inserted-but-not-yet-stripped coordinate system.
+    #   cumulative_tabs      — total leading tabs that will be stripped for
+    #                          all items processed so far.
+    #
+    # Post-strip position of item k = base_pos + cumulative_tabbed_k
+    #                                          - cumulative_tabs_k.
+    #
+    # Style requests run AFTER every createParagraphBullets in the batch, so
+    # their ranges must use fully-stripped positions.  A createParagraphBullets
+    # for run R must use pre-strip-of-R positions for its own range (since it
+    # processes its own tabs) but must account for strips performed by prior
+    # runs.
+    cumulative_tabbed = 0
+    cumulative_tabs = 0
     i = 0
     while i < len(desired_order):
         ins_req, cb_req, s_reqs = desired_order[i]
-        text_content = _get_insert_text_content(ins_req)
-        item_len = utf16_len(text_content) if text_content else 0
-        all_style_reqs.extend(_shift_request_indices(s_reqs, cumulative))
+        text_content = _get_insert_text_content(ins_req) or ""
+        item_len = utf16_len(text_content)
+        item_tabs = _count_leading_tabs(text_content) if cb_req is not None else 0
+        # Style reqs use fully-stripped positions.
+        all_style_reqs.extend(
+            _shift_request_indices(s_reqs, cumulative_tabbed - cumulative_tabs)
+        )
         if cb_req is None:
-            # Non-bullet item: just advance cumulative offset
-            cumulative += item_len
+            cumulative_tabbed += item_len
             i += 1
             continue
         # Start of a bullet run — collect consecutive items with the same preset
         cb_info = _get_create_bullets_info(cb_req)
         assert cb_info is not None
         preset, tab_id_str, segment_id = cb_info
-        run_start = base_pos + cumulative
+        # createParagraphBullets's own range is in pre-strip-of-this-run
+        # coordinates, so it must NOT subtract this run's own tabs.  But it
+        # must subtract tabs stripped by earlier, already-completed runs.
+        run_start = base_pos + cumulative_tabbed - cumulative_tabs
         run_len = item_len
+        run_tabs = item_tabs
+        inner_tabbed = item_len
+        inner_tabs = item_tabs
         j = i + 1
-        inner_cumulative = item_len  # cumulative within the bullet run
         while j < len(desired_order):
             next_ins, next_cb, next_s_reqs = desired_order[j]
             if next_cb is None:
@@ -1595,13 +1630,19 @@ def _emit_same_position_group(
                 str(segment_id) if segment_id else None,
             ):
                 break
+            next_text = _get_insert_text_content(next_ins) or ""
+            next_item_len = utf16_len(next_text)
+            next_item_tabs = _count_leading_tabs(next_text)
             all_style_reqs.extend(
-                _shift_request_indices(next_s_reqs, cumulative + inner_cumulative)
+                _shift_request_indices(
+                    next_s_reqs,
+                    cumulative_tabbed + inner_tabbed - cumulative_tabs - inner_tabs,
+                )
             )
-            next_text = _get_insert_text_content(next_ins)
-            next_item_len = utf16_len(next_text) if next_text else 0
             run_len += next_item_len
-            inner_cumulative += next_item_len
+            run_tabs += next_item_tabs
+            inner_tabbed += next_item_len
+            inner_tabs += next_item_tabs
             j += 1
         # Emit ONE createParagraphBullets for this run
         merged_range = Range(
@@ -1618,7 +1659,8 @@ def _emit_same_position_group(
                 )
             )
         )
-        cumulative += run_len
+        cumulative_tabbed += run_len
+        cumulative_tabs += run_tabs
         i = j
 
     # Emit: insertTexts first (reverse order, for correct document ordering),

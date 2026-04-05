@@ -433,11 +433,11 @@ class TestMarkdownRoundTrip:
         per_tab = document_to_markdown(doc)
         md = per_tab["Tab_1"]["document.md"]
         assert "1. A\n" in md
-        assert "  1. A.i\n" in md
-        assert "  2. A.ii\n" in md
+        assert "    1. A.i\n" in md
+        assert "    2. A.ii\n" in md
         assert "2. B\n" in md
         # re-entering level 1 restarts at 1
-        assert "  1. B.i\n" in md
+        assert "    1. B.i\n" in md
         assert "3. C\n" in md
 
     def test_document_to_md_numbered_list_resets_after_non_list(self) -> None:
@@ -1174,7 +1174,7 @@ class TestSpecialElementsPull:
         md = per_tab["Tab_1"]["document.md"]
 
         assert "- parent" in md
-        assert "  - child" in md
+        assert "    - child" in md
 
 
 # ---------------------------------------------------------------------------
