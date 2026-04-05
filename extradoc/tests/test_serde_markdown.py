@@ -37,12 +37,20 @@ from extradoc.api_types._generated import (
 )
 from extradoc.api_types._generated import List as DocList
 from extradoc.comments._types import DocumentWithComments, FileComments
-from extradoc.reconcile._core import reindex_document
+from extradoc.mock.reindex import reindex_and_normalize_all_tabs
+from extradoc.api_types._generated import Document
 from extradoc.serde.markdown import MarkdownSerde
 from extradoc.serde.markdown._from_markdown import markdown_to_document
 from extradoc.serde.markdown._to_markdown import document_to_markdown
 
 _md_serde = MarkdownSerde()
+
+
+def _reindex_document(doc: Document) -> Document:
+    doc_dict = doc.model_dump(by_alias=True, exclude_none=True)
+    reindex_and_normalize_all_tabs(doc_dict)
+    return Document.model_validate(doc_dict)
+
 
 # ---------------------------------------------------------------------------
 # Helpers
@@ -684,7 +692,7 @@ def _make_doc_with_named_range_table(
     )
     doc = _make_doc([StructuralElement(table=table)])
     # Reindex to get real indices
-    doc = reindex_document(doc)
+    doc = _reindex_document(doc)
 
     # Find the table's start_index
     tab = doc.tabs[0]  # type: ignore[index]
@@ -775,7 +783,7 @@ def _make_doc_with_adjacent_codeblock_ranges() -> Document:
             ),
         ]
     )
-    doc = reindex_document(doc)
+    doc = _reindex_document(doc)
     tab = doc.tabs[0]  # type: ignore[index]
     body = tab.document_tab.body.content  # type: ignore[union-attr]
     tables = [se for se in body if se.table is not None]
@@ -954,7 +962,7 @@ class TestSpecialElementsPull:
             ],
         )
         doc = _make_doc([StructuralElement(table=t1), StructuralElement(table=t2)])
-        doc = reindex_document(doc)
+        doc = _reindex_document(doc)
 
         tab = doc.tabs[0]  # type: ignore[index]
         body = tab.document_tab.body.content  # type: ignore[union-attr]
@@ -1042,7 +1050,7 @@ class TestSpecialElementsPull:
     def test_list_pull_derives_nesting_from_indent_when_bullet_level_missing(
         self,
     ) -> None:
-        doc = reindex_document(
+        doc = _reindex_document(
             markdown_to_document(
                 {"Tab_1": "- parent\n  - child\n"},
                 document_id="nested-list-pull",
@@ -1208,7 +1216,8 @@ class TestDiffRawJsonBase:
         import json
 
         from extradoc.client import DocsClient
-        from extradoc.reconcile._core import reindex_document
+        from extradoc.mock.reindex import reindex_and_normalize_all_tabs
+from extradoc.api_types._generated import Document
 
         INFLATE = 100  # Simulated real-API offset
 
@@ -1235,7 +1244,7 @@ class TestDiffRawJsonBase:
             title="Test",
             tab_ids={"Tab_1": "t.0"},
         )
-        raw_doc_reindexed = reindex_document(raw_doc)
+        raw_doc_reindexed = _reindex_document(raw_doc)
 
         # Serialize to JSON dict, then inflate all numeric index fields
         raw_dict = raw_doc_reindexed.model_dump(by_alias=True, exclude_none=True)
@@ -1378,7 +1387,7 @@ class TestDiffRawJsonBase:
         raw_dir.mkdir(exist_ok=True)
         (raw_dir / "document.json").write_text(
             json.dumps(
-                reindex_document(raw_doc).model_dump(by_alias=True, exclude_none=True)
+                _reindex_document(raw_doc).model_dump(by_alias=True, exclude_none=True)
             ),
             encoding="utf-8",
         )

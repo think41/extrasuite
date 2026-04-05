@@ -21,7 +21,7 @@ from extradoc.comments._types import (
     CommentOperations,
     DocumentWithComments,
 )
-from extradoc.reconcile import reindex_document
+from extradoc.mock.reindex import reindex_and_normalize_all_tabs
 from extradoc.reconcile_v3.api import reconcile_batches as reconcile_v3_batches
 from extradoc.reconcile_v3.executor import execute_request_batches
 from extradoc.serde._models import IndexXml
@@ -134,7 +134,11 @@ class DocsClient:
         result = serde_impl.deserialize(folder)
 
         base = result.base
-        desired_doc = reindex_document(result.desired.document)
+        desired_dict = result.desired.document.model_dump(
+            by_alias=True, exclude_none=True
+        )
+        reindex_and_normalize_all_tabs(desired_dict)
+        desired_doc = Document.model_validate(desired_dict)
         batches = _reconcile_documents(base.document, desired_doc)
         comment_ops = diff_comments(base.comments, result.desired.comments)
 
