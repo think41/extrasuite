@@ -231,11 +231,18 @@ def _match_tabs(
 
     for d_tab in extra_desired:
         d_props = d_tab.tab_properties
+        # Use the tab's explicit index if available, otherwise fall back to
+        # its position in the desired_tabs list.
+        if d_props and d_props.index is not None:
+            tab_index = d_props.index
+        else:
+            try:
+                tab_index = desired_tabs.index(d_tab)
+            except ValueError:
+                tab_index = len(desired_tabs) - 1
         ops.append(
             InsertTabOp(
-                desired_tab_index=d_props.index
-                if d_props and d_props.index is not None
-                else 0,
+                desired_tab_index=tab_index,
                 desired_tab=d_tab,
             )
         )

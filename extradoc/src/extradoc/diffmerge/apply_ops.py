@@ -20,6 +20,15 @@ if TYPE_CHECKING:
     from extradoc.diffmerge.model import ReconcileOp
 
 
+def _to_dict(obj: Any) -> Any:
+    """Convert a Pydantic model (or list thereof) to a plain dict."""
+    if hasattr(obj, "model_dump"):
+        return obj.model_dump(by_alias=True, exclude_none=True)
+    if isinstance(obj, list):
+        return [_to_dict(item) for item in obj]
+    return obj
+
+
 def apply_ops_to_document(
     base_doc: dict[str, Any],
     ops: list[ReconcileOp],
@@ -179,7 +188,7 @@ def _find_doc_tab(doc: dict[str, Any], tab_id: str) -> dict[str, Any] | None:
 def _apply_insert_tab(doc: dict[str, Any], op: Any) -> None:
     """Insert a new tab into the document."""
     tabs: list[dict[str, Any]] = doc.setdefault("tabs", [])
-    desired_tab = copy.deepcopy(op.desired_tab)
+    desired_tab = _to_dict(op.desired_tab)
     # Insert at the right position based on desired_tab_index
     idx = op.desired_tab_index
     tabs.insert(idx, desired_tab)
@@ -262,7 +271,7 @@ def _apply_insert_list(doc: dict[str, Any], op: Any) -> None:
     if dt is None:
         return
     lists: dict[str, Any] = dt.setdefault("lists", {})
-    lists[op.list_id] = copy.deepcopy(op.list_def)
+    lists[op.list_id] = _to_dict(op.list_def)
 
 
 def _apply_delete_list(doc: dict[str, Any], op: Any) -> None:
@@ -291,7 +300,7 @@ def _apply_create_header(doc: dict[str, Any], op: Any) -> None:
     if dt is None:
         return
     headers: dict[str, Any] = dt.setdefault("headers", {})
-    headers[op.desired_header_id] = {"content": copy.deepcopy(op.desired_content)}
+    headers[op.desired_header_id] = {"content": _to_dict(op.desired_content)}
     # Update documentStyle slot
     doc_style: dict[str, Any] = dt.setdefault("documentStyle", {})
     slot_field = _HEADER_SLOT_FIELD.get(op.section_slot)
@@ -345,7 +354,7 @@ def _apply_create_footer(doc: dict[str, Any], op: Any) -> None:
     if dt is None:
         return
     footers: dict[str, Any] = dt.setdefault("footers", {})
-    footers[op.desired_footer_id] = {"content": copy.deepcopy(op.desired_content)}
+    footers[op.desired_footer_id] = {"content": _to_dict(op.desired_content)}
     doc_style: dict[str, Any] = dt.setdefault("documentStyle", {})
     slot_field = _FOOTER_SLOT_FIELD.get(op.section_slot)
     if slot_field:
@@ -391,7 +400,7 @@ def _apply_insert_footnote(doc: dict[str, Any], op: Any) -> None:
     if dt is None:
         return
     footnotes: dict[str, Any] = dt.setdefault("footnotes", {})
-    footnotes[op.footnote_id] = {"content": copy.deepcopy(op.desired_content)}
+    footnotes[op.footnote_id] = {"content": _to_dict(op.desired_content)}
 
 
 def _apply_delete_footnote(doc: dict[str, Any], op: Any) -> None:

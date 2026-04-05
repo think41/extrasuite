@@ -628,6 +628,37 @@ class TestMultiTab:
         assert "Tab2 Para1" in texts2
         assert "Tab2 Para2" in texts2
 
+    def test_add_new_tab_with_list_content(self, tmp_path: Path) -> None:
+        """Adding a new tab with list content must not crash during 3-way merge.
+
+        Reproduces: push-md with a new tab causes 'Tab object has no attribute
+        get' because apply_ops_to_document inserts a Pydantic Tab object into
+        a dict-based document, and the list-injection loop calls .get() on it.
+        """
+        base_doc = self._make_multitab_doc(doc_id="add-tab-doc")
+        base = _make_bundle(base_doc)
+        folder = tmp_path / "doc"
+        _md_serde.serialize(base, folder)
+
+        # Add a new tab: create the markdown file and update index.xml
+        new_tab_md = "# New Tab\n\n- Bullet one\n- Bullet two\n"
+        (folder / "New_Tab.md").write_text(new_tab_md, encoding="utf-8")
+
+        # Update index.xml to register the new tab
+        from extradoc.serde._models import IndexTab, IndexXml
+
+        index = IndexXml.from_xml_string(
+            (folder / "index.xml").read_text(encoding="utf-8")
+        )
+        index.tabs.append(IndexTab(id="t.new", title="New Tab", folder="New_Tab"))
+        (folder / "index.xml").write_text(index.to_xml_string(), encoding="utf-8")
+
+        # This should not crash
+        desired = _md_serde.deserialize(folder).desired
+        assert len(desired.document.tabs or []) == 3
+        texts_new = _body_texts(desired.document, tab_idx=2)
+        assert any("Bullet one" in t for t in texts_new)
+
 
 # ---------------------------------------------------------------------------
 # Group 6: Lists
