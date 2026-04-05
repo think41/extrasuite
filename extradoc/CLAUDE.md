@@ -36,7 +36,7 @@ serde (3-way merge) and reconciler (tree diff). Public API:
 - `diff()` — structural diff between two document trees (`diff.py`)
 - `apply()` — apply diff ops to a base document (`apply_ops.py`)
 - `DiffOp` — op types representing document changes (`model.py`)
-
+- `docs/diffmerge-design.md` documents the design of this module.
 | File | Purpose |
 |------|---------|
 | `model.py` | Op types (`DiffOp` and subtypes) |
@@ -88,59 +88,20 @@ async def execute_request_batches(
 
 ### Testing
 
-We test at the public interface boundaries only. **Serde** tests load a golden
-document, serialize it, edit the files, deserialize, and assert only the
-intended changes occurred (everything else preserved). **Reconciler** tests
-construct base and desired `Document` objects, run `reconcile_batches()`, and
-assert the generated `BatchUpdateDocumentRequest`s match expectations.
-
-| Abstraction | Test file |
-|-------------|-----------|
-| Serde markdown (black-box, golden docs) | `tests/test_serde_markdown_blackbox.py` |
-| Serde markdown (hand-crafted) | `tests/test_serde_markdown_roundtrip.py` |
-| Serde markdown (bug regressions) | `tests/test_serde_markdown_bugs.py` |
-| Serde XML round-trip | `tests/test_serde_xml_roundtrip.py` |
-| Serde golden files | `tests/test_serde_golden.py` |
-| Reconcile v3 diff | `tests/reconcile_v3/test_diff.py` |
-| Reconcile v3 lowering (incl. deferred IDs) | `tests/reconcile_v3/test_lower.py` |
-| DocsClient integration | `tests/test_client_reconciler_versions.py` |
+Follow TDD / red -> green tests. Test against public interface of the respective module. Don't import module internals in your test.
 
 ## Google Docs API Reference
 
 `docs/googledocs/` contains local reference material for Google Docs API
 behavior. Key guides:
 
-- `index.md` — overview
-- `structure.md` — document tree (tabs, body, headers, footers, footnotes)
-- `document.md` / `documents.md` — Document resource and methods
-- `requests-and-responses.md` — batchUpdate request/response format
-- `batch.md` — batching semantics
-- `format-text.md` — text and paragraph styling
-- `lists.md` — list/bullet behavior
-- `tables.md` — table structure and operations
-- `tabs.md` — multi-tab documents
-- `named-ranges.md` — named range operations
-- `images.md` — inline images
-- `merge.md` — mail merge
-- `move-text.md` — moving content
-- `field-masks.md` — field mask syntax
-- `rules-behavior.md` — API behavioral rules
-- `best-practices.md` / `performance.md` — optimization guidance
+- `index.md` — overview of all documentation available for google docs
 - `api/` — 117 individual type/request reference files (e.g., `Document.md`,
   `BatchUpdateDocumentResponse.md`, `TableCell.md`, `ParagraphElement.md`)
 
 Typed Python models generated from the API schema live in
 `src/extradoc/api_types/`.
 
-## Mock
-
-`src/extradoc/mock/` contains an in-process mock of the Google Docs
-`batchUpdate` API. It is useful for fast local iteration but **not
-trustworthy** — its behavior diverges from the real API in subtle ways (style
-provenance, run consolidation, edge cases). Do not treat mock results as ground
-truth. Do not add compensating logic to the reconciler or serde just to make
-the mock pass. When the mock disagrees with live Google Docs, the mock is
-wrong.
 
 ## Development
 
