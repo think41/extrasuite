@@ -82,6 +82,8 @@ def dump_debug_artifacts(folder: str | Path) -> Path:
       - ``batch_requests.json``    — flat list of lowered requests, each tagged
                                      with ``batch_index`` and ``request_index``
       - ``segments.txt``           — base + desired per-segment end_index
+      - ``base_segments_detail.txt`` — per-element index map of the base doc
+      - ``desired_segments_detail.txt`` — per-element index map of the desired doc
       - ``report.txt``             — sections-1-4 narrative (same info, rendered)
 
     Returns the path to the ``.debug/`` directory.  Agents should read
@@ -162,6 +164,16 @@ def dump_debug_artifacts(folder: str | Path) -> Path:
         )
     (debug_dir / "segments.txt").write_text(
         "\n".join(seg_lines) + "\n", encoding="utf-8"
+    )
+
+    # base_segments_detail.txt / desired_segments_detail.txt —
+    # per-element index map, so you can answer "what is at index N?" without
+    # navigating the nested JSON.
+    (debug_dir / "base_segments_detail.txt").write_text(
+        _render_segments_detail(base_doc), encoding="utf-8"
+    )
+    (debug_dir / "desired_segments_detail.txt").write_text(
+        _render_segments_detail(desired_doc), encoding="utf-8"
     )
 
     # report.txt — sections 1-4 narrative (redundant with JSON but easier to skim)
@@ -647,9 +659,7 @@ def _render_report(
             if tab.document_tab and tab.document_tab.body:
                 lines.append("")
                 lines.append(f"  body content of tab={tid!r}:")
-                lines.extend(
-                    _render_body_elements(tab.document_tab.body.content or [])
-                )
+                lines.extend(_render_body_elements(tab.document_tab.body.content or []))
     lines.append("")
 
     # 2. Desired segments
@@ -689,6 +699,79 @@ def _render_report(
 
     lines.append("═" * 78)
     return "\n".join(lines)
+
+
+def _render_segments_detail(doc: Document) -> str:
+    """Render every structural element in every segment with its index range.
+
+    Format (one element per line):
+      [  12432..  12433) P[NORMAL_TEXT] '\\n'
+
+    Answers "what is at index N?" at a glance.
+    """
+    lines: list[str] = []
+
+    def _dump_segment(header: str, content: list[StructuralElement] | None) -> None:
+        lines.append(header)
+        if not content:
+            lines.append("  (empty)")
+            lines.append("")
+            return
+        for se in content:
+            lines.append("  " + _format_element(se))
+        lines.append("")
+
+    if doc.tabs:
+        for tab in doc.tabs:
+            tab_id = ""
+            if tab.tab_properties and tab.tab_properties.tab_id:
+                tab_id = tab.tab_properties.tab_id
+            dt = tab.document_tab
+            if dt is None:
+                continue
+            if dt.body:
+                _dump_segment(f"# tab={tab_id!r} body", dt.body.content)
+            for seg_id, header in (dt.headers or {}).items():
+                _dump_segment(f"# tab={tab_id!r} header={seg_id!r}", header.content)
+            for seg_id, footer in (dt.footers or {}).items():
+                _dump_segment(f"# tab={tab_id!r} footer={seg_id!r}", footer.content)
+            for seg_id, footnote in (dt.footnotes or {}).items():
+                _dump_segment(f"# tab={tab_id!r} footnote={seg_id!r}", footnote.content)
+    else:
+        if doc.body:
+            _dump_segment("# body", doc.body.content)
+        for seg_id, header in (doc.headers or {}).items():
+            _dump_segment(f"# header={seg_id!r}", header.content)
+        for seg_id, footer in (doc.footers or {}).items():
+            _dump_segment(f"# footer={seg_id!r}", footer.content)
+        for seg_id, footnote in (doc.footnotes or {}).items():
+            _dump_segment(f"# footnote={seg_id!r}", footnote.content)
+
+    return "\n".join(lines) + ("\n" if lines else "")
+
+
+def _format_element(se: StructuralElement) -> str:
+    start = se.start_index if se.start_index is not None else 0
+    end = se.end_index if se.end_index is not None else 0
+    if se.section_break is not None:
+        return f"[{start:6}..{end:6}) SB"
+    if se.paragraph is not None:
+        nst = (
+            se.paragraph.paragraph_style.named_style_type
+            if se.paragraph.paragraph_style
+            else None
+        )
+        text = _paragraph_text(se.paragraph)
+        return f"[{start:6}..{end:6}) P[{nst}] {_shorten(text, 60)!r}"
+    if se.table is not None:
+        nrows = len(se.table.table_rows or [])
+        ncols = (
+            len(se.table.table_rows[0].table_cells or []) if se.table.table_rows else 0
+        )
+        return f"[{start:6}..{end:6}) TABLE {nrows}x{ncols}"
+    if se.table_of_contents is not None:
+        return f"[{start:6}..{end:6}) TOC"
+    return f"[{start:6}..{end:6}) <unknown>"
 
 
 def _render_body_elements(elements: list[StructuralElement]) -> list[str]:
@@ -748,7 +831,13 @@ def _describe_diff_op(op: Any) -> str:
     # Extract a few identifying fields
     tab_id = getattr(op, "tab_id", None)
     pieces = [f"tab={tab_id!r}"] if tab_id is not None else []
-    for fname in ("segment_id", "base_range", "desired_range", "header_id", "footer_id"):
+    for fname in (
+        "segment_id",
+        "base_range",
+        "desired_range",
+        "header_id",
+        "footer_id",
+    ):
         if hasattr(op, fname):
             val = getattr(op, fname)
             if val is not None:

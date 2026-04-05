@@ -315,25 +315,13 @@ def _parse_body(
             body_pos = len(body)
             elem = _parse_code_fence(block)
             special_positions.append((body_pos, elem.named_range_name))
-            prev_is_sb = body[-1].section_break is not None
             body.append(StructuralElement(table=elem.to_table()))
-            # insertTable always displaces the preceding paragraph's trailing \n
-            # to a post-table separator paragraph.  Model it explicitly so that
-            # reindex_document assigns correct indices to subsequent elements and
-            # verify() can compare them against the actual pushed document.
-            # Only add when the table follows a real paragraph (not a SectionBreak)
-            # — the SB case uses a different insertion path with no displacement.
-            if not prev_is_sb:
-                body.append(_make_trailing_para())
 
         elif isinstance(block, Quote):
             body_pos = len(body)
             quote_elem = _parse_quote(block)
             special_positions.append((body_pos, quote_elem.named_range_name))
-            prev_is_sb = body[-1].section_break is not None
             body.append(StructuralElement(table=quote_elem.to_table()))
-            if not prev_is_sb:
-                body.append(_make_trailing_para())
 
         elif isinstance(block, MdParagraph):
             # Check if this is a footnote definition line — skip it
@@ -348,10 +336,7 @@ def _parse_body(
             body.extend(_convert_list(block, list_synth, list_id=None, nesting=0))
 
         elif isinstance(block, MdTable):
-            prev_is_sb = body[-1].section_break is not None
             body.append(_convert_gfm_table(block))
-            if not prev_is_sb:
-                body.append(_make_trailing_para())
 
         elif isinstance(block, ThematicBreak):
             body.append(_make_hr_para())

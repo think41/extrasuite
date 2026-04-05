@@ -45,6 +45,9 @@ serde (3-way merge) and reconciler (tree diff). Public API:
 | `table_diff.py` | Table diff (`diff_tables()`) |
 | `apply_ops.py` | 3-way merge: `apply_ops_to_document(base, ops)` |
 
+Design reference with full algorithm + invariants: `docs/diffmerge-design.md`.
+Read that before modifying anything in `diffmerge/`.
+
 **Reconciler** — takes `base` and `desired` `Document` and produces a list of
 `BatchUpdateDocumentRequest`s that, when executed against the live Google Doc,
 will transform it from `base` into `desired`. Uses `diffmerge` for the tree diff

@@ -11,6 +11,7 @@ The function works entirely on raw dicts (not Pydantic models).
 
 from __future__ import annotations
 
+import bisect
 import copy
 from typing import TYPE_CHECKING, Any
 
@@ -851,33 +852,47 @@ def _align_raw_to_ancestor(
             anc_to_raw[anc_idx] = raw_idx
             anc_ptr += 1
 
-    # Phase 2: Match remaining trivial elements by proximity
-    matched_raw = set(raw_to_anc.keys())
-    matched_anc = set(anc_to_raw.keys())
-    unmatched_raw = [i for i in range(len(raw_content)) if i not in matched_raw]
-    unmatched_anc = [i for i in range(len(ancestor_content)) if i not in matched_anc]
-
-    # Pair trivial elements by their position relative to surrounding matches
-    for anc_idx in unmatched_anc:
-        best_raw = None
-        best_dist = float("inf")
-        for raw_idx in unmatched_raw:
-            if raw_idx in matched_raw:
-                continue
-            # Check kind compatibility
-            if _element_kind(raw_content[raw_idx]) != _se_kind(
-                ancestor_content[anc_idx]
-            ):
-                continue
-            dist = abs(raw_idx - anc_idx)
-            if dist < best_dist:
-                best_dist = dist
-                best_raw = raw_idx
-        if best_raw is not None:
-            raw_to_anc[best_raw] = anc_idx
-            anc_to_raw[anc_idx] = best_raw
-            matched_raw.add(best_raw)
-            unmatched_raw = [i for i in unmatched_raw if i != best_raw]
+    # Phase 2: Match remaining trivial elements, preserving monotonicity.
+    #
+    # Each unmatched ancestor index has a window of admissible raw indices
+    # bounded by its neighbouring matched anchors (the previous and next
+    # matched ancestor's raw indices). Within that window we pair by order,
+    # which both preserves monotonicity of anc_to_raw and keeps elements
+    # close to their neighbours.
+    matched_anc = sorted(anc_to_raw.keys())
+    for anc_idx in range(len(ancestor_content)):
+        if anc_idx in anc_to_raw:
+            continue
+        # Find bounding matched ancestor indices.
+        lo_raw = -1
+        for a in matched_anc:
+            if a < anc_idx:
+                lo_raw = anc_to_raw[a]
+            else:
+                break
+        hi_raw = len(raw_content)
+        for a in matched_anc:
+            if a > anc_idx:
+                hi_raw = anc_to_raw[a]
+                break
+        # Candidate raw indices strictly between lo_raw and hi_raw that are
+        # unmatched and kind-compatible.
+        kind = _se_kind(ancestor_content[anc_idx])
+        candidates = [
+            r
+            for r in range(lo_raw + 1, hi_raw)
+            if r not in raw_to_anc and _element_kind(raw_content[r]) == kind
+        ]
+        if not candidates:
+            continue
+        # Pick the first candidate — this preserves order-in-window. For a
+        # window with k unmatched ancestors and k candidates, successive
+        # calls assign one each in order.
+        chosen = candidates[0]
+        raw_to_anc[chosen] = anc_idx
+        anc_to_raw[anc_idx] = chosen
+        # Keep matched_anc sorted.
+        bisect.insort(matched_anc, anc_idx)
 
     return raw_to_anc, anc_to_raw
 
@@ -1189,7 +1204,7 @@ def _apply_content_alignment(
         ]
 
     # Step 1: Align raw base to ancestor by sequential kind matching
-    _raw_to_anc, anc_to_raw = _align_raw_to_ancestor(raw_base_content, ancestor_content)
+    raw_to_anc, anc_to_raw = _align_raw_to_ancestor(raw_base_content, ancestor_content)
 
     # Step 2: Build lookup from alignment (ancestor ↔ mine)
     desired_insert_set = set(alignment.desired_inserts)
@@ -1197,13 +1212,31 @@ def _apply_content_alignment(
     for m in alignment.matches:
         desired_to_ancestor[m.desired_idx] = m.base_idx  # base_idx is ancestor idx
 
-    # Step 3: Build output
+    # Step 3: Build output by iterating desired content in order, while also
+    # carrying through any raw_base elements that have no ancestor counterpart
+    # (the serde promise: preserve anything the format can't represent).
+    #
+    # Unmatched raw elements are emitted at their original relative position:
+    # immediately before the reconciled element for the next raw element that
+    # IS matched to ancestor (and thus has a place in the desired output).
     result: list[dict[str, Any]] = []
+    last_emitted_r_idx = -1
+
+    def _emit_unmatched_raw_up_to(r_stop: int) -> None:
+        """Emit raw_base elements with no ancestor counterpart in (last_emitted_r_idx, r_stop)."""
+        nonlocal last_emitted_r_idx
+        for r in range(last_emitted_r_idx + 1, r_stop):
+            if r not in raw_to_anc:
+                result.append(copy.deepcopy(raw_base_content[r]))
+                last_emitted_r_idx = r
+
     for d_idx in range(len(desired_content)):
         d_el = desired_content[d_idx]
 
         if d_idx in desired_insert_set:
-            # Pure insert — no base element to merge with
+            # Pure insert — no base element to merge with.
+            # Do NOT flush unmatched raw elements here: they should stick to
+            # their original raw neighbours, not to newly inserted content.
             result.append(d_el.model_dump(by_alias=True, exclude_none=True))
             continue
 
@@ -1220,6 +1253,10 @@ def _apply_content_alignment(
             result.append(d_el.model_dump(by_alias=True, exclude_none=True))
             continue
 
+        # Before emitting this matched raw element, emit any unmatched raw
+        # elements that sit between the last-emitted raw index and this one.
+        _emit_unmatched_raw_up_to(r_idx)
+
         # Check if the element actually changed (compare full structure, not just text)
         ancestor_el = ancestor_content[a_idx]
         if _se_elements_equal(ancestor_el, d_el):
@@ -1228,5 +1265,9 @@ def _apply_content_alignment(
         else:
             # Element changed — merge text changes into raw base
             result.append(_merge_changed_element(raw_base_content[r_idx], d_el))
+        last_emitted_r_idx = r_idx
+
+    # Tail: any unmatched raw elements after the last matched one.
+    _emit_unmatched_raw_up_to(len(raw_base_content))
 
     return result
