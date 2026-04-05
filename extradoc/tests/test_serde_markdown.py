@@ -343,7 +343,7 @@ class TestMarkdownRoundTrip:
         assert "- item two\n" in md
 
     def test_document_to_md_numbered_list(self) -> None:
-        """Numbered list items serialize to 1. markers."""
+        """Numbered list items serialize with sequential markers (1., 2., 3.)."""
         lists = {
             "kix.list1": DocList(
                 list_properties=ListProperties(
@@ -361,13 +361,86 @@ class TestMarkdownRoundTrip:
                 _make_para(
                     "second", bullet=Bullet(list_id="kix.list1", nesting_level=0)
                 ),
+                _make_para(
+                    "third", bullet=Bullet(list_id="kix.list1", nesting_level=0)
+                ),
             ],
             lists=lists,
         )
         per_tab = document_to_markdown(doc)
         md = per_tab["Tab_1"]["document.md"]
         assert "1. first\n" in md
-        assert "1. second\n" in md
+        assert "2. second\n" in md
+        assert "3. third\n" in md
+
+    def test_document_to_md_numbered_list_resets_between_lists(self) -> None:
+        """Each distinct list_id restarts numbering at 1."""
+        lists = {
+            "kix.list1": DocList(
+                list_properties=ListProperties(
+                    nesting_levels=[
+                        NestingLevel(glyph_type=NestingLevelGlyphType.DECIMAL)
+                    ]
+                )
+            ),
+            "kix.list2": DocList(
+                list_properties=ListProperties(
+                    nesting_levels=[
+                        NestingLevel(glyph_type=NestingLevelGlyphType.DECIMAL)
+                    ]
+                )
+            ),
+        }
+        doc = _make_doc(
+            [
+                _make_para("a", bullet=Bullet(list_id="kix.list1", nesting_level=0)),
+                _make_para("b", bullet=Bullet(list_id="kix.list1", nesting_level=0)),
+                _make_para("x", bullet=Bullet(list_id="kix.list2", nesting_level=0)),
+                _make_para("y", bullet=Bullet(list_id="kix.list2", nesting_level=0)),
+            ],
+            lists=lists,
+        )
+        per_tab = document_to_markdown(doc)
+        md = per_tab["Tab_1"]["document.md"]
+        assert "1. a\n" in md
+        assert "2. b\n" in md
+        assert "1. x\n" in md
+        assert "2. y\n" in md
+
+    def test_document_to_md_numbered_list_resets_after_non_list(self) -> None:
+        """Leaving a list and re-entering with a new list_id restarts numbering."""
+        lists = {
+            "kix.list1": DocList(
+                list_properties=ListProperties(
+                    nesting_levels=[
+                        NestingLevel(glyph_type=NestingLevelGlyphType.DECIMAL)
+                    ]
+                )
+            ),
+            "kix.list2": DocList(
+                list_properties=ListProperties(
+                    nesting_levels=[
+                        NestingLevel(glyph_type=NestingLevelGlyphType.DECIMAL)
+                    ]
+                )
+            ),
+        }
+        doc = _make_doc(
+            [
+                _make_para("a", bullet=Bullet(list_id="kix.list1", nesting_level=0)),
+                _make_para("b", bullet=Bullet(list_id="kix.list1", nesting_level=0)),
+                _make_para("interlude"),
+                _make_para("x", bullet=Bullet(list_id="kix.list2", nesting_level=0)),
+                _make_para("y", bullet=Bullet(list_id="kix.list2", nesting_level=0)),
+            ],
+            lists=lists,
+        )
+        per_tab = document_to_markdown(doc)
+        md = per_tab["Tab_1"]["document.md"]
+        assert "1. a\n" in md
+        assert "2. b\n" in md
+        assert "1. x\n" in md
+        assert "2. y\n" in md
 
     def test_document_to_md_gfm_table(self) -> None:
         """Simple table serializes to GFM pipe table."""

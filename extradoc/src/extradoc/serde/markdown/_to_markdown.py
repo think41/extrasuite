@@ -164,6 +164,11 @@ def _serialize_content(
     lines: list[str] = []
     in_list = False
     current_list_id: str | None = None
+    # Per-nesting-level counters for ordered (decimal/alpha/roman) lists.
+    # Reset when we leave a list or when list_id changes; deeper levels are
+    # cleared when we pop back to a shallower level so that re-entering a
+    # deeper level restarts numbering at 1.
+    list_counters: dict[int, int] = {}
     spans = nr_spans or []
 
     for se in content:
@@ -174,6 +179,7 @@ def _serialize_content(
             if in_list:
                 in_list = False
                 current_list_id = None
+                list_counters = {}
             if lines:
                 lines.append("")
             lines.append("<!-- toc -->")
@@ -183,6 +189,7 @@ def _serialize_content(
             if in_list:
                 in_list = False
                 current_list_id = None
+                list_counters = {}
             if lines:
                 lines.append("")
             # Check for extradoc:* named range annotation via containment check
@@ -229,9 +236,23 @@ def _serialize_content(
             else:
                 bullet = para.bullet
                 if bullet:
-                    line = _serialize_list_item(para, list_types, list_defs)
+                    this_list_id = bullet.list_id
+                    if not in_list or this_list_id != current_list_id:
+                        list_counters = {}
+                    nesting = _list_item_nesting_level(
+                        para, list_defs.get(this_list_id or "")
+                    )
+                    # Drop counters at levels deeper than the current one so
+                    # that re-entering a nested level restarts its numbering.
+                    for lvl in list(list_counters.keys()):
+                        if lvl > nesting:
+                            del list_counters[lvl]
+                    ordinal = list_counters.get(nesting, 0) + 1
+                    list_counters[nesting] = ordinal
+                    line = _serialize_list_item(
+                        para, list_types, list_defs, ordinal=ordinal
+                    )
                     if line is not None:
-                        this_list_id = bullet.list_id
                         if lines and (not in_list or this_list_id != current_list_id):
                             lines.append("")
                         lines.append(line)
@@ -303,6 +324,7 @@ def _serialize_list_item(
     para: Paragraph,
     list_types: dict[str, str],
     list_defs: dict[str, Any],
+    ordinal: int = 1,
 ) -> str | None:
     bullet = para.bullet
     if not bullet:
@@ -315,7 +337,7 @@ def _serialize_list_item(
     indent = "  " * nesting
 
     if list_type == "decimal":
-        return f"{indent}1. {inline}"
+        return f"{indent}{ordinal}. {inline}"
     elif list_type == "checkbox":
         return f"{indent}- [ ] {inline}"
     else:
