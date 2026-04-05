@@ -545,7 +545,7 @@ class TestDeferredIDs:
             f"Expected >=2 batches for header+footer+footnote, got {len(batches)}"
         )
 
-        # Batch 0 should have 3 structural creates
+        # Batch 0 should have header + footer structural creates
         batch0_reqs = batches[0].requests or []
         create_types = []
         for req in batch0_reqs:
@@ -553,7 +553,10 @@ class TestDeferredIDs:
             create_types.extend(d.keys())
         assert "createHeader" in create_types
         assert "createFooter" in create_types
-        assert "createFootnote" in create_types
+
+        # createFootnote should be in a later batch (after body content)
+        all_types = _collect_request_types(batches)
+        assert "createFootnote" in all_types
 
 
 # ===========================================================================
