@@ -231,29 +231,17 @@ def test_append_single_column_populates_new_cells_2x2() -> None:
     assert c2_idx == 27, f"C2 insertText should target index 27, got {c2_idx}"
 
 
-def test_append_two_columns_populates_first_only_2x2() -> None:
-    """Base 2x2; desired adds TWO new columns. The FIRST-emitted structural
-    insertTableColumn populates its cells; the SECOND is guarded and leaves
-    its cells empty.
-
-    Documents the scope of the fix: when multiple column inserts hit the
-    same table in one push, only the first gets its cells populated —
-    because subsequent ops' BASE anchor indices are stale by then
-    (intermediate structural + variable-length text inserts have shifted
-    per-row cell boundaries by amounts we can't reconstruct cleanly at
-    lower time). The user can rerun push on the still-empty cells and
-    they'll be populated by matched-cell content alignment.
-
-    This matches the scope of ``InsertTableRowOp``'s analogous cell-text
-    fix (single-row-append only).
+def test_append_two_columns_populates_all_cells_2x2() -> None:
+    """Base 2x2; desired adds TWO new columns [C, D]. BOTH new columns must
+    be populated. The lowerer walks prior structural ops + their cell-fill
+    inserts and shifts each anchor independently, so every new cell gets
+    its correct insertText.
     """
     table_el, table_end = _make_base_2x2_table_at(table_start=1)
     terminal = make_indexed_terminal(table_end)
     base = make_indexed_doc(body_content=[table_el, terminal])
 
-    desired_table = _desired_table(
-        [["A1", "B1", "C1", "D1"], ["A2", "B2", "C2", "D2"]]
-    )
+    desired_table = _desired_table([["A1", "B1", "C1", "D1"], ["A2", "B2", "C2", "D2"]])
     desired = make_indexed_doc(
         body_content=[desired_table, make_terminal_para()],
     )
@@ -267,20 +255,106 @@ def test_append_two_columns_populates_first_only_2x2() -> None:
     )
 
     text_inserts = _find_insert_texts(reqs)
-    # The first-emitted op populates its row of cells. The LCS-driven emit
-    # order pairs the first-emitted op with the RIGHTMOST desired column
-    # (column ops are emitted in reverse desired order within an anchor
-    # group), so its texts are "D1"/"D2"/Col D's header — collectively the
-    # tokens ending in "1" and "2" that start with the rightmost header.
-    # We assert that AT LEAST one column's worth of cell texts landed.
-    populated_columns = 0
-    for pair in (("C1", "C2"), ("D1", "D2")):
-        if all(any(t == exp for _, t in text_inserts) for exp in pair):
-            populated_columns += 1
-    assert populated_columns >= 1, (
-        f"expected at least one new column to be populated; text inserts: "
-        f"{text_inserts}"
+    all_texts = [t for _, t in text_inserts]
+    # All four new cells must be populated.
+    for expected in ("C1", "C2", "D1", "D2"):
+        assert any(t == expected for t in all_texts), (
+            f"missing insertText for {expected!r}; text inserts: {text_inserts}"
+        )
+
+    # Assert precise live indices. Emission order (from _emit_insertions
+    # reversed desired order within the after-anchor group): D first, then C.
+    # Anchors for both: row 0 = S+12=13 (base row0.c1.end), row 1 = S+23=24.
+    #
+    # Op 1 (D), no prior ops → shift=0:
+    #   D1 at row 0: 13 + 0*2 + 1 = 14
+    #   D2 at row 1: 24 + 1*2 + 1 = 27
+    # Emitted reversed: D2 @ 27, D1 @ 14.
+    #
+    # Op 2 (C), shifts per row:
+    #   row 0 anchor 13: prior insertTableColumn adds 2 bytes at row 0's new
+    #     cell position 13 (post-execute), but new cell is inserted AT 13 so
+    #     content at 13 is pushed to 15 — i.e., position 13 in post-execute
+    #     coords is the new cell's start (the old c1.end). Convention: the
+    #     new cell's byte-insert lands AT position 13, so reference 13 is
+    #     UNSHIFTED (shift model: insertText at L shifts only positions > L).
+    #     Wait — our shift model uses ``L <= current``. For prior op's effect:
+    #     its row 0 new cell occupies [13,15) post-execute. A reference at
+    #     live 13 is right at the insert point: the new bytes landed AT 13,
+    #     so anything AT-OR-AFTER 13 shifts by 2. Hmm — but row 0 c1.end
+    #     STAYS at 13 because the insert is to its RIGHT.
+    #
+    #     Resolution: the new cell is inserted at position 13, and the
+    #     existing content at 13+ shifts. But the original c1.end MARKER at
+    #     13 doesn't move — the new cell occupies [13,15), and the next
+    #     existing byte (row 0 row-end marker) moves from 13 to 15. Since
+    #     our anchor refers to c1.end_index which is PRECISELY 13 (the
+    #     boundary, not the row-end byte), it stays at 13. Model: use strict
+    #     ``<`` for the insert-point comparison → new_cell bytes land at
+    #     position 13, reference <= 13 unshifted. But this contradicts the
+    #     body-text helper which uses ``<=``.
+    #
+    #     The reconciler emits insertText at p1_index which is STRICTLY
+    #     INSIDE the new cell (cell_overhead + 1). So body-text inserts
+    #     are always at positions > the cell's start boundary. Prior ITC's
+    #     cell-starts and the anchor live positions are structural
+    #     boundaries. Using ``<`` for structural-insert shift correctly
+    #     keeps row 0's anchor at 13.
+    #
+    #   row 0 anchor live = 13. C1 = 13 + 0 + 1 = 14.
+    #   row 1 anchor 24: shifts = +2 (row 0's new cell shifted row 1 start)
+    #                            +2 (row 1's own new cell is at 26, 26 <= 26? no
+    #                               — strict < → no shift) ACTUALLY wait
+    #                            row 1's new cell is at live position 26
+    #                            (= 24 base + 2 row-0-shift). The new cell
+    #                            lands at 26, reference is at 26 (same).
+    #                            The new cell sits right at the boundary.
+    #                            Again, c1.end marker stays at 26.
+    #                   Then D2 insertText at 27: 27 <= 26? No → no shift.
+    #                   Then D1 insertText at 14: 14 <= 26? Yes → +2.
+    #   row 1 anchor live = 24 + 2 + 0 + 0 + 2 = 28.
+    #   C2 = 28 + 1*2 + 1 = 31.
+    # Emitted reversed: C2 @ 31, C1 @ 14.
+    c1_hits = [(idx, t) for idx, t in text_inserts if t == "C1"]
+    c2_hits = [(idx, t) for idx, t in text_inserts if t == "C2"]
+    d1_hits = [(idx, t) for idx, t in text_inserts if t == "D1"]
+    d2_hits = [(idx, t) for idx, t in text_inserts if t == "D2"]
+    assert c1_hits[0][0] == 14, f"C1 should be at 14, got {c1_hits}"
+    assert c2_hits[0][0] == 31, f"C2 should be at 31, got {c2_hits}"
+    assert d1_hits[0][0] == 14, f"D1 should be at 14, got {d1_hits}"
+    assert d2_hits[0][0] == 27, f"D2 should be at 27, got {d2_hits}"
+
+
+def test_append_three_columns_populates_all_cells_2x2() -> None:
+    """Base 2x2; desired adds THREE new columns [C, D, E]. All cells populate."""
+    table_el, table_end = _make_base_2x2_table_at(table_start=1)
+    terminal = make_indexed_terminal(table_end)
+    base = make_indexed_doc(body_content=[table_el, terminal])
+
+    desired_table = _desired_table(
+        [
+            ["A1", "B1", "C1", "D1", "E1"],
+            ["A2", "B2", "C2", "D2", "E2"],
+        ]
     )
+    desired = make_indexed_doc(
+        body_content=[desired_table, make_terminal_para()],
+    )
+
+    batches = reconcile_batches(base, desired)
+    reqs = _collect_requests(batches)
+
+    col_inserts = [r for r in reqs if "insertTableColumn" in r]
+    assert len(col_inserts) == 3, (
+        f"expected 3 insertTableColumn, got {len(col_inserts)}"
+    )
+
+    text_inserts = _find_insert_texts(reqs)
+    all_texts = [t for _, t in text_inserts]
+    for expected in ("C1", "C2", "D1", "D2", "E1", "E2"):
+        assert any(t == expected for t in all_texts), (
+            f"missing insertText for {expected!r}; text inserts: {text_inserts}"
+        )
 
 
 def test_append_column_alongside_paragraph_edit() -> None:
@@ -326,6 +400,4 @@ def test_append_column_alongside_paragraph_edit() -> None:
     assert any("C2" in t for t in all_texts), f"missing C2: {all_texts}"
     # Matched-cell update machinery may emit the full text or just the diff
     # fragment — either form is fine as long as "_edited" lands somewhere.
-    assert any("_edited" in t for t in all_texts), (
-        f"missing Intro edit: {all_texts}"
-    )
+    assert any("_edited" in t for t in all_texts), f"missing Intro edit: {all_texts}"

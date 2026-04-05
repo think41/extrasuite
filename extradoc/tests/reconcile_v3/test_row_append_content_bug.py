@@ -244,6 +244,101 @@ def test_append_single_row_populates_new_cells_2x2() -> None:
     assert b3_idx == 28, f"B3 insertText should target index 28, got {b3_idx}"
 
 
+def test_append_two_rows_populates_all_cells_2x2() -> None:
+    """Base: 2x2 [A1|B1 / A2|B2]. Desired: 4x2 adding rows [A3|B3, A4|B4].
+    BOTH new rows must be populated.
+    """
+    table_el, table_end = _make_base_2x2_table_at(table_start=1)
+    terminal = make_indexed_terminal(table_end)
+    base = make_indexed_doc(body_content=[table_el, terminal])
+
+    desired_table = _desired_table(
+        [["A1", "B1"], ["A2", "B2"], ["A3", "B3"], ["A4", "B4"]]
+    )
+    desired = make_indexed_doc(
+        body_content=[desired_table, make_terminal_para()],
+    )
+
+    batches = reconcile_batches(base, desired)
+    reqs = _collect_requests(batches)
+
+    row_inserts = [r for r in reqs if "insertTableRow" in r]
+    assert len(row_inserts) == 2, f"expected 2 insertTableRow, got {row_inserts}"
+
+    text_inserts = _find_insert_texts(reqs)
+    all_texts = [t for _, t in text_inserts]
+    for expected in ("A3", "B3", "A4", "B4"):
+        assert any(t == expected for t in all_texts), (
+            f"missing insertText for {expected!r}; text inserts: {text_inserts}"
+        )
+
+
+def test_append_three_rows_populates_all_cells_2x2() -> None:
+    """Base 2x2; append 3 new rows. All new cells populated."""
+    table_el, table_end = _make_base_2x2_table_at(table_start=1)
+    terminal = make_indexed_terminal(table_end)
+    base = make_indexed_doc(body_content=[table_el, terminal])
+
+    desired_table = _desired_table(
+        [
+            ["A1", "B1"],
+            ["A2", "B2"],
+            ["A3", "B3"],
+            ["A4", "B4"],
+            ["A5", "B5"],
+        ]
+    )
+    desired = make_indexed_doc(
+        body_content=[desired_table, make_terminal_para()],
+    )
+
+    batches = reconcile_batches(base, desired)
+    reqs = _collect_requests(batches)
+
+    row_inserts = [r for r in reqs if "insertTableRow" in r]
+    assert len(row_inserts) == 3
+
+    text_inserts = _find_insert_texts(reqs)
+    all_texts = [t for _, t in text_inserts]
+    for expected in ("A3", "B3", "A4", "B4", "A5", "B5"):
+        assert any(t == expected for t in all_texts), (
+            f"missing insertText for {expected!r}; text inserts: {text_inserts}"
+        )
+
+
+def test_append_row_and_column_populates_all_cells_2x2() -> None:
+    """Base 2x2; desired 3x3 = add one new row AND one new column.
+    Both new structures must have their cells populated.
+    """
+    table_el, table_end = _make_base_2x2_table_at(table_start=1)
+    terminal = make_indexed_terminal(table_end)
+    base = make_indexed_doc(body_content=[table_el, terminal])
+
+    desired_table = _desired_table(
+        [["A1", "B1", "C1"], ["A2", "B2", "C2"], ["A3", "B3", "C3"]]
+    )
+    desired = make_indexed_doc(
+        body_content=[desired_table, make_terminal_para()],
+    )
+
+    batches = reconcile_batches(base, desired)
+    reqs = _collect_requests(batches)
+
+    # The table diff may represent 2x2→3x3 as (1 row + 1 col) OR as pure
+    # column inserts (depending on LCS matching); we don't care which shape
+    # the structural ops take, only that every new cell text lands.
+    row_inserts = [r for r in reqs if "insertTableRow" in r]
+    col_inserts = [r for r in reqs if "insertTableColumn" in r]
+    assert row_inserts or col_inserts, "expected at least one structural table op"
+
+    text_inserts = _find_insert_texts(reqs)
+    all_texts = [t for _, t in text_inserts]
+    for expected in ("C1", "C2", "A3", "B3", "C3"):
+        assert any(t == expected for t in all_texts), (
+            f"missing insertText for {expected!r}; text inserts: {text_inserts}"
+        )
+
+
 def test_append_row_alongside_matched_cell_edits() -> None:
     """Base 2x2; desired edits A1 AND adds a new row. Both land correctly.
 

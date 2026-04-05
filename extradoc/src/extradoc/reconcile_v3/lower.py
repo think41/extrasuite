@@ -227,6 +227,18 @@ def lower_batches(
     """
     batch0: list[Request] = []  # structural creates
     batch1: list[Request] = []  # content + style + structural deletes
+    # Sidecar map of synthetic "structural byte insert" events keyed by the
+    # ``id()`` of the request in ``batch1`` that produces them. Each value is
+    # a list of ``(tab_id, live_index, delta)`` tuples where ``live_index``
+    # is the insertion position in the frame that exists immediately AFTER
+    # the event executes (same convention as ``insertText.location.index``).
+    # These represent byte-level mutations to the body segment that table
+    # structural requests (``insertTableRow``/``insertTableColumn``) perform
+    # but do not expose as ``insertText``. The shift helper reads these
+    # alongside ``batch1``'s insertText/deleteContentRange requests so it
+    # can correctly shift BASE anchors for later same-table structural ops.
+    # See ``_compute_index_shift_for_body_ref``.
+    struct_events_by_req_id: dict[int, list[tuple[str, int, int]]] = {}
     batch1b: list[
         Request
     ] = []  # createFootnote (after body content, before named ranges)
@@ -597,50 +609,57 @@ def lower_batches(
             # ---------------------------------------------------------------- #
             case InsertTableRowOp():
                 # Shift BASE table-anchored indices by the cumulative byte
-                # delta of body-text ops already in ``batch1``. Body-text
-                # ops (from ``UpdateBodyContentOp``) are emitted BEFORE
-                # table-structural children (diff emits child_ops after the
-                # parent) and may have inserted/deleted text at positions
-                # ≤ ``table_start_index``, leaving our BASE anchors stale.
-                shift = _compute_index_shift_for_body_ref(
+                # delta of body-text ops (and prior same-table structural
+                # ops) already in ``batch1``.
+                shift_table_start = _compute_index_shift_for_body_ref(
                     batch1,
                     base_index=op.table_start_index,
                     tab_id=op.tab_id,
+                    struct_events_by_req_id=struct_events_by_req_id,
                 )
-                batch1.append(
-                    _make_insert_table_row(
-                        table_start_index=op.table_start_index + shift,
-                        row_index=op.row_index,
-                        insert_below=op.insert_below,
+                itr_req = _make_insert_table_row(
+                    table_start_index=op.table_start_index + shift_table_start,
+                    row_index=op.row_index,
+                    insert_below=op.insert_below,
+                    tab_id=op.tab_id,
+                )
+                batch1.append(itr_req)
+                # Record the structural byte injection this request performs,
+                # so later same-table ops can shift their BASE anchors past
+                # it. A new row of ``_ROW_OVERHEAD + column_count *
+                # _EMPTY_CELL_SIZE`` bytes is inserted at
+                # ``new_row_start_index`` (in live post-prior-ops coords),
+                # before the cell-fill inserts run.
+                if op.new_row_start_index is not None:
+                    shift_new_row = _compute_index_shift_for_body_ref(
+                        batch1[:-1],  # exclude the req we just appended
+                        base_index=op.new_row_start_index,
                         tab_id=op.tab_id,
+                        struct_events_by_req_id=struct_events_by_req_id,
                     )
-                )
-                # Populate the newly-created cells with the desired text.
-                # ``insertTableRow`` creates an empty row with default cell
-                # layout (per cell: 1 start-overhead byte + "\n" paragraph +
-                # trailing "\n" paragraph = 3 bytes); plus 1 row-overhead byte.
-                # The new cells' first-paragraph positions are computed off
-                # ``op.new_row_start_index`` (a BASE byte index that is valid
-                # at this point in the batch because all subsequent matched
-                # cell edits operate at strictly lower indices).
-                shifted_new_row_start_index = (
-                    op.new_row_start_index + shift
-                    if op.new_row_start_index is not None
-                    else None
-                )
-                batch1.extend(
-                    _make_new_row_cell_text_inserts(
-                        new_row_start_index=shifted_new_row_start_index,
-                        new_cell_texts=op.new_cell_texts,
-                        tab_id=op.tab_id,
+                    live_row_start = op.new_row_start_index + shift_new_row
+                    row_bytes = _ROW_OVERHEAD + op.column_count * _EMPTY_CELL_SIZE
+                    struct_events_by_req_id[id(itr_req)] = [
+                        (op.tab_id, live_row_start, row_bytes)
+                    ]
+                    # Populate the newly-created cells with the desired text.
+                    # ``insertTableRow`` creates an empty row with default
+                    # cell layout (per cell: 1 start-overhead byte + "\n"
+                    # paragraph = 2 bytes); plus 1 row-overhead byte.
+                    batch1.extend(
+                        _make_new_row_cell_text_inserts(
+                            new_row_start_index=live_row_start,
+                            new_cell_texts=op.new_cell_texts,
+                            tab_id=op.tab_id,
+                        )
                     )
-                )
 
             case DeleteTableRowOp():
                 shift = _compute_index_shift_for_body_ref(
                     batch1,
                     base_index=op.table_start_index,
                     tab_id=op.tab_id,
+                    struct_events_by_req_id=struct_events_by_req_id,
                 )
                 batch1.append(
                     _make_delete_table_row(
@@ -651,66 +670,66 @@ def lower_batches(
                 )
 
             case InsertTableColumnOp():
-                shift = _compute_index_shift_for_body_ref(
+                shift_table_start = _compute_index_shift_for_body_ref(
                     batch1,
                     base_index=op.table_start_index,
                     tab_id=op.tab_id,
+                    struct_events_by_req_id=struct_events_by_req_id,
                 )
-                batch1.append(
-                    _make_insert_table_column(
-                        table_start_index=op.table_start_index + shift,
-                        column_index=op.column_index,
+                itc_req = _make_insert_table_column(
+                    table_start_index=op.table_start_index + shift_table_start,
+                    column_index=op.column_index,
+                    insert_right=op.insert_right,
+                    tab_id=op.tab_id,
+                )
+                batch1.append(itc_req)
+                # Populate the newly-created cells with the desired text.
+                # ``insertTableColumn`` creates one empty 2-byte cell per
+                # row (1 cell-overhead + 1 "\n" paragraph). Each row's new
+                # cell lands at a DIFFERENT live byte position; compute the
+                # per-row live anchor independently by walking all prior
+                # body-text AND prior same-table structural events.
+                live_anchors: list[int | None] = []
+                for base_anchor in op.new_cell_anchor_indices:
+                    if base_anchor is None:
+                        live_anchors.append(None)
+                        continue
+                    row_shift = _compute_index_shift_for_body_ref(
+                        batch1[:-1],  # exclude the ITC we just appended
+                        base_index=base_anchor,
+                        tab_id=op.tab_id,
+                        struct_events_by_req_id=struct_events_by_req_id,
+                    )
+                    live_anchors.append(base_anchor + row_shift)
+                # Record THIS ITC's structural byte injections so later ops
+                # on the same table can account for them. Row r's new cell
+                # lands at ``live_anchors[r] + r * _EMPTY_CELL_SIZE`` in
+                # post-event coords (cumulative shift from rows 0..r-1's
+                # new cells, each adding _EMPTY_CELL_SIZE bytes).
+                events: list[tuple[str, int, int]] = []
+                for r, live in enumerate(live_anchors):
+                    if live is None:
+                        continue
+                    events.append(
+                        (op.tab_id, live + r * _EMPTY_CELL_SIZE, _EMPTY_CELL_SIZE)
+                    )
+                if events:
+                    struct_events_by_req_id[id(itc_req)] = events
+                batch1.extend(
+                    _make_new_column_cell_text_inserts(
+                        new_cell_anchor_indices=live_anchors,
+                        new_cell_texts=op.new_cell_texts,
                         insert_right=op.insert_right,
                         tab_id=op.tab_id,
                     )
                 )
-                # Populate the newly-created cells with the desired text.
-                # ``insertTableColumn`` creates one empty 2-byte cell per row
-                # (1 cell-overhead + 1 "\n" paragraph). Offsets are computed
-                # off each row's anchor cell boundary in the BASE doc, shifted
-                # by ``row_idx * _EMPTY_CELL_SIZE`` to account for earlier
-                # rows' new cells. Emitted in reverse row order so each
-                # insertText only shifts offsets we've already processed.
-                #
-                # Safety guard: the BASE anchor indices are only valid when
-                # no prior structural column op on this table has shifted
-                # per-row cell boundaries. Prior ``insertTableColumn`` ops
-                # add a variable-sized run of cell-text inserts between the
-                # structural op and this one, whose cumulative row deltas we
-                # can't reconstruct from the lowered request list alone;
-                # ``deleteTableColumn`` likewise removes a variable-sized
-                # cell. In either case we fall back to emitting the
-                # structural ``insertTableColumn`` alone and letting the new
-                # cells land empty (matching the pre-fix behavior, and
-                # matching ``InsertTableRowOp``'s analogous limitation for
-                # multi-row-append). The common "append one column" and
-                # "append one row" cases — which are what users actually hit
-                # — populate cells correctly.
-                if not _has_prior_table_structural_column_op(
-                    batch1,
-                    table_start_index=op.table_start_index + shift,
-                    tab_id=op.tab_id,
-                ):
-                    # Anchors sit at or after table_start_index (inside the
-                    # table), so the same body-text delta applies uniformly.
-                    shifted_anchors = [
-                        (a + shift) if a is not None else None
-                        for a in op.new_cell_anchor_indices
-                    ]
-                    batch1.extend(
-                        _make_new_column_cell_text_inserts(
-                            new_cell_anchor_indices=shifted_anchors,
-                            new_cell_texts=op.new_cell_texts,
-                            insert_right=op.insert_right,
-                            tab_id=op.tab_id,
-                        )
-                    )
 
             case DeleteTableColumnOp():
                 shift = _compute_index_shift_for_body_ref(
                     batch1,
                     base_index=op.table_start_index,
                     tab_id=op.tab_id,
+                    struct_events_by_req_id=struct_events_by_req_id,
                 )
                 batch1.append(
                     _make_delete_table_column(
@@ -728,6 +747,7 @@ def lower_batches(
                     batch1,
                     base_index=op.table_start_index,
                     tab_id=op.tab_id,
+                    struct_events_by_req_id=struct_events_by_req_id,
                 )
                 batch1.append(
                     _make_update_table_cell_style(
@@ -745,6 +765,7 @@ def lower_batches(
                     batch1,
                     base_index=op.table_start_index,
                     tab_id=op.tab_id,
+                    struct_events_by_req_id=struct_events_by_req_id,
                 )
                 batch1.append(
                     _make_update_table_row_style(
@@ -760,6 +781,7 @@ def lower_batches(
                     batch1,
                     base_index=op.table_start_index,
                     tab_id=op.tab_id,
+                    struct_events_by_req_id=struct_events_by_req_id,
                 )
                 batch1.append(
                     _make_update_table_column_properties(
@@ -3475,7 +3497,8 @@ def _make_new_row_cell_text_inserts(
     """Emit ``insertText`` requests that populate an empty, just-inserted row.
 
     After ``insertTableRow``, the new row exists at ``new_row_start_index``
-    with predictable byte layout (each cell is ``_EMPTY_CELL_SIZE`` bytes;
+    (in LIVE doc coords — shifted by all prior batch ops) with predictable
+    byte layout (each cell is ``_EMPTY_CELL_SIZE`` bytes;
     rows have a ``_ROW_OVERHEAD`` byte prefix). We emit one ``insertText`` per
     non-empty cell, targeting the cell's first paragraph. We emit them in
     REVERSE column order so each insert does not invalidate the byte offsets
@@ -3523,6 +3546,7 @@ def _compute_index_shift_for_body_ref(
     *,
     base_index: int,
     tab_id: str,
+    struct_events_by_req_id: dict[int, list[tuple[str, int, int]]] | None = None,
 ) -> int:
     """Return the net byte shift at ``base_index`` caused by prior body-text
     ops in ``batch`` for ``tab_id``'s body segment.
@@ -3544,11 +3568,31 @@ def _compute_index_shift_for_body_ref(
       by the reconciler (deletes are always whole structural elements),
       so we don't model them here and raise on encounter.
 
+    Table-structural requests (``insertTableRow``/``insertTableColumn``) do
+    NOT appear in ``batch`` as insertText/deleteContentRange, but they DO
+    inject bytes into the body segment. The caller records those byte
+    injections in ``struct_events`` (parallel list to ``batch``); each entry
+    is a list of ``(tab_id, live_index, delta)`` tuples where ``live_index``
+    is the insertion position in the frame that exists AFTER the event
+    executes. The shift rule mirrors ``insertText``: if ``live_index <
+    current``, the delta applies (strict ``<`` because new cells are
+    inserted AT a structural boundary, and the anchor is precisely at that
+    boundary — content AT the boundary stays at the boundary, content
+    strictly after moves forward).
+
     Only body-segment requests (``segment_id=None``, matching ``tab_id``)
     contribute; header/footer/footnote ops live in distinct coordinate spaces.
     """
     current = base_index
     for req in batch:
+        if struct_events_by_req_id is not None:
+            events = struct_events_by_req_id.get(id(req))
+            if events is not None:
+                for ev_tab_id, ev_index, ev_delta in events:
+                    if ev_tab_id != tab_id:
+                        continue
+                    if ev_index < current:
+                        current += ev_delta
         it = req.insert_text
         dcr = req.delete_content_range
         if it is not None:
@@ -3589,38 +3633,6 @@ def _compute_index_shift_for_body_ref(
     return current - base_index
 
 
-def _has_prior_table_structural_column_op(
-    batch: list[Request],
-    *,
-    table_start_index: int,
-    tab_id: str,
-) -> bool:
-    """Return True if ``batch`` already contains a column-level structural
-    op (``insertTableColumn`` or ``deleteTableColumn``) on the same table.
-
-    The just-appended ``insertTableColumn`` for the CURRENT op lives at
-    ``batch[-1]`` and is excluded — its per-row shift is already accounted
-    for in the cell-text offset formula. Requests before it are genuine
-    prior ops whose byte impact on per-row cell boundaries we can't
-    reconstruct cleanly (prior column inserts are interleaved with
-    variable-sized text fills; prior deletes remove variable-sized cell
-    content). In either case we skip the cell-text inserts for this op.
-    """
-    for req in batch[:-1]:
-        for child in (req.insert_table_column, req.delete_table_column):
-            if child is None:
-                continue
-            loc = child.table_cell_location
-            if loc is None:
-                continue
-            start = loc.table_start_location
-            if start is None:
-                continue
-            if start.index == table_start_index and start.tab_id == tab_id:
-                return True
-    return False
-
-
 def _make_new_column_cell_text_inserts(
     *,
     new_cell_anchor_indices: list[int | None],
@@ -3634,11 +3646,12 @@ def _make_new_column_cell_text_inserts(
     ``_EMPTY_CELL_SIZE``-byte cell (1 cell-overhead + 1 ``\\n`` paragraph —
     same layout as rows created by ``insertTableRow``). The new cell's
     position in each row is determined by the anchor cell's boundary in the
-    BASE document: for ``insert_right=True`` the anchor is that cell's
-    ``end_index``; for ``insert_right=False`` the anchor is its
-    ``start_index``. Because every earlier base row has also gained a new
-    cell, row ``R``'s anchor must be shifted by ``R * _EMPTY_CELL_SIZE`` to
-    land on the POST-insert absolute byte index.
+    LIVE document (as shifted by all prior batch ops): for
+    ``insert_right=True`` the anchor is that cell's ``end_index``; for
+    ``insert_right=False`` the anchor is its ``start_index``. Because every
+    earlier base row has also gained a new cell, row ``R``'s anchor must be
+    shifted by ``R * _EMPTY_CELL_SIZE`` to land on the POST-insert absolute
+    byte index.
 
     We emit one ``insertText`` per non-empty cell, targeting the cell's
     ``\\n`` paragraph, in REVERSE row order so each insert only shifts byte
