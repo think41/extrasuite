@@ -1,137 +1,88 @@
 ## Overview
 
-Python library that transforms Google Docs into a markdown or XML folder
-structure for LLM-assisted editing, using a pull → edit → push workflow
-orchestrated by `DocsClient` (`src/extradoc/client.py`).
+Python library that declaratively edits a Google Doc. The workflow is:
+pull the doc → convert to markdown/XML → LLM edits files → convert back → push
+changes to Google Docs. The conversion is lossy (markdown can't represent every
+Google Docs property), but a 3-way merge ensures anything the format can't
+represent passes through untouched. Orchestrated by `DocsClient`
+(`src/extradoc/client.py`).
 
+## Pipeline
 
-## Architecture: How It Works
+**Pull** fetches the document from Google Docs API and represents it in memory
+as `base` `DocumentWithComments` (`src/extradoc/comments/_types.py`).
 
-### Objective
-Declaratively edit a Google Doc.
+**Serialize** converts `base` into a folder of markdown or XML files that an
+LLM can read and edit.
 
-### Pipeline
-
-**pull** fetches `document.json`. This is saved as `./raw/document.json` and
-represented in memory as `base Document`. Comments are fetched separately and we
-get a composite `DocumentWithComments`.
-
-- Public interface: `DocumentWithComments` — `src/extradoc/comments/_types.py`
-- Public exports: `src/extradoc/comments/__init__.py`
-
-**SERDE** converts `DocumentWithComments` into a folder in a SERDE-specific
-format that is suitable for LLM agents to edit (markdown or XML).
-
-- Public interface: `Serde` protocol, `serialize()`, `deserialize()` — `src/extradoc/serde/__init__.py`
+- Public interface: `Serde` protocol — `src/extradoc/serde/__init__.py`
 - Implementations: `MarkdownSerde` (`serde/markdown/`), `XmlSerde` (`serde/xml/`)
-- 3-way merge engine: `src/extradoc/serde/_apply_ops.py`
-- Shared models: `src/extradoc/serde/_models.py`
 - Style handling: `src/extradoc/serde/_styles.py`
 
-**The core promise:** The serde will not corrupt anything it doesn't understand.
-Markdown/XML are inherently lossy, but the 3-way merge ensures that properties
-the format cannot represent pass through untouched from base to desired. See
-`src/extradoc/serde/CLAUDE.md` for the full explanation.
+**LLM edits** the files on disk.
 
-**LLM agent edits** outside our boundary and calls push.
-
-**SERDE deserialize** reads the edited folder, diffs it against the pristine
-snapshot saved at serialize time, and applies only the detected changes to the
-transport-accurate base document via 3-way merge. This produces a `desired`
-`DocumentWithComments`.
+**Deserialize** reads the edited folder, diffs it against the pristine snapshot
+saved at serialize time, and applies only the detected changes to the base
+document via 3-way merge. The output is two `DocumentWithComments`: `base`
+(original from pull) and `desired` (base + user's edits merged in). The 3-way
+merge is what preserves properties the format cannot represent. See
+`src/extradoc/serde/CLAUDE.md` for details.
 
 - 3-way merge: `src/extradoc/serde/_apply_ops.py` (`apply_ops_to_document()`)
 
-**Reconciler** — diffs base and desired `DocumentWithComments` and creates a
-list of `BatchUpdateRequests`.
+**Reconciler** — takes `base` and `desired` `Document` and produces a list of
+`BatchUpdateDocumentRequest`s that, when executed against the live Google Doc,
+will transform it from `base` into `desired`.
 
-The Reconciler works as a tree. A `Document` is actually a tree. It has Tabs.
-Tabs have Headers, Footers, Body. There are 5 things that have "content" —
-header, footer, body, footnote, table cell. The content is a list of
-`StructuralElement`s — which is one of 4 things: `TableOfContents`, `Paragraph`,
-`Table`, `PageBreak`. So there is recursion involved.
+```python
+# src/extradoc/reconcile_v3/api.py
+def reconcile_batches(
+    base: Document,
+    desired: Document,
+) -> list[BatchUpdateDocumentRequest]:
+```
 
-- Public interface: `diff()`, `reconcile()`, `reconcile_batches()` — `src/extradoc/reconcile_v3/api.py`
+Internally, the reconciler works as a tree diff. A `Document` is a tree: it has
+Tabs, each Tab has Headers, Footers, Body. There are 5 things that have
+"content" — header, footer, body, footnote, table cell. The content is a list
+of `StructuralElement`s — which is one of 4 things: `TableOfContents`,
+`Paragraph`, `Table`, `PageBreak`. So there is recursion involved.
+
+- Public interface: `reconcile_batches()` — `src/extradoc/reconcile_v3/api.py`
 - Op types: `src/extradoc/reconcile_v3/model.py`
 - Tree diff: `src/extradoc/reconcile_v3/diff.py` (`diff_documents()`)
 - Content alignment DP: `src/extradoc/reconcile_v3/content_align.py` (`align_content()`)
 - Table diff: `src/extradoc/reconcile_v3/table_diff.py` (`diff_tables()`)
 
-The Reconciler returns a list of `BatchUpdateRequests`. These
-`BatchUpdateRequests` have **deferred placeholder IDs** — that instruct the
-execution engine how to resolve the placeholder ID by looking at the output from
-a previous batch update request.
-
-So you could have say 5 sequential requests, with the 2nd request having some
-IDs that will only be available after the 1st request completes and so on.
-
-**The key design split — reconciler is planner, executor is executor.** The
-reconciler knows exactly what needs to be done. It simply has to say "after you
-create the tab, get the tab id — then for the subsequent BatchUpdateRequest,
-update the tab id in all request objects". The reconciler keeps creating the
-next set of requests *as though the tab already existed*. The layer after the
-reconciler invokes batchUpdate request #n, picks up the ids from the response,
-edits #n+1 to substitute the placeholders with the resolved ids, and keeps
-going on. In other words, the reconciler is planning the requests; the next
-layer is executing that plan.
-
-**Deferred placeholder format** (`src/extradoc/reconcile_v3/lower.py`,
-`CreateHeaderOp` handler): each placeholder is a dict embedded directly in the
-request where the real ID would go:
+**Executor** — takes the list of `BatchUpdateDocumentRequest`s from the
+reconciler and executes them sequentially against the live Google Docs API.
+After each batch completes, it resolves deferred placeholder IDs in subsequent
+batches using values from the API response, then continues until all batches
+are executed. At that point, the live Google Doc matches `desired`.
 
 ```python
-{"placeholder": True, "batch_index": 0, "request_index": 3, "response_path": "createHeader.headerId"}
+# src/extradoc/reconcile_v3/executor.py
+async def execute_request_batches(
+    transport: BatchUpdateTransport,
+    *,
+    document_id: str,
+    request_batches: Sequence[BatchUpdateDocumentRequest],
+    initial_revision_id: str | None,
+) -> BatchExecutionResult:
 ```
 
-The mapping `(batch_index, request_index, response_path)` tells the executor
-exactly which prior response to read and which path to extract. Every subsequent
-request is generated with this placeholder value in place of the real ID — the
-reconciler returns this map implicitly as part of the request batches themselves.
-
-**Segment IDs** (headers, footers, footnotes): proven and working. When a new
-header is created in batch 0, all batch 1 style and content requests carry the
-deferred segment ID dict. `resolve_deferred_placeholders` substitutes the real
-ID before batch 1 executes. See `lower_batches()` `CreateHeaderOp` /
-`CreateFooterOp` / `InsertFootnoteOp` handlers.
-
-**Tab IDs**: same pattern. When a new tab is created via `addDocumentTab`, the
-body content requests carry a deferred tab ID with `response_path =
-"addDocumentTab.tabProperties.tabId"`.
-
-**Table cell recursion**: this is the exact same thing, but we already know the
-segment id and the starting index. No deferred IDs are needed — cell positions
-are computable from the table's insert index and structure. This is pure
-synchronous recursion in the lowerer: `insertTable` is emitted, then each cell's
-content is emitted at the computed absolute index in the same batch. The index
-arithmetic is proven in `tests/reconcile_v3/test_lower.py`
-(`make_indexed_table`, `make_indexed_cell`).
-
-- Lowering (ops → requests with deferred IDs): `src/extradoc/reconcile_v3/lower.py` (`lower_batches()`)
 - Deferred ID resolution: `src/extradoc/reconcile_v3/executor.py` (`resolve_deferred_placeholders()`)
-- Batch execution: `src/extradoc/reconcile_v3/executor.py` (`execute_request_batches()`)
-
-When all the batch update requests have completed, the document is considered to
-have reconciled. In other words, the Google Doc now matches the desired document.
+- Lowering (ops → requests with deferred IDs): `src/extradoc/reconcile_v3/lower.py` (`lower_batches()`)
 
 - Orchestration (pull/diff/push): `src/extradoc/client.py` (`DocsClient`)
 
-### Testing Philosophy
+### Testing
 
-We test at the boundaries of the core interfaces. Anything testing internals is
-useless and must be deleted.
-
-One cycle of live testing involves: pull a document → edit it on disk → push →
-pull again to confirm the round trip. Use `./extrasuite doc create` if you don't
-have a doc yet.
-
-**Serde tests** validate the core promise — "will not corrupt anything it
-doesn't understand" — via a consistent pattern: load a real API response →
-serialize → edit files → deserialize → assert what changed is correct AND
-nothing else changed. See `docs/serde-testing-philosophy.md` for the full
-approach. The `assert_preserved` helper automates the "nothing else changed"
-check.
-
-**Tests that cover the public abstractions:**
+We test at the public interface boundaries only. **Serde** tests load a golden
+document, serialize it, edit the files, deserialize, and assert only the
+intended changes occurred (everything else preserved). **Reconciler** tests
+construct base and desired `Document` objects, run `reconcile_batches()`, and
+assert the generated `BatchUpdateDocumentRequest`s match expectations.
 
 | Abstraction | Test file |
 |-------------|-----------|
@@ -144,48 +95,42 @@ check.
 | Reconcile v3 lowering (incl. deferred IDs) | `tests/reconcile_v3/test_lower.py` |
 | DocsClient integration | `tests/test_client_reconciler_versions.py` |
 
-Test helpers (factory functions for constructing test documents):
-`tests/reconcile_v3/helpers.py`
+## Google Docs API Reference
 
-## Key Packages
+`docs/googledocs/` contains local reference material for Google Docs API
+behavior. Key guides:
 
-| Package | Purpose |
-|---------|---------|
-| `src/extradoc/serde/` | `Serde` protocol; `MarkdownSerde` and `XmlSerde` implementations; 3-way merge engine |
-| `src/extradoc/serde/markdown/` | Markdown serialization (`_to_markdown.py`) and deserialization (`_from_markdown.py`) |
-| `src/extradoc/serde/xml/` | XML serialization (`_to_xml.py`) and deserialization (`_from_xml.py`) |
-| `src/extradoc/reconcile_v3/` | `Document` diff -> `BatchUpdateDocumentRequest` batches; includes executor |
-| `src/extradoc/comments/` | `comments.xml`, inline `comment-ref`, and comment diffs |
-| `src/extradoc/mock/` | In-process mock of the Docs `batchUpdate` API |
-| `src/extradoc/api_types/` | Generated typed models from the Docs API schema |
-| `src/extradoc/transport.py` | Transport interfaces and implementations |
-| `src/extradoc/client.py` | `DocsClient` pull/diff/push orchestration |
+- `index.md` — overview
+- `structure.md` — document tree (tabs, body, headers, footers, footnotes)
+- `document.md` / `documents.md` — Document resource and methods
+- `requests-and-responses.md` — batchUpdate request/response format
+- `batch.md` — batching semantics
+- `format-text.md` — text and paragraph styling
+- `lists.md` — list/bullet behavior
+- `tables.md` — table structure and operations
+- `tabs.md` — multi-tab documents
+- `named-ranges.md` — named range operations
+- `images.md` — inline images
+- `merge.md` — mail merge
+- `move-text.md` — moving content
+- `field-masks.md` — field mask syntax
+- `rules-behavior.md` — API behavioral rules
+- `best-practices.md` / `performance.md` — optimization guidance
+- `api/` — 117 individual type/request reference files (e.g., `Document.md`,
+  `BatchUpdateDocumentResponse.md`, `TableCell.md`, `ParagraphElement.md`)
 
-## Documentation
+Typed Python models generated from the API schema live in
+`src/extradoc/api_types/`.
 
-- `docs/on-disk-format.md` — authoritative file/folder/XML format
-- `docs/serde-testing-philosophy.md` — testing approach for serde
-- `docs/comment-anchoring-limitation.md` — Drive API limitation for anchored comments
-- `docs/googledocs/` — local reference material for Google Docs API behavior
+## Mock
 
-## Key Gotchas
-
-- Google Docs indices are UTF-16 code units, not Python character offsets.
-- Headers, footers, footnotes, and table cells each have their own index rules.
-- New tabs require an `index.xml` entry and a `<sectionbreak>` as the first
-  element of `<body>`.
-- `styles.xml` is written on serialize, but deserialize also tolerates a
-  missing `styles.xml` and treats it as empty `<styles />`.
-- After `push`, always re-pull before making further edits.
-- `comment-ref` elements in `document.xml` are display metadata derived from
-  `comments.xml`, not primary editable content.
-- `src/extradoc/mock/` is useful for fast local regressions, but it is not a
-  release-confidence source and must not be treated as the transport truth.
-  For reconciler changes, prefer fixture-backed live Google Docs replay before
-  trusting the result.
-- Do not add compensating reconciler logic just to satisfy the mock. If mock
-  behavior disagrees with live Google Docs, the mock is wrong for that purpose
-  and live fixtures win.
+`src/extradoc/mock/` contains an in-process mock of the Google Docs
+`batchUpdate` API. It is useful for fast local iteration but **not
+trustworthy** — its behavior diverges from the real API in subtle ways (style
+provenance, run consolidation, edge cases). Do not treat mock results as ground
+truth. Do not add compensating logic to the reconciler or serde just to make
+the mock pass. When the mock disagrees with live Google Docs, the mock is
+wrong.
 
 ## Development
 
