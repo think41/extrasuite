@@ -1,4 +1,4 @@
-"""Content alignment algorithm for reconcile_v2.
+"""Content alignment algorithm for reconcile_v3.
 
 This module implements a DP-based alignment algorithm that determines how to
 reconcile two Google Docs content sequences (base → desired) with minimum edit

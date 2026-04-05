@@ -12,7 +12,7 @@ Multi-batch output
 ``reconcile_batches`` returns a list of ``BatchUpdateDocumentRequest`` objects.
 Batches must be executed in order; any deferred-ID placeholders in a later
 batch must be resolved against the responses from all prior batches using
-``extradoc.reconcile_v2.executor.resolve_deferred_placeholders``.
+``extradoc.reconcile_v3.executor.resolve_deferred_placeholders``.
 """
 
 from __future__ import annotations
@@ -117,7 +117,7 @@ def reconcile_batches(
         Ordered list of request batches.  Each batch must be executed in order.
         Deferred-ID placeholders in later batches are resolved against prior
         batch responses via
-        ``extradoc.reconcile_v2.executor.resolve_deferred_placeholders``.
+        ``extradoc.reconcile_v3.executor.resolve_deferred_placeholders``.
     """
     ops = diff_documents(base, desired)
     desired_lists_by_tab = _extract_lists_by_tab(desired)

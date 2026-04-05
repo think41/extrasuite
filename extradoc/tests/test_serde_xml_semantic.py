@@ -241,7 +241,6 @@ def test_deserialize_xml_roundtrip_semantics_are_stable_for_live_fixture(
 ) -> None:
     fixture = (
         Path(__file__).resolve().parent
-        / "reconcile_v2"
         / "fixtures"
         / "xml_cycle2_live_probe"
         / "desired"

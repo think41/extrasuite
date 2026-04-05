@@ -1,7 +1,0 @@
-revision=AIxLkStbKO7OQZM0gIuIpvudNme692w1JOv-DcYAlHjllCdW7C8_LJeivp3hd6caUmkAIT_4nfuzH9aVDOgGYy10GGZXEL5Z4DBKfxjCfX6AR-8
-tabs=1
-tab 't.0' title='Tab 1' index=0 children=0
-  body sections=1 blocks=3
-  resources headers=0 footers=0 footnotes=0
-  named_ranges=0
-  body block kinds={'paragraph': 3}

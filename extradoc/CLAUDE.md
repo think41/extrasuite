@@ -94,9 +94,7 @@ ID before batch 1 executes. See `lower_batches()` `CreateHeaderOp` /
 
 **Tab IDs**: same pattern. When a new tab is created via `addDocumentTab`, the
 body content requests carry a deferred tab ID with `response_path =
-"addDocumentTab.tabProperties.tabId"`. A legacy string sentinel
-`"__LAST_ADDED_TAB_ID__"` exists in `executor.py` as an interim workaround; the
-structured placeholder dict is the correct approach and replaces it.
+"addDocumentTab.tabProperties.tabId"`.
 
 **Table cell recursion**: this is the exact same thing, but we already know the
 segment id and the starting index. No deferred IDs are needed — cell positions
@@ -107,8 +105,8 @@ arithmetic is proven in `tests/reconcile_v3/test_lower.py`
 (`make_indexed_table`, `make_indexed_cell`).
 
 - Lowering (ops → requests with deferred IDs): `src/extradoc/reconcile_v3/lower.py` (`lower_batches()`)
-- Deferred ID resolution: `src/extradoc/reconcile_v2/executor.py` (`resolve_deferred_placeholders()`)
-- Batch execution: `src/extradoc/reconcile_v2/executor.py` (`execute_request_batches()`)
+- Deferred ID resolution: `src/extradoc/reconcile_v3/executor.py` (`resolve_deferred_placeholders()`)
+- Batch execution: `src/extradoc/reconcile_v3/executor.py` (`execute_request_batches()`)
 
 When all the batch update requests have completed, the document is considered to
 have reconciled. In other words, the Google Doc now matches the desired document.
@@ -143,8 +141,7 @@ Test helpers (factory functions for constructing test documents):
 | Package | Purpose |
 |---------|---------|
 | `src/extradoc/serde/` | `DocumentWithComments ↔ XML folder` |
-| `src/extradoc/reconcile_v3/` | `Document` diff -> `BatchUpdateDocumentRequest` batches (**active**) |
-| `src/extradoc/reconcile_v2/` | Previous reconciler; executor and deferred-ID resolution still used |
+| `src/extradoc/reconcile_v3/` | `Document` diff -> `BatchUpdateDocumentRequest` batches; includes executor |
 | `src/extradoc/comments/` | `comments.xml`, inline `comment-ref`, and comment diffs |
 | `src/extradoc/mock/` | In-process mock of the Docs `batchUpdate` API |
 | `src/extradoc/api_types/` | Generated typed models from the Docs API schema |

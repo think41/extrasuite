@@ -1,3 +1,0 @@
-| **left** | **right** |
-| --- | --- |
-| alpha | bravo |

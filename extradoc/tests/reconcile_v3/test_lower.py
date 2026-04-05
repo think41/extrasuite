@@ -495,7 +495,7 @@ class TestTabOps:
 
     def test_insert_tab_deferred_tab_id_resolves(self) -> None:
         """Deferred tab ID in InsertTabOp body content resolves via resolve_deferred_placeholders."""
-        from extradoc.reconcile_v2.executor import resolve_deferred_placeholders
+        from extradoc.reconcile_v3.executor import resolve_deferred_placeholders
 
         base = make_document(tabs=[make_tab("t1", "Tab 1", 0)])
         desired = make_document(

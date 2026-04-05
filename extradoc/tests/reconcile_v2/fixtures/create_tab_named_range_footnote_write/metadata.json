@@ -1,6 +1,0 @@
-{
-  "description": "Create a new tab, insert body text, create a footnote reference, populate the footnote, and add a named range over post-footnote body content in one logical cycle.",
-  "workflow": "pull-md/push-md + direct batchUpdate",
-  "doc_url": "https://docs.google.com/document/d/12kQxhQqB79pNXsjIFN8zYUaOQhGqEjjD3sWhh7qe68U",
-  "document_id": "12kQxhQqB79pNXsjIFN8zYUaOQhGqEjjD3sWhh7qe68U"
-}

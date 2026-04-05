@@ -22,8 +22,8 @@ from extradoc.comments._types import (
     DocumentWithComments,
 )
 from extradoc.reconcile import reindex_document
-from extradoc.reconcile_v2.executor import execute_request_batches
 from extradoc.reconcile_v3.api import reconcile_batches as reconcile_v3_batches
+from extradoc.reconcile_v3.executor import execute_request_batches
 from extradoc.serde._models import IndexXml
 from extradoc.serde.markdown import MarkdownSerde
 from extradoc.serde.xml import XmlSerde
