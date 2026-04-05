@@ -688,19 +688,15 @@ def _convert_list(
 
 
 def _convert_gfm_table(block: Any) -> StructuralElement:
-    """Convert a mistletoe GFM Table to a Google Docs Table.
-
-    The header row gets bold text to distinguish it from data rows.
-    """
+    """Convert a mistletoe GFM Table to a Google Docs Table."""
     all_rows: list[Any] = [block.header, *list(block.children)]
     n_cols = max((len(row.children) for row in all_rows), default=0)
 
     table_rows: list[TableRow] = []
-    for row_idx, row in enumerate(all_rows):
-        is_header = row_idx == 0
+    for row in all_rows:
         cells: list[TableCell] = []
         for cell in row.children:
-            base_style = TextStyle(bold=True) if is_header else TextStyle()
+            base_style = TextStyle()
             inline_elements = _tokens_to_elements(list(cell.children), base_style)
             inline_elements.append(ParagraphElement(text_run=TextRun(content="\n")))
             cell_para = StructuralElement(
@@ -886,12 +882,11 @@ def _tokens_to_elements(tokens: list[Any], style: TextStyle) -> list[ParagraphEl
         elif isinstance(token, InlineCode):
             # Inline code → Courier New 10pt text run
             code_text = _raw_text(token)
-            ts = TextStyle.model_validate(
-                {
-                    "weightedFontFamily": {"fontFamily": "Courier New"},
-                    "fontSize": {"magnitude": 10, "unit": "PT"},
-                }
-            )
+            # Inherit parent styles (bold, italic, etc.) and overlay monospace font
+            code_style = style.model_dump(by_alias=True, exclude_none=True)
+            code_style["weightedFontFamily"] = {"fontFamily": "Courier New"}
+            code_style["fontSize"] = {"magnitude": 10, "unit": "PT"}
+            ts = TextStyle.model_validate(code_style)
             if code_text:
                 result.append(
                     ParagraphElement(text_run=TextRun(content=code_text, text_style=ts))

@@ -766,15 +766,6 @@ class TestTableEdits:
         # Dimensions unchanged
         assert table_dimensions(result.desired.document) == [(3, 3)]
 
-    @pytest.mark.xfail(
-        reason=(
-            "BUG: 3-way merge rebuilds the table from markdown-parsed output "
-            "instead of preserving it from base. The GFM parser adds bold=True "
-            "to header cells, and the merge does not filter this out. Also "
-            "loses tableCellStyle, paragraphStyle, and tableColumnProperties."
-        ),
-        strict=True,
-    )
     def test_header_row_not_bolded_after_cell_edit(self, tmp_path: Path) -> None:
         """Editing a data cell must not introduce bold to the header row.
 
@@ -792,14 +783,6 @@ class TestTableEdits:
             "Header cell 'Name' gained bold=True after editing a data cell"
         )
 
-    @pytest.mark.xfail(
-        reason=(
-            "BUG: Any edit to the document causes the 3-way merge to rebuild "
-            "the table from the markdown-parsed version, introducing spurious "
-            "bold on header cells and losing table/cell style metadata."
-        ),
-        strict=True,
-    )
     def test_header_row_not_bolded_after_non_table_edit(self, tmp_path: Path) -> None:
         """Editing a paragraph outside the table must not bold the header row."""
         rt = RoundTrip(MD_GOLDEN_ID, tmp_path / "doc")
@@ -812,14 +795,6 @@ class TestTableEdits:
                 f"Header cell [{ci}] gained bold after editing a non-table paragraph"
             )
 
-    @pytest.mark.xfail(
-        reason=(
-            "BUG: 3-way merge rebuilds unchanged tables from markdown parse, "
-            "losing tableStyle.tableColumnProperties, tableCellStyle properties "
-            "(backgroundColor, padding), and paragraphStyle (direction, lineSpacing)."
-        ),
-        strict=True,
-    )
     def test_table_structure_preserved_after_non_table_edit(
         self, tmp_path: Path
     ) -> None:

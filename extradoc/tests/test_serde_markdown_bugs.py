@@ -319,14 +319,6 @@ class TestLinkStyleLoss:
     mine, which lacks these styles.
     """
 
-    @pytest.mark.xfail(
-        reason=(
-            "BUG: Link text runs lose foregroundColor after any body edit. "
-            "The 3-way merge replaces body content from mine (the markdown "
-            "parse), which has no foregroundColor on link runs."
-        ),
-        strict=True,
-    )
     def test_bug_link_loses_foreground_color_after_unrelated_edit(
         self, tmp_path: Path
     ) -> None:
@@ -345,14 +337,6 @@ class TestLinkStyleLoss:
             "Link lost foregroundColor after editing an unrelated paragraph"
         )
 
-    @pytest.mark.xfail(
-        reason=(
-            "BUG: Link text runs lose underline=True after any body edit. "
-            "Markdown links are implicitly underlined, so serialize skips "
-            "underline. Mine's parse has no underline on link runs."
-        ),
-        strict=True,
-    )
     def test_bug_link_loses_underline_after_unrelated_edit(
         self, tmp_path: Path
     ) -> None:
@@ -370,14 +354,6 @@ class TestLinkStyleLoss:
             "Link lost underline after editing an unrelated paragraph"
         )
 
-    @pytest.mark.xfail(
-        reason=(
-            "BUG: ALL links in the document lose their styles after ANY edit. "
-            "The second link paragraph ('Google' and 'GitHub') also loses "
-            "foregroundColor and underline."
-        ),
-        strict=True,
-    )
     def test_bug_all_links_lose_color_after_any_edit(self, tmp_path: Path) -> None:
         """All links lose foreground color after any body edit."""
         rt = RoundTrip(MD_GOLDEN_ID, tmp_path / "doc")
@@ -405,14 +381,6 @@ class TestParagraphStyleLoss:
     replaces body content from the markdown parse, losing these.
     """
 
-    @pytest.mark.xfail(
-        reason=(
-            "BUG: paragraphStyle.direction=LEFT_TO_RIGHT exists in the base "
-            "for normal paragraphs. After editing a paragraph, the merge "
-            "replaces body content. The edited paragraph loses direction."
-        ),
-        strict=True,
-    )
     def test_bug_edited_paragraph_loses_direction(self, tmp_path: Path) -> None:
         """Editing paragraph text should preserve paragraphStyle.direction."""
         rt = RoundTrip(MD_GOLDEN_ID, tmp_path / "doc")
@@ -437,14 +405,6 @@ class TestParagraphStyleLoss:
             f"direction lost: base={base_direction}, desired={edited_para[0]['direction']}"
         )
 
-    @pytest.mark.xfail(
-        reason=(
-            "BUG: Editing ANY paragraph causes ALL unedited paragraphs to "
-            "lose their direction property too, because the 3-way merge "
-            "replaces the entire body content array."
-        ),
-        strict=True,
-    )
     def test_bug_unedited_paragraph_loses_direction_after_other_edit(
         self, tmp_path: Path
     ) -> None:
@@ -475,14 +435,6 @@ class TestParagraphStyleLoss:
             f"desired={target_d[0]['direction']}"
         )
 
-    @pytest.mark.xfail(
-        reason=(
-            "BUG: Table cell paragraphs have lineSpacing=100 in base. "
-            "After any edit, the merge rebuilds the table from markdown "
-            "parse, creating cells without lineSpacing."
-        ),
-        strict=True,
-    )
     def test_bug_table_cell_paragraph_loses_line_spacing(self, tmp_path: Path) -> None:
         """Table cell paragraph lineSpacing should survive after edit."""
         rt = RoundTrip(MD_GOLDEN_ID, tmp_path / "doc")
@@ -500,13 +452,6 @@ class TestParagraphStyleLoss:
             f"lineSpacing lost: base={base_ls}, desired={desired_ps[0]['line_spacing']}"
         )
 
-    @pytest.mark.xfail(
-        reason=(
-            "BUG: Table cell paragraphs have direction=LEFT_TO_RIGHT in base. "
-            "After any edit, the merge rebuilds the table, losing direction."
-        ),
-        strict=True,
-    )
     def test_bug_table_cell_paragraph_loses_direction(self, tmp_path: Path) -> None:
         """Table cell paragraph direction should survive after edit."""
         rt = RoundTrip(MD_GOLDEN_ID, tmp_path / "doc")
@@ -537,14 +482,6 @@ class TestTableCellStyleLoss:
     parse, which creates cells with empty TableCellStyle().
     """
 
-    @pytest.mark.xfail(
-        reason=(
-            "BUG: tableCellStyle.paddingLeft/Right/Top/Bottom lost after "
-            "editing a non-table paragraph. The merge replaces the table "
-            "from the markdown parse which has empty TableCellStyle."
-        ),
-        strict=True,
-    )
     def test_bug_cell_padding_lost_after_non_table_edit(self, tmp_path: Path) -> None:
         """Editing a paragraph outside the table should preserve cell padding."""
         rt = RoundTrip(MD_GOLDEN_ID, tmp_path / "doc")
@@ -561,10 +498,6 @@ class TestTableCellStyleLoss:
             f"desired: {list(desired_cs.keys())}"
         )
 
-    @pytest.mark.xfail(
-        reason=("BUG: tableCellStyle.contentAlignment lost after non-table edit."),
-        strict=True,
-    )
     def test_bug_cell_alignment_lost_after_non_table_edit(self, tmp_path: Path) -> None:
         """Table cell contentAlignment should survive after non-table edit."""
         rt = RoundTrip(MD_GOLDEN_ID, tmp_path / "doc")
@@ -581,13 +514,6 @@ class TestTableCellStyleLoss:
             f"desired: {list(desired_cs.keys())}"
         )
 
-    @pytest.mark.xfail(
-        reason=(
-            "BUG: Editing one cell destroys tableCellStyle on ALL cells, "
-            "including untouched ones. The entire table is rebuilt."
-        ),
-        strict=True,
-    )
     def test_bug_untouched_cell_loses_style_after_other_cell_edit(
         self, tmp_path: Path
     ) -> None:
@@ -618,14 +544,6 @@ class TestTableHeaderBold:
     the merge rebuilds the table from mine, adding spurious bold.
     """
 
-    @pytest.mark.xfail(
-        reason=(
-            "BUG: _convert_gfm_table line 703 always sets bold=True for "
-            "header cells. After editing a data cell, the merge replaces "
-            "the table from mine, which has bold headers."
-        ),
-        strict=True,
-    )
     def test_bug_header_gains_bold_after_data_cell_edit(self, tmp_path: Path) -> None:
         """Editing a data cell should not add bold to the header row."""
         rt = RoundTrip(MD_GOLDEN_ID, tmp_path / "doc")
@@ -643,13 +561,6 @@ class TestTableHeaderBold:
             "Header cell gained bold=True after editing a data cell"
         )
 
-    @pytest.mark.xfail(
-        reason=(
-            "BUG: Same issue: editing a non-table paragraph still causes "
-            "the table to be rebuilt with bold headers via 3-way merge."
-        ),
-        strict=True,
-    )
     def test_bug_header_gains_bold_after_non_table_edit(self, tmp_path: Path) -> None:
         """Editing a paragraph outside the table must not bold the header."""
         rt = RoundTrip(MD_GOLDEN_ID, tmp_path / "doc")
@@ -675,13 +586,6 @@ class TestInlineCodeStyleLoss:
     so surrounding bold/italic formatting is lost.
     """
 
-    @pytest.mark.xfail(
-        reason=(
-            "BUG: InlineCode creates TextStyle with only Courier New 10pt, "
-            "ignoring the parent Strong's bold=True. **`code`** loses bold."
-        ),
-        strict=True,
-    )
     def test_bug_bold_inline_code_loses_bold(self, tmp_path: Path) -> None:
         """**`code`** should produce a run with bold=True AND font=Courier New."""
         rt = RoundTrip(MD_GOLDEN_ID, tmp_path / "doc")
@@ -697,10 +601,6 @@ class TestInlineCodeStyleLoss:
             f"**`bold code`** should be bold AND monospace, got: {code_runs[0]}"
         )
 
-    @pytest.mark.xfail(
-        reason=("BUG: Same issue for italic. *`code`* loses italic."),
-        strict=True,
-    )
     def test_bug_italic_inline_code_loses_italic(self, tmp_path: Path) -> None:
         """*`code`* should produce a run with italic=True AND font=Courier New."""
         rt = RoundTrip(MD_GOLDEN_ID, tmp_path / "doc")
@@ -758,14 +658,6 @@ class TestHeadingIdLoss:
             f"desired={overview[0]['heading_id']}"
         )
 
-    @pytest.mark.xfail(
-        reason=(
-            "BUG: Editing a non-heading paragraph causes ALL headings to "
-            "lose their IDs, because the merge replaces body content from "
-            "mine which has no headingId on any heading."
-        ),
-        strict=True,
-    )
     def test_bug_unedited_heading_loses_id_after_paragraph_edit(
         self, tmp_path: Path
     ) -> None:
@@ -804,14 +696,6 @@ class TestColoredEmptyParagraph:
     replaces body content from mine, losing the color.
     """
 
-    @pytest.mark.xfail(
-        reason=(
-            "BUG: <!-- --> is deserialized to _make_trailing_para() which "
-            "has no text style. When any edit triggers UpdateBodyContentOp, "
-            "mine's plain paragraph replaces base's colored paragraph."
-        ),
-        strict=True,
-    )
     def test_bug_colored_empty_para_loses_color_after_edit(
         self, tmp_path: Path
     ) -> None:
@@ -883,14 +767,6 @@ class TestListIndentLoss:
     these. After editing a list item, the indent properties are lost.
     """
 
-    @pytest.mark.xfail(
-        reason=(
-            "BUG: _convert_list creates list paragraphs with only "
-            "namedStyleType=NORMAL_TEXT and bullet. After editing a list "
-            "item, the merge replaces it from mine, losing indents."
-        ),
-        strict=True,
-    )
     def test_bug_edited_list_item_loses_indent(self, tmp_path: Path) -> None:
         """Editing a list item should preserve indent properties."""
         rt = RoundTrip(MD_GOLDEN_ID, tmp_path / "doc")
@@ -910,13 +786,6 @@ class TestListIndentLoss:
             f"indentFirst lost: base={base_indent_first}, desired={edited[0]['indent_first']}"
         )
 
-    @pytest.mark.xfail(
-        reason=(
-            "BUG: Editing any paragraph causes ALL list items to lose "
-            "their indent properties."
-        ),
-        strict=True,
-    )
     def test_bug_unedited_list_item_loses_indent_after_other_edit(
         self, tmp_path: Path
     ) -> None:
@@ -953,14 +822,6 @@ class TestTableColumnProperties:
     is lost when the merge rebuilds the table from the markdown parse.
     """
 
-    @pytest.mark.xfail(
-        reason=(
-            "BUG: The markdown parser creates tables without tableStyle. "
-            "After any edit, the merge replaces the table, losing column "
-            "width properties."
-        ),
-        strict=True,
-    )
     def test_bug_table_style_lost_after_edit(self, tmp_path: Path) -> None:
         """Table tableStyle should survive after a nearby edit."""
         rt = RoundTrip(MD_GOLDEN_ID, tmp_path / "doc")
@@ -1003,13 +864,6 @@ class TestMultiParagraphTableCell:
     with spaces, losing paragraph structure on round-trip.
     """
 
-    @pytest.mark.xfail(
-        reason=(
-            "BUG: _cell_text joins cell paragraphs with ' '. On round-trip, "
-            "the cell has a single paragraph. Multi-paragraph structure is lost."
-        ),
-        strict=True,
-    )
     def test_bug_multi_paragraph_cell_collapses(self, tmp_path: Path) -> None:
         """Multi-paragraph cells should preserve paragraph count."""
         doc_dict = _load_golden(MD_GOLDEN_ID).model_dump(
@@ -1062,15 +916,6 @@ class TestTrailingNewlineStructure:
     have \\n as a separate run. This changes the run count and structure.
     """
 
-    @pytest.mark.xfail(
-        reason=(
-            "BUG: Base has ' in it.\\n' as a single run. Desired has "
-            "' in it.' and '\\n' as separate runs. The trailing \\n is "
-            "always a separate run in the markdown parse output. This "
-            "changes run boundaries for EVERY paragraph after any edit."
-        ),
-        strict=True,
-    )
     def test_bug_trailing_newline_becomes_separate_run(self, tmp_path: Path) -> None:
         """After edit, unedited paragraphs should preserve \\n in last run."""
         rt = RoundTrip(MD_GOLDEN_ID, tmp_path / "doc")
@@ -1130,15 +975,6 @@ class TestTableFullStructurePreservation:
     3-way merge rebuilds it from the markdown parse.
     """
 
-    @pytest.mark.xfail(
-        reason=(
-            "BUG: Any body edit triggers UpdateBodyContentOp which replaces "
-            "the ENTIRE body content from mine. The table in mine was parsed "
-            "from GFM markdown, losing: tableCellStyle, paragraph lineSpacing, "
-            "paragraph direction, and adding bold to header cells."
-        ),
-        strict=True,
-    )
     def test_bug_table_not_identical_after_non_table_edit(self, tmp_path: Path) -> None:
         """Table should be bit-for-bit identical after a non-table edit."""
         rt = RoundTrip(MD_GOLDEN_ID, tmp_path / "doc")
@@ -1175,15 +1011,6 @@ class TestOriginalDocStylePreservation:
     are lost on deserialize because the markdown parse doesn't capture them.
     """
 
-    @pytest.mark.xfail(
-        reason=(
-            "BUG: If the original doc has text with a non-default foreground "
-            "color (not a link), markdown cannot represent the color. After "
-            "any edit, the merge replaces body content from mine, which has "
-            "no color information on that text run."
-        ),
-        strict=True,
-    )
     def test_bug_colored_text_loses_color_after_edit(self, tmp_path: Path) -> None:
         """Text with foreground color should survive after unrelated edit."""
         doc_dict = _load_golden(MD_GOLDEN_ID).model_dump(
@@ -1225,14 +1052,6 @@ class TestOriginalDocStylePreservation:
         assert runs, "Red text paragraph should exist"
         assert runs[0]["fg_color"], "Red text lost its foregroundColor"
 
-    @pytest.mark.xfail(
-        reason=(
-            "BUG: Text with background color (highlighting) in the original "
-            "doc loses its background color after any edit. Markdown cannot "
-            "represent background color on text runs."
-        ),
-        strict=True,
-    )
     def test_bug_highlighted_text_loses_background_after_edit(
         self, tmp_path: Path
     ) -> None:
@@ -1280,14 +1099,6 @@ class TestOriginalDocStylePreservation:
         assert runs, "Highlighted paragraph should exist"
         assert runs[0]["bg_color"], "Highlighted text lost its backgroundColor"
 
-    @pytest.mark.xfail(
-        reason=(
-            "BUG: Text with a custom font (e.g. Georgia) loses its font "
-            "after any edit. Markdown cannot represent font choices "
-            "(except monospace via backticks)."
-        ),
-        strict=True,
-    )
     def test_bug_custom_font_text_loses_font_after_edit(self, tmp_path: Path) -> None:
         """Text with custom font should survive after unrelated edit."""
         doc_dict = _load_golden(MD_GOLDEN_ID).model_dump(
@@ -1327,13 +1138,6 @@ class TestOriginalDocStylePreservation:
             f"Font lost: expected 'Georgia', got '{runs[0]['font']}'"
         )
 
-    @pytest.mark.xfail(
-        reason=(
-            "BUG: Text with explicit font size (e.g. 14pt) loses its size "
-            "after any edit. Markdown cannot represent font sizes."
-        ),
-        strict=True,
-    )
     def test_bug_font_size_lost_after_edit(self, tmp_path: Path) -> None:
         """Text with explicit font size should survive after unrelated edit."""
         doc_dict = _load_golden(MD_GOLDEN_ID).model_dump(
