@@ -1,5 +1,41 @@
 #!/usr/bin/env bash
 # Local development wrapper for extrasuite CLI.
 # Uses the locally installed version (client/ package) instead of the PyPI release.
+#
+# Auto-injects --debug on doc push / push-md so that push-pipeline artifacts
+# always land in <folder>/.debug/ during local development.  The pip-installed
+# `extrasuite` CLI keeps --debug off by default.
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
-exec uv run --project "$SCRIPT_DIR/client" extrasuite "$@"
+
+args=("$@")
+
+# Look for `doc push [-md]` (or `docs push[-md]`) in the argument list and
+# append --debug if not already passed.
+_inject_debug=false
+_first=""
+_second=""
+for a in "$@"; do
+    case "$a" in
+        -*) continue ;;
+    esac
+    if [ -z "$_first" ]; then
+        _first="$a"
+    elif [ -z "$_second" ]; then
+        _second="$a"
+        break
+    fi
+done
+
+if { [ "$_first" = "doc" ] || [ "$_first" = "docs" ]; } \
+    && { [ "$_second" = "push" ] || [ "$_second" = "push-md" ]; }; then
+    _inject_debug=true
+    for a in "$@"; do
+        if [ "$a" = "--debug" ]; then _inject_debug=false; fi
+    done
+fi
+
+if $_inject_debug; then
+    args+=(--debug)
+fi
+
+exec uv run --project "$SCRIPT_DIR/client" extrasuite "${args[@]}"

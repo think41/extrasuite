@@ -323,7 +323,11 @@ def build_parser() -> Any:
         formatter_class=argparse.RawDescriptionHelpFormatter,
     )
     sp.add_argument("title", help="Spreadsheet title")
-    sp.add_argument("output_dir", nargs="?", help="Directory to pull the file into after creation (default: creates <file_id>/ in current directory)")
+    sp.add_argument(
+        "output_dir",
+        nargs="?",
+        help="Directory to pull the file into after creation (default: creates <file_id>/ in current directory)",
+    )
     sp.add_argument(
         "--copy-from",
         metavar="URL",
@@ -402,7 +406,11 @@ def build_parser() -> Any:
         formatter_class=argparse.RawDescriptionHelpFormatter,
     )
     sp.add_argument("title", help="Presentation title")
-    sp.add_argument("output_dir", nargs="?", help="Directory to pull the file into after creation (default: creates <file_id>/ in current directory)")
+    sp.add_argument(
+        "output_dir",
+        nargs="?",
+        help="Directory to pull the file into after creation (default: creates <file_id>/ in current directory)",
+    )
     sp.add_argument(
         "--copy-from",
         metavar="URL",
@@ -486,7 +494,11 @@ def build_parser() -> Any:
         formatter_class=argparse.RawDescriptionHelpFormatter,
     )
     sp.add_argument("title", help="Form title")
-    sp.add_argument("output_dir", nargs="?", help="Directory to pull the file into after creation (default: creates <file_id>/ in current directory)")
+    sp.add_argument(
+        "output_dir",
+        nargs="?",
+        help="Directory to pull the file into after creation (default: creates <file_id>/ in current directory)",
+    )
     sp.add_argument(
         "--copy-from",
         metavar="URL",
@@ -647,6 +659,12 @@ def build_parser() -> Any:
     sp.add_argument("folder", help="Document folder path")
     sp.add_argument("-f", "--force", action="store_true", help="Push despite warnings")
     sp.add_argument("--verify", action="store_true", help="Pull after push to verify")
+    sp.add_argument(
+        "--debug",
+        action="store_true",
+        help="Dump pipeline artifacts to <folder>/.debug/ and, on API failure, "
+        "print a focused analysis of the failing request",
+    )
 
     sp = doc_sub.add_parser(
         "push-md",
@@ -658,6 +676,12 @@ def build_parser() -> Any:
     sp.add_argument("folder", help="Document folder path")
     sp.add_argument("-f", "--force", action="store_true", help="Push despite warnings")
     sp.add_argument("--verify", action="store_true", help="Pull after push to verify")
+    sp.add_argument(
+        "--debug",
+        action="store_true",
+        help="Dump pipeline artifacts to <folder>/.debug/ and, on API failure, "
+        "print a focused analysis of the failing request",
+    )
 
     sp = doc_sub.add_parser(
         "create",
@@ -667,7 +691,11 @@ def build_parser() -> Any:
         formatter_class=argparse.RawDescriptionHelpFormatter,
     )
     sp.add_argument("title", help="Document title")
-    sp.add_argument("output_dir", nargs="?", help="Directory to pull the file into after creation (default: creates <file_id>/ in current directory)")
+    sp.add_argument(
+        "output_dir",
+        nargs="?",
+        help="Directory to pull the file into after creation (default: creates <file_id>/ in current directory)",
+    )
     sp.add_argument(
         "--copy-from",
         metavar="URL",
@@ -1099,7 +1127,12 @@ def build_parser() -> Any:
 def main() -> None:
     """Main entry point."""
     # Rewrite singular command aliases to canonical plural forms
-    _SINGULAR_TO_PLURAL = {"doc": "docs", "sheet": "sheets", "slide": "slides", "form": "forms"}
+    _SINGULAR_TO_PLURAL = {
+        "doc": "docs",
+        "sheet": "sheets",
+        "slide": "slides",
+        "form": "forms",
+    }
     if len(sys.argv) > 1 and sys.argv[1] in _SINGULAR_TO_PLURAL:
         sys.argv = [sys.argv[0], _SINGULAR_TO_PLURAL[sys.argv[1]]] + sys.argv[2:]
 

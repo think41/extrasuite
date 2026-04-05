@@ -97,6 +97,16 @@ def cmd_doc_push(args: Any) -> None:
     """Push changes to a Google Doc."""
     from extradoc import DocsClient, GoogleDocsTransport
 
+    debug = bool(getattr(args, "debug", False))
+    if debug:
+        from extradoc.debug_push import dump_debug_artifacts
+
+        try:
+            debug_dir = dump_debug_artifacts(args.folder)
+            print(f"[debug] wrote pipeline artifacts to {debug_dir}/", file=sys.stderr)
+        except Exception as exc:
+            print(f"[debug] failed to dump artifacts: {exc}", file=sys.stderr)
+
     reason = _get_reason(args, default="Pushing changes to Google Doc")
     cred = _get_credential(
         args,
@@ -111,6 +121,14 @@ def cmd_doc_push(args: Any) -> None:
             result = await client.push(args.folder, force=args.force)
             print(result.message)
             if not result.success:
+                if debug:
+                    from extradoc.debug_push import analyze_push_error
+
+                    print("", file=sys.stderr)
+                    print(
+                        analyze_push_error(args.folder, result.message),
+                        file=sys.stderr,
+                    )
                 sys.exit(1)
         finally:
             await transport.close()

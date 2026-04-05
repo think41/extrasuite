@@ -3458,3 +3458,133 @@ class TestTableInsertIntoBody:
             f"First cell insertText should be at table_idx+4={table_idx + 4}, "
             f"got {first_text_idx} (table_idx+{first_text_idx - table_idx})"
         )
+
+
+class TestSamePositionGroupWithTable:
+    """Regression: paragraph + table + paragraph all inserted at same base_pos.
+
+    When inserting multiple structural elements before the same existing base
+    element, the reconciler emits all of them with the same ``insert_pos`` and
+    groups them together via ``_emit_same_position_group``.  If one of the
+    elements is a table (with its own internal ``insertTable`` + cell-content
+    ``insertText`` requests), the group emitter must keep the table's internal
+    requests intact and in order: ``insertTable`` BEFORE its cell-content
+    ``insertText`` requests.  Failing to do so produces cell-content inserts
+    that reference an index past the end of the segment.
+    """
+
+    def test_table_among_paragraphs_at_same_position(self) -> None:
+        """insertTable must be emitted before its own cell-content insertText.
+
+        Scenario: empty-ish body (only trailing ``\\n``).  Desired: insert
+        para "Before\\n" + 1x1 table containing "CellContent\\n" + para
+        "After\\n" — all before the trailing paragraph, so all at insert_pos=1.
+        """
+        # base: just trailing paragraph at index 1
+        base = make_indexed_doc(body_content=[make_indexed_terminal(1)])
+
+        # desired: [Before, 1x1 table with "CellContent", After, trailing]
+        table_el = make_table_el([["CellContent\n"]])
+        desired = make_indexed_doc(
+            body_content=[
+                make_indexed_para("Before\n", 1),
+                # indices don't matter on desired — diff keys off structure
+                table_el,
+                make_para_el("After\n"),
+                make_terminal_para(),
+            ],
+        )
+
+        batches = reconcile_batches(base, desired)
+        all_reqs: list[Any] = []
+        for b in batches:
+            all_reqs.extend(_get_batch_requests(b))
+
+        # There should be exactly one insertTable
+        insert_table_positions = [
+            i for i, r in enumerate(all_reqs) if r.insert_table is not None
+        ]
+        assert len(insert_table_positions) == 1, (
+            f"Expected one insertTable, got {len(insert_table_positions)}"
+        )
+        table_req_idx = insert_table_positions[0]
+        table_loc_index = all_reqs[table_req_idx].insert_table.location.index
+
+        # Find the cell-content insertText ("CellContent\n")
+        cell_text_positions = [
+            i
+            for i, r in enumerate(all_reqs)
+            if r.insert_text is not None
+            and (r.insert_text.text or "") == "CellContent\n"
+        ]
+        assert len(cell_text_positions) == 1, (
+            f"Expected one 'CellContent\\n' insertText, got "
+            f"{len(cell_text_positions)}"
+        )
+        cell_text_req_idx = cell_text_positions[0]
+
+        # The cell-content insertText MUST come AFTER the insertTable in the
+        # batch — otherwise it targets an index inside a table that doesn't
+        # exist yet.
+        assert cell_text_req_idx > table_req_idx, (
+            f"insertTable is at request {table_req_idx}, cell-content "
+            f"insertText is at request {cell_text_req_idx}.  The cell "
+            f"content must be emitted AFTER the table is created."
+        )
+
+        # The cell-content insertText must target table_loc_index + 4
+        # (see test_insert_table_1x1_cell_content_index for the math).
+        cell_text_target = all_reqs[cell_text_req_idx].insert_text.location.index
+        assert cell_text_target == table_loc_index + 4, (
+            f"Cell content insertText should target {table_loc_index + 4}, "
+            f"got {cell_text_target}"
+        )
+
+    def test_simulated_execution_stays_in_segment_bounds(self) -> None:
+        """Simulate running the batch — every insert's index must be in bounds.
+
+        This catches the bug where cell-content insertTexts are emitted
+        before the ``insertTable``, pushing them past the segment end.
+        """
+        from extradoc.indexer import utf16_len
+
+        base = make_indexed_doc(body_content=[make_indexed_terminal(1)])
+
+        table_el = make_table_el([["CellContent\n"]])
+        desired = make_indexed_doc(
+            body_content=[
+                make_indexed_para("Before\n", 1),
+                table_el,
+                make_para_el("After\n"),
+                make_terminal_para(),
+            ],
+        )
+
+        batches = reconcile_batches(base, desired)
+
+        # Simulate the body segment size growing as each request runs.
+        # Initial body size = 2 (terminal \n + implicit end — actually
+        # end_index of terminal is 2 since it occupies [1,2)).
+        body_size = 2  # end_index of the segment
+
+        for batch in batches:
+            for req in _get_batch_requests(batch):
+                if req.insert_text is not None and req.insert_text.location:
+                    idx = req.insert_text.location.index
+                    text = req.insert_text.text or ""
+                    assert idx < body_size, (
+                        f"insertText at index {idx} exceeds body_size "
+                        f"{body_size}; text={text!r}"
+                    )
+                    body_size += utf16_len(text)
+                elif req.insert_table is not None and req.insert_table.location:
+                    idx = req.insert_table.location.index
+                    rows = req.insert_table.rows or 0
+                    cols = req.insert_table.columns or 0
+                    assert idx < body_size, (
+                        f"insertTable at index {idx} exceeds body_size "
+                        f"{body_size}"
+                    )
+                    # Empty table size: 1 (pre-\n) + 1 (table open) +
+                    # rows * (1 + cols*2) + 1 (trailing \n)
+                    body_size += 2 + rows * (1 + cols * 2) + 1

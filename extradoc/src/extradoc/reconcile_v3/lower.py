@@ -1180,6 +1180,80 @@ def _get_create_bullets_info(
     return (preset, tab_id, segment_id)
 
 
+def _final_doc_size_from_reqs(reqs: list[Request]) -> int:
+    """Compute how many UTF-16 code units this element occupies in the final doc.
+
+    Sums contributions from ``insertText`` (text length), ``insertTable``
+    (empty-table structural size, counted as emitted by insertTable: 1 pre-\\n
+    + table_opener + rows*(row_opener + cols*cell_size) + trailing \\n, where
+    cell_size starts at 2 for an empty cell but grows with cell-content
+    ``insertText``s that follow), and page/section break inserts.
+    """
+    total = 0
+    for req in reqs:
+        if req.insert_text is not None:
+            total += utf16_len(req.insert_text.text or "")
+        elif req.insert_table is not None:
+            it = req.insert_table
+            rows = it.rows or 0
+            cols = it.columns or 0
+            # Empty table as emitted by insertTable: pre-\n (1) + table opener
+            # (1) + rows * (row opener (1) + cols * (cell opener (1) +
+            # terminal \n (1))) + trailing \n (1).
+            total += 2 + rows * (1 + cols * 2) + 1
+        elif req.insert_page_break is not None:
+            total += 2
+        elif req.insert_section_break is not None:
+            total += 1
+    return total
+
+
+def _is_insert_request(req: Request) -> bool:
+    """True if this request inserts characters into the document."""
+    return (
+        req.insert_text is not None
+        or req.insert_table is not None
+        or req.insert_page_break is not None
+        or req.insert_section_break is not None
+    )
+
+
+def _shift_post_insert_request(req: Request, offset: int) -> Request:
+    """Shift the index range of a non-insert request by ``offset``.
+
+    Used for requests that run AFTER all inserts have happened in the same
+    batch (style updates, createParagraphBullets).  These were generated as
+    if the element were at ``base_pos``; they need to point at
+    ``base_pos + offset`` where the element actually ends up after all
+    same-position inserts complete.
+    """
+    if offset == 0:
+        return req
+    if req.update_paragraph_style is not None or req.update_text_style is not None:
+        req = copy.deepcopy(req)
+        inner = req.update_paragraph_style or req.update_text_style
+        assert inner is not None
+        rng = inner.range
+        if rng is not None:
+            if rng.start_index is not None:
+                rng.start_index += offset
+            if rng.end_index is not None:
+                rng.end_index += offset
+        return req
+    if req.create_paragraph_bullets is not None:
+        req = copy.deepcopy(req)
+        cb = req.create_paragraph_bullets
+        assert cb is not None
+        rng = cb.range
+        if rng is not None:
+            if rng.start_index is not None:
+                rng.start_index += offset
+            if rng.end_index is not None:
+                rng.end_index += offset
+        return req
+    return req
+
+
 def _emit_same_position_group(
     group: list[tuple[int, int, list[Request]]],
 ) -> list[Request]:
@@ -1203,12 +1277,57 @@ def _emit_same_position_group(
         # Single item — no merging needed
         return group[0][2]
 
-    # Separate each element's requests into components.
-    # Items arrive in reverse desired_idx order (last desired item first),
-    # which is the order we insert them at position P.  After all inserts,
-    # the items appear in desired_idx order in the document:
-    #   item[desired_idx=0] at P, item[desired_idx=1] at P+len0, ...
-    #
+    # Classify each element: "simple" = exactly one insertText and no
+    # insertTable/page-break/section-break.  A simple element is a plain
+    # paragraph that fits the bullet-merge optimisation.  Anything else
+    # (tables with cell content, page breaks, section breaks) is "complex"
+    # and must emit its requests atomically.
+    def _is_simple(reqs: list[Request]) -> bool:
+        num_ins_text = 0
+        for r in reqs:
+            if r.insert_text is not None:
+                num_ins_text += 1
+            elif (
+                r.insert_table is not None
+                or r.insert_page_break is not None
+                or r.insert_section_break is not None
+            ):
+                return False
+        return num_ins_text == 1
+
+    if not all(_is_simple(reqs) for _, _, reqs in group):
+        # Complex mixed group (tables among paragraphs, etc.).
+        #
+        # ``group`` is sorted by desired_idx ascending.  We must insert items
+        # in REVERSE desired_idx order at ``base_pos`` so the final document
+        # order matches desired order.  Each element's requests contain both
+        # insert-type and post-insert-type requests; within the batch, the
+        # API processes requests sequentially, so we can emit each element's
+        # requests contiguously.  Crucially, a table's cell-content
+        # ``insertText``s MUST follow its ``insertTable`` (they reference
+        # indices relative to the table's position at the moment it was
+        # inserted).
+        #
+        # After all inserts complete, element i (in desired order) lives at
+        # ``base_pos + cumulative_i`` where cumulative_i is the combined size
+        # of desired elements 0..i-1.  Post-insert requests (style updates,
+        # createParagraphBullets) were generated assuming the element is at
+        # ``base_pos``; we shift their ranges by cumulative_i.
+        lens = [_final_doc_size_from_reqs(reqs) for _, _, reqs in group]
+        out_inserts: list[Request] = []
+        out_post: list[Request] = []
+        # Emit in reverse desired order (= reverse of group order).
+        for i in range(len(group) - 1, -1, -1):
+            _, _, reqs = group[i]
+            cumulative = sum(lens[:i])
+            for req in reqs:
+                if _is_insert_request(req):
+                    out_inserts.append(req)
+                else:
+                    out_post.append(_shift_post_insert_request(req, cumulative))
+        return out_inserts + out_post
+
+    # All-simple (paragraph) path: the bullet-merge optimisation.
     # Per-element structure: (insert_req, create_bullets_req_or_None, style_reqs)
     per_element: list[tuple[Request, Request | None, list[Request]]] = []
 
