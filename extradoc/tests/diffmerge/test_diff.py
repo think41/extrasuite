@@ -25,8 +25,7 @@ from extradoc.api_types._generated import (
     Tab,
     TabProperties,
 )
-from extradoc.reconcile_v3.api import diff
-from extradoc.reconcile_v3.model import (
+from extradoc.diffmerge import (
     CreateFooterOp,
     CreateHeaderOp,
     DeleteFooterOp,
@@ -55,8 +54,9 @@ from extradoc.reconcile_v3.model import (
     UpdateTableCellStyleOp,
     UpdateTableColumnPropertiesOp,
     UpdateTableRowStyleOp,
+    diff,
 )
-from tests.reconcile_v3.helpers import (
+from tests.diffmerge.helpers import (
     make_doc_tab,
     make_document,
     make_footer,

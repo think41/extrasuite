@@ -36,7 +36,7 @@ from itertools import groupby
 from typing import TYPE_CHECKING
 
 if TYPE_CHECKING:
-    from extradoc.reconcile_v3.content_align import ContentAlignment
+    from extradoc.diffmerge import ContentAlignment
 
 from extradoc.api_types._generated import (
     AddDocumentTabRequest,
@@ -90,8 +90,7 @@ from extradoc.api_types._generated import (
 from extradoc.api_types._generated import (
     List as DocList,
 )
-from extradoc.indexer import utf16_len
-from extradoc.reconcile_v3.model import (
+from extradoc.diffmerge import (
     CreateFooterOp,
     CreateHeaderOp,
     DeleteFooterOp,
@@ -110,7 +109,6 @@ from extradoc.reconcile_v3.model import (
     InsertTableColumnOp,
     InsertTableRowOp,
     InsertTabOp,
-    ReconcileOp,
     UpdateBodyContentOp,
     UpdateDocumentStyleOp,
     UpdateFooterContentOp,
@@ -123,6 +121,10 @@ from extradoc.reconcile_v3.model import (
     UpdateTableColumnPropertiesOp,
     UpdateTableRowStyleOp,
 )
+from extradoc.diffmerge import (
+    DiffOp as ReconcileOp,
+)
+from extradoc.indexer import utf16_len
 
 # Slot → API type string
 _HEADER_TYPE = {

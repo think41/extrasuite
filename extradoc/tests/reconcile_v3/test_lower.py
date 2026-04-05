@@ -47,9 +47,7 @@ from extradoc.api_types._generated import (
     TextRun,
     TextStyle,
 )
-from extradoc.reconcile_v3.api import diff, reconcile, reconcile_batches
-from extradoc.reconcile_v3.lower import lower_batches, lower_ops
-from extradoc.reconcile_v3.model import (
+from extradoc.diffmerge import (
     DeleteFootnoteOp,
     DeleteHeaderOp,
     DeleteInlineObjectOp,
@@ -70,7 +68,10 @@ from extradoc.reconcile_v3.model import (
     UpdateTableCellStyleOp,
     UpdateTableColumnPropertiesOp,
     UpdateTableRowStyleOp,
+    diff,
 )
+from extradoc.reconcile_v3.api import reconcile, reconcile_batches
+from extradoc.reconcile_v3.lower import lower_batches, lower_ops
 from tests.reconcile_v3.helpers import (
     make_document,
     make_footer,
@@ -633,7 +634,7 @@ class TestNamedStyleOps:
 
     def test_delete_named_style_raises_not_implemented(self) -> None:
         """DeleteNamedStyleOp raises because the API doesn't support removal."""
-        from extradoc.reconcile_v3.model import DeleteNamedStyleOp
+        from extradoc.diffmerge import DeleteNamedStyleOp
 
         op = DeleteNamedStyleOp(
             tab_id="t1",
@@ -763,7 +764,7 @@ class TestEndToEndRoundTrip:
         """Ops that cannot be lowered raise NotImplementedError."""
         from extradoc.api_types._generated import List as DocList
         from extradoc.api_types._generated import ListProperties
-        from extradoc.reconcile_v3.model import UpdateListOp
+        from extradoc.diffmerge import UpdateListOp
 
         op = UpdateListOp(
             tab_id="t1",
@@ -2162,7 +2163,7 @@ class TestTableStructuralLowering:
 
     def test_table_ops_go_into_content_batch_not_batch_0(self) -> None:
         """Table structural ops go into batch 1 (content batch), not batch 0."""
-        from extradoc.reconcile_v3.model import CreateHeaderOp
+        from extradoc.diffmerge import CreateHeaderOp
 
         ops: list[Any] = [
             CreateHeaderOp(
@@ -2672,7 +2673,7 @@ class TestInlineImageLowering:
 
     def test_end_to_end_reconcile_with_image_added(self) -> None:
         """End-to-end: reconcile() on a document where a matched paragraph gains an image."""
-        from tests.reconcile_v3.test_diff import _make_inline_object
+        from tests.diffmerge.test_diff import _make_inline_object
 
         obj_id = "kix.e2e"
         content_uri = "https://lh3.googleusercontent.com/e2e"

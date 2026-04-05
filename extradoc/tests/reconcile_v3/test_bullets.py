@@ -27,8 +27,8 @@ from extradoc.api_types._generated import (
 from extradoc.api_types._generated import (
     List as DocList,
 )
-from extradoc.reconcile_v3.api import diff, reconcile
-from extradoc.reconcile_v3.model import UpdateListOp
+from extradoc.diffmerge import UpdateListOp, diff
+from extradoc.reconcile_v3.api import reconcile
 from tests.reconcile_v3.helpers import (
     make_document,
     make_indexed_para,

@@ -78,6 +78,10 @@ ignore = [
 # Tests and scripts use local imports intentionally (test isolation, import-visibility tests).
 "tests/*.py" = ["PLC0415"]
 "scripts/*.py" = ["PLC0415"]
+# These modules use deferred imports intentionally to avoid circular dependencies.
+"src/extradoc/diffmerge/apply_ops.py" = ["PLC0415"]
+"src/extradoc/serde/markdown/__init__.py" = ["PLC0415"]
+"src/extradoc/serde/xml/__init__.py" = ["PLC0415"]
 
 [tool.ruff.lint.isort]
 known-first-party = ["extradoc"]

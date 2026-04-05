@@ -16,8 +16,8 @@ from typing import TYPE_CHECKING, Any
 
 if TYPE_CHECKING:
     from extradoc.api_types._generated import StructuralElement
-    from extradoc.reconcile_v3.content_align import ContentAlignment
-    from extradoc.reconcile_v3.model import ReconcileOp
+    from extradoc.diffmerge.content_align import ContentAlignment
+    from extradoc.diffmerge.model import ReconcileOp
 
 
 def apply_ops_to_document(
@@ -39,7 +39,7 @@ def apply_ops_to_document(
         Deep copy of base_doc with all ops applied.
     """
     # Import here to avoid circular imports at module load time
-    from extradoc.reconcile_v3.model import (
+    from extradoc.diffmerge.model import (
         CreateFooterOp,
         CreateHeaderOp,
         DeleteFooterOp,
@@ -221,7 +221,7 @@ def _apply_update_named_style(doc: dict[str, Any], op: Any) -> None:
     styles: list[dict[str, Any]] = named_styles.setdefault("styles", [])
 
     # If it's an update, replace. If insert, add.
-    from extradoc.reconcile_v3.model import UpdateNamedStyleOp
+    from extradoc.diffmerge.model import UpdateNamedStyleOp
 
     if isinstance(op, UpdateNamedStyleOp):
         desired_style = op.desired_style
@@ -532,7 +532,7 @@ def _find_table_in_doc(
 
 def _apply_table_structural_op(doc: dict[str, Any], op: Any) -> None:
     """Apply row/column insert or delete ops to the matching table."""
-    from extradoc.reconcile_v3.model import (
+    from extradoc.diffmerge.model import (
         DeleteTableColumnOp,
         DeleteTableRowOp,
         InsertTableColumnOp,
@@ -584,7 +584,7 @@ def _apply_table_structural_op(doc: dict[str, Any], op: Any) -> None:
 
 def _apply_table_style_op(doc: dict[str, Any], op: Any) -> None:
     """Apply cell style, row style, or column properties ops to the matching table."""
-    from extradoc.reconcile_v3.model import (
+    from extradoc.diffmerge.model import (
         UpdateTableCellStyleOp,
         UpdateTableColumnPropertiesOp,
         UpdateTableRowStyleOp,

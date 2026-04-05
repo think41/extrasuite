@@ -221,9 +221,8 @@ def _three_way_merge(
     base: DocumentWithComments,
 ) -> DocumentWithComments:
     """Compute desired = apply_ops(base, diff(ancestor, mine))."""
-    from extradoc.reconcile_v3.api import diff as reconcile_diff
-
-    from .._apply_ops import apply_ops_to_document
+    from extradoc.diffmerge import apply as apply_ops_to_document
+    from extradoc.diffmerge import diff as reconcile_diff
 
     base_dict = base.document.model_dump(by_alias=True, exclude_none=True)
     mine_dict = mine.document.model_dump(by_alias=True, exclude_none=True)

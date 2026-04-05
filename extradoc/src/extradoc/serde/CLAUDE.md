@@ -46,7 +46,7 @@ On `deserialize`:
 2. **ancestor** = unzip `.pristine/document.zip` and parse it (what the serde wrote)
 3. **mine** = parse the current folder (what the user edited)
 4. **ops** = `diff(ancestor, mine)` — what changed in the lossy representation
-5. **desired** = `apply_ops_to_document(base, ops)` — apply only those changes to base
+5. **desired** = `apply_ops_to_document(base, ops)` — apply only those changes to base (via `diffmerge/apply_ops.py`)
 
 Because `ancestor` and `mine` go through the same lossy conversion, any
 systematic bias cancels out. An HR that markdown doesn't understand appears
@@ -72,7 +72,7 @@ is used directly.
 | File | Purpose |
 |------|---------|
 | `__init__.py` | `Serde` Protocol, `DeserializeResult` dataclass |
-| `_apply_ops.py` | 3-way merge engine: `apply_ops_to_document(base, ops)` |
+| `../diffmerge/apply_ops.py` | 3-way merge engine: `apply_ops_to_document(base, ops)` (moved to diffmerge package) |
 | `_models.py` | Shared dataclasses (`TabXml`, `ParagraphXml`, `TabFiles`, etc.) |
 | `_styles.py` | Style extraction, resolution, and CSS-like class system |
 | `_tab_extras.py` | Per-tab extras: `DocStyleXml`, `NamedStylesXml`, `InlineObjectsXml` |

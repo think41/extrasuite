@@ -27,11 +27,11 @@ from extradoc.api_types._generated import (
 from extradoc.api_types._generated import (
     List as DocList,
 )
-from extradoc.reconcile_v3.diff import diff_documents
+from extradoc.diffmerge import diff as diff_documents
 from extradoc.reconcile_v3.lower import lower_batches
 
 if TYPE_CHECKING:
-    from extradoc.reconcile_v3.model import ReconcileOp
+    from extradoc.diffmerge import DiffOp
 
 
 def _extract_lists_by_tab(doc: Document) -> dict[str, dict[str, DocList]]:
@@ -133,7 +133,7 @@ def reconcile_batches(
 def diff(
     base: Document,
     desired: Document,
-) -> list[ReconcileOp]:
+) -> list[DiffOp]:
     """Return the full op list for base → desired without lowering.
 
     Use this to verify op detection is correct without triggering lowering.

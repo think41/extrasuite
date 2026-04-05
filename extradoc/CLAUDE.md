@@ -28,11 +28,27 @@ document via 3-way merge. The output is two `DocumentWithComments`: `base`
 merge is what preserves properties the format cannot represent. See
 `src/extradoc/serde/CLAUDE.md` for details.
 
-- 3-way merge: `src/extradoc/serde/_apply_ops.py` (`apply_ops_to_document()`)
+- 3-way merge: `src/extradoc/diffmerge/apply_ops.py` (`apply_ops_to_document()`)
+
+**Diffmerge** (`src/extradoc/diffmerge/`) — shared diff+merge layer used by both
+serde (3-way merge) and reconciler (tree diff). Public API:
+
+- `diff()` — structural diff between two document trees (`diff.py`)
+- `apply()` — apply diff ops to a base document (`apply_ops.py`)
+- `DiffOp` — op types representing document changes (`model.py`)
+
+| File | Purpose |
+|------|---------|
+| `model.py` | Op types (`DiffOp` and subtypes) |
+| `diff.py` | Tree diff engine (`diff_documents()`) |
+| `content_align.py` | Content alignment DP (`align_content()`) |
+| `table_diff.py` | Table diff (`diff_tables()`) |
+| `apply_ops.py` | 3-way merge: `apply_ops_to_document(base, ops)` |
 
 **Reconciler** — takes `base` and `desired` `Document` and produces a list of
 `BatchUpdateDocumentRequest`s that, when executed against the live Google Doc,
-will transform it from `base` into `desired`.
+will transform it from `base` into `desired`. Uses `diffmerge` for the tree diff
+and produces lowered API requests.
 
 ```python
 # src/extradoc/reconcile_v3/api.py
@@ -42,17 +58,8 @@ def reconcile_batches(
 ) -> list[BatchUpdateDocumentRequest]:
 ```
 
-Internally, the reconciler works as a tree diff. A `Document` is a tree: it has
-Tabs, each Tab has Headers, Footers, Body. There are 5 things that have
-"content" — header, footer, body, footnote, table cell. The content is a list
-of `StructuralElement`s — which is one of 4 things: `TableOfContents`,
-`Paragraph`, `Table`, `PageBreak`. So there is recursion involved.
-
-- Public interface: `reconcile_batches()` — `src/extradoc/reconcile_v3/api.py`
-- Op types: `src/extradoc/reconcile_v3/model.py`
-- Tree diff: `src/extradoc/reconcile_v3/diff.py` (`diff_documents()`)
-- Content alignment DP: `src/extradoc/reconcile_v3/content_align.py` (`align_content()`)
-- Table diff: `src/extradoc/reconcile_v3/table_diff.py` (`diff_tables()`)
+- Lowering (ops → requests with deferred IDs): `src/extradoc/reconcile_v3/lower.py`
+- API entry point: `src/extradoc/reconcile_v3/api.py`
 
 **Executor** — takes the list of `BatchUpdateDocumentRequest`s from the
 reconciler and executes them sequentially against the live Google Docs API.

@@ -24,7 +24,7 @@ if TYPE_CHECKING:
     from collections.abc import Callable
 
     from extradoc.api_types._generated import Table, TableCell, TableRow
-from extradoc.reconcile_v3.model import (
+from extradoc.diffmerge.model import (
     DeleteTableColumnOp,
     DeleteTableRowOp,
     InsertTableColumnOp,

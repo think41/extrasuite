@@ -38,7 +38,6 @@ from extradoc.api_types._generated import (
 from extradoc.api_types._generated import List as DocList
 from extradoc.comments._types import DocumentWithComments, FileComments
 from extradoc.mock.reindex import reindex_and_normalize_all_tabs
-from extradoc.api_types._generated import Document
 from extradoc.serde.markdown import MarkdownSerde
 from extradoc.serde.markdown._from_markdown import markdown_to_document
 from extradoc.serde.markdown._to_markdown import document_to_markdown
@@ -1215,9 +1214,7 @@ class TestDiffRawJsonBase:
         """
         import json
 
-        from extradoc.api_types._generated import Document
         from extradoc.client import DocsClient
-        from extradoc.mock.reindex import reindex_and_normalize_all_tabs
 
         INFLATE = 100  # Simulated real-API offset
 

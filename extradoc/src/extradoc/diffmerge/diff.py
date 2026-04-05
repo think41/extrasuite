@@ -45,13 +45,13 @@ from extradoc.api_types._generated import (
     TableStyle,
     TabProperties,
 )
-from extradoc.reconcile_v3.content_align import (
+from extradoc.diffmerge.content_align import (
     ContentAlignment,
     ContentNode,
     align_content,
     content_node_from_element,
 )
-from extradoc.reconcile_v3.model import (
+from extradoc.diffmerge.model import (
     CreateFooterOp,
     CreateHeaderOp,
     DeleteFooterOp,
@@ -78,8 +78,8 @@ from extradoc.reconcile_v3.model import (
     UpdateTableColumnPropertiesOp,
     UpdateTableRowStyleOp,
 )
-from extradoc.reconcile_v3.table_diff import diff_tables as _diff_tables_structural
-from extradoc.reconcile_v3.table_diff import get_matched_rows
+from extradoc.diffmerge.table_diff import diff_tables as _diff_tables_structural
+from extradoc.diffmerge.table_diff import get_matched_rows
 
 # ---------------------------------------------------------------------------
 # Public entry point

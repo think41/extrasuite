@@ -30,7 +30,7 @@ if TYPE_CHECKING:
         Tab,
         TableCellStyle,
     )
-    from extradoc.reconcile_v3.content_align import ContentAlignment
+    from extradoc.diffmerge.content_align import ContentAlignment
 
 # ---------------------------------------------------------------------------
 # Tab-level structural ops
