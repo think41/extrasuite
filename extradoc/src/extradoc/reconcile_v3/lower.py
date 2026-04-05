@@ -215,8 +215,12 @@ def lower_batches(
     """
     batch0: list[Request] = []  # structural creates
     batch1: list[Request] = []  # content + style + structural deletes
-    batch1b: list[Request] = []  # createFootnote (after body content, before named ranges)
-    batch1b_content: list[Request] = []  # footnote content insertions (after createFootnote)
+    batch1b: list[
+        Request
+    ] = []  # createFootnote (after body content, before named ranges)
+    batch1b_content: list[
+        Request
+    ] = []  # footnote content insertions (after createFootnote)
     batch2: list[Request] = []  # named ranges (after content, so indices are stable)
 
     _desired_lists_by_tab: dict[str, dict[str, DocList]] = desired_lists_by_tab or {}

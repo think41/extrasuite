@@ -2008,7 +2008,9 @@ class TestFootnoteLowering:
             for b in batches:
                 all_reqs.extend(_get_batch_requests(b))
             create_fn_any = [r for r in all_reqs if r.create_footnote is not None]
-            assert len(create_fn_any) == 1, "Expected exactly one createFootnote request"
+            assert len(create_fn_any) == 1, (
+                "Expected exactly one createFootnote request"
+            )
 
     # -----------------------------------------------------------------------
     # 4. Multiple footnotes, one changed
