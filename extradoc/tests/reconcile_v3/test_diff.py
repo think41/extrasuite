@@ -183,9 +183,7 @@ class TestDocumentStyle:
         style_ops = [op for op in ops if isinstance(op, UpdateDocumentStyleOp)]
         assert len(style_ops) == 1
         assert style_ops[0].tab_id == "t1"
-        assert style_ops[0].changed_fields == {
-            "pageSize": {"width": {"magnitude": 792, "unit": "PT"}}
-        }
+        assert style_ops[0].desired_style is not None
         assert style_ops[0].fields_mask == "pageSize"
 
 
@@ -213,7 +211,7 @@ class TestDocumentStyleDiff:
         style_ops = [op for op in ops if isinstance(op, UpdateDocumentStyleOp)]
         assert len(style_ops) == 1
         op = style_ops[0]
-        assert op.changed_fields == {"marginTop": {"magnitude": 36, "unit": "PT"}}
+        assert op.desired_style.margin_top == Dimension(magnitude=36, unit="PT")
         assert op.fields_mask == "marginTop"
 
     def test_page_size_changed(self) -> None:
@@ -226,9 +224,8 @@ class TestDocumentStyleDiff:
         assert len(style_ops) == 1
         op = style_ops[0]
         assert "pageSize" in op.fields_mask
-        assert op.changed_fields["pageSize"] == {
-            "width": {"magnitude": 792, "unit": "PT"}
-        }
+        assert op.desired_style.page_size is not None
+        assert op.desired_style.page_size.width == Dimension(magnitude=792, unit="PT")
 
     def test_background_changed(self) -> None:
         base_style: dict[str, Any] = {}
@@ -240,7 +237,7 @@ class TestDocumentStyleDiff:
         assert len(style_ops) == 1
         op = style_ops[0]
         assert op.fields_mask == "background"
-        assert "background" in op.changed_fields
+        assert op.desired_style.background is not None
 
     def test_header_footer_id_only_change_no_op(self) -> None:
         """Header/footer ID changes are structural — no UpdateDocumentStyleOp."""
@@ -270,7 +267,7 @@ class TestDocumentStyleDiff:
             "marginBottom",
             "pageNumberStart",
         }
-        assert op.changed_fields["pageNumberStart"] == 2
+        assert op.desired_style.page_number_start == 2
 
 
 # ===========================================================================
@@ -1283,7 +1280,7 @@ class TestTableStyleDiff:
         op = cell_style_ops[0]
         assert op.row_index == 0
         assert op.column_index == 0
-        assert "backgroundColor" in op.style_changes
+        assert op.desired_style.background_color is not None
         assert "backgroundColor" in op.fields_mask
 
     def test_row_height_changed(self) -> None:

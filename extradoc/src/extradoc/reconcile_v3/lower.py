@@ -33,7 +33,10 @@ from __future__ import annotations
 import copy
 import difflib
 from itertools import groupby
-from typing import Any
+from typing import TYPE_CHECKING
+
+if TYPE_CHECKING:
+    from extradoc.reconcile_v3.content_align import ContentAlignment
 
 from extradoc.api_types._generated import (
     AddDocumentTabRequest,
@@ -52,7 +55,7 @@ from extradoc.api_types._generated import (
     DeleteTableColumnRequest,
     DeleteTableRowRequest,
     DeleteTabRequest,
-    DocumentStyle,
+    Dimension,
     InsertInlineImageRequest,
     InsertPageBreakRequest,
     InsertSectionBreakRequest,
@@ -290,12 +293,7 @@ def lower_batches(
                 )
 
             case InsertTabOp():
-                tab = (
-                    op.desired_tab
-                    if isinstance(op.desired_tab, Tab)
-                    else Tab.model_validate(op.desired_tab)
-                )
-                props = tab.tab_properties
+                props = op.desired_tab.tab_properties
                 title = props.title if props and props.title else "Untitled"
                 index = props.index if props else None
                 parent_tab_id = props.parent_tab_id if props else None
@@ -313,7 +311,7 @@ def lower_batches(
                     request_index=req_index,
                     response_path="addDocumentTab.tabProperties.tabId",
                 )
-                body_content = _extract_tab_body_content(tab)
+                body_content = _extract_tab_body_content(op.desired_tab)
                 if body_content:
                     batch1.extend(
                         _lower_content_insert(
@@ -378,13 +376,12 @@ def lower_batches(
             # DocumentStyle → batch 1
             # ---------------------------------------------------------------- #
             case UpdateDocumentStyleOp():
-                # op.changed_fields already excludes header/footer ID fields
-                # (those are managed structurally by CreateHeader/Footer ops).
-                doc_style = DocumentStyle.model_validate(op.changed_fields)
+                # op.desired_style carries the full desired DocumentStyle;
+                # op.fields_mask restricts the update to only changed fields.
                 batch1.append(
                     Request(
                         update_document_style=UpdateDocumentStyleRequest(
-                            document_style=doc_style,
+                            document_style=op.desired_style,
                             fields=op.fields_mask,
                             tab_id=op.tab_id if op.tab_id else None,
                         )
@@ -612,7 +609,7 @@ def lower_batches(
                         table_start_index=op.table_start_index,
                         row_index=op.row_index,
                         column_index=op.column_index,
-                        style_changes=op.style_changes,
+                        desired_style=op.desired_style,
                         fields_mask=op.fields_mask,
                         tab_id=op.tab_id,
                     )
@@ -724,45 +721,6 @@ def _infer_bullet_preset_from_model(bullet: Bullet, lists: dict[str, DocList]) -
     return _DEFAULT_BULLET_PRESET
 
 
-def _infer_bullet_preset(bullet: dict[str, Any], lists: dict[str, Any]) -> str:
-    """Infer the createParagraphBullets preset from the bullet's list definition.
-
-    Reads the first NestingLevel from the lists dict to detect whether the list
-    is numbered (glyphType set), a checkbox (GLYPH_TYPE_UNSPECIFIED), or
-    unordered (glyphSymbol set).  Falls back to BULLET_DISC_CIRCLE_SQUARE for
-    any missing or unrecognised data.
-    """
-    list_id = bullet.get("listId")
-    if not list_id or not lists or list_id not in lists:
-        return _DEFAULT_BULLET_PRESET
-
-    list_obj = lists[list_id]
-    lp = list_obj.get("listProperties", {})
-    if not lp:
-        return _DEFAULT_BULLET_PRESET
-    nesting = lp.get("nestingLevels", [])
-    if not nesting:
-        return _DEFAULT_BULLET_PRESET
-
-    level_0 = nesting[0]
-    glyph_type: str = level_0.get("glyphType", "")
-    glyph_symbol: str = level_0.get("glyphSymbol", "")
-
-    # Numbered list: a real glyphType is set (not NONE / GLYPH_TYPE_UNSPECIFIED)
-    if glyph_type and glyph_type not in ("GLYPH_TYPE_UNSPECIFIED", "NONE", ""):
-        return _GLYPH_TYPE_TO_PRESET.get(glyph_type, "NUMBERED_DECIMAL_NESTED")
-
-    # Checkbox: GLYPH_TYPE_UNSPECIFIED with no glyph symbol
-    if glyph_type == "GLYPH_TYPE_UNSPECIFIED":
-        return "BULLET_CHECKBOX"
-
-    # Unordered: glyph symbol determines the preset
-    if glyph_symbol:
-        return _GLYPH_SYMBOL_TO_PRESET.get(glyph_symbol, _DEFAULT_BULLET_PRESET)
-
-    return _DEFAULT_BULLET_PRESET
-
-
 def _make_create_paragraph_bullets(
     *,
     start: int,
@@ -811,7 +769,7 @@ def _make_delete_paragraph_bullets(
 
 
 def _lower_story_content_update(
-    alignment: Any,
+    alignment: ContentAlignment,
     *,
     base_content: list[StructuralElement],
     desired_content: list[StructuralElement],
@@ -960,7 +918,7 @@ def _lower_story_content_update(
 
 def _plan_insertions(
     *,
-    alignment: Any,
+    alignment: ContentAlignment,
     base_content: list[StructuralElement],
     desired_content: list[StructuralElement],
     tab_id: str,
@@ -1411,36 +1369,34 @@ def _lower_paragraph_update(
     return requests
 
 
+_EMPTY_TEXT_STYLE = TextStyle()
+
+
 def _extract_runs(
     para: Paragraph,
-) -> list[tuple[str, dict[str, Any]]]:
-    """Return list of (text, text_style_dict) for each textRun element in a paragraph.
+) -> list[tuple[str, TextStyle]]:
+    """Return list of (text, TextStyle) for each textRun element in a paragraph.
 
     Non-textRun elements (inline objects, footnote refs, etc.) are skipped.
-    The text_style is dumped to dict for comparison purposes.
     """
-    runs: list[tuple[str, dict[str, Any]]] = []
+    runs: list[tuple[str, TextStyle]] = []
     for el in para.elements or []:
         if el.text_run is not None:
             tr = el.text_run
             text = tr.content or ""
-            style = (
-                tr.text_style.model_dump(by_alias=True, exclude_none=True)
-                if tr.text_style
-                else {}
-            )
+            style = tr.text_style or _EMPTY_TEXT_STYLE
             runs.append((text, style))
     return runs
 
 
 def _runs_to_spans(
-    runs: list[tuple[str, dict[str, Any]]],
-) -> list[tuple[int, int, str, dict[str, Any]]]:
+    runs: list[tuple[str, TextStyle]],
+) -> list[tuple[int, int, str, TextStyle]]:
     """Convert runs to (start, end, text, style) spans with character offsets.
 
     Offsets are relative to the start of the paragraph (0-based).
     """
-    spans: list[tuple[int, int, str, dict[str, Any]]] = []
+    spans: list[tuple[int, int, str, TextStyle]] = []
     cursor = 0
     for text, style in runs:
         length = utf16_len(text)
@@ -1449,18 +1405,14 @@ def _runs_to_spans(
     return spans
 
 
-def _styles_equal(s1: dict[str, Any], s2: dict[str, Any]) -> bool:
-    """Return True if two textStyle dicts are effectively equal.
+def _styles_equal(s1: TextStyle, s2: TextStyle) -> bool:
+    """Return True if two TextStyle models are effectively equal.
 
-    Missing keys are treated as default (falsy/None).
+    Compares via model_dump to handle None vs missing field equivalence.
     """
-    all_keys = set(s1) | set(s2)
-    for k in all_keys:
-        v1 = s1.get(k)
-        v2 = s2.get(k)
-        if v1 != v2:
-            return False
-    return True
+    return s1.model_dump(by_alias=True, exclude_none=True) == s2.model_dump(
+        by_alias=True, exclude_none=True
+    )
 
 
 def _diff_paragraph_runs(
@@ -1622,8 +1574,8 @@ def _diff_paragraph_runs(
 
 def _style_update_ops_for_equal_span(
     *,
-    base_spans: list[tuple[int, int, str, dict[str, Any]]],
-    desired_spans: list[tuple[int, int, str, dict[str, Any]]],
+    base_spans: list[tuple[int, int, str, TextStyle]],
+    desired_spans: list[tuple[int, int, str, TextStyle]],
     base_start: int,
     base_end: int,
     desired_start: int,
@@ -1668,7 +1620,7 @@ def _style_update_ops_for_equal_span(
         if not _styles_equal(b_style, d_style):
             abs_start = story_offset + i
             abs_end = story_offset + chunk_end
-            changed_fields = _style_fields(b_style, d_style)
+            changed_fields = _text_style_changed_fields(b_style, d_style)
             if changed_fields:
                 result.append(
                     (
@@ -1693,18 +1645,18 @@ def _style_update_ops_for_equal_span(
 
 
 def _style_at_offset(
-    spans: list[tuple[int, int, str, dict[str, Any]]],
+    spans: list[tuple[int, int, str, TextStyle]],
     offset: int,
-) -> dict[str, Any]:
-    """Return the textStyle for the character at the given offset within spans."""
+) -> TextStyle:
+    """Return the TextStyle for the character at the given offset within spans."""
     for start, end, _text, style in spans:
         if start <= offset < end:
             return style
-    return {}
+    return _EMPTY_TEXT_STYLE
 
 
 def _next_span_boundary(
-    spans: list[tuple[int, int, str, dict[str, Any]]],
+    spans: list[tuple[int, int, str, TextStyle]],
     pos: int,
     limit: int,
 ) -> int:
@@ -1717,7 +1669,7 @@ def _next_span_boundary(
 
 def _insert_ops_for_span(
     *,
-    desired_spans: list[tuple[int, int, str, dict[str, Any]]],
+    desired_spans: list[tuple[int, int, str, TextStyle]],
     desired_start: int,
     desired_end: int,
     base_pos: int,
@@ -1771,19 +1723,19 @@ def _insert_ops_for_span(
         style = _style_at_offset(desired_spans, i)
         end_of_span = _next_span_boundary(desired_spans, i, desired_end)
         span_len = end_of_span - i
-        if style:
-            fields = list(style.keys())
-            if fields:
-                reqs.append(
-                    _make_update_text_style(
-                        start_index=cursor,
-                        end_index=cursor + span_len,
-                        tab_id=tab_id,
-                        segment_id=segment_id,
-                        text_style=style,
-                        fields=fields,
-                    )
+        style_dict = style.model_dump(by_alias=True, exclude_none=True)
+        if style_dict:
+            fields = list(style_dict.keys())
+            reqs.append(
+                _make_update_text_style(
+                    start_index=cursor,
+                    end_index=cursor + span_len,
+                    tab_id=tab_id,
+                    segment_id=segment_id,
+                    text_style=style,
+                    fields=fields,
                 )
+            )
         cursor += span_len
         i = end_of_span
 
@@ -1796,7 +1748,7 @@ def _make_update_text_style(
     end_index: int,
     tab_id: _StrOrDeferred,
     segment_id: _StrOrDeferred | None,
-    text_style: dict[str, Any],
+    text_style: TextStyle,
     fields: list[str],
 ) -> Request:
     """Build an updateTextStyle Request."""
@@ -1808,7 +1760,7 @@ def _make_update_text_style(
                 tab_id=tab_id if tab_id else None,
                 segment_id=segment_id if segment_id else None,
             ),
-            text_style=TextStyle.model_validate(text_style),
+            text_style=text_style,
             fields=",".join(fields),
         )
     )
@@ -1953,7 +1905,7 @@ def _lower_para_style_update(
     if base_ps != desired_ps and desired_ps:
         # Compute changed fields — exclude bullet-managed indentation when
         # bullet ops were already emitted above (they set indentation).
-        fields = _style_fields(base_ps, desired_ps)
+        fields = _dict_changed_fields(base_ps, desired_ps)
         # Always exclude server-managed readonly fields from the field mask.
         fields = [f for f in fields if f not in _PARA_STYLE_READONLY_FIELDS]
         if base_bullet or desired_bullet:
@@ -2119,7 +2071,8 @@ def _lower_paragraph_insert(
         run_offset = index
         for text_content, style in runs:
             run_len = utf16_len(text_content)
-            if run_len > 0 and style:
+            style_dict = style.model_dump(by_alias=True, exclude_none=True)
+            if run_len > 0 and style_dict:
                 requests.append(
                     _make_update_text_style(
                         start_index=run_offset,
@@ -2127,7 +2080,7 @@ def _lower_paragraph_insert(
                         tab_id=tab_id,
                         segment_id=segment_id,
                         text_style=style,
-                        fields=list(style.keys()),
+                        fields=list(style_dict.keys()),
                     )
                 )
             run_offset += run_len
@@ -2169,7 +2122,8 @@ def _lower_paragraph_insert(
         run_offset = index
         for text_content, style in runs:
             run_len = utf16_len(text_content)
-            if run_len > 0 and style:
+            style_dict = style.model_dump(by_alias=True, exclude_none=True)
+            if run_len > 0 and style_dict:
                 requests.append(
                     _make_update_text_style(
                         start_index=run_offset,
@@ -2177,7 +2131,7 @@ def _lower_paragraph_insert(
                         tab_id=tab_id,
                         segment_id=segment_id,
                         text_style=style,
-                        fields=list(style.keys()),
+                        fields=list(style_dict.keys()),
                     )
                 )
             run_offset += run_len
@@ -2416,7 +2370,7 @@ def _lower_section_break_update(
         else {}
     )
 
-    changed_fields = _style_fields(base_style, desired_style)
+    changed_fields = _dict_changed_fields(base_style, desired_style)
     if not changed_fields:
         return []
 
@@ -2586,13 +2540,24 @@ def _para_text(para: Paragraph) -> str:
     return "".join(texts)
 
 
-def _style_fields(
-    base_style: dict[str, Any],
-    desired_style: dict[str, Any],
+def _dict_changed_fields(
+    base_dict: dict[str, object],
+    desired_dict: dict[str, object],
 ) -> list[str]:
-    """Return the field names that differ between base and desired style dicts."""
-    all_keys = set(base_style) | set(desired_style)
-    return [k for k in all_keys if base_style.get(k) != desired_style.get(k)]
+    """Return the camelCase field names that differ between two style dicts."""
+    all_keys = set(base_dict) | set(desired_dict)
+    return [k for k in all_keys if base_dict.get(k) != desired_dict.get(k)]
+
+
+def _text_style_changed_fields(
+    base_style: TextStyle,
+    desired_style: TextStyle,
+) -> list[str]:
+    """Return the camelCase field names that differ between two TextStyle models."""
+    return _dict_changed_fields(
+        base_style.model_dump(by_alias=True, exclude_none=True),
+        desired_style.model_dump(by_alias=True, exclude_none=True),
+    )
 
 
 # ---------------------------------------------------------------------------
@@ -2725,9 +2690,14 @@ def _make_update_paragraph_style(
     end_index: int,
     tab_id: _StrOrDeferred,
     segment_id: _StrOrDeferred | None,
-    paragraph_style: dict[str, Any],
+    paragraph_style: ParagraphStyle | dict[str, object],
     fields: list[str],
 ) -> Request:
+    ps = (
+        paragraph_style
+        if isinstance(paragraph_style, ParagraphStyle)
+        else ParagraphStyle.model_validate(paragraph_style)
+    )
     return Request(
         update_paragraph_style=UpdateParagraphStyleRequest(
             range=Range(
@@ -2736,7 +2706,7 @@ def _make_update_paragraph_style(
                 tab_id=tab_id if tab_id else None,
                 segment_id=segment_id if segment_id else None,
             ),
-            paragraph_style=ParagraphStyle.model_validate(paragraph_style),
+            paragraph_style=ps,
             fields=",".join(fields),
         )
     )
@@ -2745,7 +2715,7 @@ def _make_update_paragraph_style(
 def _make_update_named_style(
     *,
     tab_id: str,
-    style: NamedStyle | dict[str, Any],
+    style: NamedStyle,
 ) -> Request:
     """Emit an updateDocumentStyle request to update/insert a single named style.
 
@@ -2754,11 +2724,8 @@ def _make_update_named_style(
     model doesn't have a ``namedStyles`` field, we use ``model_validate`` with
     the raw dict to leverage ``extra="allow"`` on the model.
     """
-    if isinstance(style, NamedStyle):
-        style_dict = style.model_dump(by_alias=True, exclude_none=True)
-    else:
-        style_dict = style
-    inner: dict[str, Any] = {
+    style_dict = style.model_dump(by_alias=True, exclude_none=True)
+    inner: dict[str, object] = {
         "namedStyles": {
             "styles": [style_dict],
         },
@@ -2916,7 +2883,7 @@ def _make_update_table_cell_style(
     table_start_index: int,
     row_index: int,
     column_index: int,
-    style_changes: dict[str, Any],
+    desired_style: TableCellStyle,
     fields_mask: str,
     tab_id: str,
 ) -> Request:
@@ -2939,7 +2906,7 @@ def _make_update_table_cell_style(
                 row_span=1,
                 column_span=1,
             ),
-            table_cell_style=TableCellStyle.model_validate(style_changes),
+            table_cell_style=desired_style,
             fields=fields_mask,
         )
     )
@@ -2949,7 +2916,7 @@ def _make_update_table_row_style(
     *,
     table_start_index: int,
     row_index: int,
-    min_row_height: Any,
+    min_row_height: Dimension | None,
     tab_id: str,
 ) -> Request:
     return Request(
@@ -2969,17 +2936,14 @@ def _make_update_table_column_properties(
     *,
     table_start_index: int,
     column_index: int,
-    width: Any,
+    width: Dimension | None,
     width_type: str | None,
     tab_id: str,
 ) -> Request:
-    col_props_dict: dict[str, Any] = {}
     fields_parts: list[str] = []
     if width is not None:
-        col_props_dict["width"] = width
         fields_parts.append("width")
     if width_type is not None:
-        col_props_dict["widthType"] = width_type
         fields_parts.append("widthType")
     fields_mask = ",".join(sorted(fields_parts)) if fields_parts else "widthType"
     return Request(
@@ -2989,8 +2953,9 @@ def _make_update_table_column_properties(
                 tab_id=tab_id,
             ),
             column_indices=[column_index],
-            table_column_properties=TableColumnProperties.model_validate(
-                col_props_dict
+            table_column_properties=TableColumnProperties(
+                width=width,
+                width_type=width_type,
             ),
             fields=fields_mask,
         )

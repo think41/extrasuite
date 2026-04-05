@@ -10,11 +10,10 @@ Tests verify that:
 
 from __future__ import annotations
 
-from typing import Any
-
 from extradoc.api_types._generated import (
     Bullet,
     Dimension,
+    Document,
     ListProperties,
     NestingLevel,
     Paragraph,
@@ -143,7 +142,7 @@ def make_doc_with_lists(
     tab_id: str,
     body_content: list[StructuralElement],
     lists: dict[str, DocList],
-) -> Any:
+) -> Document:
     """Build a document with explicit body content and lists."""
     return make_document(
         tabs=[
@@ -682,52 +681,69 @@ class TestDiffListsNoUpdateListOp:
 
 
 class TestBulletPresetInference:
-    """_infer_bullet_preset correctly maps list defs to preset strings."""
+    """_infer_bullet_preset_from_model correctly maps list defs to preset strings."""
 
     def test_disc_bullet_preset(self) -> None:
         """glyphSymbol '\u25cf' -> BULLET_DISC_CIRCLE_SQUARE."""
-        from extradoc.reconcile_v3.lower import _infer_bullet_preset
+        from extradoc.reconcile_v3.lower import _infer_bullet_preset_from_model
 
-        bullet = {"listId": "list1"}
+        bullet = Bullet(list_id="list1")
         lists = {
-            "list1": {"listProperties": {"nestingLevels": [{"glyphSymbol": "\u25cf"}]}}
+            "list1": DocList(
+                list_properties=ListProperties(
+                    nesting_levels=[NestingLevel(glyph_symbol="\u25cf")]
+                )
+            )
         }
-        assert _infer_bullet_preset(bullet, lists) == "BULLET_DISC_CIRCLE_SQUARE"
+        assert (
+            _infer_bullet_preset_from_model(bullet, lists)
+            == "BULLET_DISC_CIRCLE_SQUARE"
+        )
 
     def test_decimal_numbered_preset(self) -> None:
         """glyphType 'DECIMAL' -> NUMBERED_DECIMAL_NESTED."""
-        from extradoc.reconcile_v3.lower import _infer_bullet_preset
+        from extradoc.reconcile_v3.lower import _infer_bullet_preset_from_model
 
-        bullet = {"listId": "list1"}
+        bullet = Bullet(list_id="list1")
         lists = {
-            "list1": {"listProperties": {"nestingLevels": [{"glyphType": "DECIMAL"}]}}
+            "list1": DocList(
+                list_properties=ListProperties(
+                    nesting_levels=[NestingLevel(glyph_type="DECIMAL")]
+                )
+            )
         }
-        assert _infer_bullet_preset(bullet, lists) == "NUMBERED_DECIMAL_NESTED"
+        assert (
+            _infer_bullet_preset_from_model(bullet, lists) == "NUMBERED_DECIMAL_NESTED"
+        )
 
     def test_checkbox_preset(self) -> None:
         """glyphType 'GLYPH_TYPE_UNSPECIFIED' -> BULLET_CHECKBOX."""
-        from extradoc.reconcile_v3.lower import _infer_bullet_preset
+        from extradoc.reconcile_v3.lower import _infer_bullet_preset_from_model
 
-        bullet = {"listId": "list1"}
+        bullet = Bullet(list_id="list1")
         lists = {
-            "list1": {
-                "listProperties": {
-                    "nestingLevels": [{"glyphType": "GLYPH_TYPE_UNSPECIFIED"}]
-                }
-            }
+            "list1": DocList(
+                list_properties=ListProperties(
+                    nesting_levels=[NestingLevel(glyph_type="GLYPH_TYPE_UNSPECIFIED")]
+                )
+            )
         }
-        assert _infer_bullet_preset(bullet, lists) == "BULLET_CHECKBOX"
+        assert _infer_bullet_preset_from_model(bullet, lists) == "BULLET_CHECKBOX"
 
     def test_missing_list_falls_back_to_disc(self) -> None:
         """Missing list_id -> BULLET_DISC_CIRCLE_SQUARE fallback."""
-        from extradoc.reconcile_v3.lower import _infer_bullet_preset
+        from extradoc.reconcile_v3.lower import _infer_bullet_preset_from_model
 
-        bullet = {"listId": "missing_list"}
-        assert _infer_bullet_preset(bullet, {}) == "BULLET_DISC_CIRCLE_SQUARE"
+        bullet = Bullet(list_id="missing_list")
+        assert (
+            _infer_bullet_preset_from_model(bullet, {}) == "BULLET_DISC_CIRCLE_SQUARE"
+        )
 
     def test_empty_lists_falls_back_to_disc(self) -> None:
         """No lists dict -> BULLET_DISC_CIRCLE_SQUARE fallback."""
-        from extradoc.reconcile_v3.lower import _infer_bullet_preset
+        from extradoc.reconcile_v3.lower import _infer_bullet_preset_from_model
 
-        bullet = {"listId": "list1"}
-        assert _infer_bullet_preset(bullet, {}) == "BULLET_DISC_CIRCLE_SQUARE"
+        bullet = Bullet(list_id="list1")
+        assert (
+            _infer_bullet_preset_from_model(bullet, {}) == "BULLET_DISC_CIRCLE_SQUARE"
+        )

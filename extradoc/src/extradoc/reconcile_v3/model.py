@@ -16,20 +16,20 @@ Convention
 from __future__ import annotations
 
 from dataclasses import dataclass, field
-from typing import TYPE_CHECKING, Any
+from typing import TYPE_CHECKING
 
 if TYPE_CHECKING:
     from extradoc.api_types._generated import (
         Dimension,
+        DocumentStyle,
         InlineObject,
         List,
         NamedStyle,
         Size,
         StructuralElement,
         Tab,
+        TableCellStyle,
     )
-
-if TYPE_CHECKING:
     from extradoc.reconcile_v3.content_align import ContentAlignment
 
 # ---------------------------------------------------------------------------
@@ -65,13 +65,13 @@ class UpdateDocumentStyleOp:
     Only carries the fields that actually changed (header/footer ID fields are
     excluded — those are managed structurally by header/footer ops).
 
-    ``changed_fields`` is a dict of field_name → desired_value for every field
-    that differs.  ``fields_mask`` is the comma-separated field-mask string
-    required by the Google Docs ``updateDocumentStyle`` request.
+    ``desired_style`` carries the full desired ``DocumentStyle`` model.
+    ``fields_mask`` is the comma-separated field-mask string required by the
+    Google Docs ``updateDocumentStyle`` request (only the changed fields).
     """
 
     tab_id: str
-    changed_fields: dict[str, Any]
+    desired_style: DocumentStyle
     fields_mask: str
 
 
@@ -393,7 +393,7 @@ class UpdateTableCellStyleOp:
     table_start_index: int
     row_index: int
     column_index: int
-    style_changes: dict[str, Any]  # fields that changed
+    desired_style: TableCellStyle
     fields_mask: str  # comma-separated field names for the updateFields mask
 
 
@@ -433,7 +433,7 @@ class UpdateBodyContentOp:
     alignment: ContentAlignment
     base_content: list[StructuralElement]
     desired_content: list[StructuralElement]
-    child_ops: list[Any] = field(default_factory=list)
+    child_ops: list[ReconcileOp] = field(default_factory=list)
 
 
 # Unified type alias for all op types.

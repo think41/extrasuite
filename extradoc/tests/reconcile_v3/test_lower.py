@@ -21,23 +21,28 @@ import pytest
 
 from extradoc.api_types._generated import (
     BatchUpdateDocumentRequest,
+    Color,
     DeferredID,
     Dimension,
     Document,
+    DocumentStyle,
     Footnote,
     FootnoteReference,
     InlineObject,
     InlineObjectElement,
+    OptionalColor,
     PageBreak,
     Paragraph,
     ParagraphElement,
     ParagraphStyle,
+    RgbColor,
     SectionBreak,
     SectionStyle,
     Size,
     StructuralElement,
     Table,
     TableCell,
+    TableCellStyle,
     TableRow,
     TextRun,
     TextStyle,
@@ -2303,7 +2308,9 @@ class TestTableStyleLowering:
             table_start_index=5,
             row_index=1,
             column_index=2,
-            style_changes={"backgroundColor": {"color": {"rgbColor": {"red": 1.0}}}},
+            desired_style=TableCellStyle(
+                background_color=OptionalColor(color=Color(rgb_color=RgbColor(red=1.0)))
+            ),
             fields_mask="backgroundColor",
         )
         batches = lower_batches([op])
@@ -2388,7 +2395,7 @@ class TestTableStyleLowering:
                 table_start_index=1,
                 row_index=0,
                 column_index=0,
-                style_changes={"contentAlignment": "TOP"},
+                desired_style=TableCellStyle(content_alignment="TOP"),
                 fields_mask="contentAlignment",
             ),
             UpdateTableRowStyleOp(
@@ -2466,7 +2473,7 @@ class TestDocumentStyleLowering:
         """UpdateDocumentStyleOp lowers to a correct updateDocumentStyle request."""
         op = UpdateDocumentStyleOp(
             tab_id="t1",
-            changed_fields={"marginTop": {"magnitude": 36, "unit": "PT"}},
+            desired_style=DocumentStyle(margin_top=Dimension(magnitude=36, unit="PT")),
             fields_mask="marginTop",
         )
         reqs = lower_ops([op])
@@ -2485,10 +2492,10 @@ class TestDocumentStyleLowering:
         """fields_mask is passed through verbatim."""
         op = UpdateDocumentStyleOp(
             tab_id="t1",
-            changed_fields={
-                "marginTop": {"magnitude": 72, "unit": "PT"},
-                "pageNumberStart": 2,
-            },
+            desired_style=DocumentStyle(
+                margin_top=Dimension(magnitude=72, unit="PT"),
+                page_number_start=2,
+            ),
             fields_mask="marginTop,pageNumberStart",
         )
         reqs = lower_ops([op])
@@ -2501,7 +2508,7 @@ class TestDocumentStyleLowering:
         """Legacy pseudo-tabs (empty tab_id) omit tabId from the request."""
         op = UpdateDocumentStyleOp(
             tab_id="",
-            changed_fields={"pageNumberStart": 3},
+            desired_style=DocumentStyle(page_number_start=3),
             fields_mask="pageNumberStart",
         )
         reqs = lower_ops([op])

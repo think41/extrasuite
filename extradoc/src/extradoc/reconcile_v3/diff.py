@@ -20,8 +20,6 @@ No live API calls.  All computation is pure in-memory over typed Pydantic models
 
 from __future__ import annotations
 
-from typing import Any
-
 from extradoc.api_types._generated import (
     Body,
     Document,
@@ -327,19 +325,20 @@ def _diff_document_style(
     base_style = base_dt.document_style or DocumentStyle()
     desired_style = desired_dt.document_style
 
-    # Convert to camelCase dicts for field-level comparison and API request
+    # Compare only writable fields to compute the field mask
     base_dict = base_style.model_dump(by_alias=True, exclude_none=True)
     desired_dict = desired_style.model_dump(by_alias=True, exclude_none=True)
 
-    result = _styles_changed(base_dict, desired_dict, _WRITABLE_DOC_STYLE_FIELDS)
-    if result is None:
+    fields_mask = _fields_mask_for_changed(
+        base_dict, desired_dict, _WRITABLE_DOC_STYLE_FIELDS
+    )
+    if fields_mask is None:
         return []
 
-    changed_fields, fields_mask = result
     return [
         UpdateDocumentStyleOp(
             tab_id=tab_id,
-            changed_fields=changed_fields,
+            desired_style=desired_style,
             fields_mask=fields_mask,
         )
     ]
@@ -900,29 +899,25 @@ def _diff_paragraph_inline_images(
     return ops
 
 
-def _styles_changed(
-    base: dict[str, Any],
-    desired: dict[str, Any],
+def _fields_mask_for_changed(
+    base: dict[str, object],
+    desired: dict[str, object],
     fields: list[str],
-) -> tuple[dict[str, Any], str] | None:
-    """Compare specific fields between base and desired dicts.
+) -> str | None:
+    """Compare specific camelCase fields between two model_dump dicts.
 
-    Returns (changed_fields_dict, fields_mask) if any of the given fields
-    differ between base and desired, or None if they are identical.
-
-    Both ``base`` and ``desired`` should be camelCase-keyed dicts (e.g. from
-    ``model.model_dump(by_alias=True, exclude_none=True)``).
+    Returns a comma-separated fields_mask string if any of the given fields
+    differ, or None if they are identical.
     """
-    changed: dict[str, Any] = {}
+    changed: list[str] = []
     for field in fields:
         b_val = base.get(field)
         d_val = desired.get(field)
         if b_val != d_val:
-            changed[field] = d_val
+            changed.append(field)
     if not changed:
         return None
-    fields_mask = ",".join(sorted(changed.keys()))
-    return changed, fields_mask
+    return ",".join(sorted(changed))
 
 
 def _diff_table(
@@ -1005,16 +1000,17 @@ def _diff_table(
             ]
             b_cell_dict = b_cell_style.model_dump(by_alias=True, exclude_none=True)
             d_cell_dict = d_cell_style.model_dump(by_alias=True, exclude_none=True)
-            result = _styles_changed(b_cell_dict, d_cell_dict, _CELL_STYLE_FIELDS)
-            if result is not None:
-                style_changes, fields_mask = result
+            fields_mask = _fields_mask_for_changed(
+                b_cell_dict, d_cell_dict, _CELL_STYLE_FIELDS
+            )
+            if fields_mask is not None:
                 ops.append(
                     UpdateTableCellStyleOp(
                         tab_id=tab_id,
                         table_start_index=table_start_index,
                         row_index=base_row_idx,
                         column_index=col_idx,
-                        style_changes=style_changes,
+                        desired_style=d_cell_style,
                         fields_mask=fields_mask,
                     )
                 )
@@ -1049,8 +1045,8 @@ def _diff_table(
     ):
         b_col_dict = b_col.model_dump(by_alias=True, exclude_none=True)
         d_col_dict = d_col.model_dump(by_alias=True, exclude_none=True)
-        result = _styles_changed(b_col_dict, d_col_dict, _COL_FIELDS)
-        if result is not None:
+        col_fields_mask = _fields_mask_for_changed(b_col_dict, d_col_dict, _COL_FIELDS)
+        if col_fields_mask is not None:
             ops.append(
                 UpdateTableColumnPropertiesOp(
                     tab_id=tab_id,

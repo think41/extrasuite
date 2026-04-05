@@ -184,12 +184,12 @@ def _apply_delete_tab(doc: dict[str, Any], op: Any) -> None:
 
 
 def _apply_update_document_style(doc: dict[str, Any], op: Any) -> None:
-    """Merge changed_fields into the matching tab's documentStyle."""
+    """Merge desired_style into the matching tab's documentStyle."""
     dt = _find_doc_tab(doc, op.tab_id)
     if dt is None:
         return
     doc_style: dict[str, Any] = dt.setdefault("documentStyle", {})
-    doc_style.update(op.changed_fields)
+    doc_style.update(op.desired_style.model_dump(by_alias=True, exclude_none=True))
 
 
 # ---------------------------------------------------------------------------
@@ -579,7 +579,9 @@ def _apply_table_style_op(doc: dict[str, Any], op: Any) -> None:
             if op.column_index < len(cells):
                 cell = cells[op.column_index]
                 cell_style: dict[str, Any] = cell.setdefault("tableCellStyle", {})
-                cell_style.update(op.style_changes)
+                cell_style.update(
+                    op.desired_style.model_dump(by_alias=True, exclude_none=True)
+                )
 
     elif isinstance(op, UpdateTableRowStyleOp):
         if op.row_index < len(rows):

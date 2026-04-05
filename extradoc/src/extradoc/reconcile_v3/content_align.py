@@ -58,7 +58,7 @@ from __future__ import annotations
 
 import math
 from dataclasses import dataclass, field
-from typing import TYPE_CHECKING, Any
+from typing import TYPE_CHECKING
 
 if TYPE_CHECKING:
     from extradoc.api_types._generated import (
@@ -148,7 +148,7 @@ class ContentNode:
     list_kind: str | None = None
     table_cell_texts: list[str] = field(default_factory=list)
     is_terminal: bool = False
-    original: StructuralElement | Any = None
+    original: StructuralElement | object = None
 
 
 # ---------------------------------------------------------------------------
@@ -258,7 +258,7 @@ def content_node_from_element(
 # ---------------------------------------------------------------------------
 
 
-def content_node_from_ir(block: Any, *, is_terminal: bool = False) -> ContentNode:
+def content_node_from_ir(block: object, *, is_terminal: bool = False) -> ContentNode:
     """Build a ``ContentNode`` from a ``BlockIR`` instance."""
     from extradoc.reconcile_v2.ir import (  # noqa: PLC0415
         ListIR,
