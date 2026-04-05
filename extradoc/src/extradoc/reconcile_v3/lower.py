@@ -596,9 +596,20 @@ def lower_batches(
             # Table structural ops → batch 1
             # ---------------------------------------------------------------- #
             case InsertTableRowOp():
+                # Shift BASE table-anchored indices by the cumulative byte
+                # delta of body-text ops already in ``batch1``. Body-text
+                # ops (from ``UpdateBodyContentOp``) are emitted BEFORE
+                # table-structural children (diff emits child_ops after the
+                # parent) and may have inserted/deleted text at positions
+                # ≤ ``table_start_index``, leaving our BASE anchors stale.
+                shift = _compute_index_shift_for_body_ref(
+                    batch1,
+                    base_index=op.table_start_index,
+                    tab_id=op.tab_id,
+                )
                 batch1.append(
                     _make_insert_table_row(
-                        table_start_index=op.table_start_index,
+                        table_start_index=op.table_start_index + shift,
                         row_index=op.row_index,
                         insert_below=op.insert_below,
                         tab_id=op.tab_id,
@@ -612,27 +623,42 @@ def lower_batches(
                 # ``op.new_row_start_index`` (a BASE byte index that is valid
                 # at this point in the batch because all subsequent matched
                 # cell edits operate at strictly lower indices).
+                shifted_new_row_start_index = (
+                    op.new_row_start_index + shift
+                    if op.new_row_start_index is not None
+                    else None
+                )
                 batch1.extend(
                     _make_new_row_cell_text_inserts(
-                        new_row_start_index=op.new_row_start_index,
+                        new_row_start_index=shifted_new_row_start_index,
                         new_cell_texts=op.new_cell_texts,
                         tab_id=op.tab_id,
                     )
                 )
 
             case DeleteTableRowOp():
+                shift = _compute_index_shift_for_body_ref(
+                    batch1,
+                    base_index=op.table_start_index,
+                    tab_id=op.tab_id,
+                )
                 batch1.append(
                     _make_delete_table_row(
-                        table_start_index=op.table_start_index,
+                        table_start_index=op.table_start_index + shift,
                         row_index=op.row_index,
                         tab_id=op.tab_id,
                     )
                 )
 
             case InsertTableColumnOp():
+                shift = _compute_index_shift_for_body_ref(
+                    batch1,
+                    base_index=op.table_start_index,
+                    tab_id=op.tab_id,
+                )
                 batch1.append(
                     _make_insert_table_column(
-                        table_start_index=op.table_start_index,
+                        table_start_index=op.table_start_index + shift,
                         column_index=op.column_index,
                         insert_right=op.insert_right,
                         tab_id=op.tab_id,
@@ -661,11 +687,19 @@ def lower_batches(
                 # "append one row" cases — which are what users actually hit
                 # — populate cells correctly.
                 if not _has_prior_table_structural_column_op(
-                    batch1, table_start_index=op.table_start_index, tab_id=op.tab_id
+                    batch1,
+                    table_start_index=op.table_start_index + shift,
+                    tab_id=op.tab_id,
                 ):
+                    # Anchors sit at or after table_start_index (inside the
+                    # table), so the same body-text delta applies uniformly.
+                    shifted_anchors = [
+                        (a + shift) if a is not None else None
+                        for a in op.new_cell_anchor_indices
+                    ]
                     batch1.extend(
                         _make_new_column_cell_text_inserts(
-                            new_cell_anchor_indices=op.new_cell_anchor_indices,
+                            new_cell_anchor_indices=shifted_anchors,
                             new_cell_texts=op.new_cell_texts,
                             insert_right=op.insert_right,
                             tab_id=op.tab_id,
@@ -673,9 +707,14 @@ def lower_batches(
                     )
 
             case DeleteTableColumnOp():
+                shift = _compute_index_shift_for_body_ref(
+                    batch1,
+                    base_index=op.table_start_index,
+                    tab_id=op.tab_id,
+                )
                 batch1.append(
                     _make_delete_table_column(
-                        table_start_index=op.table_start_index,
+                        table_start_index=op.table_start_index + shift,
                         column_index=op.column_index,
                         tab_id=op.tab_id,
                     )
@@ -685,9 +724,14 @@ def lower_batches(
             # Table style ops → batch 1
             # ---------------------------------------------------------------- #
             case UpdateTableCellStyleOp():
+                shift = _compute_index_shift_for_body_ref(
+                    batch1,
+                    base_index=op.table_start_index,
+                    tab_id=op.tab_id,
+                )
                 batch1.append(
                     _make_update_table_cell_style(
-                        table_start_index=op.table_start_index,
+                        table_start_index=op.table_start_index + shift,
                         row_index=op.row_index,
                         column_index=op.column_index,
                         desired_style=op.desired_style,
@@ -697,9 +741,14 @@ def lower_batches(
                 )
 
             case UpdateTableRowStyleOp():
+                shift = _compute_index_shift_for_body_ref(
+                    batch1,
+                    base_index=op.table_start_index,
+                    tab_id=op.tab_id,
+                )
                 batch1.append(
                     _make_update_table_row_style(
-                        table_start_index=op.table_start_index,
+                        table_start_index=op.table_start_index + shift,
                         row_index=op.row_index,
                         min_row_height=op.min_row_height,
                         tab_id=op.tab_id,
@@ -707,9 +756,14 @@ def lower_batches(
                 )
 
             case UpdateTableColumnPropertiesOp():
+                shift = _compute_index_shift_for_body_ref(
+                    batch1,
+                    base_index=op.table_start_index,
+                    tab_id=op.tab_id,
+                )
                 batch1.append(
                     _make_update_table_column_properties(
-                        table_start_index=op.table_start_index,
+                        table_start_index=op.table_start_index + shift,
                         column_index=op.column_index,
                         width=op.width,
                         width_type=op.width_type,
@@ -3462,6 +3516,77 @@ def _make_new_row_cell_text_inserts(
             )
         )
     return requests
+
+
+def _compute_index_shift_for_body_ref(
+    batch: list[Request],
+    *,
+    base_index: int,
+    tab_id: str,
+) -> int:
+    """Return the net byte shift at ``base_index`` caused by prior body-text
+    ops in ``batch`` for ``tab_id``'s body segment.
+
+    Ops in ``batch`` are emitted in execution order. Each ``insertText`` /
+    ``deleteContentRange`` request's indices are valid at the point it runs
+    (the body-content lowerer emits them in descending base-index order so
+    they are self-consistent). Requests emitted AFTER body-text ops (such as
+    table-structural ops) use BASE indices and therefore need to be shifted
+    by the cumulative delta body-text ops impose at positions ≤ their
+    reference index.
+
+    We walk ``batch`` in order, maintaining ``current`` = the live position
+    of ``base_index`` after each op executes:
+
+    - ``insertText(loc=L, text=T)``: if ``L <= current``, ``current += len(T)``.
+    - ``deleteContentRange(start=s, end=e)``: if ``e <= current``, ``current -= (e - s)``.
+      If ``s >= current``, no shift. Partial-overlap deletes are not emitted
+      by the reconciler (deletes are always whole structural elements),
+      so we don't model them here and raise on encounter.
+
+    Only body-segment requests (``segment_id=None``, matching ``tab_id``)
+    contribute; header/footer/footnote ops live in distinct coordinate spaces.
+    """
+    current = base_index
+    for req in batch:
+        it = req.insert_text
+        dcr = req.delete_content_range
+        if it is not None:
+            loc = it.location
+            if loc is None or loc.index is None:
+                continue
+            if loc.segment_id is not None:
+                continue
+            if loc.tab_id != tab_id:
+                continue
+            text = it.text or ""
+            if loc.index <= current:
+                current += len(text)
+            continue
+        if dcr is not None:
+            rng = dcr.range
+            if rng is None or rng.start_index is None or rng.end_index is None:
+                continue
+            if rng.segment_id is not None:
+                continue
+            if rng.tab_id != tab_id:
+                continue
+            s, e = rng.start_index, rng.end_index
+            if e <= current:
+                current -= e - s
+            elif s >= current:
+                continue
+            else:
+                # Delete straddles the reference position. The reconciler
+                # only emits whole-element deletes, and table-structural
+                # refs are always at a structural boundary, so this should
+                # never happen. Raise loudly if it does.
+                raise ValueError(
+                    f"deleteContentRange [{s},{e}) straddles table "
+                    f"reference index {base_index} (live position "
+                    f"{current}); cannot compute shift."
+                )
+    return current - base_index
 
 
 def _has_prior_table_structural_column_op(
