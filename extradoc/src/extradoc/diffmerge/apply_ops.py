@@ -839,18 +839,71 @@ def _align_raw_to_ancestor(
         raw_to_anc[rs] = as_
         anc_to_raw[as_] = rs
 
-    # Sequential matching for content-bearing elements
-    anc_ptr = 0
-    for raw_idx in raw_content_indices:
-        if anc_ptr >= len(anc_content_indices):
-            break
-        anc_idx = anc_content_indices[anc_ptr]
-        raw_kind = _element_kind(raw_content[raw_idx])
-        anc_kind = _se_kind(ancestor_content[anc_idx])
-        if raw_kind == anc_kind:
-            raw_to_anc[raw_idx] = anc_idx
-            anc_to_raw[anc_idx] = raw_idx
-            anc_ptr += 1
+    # LCS-based matching for content-bearing elements.
+    #
+    # The greedy sequential approach breaks when the raw base has more
+    # content-bearing elements than the ancestor (e.g. inline objects, HRs
+    # that the markdown serializer drops). The extra raw elements consume
+    # ancestor slots, shifting all subsequent mappings. An LCS DP finds the
+    # longest common subsequence of matchable element pairs, which correctly
+    # skips over extra raw elements without consuming ancestor slots.
+    from extradoc.diffmerge.content_align import (
+        MIN_PARA_MATCH_SIMILARITY,
+        text_similarity,
+    )
+
+    R = raw_content_indices
+    A = anc_content_indices
+    nr = len(R)
+    na = len(A)
+
+    def _can_match_raw_anc(ri: int, ai: int) -> bool:
+        """Return True if raw element ri and ancestor element ai can be matched."""
+        raw_kind = _element_kind(raw_content[ri])
+        anc_kind = _se_kind(ancestor_content[ai])
+        if raw_kind != anc_kind:
+            return False
+        if raw_kind == "paragraph":
+            raw_text = _dict_text(raw_content[ri]).strip()
+            anc_text = _se_text(ancestor_content[ai]).strip()
+            return text_similarity(raw_text, anc_text) >= MIN_PARA_MATCH_SIMILARITY
+        if raw_kind == "table":
+            raw_text = _dict_text(raw_content[ri])
+            anc_text = _se_text(ancestor_content[ai])
+            # Any non-zero text overlap, or both empty (structural match)
+            return text_similarity(raw_text, anc_text) > 0.0 or (
+                not raw_text.strip() and not anc_text.strip()
+            )
+        # sectionBreak, toc, other — same kind is sufficient
+        return True
+
+    # dp[i][j] = length of LCS of R[:i] and A[:j]
+    # Use flat list-of-lists for O(nr*na) memory.
+    dp = [[0] * (na + 1) for _ in range(nr + 1)]
+    for i in range(1, nr + 1):
+        for j in range(1, na + 1):
+            if _can_match_raw_anc(R[i - 1], A[j - 1]):
+                dp[i][j] = dp[i - 1][j - 1] + 1
+            else:
+                dp[i][j] = max(dp[i - 1][j], dp[i][j - 1])
+
+    # Backtrack to recover matched pairs (in reverse order, then reverse).
+    lcs_pairs: list[tuple[int, int]] = []
+    i, j = nr, na
+    while i > 0 and j > 0:
+        if _can_match_raw_anc(R[i - 1], A[j - 1]) and dp[i][j] == dp[i - 1][j - 1] + 1:
+            lcs_pairs.append((R[i - 1], A[j - 1]))
+            i -= 1
+            j -= 1
+        elif dp[i - 1][j] >= dp[i][j - 1]:
+            i -= 1
+        else:
+            j -= 1
+    lcs_pairs.reverse()
+
+    for raw_idx, anc_idx in lcs_pairs:
+        raw_to_anc[raw_idx] = anc_idx
+        anc_to_raw[anc_idx] = raw_idx
 
     # Phase 2: Match remaining trivial elements, preserving monotonicity.
     #
@@ -898,7 +951,9 @@ def _align_raw_to_ancestor(
 
 
 def _merge_changed_paragraph(
-    raw_para: dict[str, Any], desired_el: StructuralElement
+    raw_para: dict[str, Any],
+    desired_el: StructuralElement,
+    ancestor_el: StructuralElement | None = None,
 ) -> dict[str, Any]:
     """Merge a changed paragraph: base structure + desired text content.
 
@@ -908,6 +963,13 @@ def _merge_changed_paragraph(
 
     Takes from desired: text run content and markdown-representable formatting
     (bold, italic, strikethrough, underline, link, namedStyleType, monospace font).
+
+    ancestor_el: the original parsed ancestor element (before user edits).
+    When provided, namedStyleType is only propagated from desired if the user
+    actually changed it (i.e. desired differs from ancestor). If the user left
+    namedStyleType unchanged, we keep the raw base's namedStyleType — which may
+    differ from the parsed ancestor value because the serde round-trip normalises
+    some style names (e.g. TITLE → HEADING_1).
     """
     result = copy.deepcopy(raw_para)
     d_para = desired_el.paragraph
@@ -916,11 +978,26 @@ def _merge_changed_paragraph(
 
     para = result["paragraph"]
 
-    # Merge paragraphStyle: keep base, overlay only what markdown represents
+    # Merge paragraphStyle: keep base, overlay only what markdown represents.
+    # For namedStyleType: only propagate the desired value if the user actually
+    # changed it relative to the ancestor. If ancestor and desired have the same
+    # namedStyleType, the user didn't change the heading level — keep the raw
+    # base's namedStyleType (which may differ from the parsed ancestor because
+    # the serde normalises some style names, e.g. TITLE → HEADING_1).
     base_ps = para.get("paragraphStyle") or {}
     d_ps = d_para.paragraph_style
     if d_ps is not None and d_ps.named_style_type is not None:
-        base_ps["namedStyleType"] = str(d_ps.named_style_type)
+        anc_named_style_type = None
+        if ancestor_el is not None and ancestor_el.paragraph is not None:
+            anc_ps = ancestor_el.paragraph.paragraph_style
+            if anc_ps is not None:
+                anc_named_style_type = anc_ps.named_style_type
+        # Only apply desired namedStyleType if user changed it from the ancestor
+        if (
+            anc_named_style_type is None
+            or d_ps.named_style_type != anc_named_style_type
+        ):
+            base_ps["namedStyleType"] = str(d_ps.named_style_type)
     para["paragraphStyle"] = base_ps
 
     # Merge bullet: if desired has a bullet, merge with base's bullet
@@ -942,7 +1019,7 @@ def _merge_changed_paragraph(
     desired_elements = d_para.elements or []
 
     # Build a map of base run styles keyed by their text content position
-    # so we can carry over styles like foregroundColor, backgroundColor, font, fontSize
+    # so we can carry over styles like foregroundColor, backgroundColor, font, fontSize.
     base_style_by_offset: list[tuple[int, int, dict[str, Any]]] = []
     offset = 0
     for be in base_elements:
@@ -956,25 +1033,150 @@ def _merge_changed_paragraph(
             # Inline object or other non-text element — track position
             offset += 1
 
+    # Compute per-desired-run base offset adjustments.
+    #
+    # When text was edited (e.g. a word replaced), the character offsets of
+    # desired runs AFTER the edit are shifted relative to the base offsets.
+    # We use the ancestor text (before user edits) to compute how much each
+    # desired run's offset should be adjusted when looking up the base style.
+    #
+    # The ancestor is the version the user started editing from.  By comparing
+    # the ancestor text to the desired text we find the cumulative delta
+    # (base_chars - desired_chars) at the start of each desired run.
+    anc_text = _se_text(ancestor_el) if ancestor_el is not None else ""
+    desired_run_offsets: list[tuple[int, int]] = []  # (d_offset, base_lookup_offset)
+    offset_info: dict[str, Any] = {"delta": 0, "prefix_len": 0, "des_edit_end": 0}
+    if anc_text:
+        _offs_result = _compute_base_offsets_for_desired_runs(anc_text, desired_elements)
+        desired_run_offsets = _offs_result[0]
+        offset_info = _offs_result[1]
+
     new_elements: list[dict[str, Any]] = []
     d_offset = 0
-    for de in desired_elements:
+    for d_i, de in enumerate(desired_elements):
         de_dict = de.model_dump(by_alias=True, exclude_none=True)
         if de.text_run and de.text_run.content:
             d_content = de.text_run.content
             d_len = len(d_content)
-            # Find the best-matching base style for this run position
-            best_base_ts = _find_base_style_at(base_style_by_offset, d_offset)
-            if best_base_ts:
-                # Carry over non-representable styles from base
-                merged_ts = _merge_text_styles(
-                    best_base_ts, de_dict.get("textRun", {}).get("textStyle") or {}
+            d_ts = (de_dict.get("textRun") or {}).get("textStyle") or {}
+
+            # Determine base offset range for this desired run
+            if d_i < len(desired_run_offsets):
+                b_start = desired_run_offsets[d_i][1]
+            else:
+                b_start = d_offset
+            # Compute b_end using the base offset of the start of the NEXT run,
+            # or if this is the last run, use the total base text length.
+            if d_i + 1 < len(desired_run_offsets):
+                b_end = desired_run_offsets[d_i + 1][1]
+            else:
+                b_end = (
+                    base_style_by_offset[-1][1]
+                    if base_style_by_offset
+                    else b_start + d_len
                 )
-                de_dict.setdefault("textRun", {})["textStyle"] = merged_ts
+
+            # Find base run boundaries within [b_start, b_end].
+            # Split the desired run at those boundaries so each sub-segment gets
+            # the correct base non-representable style.
+            split_points = _find_base_splits_in_range(
+                base_style_by_offset, b_start, b_end
+            )
+
+            if len(split_points) <= 1:
+                # Single base run covers this desired run — simple case
+                best_base_ts = _find_base_style_at(base_style_by_offset, b_start)
+                if best_base_ts:
+                    merged_ts = _merge_text_styles(best_base_ts, d_ts)
+                    de_dict.setdefault("textRun", {})["textStyle"] = merged_ts
+                new_elements.append(de_dict)
+            else:
+                # Multiple base runs — split desired run at base run boundaries.
+                # Convert each base split point to a desired-text position using
+                # the delta information from offset_info.
+                oi_delta: int = offset_info.get("delta", 0)
+                oi_prefix: int = offset_info.get("prefix_len", 0)
+                oi_des_edit_end: int = offset_info.get("des_edit_end", 0)
+                # base edit region end in base coords
+                oi_base_edit_end: int = (
+                    oi_prefix + oi_delta + (oi_des_edit_end - oi_prefix)
+                    if oi_delta
+                    else 0
+                )
+
+                def _b_to_d_offset(
+                    b_pos: int,
+                    run_b_start: int,
+                    run_d_start: int,
+                    run_d_len: int,
+                    delta: int,
+                    prefix: int,
+                    des_edit_end: int,
+                    base_edit_end: int,
+                ) -> int:
+                    """Convert a base split position to an offset within the desired run."""
+                    if delta == 0:
+                        return b_pos - run_b_start
+                    if b_pos <= prefix:
+                        abs_d = b_pos
+                    elif b_pos >= base_edit_end:
+                        abs_d = b_pos - delta
+                    else:
+                        abs_d = des_edit_end
+                    return max(0, min(run_d_len, abs_d - run_d_start))
+
+                seg_start_d = 0  # offset within desired run
+                seg_start_b = b_start
+                for sp_b in split_points[1:]:  # each split point in base coords
+                    sp_d = _b_to_d_offset(
+                        sp_b,
+                        b_start,
+                        d_offset,
+                        d_len,
+                        oi_delta,
+                        oi_prefix,
+                        oi_des_edit_end,
+                        oi_base_edit_end,
+                    )
+                    sp_d = max(seg_start_d, min(d_len, sp_d))
+                    seg_text = d_content[seg_start_d:sp_d]
+                    if seg_text:
+                        seg_base_ts = (
+                            _find_base_style_at(base_style_by_offset, seg_start_b) or {}
+                        )
+                        seg_merged_ts = _merge_text_styles(seg_base_ts, d_ts)
+                        new_elements.append(
+                            {
+                                "textRun": {
+                                    "content": seg_text,
+                                    "textStyle": seg_merged_ts,
+                                }
+                            }
+                        )
+                    seg_start_d = sp_d
+                    seg_start_b = sp_b
+                # Last segment
+                seg_text = d_content[seg_start_d:]
+                if seg_text:
+                    seg_base_ts = (
+                        _find_base_style_at(base_style_by_offset, seg_start_b) or {}
+                    )
+                    seg_merged_ts = _merge_text_styles(seg_base_ts, d_ts)
+                    new_elements.append(
+                        {
+                            "textRun": {
+                                "content": seg_text,
+                                "textStyle": seg_merged_ts,
+                            }
+                        }
+                    )
             d_offset += d_len
         elif de.inline_object_element or de.footnote_reference:
             d_offset += 1
-        new_elements.append(de_dict)
+            new_elements.append(de_dict)
+            continue
+        else:
+            new_elements.append(de_dict)
 
     # Preserve inline objects from base that desired doesn't have
     # (images, footnote refs, etc. that markdown can't represent)
@@ -1003,6 +1205,110 @@ def _merge_changed_paragraph(
 
     para["elements"] = new_elements
     return result
+
+
+def _find_base_splits_in_range(
+    base_style_by_offset: list[tuple[int, int, dict[str, Any]]],
+    b_start: int,
+    b_end: int,
+) -> list[int]:
+    """Return the list of base run start offsets that fall within [b_start, b_end).
+
+    The first element is always b_start (or the start of the base run containing
+    b_start).  Subsequent elements are the starts of base runs that begin within
+    [b_start, b_end).
+
+    Returns a list of at least 1 element (just [b_start] if covered by one run).
+    """
+    splits: list[int] = [b_start]
+    for run_start, _run_end, _ in base_style_by_offset:
+        if run_start > b_start and run_start < b_end:
+            splits.append(run_start)
+    return splits
+
+
+def _compute_base_offsets_for_desired_runs(
+    anc_text: str,
+    desired_elements: list[Any],  # list[ParagraphElement]
+) -> tuple[list[tuple[int, int]], dict[str, Any]]:
+    """Compute (desired_offset, base_offset) pairs for the start of each desired run.
+
+    Uses the ancestor text to identify the common prefix and suffix.  Text
+    before the first edit point has the same base and desired offsets.  Text
+    after the edit has a shifted desired offset (base_offset = desired_offset +
+    delta, where delta = len(anc_edit) - len(desired_edit)).
+
+    Returns one entry per desired element.  For non-text-run elements the
+    offsets track position but are less meaningful.
+
+    This allows offset-based base style lookup to remain accurate even when a
+    word in the middle of a paragraph was replaced with a word of different
+    length.
+    """
+    # Concatenate all desired run texts
+    desired_runs_text: list[str] = []
+    for de in desired_elements:
+        if de.text_run and de.text_run.content:
+            desired_runs_text.append(de.text_run.content)
+        else:
+            desired_runs_text.append("")
+    desired_text = "".join(desired_runs_text)
+
+    n_anc = len(anc_text)
+    n_des = len(desired_text)
+
+    # Common prefix length
+    prefix_len = 0
+    while (
+        prefix_len < n_anc
+        and prefix_len < n_des
+        and anc_text[prefix_len] == desired_text[prefix_len]
+    ):
+        prefix_len += 1
+
+    # Common suffix length (don't overlap with prefix)
+    suffix_len = 0
+    while (
+        suffix_len < n_anc - prefix_len
+        and suffix_len < n_des - prefix_len
+        and anc_text[n_anc - 1 - suffix_len] == desired_text[n_des - 1 - suffix_len]
+    ):
+        suffix_len += 1
+
+    # Delta: positive means base is longer (desired chars are shifted left relative to base)
+    anc_edit_len = n_anc - prefix_len - suffix_len
+    des_edit_len = n_des - prefix_len - suffix_len
+    delta = (
+        anc_edit_len - des_edit_len
+    )  # base_offset = desired_offset + delta (for positions after edit)
+    # Edit region in desired: [prefix_len, prefix_len + des_edit_len)
+    des_edit_end = prefix_len + des_edit_len
+
+    def _d_to_b(d_pos: int) -> int:
+        """Convert a desired-text position to a base-text position."""
+        if d_pos <= prefix_len:
+            return d_pos
+        elif d_pos >= des_edit_end:
+            return d_pos + delta
+        else:
+            # Inside the edit region — map to the start of the base edit
+            return prefix_len
+
+    result: list[tuple[int, int]] = []
+    d_offset = 0
+    for run_text in desired_runs_text:
+        d_run_start = d_offset
+        base_offset = _d_to_b(d_run_start)
+        result.append((d_run_start, base_offset))
+        d_offset += len(run_text)
+
+    # Also return info needed to convert base split points back to desired positions
+    info: dict[str, Any] = {
+        "delta": delta,
+        "prefix_len": prefix_len,
+        "des_edit_end": des_edit_end,
+    }
+    return result, info
 
 
 def _find_base_style_at(
@@ -1057,6 +1363,7 @@ def _merge_text_styles(
             key in merged
             and key not in desired_ts
             and key in ("bold", "italic", "strikethrough", "underline")
+            and merged[key]  # Only pop if currently True; leave explicit False alone
         ):
             merged.pop(key, None)
 
@@ -1167,7 +1474,9 @@ def _merge_table_cell(raw_cell: dict[str, Any], d_cell: Any) -> None:
 
 
 def _merge_changed_element(
-    raw_base: dict[str, Any], desired_el: StructuralElement
+    raw_base: dict[str, Any],
+    desired_el: StructuralElement,
+    ancestor_el: StructuralElement | None = None,
 ) -> dict[str, Any]:
     """Merge a changed element: start from raw base, apply text-level changes.
 
@@ -1175,7 +1484,7 @@ def _merge_changed_element(
     """
     kind = _element_kind(raw_base)
     if kind == "paragraph":
-        return _merge_changed_paragraph(raw_base, desired_el)
+        return _merge_changed_paragraph(raw_base, desired_el, ancestor_el)
     if kind == "table":
         return _merge_changed_table(raw_base, desired_el)
     # For other types (section_break, toc, etc.), use base as-is
@@ -1271,7 +1580,9 @@ def _apply_content_alignment(
             result.append(copy.deepcopy(raw_base_content[r_idx]))
         else:
             # Element changed — merge text changes into raw base
-            result.append(_merge_changed_element(raw_base_content[r_idx], d_el))
+            result.append(
+                _merge_changed_element(raw_base_content[r_idx], d_el, ancestor_el)
+            )
         last_emitted_r_idx = r_idx
 
     # Tail: any unmatched raw elements after the last matched one.
