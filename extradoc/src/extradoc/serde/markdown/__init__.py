@@ -225,30 +225,9 @@ def _three_way_merge(
     from extradoc.diffmerge import diff as reconcile_diff
 
     base_dict = base.document.model_dump(by_alias=True, exclude_none=True)
-    mine_dict = mine.document.model_dump(by_alias=True, exclude_none=True)
 
     ops = reconcile_diff(ancestor.document, mine.document)
     desired_dict = apply_ops_to_document(base_dict, ops)
-
-    # Inject mine's synthetic list defs so the reconciler picks the right preset
-    mine_tabs = mine_dict.get("tabs") or []
-    desired_tabs = desired_dict.get("tabs") or []
-    for mine_tab in mine_tabs:
-        mine_props = mine_tab.get("tabProperties") or {}
-        mine_tab_id = str(mine_props.get("tabId", ""))
-        mine_dt = mine_tab.get("documentTab") or {}
-        mine_lists = mine_dt.get("lists") or {}
-        if not mine_lists:
-            continue
-        for d_tab in desired_tabs:
-            d_props = d_tab.get("tabProperties") or {}
-            if str(d_props.get("tabId", "")) == mine_tab_id:
-                d_dt = d_tab.setdefault("documentTab", {})
-                d_lists = d_dt.setdefault("lists", {})
-                for list_id, list_def in mine_lists.items():
-                    if list_id not in d_lists:
-                        d_lists[list_id] = list_def
-                break
 
     desired_document = base.document.__class__.model_validate(desired_dict)
 

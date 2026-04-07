@@ -1054,3 +1054,72 @@ class TestOriginalDocStylePreservation:
         assert runs[0]["font_size"] == 14, (
             f"Font size lost: expected 14, got {runs[0]['font_size']}"
         )
+
+
+# ===========================================================================
+# BUG: Spurious synthetic list defs injected into desired after word edit
+# ===========================================================================
+
+OASIS_CIQ_GOLDEN_ID = "19GeM80fb9c0uHEget4jaR8WotgXwNpTwTaOHzynH-PI"
+
+
+class TestListIdsPreserved:
+    """3-way merge must not inject synthetic list IDs into the desired document.
+
+    List IDs can't be represented in markdown, so they should pass through
+    from base untouched.  The injection block in _three_way_merge() was
+    unconditionally copying all of mine's synthetic list defs (e.g.
+    ``kix.md_list_bullet_1``) into desired even for UNCHANGED lists.  The
+    reconciler then generated spurious createNamedRangeRequests/list requests
+    for each of those 23 phantom defs.
+    """
+
+    def test_list_ids_preserved_through_word_edit(self, tmp_path: Path) -> None:
+        """A single word edit in a non-list paragraph must not add synthetic list IDs."""
+        from extradoc.reconcile_v3.api import reconcile_batches
+
+        rt = RoundTrip(OASIS_CIQ_GOLDEN_ID, tmp_path / "doc")
+
+        # Edit a plain (non-list) subtitle paragraph
+        rt.edit_md(find="Public Review Draft 02", replace="Public Review Draft 03")
+
+        result = rt.deserialize()
+
+        # Collect list IDs from base and desired
+        def _list_ids(doc: Document) -> set[str]:
+            ids: set[str] = set()
+            for tab in doc.tabs or []:
+                dt = tab.document_tab
+                if dt and dt.lists:
+                    ids.update(dt.lists.keys())
+            return ids
+
+        base_ids = _list_ids(result.base.document)
+        desired_ids = _list_ids(result.desired.document)
+
+        # No new synthetic list IDs should appear in desired
+        new_ids = desired_ids - base_ids
+        assert not new_ids, (
+            f"Spurious synthetic list IDs injected into desired: {sorted(new_ids)}"
+        )
+
+        # All base list IDs must survive into desired (not be lost either)
+        missing_ids = base_ids - desired_ids
+        assert not missing_ids, (
+            f"Base list IDs missing from desired: {sorted(missing_ids)}"
+        )
+
+        # The requests should not include any createParagraphBullets or similar
+        # list-construction requests caused by the spurious synthetic defs.
+        batches = reconcile_batches(result.base.document, result.desired.document)
+        list_requests = [
+            req
+            for batch in batches
+            for req in (batch.requests or [])
+            if req.model_dump(by_alias=True, exclude_none=True).keys()
+            & {"createParagraphBullets", "updateListProperties"}
+        ]
+        assert not list_requests, (
+            f"Unexpected list-related requests generated: {list_requests}. "
+            "Likely caused by spurious synthetic list defs in desired."
+        )
