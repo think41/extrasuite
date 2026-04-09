@@ -16,9 +16,21 @@ Usage::
 
     json_str = to_json(doc)        # full-fidelity JSON with XPath pointers
     md_str = to_markdown(doc)      # GFM markdown
+
+Markdown round-trip::
+
+    from extradocx import DocxParser, to_markdown, parse_markdown, diff
+
+    doc = DocxParser("report.docx").parse()
+    md = to_markdown(doc)
+    # ... user edits md ...
+    edited_doc = parse_markdown(edited_md)
+    ops = diff(doc, edited_doc)    # list of DiffOp
 """
 
+from extradocx.md_diff import diff
+from extradocx.md_parser import parse_markdown
 from extradocx.parser import DocxParser
 from extradocx.serializers import to_json, to_markdown
 
-__all__ = ["DocxParser", "to_json", "to_markdown"]
+__all__ = ["DocxParser", "to_json", "to_markdown", "parse_markdown", "diff"]
