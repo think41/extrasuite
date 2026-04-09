@@ -78,7 +78,8 @@ def document_to_markdown(doc: Document) -> dict[str, dict[str, str]]:
             continue
 
         list_defs = dt.lists or {}
-        content = _serialize_body(dt, list_defs, heading_id_to_name=heading_id_to_name)
+        inline_objs = dt.inline_objects or {}
+        content = _serialize_body(dt, list_defs, heading_id_to_name=heading_id_to_name, inline_objects=inline_objs)
         result[folder] = {"document.md": content}
 
     return result
@@ -137,6 +138,7 @@ def _serialize_body(
     list_defs: dict[str, Any],
     *,
     heading_id_to_name: dict[str, str] | None = None,
+    inline_objects: dict[str, Any] | None = None,
 ) -> str:
     h_map = heading_id_to_name or {}
     list_types = {lid: _detect_list_type(ld) for lid, ld in list_defs.items()}
@@ -148,11 +150,11 @@ def _serialize_body(
         parts: list[str] = []
         for se in fn.content or []:
             if se.paragraph:
-                parts.append(_serialize_inlines(se.paragraph.elements or [], heading_id_to_name=h_map))
+                parts.append(_serialize_inlines(se.paragraph.elements or [], heading_id_to_name=h_map, inline_objects=inline_objects))
         footnote_defs[fn_id] = " ".join(p for p in parts if p)
 
     body_content = (doc_tab.body.content or []) if doc_tab.body else []
-    blocks = _serialize_content(body_content, list_types, list_defs, nr_spans, heading_id_to_name=h_map)
+    blocks = _serialize_content(body_content, list_types, list_defs, nr_spans, heading_id_to_name=h_map, inline_objects=inline_objects)
 
     # Append footnote definitions
     if footnote_defs:
@@ -170,6 +172,7 @@ def _serialize_content(
     nr_spans: list[tuple[int, int, str]] | None = None,
     *,
     heading_id_to_name: dict[str, str] | None = None,
+    inline_objects: dict[str, Any] | None = None,
 ) -> list[str]:
     """Serialize a list of StructuralElements to markdown lines."""
     lines: list[str] = []
@@ -210,7 +213,7 @@ def _serialize_content(
                 elem = special_element_from_named_range(se.table, annotation)
                 lines.append(elem.to_markdown(heading_id_to_name=h_map))
             else:
-                lines.append(_serialize_table(se.table, heading_id_to_name=h_map))
+                lines.append(_serialize_table(se.table, heading_id_to_name=h_map, inline_objects=inline_objects))
             continue
 
         if se.paragraph is not None:
@@ -262,7 +265,7 @@ def _serialize_content(
                     ordinal = list_counters.get(nesting, 0) + 1
                     list_counters[nesting] = ordinal
                     line = _serialize_list_item(
-                        para, list_types, list_defs, ordinal=ordinal, heading_id_to_name=h_map
+                        para, list_types, list_defs, ordinal=ordinal, heading_id_to_name=h_map, inline_objects=inline_objects
                     )
                     if line is not None:
                         if lines and (not in_list or this_list_id != current_list_id):
@@ -275,7 +278,7 @@ def _serialize_content(
                     if in_list:
                         in_list = False
                         current_list_id = None
-                    block = _serialize_paragraph(para, heading_id_to_name=h_map)
+                    block = _serialize_paragraph(para, heading_id_to_name=h_map, inline_objects=inline_objects)
                     if block is not None:
                         if lines:
                             lines.append("")
@@ -320,10 +323,10 @@ def _is_colored_empty_paragraph(para: Paragraph) -> bool:
 
 
 def _serialize_paragraph(
-    para: Paragraph, *, heading_id_to_name: dict[str, str] | None = None
+    para: Paragraph, *, heading_id_to_name: dict[str, str] | None = None, inline_objects: dict[str, Any] | None = None
 ) -> str | None:
-    inline = _serialize_inlines(para.elements or [], heading_id_to_name=heading_id_to_name)
-    if not inline.strip():
+    inline = _serialize_inlines(para.elements or [], heading_id_to_name=heading_id_to_name, inline_objects=inline_objects).rstrip()
+    if not inline:
         return None
 
     ps = para.paragraph_style
@@ -340,12 +343,13 @@ def _serialize_list_item(
     list_defs: dict[str, Any],
     ordinal: int = 1,
     heading_id_to_name: dict[str, str] | None = None,
+    inline_objects: dict[str, Any] | None = None,
 ) -> str | None:
     bullet = para.bullet
     if not bullet:
         return None
 
-    inline = _serialize_inlines(para.elements or [], heading_id_to_name=heading_id_to_name)
+    inline = _serialize_inlines(para.elements or [], heading_id_to_name=heading_id_to_name, inline_objects=inline_objects).rstrip()
     list_id = bullet.list_id or ""
     nesting = _list_item_nesting_level(para, list_defs.get(list_id))
     list_type = list_types.get(list_id, "bullet")
@@ -410,19 +414,38 @@ def _serialize_inlines(
     elements: list[ParagraphElement],
     *,
     heading_id_to_name: dict[str, str] | None = None,
+    inline_objects: dict[str, Any] | None = None,
 ) -> str:
-    return "".join(_serialize_inline_elem(pe, heading_id_to_name=heading_id_to_name) for pe in elements)
+    return "".join(_serialize_inline_elem(pe, heading_id_to_name=heading_id_to_name, inline_objects=inline_objects) for pe in elements)
 
 
 def _serialize_inline_elem(
-    pe: ParagraphElement, *, heading_id_to_name: dict[str, str] | None = None
+    pe: ParagraphElement, *, heading_id_to_name: dict[str, str] | None = None, inline_objects: dict[str, Any] | None = None
 ) -> str:
     if pe.text_run is not None:
         return serialize_text_run(pe.text_run, heading_id_to_name=heading_id_to_name)
 
     if pe.inline_object_element is not None:
         obj_id = pe.inline_object_element.inline_object_id or ""
-        return f'<x-img id="{obj_id}"/>'
+        io_dict = inline_objects or {}
+        obj = io_dict.get(obj_id)
+        uri = ""
+        alt = ""
+        if obj is not None:
+            props = getattr(obj, "inline_object_properties", None)
+            if props is None and isinstance(obj, dict):
+                props_d = obj.get("inlineObjectProperties", {})
+                eo_d = props_d.get("embeddedObject", {}) if props_d else {}
+                uri = (eo_d.get("imageProperties", {}) or {}).get("contentUri", "") or ""
+                alt = eo_d.get("description", "") or ""
+            elif props is not None:
+                eo = props.embedded_object
+                if eo is not None:
+                    uri = (eo.image_properties.content_uri or "") if eo.image_properties else ""
+                    alt = eo.description or ""
+        safe_alt = alt.replace("\\", "\\\\").replace("]", "\\]")
+        safe_uri = uri.replace("\\", "\\\\").replace(")", "\\)")
+        return f"![{safe_alt}]({safe_uri})"
 
     if pe.footnote_reference is not None:
         fn_id = pe.footnote_reference.footnote_id or ""
@@ -466,10 +489,10 @@ def _serialize_inline_elem(
 # ---------------------------------------------------------------------------
 
 
-def _serialize_table(table: Table, *, heading_id_to_name: dict[str, str] | None = None) -> str:
+def _serialize_table(table: Table, *, heading_id_to_name: dict[str, str] | None = None, inline_objects: dict[str, Any] | None = None) -> str:
     if _needs_html_table(table):
-        return _serialize_html_table(table, heading_id_to_name=heading_id_to_name)
-    return _serialize_gfm_table(table, heading_id_to_name=heading_id_to_name)
+        return _serialize_html_table(table, heading_id_to_name=heading_id_to_name, inline_objects=inline_objects)
+    return _serialize_gfm_table(table, heading_id_to_name=heading_id_to_name, inline_objects=inline_objects)
 
 
 def _needs_html_table(table: Table) -> bool:
@@ -487,22 +510,22 @@ def _needs_html_table(table: Table) -> bool:
     return False
 
 
-def _cell_text(cell: Any, *, heading_id_to_name: dict[str, str] | None = None) -> str:
+def _cell_text(cell: Any, *, heading_id_to_name: dict[str, str] | None = None, inline_objects: dict[str, Any] | None = None) -> str:
     parts: list[str] = []
     for se in cell.content or []:
         if se.paragraph:
-            t = _serialize_inlines(se.paragraph.elements or [], heading_id_to_name=heading_id_to_name)
+            t = _serialize_inlines(se.paragraph.elements or [], heading_id_to_name=heading_id_to_name, inline_objects=inline_objects)
             if t:
                 parts.append(t)
     return " ".join(parts).replace("|", "\\|")
 
 
-def _serialize_gfm_table(table: Table, *, heading_id_to_name: dict[str, str] | None = None) -> str:
+def _serialize_gfm_table(table: Table, *, heading_id_to_name: dict[str, str] | None = None, inline_objects: dict[str, Any] | None = None) -> str:
     rows = table.table_rows or []
     if not rows:
         return ""
 
-    cells = [[_cell_text(c, heading_id_to_name=heading_id_to_name) for c in row.table_cells or []] for row in rows]
+    cells = [[_cell_text(c, heading_id_to_name=heading_id_to_name, inline_objects=inline_objects) for c in row.table_cells or []] for row in rows]
     n_cols = max((len(r) for r in cells), default=0)
     for row in cells:
         while len(row) < n_cols:
@@ -514,7 +537,7 @@ def _serialize_gfm_table(table: Table, *, heading_id_to_name: dict[str, str] | N
     return "\n".join([header, sep, *data])
 
 
-def _serialize_html_table(table: Table, *, heading_id_to_name: dict[str, str] | None = None) -> str:
+def _serialize_html_table(table: Table, *, heading_id_to_name: dict[str, str] | None = None, inline_objects: dict[str, Any] | None = None) -> str:
     lines = ["<table>"]
     for i, row in enumerate(table.table_rows or []):
         lines.append("  <tr>")
@@ -531,7 +554,7 @@ def _serialize_html_table(table: Table, *, heading_id_to_name: dict[str, str] | 
                     color = optional_color_to_hex(s.background_color)
                     if color:
                         attrs += f' style="background-color:{color}"'
-            text = _cell_text(cell, heading_id_to_name=heading_id_to_name)
+            text = _cell_text(cell, heading_id_to_name=heading_id_to_name, inline_objects=inline_objects)
             lines.append(f"    <{tag}{attrs}>{text}</{tag}>")
         lines.append("  </tr>")
     lines.append("</table>")

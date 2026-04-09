@@ -46,19 +46,26 @@ from mistletoe.span_token import (
     Strikethrough,
     Strong,
 )
+from mistletoe.span_token import Image as MdImage
 from mistletoe.span_token import Link as MdLink
 
 from extradoc.api_types._generated import (
     AutoText,
+    BookmarkLink,
     Bullet,
     ColumnBreak,
     DateElement,
     Document,
     DocumentTab,
+    EmbeddedObject,
     Equation,
     FootnoteReference,
+    HeadingLink,
     HorizontalRule,
+    ImageProperties,
+    InlineObject,
     InlineObjectElement,
+    InlineObjectProperties,
     PageBreak,
     Paragraph,
     ParagraphElement,
@@ -81,8 +88,6 @@ from extradoc.api_types._generated import (
     TextStyle,
 )
 from extradoc.api_types._generated import (
-    BookmarkLink,
-    HeadingLink,
     Link as DocLink,
 )
 from extradoc.mock.reindex import reindex_and_normalize_all_tabs
@@ -220,7 +225,8 @@ def _parse_tab(
     indices (obtained by running reindex internally).
     """
     list_synth = _ListSynth()
-    body_content, footnotes, special_positions = _parse_body(source, list_synth, heading_name_to_id=heading_name_to_id)
+    pending_inline_objects: dict[str, InlineObject] = {}
+    body_content, footnotes, special_positions = _parse_body(source, list_synth, heading_name_to_id=heading_name_to_id, pending_inline_objects=pending_inline_objects)
 
     # Build list definitions dict
     lists_d = list_synth.defs
@@ -236,6 +242,11 @@ def _parse_tab(
         doc_tab_d["lists"] = lists_d
     if footnotes:
         doc_tab_d["footnotes"] = footnotes  # already plain dicts from _parse_body
+    if pending_inline_objects:
+        doc_tab_d["inlineObjects"] = {
+            k: v.model_dump(by_alias=True, exclude_none=True)
+            for k, v in pending_inline_objects.items()
+        }
 
     actual_tab_id = tab_id or f"t.{folder}"
     tab_props = TabProperties(tab_id=actual_tab_id, title=tab_title)
@@ -300,6 +311,7 @@ def _parse_body(
     list_synth: _ListSynth,
     *,
     heading_name_to_id: dict[str, tuple[str, str | None]] | None = None,
+    pending_inline_objects: dict[str, InlineObject] | None = None,
 ) -> tuple[list[StructuralElement], dict[str, Any], list[tuple[int, str]]]:
     """Parse markdown source into body StructuralElements and footnotes.
 
@@ -327,7 +339,7 @@ def _parse_body(
     h_map = heading_name_to_id or {}
     for block in md_doc.children or []:
         if isinstance(block, Heading):
-            body.append(_convert_heading(block, h_map))
+            body.append(_convert_heading(block, h_map, pending_inline_objects))
 
         elif isinstance(block, CodeFence):
             body_pos = len(body)
@@ -347,14 +359,14 @@ def _parse_body(
             text = _raw_text(block)
             if _FN_DEF_RE.match(text):
                 continue
-            ses = _convert_paragraph(block, h_map)
+            ses = _convert_paragraph(block, h_map, pending_inline_objects)
             body.extend(ses)
 
         elif isinstance(block, MdList):
-            body.extend(_convert_list(block, list_synth, list_id=None, nesting=0, heading_name_to_id=h_map))
+            body.extend(_convert_list(block, list_synth, list_id=None, nesting=0, heading_name_to_id=h_map, pending_inline_objects=pending_inline_objects))
 
         elif isinstance(block, MdTable):
-            body.append(_convert_gfm_table(block, h_map))
+            body.append(_convert_gfm_table(block, h_map, pending_inline_objects))
 
         elif isinstance(block, ThematicBreak):
             body.append(_make_hr_para())
@@ -445,9 +457,9 @@ def _block_to_para_groups(block: Any) -> list[list[Any]]:
     return [g for g in groups if g]
 
 
-def _tokens_to_para(tokens: list[Any], *, heading_name_to_id: dict[str, tuple[str, str | None]] | None = None) -> Paragraph | None:
+def _tokens_to_para(tokens: list[Any], *, heading_name_to_id: dict[str, tuple[str, str | None]] | None = None, pending_inline_objects: dict[str, InlineObject] | None = None) -> Paragraph | None:
     """Convert a flat list of inline tokens to a Paragraph, or None if empty."""
-    elements = _tokens_to_elements(tokens, TextStyle(), heading_name_to_id)
+    elements = _tokens_to_elements(tokens, TextStyle(), heading_name_to_id, pending_inline_objects)
     if not elements:
         return None
     # Every paragraph in the Google Docs API must end with a "\n" text run.
@@ -596,12 +608,12 @@ def _make_pagebreak_para() -> StructuralElement:
 # ---------------------------------------------------------------------------
 
 
-def _convert_heading(block: Any, heading_name_to_id: dict[str, tuple[str, str | None]] | None = None) -> StructuralElement:
+def _convert_heading(block: Any, heading_name_to_id: dict[str, tuple[str, str | None]] | None = None, pending_inline_objects: dict[str, InlineObject] | None = None) -> StructuralElement:
     level = block.level
     named_style = _LEVEL_TO_NAMED_STYLE.get(
         level, ParagraphStyleNamedStyleType.HEADING_1
     )
-    elements = _tokens_to_elements(block.children, TextStyle(), heading_name_to_id)
+    elements = _tokens_to_elements(block.children, TextStyle(), heading_name_to_id, pending_inline_objects)
     elements.append(ParagraphElement(text_run=TextRun(content="\n")))
     return StructuralElement(
         paragraph=Paragraph(
@@ -611,7 +623,7 @@ def _convert_heading(block: Any, heading_name_to_id: dict[str, tuple[str, str | 
     )
 
 
-def _convert_paragraph(block: Any, heading_name_to_id: dict[str, tuple[str, str | None]] | None = None) -> list[StructuralElement]:
+def _convert_paragraph(block: Any, heading_name_to_id: dict[str, tuple[str, str | None]] | None = None, pending_inline_objects: dict[str, InlineObject] | None = None) -> list[StructuralElement]:
     """Convert a mistletoe Paragraph to one or more StructuralElements.
 
     A paragraph that contains only a <x-pagebreak/> becomes a pagebreak element.
@@ -625,7 +637,7 @@ def _convert_paragraph(block: Any, heading_name_to_id: dict[str, tuple[str, str 
     ):
         return [_make_pagebreak_para()]
 
-    elements = _tokens_to_elements(children, TextStyle(), heading_name_to_id)
+    elements = _tokens_to_elements(children, TextStyle(), heading_name_to_id, pending_inline_objects)
     if not elements:
         return []
     elements.append(ParagraphElement(text_run=TextRun(content="\n")))
@@ -647,6 +659,7 @@ def _convert_list(
     list_id: str | None,
     nesting: int,
     heading_name_to_id: dict[str, tuple[str, str | None]] | None = None,
+    pending_inline_objects: dict[str, InlineObject] | None = None,
 ) -> list[StructuralElement]:
     """Convert a mistletoe List token to StructuralElements.
 
@@ -671,7 +684,7 @@ def _convert_list(
                 inline_tokens = list(child.children or [])
             # Other block types (quotes, etc.) are skipped for simplicity
 
-        elements = _tokens_to_elements(inline_tokens, TextStyle(), heading_name_to_id)
+        elements = _tokens_to_elements(inline_tokens, TextStyle(), heading_name_to_id, pending_inline_objects)
         elements.append(ParagraphElement(text_run=TextRun(content="\n")))
 
         result.append(
@@ -689,13 +702,13 @@ def _convert_list(
         # Recurse into nested lists using same list_id
         for nested in nested_lists:
             result.extend(
-                _convert_list(nested, list_synth, list_id=list_id, nesting=nesting + 1, heading_name_to_id=heading_name_to_id)
+                _convert_list(nested, list_synth, list_id=list_id, nesting=nesting + 1, heading_name_to_id=heading_name_to_id, pending_inline_objects=pending_inline_objects)
             )
 
     return result
 
 
-def _convert_gfm_table(block: Any, heading_name_to_id: dict[str, tuple[str, str | None]] | None = None) -> StructuralElement:
+def _convert_gfm_table(block: Any, heading_name_to_id: dict[str, tuple[str, str | None]] | None = None, pending_inline_objects: dict[str, InlineObject] | None = None) -> StructuralElement:
     """Convert a mistletoe GFM Table to a Google Docs Table."""
     all_rows: list[Any] = [block.header, *list(block.children)]
     n_cols = max((len(row.children) for row in all_rows), default=0)
@@ -705,7 +718,7 @@ def _convert_gfm_table(block: Any, heading_name_to_id: dict[str, tuple[str, str 
         cells: list[TableCell] = []
         for cell in row.children:
             base_style = TextStyle()
-            inline_elements = _tokens_to_elements(list(cell.children), base_style, heading_name_to_id)
+            inline_elements = _tokens_to_elements(list(cell.children), base_style, heading_name_to_id, pending_inline_objects)
             inline_elements.append(ParagraphElement(text_run=TextRun(content="\n")))
             cell_para = StructuralElement(
                 paragraph=Paragraph(
@@ -851,6 +864,7 @@ def _tokens_to_elements(
     tokens: list[Any],
     style: TextStyle,
     heading_name_to_id: dict[str, tuple[str, str | None]] | None = None,
+    pending_inline_objects: dict[str, InlineObject] | None = None,
 ) -> list[ParagraphElement]:
     """Recursively convert mistletoe inline tokens to ParagraphElements."""
     result: list[ParagraphElement] = []
@@ -881,15 +895,15 @@ def _tokens_to_elements(
 
         elif isinstance(token, Strong):
             new_style = style.model_copy(update={"bold": True})
-            result.extend(_tokens_to_elements(list(token.children or []), new_style, heading_name_to_id))
+            result.extend(_tokens_to_elements(list(token.children or []), new_style, heading_name_to_id, pending_inline_objects))
 
         elif isinstance(token, Emphasis):
             new_style = style.model_copy(update={"italic": True})
-            result.extend(_tokens_to_elements(list(token.children or []), new_style, heading_name_to_id))
+            result.extend(_tokens_to_elements(list(token.children or []), new_style, heading_name_to_id, pending_inline_objects))
 
         elif isinstance(token, Strikethrough):
             new_style = style.model_copy(update={"strikethrough": True})
-            result.extend(_tokens_to_elements(list(token.children or []), new_style, heading_name_to_id))
+            result.extend(_tokens_to_elements(list(token.children or []), new_style, heading_name_to_id, pending_inline_objects))
 
         elif isinstance(token, InlineCode):
             # Inline code → Courier New 10pt text run
@@ -936,7 +950,7 @@ def _tokens_to_elements(
             else:
                 link_obj = DocLink(url=target)
             new_style = style.model_copy(update={"link": link_obj})
-            result.extend(_tokens_to_elements(list(token.children or []), new_style, heading_name_to_id))
+            result.extend(_tokens_to_elements(list(token.children or []), new_style, heading_name_to_id, pending_inline_objects))
 
         elif isinstance(token, HTMLSpan):
             content = token.content
@@ -962,6 +976,30 @@ def _tokens_to_elements(
                 pe = _parse_html_span(content)
                 if pe is not None:
                     result.append(pe)
+
+        elif isinstance(token, MdImage):
+            src = token.src or ""
+            alt_parts: list[str] = []
+            for c in token.children or []:
+                if isinstance(c, RawText):
+                    alt_parts.append(c.content)
+            alt = "".join(alt_parts)
+            pio = pending_inline_objects
+            synthetic_id = f"local.img.{len(pio)}" if pio is not None else "local.img.0"
+            pe = ParagraphElement(
+                inline_object_element=InlineObjectElement(inline_object_id=synthetic_id)
+            )
+            if pio is not None:
+                pio[synthetic_id] = InlineObject(
+                    object_id=synthetic_id,
+                    inline_object_properties=InlineObjectProperties(
+                        embedded_object=EmbeddedObject(
+                            image_properties=ImageProperties(content_uri=src),
+                            description=alt or None,
+                        )
+                    ),
+                )
+            result.append(pe)
 
         elif isinstance(token, LineBreak):
             if token.soft:

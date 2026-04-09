@@ -511,7 +511,14 @@ class TestMarkdownRoundTrip:
         assert "| 1 | 2 |" in md
 
     def test_passthrough_inline_image(self) -> None:
-        """Inline images serialize to <x-img id="..."/> and round-trip back."""
+        """Inline images serialize to ![alt](url) and round-trip back."""
+        from extradoc.api_types._generated import (
+            EmbeddedObject,
+            ImageProperties,
+            InlineObject,
+            InlineObjectProperties,
+        )
+
         content = [
             StructuralElement(
                 paragraph=Paragraph(
@@ -530,9 +537,24 @@ class TestMarkdownRoundTrip:
             )
         ]
         doc = _make_doc(content)
+        # Add inline_objects so the serializer can look up the image properties
+        dt = doc.tabs[0].document_tab  # type: ignore[index,union-attr]
+        dt.inline_objects = {
+            "obj.abc123": InlineObject(
+                object_id="obj.abc123",
+                inline_object_properties=InlineObjectProperties(
+                    embedded_object=EmbeddedObject(
+                        image_properties=ImageProperties(
+                            content_uri="https://example.com/img.png"
+                        ),
+                        description="test image",
+                    )
+                ),
+            )
+        }
         per_tab = document_to_markdown(doc)
         md = per_tab["Tab_1"]["document.md"]
-        assert '<x-img id="obj.abc123"/>' in md
+        assert "![test image](https://example.com/img.png)" in md
 
         # Round-trip back
         doc2 = markdown_to_document({"Tab_1": md}, document_id="x", title="T")
@@ -546,7 +568,7 @@ class TestMarkdownRoundTrip:
             if pe.inline_object_element
         ]
         assert len(img_elements) == 1
-        assert img_elements[0].inline_object_element.inline_object_id == "obj.abc123"  # type: ignore[union-attr]
+        assert img_elements[0].inline_object_element.inline_object_id is not None  # type: ignore[union-attr]
 
 
 # ---------------------------------------------------------------------------

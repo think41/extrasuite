@@ -1203,8 +1203,62 @@ def _merge_changed_paragraph(
                 insert_pos = max(0, len(new_elements) - 1)
                 new_elements.insert(insert_pos, copy.deepcopy(be))
 
+    # Preserve trailing whitespace (before the final \n) from the base paragraph.
+    # Markdown round-trips strip trailing spaces, so the desired runs won't have
+    # them.  Without this, every edited paragraph with trailing whitespace in the
+    # original doc would produce a spurious deleteContentRange request.
+    _restore_trailing_whitespace(new_elements, base_elements)
+
     para["elements"] = new_elements
     return result
+
+
+def _restore_trailing_whitespace(
+    new_elements: list[dict[str, Any]],
+    base_elements: list[dict[str, Any]],
+) -> None:
+    """Re-add trailing whitespace (before \\n) that markdown round-trips strip.
+
+    Modifies *new_elements* in place.  Compares the base paragraph's trailing
+    whitespace (the spaces/tabs between the last visible character and the
+    paragraph-ending ``\\n``) with what the desired elements have, and appends
+    the missing whitespace to the last non-newline text run.
+    """
+    # Extract trailing whitespace from base
+    base_text = ""
+    for be in base_elements:
+        tr = be.get("textRun")
+        if tr:
+            base_text += tr.get("content", "")
+    if base_text.endswith("\n"):
+        base_before_nl = base_text[:-1]
+    else:
+        return
+    base_trailing_ws = base_before_nl[len(base_before_nl.rstrip()):]
+    if not base_trailing_ws:
+        return
+
+    # Extract trailing whitespace from desired
+    des_text = ""
+    for ne in new_elements:
+        tr = ne.get("textRun")
+        if tr:
+            des_text += tr.get("content", "")
+    if des_text.endswith("\n"):
+        des_before_nl = des_text[:-1]
+    else:
+        return
+    des_trailing_ws = des_before_nl[len(des_before_nl.rstrip()):]
+    if des_trailing_ws:
+        return  # desired already has trailing whitespace
+
+    # Find the last non-newline text run and append the base trailing whitespace
+    for i in range(len(new_elements) - 1, -1, -1):
+        tr = new_elements[i].get("textRun")
+        if tr and tr.get("content", "") != "\n":
+            tr["content"] = tr["content"] + base_trailing_ws
+            break
+
 
 
 def _find_base_splits_in_range(

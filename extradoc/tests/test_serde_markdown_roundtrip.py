@@ -27,7 +27,11 @@ from extradoc.api_types._generated import (
     Header,
     HeadingLink,
     InlineObject,
+    InlineObjectElement,
     InlineObjectProperties,
+    EmbeddedObject,
+    ImageProperties,
+    Size,
     Link as DocLink,
     NamedStyle,
     NamedStyles,
@@ -1266,3 +1270,233 @@ class TestHeadingLinksByName:
         # Should now be a real heading link, not a placeholder
         has_heading = (link2.heading_id is not None) or (link2.heading is not None)
         assert has_heading, f"Expected heading link after self-heal, got: {link2}"
+
+
+# ---------------------------------------------------------------------------
+# Image support tests
+# ---------------------------------------------------------------------------
+
+
+def _make_inline_object(
+    object_id: str,
+    content_uri: str,
+    description: str | None = None,
+) -> InlineObject:
+    return InlineObject(
+        object_id=object_id,
+        inline_object_properties=InlineObjectProperties(
+            embedded_object=EmbeddedObject(
+                image_properties=ImageProperties(content_uri=content_uri),
+                description=description,
+                size=Size(
+                    width=Dimension(magnitude=200, unit="PT"),
+                    height=Dimension(magnitude=100, unit="PT"),
+                ),
+            )
+        ),
+    )
+
+
+def _make_para_with_image(
+    text: str, inline_object_id: str
+) -> StructuralElement:
+    return StructuralElement(
+        paragraph=Paragraph(
+            elements=[
+                ParagraphElement(text_run=TextRun(content=text)),
+                ParagraphElement(
+                    inline_object_element=InlineObjectElement(
+                        inline_object_id=inline_object_id
+                    )
+                ),
+                ParagraphElement(text_run=TextRun(content="\n")),
+            ],
+            paragraph_style=ParagraphStyle(
+                named_style_type=ParagraphStyleNamedStyleType.NORMAL_TEXT
+            ),
+        )
+    )
+
+
+class TestImageSerde:
+    """Tests for inline image markdown serialization/deserialization."""
+
+    def test_serialize_image_with_description(self, tmp_path: "Path") -> None:
+        """An image with description serializes as ![alt](url)."""
+        img = _make_inline_object(
+            "kix.abc123",
+            "https://lh3.googleusercontent.com/abc123",
+            description="A photo",
+        )
+        para = _make_para_with_image("Hello ", "kix.abc123")
+        doc = _make_doc(
+            [],
+            extra_content=[para],
+            inline_objects={"kix.abc123": img},
+        )
+        bundle = _make_bundle(doc)
+        _md_serde.serialize(bundle, tmp_path)
+
+        md = (tmp_path / "Tab_1.md").read_text()
+        assert "![A photo](https://lh3.googleusercontent.com/abc123)" in md
+        assert "<x-img" not in md
+
+    def test_serialize_image_no_description(self, tmp_path: "Path") -> None:
+        """An image with no description serializes with empty alt text."""
+        img = _make_inline_object(
+            "kix.abc123",
+            "https://lh3.googleusercontent.com/abc123",
+        )
+        para = _make_para_with_image("Hello ", "kix.abc123")
+        doc = _make_doc(
+            [],
+            extra_content=[para],
+            inline_objects={"kix.abc123": img},
+        )
+        bundle = _make_bundle(doc)
+        _md_serde.serialize(bundle, tmp_path)
+
+        md = (tmp_path / "Tab_1.md").read_text()
+        assert "![](https://lh3.googleusercontent.com/abc123)" in md
+        assert "<x-img" not in md
+
+    def test_deserialize_existing_image_roundtrip(self, tmp_path: "Path") -> None:
+        """Deserializing a doc with an image produces same inlineObjectElement."""
+        img = _make_inline_object(
+            "kix.abc123",
+            "https://lh3.googleusercontent.com/abc123",
+            description="A photo",
+        )
+        para = _make_para_with_image("Hello ", "kix.abc123")
+        doc = _make_doc(
+            [],
+            extra_content=[para],
+            inline_objects={"kix.abc123": img},
+        )
+        bundle = _make_bundle(doc)
+        _md_serde.serialize(bundle, tmp_path)
+
+        # Verify the serialized markdown uses ![alt](url) not <x-img>
+        md = (tmp_path / "Tab_1.md").read_text()
+        assert "![A photo](https://lh3.googleusercontent.com/abc123)" in md
+        assert "<x-img" not in md
+
+        # No edits — just deserialize
+        result = _md_serde.deserialize(tmp_path)
+        desired = result.desired.document
+        dt = (desired.tabs or [])[0].document_tab
+        assert dt is not None
+        assert dt.inline_objects is not None
+        assert "kix.abc123" in dt.inline_objects
+
+        # Check the element is still in the body
+        body_els = dt.body.content or []
+        found = False
+        for se in body_els:
+            if se.paragraph:
+                for el in se.paragraph.elements or []:
+                    if (
+                        el.inline_object_element
+                        and el.inline_object_element.inline_object_id == "kix.abc123"
+                    ):
+                        found = True
+        assert found, "InlineObjectElement should be preserved in round-trip"
+
+    def test_deserialize_new_local_image(self, tmp_path: "Path") -> None:
+        """Adding ![photo](./images/local.png) creates a new InlineObjectElement."""
+        doc = _make_doc(["Hello world"])
+        bundle = _make_bundle(doc)
+        _md_serde.serialize(bundle, tmp_path)
+
+        md_path = tmp_path / "Tab_1.md"
+        md = md_path.read_text()
+        md += "\n![photo](./images/local.png)\n"
+        md_path.write_text(md)
+
+        result = _md_serde.deserialize(tmp_path)
+        desired = result.desired.document
+        dt = (desired.tabs or [])[0].document_tab
+        assert dt is not None
+        assert dt.inline_objects is not None
+        assert len(dt.inline_objects) > 0
+
+        # Find an inline object with our local path as contentUri
+        found_uri = False
+        for io in dt.inline_objects.values():
+            props = io.inline_object_properties
+            if props and props.embedded_object:
+                uri = props.embedded_object.image_properties
+                if uri and uri.content_uri == "./images/local.png":
+                    found_uri = True
+        assert found_uri, "Expected inline object with contentUri='./images/local.png'"
+
+    def test_deserialize_new_external_image(self, tmp_path: "Path") -> None:
+        """Adding ![alt](https://example.com/img.png) creates a new InlineObjectElement."""
+        doc = _make_doc(["Hello world"])
+        bundle = _make_bundle(doc)
+        _md_serde.serialize(bundle, tmp_path)
+
+        md_path = tmp_path / "Tab_1.md"
+        md = md_path.read_text()
+        md += "\n![alt](https://example.com/img.png)\n"
+        md_path.write_text(md)
+
+        result = _md_serde.deserialize(tmp_path)
+        desired = result.desired.document
+        dt = (desired.tabs or [])[0].document_tab
+        assert dt is not None
+        assert dt.inline_objects is not None
+        assert len(dt.inline_objects) > 0
+
+        found_uri = False
+        for io in dt.inline_objects.values():
+            props = io.inline_object_properties
+            if props and props.embedded_object:
+                uri = props.embedded_object.image_properties
+                if uri and uri.content_uri == "https://example.com/img.png":
+                    found_uri = True
+        assert found_uri, "Expected inline object with contentUri='https://example.com/img.png'"
+
+    def test_delete_image(self, tmp_path: "Path") -> None:
+        """Removing ![alt](url) from markdown removes the InlineObjectElement."""
+        img = _make_inline_object(
+            "kix.abc123",
+            "https://lh3.googleusercontent.com/abc123",
+            description="A photo",
+        )
+        para = _make_para_with_image("Hello ", "kix.abc123")
+        doc = _make_doc(
+            [],
+            extra_content=[para],
+            inline_objects={"kix.abc123": img},
+        )
+        bundle = _make_bundle(doc)
+        _md_serde.serialize(bundle, tmp_path)
+
+        # Verify serialized as markdown image (not <x-img>)
+        md_path = tmp_path / "Tab_1.md"
+        md = md_path.read_text()
+        assert "![A photo](https://lh3.googleusercontent.com/abc123)" in md
+        assert "<x-img" not in md
+
+        # Remove the image from markdown
+        lines = md.split("\n")
+        lines = [line for line in lines if "![A photo]" not in line]
+        md_path.write_text("\n".join(lines))
+
+        result = _md_serde.deserialize(tmp_path)
+        desired = result.desired.document
+        dt = (desired.tabs or [])[0].document_tab
+        assert dt is not None
+
+        # The inline object element should be gone from body
+        found = False
+        for se in (dt.body.content or []):
+            if se.paragraph:
+                for el in se.paragraph.elements or []:
+                    if (
+                        el.inline_object_element
+                        and el.inline_object_element.inline_object_id == "kix.abc123"
+                    ):
+                        found = True
+        assert not found, "InlineObjectElement should be removed after deleting image from markdown"

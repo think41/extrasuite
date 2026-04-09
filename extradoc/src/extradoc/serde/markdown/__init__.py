@@ -270,6 +270,28 @@ def _three_way_merge(
 
     desired_document = base.document.__class__.model_validate(desired_dict)
 
+    # Merge inline_objects from mine into desired.  The 3-way merge operates on
+    # body content but does not propagate tab-level inline_objects.  Only carry
+    # over entries that are actually referenced in the desired body — otherwise
+    # round-tripped existing images leave dangling synthetic entries.
+    for d_tab, m_tab in zip(desired_document.tabs or [], mine.document.tabs or [], strict=False):
+        m_dt = m_tab.document_tab
+        d_dt = d_tab.document_tab
+        if m_dt and m_dt.inline_objects and d_dt:
+            # Collect inline object IDs referenced in the desired body
+            referenced_ids: set[str] = set()
+            for se in (d_dt.body.content or []) if d_dt.body else []:
+                if se.paragraph:
+                    for pe in se.paragraph.elements or []:
+                        ioe = pe.inline_object_element
+                        if ioe and ioe.inline_object_id:
+                            referenced_ids.add(ioe.inline_object_id)
+            merged = dict(d_dt.inline_objects or {})
+            for obj_id, obj in m_dt.inline_objects.items():
+                if obj_id in referenced_ids and obj_id not in merged:
+                    merged[obj_id] = obj
+            d_dt.inline_objects = merged
+
     return DocumentWithComments(document=desired_document, comments=mine.comments)
 
 
