@@ -44,12 +44,18 @@ from extradocx.ast_nodes import BlockNode, InlineNode
 class InsertBlock:
     """A new block was inserted at a given position.
 
-    ``position`` is the index in the parent's children list where the new
-    block should be inserted.  ``block`` is the full derived AST node.
+    ``position`` is the index in the derived children list where the block
+    appears.  ``block`` is the full derived AST node.
+
+    ``after_xpath`` is the xpath of the **last base block that precedes this
+    insertion point** — i.e. the new block should be inserted immediately
+    after the DOCX element identified by that xpath.  Empty string means
+    insert at the very beginning of the parent container.
     """
 
     position: int
     block: BlockNode
+    after_xpath: str = ""
 
     def __repr__(self) -> str:
         btype = type(self.block).__name__

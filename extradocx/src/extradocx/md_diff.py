@@ -321,9 +321,25 @@ def _alignment_to_ops(
             )
         )
 
+    # Build a lookup: derived_index → xpath of the last base element before it.
+    # Sorted by derived index so we can scan forward.
+    _sorted_matches = sorted(alignment.matches, key=lambda m: m[1])  # sort by derived idx
+
+    def _after_xpath_for(di: int) -> str:
+        """Return the xpath of the last matched base element with derived_idx < di."""
+        prior = ""
+        for bi, mdj in _sorted_matches:
+            if mdj < di:
+                prior = getattr(base[bi], "xpath", "")
+            else:
+                break
+        return prior
+
     # Insertions
     for di in alignment.derived_inserts:
-        ops.append(InsertBlock(position=di, block=derived[di]))
+        ops.append(
+            InsertBlock(position=di, block=derived[di], after_xpath=_after_xpath_for(di))
+        )
 
     # Matched pairs — emit replace ops only if content changed
     for bi, di in alignment.matches:

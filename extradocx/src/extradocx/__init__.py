@@ -28,9 +28,10 @@ Markdown round-trip::
     ops = diff(doc, edited_doc)    # list of DiffOp
 """
 
+from extradocx.docx_apply import apply_ops
 from extradocx.md_diff import diff
 from extradocx.md_parser import parse_markdown
 from extradocx.parser import DocxParser
 from extradocx.serializers import to_json, to_markdown
 
-__all__ = ["DocxParser", "to_json", "to_markdown", "parse_markdown", "diff"]
+__all__ = ["DocxParser", "to_json", "to_markdown", "parse_markdown", "diff", "apply_ops"]
