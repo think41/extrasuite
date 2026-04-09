@@ -17,6 +17,7 @@ if TYPE_CHECKING:
 
 from extradoc.api_types._generated import (
     Body,
+    BookmarkLink,
     Dimension,
     Document,
     DocumentStyle,
@@ -24,8 +25,10 @@ from extradoc.api_types._generated import (
     Footer,
     Footnote,
     Header,
+    HeadingLink,
     InlineObject,
     InlineObjectProperties,
+    Link as DocLink,
     NamedStyle,
     NamedStyles,
     Paragraph,
@@ -193,6 +196,79 @@ def _write_md(folder: Path, content: str, tab_name: str = "Tab_1") -> None:
 # ---------------------------------------------------------------------------
 # Test: serialize writes .pristine/document.zip
 # ---------------------------------------------------------------------------
+
+
+class TestIndexMdHeadingIds:
+    """index.md shows heading IDs so authors can create internal links."""
+
+    def _make_doc_with_headings(self) -> Document:
+        """Build a two-heading document where each heading has a heading_id."""
+
+        def _heading_se(
+            text: str,
+            style: ParagraphStyleNamedStyleType,
+            heading_id: str,
+        ) -> StructuralElement:
+            ps = ParagraphStyle(named_style_type=style, heading_id=heading_id)
+            el = ParagraphElement(text_run=TextRun(content=text + "\n", text_style=TextStyle()))
+            return StructuralElement(paragraph=Paragraph(elements=[el], paragraph_style=ps))
+
+        intro = _make_text_para("Some intro text.")
+        h1 = _heading_se("Overview", ParagraphStyleNamedStyleType.HEADING_1, "h.overview1")
+        h2 = _heading_se("Details", ParagraphStyleNamedStyleType.HEADING_2, "h.details2")
+        doc_tab = DocumentTab(body=Body(content=[intro, h1, h2]))
+        return Document(
+            document_id="test-doc",
+            title="Test",
+            tabs=[
+                Tab(
+                    tab_properties=TabProperties(tab_id="t.0", title="Tab 1"),
+                    document_tab=doc_tab,
+                )
+            ],
+        )
+
+    def test_index_md_has_heading_table(self, tmp_path: Path) -> None:
+        """index.md includes a heading table (without ID column)."""
+        doc = self._make_doc_with_headings()
+        bundle = _make_bundle(doc)
+        folder = tmp_path / "doc"
+        _md_serde.serialize(bundle, folder)
+
+        index_md = (folder / "index.md").read_text()
+        assert "| Line | Heading |" in index_md
+        # ID column should NOT be present
+        assert "| ID |" not in index_md
+        assert "# Overview" in index_md
+        assert "## Details" in index_md
+
+    def test_index_md_has_link_usage_hint(self, tmp_path: Path) -> None:
+        """index.md includes name-based heading link instructions."""
+        doc = self._make_doc_with_headings()
+        bundle = _make_bundle(doc)
+        folder = tmp_path / "doc"
+        _md_serde.serialize(bundle, folder)
+
+        index_md = (folder / "index.md").read_text()
+        assert "#Heading Name" in index_md
+        assert "#Tab_Name/Heading Name" in index_md
+
+    def test_index_md_no_id_column_when_no_heading_ids(self, tmp_path: Path) -> None:
+        """index.md has 2-column table when headings have no IDs."""
+        # Build a heading without a heading_id
+        ps = ParagraphStyle(
+            named_style_type=ParagraphStyleNamedStyleType.HEADING_1, heading_id=None
+        )
+        el = ParagraphElement(text_run=TextRun(content="Overview\n", text_style=TextStyle()))
+        se = StructuralElement(paragraph=Paragraph(elements=[el], paragraph_style=ps))
+        doc = _make_doc(["intro"], extra_content=[se])
+        bundle = _make_bundle(doc)
+        folder = tmp_path / "doc"
+        _md_serde.serialize(bundle, folder)
+
+        index_md = (folder / "index.md").read_text()
+        assert "| Line | Heading |" in index_md
+        assert "| ID |" not in index_md
 
 
 class TestSerializeWritesPristine:
@@ -808,3 +884,385 @@ class TestEdgeCases:
 
         result = _xml_serde.deserialize(folder)
         assert result.desired.document is not None
+
+
+# ---------------------------------------------------------------------------
+# Tests: Hyperlink serialization / deserialization
+# ---------------------------------------------------------------------------
+
+
+def _make_linked_para(display_text: str, link: DocLink) -> StructuralElement:
+    """Build a paragraph with a single linked text run followed by a plain newline."""
+    linked_run = ParagraphElement(
+        text_run=TextRun(content=display_text, text_style=TextStyle(link=link))
+    )
+    newline_run = ParagraphElement(text_run=TextRun(content="\n", text_style=TextStyle()))
+    ps = ParagraphStyle(named_style_type=ParagraphStyleNamedStyleType.NORMAL_TEXT)
+    return StructuralElement(
+        paragraph=Paragraph(elements=[linked_run, newline_run], paragraph_style=ps)
+    )
+
+
+def _get_link_from_desired(result_doc: Document, tab_idx: int = 0) -> DocLink | None:
+    """Return the first DocLink found in the desired document body."""
+    tab = (result_doc.tabs or [])[tab_idx]
+    dt = tab.document_tab
+    if not dt or not dt.body:
+        return None
+    for se in dt.body.content or []:
+        if se.paragraph:
+            for pe in se.paragraph.elements or []:
+                if pe.text_run and pe.text_run.text_style and pe.text_run.text_style.link:
+                    return pe.text_run.text_style.link
+    return None
+
+
+class TestHyperlinkSerde:
+    """Tests for all hyperlink types in the markdown SERDE."""
+
+    def test_external_url_round_trip(self, tmp_path: Path) -> None:
+        """External URL links serialize to [text](url) and round-trip correctly."""
+        link = DocLink(url="https://example.com/path?q=1")
+        doc = _make_doc(["intro"], extra_content=[_make_linked_para("click here", link)])
+        bundle = _make_bundle(doc)
+        folder = tmp_path / "doc"
+        _md_serde.serialize(bundle, folder)
+
+        md = _read_md(folder)
+        assert "[click here](https://example.com/path?q=1)" in md
+
+        result = _md_serde.deserialize(folder)
+        found = _get_link_from_desired(result.desired.document)
+        assert found is not None
+        assert found.url == "https://example.com/path?q=1"
+
+    def test_heading_link_legacy_format_round_trip(self, tmp_path: Path) -> None:
+        """Legacy headingId links (#heading:{id}) round-trip correctly."""
+        link = DocLink(heading_id="h.abc123")
+        doc = _make_doc(["intro"], extra_content=[_make_linked_para("see section", link)])
+        bundle = _make_bundle(doc)
+        folder = tmp_path / "doc"
+        _md_serde.serialize(bundle, folder)
+
+        md = _read_md(folder)
+        assert "[see section](#heading:h.abc123)" in md
+
+        result = _md_serde.deserialize(folder)
+        found = _get_link_from_desired(result.desired.document)
+        assert found is not None
+        assert found.heading_id == "h.abc123"
+
+    def test_heading_link_new_format_same_tab(self, tmp_path: Path) -> None:
+        """New HeadingLink without tab_id serializes as #heading:{id}.
+        On a no-edit round-trip the 3-way merge returns base unchanged, so
+        the desired document keeps the original HeadingLink struct.
+        """
+        link = DocLink(heading=HeadingLink(id="h.abc123", tab_id=None))
+        doc = _make_doc(["intro"], extra_content=[_make_linked_para("see section", link)])
+        bundle = _make_bundle(doc)
+        folder = tmp_path / "doc"
+        _md_serde.serialize(bundle, folder)
+
+        md = _read_md(folder)
+        assert "[see section](#heading:h.abc123)" in md
+
+        # No-edit round-trip: 3-way merge returns base unchanged → HeadingLink preserved.
+        result = _md_serde.deserialize(folder)
+        found = _get_link_from_desired(result.desired.document)
+        assert found is not None
+        assert found.heading is not None
+        assert found.heading.id == "h.abc123"
+        assert found.heading.tab_id is None
+
+    def test_heading_link_new_format_cross_tab(self, tmp_path: Path) -> None:
+        """Cross-tab HeadingLink serializes as #heading:{tab_id}/{heading_id}."""
+        link = DocLink(heading=HeadingLink(id="h.xyz789", tab_id="t.fr18r141n5si"))
+        doc = _make_doc(["intro"], extra_content=[_make_linked_para("see other tab", link)])
+        bundle = _make_bundle(doc)
+        folder = tmp_path / "doc"
+        _md_serde.serialize(bundle, folder)
+
+        md = _read_md(folder)
+        assert "[see other tab](#heading:t.fr18r141n5si/h.xyz789)" in md
+
+        result = _md_serde.deserialize(folder)
+        found = _get_link_from_desired(result.desired.document)
+        assert found is not None
+        assert found.heading is not None
+        assert found.heading.id == "h.xyz789"
+        assert found.heading.tab_id == "t.fr18r141n5si"
+
+    def test_bookmark_link_legacy_format_round_trip(self, tmp_path: Path) -> None:
+        """Legacy bookmarkId links (#bookmark:{id}) round-trip correctly."""
+        link = DocLink(bookmark_id="bm.def456")
+        doc = _make_doc(["intro"], extra_content=[_make_linked_para("see bookmark", link)])
+        bundle = _make_bundle(doc)
+        folder = tmp_path / "doc"
+        _md_serde.serialize(bundle, folder)
+
+        md = _read_md(folder)
+        assert "[see bookmark](#bookmark:bm.def456)" in md
+
+        result = _md_serde.deserialize(folder)
+        found = _get_link_from_desired(result.desired.document)
+        assert found is not None
+        assert found.bookmark_id == "bm.def456"
+
+    def test_bookmark_link_new_format_same_tab(self, tmp_path: Path) -> None:
+        """New BookmarkLink without tab_id serializes as #bookmark:{id}.
+        On a no-edit round-trip the 3-way merge returns base unchanged, so
+        the desired document keeps the original BookmarkLink struct.
+        """
+        link = DocLink(bookmark=BookmarkLink(id="bm.def456", tab_id=None))
+        doc = _make_doc(["intro"], extra_content=[_make_linked_para("see bookmark", link)])
+        bundle = _make_bundle(doc)
+        folder = tmp_path / "doc"
+        _md_serde.serialize(bundle, folder)
+
+        md = _read_md(folder)
+        assert "[see bookmark](#bookmark:bm.def456)" in md
+
+        # No-edit round-trip: 3-way merge returns base unchanged → BookmarkLink preserved.
+        result = _md_serde.deserialize(folder)
+        found = _get_link_from_desired(result.desired.document)
+        assert found is not None
+        assert found.bookmark is not None
+        assert found.bookmark.id == "bm.def456"
+        assert found.bookmark.tab_id is None
+
+    def test_bookmark_link_new_format_cross_tab(self, tmp_path: Path) -> None:
+        """Cross-tab BookmarkLink serializes as #bookmark:{tab_id}/{bookmark_id}."""
+        link = DocLink(bookmark=BookmarkLink(id="bm.xyz789", tab_id="t.de9mg0cq7w3r"))
+        doc = _make_doc(["intro"], extra_content=[_make_linked_para("see other tab", link)])
+        bundle = _make_bundle(doc)
+        folder = tmp_path / "doc"
+        _md_serde.serialize(bundle, folder)
+
+        md = _read_md(folder)
+        assert "[see other tab](#bookmark:t.de9mg0cq7w3r/bm.xyz789)" in md
+
+        result = _md_serde.deserialize(folder)
+        found = _get_link_from_desired(result.desired.document)
+        assert found is not None
+        assert found.bookmark is not None
+        assert found.bookmark.id == "bm.xyz789"
+        assert found.bookmark.tab_id == "t.de9mg0cq7w3r"
+
+    def test_tab_link_round_trip(self, tmp_path: Path) -> None:
+        """Direct tab links (#tab:{tab_id}) round-trip correctly."""
+        link = DocLink(tab_id="t.fr18r141n5si")
+        doc = _make_doc(["intro"], extra_content=[_make_linked_para("go to tab 2", link)])
+        bundle = _make_bundle(doc)
+        folder = tmp_path / "doc"
+        _md_serde.serialize(bundle, folder)
+
+        md = _read_md(folder)
+        assert "[go to tab 2](#tab:t.fr18r141n5si)" in md
+
+        result = _md_serde.deserialize(folder)
+        found = _get_link_from_desired(result.desired.document)
+        assert found is not None
+        assert found.tab_id == "t.fr18r141n5si"
+
+    def test_heading_link_is_preserved_on_noop(self, tmp_path: Path) -> None:
+        """A new-format HeadingLink survives a no-op serialize → deserialize."""
+        link = DocLink(heading=HeadingLink(id="h.abc123", tab_id="t.0"))
+        doc = _make_doc(["intro"], extra_content=[_make_linked_para("same tab link", link)])
+        bundle = _make_bundle(doc)
+        folder = tmp_path / "doc"
+        _md_serde.serialize(bundle, folder)
+        result = _md_serde.deserialize(folder)
+        # The base document must appear in desired unchanged (no diff)
+        # Find the link in base
+        base_link = _get_link_from_desired(result.base.document)
+        desired_link = _get_link_from_desired(result.desired.document)
+        assert base_link is not None
+        assert desired_link is not None
+        # 3-way merge: no edits → desired link must equal base link
+        assert desired_link.heading is not None
+        assert desired_link.heading.id == "h.abc123"
+        assert desired_link.heading.tab_id == "t.0"
+
+
+# ---------------------------------------------------------------------------
+# Group 9: Heading links by name
+# ---------------------------------------------------------------------------
+
+import pytest
+
+
+def _make_heading_se(
+    text: str,
+    style: ParagraphStyleNamedStyleType,
+    heading_id: str,
+) -> StructuralElement:
+    """Build a heading StructuralElement with a heading_id."""
+    ps = ParagraphStyle(named_style_type=style, heading_id=heading_id)
+    el = ParagraphElement(text_run=TextRun(content=text + "\n", text_style=TextStyle()))
+    return StructuralElement(paragraph=Paragraph(elements=[el], paragraph_style=ps))
+
+
+class TestHeadingLinksByName:
+    """Tests for heading-link-by-name resolution in markdown serde."""
+
+    def test_existing_heading_resolves_by_name(self, tmp_path: Path) -> None:
+        """Link [see here](#Overview) resolves to a heading link when 'Overview' exists."""
+        h1 = _make_heading_se("Overview", ParagraphStyleNamedStyleType.HEADING_1, "h.abc123")
+        doc = _make_doc(["intro"], extra_content=[h1])
+        bundle = _make_bundle(doc)
+        folder = tmp_path / "doc"
+        _md_serde.serialize(bundle, folder)
+
+        # Write markdown with a heading link by name
+        md = _read_md(folder)
+        md = md.replace("intro", "[see here](#Overview)")
+        _write_md(folder, md)
+
+        result = _md_serde.deserialize(folder)
+        found = _get_link_from_desired(result.desired.document)
+        assert found is not None, "Expected a heading link in the desired document"
+        # Must be a heading link, not a plain URL
+        has_heading = (found.heading_id is not None) or (found.heading is not None)
+        assert has_heading, f"Expected heading link, got: {found}"
+
+    def test_cross_tab_heading_resolves_by_name(self, tmp_path: Path) -> None:
+        """Link [see](#Tab_2/Details) resolves to a heading link in the other tab."""
+        h1_tab1 = _make_heading_se("Intro", ParagraphStyleNamedStyleType.HEADING_1, "h.t1intro")
+        h1_tab2 = _make_heading_se("Details", ParagraphStyleNamedStyleType.HEADING_1, "h.t2details")
+
+        tab1_content = [_make_text_para("intro"), h1_tab1]
+        tab2_content = [h1_tab2, _make_text_para("Some detail text")]
+
+        doc = Document(
+            document_id="cross-tab-doc",
+            title="CrossTab",
+            tabs=[
+                Tab(
+                    tab_properties=TabProperties(tab_id="t.0", title="Tab 1"),
+                    document_tab=DocumentTab(body=Body(content=tab1_content)),
+                ),
+                Tab(
+                    tab_properties=TabProperties(tab_id="t.1", title="Tab 2"),
+                    document_tab=DocumentTab(body=Body(content=tab2_content)),
+                ),
+            ],
+        )
+        bundle = _make_bundle(doc)
+        folder = tmp_path / "doc"
+        _md_serde.serialize(bundle, folder)
+
+        # Write a cross-tab heading link by name
+        md = _read_md(folder, "Tab_1")
+        md = md.replace("intro", "[see](#Tab_2/Details)")
+        _write_md(folder, md, "Tab_1")
+
+        result = _md_serde.deserialize(folder)
+        found = _get_link_from_desired(result.desired.document, tab_idx=0)
+        assert found is not None, "Expected a cross-tab heading link"
+        # Must be a heading link (not a URL)
+        has_heading = (found.heading_id is not None) or (found.heading is not None)
+        assert has_heading, f"Expected heading link, got: {found}"
+
+    def test_duplicate_headings_first_wins(self, tmp_path: Path) -> None:
+        """Two headings named 'Details' — link resolves to the first one."""
+        h1 = _make_heading_se("Details", ParagraphStyleNamedStyleType.HEADING_2, "h.first")
+        h2 = _make_heading_se("Details", ParagraphStyleNamedStyleType.HEADING_2, "h.second")
+        doc = _make_doc(["intro"], extra_content=[h1, h2])
+        bundle = _make_bundle(doc)
+        folder = tmp_path / "doc"
+        _md_serde.serialize(bundle, folder)
+
+        md = _read_md(folder)
+        md = md.replace("intro", "[see](#Details)")
+        _write_md(folder, md)
+
+        result = _md_serde.deserialize(folder)
+        found = _get_link_from_desired(result.desired.document)
+        assert found is not None, "Expected a heading link"
+        has_heading = (found.heading_id is not None) or (found.heading is not None)
+        assert has_heading, f"Expected heading link, got: {found}"
+
+    def test_new_heading_placeholder(self, tmp_path: Path) -> None:
+        """Link to non-existent heading creates a placeholder URL."""
+        doc = _make_doc(["intro"])
+        bundle = _make_bundle(doc)
+        folder = tmp_path / "doc"
+        _md_serde.serialize(bundle, folder)
+
+        md = _read_md(folder)
+        md = md.replace("intro", "[see](#NewSection)")
+        _write_md(folder, md)
+
+        result = _md_serde.deserialize(folder)
+        found = _get_link_from_desired(result.desired.document)
+        assert found is not None, "Expected a link in the desired document"
+        assert found.url is not None, "Expected a URL-based placeholder link"
+        assert found.url.startswith("#heading-ref:"), f"Expected placeholder, got: {found.url}"
+        assert "NewSection" in found.url
+
+    def test_serialize_heading_link_as_name(self, tmp_path: Path) -> None:
+        """Heading link with heading_id serializes as [text](#Heading Name)."""
+        h1 = _make_heading_se("Overview", ParagraphStyleNamedStyleType.HEADING_1, "h.abc123")
+        link = DocLink(heading_id="h.abc123")
+        linked_para = _make_linked_para("click here", link)
+        doc = _make_doc([], extra_content=[h1, linked_para])
+        bundle = _make_bundle(doc)
+        folder = tmp_path / "doc"
+        _md_serde.serialize(bundle, folder)
+
+        md = _read_md(folder)
+        assert "[click here](#Overview)" in md, f"Expected name-based link, got:\n{md}"
+        # Must NOT contain the raw heading ID
+        assert "#heading:h.abc123" not in md
+
+    def test_serialize_placeholder_back_as_name(self, tmp_path: Path) -> None:
+        """Doc with url='#heading-ref:Details' serializes as [text](#Details)."""
+        link = DocLink(url="#heading-ref:Details")
+        linked_para = _make_linked_para("see details", link)
+        doc = _make_doc(["intro"], extra_content=[linked_para])
+        bundle = _make_bundle(doc)
+        folder = tmp_path / "doc"
+        _md_serde.serialize(bundle, folder)
+
+        md = _read_md(folder)
+        assert "[see details](#Details)" in md, f"Expected name-based link, got:\n{md}"
+        assert "#heading-ref:" not in md
+
+    def test_self_healing_round_trip(self, tmp_path: Path) -> None:
+        """Full cycle: first push creates placeholder, next cycle resolves it.
+
+        Cycle 1: Link to 'NewSection' (doesn't exist) → placeholder stored.
+        Cycle 2: 'NewSection' heading now exists in base → resolves to real heading link.
+        """
+        # --- Cycle 1: create doc, add link to non-existent heading ---
+        doc = _make_doc(["intro"])
+        bundle = _make_bundle(doc)
+        folder1 = tmp_path / "cycle1"
+        _md_serde.serialize(bundle, folder1)
+
+        md = _read_md(folder1)
+        md = md.replace("intro", "[see](#NewSection)")
+        _write_md(folder1, md)
+
+        result1 = _md_serde.deserialize(folder1)
+        link1 = _get_link_from_desired(result1.desired.document)
+        assert link1 is not None
+        assert link1.url is not None and link1.url.startswith("#heading-ref:")
+
+        # --- Cycle 2: base now has the heading + the placeholder link ---
+        # Build a new base that has the heading AND the placeholder link from cycle 1
+        h1 = _make_heading_se("NewSection", ParagraphStyleNamedStyleType.HEADING_1, "h.newsec")
+        placeholder_link = DocLink(url="#heading-ref:NewSection")
+        linked_para = _make_linked_para("see", placeholder_link)
+        doc2 = _make_doc([], extra_content=[h1, linked_para])
+        bundle2 = _make_bundle(doc2)
+        folder2 = tmp_path / "cycle2"
+        _md_serde.serialize(bundle2, folder2)
+
+        # No edits — just deserialize; the placeholder should self-heal
+        result2 = _md_serde.deserialize(folder2)
+        link2 = _get_link_from_desired(result2.desired.document)
+        assert link2 is not None, "Expected a link after self-healing"
+        # Should now be a real heading link, not a placeholder
+        has_heading = (link2.heading_id is not None) or (link2.heading is not None)
+        assert has_heading, f"Expected heading link after self-heal, got: {link2}"

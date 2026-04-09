@@ -26,6 +26,7 @@ from __future__ import annotations
 
 import html as _html
 import re
+import urllib.parse
 from html.parser import HTMLParser
 from typing import Any, Literal, cast
 
@@ -80,6 +81,8 @@ from extradoc.api_types._generated import (
     TextStyle,
 )
 from extradoc.api_types._generated import (
+    BookmarkLink,
+    HeadingLink,
     Link as DocLink,
 )
 from extradoc.mock.reindex import reindex_and_normalize_all_tabs
@@ -170,6 +173,7 @@ def markdown_to_document(
     title: str = "",
     revision_id: str | None = None,
     tab_ids: dict[str, str] | None = None,
+    heading_name_to_id: dict[str, tuple[str, str | None]] | None = None,
 ) -> Document:
     """Convert per-tab markdown content to a Document.
 
@@ -178,6 +182,8 @@ def markdown_to_document(
         document_id: Optional document ID
         title: Optional document title
         tab_ids: Optional dict[folder_name → tab_id] for using real API tab IDs
+        heading_name_to_id: Optional map from heading name → heading_id for
+            resolving name-based heading links (e.g. ``[text](#Overview)``).
 
     Returns:
         Document without indices. Call reindex_document() if needed.
@@ -187,18 +193,26 @@ def markdown_to_document(
     if revision_id:
         doc.revision_id = revision_id
     doc.tabs = []
+    h_map = heading_name_to_id or {}
 
     for folder, source in tab_content.items():
         # Derive tab title from folder name
         tab_title = folder.replace("_", " ")
         tab_id = (tab_ids or {}).get(folder, f"t.{folder}")
-        tab = _parse_tab(source, tab_title, folder, tab_id=tab_id)
+        tab = _parse_tab(source, tab_title, folder, tab_id=tab_id, heading_name_to_id=h_map)
         doc.tabs.append(tab)
 
     return doc
 
 
-def _parse_tab(source: str, tab_title: str, folder: str, *, tab_id: str = "") -> Tab:
+def _parse_tab(
+    source: str,
+    tab_title: str,
+    folder: str,
+    *,
+    tab_id: str = "",
+    heading_name_to_id: dict[str, tuple[str, str | None]] | None = None,
+) -> Tab:
     """Parse a single tab's markdown source into a Tab.
 
     If the source contains special elements (code blocks, callouts, blockquotes),
@@ -206,7 +220,7 @@ def _parse_tab(source: str, tab_title: str, folder: str, *, tab_id: str = "") ->
     indices (obtained by running reindex internally).
     """
     list_synth = _ListSynth()
-    body_content, footnotes, special_positions = _parse_body(source, list_synth)
+    body_content, footnotes, special_positions = _parse_body(source, list_synth, heading_name_to_id=heading_name_to_id)
 
     # Build list definitions dict
     lists_d = list_synth.defs
@@ -282,7 +296,10 @@ def _parse_tab(source: str, tab_title: str, folder: str, *, tab_id: str = "") ->
 
 
 def _parse_body(
-    source: str, list_synth: _ListSynth
+    source: str,
+    list_synth: _ListSynth,
+    *,
+    heading_name_to_id: dict[str, tuple[str, str | None]] | None = None,
 ) -> tuple[list[StructuralElement], dict[str, Any], list[tuple[int, str]]]:
     """Parse markdown source into body StructuralElements and footnotes.
 
@@ -307,9 +324,10 @@ def _parse_body(
     # Every body starts with a SectionBreak
     body.append(StructuralElement(section_break=SectionBreak()))
 
+    h_map = heading_name_to_id or {}
     for block in md_doc.children or []:
         if isinstance(block, Heading):
-            body.append(_convert_heading(block))
+            body.append(_convert_heading(block, h_map))
 
         elif isinstance(block, CodeFence):
             body_pos = len(body)
@@ -319,7 +337,7 @@ def _parse_body(
 
         elif isinstance(block, Quote):
             body_pos = len(body)
-            quote_elem = _parse_quote(block)
+            quote_elem = _parse_quote(block, heading_name_to_id=h_map)
             special_positions.append((body_pos, quote_elem.named_range_name))
             body.append(StructuralElement(table=quote_elem.to_table()))
 
@@ -329,14 +347,14 @@ def _parse_body(
             text = _raw_text(block)
             if _FN_DEF_RE.match(text):
                 continue
-            ses = _convert_paragraph(block)
+            ses = _convert_paragraph(block, h_map)
             body.extend(ses)
 
         elif isinstance(block, MdList):
-            body.extend(_convert_list(block, list_synth, list_id=None, nesting=0))
+            body.extend(_convert_list(block, list_synth, list_id=None, nesting=0, heading_name_to_id=h_map))
 
         elif isinstance(block, MdTable):
-            body.append(_convert_gfm_table(block))
+            body.append(_convert_gfm_table(block, h_map))
 
         elif isinstance(block, ThematicBreak):
             body.append(_make_hr_para())
@@ -427,9 +445,9 @@ def _block_to_para_groups(block: Any) -> list[list[Any]]:
     return [g for g in groups if g]
 
 
-def _tokens_to_para(tokens: list[Any]) -> Paragraph | None:
+def _tokens_to_para(tokens: list[Any], *, heading_name_to_id: dict[str, tuple[str, str | None]] | None = None) -> Paragraph | None:
     """Convert a flat list of inline tokens to a Paragraph, or None if empty."""
-    elements = _tokens_to_elements(tokens, TextStyle())
+    elements = _tokens_to_elements(tokens, TextStyle(), heading_name_to_id)
     if not elements:
         return None
     # Every paragraph in the Google Docs API must end with a "\n" text run.
@@ -442,7 +460,7 @@ def _tokens_to_para(tokens: list[Any]) -> Paragraph | None:
     )
 
 
-def _parse_quote(block: Any) -> SpecialElement:
+def _parse_quote(block: Any, *, heading_name_to_id: dict[str, tuple[str, str | None]] | None = None) -> SpecialElement:
     """Convert a mistletoe Quote token to a Callout or Blockquote special element.
 
     Each visual line (separated by LineBreak within a paragraph, or by separate
@@ -458,7 +476,7 @@ def _parse_quote(block: Any) -> SpecialElement:
     all_paras: list[Paragraph] = []
     for child in children:
         for group in _block_to_para_groups(child):
-            para = _tokens_to_para(group)
+            para = _tokens_to_para(group, heading_name_to_id=heading_name_to_id)
             if para is not None:
                 all_paras.append(para)
 
@@ -578,12 +596,12 @@ def _make_pagebreak_para() -> StructuralElement:
 # ---------------------------------------------------------------------------
 
 
-def _convert_heading(block: Any) -> StructuralElement:
+def _convert_heading(block: Any, heading_name_to_id: dict[str, tuple[str, str | None]] | None = None) -> StructuralElement:
     level = block.level
     named_style = _LEVEL_TO_NAMED_STYLE.get(
         level, ParagraphStyleNamedStyleType.HEADING_1
     )
-    elements = _tokens_to_elements(block.children, TextStyle())
+    elements = _tokens_to_elements(block.children, TextStyle(), heading_name_to_id)
     elements.append(ParagraphElement(text_run=TextRun(content="\n")))
     return StructuralElement(
         paragraph=Paragraph(
@@ -593,7 +611,7 @@ def _convert_heading(block: Any) -> StructuralElement:
     )
 
 
-def _convert_paragraph(block: Any) -> list[StructuralElement]:
+def _convert_paragraph(block: Any, heading_name_to_id: dict[str, tuple[str, str | None]] | None = None) -> list[StructuralElement]:
     """Convert a mistletoe Paragraph to one or more StructuralElements.
 
     A paragraph that contains only a <x-pagebreak/> becomes a pagebreak element.
@@ -607,7 +625,7 @@ def _convert_paragraph(block: Any) -> list[StructuralElement]:
     ):
         return [_make_pagebreak_para()]
 
-    elements = _tokens_to_elements(children, TextStyle())
+    elements = _tokens_to_elements(children, TextStyle(), heading_name_to_id)
     if not elements:
         return []
     elements.append(ParagraphElement(text_run=TextRun(content="\n")))
@@ -628,6 +646,7 @@ def _convert_list(
     list_synth: _ListSynth,
     list_id: str | None,
     nesting: int,
+    heading_name_to_id: dict[str, tuple[str, str | None]] | None = None,
 ) -> list[StructuralElement]:
     """Convert a mistletoe List token to StructuralElements.
 
@@ -652,7 +671,7 @@ def _convert_list(
                 inline_tokens = list(child.children or [])
             # Other block types (quotes, etc.) are skipped for simplicity
 
-        elements = _tokens_to_elements(inline_tokens, TextStyle())
+        elements = _tokens_to_elements(inline_tokens, TextStyle(), heading_name_to_id)
         elements.append(ParagraphElement(text_run=TextRun(content="\n")))
 
         result.append(
@@ -670,13 +689,13 @@ def _convert_list(
         # Recurse into nested lists using same list_id
         for nested in nested_lists:
             result.extend(
-                _convert_list(nested, list_synth, list_id=list_id, nesting=nesting + 1)
+                _convert_list(nested, list_synth, list_id=list_id, nesting=nesting + 1, heading_name_to_id=heading_name_to_id)
             )
 
     return result
 
 
-def _convert_gfm_table(block: Any) -> StructuralElement:
+def _convert_gfm_table(block: Any, heading_name_to_id: dict[str, tuple[str, str | None]] | None = None) -> StructuralElement:
     """Convert a mistletoe GFM Table to a Google Docs Table."""
     all_rows: list[Any] = [block.header, *list(block.children)]
     n_cols = max((len(row.children) for row in all_rows), default=0)
@@ -686,7 +705,7 @@ def _convert_gfm_table(block: Any) -> StructuralElement:
         cells: list[TableCell] = []
         for cell in row.children:
             base_style = TextStyle()
-            inline_elements = _tokens_to_elements(list(cell.children), base_style)
+            inline_elements = _tokens_to_elements(list(cell.children), base_style, heading_name_to_id)
             inline_elements.append(ParagraphElement(text_run=TextRun(content="\n")))
             cell_para = StructuralElement(
                 paragraph=Paragraph(
@@ -828,7 +847,11 @@ def _convert_html_table(raw_html: str) -> StructuralElement:
 # ---------------------------------------------------------------------------
 
 
-def _tokens_to_elements(tokens: list[Any], style: TextStyle) -> list[ParagraphElement]:
+def _tokens_to_elements(
+    tokens: list[Any],
+    style: TextStyle,
+    heading_name_to_id: dict[str, tuple[str, str | None]] | None = None,
+) -> list[ParagraphElement]:
     """Recursively convert mistletoe inline tokens to ParagraphElements."""
     result: list[ParagraphElement] = []
     token_list = list(tokens)
@@ -858,15 +881,15 @@ def _tokens_to_elements(tokens: list[Any], style: TextStyle) -> list[ParagraphEl
 
         elif isinstance(token, Strong):
             new_style = style.model_copy(update={"bold": True})
-            result.extend(_tokens_to_elements(list(token.children or []), new_style))
+            result.extend(_tokens_to_elements(list(token.children or []), new_style, heading_name_to_id))
 
         elif isinstance(token, Emphasis):
             new_style = style.model_copy(update={"italic": True})
-            result.extend(_tokens_to_elements(list(token.children or []), new_style))
+            result.extend(_tokens_to_elements(list(token.children or []), new_style, heading_name_to_id))
 
         elif isinstance(token, Strikethrough):
             new_style = style.model_copy(update={"strikethrough": True})
-            result.extend(_tokens_to_elements(list(token.children or []), new_style))
+            result.extend(_tokens_to_elements(list(token.children or []), new_style, heading_name_to_id))
 
         elif isinstance(token, InlineCode):
             # Inline code → Courier New 10pt text run
@@ -883,14 +906,37 @@ def _tokens_to_elements(tokens: list[Any], style: TextStyle) -> list[ParagraphEl
 
         elif isinstance(token, MdLink):
             target = token.target
+            h_map = heading_name_to_id or {}
             if target.startswith("#heading:"):
-                link_obj = DocLink(heading_id=target[len("#heading:") :])
+                anchor = target[len("#heading:"):]
+                if "/" in anchor:
+                    tab_id, heading_id = anchor.split("/", 1)
+                    link_obj = DocLink(heading=HeadingLink(id=heading_id, tab_id=tab_id))
+                else:
+                    link_obj = DocLink(heading_id=anchor)
             elif target.startswith("#bookmark:"):
-                link_obj = DocLink(bookmark_id=target[len("#bookmark:") :])
+                anchor = target[len("#bookmark:"):]
+                if "/" in anchor:
+                    tab_id, bookmark_id = anchor.split("/", 1)
+                    link_obj = DocLink(bookmark=BookmarkLink(id=bookmark_id, tab_id=tab_id))
+                else:
+                    link_obj = DocLink(bookmark_id=anchor)
+            elif target.startswith("#tab:"):
+                link_obj = DocLink(tab_id=target[len("#tab:"):])
+            elif target.startswith("#") and not target.startswith("#heading-ref:"):
+                # Name-based heading link: #HeadingName or #FolderName/HeadingName
+                heading_name = urllib.parse.unquote(target[1:])  # strip leading #, decode %20 etc.
+                resolved_info = h_map.get(heading_name)
+                if resolved_info is not None:
+                    resolved_id, resolved_tab_id = resolved_info
+                    link_obj = DocLink(heading=HeadingLink(id=resolved_id, tab_id=resolved_tab_id))
+                else:
+                    # Unresolved — store as placeholder URL
+                    link_obj = DocLink(url=f"#heading-ref:{heading_name}")
             else:
                 link_obj = DocLink(url=target)
             new_style = style.model_copy(update={"link": link_obj})
-            result.extend(_tokens_to_elements(list(token.children or []), new_style))
+            result.extend(_tokens_to_elements(list(token.children or []), new_style, heading_name_to_id))
 
         elif isinstance(token, HTMLSpan):
             content = token.content
@@ -906,7 +952,7 @@ def _tokens_to_elements(tokens: list[Any], style: TextStyle) -> list[ParagraphEl
                     underline_tokens.append(t)
                     i += 1
                 new_style = style.model_copy(update={"underline": True})
-                result.extend(_tokens_to_elements(underline_tokens, new_style))
+                result.extend(_tokens_to_elements(underline_tokens, new_style, heading_name_to_id))
 
             elif content.lower() == "</u>":
                 pass  # already consumed above

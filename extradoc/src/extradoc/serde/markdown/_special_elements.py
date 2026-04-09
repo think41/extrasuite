@@ -234,7 +234,7 @@ class SpecialElement(ABC):
         """Build a 1x1 Google Docs Table with canonical content and visual styling."""
 
     @abstractmethod
-    def to_markdown(self) -> str:
+    def to_markdown(self, *, heading_id_to_name: dict[str, str] | None = None) -> str:
         """Render as a markdown string (no trailing newline)."""
 
     @classmethod
@@ -261,7 +261,7 @@ class CodeBlock(SpecialElement):
             return f"extradoc:codeblock:{self.language}"
         return "extradoc:codeblock"
 
-    def to_markdown(self) -> str:
+    def to_markdown(self, *, heading_id_to_name: dict[str, str] | None = None) -> str:
         fence = f"```{self.language}" if self.language else "```"
         return fence + "\n" + "\n".join(self.lines) + "\n```"
 
@@ -311,12 +311,12 @@ class Callout(SpecialElement):
     def named_range_name(self) -> str:
         return f"extradoc:callout:{self.variant}"
 
-    def to_markdown(self) -> str:
+    def to_markdown(self, *, heading_id_to_name: dict[str, str] | None = None) -> str:
         header = f"> [!{self.variant.upper()}]"
         body: list[str] = []
         for para in self.paragraphs:
             line = "".join(
-                serialize_text_run(pe.text_run)
+                serialize_text_run(pe.text_run, heading_id_to_name=heading_id_to_name)
                 for pe in (para.elements or [])
                 if pe.text_run is not None
             )
@@ -361,11 +361,11 @@ class Blockquote(SpecialElement):
     def named_range_name(self) -> str:
         return "extradoc:blockquote"
 
-    def to_markdown(self) -> str:
+    def to_markdown(self, *, heading_id_to_name: dict[str, str] | None = None) -> str:
         lines: list[str] = []
         for para in self.paragraphs:
             line = "".join(
-                serialize_text_run(pe.text_run)
+                serialize_text_run(pe.text_run, heading_id_to_name=heading_id_to_name)
                 for pe in (para.elements or [])
                 if pe.text_run is not None
             )

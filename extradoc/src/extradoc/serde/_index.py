@@ -67,7 +67,8 @@ def _build_index_tab(
     else:
         folder = sanitize_tab_name(tab_title)
 
-    headings = _extract_outline(tab_xml_map.get(tab_id))
+    tab_xml = tab_xml_map.get(tab_id)
+    headings = _extract_outline(tab_xml) if tab_xml is not None else _extract_outline_from_tab(tab)
 
     parent_tab_id = tab_props.parent_tab_id if tab_props else None
     nesting_level = tab_props.nesting_level if tab_props else None
@@ -113,6 +114,60 @@ def _extract_outline(tab_xml: TabXml | None) -> list[IndexHeading]:
                     heading_id=block.heading_id,
                 )
             )
+
+    return headings
+
+
+def _extract_outline_from_tab(tab: Tab) -> list[IndexHeading]:
+    """Extract indexed headings directly from an API Tab object.
+
+    Used by MarkdownSerde, which has the full Document but no TabXml models.
+    Returns headings in document order with their heading_ids (stable opaque IDs
+    assigned by Google Docs, invariant across heading text renames).
+    """
+    from extradoc.api_types._generated import ParagraphStyleNamedStyleType
+
+    _style_to_tag: dict[str, str] = {
+        "TITLE": "title",
+        "SUBTITLE": "subtitle",
+        "HEADING_1": "h1",
+        "HEADING_2": "h2",
+        "HEADING_3": "h3",
+    }
+    headings: list[IndexHeading] = []
+    counts: dict[str, int] = {}
+
+    dt = tab.document_tab if tab else None
+    body = dt.body if dt else None
+    for se in body.content or [] if body else []:
+        para = se.paragraph
+        if not para:
+            continue
+        ps = para.paragraph_style
+        if not ps:
+            continue
+        style_name = (ps.named_style_type.value if isinstance(
+            ps.named_style_type, ParagraphStyleNamedStyleType
+        ) else (ps.named_style_type or "")) if ps.named_style_type else ""
+        tag = _style_to_tag.get(style_name)
+        if not tag:
+            continue
+        text = "".join(
+            (pe.text_run.content or "").rstrip("\n")
+            for pe in (para.elements or [])
+            if pe.text_run and pe.text_run.content
+        ).strip()
+        if not text:
+            continue
+        counts[tag] = counts.get(tag, 0) + 1
+        headings.append(
+            IndexHeading(
+                tag=tag,
+                text=text,
+                xpath=f"/tab/body/{tag}[{counts[tag]}]",
+                heading_id=ps.heading_id,
+            )
+        )
 
     return headings
 

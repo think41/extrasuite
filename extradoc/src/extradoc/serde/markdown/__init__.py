@@ -19,7 +19,7 @@ from extradoc.serde import DeserializeResult
 
 from .._index import build_index
 from .._models import IndexXml
-from .._utils import sanitize_tab_name
+from .._utils import build_heading_maps, sanitize_tab_name
 from ._from_markdown import markdown_to_document
 from ._to_markdown import document_to_markdown
 
@@ -54,23 +54,43 @@ class MarkdownSerde:
         folder.mkdir(parents=True, exist_ok=True)
 
         # Write per-tab .md files at root level (e.g. Tab_1.md)
+        # tab_toc: folder_name → list of (lineno, heading_line, heading_id | None)
         heading_re = re.compile(r"^(#{1,6})\s+.+$")
-        tab_toc: dict[str, list[tuple[int, str]]] = {}
+        tab_toc: dict[str, list[tuple[int, str, str | None]]] = {}
 
         for folder_name, files in per_tab.items():
             content = files.get("document.md", "")
             tab_path = folder / f"{folder_name}.md"
             tab_path.write_text(content, encoding="utf-8")
 
-            headings: list[tuple[int, str]] = []
+            heading_lines: list[tuple[int, str]] = []
             for lineno, line in enumerate(content.splitlines(), 1):
                 if heading_re.match(line):
-                    headings.append((lineno, line))
-            tab_toc[folder_name] = headings
+                    heading_lines.append((lineno, line))
+            tab_toc[folder_name] = [(ln, line, None) for ln, line in heading_lines]
+
+        # Enrich tab_toc with heading IDs from the index (extracted from API response)
+        for idx_tab in index.all_tabs_flat():
+            folder_name = idx_tab.folder
+            toc_entries = tab_toc.get(folder_name, [])
+            api_headings = idx_tab.headings  # list[IndexHeading] with heading_id
+            # Both lists are in document order — zip by position to correlate
+            enriched: list[tuple[int, str, str | None]] = []
+            api_iter = iter(api_headings)
+            for lineno, heading_line, _ in toc_entries:
+                api_h = next(api_iter, None)
+                enriched.append((lineno, heading_line, api_h.heading_id if api_h else None))
+            tab_toc[folder_name] = enriched
 
         # Write index.md — human-readable TOC with line numbers per tab
         doc_title = doc.title or "Document"
-        md_lines: list[str] = [f"# {doc_title}", ""]
+        md_lines: list[str] = [
+            f"# {doc_title}",
+            "",
+            "To link to a heading: `[text](#Heading Name)` for same-tab,",
+            "`[text](#Tab_Name/Heading Name)` for cross-tab.",
+            "",
+        ]
         for idx_tab in index.all_tabs_flat():
             md_lines.append(f"## {idx_tab.title}")
             md_lines.append("")
@@ -80,7 +100,7 @@ class MarkdownSerde:
             if headings:
                 md_lines.append("| Line | Heading |")
                 md_lines.append("|------|---------|")
-                for lineno, heading_line in headings:
+                for lineno, heading_line, _ in headings:
                     safe = heading_line.replace("|", "\\|")
                     md_lines.append(f"| {lineno} | {safe} |")
             else:
@@ -121,10 +141,19 @@ class MarkdownSerde:
         Desired is computed via 3-way merge: diff(pristine, current) applied to base.
         """
         base_bundle = self._load_base(folder)
+
+        # Build heading name→id map from the base document so that both
+        # pristine and current markdown can resolve name-based heading links.
+        _, heading_name_to_id = build_heading_maps(base_bundle.document)
+
+        # Pristine is parsed WITHOUT the heading map so that placeholder URLs
+        # from a prior cycle remain as-is.  The current (mine) parse DOES use
+        # the map, so a placeholder like #heading-ref:Name resolves to a real
+        # heading link when the heading now exists in base — self-healing.
         pristine_bundle = self._load_pristine(folder)
 
         # Parse current (mine) folder
-        mine_bundle = self._parse(folder)
+        mine_bundle = self._parse(folder, heading_name_to_id=heading_name_to_id)
 
         # 3-way merge
         desired_bundle = _three_way_merge(pristine_bundle, mine_bundle, base_bundle)
@@ -139,7 +168,9 @@ class MarkdownSerde:
         pristine_bundle = self._load_pristine(folder)
         return DocumentWithComments(document=doc, comments=pristine_bundle.comments)
 
-    def _load_pristine(self, folder: Path) -> DocumentWithComments:
+    def _load_pristine(
+        self, folder: Path, *, heading_name_to_id: dict[str, tuple[str, str | None]] | None = None
+    ) -> DocumentWithComments:
         """Extract and parse .pristine/document.zip."""
         pristine_zip = folder / _PRISTINE_DIR / _PRISTINE_ZIP
         with tempfile.TemporaryDirectory() as tmp:
@@ -149,16 +180,23 @@ class MarkdownSerde:
             pristine_index = IndexXml.from_xml_string(
                 (pristine_folder / "index.xml").read_text(encoding="utf-8")
             )
-            return _parse_markdown(pristine_folder, pristine_index)
+            return _parse_markdown(pristine_folder, pristine_index, heading_name_to_id=heading_name_to_id)
 
-    def _parse(self, folder: Path) -> DocumentWithComments:
+    def _parse(
+        self, folder: Path, *, heading_name_to_id: dict[str, tuple[str, str | None]] | None = None
+    ) -> DocumentWithComments:
         """Read a markdown-format folder into a DocumentWithComments."""
         index_path = folder / "index.xml"
         index = IndexXml.from_xml_string(index_path.read_text(encoding="utf-8"))
-        return _parse_markdown(folder, index)
+        return _parse_markdown(folder, index, heading_name_to_id=heading_name_to_id)
 
 
-def _parse_markdown(folder: Path, index: IndexXml) -> DocumentWithComments:
+def _parse_markdown(
+    folder: Path,
+    index: IndexXml,
+    *,
+    heading_name_to_id: dict[str, tuple[str, str | None]] | None = None,
+) -> DocumentWithComments:
     """Internal: read a markdown-format folder into a DocumentWithComments."""
     tab_content: dict[str, str] = {}
     tab_ids: dict[str, str] = {}
@@ -185,6 +223,7 @@ def _parse_markdown(folder: Path, index: IndexXml) -> DocumentWithComments:
         title=index.title,
         revision_id=index.revision,
         tab_ids=tab_ids,
+        heading_name_to_id=heading_name_to_id,
     )
 
     comments_path = folder / "comments.xml"

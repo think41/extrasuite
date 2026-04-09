@@ -246,16 +246,18 @@ def _apply_formatting(text: str, style: Any, *, skip_underline: bool = False) ->
     return result
 
 
-def serialize_text_run(tr: Any) -> str:
+def serialize_text_run(
+    tr: Any, *, heading_id_to_name: dict[str, str] | None = None
+) -> str:
     """Serialize a single TextRun to markdown.
 
     Handles inline code, links (including heading/bookmark anchors), and
     bold/italic/strikethrough/underline formatting.
 
-    Heading and bookmark links use prefixed anchors so they can be decoded
-    unambiguously on push:
-      headingId  → #heading:{id}
-      bookmarkId → #bookmark:{id}
+    When *heading_id_to_name* is provided, heading links are serialized using
+    the human-readable heading name (e.g. ``[text](#Overview)``) instead of
+    the opaque ID.  Placeholder URLs of the form ``#heading-ref:Name`` are
+    also resolved back to ``[text](#Name)``.
     """
     content = (tr.content or "").rstrip("\n").replace("\u000b", " ")
     if not content:
@@ -270,17 +272,116 @@ def serialize_text_run(tr: Any) -> str:
     if not style or not _style_has_attrs(style):
         return _escape_md(content)
 
+    h_map = heading_id_to_name or {}
     link = style.link
     if link:
-        if link.heading_id:
-            raw_url = f"#heading:{link.heading_id}"
+        if link.heading:
+            hid = link.heading.id or ""
+            name = h_map.get(hid)
+            if name is not None:
+                raw_url = f"#{urllib.parse.quote(name, safe='/')}"
+            elif link.heading.tab_id:
+                raw_url = f"#heading:{link.heading.tab_id}/{hid}"
+            else:
+                raw_url = f"#heading:{hid}"
+        elif link.heading_id:
+            name = h_map.get(link.heading_id)
+            if name is not None:
+                raw_url = f"#{urllib.parse.quote(name, safe='/')}"
+            else:
+                raw_url = f"#heading:{link.heading_id}"
+        elif link.bookmark:
+            # New structured format.
+            # Cross-tab: #bookmark:{tab_id}/{bookmark_id}
+            # Same-tab:  #bookmark:{bookmark_id}
+            bid = link.bookmark.id or ""
+            if link.bookmark.tab_id:
+                raw_url = f"#bookmark:{link.bookmark.tab_id}/{bid}"
+            else:
+                raw_url = f"#bookmark:{bid}"
         elif link.bookmark_id:
+            # Legacy format.
             raw_url = f"#bookmark:{link.bookmark_id}"
+        elif link.tab_id:
+            # Direct link to a tab (no specific heading/bookmark).
+            raw_url = f"#tab:{link.tab_id}"
         else:
             raw_url = link.url or "#"
+            # Resolve #heading-ref: placeholders back to name-based links
+            if raw_url.startswith("#heading-ref:"):
+                raw_url = "#" + urllib.parse.quote(raw_url[len("#heading-ref:"):], safe="/")
         url = _normalize_url(raw_url)
         # Underline is implied by markdown link syntax — skip it inside links
         inner = _apply_formatting(content, style, skip_underline=True)
         return f"[{inner}]({url})"
 
     return _apply_formatting(content, style)
+
+
+# ---------------------------------------------------------------------------
+# Heading maps for name-based heading links
+# ---------------------------------------------------------------------------
+
+
+def build_heading_maps(
+    doc: Any,
+) -> tuple[dict[str, str], dict[str, tuple[str, str | None]]]:
+    """Build heading_id_to_name and heading_name_to_info maps from a Document.
+
+    Walks all tabs to extract headings with their IDs and text content.
+
+    Returns:
+        (heading_id_to_name, heading_name_to_info).
+        heading_name_to_info maps heading name → (heading_id, tab_id).
+        It includes per-tab entries ("HeadingName") and cross-tab entries
+        ("FolderName/HeadingName"). First occurrence wins for duplicate
+        heading names within the same scope.
+    """
+    id_to_name: dict[str, str] = {}
+    name_to_info: dict[str, tuple[str, str | None]] = {}
+
+    _HEADING_STYLES = {
+        "TITLE", "SUBTITLE",
+        "HEADING_1", "HEADING_2", "HEADING_3",
+        "HEADING_4", "HEADING_5", "HEADING_6",
+    }
+
+    for tab in doc.tabs or []:
+        props = tab.tab_properties
+        tab_title = (props.title or "Tab 1") if props else "Tab 1"
+        tab_id = (props.tab_id or None) if props else None
+        folder = sanitize_tab_name(tab_title)
+
+        dt = tab.document_tab if tab else None
+        body = dt.body if dt else None
+        for se in (body.content or []) if body else []:
+            para = se.paragraph
+            if not para:
+                continue
+            ps = para.paragraph_style
+            if not ps or not ps.named_style_type:
+                continue
+            style_name = (
+                ps.named_style_type.value
+                if hasattr(ps.named_style_type, "value")
+                else str(ps.named_style_type)
+            )
+            if style_name not in _HEADING_STYLES:
+                continue
+            hid = ps.heading_id
+            if not hid:
+                continue
+            text = "".join(
+                (pe.text_run.content or "").rstrip("\n")
+                for pe in (para.elements or [])
+                if pe.text_run and pe.text_run.content
+            ).strip()
+            if not text:
+                continue
+
+            id_to_name.setdefault(hid, text)
+            name_to_info.setdefault(text, (hid, tab_id))
+            cross_key = f"{folder}/{text}"
+            name_to_info.setdefault(cross_key, (hid, tab_id))
+
+    return id_to_name, name_to_info
