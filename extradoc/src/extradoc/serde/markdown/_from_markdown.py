@@ -360,6 +360,11 @@ def _parse_body(
     with HtmlRenderer():  # type: ignore[no-untyped-call]
         md_doc = MdDocument(source)
 
+    # Pre-split source into lines so we can recover leading whitespace that
+    # mistletoe strips from block content.  mistletoe sets ``line_number`` on
+    # each block (1-based, pointing to the first source line).
+    source_lines = source.splitlines()
+
     body: list[StructuralElement] = []
     special_positions: list[tuple[int, str]] = []
 
@@ -389,7 +394,7 @@ def _parse_body(
             text = _raw_text(block)
             if _FN_DEF_RE.match(text):
                 continue
-            ses = _convert_paragraph(block, h_map, pending_inline_objects)
+            ses = _convert_paragraph(block, h_map, pending_inline_objects, source_lines=source_lines)
             body.extend(ses)
 
         elif isinstance(block, MdList):
@@ -653,7 +658,7 @@ def _convert_heading(block: Any, heading_name_to_id: dict[str, tuple[str, str | 
     )
 
 
-def _convert_paragraph(block: Any, heading_name_to_id: dict[str, tuple[str, str | None]] | None = None, pending_inline_objects: dict[str, InlineObject] | None = None) -> list[StructuralElement]:
+def _convert_paragraph(block: Any, heading_name_to_id: dict[str, tuple[str, str | None]] | None = None, pending_inline_objects: dict[str, InlineObject] | None = None, *, source_lines: list[str] | None = None) -> list[StructuralElement]:
     """Convert a mistletoe Paragraph to one or more StructuralElements.
 
     A paragraph that contains only a <x-pagebreak/> becomes a pagebreak element.
@@ -670,6 +675,14 @@ def _convert_paragraph(block: Any, heading_name_to_id: dict[str, tuple[str, str 
     elements = _tokens_to_elements(children, TextStyle(), heading_name_to_id, pending_inline_objects)
     if not elements:
         return []
+    # Recover leading whitespace that mistletoe strips from block content.
+    # mistletoe normalises leading indentation (0-3 spaces) away before
+    # emitting inline tokens, so ``'   *italic*'`` arrives as just an
+    # Emphasis token.  Look up the raw source line via ``block.line_number``
+    # and, if it begins with whitespace, prepend a plain text run.
+    leading_ws = _recover_leading_whitespace(block, source_lines)
+    if leading_ws:
+        elements.insert(0, _make_text_run(leading_ws, TextStyle()))
     elements.append(ParagraphElement(text_run=TextRun(content="\n")))
     return [
         StructuralElement(
@@ -823,9 +836,17 @@ def _convert_html_table(raw_html: str) -> StructuralElement:
             if tag in ("td", "th") and self._in_cell:
                 self._in_cell = False
                 if self.rows:
+                    raw = "".join(self._buf)
+                    # Strip HTML-layout newlines with their surrounding
+                    # indentation whitespace, but preserve intentional
+                    # leading/trailing spaces on the cell content itself.
+                    # e.g. ``"\n  foo\n"`` → ``"foo"`` but `` INTEREST`` →
+                    # `` INTEREST`` (leading space kept).
+                    if "\n" in raw:
+                        raw = re.sub(r"[ \t]*\n[ \t]*", "", raw)
                     self.rows[-1].append(
                         {
-                            "text": "".join(self._buf).strip(),
+                            "text": raw,
                             "colspan": self._colspan,
                             "rowspan": self._rowspan,
                             "bg": self._bg,
@@ -1044,6 +1065,27 @@ def _tokens_to_elements(
 def _make_text_run(text: str, style: TextStyle) -> ParagraphElement:
     ts = style if _style_has_attrs(style) else None
     return ParagraphElement(text_run=TextRun(content=text, text_style=ts))
+
+
+def _recover_leading_whitespace(block: Any, source_lines: list[str] | None) -> str:
+    """Return any leading spaces/tabs on the block's first source line.
+
+    mistletoe's block parser silently consumes 0-3 leading spaces of
+    indentation before emitting inline tokens, so that information is only
+    available from the raw source.  The block's ``line_number`` attribute is
+    1-based and points at the first line of the block.  Returns ``""`` if
+    the source lines are unavailable, the line number is missing, or the
+    line has no leading whitespace.
+    """
+    if source_lines is None:
+        return ""
+    line_number = getattr(block, "line_number", None)
+    if not isinstance(line_number, int) or line_number < 1 or line_number > len(source_lines):
+        return ""
+    raw = source_lines[line_number - 1]
+    stripped = raw.lstrip(" \t")
+    ws = raw[: len(raw) - len(stripped)]
+    return ws
 
 
 def _raw_text_with_footnote_refs(text: str, style: TextStyle) -> list[ParagraphElement]:
