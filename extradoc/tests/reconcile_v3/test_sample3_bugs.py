@@ -82,9 +82,7 @@ def _request_types(batches: list[Any]) -> list[str]:
     return types
 
 
-def _apply_batches_via_mock(
-    base: Document, batches: list[Any]
-) -> Document:
+def _apply_batches_via_mock(base: Document, batches: list[Any]) -> Document:
     """Apply reconcile batches to ``base`` using the mock API and return the result."""
     mock = MockGoogleDocsAPI(base)
     responses: list[dict[str, Any]] = []
@@ -180,8 +178,7 @@ def test_bug65_colbreak_preserved_on_columns_text_edit(tmp_path: Path) -> None:
         after_doc = _apply_batches_via_mock(result.base.document, batches)
     except Exception as exc:  # noqa: BLE001 — mock rejection is itself the bug
         pytest.fail(
-            "mock API rejected reconcile output for a simple paragraph edit: "
-            f"{exc!r}"
+            f"mock API rejected reconcile output for a simple paragraph edit: {exc!r}"
         )
 
     out_folder = tmp_path / "doc_after"
@@ -192,9 +189,7 @@ def test_bug65_colbreak_preserved_on_columns_text_edit(tmp_path: Path) -> None:
     after_colbreak_lines = [
         i for i, line in enumerate(after_lines) if "<x-colbreak/>" in line
     ]
-    assert after_colbreak_lines, (
-        "x-colbreak disappeared entirely after reconcile+apply"
-    )
+    assert after_colbreak_lines, "x-colbreak disappeared entirely after reconcile+apply"
     first_after = after_colbreak_lines[0]
     trailing_after = "\n".join(after_lines[first_after + 1 :]).strip()
 

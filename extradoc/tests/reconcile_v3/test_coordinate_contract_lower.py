@@ -296,8 +296,10 @@ def test_joined_cell_delete_reads_base_not_desired() -> None:
     deletes = [r for r in req_dicts if "deleteContentRange" in r]
     assert len(deletes) == 3
     delete_ranges = {
-        (d["deleteContentRange"]["range"]["startIndex"],
-         d["deleteContentRange"]["range"]["endIndex"])
+        (
+            d["deleteContentRange"]["range"]["startIndex"],
+            d["deleteContentRange"]["range"]["endIndex"],
+        )
         for d in deletes
     }
     # Base paragraphs: [414..419), [419..423), [423..496)
@@ -309,8 +311,7 @@ def test_joined_cell_delete_reads_base_not_desired() -> None:
     # (An exclusive endIndex of 496 is legal — it means "up to but not
     # including the cell terminator".)
     for r in req_dicts:
-        for key in ("deleteContentRange", "updateTextStyle",
-                    "updateParagraphStyle"):
+        for key in ("deleteContentRange", "updateTextStyle", "updateParagraphStyle"):
             if key not in r:
                 continue
             rng = r[key].get("range") or {}
@@ -465,8 +466,7 @@ def test_form15g_cell_boundary_not_touched() -> None:
     # Verify no op starts at / inserts at the cell boundary {496, 497}.
     # (Exclusive endIndex=496 is legal — that's one-past-last-content-char.)
     for r in reqs:
-        for key in ("deleteContentRange", "updateTextStyle",
-                    "updateParagraphStyle"):
+        for key in ("deleteContentRange", "updateTextStyle", "updateParagraphStyle"):
             if key not in r:
                 continue
             rng = r[key].get("range", {})

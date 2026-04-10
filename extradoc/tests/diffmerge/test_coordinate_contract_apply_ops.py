@@ -121,9 +121,7 @@ def _se_para(text: str) -> StructuralElement:
 def _se_table(rows_texts: list[list[str]]) -> StructuralElement:
     rows = []
     for row_texts in rows_texts:
-        cells = [
-            TableCell(content=[_se_para(text)]) for text in row_texts
-        ]
+        cells = [TableCell(content=[_se_para(text)]) for text in row_texts]
         rows.append(TableRow(table_cells=cells))
     return StructuralElement(
         table=Table(
@@ -179,8 +177,8 @@ def test_identity_merge_preserves_concrete_indices() -> None:
 
 
 def test_single_paragraph_edit_nulls_touched_and_later_siblings() -> None:
-    p0 = _para_dict("alpha\n", 1)   # untouched, BEFORE the edit
-    p1 = _para_dict("beta\n", 7)    # edited
+    p0 = _para_dict("alpha\n", 1)  # untouched, BEFORE the edit
+    p1 = _para_dict("beta\n", 7)  # edited
     p2 = _para_dict("gamma\n", 12)  # untouched, sibling AFTER the edit
     base = _make_base([p0, p1, p2])
 
@@ -228,8 +226,8 @@ def test_single_paragraph_edit_nulls_touched_and_later_siblings() -> None:
 
 
 def test_insert_mid_body_poisons_only_touched_span() -> None:
-    p0 = _para_dict("alpha\n", 1)   # [1..7)
-    p1 = _para_dict("beta\n", 7)    # [7..12)
+    p0 = _para_dict("alpha\n", 1)  # [1..7)
+    p1 = _para_dict("beta\n", 7)  # [7..12)
     table = _table_dict([["x"]], 12)
     # Append a trailing paragraph after the table, also concrete.
     tail_start = table["endIndex"]
@@ -302,10 +300,10 @@ def test_table_cell_paragraph_join_poisons_entire_table() -> None:
     # Table starts at 8.
     cur = 8
     cell_start = cur
-    cell_p0 = _para_dict("Name\n", cur)     # [8..13)
+    cell_p0 = _para_dict("Name\n", cur)  # [8..13)
     cur = cell_p0["endIndex"]
-    cell_p1 = _para_dict("Status\n", cur)   # [13..20)
-    cur = cell_p1["endIndex"] + 1           # +1 cell terminator
+    cell_p1 = _para_dict("Status\n", cur)  # [13..20)
+    cur = cell_p1["endIndex"] + 1  # +1 cell terminator
     cell_end = cur
     cell_dict = {
         "startIndex": cell_start,
@@ -337,11 +335,7 @@ def test_table_cell_paragraph_join_poisons_entire_table() -> None:
     a_table = StructuralElement(
         table=Table(
             table_rows=[
-                TableRow(
-                    table_cells=[
-                        TableCell(content=[_se_para("Name Status\n")])
-                    ]
-                )
+                TableRow(table_cells=[TableCell(content=[_se_para("Name Status\n")])])
             ],
             rows=1,
             columns=1,
@@ -351,11 +345,7 @@ def test_table_cell_paragraph_join_poisons_entire_table() -> None:
     d_table = StructuralElement(
         table=Table(
             table_rows=[
-                TableRow(
-                    table_cells=[
-                        TableCell(content=[_se_para("Full name\n")])
-                    ]
-                )
+                TableRow(table_cells=[TableCell(content=[_se_para("Full name\n")])])
             ],
             rows=1,
             columns=1,

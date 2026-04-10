@@ -116,7 +116,11 @@ def _style_ops_on_inserted_content(reqs: list[dict[str, Any]]) -> set[int]:
             if isinstance(s, int) and isinstance(e, int):
                 cum_shift -= e - s
         elif "updateTextStyle" in req or "updateParagraphStyle" in req:
-            key = "updateTextStyle" if "updateTextStyle" in req else "updateParagraphStyle"
+            key = (
+                "updateTextStyle"
+                if "updateTextStyle" in req
+                else "updateParagraphStyle"
+            )
             rng = req[key].get("range") or {}
             s = rng.get("startIndex")
             e = rng.get("endIndex")
@@ -159,9 +163,7 @@ def _assert_range_shape(reqs: list[dict[str, Any]]) -> None:
                 loc = op.get("location") or {}
                 if loc:
                     idx = loc.get("index")
-                    assert isinstance(idx, int), (
-                        f"req {i} {key}: non-int index {idx!r}"
-                    )
+                    assert isinstance(idx, int), f"req {i} {key}: non-int index {idx!r}"
                 continue
             rng = op.get("range") or {}
             if not rng:
@@ -404,6 +406,4 @@ def test_form15g_cell_join_no_boundary_op() -> None:
     # fine, a larger count may indicate regression.
     assert len(reqs) > 0, "cell join produced no ops"
     # Upper bound; tune after first run.
-    assert len(reqs) < 200, (
-        f"cell join produced unexpectedly many ops: {len(reqs)}"
-    )
+    assert len(reqs) < 200, f"cell join produced unexpectedly many ops: {len(reqs)}"

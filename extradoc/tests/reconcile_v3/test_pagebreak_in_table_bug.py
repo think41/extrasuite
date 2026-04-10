@@ -164,11 +164,15 @@ def _build_2x1_table_doc(
     """Build a doc with a 2-row 1-column table."""
     table_start = 1
     row0_start = table_start + 1
-    cell0 = _make_cell(row0_start + 1, cell_texts[0], with_trailing_rich=with_trailing_rich)
+    cell0 = _make_cell(
+        row0_start + 1, cell_texts[0], with_trailing_rich=with_trailing_rich
+    )
     assert cell0.end_index is not None
     row0_end = cell0.end_index
     row1_start = row0_end
-    cell1 = _make_cell(row1_start + 1, cell_texts[1], with_trailing_rich=with_trailing_rich)
+    cell1 = _make_cell(
+        row1_start + 1, cell_texts[1], with_trailing_rich=with_trailing_rich
+    )
     assert cell1.end_index is not None
     row1_end = cell1.end_index
     table_end = row1_end

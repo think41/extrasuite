@@ -792,8 +792,7 @@ def _assert_indices_well_formed(doc_dict: dict[str, Any]) -> None:
                 e_is_none = e is None
                 if s_is_none != e_is_none:
                     raise AssertionError(
-                        f"Mixed-index state at {path}: "
-                        f"startIndex={s!r}, endIndex={e!r}"
+                        f"Mixed-index state at {path}: startIndex={s!r}, endIndex={e!r}"
                     )
             for k, v in node.items():
                 _walk(v, f"{path}.{k}" if path else k)

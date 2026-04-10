@@ -132,9 +132,7 @@ def _simulate_requests_and_find_stale_deletes(
                         f"(startIndex={start})"
                     )
                 else:
-                    inserted_bytes = [
-                        i for i in range(start, end) if origins[i] == "I"
-                    ]
+                    inserted_bytes = [i for i in range(start, end) if origins[i] == "I"]
                     if inserted_bytes:
                         violations.append(
                             f"req[{req_idx}] deleteContentRange [{start}..{end}) "
@@ -225,9 +223,7 @@ def test_xfail_replace_body_with_heading_table_and_bullets() -> None:
         body_content=[
             make_para_el("Fruits\n", named_style="HEADING_1"),
             make_para_el("This is a short paragraph about fruits.\n"),
-            make_table_el(
-                [["Fruit", "Color"], ["Apple", "Red"], ["Mango", "Yellow"]]
-            ),
+            make_table_el([["Fruit", "Color"], ["Apple", "Red"], ["Mango", "Yellow"]]),
             make_para_el("Some text after the table.\n"),
             _make_bullet_para("First bullet\n"),
             _make_bullet_para("Second bullet\n"),
@@ -480,9 +476,7 @@ def test_xfail_replace_single_paragraph_with_longer_text() -> None:
         ]
     )
 
-    replacement = (
-        "much longer replacement text that is fifty plus chars long here\n"
-    )
+    replacement = "much longer replacement text that is fifty plus chars long here\n"
     desired = make_indexed_doc(
         body_content=[
             make_para_el(replacement),

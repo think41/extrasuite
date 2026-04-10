@@ -1068,9 +1068,7 @@ def _lower_story_content_update(
         # is an invariant violation (see docs/coordinate_contract.md §who-reads-what).
         start, end = _require_concrete(
             el,
-            context=(
-                f"_lower_story_content_update base_delete base_idx={base_idx}"
-            ),
+            context=(f"_lower_story_content_update base_delete base_idx={base_idx}"),
         )
         requests.append(
             _make_delete_content_range(
@@ -1128,9 +1126,7 @@ def _lower_story_content_update(
         # is an invariant violation (see docs/coordinate_contract.md §who-reads-what).
         start, end = _require_concrete(
             el,
-            context=(
-                f"_lower_story_content_update deleted_sizes base_idx={base_idx}"
-            ),
+            context=(f"_lower_story_content_update deleted_sizes base_idx={base_idx}"),
         )
         deleted_sizes[base_idx] = end - start
 
@@ -1148,8 +1144,7 @@ def _lower_story_content_update(
         s, _ = _require_concrete(
             base_content[m.base_idx],  # type: ignore[attr-defined]
             context=(
-                f"_lower_story_content_update match sort "
-                f"base_idx={m.base_idx}"  # type: ignore[attr-defined]
+                f"_lower_story_content_update match sort base_idx={m.base_idx}"  # type: ignore[attr-defined]
             ),
         )
         return s
@@ -1169,8 +1164,7 @@ def _lower_story_content_update(
         b_el_start, _ = _require_concrete(
             b_el,
             context=(
-                f"_lower_story_content_update match update "
-                f"base_idx={match.base_idx}"
+                f"_lower_story_content_update match update base_idx={match.base_idx}"
             ),
         )
         shift = _deleted_chars_before(
@@ -1285,9 +1279,7 @@ def _plan_insertions(
             terminal = base_content[-1]
             raw_insert_pos, _ = _require_concrete(
                 terminal,
-                context=(
-                    f"_plan_insertions terminal anchor desired_idx={desired_idx}"
-                ),
+                context=(f"_plan_insertions terminal anchor desired_idx={desired_idx}"),
             )
 
         # Adjust for characters deleted before this insertion point
@@ -1853,9 +1845,7 @@ def _lower_paragraph_update(
 
     # Base-tree read: contract guarantees concrete indices. A None here is
     # an invariant violation (see docs/coordinate_contract.md §who-reads-what).
-    start, end = _require_concrete(
-        base_el, context="base_el in element update"
-    )
+    start, end = _require_concrete(base_el, context="base_el in element update")
 
     adjusted_start = start - pre_delete_shift + post_insert_shift
     adjusted_end = end - pre_delete_shift + post_insert_shift
@@ -3159,9 +3149,7 @@ def _lower_section_break_update(
 
     # Base-tree read: contract guarantees concrete indices. A None here is
     # an invariant violation (see docs/coordinate_contract.md §who-reads-what).
-    start, end = _require_concrete(
-        base_el, context="base_el in element update"
-    )
+    start, end = _require_concrete(base_el, context="base_el in element update")
 
     adjusted_start = start - pre_delete_shift + post_insert_shift
     adjusted_end = end - pre_delete_shift + post_insert_shift
