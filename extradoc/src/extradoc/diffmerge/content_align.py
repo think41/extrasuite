@@ -446,6 +446,42 @@ def text_similarity(a: str, b: str) -> float:
     return intersection / union if union > 0 else 0.0
 
 
+def shared_affix_ratio(a: str, b: str) -> float:
+    """Return (shared_prefix + shared_suffix) / max(len(a), len(b)).
+
+    This is a character-level "near-identical" heuristic used to catch
+    paragraph pairs that differ by a small localised edit (e.g. insert a
+    space inside a CamelCase word, replace a date, append a trailing
+    clause). Such pairs can score 0.0 on word-level Jaccard yet still be
+    obviously the same paragraph.
+
+    Unrelated strings return ~0.0 because they share no common prefix or
+    suffix.
+    """
+    if not a or not b:
+        return 0.0
+    if a == b:
+        return 1.0
+    # Common prefix length
+    prefix = 0
+    max_prefix = min(len(a), len(b))
+    while prefix < max_prefix and a[prefix] == b[prefix]:
+        prefix += 1
+    # Common suffix length (bounded so prefix + suffix <= min length)
+    suffix = 0
+    max_suffix = min(len(a), len(b)) - prefix
+    while suffix < max_suffix and a[len(a) - 1 - suffix] == b[len(b) - 1 - suffix]:
+        suffix += 1
+    return (prefix + suffix) / max(len(a), len(b))
+
+
+#: Minimum shared-prefix+suffix ratio (character-level) above which two
+#: paragraphs are considered "near-identical" even if their word-level
+#: Jaccard similarity falls below ``MIN_PARA_MATCH_SIMILARITY``. Set high
+#: enough that unrelated paragraphs never trigger it.
+MIN_PARA_NEAR_IDENTICAL_RATIO: float = 0.4
+
+
 # ---------------------------------------------------------------------------
 # Table similarity (cell-text Jaccard against base)
 # ---------------------------------------------------------------------------
@@ -513,7 +549,16 @@ def matchable(base: ContentNode, desired: ContentNode) -> bool:
     if base.kind != desired.kind:
         return False
     if base.kind == NodeKind.PARAGRAPH:
-        return text_similarity(base.text, desired.text) >= MIN_PARA_MATCH_SIMILARITY
+        if text_similarity(base.text, desired.text) >= MIN_PARA_MATCH_SIMILARITY:
+            return True
+        # Fallback: near-identical paragraphs (one-character edits in the
+        # middle of a CamelCase word, appended trailing clauses, etc.) score
+        # 0 on word-Jaccard but share a long common prefix+suffix. Accept
+        # them so the reconciler emits a surgical text diff instead of
+        # delete+insert.
+        return (
+            shared_affix_ratio(base.text, desired.text) >= MIN_PARA_NEAR_IDENTICAL_RATIO
+        )
     if base.kind == NodeKind.TABLE:
         return _table_sim(base, desired) >= MIN_TABLE_MATCH_SIMILARITY
     if base.kind == NodeKind.LIST:
@@ -568,6 +613,14 @@ def edit_cost(base: ContentNode, desired: ContentNode) -> float:
     """
     if base.kind == NodeKind.PARAGRAPH:
         sim = text_similarity(base.text, desired.text)
+        # For near-identical paragraphs whose word-Jaccard is artificially
+        # low (CamelCase edits, appended clauses), use the shared
+        # prefix+suffix ratio as the similarity estimate instead. This
+        # keeps edit_cost below delete_penalty + insert_penalty so the DP
+        # actually picks the match.
+        affix_sim = shared_affix_ratio(base.text, desired.text)
+        if affix_sim > sim:
+            sim = affix_sim
         max_len = max(len(base.text), len(desired.text))
         return (1.0 - sim) * max_len
     if base.kind == NodeKind.LIST:

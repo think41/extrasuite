@@ -849,6 +849,8 @@ def _align_raw_to_ancestor(
     # skips over extra raw elements without consuming ancestor slots.
     from extradoc.diffmerge.content_align import (
         MIN_PARA_MATCH_SIMILARITY,
+        MIN_PARA_NEAR_IDENTICAL_RATIO,
+        shared_affix_ratio,
         text_similarity,
     )
 
@@ -866,7 +868,15 @@ def _align_raw_to_ancestor(
         if raw_kind == "paragraph":
             raw_text = _dict_text(raw_content[ri]).strip()
             anc_text = _se_text(ancestor_content[ai]).strip()
-            return text_similarity(raw_text, anc_text) >= MIN_PARA_MATCH_SIMILARITY
+            if text_similarity(raw_text, anc_text) >= MIN_PARA_MATCH_SIMILARITY:
+                return True
+            # Fallback: near-identical paragraphs (CamelCase edits, appended
+            # tails) can score 0 on word-Jaccard but share a long common
+            # prefix+suffix. Keep them matchable so the 3-way merge updates
+            # the existing raw paragraph instead of delete+insert-ing it.
+            return (
+                shared_affix_ratio(raw_text, anc_text) >= MIN_PARA_NEAR_IDENTICAL_RATIO
+            )
         if raw_kind == "table":
             raw_text = _dict_text(raw_content[ri])
             anc_text = _se_text(ancestor_content[ai])
