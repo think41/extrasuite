@@ -743,70 +743,12 @@ def align_content(
     # ------------------------------------------------------------------
     # Pre-match terminals
     # ------------------------------------------------------------------
-    # Normally the terminals are simply ``base[m-1]`` and ``desired[n-1]``.
-    #
-    # However, when one side (typically base) has *extra* trailing
-    # bare-newline paragraphs that were removed in the other side (e.g. a
-    # table cell had three empty trailing paragraphs and the user deleted
-    # two), naively forcing ``base[-1] ↔ desired[-1]`` pairs a bare ``\n``
-    # paragraph with a real-content paragraph. That pairing leaves the real
-    # base content paragraph unmatched (and forced into ``base_deletes``)
-    # which in turn makes the reconciler emit a delete-whole-paragraph +
-    # insert-whole-paragraph plan instead of a surgical text diff.
-    #
-    # To avoid that, peel off any *excess* trailing bare-newline paragraphs
-    # from whichever side is longer and route them directly into deletes /
-    # inserts, then pre-match the remaining innermost pair of bare-newline
-    # paragraphs (if any), and finally run the DP on whatever sits before
-    # the paired terminal on each side.
-    base_tail = _count_trailing_bare_newline(base)
-    desired_tail = _count_trailing_bare_newline(desired)
+    # The terminals are base[m-1] and desired[n-1].
+    terminal_match = ContentMatch(base_idx=m - 1, desired_idx=n - 1)
 
-    extra_base_tail: list[int] = []
-    extra_desired_tail: list[int] = []
-
-    # Peel the asymmetric excess of trailing bare-newline paragraphs.
-    # The number of terminals we will pre-match is ``min(base_tail,
-    # desired_tail)``. The "excess" on the longer-tail side goes straight
-    # into deletes (or inserts). This keeps the forced ``base[-1] ↔
-    # desired[-1]`` terminal pair meaningful: we only force a pairing when
-    # both sides actually have a bare-newline to pair up, or when neither
-    # side does (in which case the DP is free to pick).
-    common_tail = min(base_tail, desired_tail)
-    if base_tail > common_tail:
-        num_to_delete = base_tail - common_tail
-        extra_base_tail = [m - 1 - k for k in range(num_to_delete)]
-    if desired_tail > common_tail:
-        num_to_insert = desired_tail - common_tail
-        extra_desired_tail = [n - 1 - k for k in range(num_to_insert)]
-
-    # After peeling, the "effective" last index on each side is:
-    eff_m = m - len(extra_base_tail)
-    eff_n = n - len(extra_desired_tail)
-
-    # Pre-match the innermost paired terminals only if a common bare-newline
-    # tail exists on both sides. Otherwise skip the terminal pre-match and
-    # let the DP align everything (including the original ``base[-1]`` /
-    # ``desired[-1]`` slots, whose ``is_terminal`` flag is ignored below).
-    if common_tail >= 1 and eff_m > 0 and eff_n > 0:
-        terminal_match = ContentMatch(base_idx=eff_m - 1, desired_idx=eff_n - 1)
-        prefix_base = base[: eff_m - 1]
-        prefix_desired = desired[: eff_n - 1]
-    else:
-        terminal_match = None
-        # When there's no bare-newline pairing to protect, the previously
-        # terminal-flagged element (if any still sits at the effective end)
-        # must be *allowed* to participate in delete/insert transitions.
-        # Clear ``is_terminal`` on a per-call copy so ``delete_penalty`` /
-        # ``insert_penalty`` return finite costs for it.
-        prefix_base = [
-            _unflag_terminal(node) if node.is_terminal else node
-            for node in base[:eff_m]
-        ]
-        prefix_desired = [
-            _unflag_terminal(node) if node.is_terminal else node
-            for node in desired[:eff_n]
-        ]
+    # Run DP on prefixes base[0..m-2] and desired[0..n-2].
+    prefix_base = base[: m - 1]
+    prefix_desired = desired[: n - 1]
 
     prefix_alignment = _dp_align(prefix_base, prefix_desired)
 
@@ -819,61 +761,18 @@ def align_content(
         prefix_alignment, prefix_base, prefix_desired
     )
 
-    # Combine prefix result with terminal match + peeled trailing excess.
-    all_matches = list(prefix_alignment.matches)
-    if terminal_match is not None:
-        all_matches.append(terminal_match)
-    base_deletes = sorted([*prefix_alignment.base_deletes, *extra_base_tail])
-    desired_inserts = sorted([*prefix_alignment.desired_inserts, *extra_desired_tail])
-    total_cost = prefix_alignment.total_cost
+    # Combine prefix result with terminal match.
+    all_matches = [*prefix_alignment.matches, terminal_match]
+    total_cost = (
+        prefix_alignment.total_cost
+    )  # terminal edit_cost is excluded (terminals are paired by definition)
 
     return ContentAlignment(
         matches=all_matches,
-        base_deletes=base_deletes,
-        desired_inserts=desired_inserts,
+        base_deletes=prefix_alignment.base_deletes,
+        desired_inserts=prefix_alignment.desired_inserts,
         total_cost=total_cost,
     )
-
-
-def _unflag_terminal(node: ContentNode) -> ContentNode:
-    """Return a shallow copy of *node* with ``is_terminal`` cleared.
-
-    ``align_content`` uses this when it decides the node should no longer
-    be protected by the terminal pre-match (e.g. because the caller marked
-    the last element as terminal, but that element is a bare-newline
-    paragraph whose counterpart on the other side is a real-content
-    paragraph that must not be delete+re-inserted).
-    """
-    return ContentNode(
-        kind=node.kind,
-        text=node.text,
-        num_cells=node.num_cells,
-        inline_element_count=node.inline_element_count,
-        list_kind=node.list_kind,
-        table_cell_texts=node.table_cell_texts,
-        is_terminal=False,
-        original=node.original,
-    )
-
-
-def _is_bare_newline_paragraph(node: ContentNode) -> bool:
-    """Return True if *node* is a paragraph whose entire text is ``"\\n"``.
-
-    Used by ``align_content`` to identify trailing "empty" paragraphs that
-    can be deleted (or inserted) as a whole without corrupting any
-    meaningful content. Non-paragraph nodes are never considered bare.
-    """
-    return node.kind == NodeKind.PARAGRAPH and node.text == "\n"
-
-
-def _count_trailing_bare_newline(nodes: list[ContentNode]) -> int:
-    """Return the number of consecutive bare-``\\n`` paragraphs at the end."""
-    k = 0
-    i = len(nodes) - 1
-    while i >= 0 and _is_bare_newline_paragraph(nodes[i]):
-        k += 1
-        i -= 1
-    return k
 
 
 def _tables_share_content(a: ContentNode, b: ContentNode) -> bool:
