@@ -2128,6 +2128,11 @@ def _diff_paragraph_runs(
                 tab_id=tab_id,
                 segment_id=segment_id,
                 base_cp_to_utf16=base_cp_to_utf16,
+                inherited_style=_inherited_insert_style(
+                    base_spans=base_spans,
+                    base_body=base_body,
+                    base_pos=i1,
+                ),
             )
             if insert_reqs:
                 pending.append((story_offset + base_cp_to_utf16[i1], insert_reqs))
@@ -2160,6 +2165,11 @@ def _diff_paragraph_runs(
                 tab_id=tab_id,
                 segment_id=segment_id,
                 base_cp_to_utf16=base_cp_to_utf16,
+                inherited_style=_inherited_insert_style(
+                    base_spans=base_spans,
+                    base_body=base_body,
+                    base_pos=i1,
+                ),
             )
             # Delete and insert at the same logical position.
             # We emit the insert first (smaller sort key → processed before delete
@@ -2292,6 +2302,44 @@ def _next_span_boundary(
     return limit
 
 
+def _inherited_insert_style(
+    *,
+    base_spans: list[tuple[int, int, str, TextStyle]],
+    base_body: str,
+    base_pos: int,
+) -> TextStyle:
+    """Return the TextStyle that ``insertText`` at ``base_pos`` will inherit.
+
+    Google Docs ``insertText`` inherits the style of the character to the
+    LEFT of the insertion point (falling back to the character to the right
+    when inserting at the very start of a paragraph/segment).  We mirror
+    that behaviour here so the reconciler can avoid emitting spurious
+    ``updateTextStyle`` requests for inserted characters whose desired style
+    already matches what they would inherit from the surrounding run.
+
+    Opaque placeholder chars (non-textRun elements) are skipped — they are
+    not real runs and their sentinel style must not be mistaken for
+    inherited formatting.
+    """
+    # Prefer the left neighbour (classic Docs insert-inherit semantics).
+    i = base_pos - 1
+    while i >= 0 and i < len(base_body) and base_body[i] == _OPAQUE_ELEMENT_CHAR:
+        i -= 1
+    if i >= 0:
+        style = _style_at_offset(base_spans, i)
+        if not _is_opaque_style(style):
+            return style
+    # Fall back to the right neighbour.
+    j = base_pos
+    while j < len(base_body) and base_body[j] == _OPAQUE_ELEMENT_CHAR:
+        j += 1
+    if j < len(base_body):
+        style = _style_at_offset(base_spans, j)
+        if not _is_opaque_style(style):
+            return style
+    return _EMPTY_TEXT_STYLE
+
+
 def _insert_ops_for_span(
     *,
     desired_spans: list[tuple[int, int, str, TextStyle]],
@@ -2302,6 +2350,7 @@ def _insert_ops_for_span(
     tab_id: str,
     segment_id: str | None,
     base_cp_to_utf16: list[int] | None = None,
+    inherited_style: TextStyle | None = None,
 ) -> list[Request]:
     """Emit insertText + optional updateTextStyle for desired[desired_start:desired_end].
 
@@ -2375,9 +2424,15 @@ def _insert_ops_for_span(
         if _is_opaque_style(style):
             i = end_of_span
             continue
-        style_dict = style.model_dump(by_alias=True, exclude_none=True)
-        if style_dict:
-            fields = list(style_dict.keys())
+        # Compare the desired style against the style that the inserted
+        # text will inherit from its neighbour in the base document.  Only
+        # fields that actually differ need an explicit updateTextStyle.
+        # Emitting a redundant updateTextStyle — even with identical values
+        # — fragments the run on the real Google Docs API and causes edits
+        # like ``PARTI`` → ``PART I`` to round-trip as ``**PART** **I**``.
+        base_ref = inherited_style if inherited_style is not None else _EMPTY_TEXT_STYLE
+        fields = _text_style_changed_fields(base_ref, style)
+        if fields:
             reqs.append(
                 _make_update_text_style(
                     start_index=cursor,
