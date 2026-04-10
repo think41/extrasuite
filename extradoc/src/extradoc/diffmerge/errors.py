@@ -17,3 +17,16 @@ class UnsupportedReconcileV3Error(ReconcileV3Error):
 
 class ReconcileV3InvariantError(ReconcileV3Error):
     """Raised when an internal reconciler invariant is violated (a bug)."""
+
+
+class CoordinateNotResolvedError(ReconcileV3Error):
+    """Raised when reconcile_v3/lower encounters a desired-tree node whose
+    (startIndex, endIndex) are None and the current code path cannot
+    synthesize a live-doc coordinate from base anchors + cumulative shift.
+
+    Also raised when a base-tree node is unexpectedly missing concrete
+    indices — the coordinate contract (docs/coordinate_contract.md) requires
+    the base tree to always be in State A (concrete).
+
+    See ``docs/coordinate_contract.md`` §failure-mode.
+    """

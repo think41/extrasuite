@@ -232,6 +232,57 @@ Decide whether the remaining work should focus on:
     content intended for the suffix span after an existing page break is still
     being reinserted on the wrong side of that page break during repair/replan
 
+### 2026-04-10 — coordinate contract (Direction A) final verification
+
+Branch `coordinate-contract-direction-a`. Validating the apply_ops/lower
+coordinate contract refactor (Tasks 1–9) against the live API. Previous
+attempts on FORM-15G were failing with invalid `deleteContentRange[496..497)`
+targeting a table cell boundary.
+
+Doc: `1FkRTeU852Mxg0OJh684MXutDxW7ubTkiA6_EXyRce54` (FORM-15G).
+
+**Run 1 — no-op round trip**
+- `pull → push (no edit) → verify`
+- Result: **0 requests emitted**, push succeeded, verify passed.
+
+**Run 2 — 3 targeted edits in the previously-drifting region**
+1. Text edit inside the "Previous year" table cell (`2020-21` → `2025-26`) —
+   this is the N-to-1 paragraph-collapse case that previously triggered the
+   `[496..497)` bug.
+2. New italic paragraph inserted before the `**PARTI**` heading.
+3. Bold markers added around `DIVIDEND` inside an HTML `<td>` cell.
+
+Total ops emitted: **16** (previous attempts on similar edits were producing
+50+ ops with invalid ranges). Breakdown:
+
+- Edit 1 (insert paragraph): 3 ops (insertText + updateParagraphStyle +
+  updateTextStyle). Surgical.
+- Edit 2 (text edit in cell): 8 ops — two deletes `[519..557)` and
+  `[477..519)`, then insertText @477 plus four updateTextStyle run-style
+  replays.
+- Edit 3 (bold markers): 5 ops — two `**` insertText plus three
+  updateTextStyle.
+
+**Critical assertion**: no op touches indices `{496, 497}`. The cell
+boundary that was the prior bug is untouched by the emitted batch.
+
+Push succeeded with 0 API errors; `--verify` passed; re-pull after push is
+byte-identical to the edited file (`diff` → empty).
+
+**Non-contract quirks observed** (both pre-existing, unrelated to this work):
+
+- Edit 3 (`**DIVIDEND**`) was pushed as literal `**` character insertion
+  rather than a bold style toggle. HTML-in-markdown parser does not
+  recognize markdown bold inside an HTML `<td>` cell.
+- Edit 2 used delete+insert for the in-cell text change rather than a
+  narrower string diff. Both ranges are clean cell-interior ranges; the
+  pattern is expected when run styles need to be replayed inside the cell.
+
+**Conclusion**: the coordinate contract refactor holds end-to-end against
+the real API. The previously-drifted `[414..496)` cell region now generates
+legal, surgical ops, and the full pull → edit → push → pull cycle is
+byte-stable.
+
 ### 2026-04-01
 
 - Applied diff.py anchor changes (PageBreakIR + TableIR treated as section anchors)

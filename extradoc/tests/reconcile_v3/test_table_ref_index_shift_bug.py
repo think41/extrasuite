@@ -26,6 +26,7 @@ from extradoc.api_types._generated import (
 from extradoc.reconcile_v3.api import reconcile_batches
 
 from .helpers import (
+    assert_batches_within_base,
     make_indexed_para,
     make_indexed_terminal,
     make_para_el,
@@ -121,6 +122,7 @@ def test_insert_text_before_table_shifts_insertTableColumn_start() -> None:
     )
 
     batches = reconcile_batches(base, desired)
+    assert_batches_within_base(base, batches)
     reqs = _collect_requests(batches)
 
     col_inserts = [r for r in reqs if "insertTableColumn" in r]
@@ -155,6 +157,7 @@ def test_delete_before_table_shifts_insertTableRow_start() -> None:
     )
 
     batches = reconcile_batches(base, desired)
+    assert_batches_within_base(base, batches)
     reqs = _collect_requests(batches)
 
     row_inserts = [r for r in reqs if "insertTableRow" in r]
@@ -194,6 +197,7 @@ def test_multiple_body_edits_accumulate_shift() -> None:
     )
 
     batches = reconcile_batches(base, desired)
+    assert_batches_within_base(base, batches)
     reqs = _collect_requests(batches)
 
     col_inserts = [r for r in reqs if "insertTableColumn" in r]
@@ -222,6 +226,7 @@ def test_body_edit_after_table_does_not_shift_table_start() -> None:
     )
 
     batches = reconcile_batches(base, desired)
+    assert_batches_within_base(base, batches)
     reqs = _collect_requests(batches)
 
     col_inserts = [r for r in reqs if "insertTableColumn" in r]

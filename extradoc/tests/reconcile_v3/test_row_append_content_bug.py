@@ -22,7 +22,12 @@ from extradoc.api_types._generated import (
 )
 from extradoc.reconcile_v3.api import reconcile_batches
 
-from .helpers import make_indexed_terminal, make_para_el, make_terminal_para
+from .helpers import (
+    assert_batches_within_base,
+    make_indexed_terminal,
+    make_para_el,
+    make_terminal_para,
+)
 from .test_lower import make_indexed_doc
 
 
@@ -195,6 +200,7 @@ def test_append_single_row_populates_new_cells_2x1() -> None:
     )
 
     batches = reconcile_batches(base, desired)
+    assert_batches_within_base(base, batches)
     reqs = _collect_requests(batches)
 
     # Assert: exactly one insertTableRow was emitted
@@ -222,6 +228,7 @@ def test_append_single_row_populates_new_cells_2x2() -> None:
     )
 
     batches = reconcile_batches(base, desired)
+    assert_batches_within_base(base, batches)
     reqs = _collect_requests(batches)
 
     row_inserts = [r for r in reqs if "insertTableRow" in r]
@@ -260,6 +267,7 @@ def test_append_two_rows_populates_all_cells_2x2() -> None:
     )
 
     batches = reconcile_batches(base, desired)
+    assert_batches_within_base(base, batches)
     reqs = _collect_requests(batches)
 
     row_inserts = [r for r in reqs if "insertTableRow" in r]
@@ -293,6 +301,7 @@ def test_append_three_rows_populates_all_cells_2x2() -> None:
     )
 
     batches = reconcile_batches(base, desired)
+    assert_batches_within_base(base, batches)
     reqs = _collect_requests(batches)
 
     row_inserts = [r for r in reqs if "insertTableRow" in r]
@@ -322,6 +331,7 @@ def test_append_row_and_column_populates_all_cells_2x2() -> None:
     )
 
     batches = reconcile_batches(base, desired)
+    assert_batches_within_base(base, batches)
     reqs = _collect_requests(batches)
 
     # The table diff may represent 2x2→3x3 as (1 row + 1 col) OR as pure
@@ -356,6 +366,7 @@ def test_append_row_alongside_matched_cell_edits() -> None:
     )
 
     batches = reconcile_batches(base, desired)
+    assert_batches_within_base(base, batches)
     reqs = _collect_requests(batches)
 
     row_inserts = [r for r in reqs if "insertTableRow" in r]

@@ -26,7 +26,7 @@ from extradoc.api_types._generated import (
 from extradoc.indexer import utf16_len
 from extradoc.reconcile_v3.api import reconcile_batches
 
-from .helpers import make_indexed_terminal
+from .helpers import assert_batches_within_base, make_indexed_terminal
 from .test_lower import make_indexed_doc
 
 
@@ -164,11 +164,15 @@ def _build_2x1_table_doc(
     """Build a doc with a 2-row 1-column table."""
     table_start = 1
     row0_start = table_start + 1
-    cell0 = _make_cell(row0_start + 1, cell_texts[0], with_trailing_rich=with_trailing_rich)
+    cell0 = _make_cell(
+        row0_start + 1, cell_texts[0], with_trailing_rich=with_trailing_rich
+    )
     assert cell0.end_index is not None
     row0_end = cell0.end_index
     row1_start = row0_end
-    cell1 = _make_cell(row1_start + 1, cell_texts[1], with_trailing_rich=with_trailing_rich)
+    cell1 = _make_cell(
+        row1_start + 1, cell_texts[1], with_trailing_rich=with_trailing_rich
+    )
     assert cell1.end_index is not None
     row1_end = cell1.end_index
     table_end = row1_end
@@ -211,6 +215,7 @@ def test_cell_text_edit_does_not_emit_pagebreakbefore_in_mask() -> None:
     )
 
     batches = reconcile_batches(base, desired)  # type: ignore[arg-type]
+    assert_batches_within_base(base, batches)
     table_start, table_end = _table_span(base)
 
     offenders: list[tuple[int, int, str]] = []
@@ -266,6 +271,7 @@ def test_cell_row_append_does_not_emit_pagebreakbefore_in_mask() -> None:
     )
 
     batches = reconcile_batches(base, desired)  # type: ignore[arg-type]
+    assert_batches_within_base(base, batches)
     # The base table span is what matters — requests run against base indices.
     base_table_start, base_table_end = _table_span(base)
 

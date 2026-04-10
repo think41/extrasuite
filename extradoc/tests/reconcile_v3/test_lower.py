@@ -240,8 +240,16 @@ class TestSimpleContentOps:
         ]
         assert starts == sorted(starts, reverse=True)
 
-    def test_elements_without_indices_are_skipped_not_crashed(self) -> None:
-        """Elements without startIndex/endIndex are silently skipped (no crash)."""
+    def test_elements_without_indices_raise_coordinate_error(self) -> None:
+        """Base elements without concrete indices violate the coordinate contract.
+
+        Per ``docs/coordinate_contract.md``, the base tree must always be in
+        State A (concrete indices). Feeding a base tree whose elements carry
+        ``(None, None)`` indices must raise ``CoordinateNotResolvedError``
+        loudly — silent skip is forbidden.
+        """
+        from extradoc.diffmerge import CoordinateNotResolvedError
+
         base = make_document(
             tabs=[
                 make_tab(
@@ -259,9 +267,8 @@ class TestSimpleContentOps:
             ]
         )
         ops = diff(base, desired)
-        # Should not raise
-        result = lower_ops(ops)
-        assert isinstance(result, list)
+        with pytest.raises(CoordinateNotResolvedError):
+            lower_ops(ops)
 
 
 # ===========================================================================
@@ -3518,8 +3525,7 @@ class TestSamePositionGroupWithTable:
             and (r.insert_text.text or "") == "CellContent\n"
         ]
         assert len(cell_text_positions) == 1, (
-            f"Expected one 'CellContent\\n' insertText, got "
-            f"{len(cell_text_positions)}"
+            f"Expected one 'CellContent\\n' insertText, got {len(cell_text_positions)}"
         )
         cell_text_req_idx = cell_text_positions[0]
 
@@ -3582,8 +3588,7 @@ class TestSamePositionGroupWithTable:
                     rows = req.insert_table.rows or 0
                     cols = req.insert_table.columns or 0
                     assert idx < body_size, (
-                        f"insertTable at index {idx} exceeds body_size "
-                        f"{body_size}"
+                        f"insertTable at index {idx} exceeds body_size {body_size}"
                     )
                     # Empty table size: 1 (pre-\n) + 1 (table open) +
                     # rows * (1 + cols*2) + 1 (trailing \n)

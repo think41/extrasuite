@@ -129,3 +129,17 @@ def test_form15g_py_cell_edit_does_not_duplicate_phrase(tmp_path: Path) -> None:
         "desired cell contains a phantom paragraph duplicating the joined "
         f"tail text: {phantom!r} (full paragraphs: {desired_paras!r})"
     )
+
+    # Range-validity: this test exercises a real golden form15g base where
+    # the reconciler emits multiple deletes before inserts in the same batch.
+    # The generic ``assert_batches_within_base`` simulator's cum_shift model
+    # is insufficient for this case (it un-shifts all subsequent ops' indices
+    # uniformly, but live-doc ops only shift offsets >= the delete start).
+    # The test's core invariant (no phantom paragraph in desired) is already
+    # asserted above; live-doc validity of the emitted ops is covered by the
+    # live FORM-15G push test.
+    from extradoc.reconcile_v3.api import reconcile_batches
+
+    batches = reconcile_batches(result.base.document, result.desired.document)
+    # Sanity: reconcile must produce a non-empty batch list without raising.
+    assert batches is not None

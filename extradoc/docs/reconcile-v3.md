@@ -2,6 +2,10 @@
 
 **Audience**: An engineer picking up where this work left off. Read this before touching any code.
 
+> **See also:** [`coordinate_contract.md`](coordinate_contract.md) — the
+> three-state `startIndex`/`endIndex` invariant that `reconcile_v3/lower.py`
+> consumes from the desired tree. Required reading before modifying `lower.py`.
+
 ---
 
 ## The Big Picture

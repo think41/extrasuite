@@ -31,6 +31,7 @@ from extradoc.indexer import utf16_len
 from extradoc.reconcile_v3.api import reconcile_batches
 
 from .helpers import (
+    assert_batches_within_base,
     make_indexed_doc,
     make_indexed_para,
     make_indexed_terminal,
@@ -225,6 +226,7 @@ def test_delete_row_and_edit_cell_content() -> None:
     )
 
     batches = reconcile_batches(base, desired)
+    assert_batches_within_base(base, batches)
     violations = _simulate_batches(
         batches,
         initial_body_len=table_end + 1,
@@ -252,6 +254,7 @@ def test_delete_multiple_rows_and_edit_cells() -> None:
     )
 
     batches = reconcile_batches(base, desired)
+    assert_batches_within_base(base, batches)
     # Row deletes are emitted in descending index order: row 3 first, then row 1
     violations = _simulate_batches(
         batches,
@@ -296,6 +299,7 @@ def test_delete_row_and_fill_empty_cells() -> None:
     )
 
     batches = reconcile_batches(base, desired)
+    assert_batches_within_base(base, batches)
     violations = _simulate_batches(
         batches,
         initial_body_len=table_end + 1,
@@ -336,6 +340,7 @@ def test_body_text_before_table_plus_row_delete_and_cell_edit() -> None:
     )
 
     batches = reconcile_batches(base, desired)
+    assert_batches_within_base(base, batches)
     violations = _simulate_batches(
         batches,
         initial_body_len=table_end + 1,

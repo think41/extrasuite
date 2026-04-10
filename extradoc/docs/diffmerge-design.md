@@ -9,6 +9,10 @@ Read this before modifying anything in the package. The layer is small (~5 files
 but the invariants matter: getting them wrong produces invalid edit plans that
 the Google Docs API rejects.
 
+> **See also:** [`coordinate_contract.md`](coordinate_contract.md) for the
+> three-state `startIndex`/`endIndex` invariant on the desired tree produced
+> by `apply_ops_to_document`.
+
 ## Public surface
 
 ```python

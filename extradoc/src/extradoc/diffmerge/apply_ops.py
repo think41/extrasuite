@@ -160,6 +160,9 @@ def apply_ops_to_document(
             _apply_table_style_op(doc, op)
         # Any unknown op type is silently skipped
 
+    if __debug__:
+        _assert_indices_well_formed(doc)
+
     return doc
 
 
@@ -591,6 +594,11 @@ def _apply_table_structural_op(doc: dict[str, Any], op: Any) -> None:
             if op.column_index < len(cells):
                 del cells[op.column_index]
 
+    # Table shape mutation: poison every index on this table and all its
+    # descendants. The row/column list changed, so base indices on the
+    # untouched rows/cells are no longer meaningful.
+    _null_indices_recursive(table)
+
 
 def _apply_table_style_op(doc: dict[str, Any], op: Any) -> None:
     """Apply cell style, row style, or column properties ops to the matching table."""
@@ -706,21 +714,93 @@ def _se_elements_equal(a: StructuralElement, b: StructuralElement) -> bool:
     a_dict = a.model_dump(by_alias=True, exclude_none=True)
     b_dict = b.model_dump(by_alias=True, exclude_none=True)
     # Strip indices since they differ between ancestor and mine
-    _strip_indices_inplace(a_dict)
-    _strip_indices_inplace(b_dict)
+    _strip_indices_for_equality(a_dict)
+    _strip_indices_for_equality(b_dict)
     return a_dict == b_dict
 
 
-def _strip_indices_inplace(obj: Any) -> None:
-    """Remove startIndex/endIndex from a nested dict/list structure in place."""
+def _strip_indices_for_equality(obj: Any) -> None:
+    """Remove startIndex/endIndex from a nested dict/list structure in place.
+
+    Used ONLY for equality comparisons. Removes the keys entirely so two
+    dicts with different (or missing) indices compare equal. For poisoning
+    mutation sites on the desired tree, use ``_null_indices_recursive``
+    instead — it SETS the keys to None so the coordinate contract's
+    State B (``(None, None)``) is observable by downstream consumers.
+    """
     if isinstance(obj, dict):
         obj.pop("startIndex", None)
         obj.pop("endIndex", None)
         for v in obj.values():
-            _strip_indices_inplace(v)
+            _strip_indices_for_equality(v)
     elif isinstance(obj, list):
         for item in obj:
-            _strip_indices_inplace(item)
+            _strip_indices_for_equality(item)
+
+
+def _null_indices_recursive(obj: Any) -> None:
+    """Set ``startIndex``/``endIndex`` to ``None`` on a node and all descendants.
+
+    This is the low-level tool that realises the poisoning rule from
+    ``docs/coordinate_contract.md``. Unlike ``_strip_indices_for_equality``,
+    which removes the keys, this SETS them to ``None`` so downstream
+    consumers (``reconcile_v3/lower.py``) can observe State B and recompute
+    live-doc coordinates from base anchors + cumulative shift.
+
+    Walks conservatively: at each dict node, if ``startIndex`` or ``endIndex``
+    is present the pair is nulled; then recurses into every value (which
+    covers paragraphs, paragraph.elements, tables, tableRows, tableCells,
+    tableCell.content, sectionBreak, tableOfContents, horizontalRule, etc.).
+    """
+    if isinstance(obj, dict):
+        if "startIndex" in obj or "endIndex" in obj:
+            obj["startIndex"] = None
+            obj["endIndex"] = None
+        for v in obj.values():
+            _null_indices_recursive(v)
+    elif isinstance(obj, list):
+        for item in obj:
+            _null_indices_recursive(item)
+
+
+def _assert_indices_well_formed(doc_dict: dict[str, Any]) -> None:
+    """Assert the three-state invariant on a desired document tree.
+
+    For every dict node in ``doc_dict``, if *both* ``startIndex`` and
+    ``endIndex`` keys are present, they must have the same nullness:
+    either both concrete ``int`` (State A), or both ``None`` (State B).
+    A node with one as ``int`` and the other as ``None`` is State C
+    (forbidden) and raises ``AssertionError`` with a dotted path to the
+    offending node.
+
+    A *missing* key is not State C — Google's own API omits ``startIndex``
+    on the first element of a segment (implicit 0). Missing keys are
+    treated as concrete. Only the explicit ``None`` sentinel set by
+    ``_null_indices_recursive`` indicates State B.
+
+    Exposed for test use.
+    """
+
+    def _walk(node: Any, path: str) -> None:
+        if isinstance(node, dict):
+            has_start = "startIndex" in node
+            has_end = "endIndex" in node
+            if has_start and has_end:
+                s = node["startIndex"]
+                e = node["endIndex"]
+                s_is_none = s is None
+                e_is_none = e is None
+                if s_is_none != e_is_none:
+                    raise AssertionError(
+                        f"Mixed-index state at {path}: startIndex={s!r}, endIndex={e!r}"
+                    )
+            for k, v in node.items():
+                _walk(v, f"{path}.{k}" if path else k)
+        elif isinstance(node, list):
+            for i, item in enumerate(node):
+                _walk(item, f"{path}[{i}]")
+
+    _walk(doc_dict, "")
 
 
 def _dict_text(el: dict[str, Any]) -> str:
@@ -1228,6 +1308,12 @@ def _merge_changed_paragraph(
     _restore_trailing_whitespace(new_elements, base_elements)
 
     para["elements"] = new_elements
+    # Mutation: this paragraph's byte length may have changed (text edits,
+    # run splitting). Null all indices on this structural element — the
+    # coordinate contract requires State B for any mutated node. The
+    # enclosing ``_apply_content_alignment`` run will null sibling elements
+    # in the same region.
+    _null_indices_recursive(result)
     return result
 
 
@@ -1493,6 +1579,12 @@ def _merge_changed_table(
         del raw_rows[len(d_rows) :]
         raw_table["rows"] = len(d_rows)
 
+    # Mutation: this table is on the "changed" path — at least one cell,
+    # row, or column changed. Per the poisoning rule in
+    # ``docs/coordinate_contract.md``, cell/row shape changes propagate up
+    # to the containing table, so every descendant (rows, cells,
+    # cell-content paragraphs, runs) loses its base indices.
+    _null_indices_recursive(result)
     return result
 
 
@@ -1652,6 +1744,13 @@ def _apply_content_alignment(
     # IS matched to ancestor (and thus has a place in the desired output).
     result: list[dict[str, Any]] = []
     last_emitted_r_idx = -1
+    # Track which result indices were mutated or inserted. The poisoning
+    # rule (docs/coordinate_contract.md) bounds propagation by the enclosing
+    # alignment run: within the span from the first touched result index
+    # through the last touched result index, every sibling (touched or not)
+    # has its indices nulled. Outside that span, concrete base indices are
+    # preserved.
+    mutated_result_indices: list[int] = []
 
     def _emit_unmatched_raw_up_to(r_stop: int) -> None:
         """Emit raw_base elements with no ancestor counterpart in (last_emitted_r_idx, r_stop)."""
@@ -1668,14 +1767,20 @@ def _apply_content_alignment(
             # Pure insert — no base element to merge with.
             # Do NOT flush unmatched raw elements here: they should stick to
             # their original raw neighbours, not to newly inserted content.
-            result.append(d_el.model_dump(by_alias=True, exclude_none=True))
+            inserted = d_el.model_dump(by_alias=True, exclude_none=True)
+            _null_indices_recursive(inserted)
+            result.append(inserted)
+            mutated_result_indices.append(len(result) - 1)
             continue
 
         # This is a matched element
         a_idx = desired_to_ancestor.get(d_idx)
         if a_idx is None:
             # Shouldn't happen, but safety fallback
-            result.append(d_el.model_dump(by_alias=True, exclude_none=True))
+            fallback = d_el.model_dump(by_alias=True, exclude_none=True)
+            _null_indices_recursive(fallback)
+            result.append(fallback)
+            mutated_result_indices.append(len(result) - 1)
             continue
 
         r_idx = anc_to_raw.get(a_idx)
@@ -1688,7 +1793,10 @@ def _apply_content_alignment(
             # the desired element.
             ancestor_el = ancestor_content[a_idx]
             if not _se_elements_equal(ancestor_el, d_el):
-                result.append(d_el.model_dump(by_alias=True, exclude_none=True))
+                synth = d_el.model_dump(by_alias=True, exclude_none=True)
+                _null_indices_recursive(synth)
+                result.append(synth)
+                mutated_result_indices.append(len(result) - 1)
             continue
 
         # Before emitting this matched raw element, emit any unmatched raw
@@ -1701,13 +1809,24 @@ def _apply_content_alignment(
             # Element is unchanged — use raw base as-is (preserves all rich formatting)
             result.append(copy.deepcopy(raw_base_content[r_idx]))
         else:
-            # Element changed — merge text changes into raw base
+            # Element changed — merge text changes into raw base.
+            # _merge_changed_element already nulls indices on its result.
             result.append(
                 _merge_changed_element(raw_base_content[r_idx], d_el, ancestor_el)
             )
+            mutated_result_indices.append(len(result) - 1)
         last_emitted_r_idx = r_idx
 
     # Tail: any unmatched raw elements after the last matched one.
     _emit_unmatched_raw_up_to(len(raw_base_content))
+
+    # Poison siblings within the touched region (inclusive span from first
+    # mutation to last mutation). Elements outside this span keep their
+    # concrete base indices.
+    if mutated_result_indices:
+        first_touched = min(mutated_result_indices)
+        last_touched = max(mutated_result_indices)
+        for i in range(first_touched, last_touched + 1):
+            _null_indices_recursive(result[i])
 
     return result

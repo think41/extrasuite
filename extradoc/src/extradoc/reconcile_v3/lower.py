@@ -95,6 +95,7 @@ from extradoc.api_types._generated import (
     List as DocList,
 )
 from extradoc.diffmerge import (
+    CoordinateNotResolvedError,
     CreateFooterOp,
     CreateHeaderOp,
     DeleteFooterOp,
@@ -597,16 +598,23 @@ def lower_batches(
                     # indices. Prior requests in batch1 (body-text edits,
                     # deleteTableRow, insertTableRow) may have shifted these
                     # indices. Compute the cumulative shift and adjust.
-                    first_start = _element_start(op.base_content[0])
-                    if first_start is not None:
-                        shift = _compute_index_shift_for_body_ref(
-                            batch1,
-                            base_index=first_start,
-                            tab_id=op.tab_id,
-                            struct_events_by_req_id=struct_events_by_req_id,
-                        )
-                        if shift != 0:
-                            content_to_lower = _shift_elements(op.base_content, shift)
+                    # Base-tree read: contract guarantees concrete indices.
+                    # See docs/coordinate_contract.md §who-reads-what.
+                    first_start, _ = _require_concrete(
+                        op.base_content[0],
+                        context=(
+                            f"UpdateBodyContentOp.base_content[0] "
+                            f"tab_id={op.tab_id} story_kind={op.story_kind}"
+                        ),
+                    )
+                    shift = _compute_index_shift_for_body_ref(
+                        batch1,
+                        base_index=first_start,
+                        tab_id=op.tab_id,
+                        struct_events_by_req_id=struct_events_by_req_id,
+                    )
+                    if shift != 0:
+                        content_to_lower = _shift_elements(op.base_content, shift)
                 batch1.extend(
                     _lower_story_content_update(
                         op.alignment,
@@ -1056,10 +1064,12 @@ def _lower_story_content_update(
 
     for base_idx in sorted_deletes:
         el = base_content[base_idx]
-        start, end = _element_range(el)
-        if start is None or end is None:
-            # Element has no index info — skip (shouldn't happen on real docs)
-            continue
+        # Base-tree read: contract guarantees concrete indices. A None here
+        # is an invariant violation (see docs/coordinate_contract.md §who-reads-what).
+        start, end = _require_concrete(
+            el,
+            context=(f"_lower_story_content_update base_delete base_idx={base_idx}"),
+        )
         requests.append(
             _make_delete_content_range(
                 start_index=start,
@@ -1112,11 +1122,13 @@ def _lower_story_content_update(
     deleted_sizes: dict[int, int] = {}
     for base_idx in alignment.base_deletes:
         el = base_content[base_idx]
-        start, end = _element_range(el)
-        if start is not None and end is not None:
-            deleted_sizes[base_idx] = end - start
-        else:
-            deleted_sizes[base_idx] = 0
+        # Base-tree read: contract guarantees concrete indices. A None here
+        # is an invariant violation (see docs/coordinate_contract.md §who-reads-what).
+        start, end = _require_concrete(
+            el,
+            context=(f"_lower_story_content_update deleted_sizes base_idx={base_idx}"),
+        )
+        deleted_sizes[base_idx] = end - start
 
     # Process matched element updates in DESCENDING start-index order.
     # Each in-place paragraph update may grow or shrink the paragraph.  If we
@@ -1126,9 +1138,20 @@ def _lower_story_content_update(
     # (higher-index) elements are emitted first; a size change there only
     # affects positions below it, which we haven't emitted yet — so they will
     # use the correct original positions (no cumulative shift needed).
+    # Base-tree read: contract guarantees concrete indices.
+    # See docs/coordinate_contract.md §who-reads-what.
+    def _match_start(m: object) -> int:
+        s, _ = _require_concrete(
+            base_content[m.base_idx],  # type: ignore[attr-defined]
+            context=(
+                f"_lower_story_content_update match sort base_idx={m.base_idx}"  # type: ignore[attr-defined]
+            ),
+        )
+        return s
+
     matches_desc = sorted(
         alignment.matches,
-        key=lambda m: _element_start(base_content[m.base_idx]) or 0,
+        key=_match_start,
         reverse=True,
     )
     for match in matches_desc:
@@ -1136,23 +1159,22 @@ def _lower_story_content_update(
         d_el = desired_content[match.desired_idx]
         if b_el == d_el:
             continue
-        b_el_start = _element_start(b_el)
-        shift = (
-            _deleted_chars_before(
-                deleted_sizes=deleted_sizes,
-                base_content=base_content,
-                before_pos=b_el_start,
-            )
-            if b_el_start is not None
-            else 0
+        # Base-tree read: contract guarantees concrete indices.
+        # See docs/coordinate_contract.md §who-reads-what.
+        b_el_start, _ = _require_concrete(
+            b_el,
+            context=(
+                f"_lower_story_content_update match update base_idx={match.base_idx}"
+            ),
         )
-        post_insert_shift = (
-            _inserted_chars_before_or_at(
-                insert_metadata=insert_metadata,
-                before_pos=b_el_start,
-            )
-            if b_el_start is not None
-            else 0
+        shift = _deleted_chars_before(
+            deleted_sizes=deleted_sizes,
+            base_content=base_content,
+            before_pos=b_el_start,
+        )
+        post_insert_shift = _inserted_chars_before_or_at(
+            insert_metadata=insert_metadata,
+            before_pos=b_el_start,
         )
         update_reqs = _lower_element_update(
             base_el=b_el,
@@ -1215,11 +1237,13 @@ def _plan_insertions(
     deleted_sizes: dict[int, int] = {}
     for base_idx in alignment.base_deletes:
         el = base_content[base_idx]
-        start, end = _element_range(el)
-        if start is not None and end is not None:
-            deleted_sizes[base_idx] = end - start
-        else:
-            deleted_sizes[base_idx] = 0
+        # Base-tree read: contract guarantees concrete indices. A None here
+        # is an invariant violation (see docs/coordinate_contract.md §who-reads-what).
+        start, end = _require_concrete(
+            el,
+            context=f"_plan_insertions deleted_sizes base_idx={base_idx}",
+        )
+        deleted_sizes[base_idx] = end - start
 
     # Phase 1: Compute (insert_pos, desired_idx, element_requests) for each insert.
     # We collect them first so we can reorder within same-position groups.
@@ -1239,17 +1263,24 @@ def _plan_insertions(
                 insert_before_base_idx = m.base_idx
                 break
 
+        # Base-tree reads: contract guarantees concrete indices.
+        # See docs/coordinate_contract.md §who-reads-what.
         if insert_before_base_idx is not None:
             base_el = base_content[insert_before_base_idx]
-            raw_insert_pos = _element_start(base_el)
+            raw_insert_pos, _ = _require_concrete(
+                base_el,
+                context=(
+                    f"_plan_insertions anchor desired_idx={desired_idx} "
+                    f"base_idx={insert_before_base_idx}"
+                ),
+            )
         else:
             # Insert before terminal (last element in base_content)
             terminal = base_content[-1]
-            raw_insert_pos = _element_start(terminal)
-
-        if raw_insert_pos is None:
-            # No index info — skip
-            continue
+            raw_insert_pos, _ = _require_concrete(
+                terminal,
+                context=(f"_plan_insertions terminal anchor desired_idx={desired_idx}"),
+            )
 
         # Adjust for characters deleted before this insertion point
         offset = _deleted_chars_before(
@@ -1701,8 +1732,13 @@ def _deleted_chars_before(
     """Return total character count deleted from positions < before_pos."""
     total = 0
     for bidx, size in deleted_sizes.items():
-        el_start = _element_start(base_content[bidx])
-        if el_start is not None and el_start < before_pos:
+        # Base-tree read: contract guarantees concrete indices.
+        # See docs/coordinate_contract.md §who-reads-what.
+        el_start, _ = _require_concrete(
+            base_content[bidx],
+            context=f"_deleted_chars_before base_idx={bidx}",
+        )
+        if el_start < before_pos:
             total += size
     return total
 
@@ -1807,9 +1843,9 @@ def _lower_paragraph_update(
     base_para = base_el.paragraph
     desired_para = desired_el.paragraph
 
-    start, end = _element_range(base_el)
-    if start is None or end is None:
-        return []
+    # Base-tree read: contract guarantees concrete indices. A None here is
+    # an invariant violation (see docs/coordinate_contract.md §who-reads-what).
+    start, end = _require_concrete(base_el, context="base_el in element update")
 
     adjusted_start = start - pre_delete_shift + post_insert_shift
     adjusted_end = end - pre_delete_shift + post_insert_shift
@@ -3111,9 +3147,9 @@ def _lower_section_break_update(
     if not changed_fields:
         return []
 
-    start, end = _element_range(base_el)
-    if start is None or end is None:
-        return []
+    # Base-tree read: contract guarantees concrete indices. A None here is
+    # an invariant violation (see docs/coordinate_contract.md §who-reads-what).
+    start, end = _require_concrete(base_el, context="base_el in element update")
 
     adjusted_start = start - pre_delete_shift + post_insert_shift
     adjusted_end = end - pre_delete_shift + post_insert_shift
@@ -3280,11 +3316,16 @@ def _element_size(el: StructuralElement) -> int:
     if el.section_break is not None:
         return 1
     if el.table is not None:
-        # Try indices first (from API pull), fall back to recursive computation
+        # Desired-tree tolerant path: indices are used only as a fast-path
+        # optimization. If they are None (State B per coordinate contract
+        # §three-state-invariant), we recursively compute size from cell
+        # content. Both base and desired callers are supported.
         start, end = _element_range(el)
         if start is not None and end is not None:
             return end - start
         return _table_size(el.table)
+    # Desired-tree tolerant path: same rationale as the table branch above.
+    # See docs/coordinate_contract.md §three-state-invariant.
     start, end = _element_range(el)
     if start is not None and end is not None:
         return end - start
@@ -3331,6 +3372,79 @@ def _element_start(el: StructuralElement) -> int | None:
     """Return startIndex from a StructuralElement, or None."""
     start = el.start_index
     return start if isinstance(start, int) else None
+
+
+def _require_concrete(el: StructuralElement, *, context: str) -> tuple[int, int]:
+    """Return ``(startIndex, endIndex)`` from a base-tree element.
+
+    Per the coordinate contract (``docs/coordinate_contract.md``), the base
+    tree is always in State A — concrete indices. The Google Docs API uses an
+    "implicit-zero" convention for the very first element of a segment: it
+    omits ``startIndex`` entirely (meaning 0). Per the contract's
+    "Missing index keys = concrete State A" rule, a missing ``startIndex``
+    paired with a concrete ``endIndex`` is still State A and resolves to
+    ``start=0``.
+
+    Fully absent indices (``start=None, end=None``) on a base-tree element
+    are an invariant violation — either the producer in ``apply_ops.py``
+    corrupted the base tree, or a caller passed a desired-tree element into a
+    site that expects base. Raise loudly so the bug surfaces at its origin.
+    """
+    start = el.start_index
+    end = el.end_index
+    # Resolve the API's implicit-zero for the first element of a segment.
+    if start is None and isinstance(end, int):
+        start = 0
+    if not isinstance(start, int) or not isinstance(end, int):
+        raise CoordinateNotResolvedError(
+            f"{context}: expected concrete base-tree indices, "
+            f"got (start={el.start_index!r}, end={el.end_index!r}). "
+            "The coordinate contract guarantees the base tree is concrete; "
+            "a None here is an invariant violation. "
+            "See docs/coordinate_contract.md §who-reads-what."
+        )
+    return start, end
+
+
+def _resolve_desired_range(
+    desired_el: StructuralElement,
+    *,
+    base_anchor_start: int,
+    cumulative_shift: int,
+    local_offset: int = 0,
+    context: str = "desired element",
+) -> tuple[int, int]:
+    """Synthesize a live-doc coordinate for a desired-tree element whose
+    indices are ``(None, None)``.
+
+    The live-doc start index is computed as::
+
+        base_anchor_start + cumulative_shift + local_offset
+
+    where:
+    - ``base_anchor_start`` is the startIndex of the nearest preceding
+      matched base element (callers must supply this; this helper does not
+      try to walk up the tree).
+    - ``cumulative_shift`` is the net byte delta produced by all prior ops in
+      the current batch (positive for inserts, negative for deletes).
+    - ``local_offset`` is a caller-supplied offset within the synthesized
+      region (e.g. an intra-paragraph run offset).
+
+    The element's length is derived from its structural content (text runs
+    for paragraphs, recursive walk for tables). Raises
+    ``CoordinateNotResolvedError`` if a length cannot be computed — for
+    example a ``tableOfContents`` element with no indices and no other size
+    signal.
+    """
+    start = base_anchor_start + cumulative_shift + local_offset
+    try:
+        length = _element_size(desired_el)
+    except NotImplementedError as exc:
+        raise CoordinateNotResolvedError(
+            f"{context}: cannot synthesize desired-range length — "
+            f"no concrete indices and no derivable size. Root cause: {exc}"
+        ) from None
+    return start, start + length
 
 
 def _para_text(para: Paragraph) -> str:
