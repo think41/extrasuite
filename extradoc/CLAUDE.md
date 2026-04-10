@@ -86,6 +86,21 @@ async def execute_request_batches(
 
 - Orchestration (pull/diff/push): `src/extradoc/client.py` (`DocsClient`)
 
+### Coordinate contract
+
+The desired `Document` tree produced by diffmerge and consumed by the
+reconciler follows a strict three-state invariant on `startIndex`/`endIndex`:
+
+1. **Concrete indices** on regions carried through unchanged from `base`.
+2. **`None`** on regions that were synthesized or mutated by `apply_ops`.
+3. **Mixed within a single element is forbidden** — poisoning propagates to
+   the entire region enclosed by the `_apply_content_alignment` boundary.
+
+`apply_ops_to_document` (`diffmerge/apply_ops.py`) is the **sole producer** of
+desired-tree indices; `reconcile_v3/lower.py` is the **sole consumer**. Before
+changing anything in `diffmerge/apply_ops.py` or `reconcile_v3/lower.py`, read
+[`docs/coordinate_contract.md`](docs/coordinate_contract.md).
+
 ### Testing
 
 Follow TDD / red -> green tests. Test against public interface of the respective module. Don't import module internals in your test.
