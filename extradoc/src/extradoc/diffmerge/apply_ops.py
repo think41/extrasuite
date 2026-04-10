@@ -1047,7 +1047,9 @@ def _merge_changed_paragraph(
     desired_run_offsets: list[tuple[int, int]] = []  # (d_offset, base_lookup_offset)
     offset_info: dict[str, Any] = {"delta": 0, "prefix_len": 0, "des_edit_end": 0}
     if anc_text:
-        _offs_result = _compute_base_offsets_for_desired_runs(anc_text, desired_elements)
+        _offs_result = _compute_base_offsets_for_desired_runs(
+            anc_text, desired_elements
+        )
         desired_run_offsets = _offs_result[0]
         offset_info = _offs_result[1]
 
@@ -1234,7 +1236,7 @@ def _restore_trailing_whitespace(
         base_before_nl = base_text[:-1]
     else:
         return
-    base_trailing_ws = base_before_nl[len(base_before_nl.rstrip()):]
+    base_trailing_ws = base_before_nl[len(base_before_nl.rstrip()) :]
     if not base_trailing_ws:
         return
 
@@ -1248,7 +1250,7 @@ def _restore_trailing_whitespace(
         des_before_nl = des_text[:-1]
     else:
         return
-    des_trailing_ws = des_before_nl[len(des_before_nl.rstrip()):]
+    des_trailing_ws = des_before_nl[len(des_before_nl.rstrip()) :]
     if des_trailing_ws:
         return  # desired already has trailing whitespace
 
@@ -1258,7 +1260,6 @@ def _restore_trailing_whitespace(
         if tr and tr.get("content", "") != "\n":
             tr["content"] = tr["content"] + base_trailing_ws
             break
-
 
 
 def _find_base_splits_in_range(
@@ -1434,7 +1435,9 @@ def _merge_text_styles(
 
 
 def _merge_changed_table(
-    raw_table_el: dict[str, Any], desired_el: StructuralElement
+    raw_table_el: dict[str, Any],
+    desired_el: StructuralElement,
+    ancestor_el: StructuralElement | None = None,
 ) -> dict[str, Any]:
     """Merge a changed table: preserve base structure, update cell text.
 
@@ -1451,6 +1454,9 @@ def _merge_changed_table(
     raw_rows = raw_table.get("tableRows") or []
     d_rows = d_table.table_rows or []
 
+    a_table = ancestor_el.table if ancestor_el is not None else None
+    a_rows = a_table.table_rows or [] if a_table is not None else []
+
     # Merge overlapping rows; append/trim for structural changes.
     # This preserves tableStyle, tableCellStyle, and paragraph styles on
     # existing cells even when rows or columns are added/removed.
@@ -1458,7 +1464,8 @@ def _merge_changed_table(
     for row_i in range(common_rows):
         raw_row = raw_rows[row_i]
         d_row = d_rows[row_i]
-        _merge_table_row(raw_row, d_row)
+        a_row = a_rows[row_i] if row_i < len(a_rows) else None
+        _merge_table_row(raw_row, d_row, a_row)
 
     if len(d_rows) > len(raw_rows):
         # New rows added — append from desired
@@ -1473,14 +1480,18 @@ def _merge_changed_table(
     return result
 
 
-def _merge_table_row(raw_row: dict[str, Any], d_row: Any) -> None:
+def _merge_table_row(
+    raw_row: dict[str, Any], d_row: Any, a_row: Any | None = None
+) -> None:
     """Merge a single table row: preserve base cell styles, update content."""
     raw_cells = raw_row.get("tableCells") or []
     d_cells = d_row.table_cells or []
+    a_cells = (a_row.table_cells or []) if a_row is not None else []
 
     common_cols = min(len(raw_cells), len(d_cells))
     for col_i in range(common_cols):
-        _merge_table_cell(raw_cells[col_i], d_cells[col_i])
+        a_cell = a_cells[col_i] if col_i < len(a_cells) else None
+        _merge_table_cell(raw_cells[col_i], d_cells[col_i], a_cell)
 
     if len(d_cells) > len(raw_cells):
         # New columns added — append from desired
@@ -1493,10 +1504,30 @@ def _merge_table_row(raw_row: dict[str, Any], d_row: Any) -> None:
     raw_row["tableCells"] = raw_cells
 
 
-def _merge_table_cell(raw_cell: dict[str, Any], d_cell: Any) -> None:
+def _merge_table_cell(
+    raw_cell: dict[str, Any], d_cell: Any, a_cell: Any | None = None
+) -> None:
     """Merge a single table cell: preserve tableCellStyle, update content."""
     raw_cell_content = raw_cell.get("content") or []
     d_cell_content = d_cell.content or []
+
+    # Short-circuit: if the ancestor (pristine) and desired (current) cells
+    # are semantically equal, the user did not edit this cell. Any structural
+    # difference between base and desired is purely round-trip flattening (e.g.
+    # HTML <td> collapsing N paragraphs into 1). Preserve raw base unchanged so
+    # the reconciler emits no requests for this cell.
+    #
+    # We compare the full Pydantic model dump rather than just flattened text,
+    # so edits that only change styles (bold/italic/link) are NOT short-circuited.
+    if a_cell is not None:
+        try:
+            a_dump = a_cell.model_dump(by_alias=True, exclude_none=True)
+            d_dump = d_cell.model_dump(by_alias=True, exclude_none=True)
+        except AttributeError:
+            a_dump = None
+            d_dump = None
+        if a_dump is not None and a_dump == d_dump:
+            return
 
     # Merge paragraphs at matching positions
     common_paras = min(len(raw_cell_content), len(d_cell_content))
@@ -1540,7 +1571,7 @@ def _merge_changed_element(
     if kind == "paragraph":
         return _merge_changed_paragraph(raw_base, desired_el, ancestor_el)
     if kind == "table":
-        return _merge_changed_table(raw_base, desired_el)
+        return _merge_changed_table(raw_base, desired_el, ancestor_el)
     # For other types (section_break, toc, etc.), use base as-is
     return copy.deepcopy(raw_base)
 
