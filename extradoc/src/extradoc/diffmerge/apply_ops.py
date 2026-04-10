@@ -1650,8 +1650,15 @@ def _apply_content_alignment(
 
         r_idx = anc_to_raw.get(a_idx)
         if r_idx is None:
-            # No raw base counterpart (ancestor element had no match in raw base)
-            result.append(d_el.model_dump(by_alias=True, exclude_none=True))
+            # No raw base counterpart: the ancestor element was synthetic
+            # (e.g. a trailing "\n" paragraph added by the markdown parser
+            # because every segment must end with a paragraph). If the
+            # element is unchanged vs ancestor, drop it — raw base doesn't
+            # have it and shouldn't gain it. If the user changed it, keep
+            # the desired element.
+            ancestor_el = ancestor_content[a_idx]
+            if not _se_elements_equal(ancestor_el, d_el):
+                result.append(d_el.model_dump(by_alias=True, exclude_none=True))
             continue
 
         # Before emitting this matched raw element, emit any unmatched raw
