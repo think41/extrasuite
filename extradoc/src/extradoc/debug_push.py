@@ -95,7 +95,10 @@ def dump_debug_artifacts(folder: str | Path) -> Path:
     debug_dir.mkdir(parents=True, exist_ok=True)
 
     # --- Load base and desired via serde ---
-    index_path = folder / "index.xml"
+    # Markdown layout stores index.xml under .extrasuite/; XML layout keeps it at root.
+    index_path = folder / ".extrasuite" / "index.xml"
+    if not index_path.exists():
+        index_path = folder / "index.xml"
     index = IndexXml.from_xml_string(index_path.read_text(encoding="utf-8"))
     serde: Any = (
         MarkdownSerde() if (index.format or "xml") == "markdown" else XmlSerde()
