@@ -1552,14 +1552,28 @@ def _merge_table_cell(
             raw_cell_content.append(d_cse.model_dump(by_alias=True, exclude_none=True))
     elif len(d_cell_content) < len(raw_cell_content):
         # The desired content has fewer paragraphs than the raw base cell.
-        # This is almost always because the editable format (e.g. GFM
-        # markdown tables) only models a single paragraph per cell, while
-        # Google Docs cells may contain trailing empty paragraphs carrying
-        # border/padding style.  Dropping those trailing paragraphs causes
-        # the reconciler to emit cascading delete+insert ops across cells,
-        # which fail with stale index errors on the real API.  Preserve the
-        # trailing raw paragraphs unchanged.
-        pass
+        # Two distinct cases must be distinguished:
+        #
+        # 1. Join case: the serde's editable format (e.g. GFM markdown
+        #    tables) flattened multiple raw paragraphs into a single
+        #    editable line, so the ancestor ALREADY had fewer paragraphs
+        #    than the raw base. In this case the first merged paragraph
+        #    (position 0) now carries the full joined text, and the
+        #    trailing raw paragraphs are duplicates of content that has
+        #    moved into position 0. They must be dropped — otherwise the
+        #    desired document contains phantom paragraphs that duplicate
+        #    the joined text.
+        #
+        # 2. Trailing-empty case: ancestor and raw had the SAME number of
+        #    paragraphs, but desired dropped a trailing empty paragraph
+        #    (e.g. an empty `\n` terminator carrying border/padding style
+        #    that the editable format can't represent). Preserve the
+        #    trailing raw paragraphs unchanged so the reconciler doesn't
+        #    emit cascading delete+insert ops against styling-only tails.
+        if a_cell is not None and len(a_cell.content or []) < len(raw_cell_content):
+            # Join case — truncate the raw cell to the desired paragraph count.
+            del raw_cell_content[len(d_cell_content) :]
+        # else: trailing-empty case — preserve the raw trailing paragraphs.
 
     raw_cell["content"] = raw_cell_content
 
