@@ -805,3 +805,90 @@ class TestBulletPresetInference:
         assert (
             _infer_bullet_preset_from_model(bullet, {}) == "BULLET_DISC_CIRCLE_SQUARE"
         )
+
+
+# ===========================================================================
+# Regression: text edit inside one item of a multi-item numbered list
+# should NOT fragment the list (no delete/createParagraphBullets emitted).
+# ===========================================================================
+
+
+class TestNumberedListTextEditNoFragmentation:
+    """Editing only the text of one item in a numbered list must not touch bullets."""
+
+    def test_edit_item4_text_only_emits_no_bullet_requests(
+        self, tmp_path
+    ) -> None:
+        """Simulates the real pull->edit->push pipeline via MarkdownSerde.
+
+        Build a document with a numbered list, serialize to markdown, edit a
+        single list item's text in the markdown file, deserialize, then run
+        reconcile. The generated requests should contain only text edits --
+        no bullet add/remove requests.
+        """
+        from extradoc.comments._types import DocumentWithComments, FileComments
+        from extradoc.indexer import utf16_len
+        from extradoc.serde.markdown import MarkdownSerde
+
+        items = ["Headings", "Lists", "Links", "Images", "Tables"]
+
+        # Build base with indexed numbered-list paragraphs starting at 1.
+        base_body: list[StructuralElement] = []
+        idx = 1
+        for text in items:
+            base_body.append(
+                make_indexed_bullet_para(
+                    text + "\n", idx, list_id="list1", nesting_level=0
+                )
+            )
+            idx += utf16_len(text + "\n")
+        base_body.append(make_indexed_terminal(idx))
+        base_doc = make_doc_with_lists(
+            "t1",
+            body_content=base_body,
+            lists={"list1": _NUMBERED_LIST_DEF},
+        )
+        base_doc.document_id = "testdoc"
+
+        serde = MarkdownSerde()
+        bundle = DocumentWithComments(
+            document=base_doc,
+            comments=FileComments(file_id="testdoc"),
+        )
+        serde.serialize(bundle, tmp_path)
+
+        # Edit only item 4's text in the tab markdown file.
+        edited = False
+        for md_path in tmp_path.rglob("*.md"):
+            if "tabs" not in str(md_path):
+                continue
+            content = md_path.read_text()
+            if "4. Images" in content:
+                md_path.write_text(
+                    content.replace("4. Images", "4. Images and Figures")
+                )
+                edited = True
+        assert edited, "Expected to find '4. Images' in the serialized markdown"
+
+        result = serde.deserialize(tmp_path)
+        reqs = reconcile(result.base.document, result.desired.document)
+
+        # Core bug assertion: no bullet add/remove requests should be emitted
+        # for a pure text edit inside a matched bullet paragraph.
+        assert _get_create_bullets_requests(reqs) == [], (
+            f"Expected no createParagraphBullets for pure text edit, got: {reqs}"
+        )
+        assert _get_delete_bullets_requests(reqs) == [], (
+            f"Expected no deleteParagraphBullets for pure text edit, got: {reqs}"
+        )
+
+        # Strengthening: the only non-trivial requests should be text edits.
+        non_text_reqs = [
+            r
+            for r in reqs
+            if r.insert_text is None and r.delete_content_range is None
+        ]
+        assert non_text_reqs == [], (
+            f"Expected only insertText/deleteContentRange requests, got extras: "
+            f"{non_text_reqs}"
+        )

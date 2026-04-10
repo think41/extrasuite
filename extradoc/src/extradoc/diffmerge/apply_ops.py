@@ -1009,6 +1009,12 @@ def _merge_changed_paragraph(
         # Preserve textStyle from base bullet (markdown can't represent it)
         if "textStyle" in base_bullet and "textStyle" not in bullet_d:
             bullet_d["textStyle"] = base_bullet["textStyle"]
+        # Preserve listId from base: markdown serde generates synthetic list
+        # IDs that don't match the base document's list IDs. The base's list
+        # identity is authoritative for matched paragraphs — overwriting it
+        # would fragment the list on push.
+        if base_bullet.get("listId"):
+            bullet_d["listId"] = base_bullet["listId"]
         para["bullet"] = bullet_d
     else:
         para.pop("bullet", None)
