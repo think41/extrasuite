@@ -382,6 +382,11 @@ class DeleteTableRowOp:
     tab_id: str
     table_start_index: int
     row_index: int
+    # Byte range of the deleted row in base document coordinates.
+    # Used by lowering to record the structural byte deletion so later
+    # same-batch ops (e.g. table cell content updates) can shift indices.
+    row_start_index: int | None = None
+    row_end_index: int | None = None
 
 
 @dataclass

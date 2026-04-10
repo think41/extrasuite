@@ -591,10 +591,26 @@ def lower_batches(
             # Body / story content → batch 1
             # ---------------------------------------------------------------- #
             case UpdateBodyContentOp():
+                content_to_lower = op.base_content
+                if op.story_kind == "table_cell":
+                    # Table cell content elements carry body-level BASE
+                    # indices. Prior requests in batch1 (body-text edits,
+                    # deleteTableRow, insertTableRow) may have shifted these
+                    # indices. Compute the cumulative shift and adjust.
+                    first_start = _element_start(op.base_content[0])
+                    if first_start is not None:
+                        shift = _compute_index_shift_for_body_ref(
+                            batch1,
+                            base_index=first_start,
+                            tab_id=op.tab_id,
+                            struct_events_by_req_id=struct_events_by_req_id,
+                        )
+                        if shift != 0:
+                            content_to_lower = _shift_elements(op.base_content, shift)
                 batch1.extend(
                     _lower_story_content_update(
                         op.alignment,
-                        base_content=op.base_content,
+                        base_content=content_to_lower,
                         desired_content=op.desired_content,
                         tab_id=op.tab_id,
                         segment_id=None,
@@ -661,13 +677,21 @@ def lower_batches(
                     tab_id=op.tab_id,
                     struct_events_by_req_id=struct_events_by_req_id,
                 )
-                batch1.append(
-                    _make_delete_table_row(
-                        table_start_index=op.table_start_index + shift,
-                        row_index=op.row_index,
-                        tab_id=op.tab_id,
-                    )
+                dtr_req = _make_delete_table_row(
+                    table_start_index=op.table_start_index + shift,
+                    row_index=op.row_index,
+                    tab_id=op.tab_id,
                 )
+                batch1.append(dtr_req)
+                # Record the structural byte removal so later same-batch
+                # ops (cell content updates) can shift their indices.
+                if op.row_start_index is not None and op.row_end_index is not None:
+                    row_bytes = op.row_end_index - op.row_start_index
+                    live_row_start = op.row_start_index + shift
+                    # Negative delta: bytes are removed at this position.
+                    struct_events_by_req_id[id(dtr_req)] = [
+                        (op.tab_id, live_row_start, -row_bytes)
+                    ]
 
             case InsertTableColumnOp():
                 shift_table_start = _compute_index_shift_for_body_ref(
@@ -3217,6 +3241,26 @@ def _element_size(el: StructuralElement) -> int:
         "without startIndex/endIndex. Ensure the desired document was "
         "pulled from the Google API so that index information is present."
     )
+
+
+def _shift_elements(
+    elements: list[StructuralElement], shift: int
+) -> list[StructuralElement]:
+    """Return a shallow copy of *elements* with all indices shifted by *shift*.
+
+    Used to adjust table-cell content elements whose body-level BASE indices
+    have been invalidated by prior batch requests (e.g. ``deleteTableRow``,
+    ``insertText`` in the body before the table).
+    """
+    shifted: list[StructuralElement] = []
+    for el in elements:
+        el = el.model_copy(deep=True)
+        if el.start_index is not None:
+            el.start_index += shift
+        if el.end_index is not None:
+            el.end_index += shift
+        shifted.append(el)
+    return shifted
 
 
 def _element_range(el: StructuralElement) -> tuple[int | None, int | None]:

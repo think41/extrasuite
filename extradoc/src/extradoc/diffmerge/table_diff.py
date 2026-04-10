@@ -380,11 +380,14 @@ def diff_tables(
     # Emit: row deletions (highest index first)
     # -----------------------------------------------------------------------
     for row_idx in deleted_rows:
+        row = base_rows[row_idx]
         ops.append(
             DeleteTableRowOp(
                 tab_id=tab_id,
                 table_start_index=table_start_index,
                 row_index=row_idx,
+                row_start_index=row.start_index,
+                row_end_index=row.end_index,
             )
         )
 
