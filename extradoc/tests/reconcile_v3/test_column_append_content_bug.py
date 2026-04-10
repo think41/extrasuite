@@ -27,6 +27,7 @@ from extradoc.api_types._generated import (
 from extradoc.reconcile_v3.api import reconcile_batches
 
 from .helpers import (
+    assert_batches_within_base,
     make_indexed_para,
     make_indexed_terminal,
     make_para_el,
@@ -179,6 +180,7 @@ def test_append_single_column_populates_new_cells_1x2() -> None:
     )
 
     batches = reconcile_batches(base, desired)
+    assert_batches_within_base(base, batches)
     reqs = _collect_requests(batches)
 
     col_inserts = [r for r in reqs if "insertTableColumn" in r]
@@ -210,6 +212,7 @@ def test_append_single_column_populates_new_cells_2x2() -> None:
     )
 
     batches = reconcile_batches(base, desired)
+    assert_batches_within_base(base, batches)
     reqs = _collect_requests(batches)
 
     col_inserts = [r for r in reqs if "insertTableColumn" in r]
@@ -247,6 +250,7 @@ def test_append_two_columns_populates_all_cells_2x2() -> None:
     )
 
     batches = reconcile_batches(base, desired)
+    assert_batches_within_base(base, batches)
     reqs = _collect_requests(batches)
 
     col_inserts = [r for r in reqs if "insertTableColumn" in r]
@@ -342,6 +346,7 @@ def test_append_three_columns_populates_all_cells_2x2() -> None:
     )
 
     batches = reconcile_batches(base, desired)
+    assert_batches_within_base(base, batches)
     reqs = _collect_requests(batches)
 
     col_inserts = [r for r in reqs if "insertTableColumn" in r]
@@ -383,6 +388,7 @@ def test_append_column_alongside_paragraph_edit() -> None:
     )
 
     batches = reconcile_batches(base, desired)
+    assert_batches_within_base(base, batches)
     reqs = _collect_requests(batches)
 
     col_inserts = [r for r in reqs if "insertTableColumn" in r]

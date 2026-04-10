@@ -37,7 +37,11 @@ from extradoc.api_types._generated import (
 )
 from extradoc.indexer import utf16_len
 from extradoc.reconcile_v3.api import reconcile_batches
-from tests.reconcile_v3.helpers import make_indexed_doc, make_indexed_terminal
+from tests.reconcile_v3.helpers import (
+    assert_batches_within_base,
+    make_indexed_doc,
+    make_indexed_terminal,
+)
 
 
 def _make_section_break(start: int = 0) -> StructuralElement:
@@ -106,6 +110,7 @@ def test_inserting_spaces_into_italic_run_does_not_fragment() -> None:
     desired = _make_doc("column 16 of Part I", TextStyle(italic=True))
 
     batches = reconcile_batches(base, desired)
+    assert_batches_within_base(base, batches)
     requests = _collect_requests(batches)
 
     insert_reqs = [r for r in requests if r.insert_text is not None]
@@ -141,10 +146,12 @@ def test_inserting_space_into_bold_run_does_not_fragment() -> None:
     the bold run fragments into ``**PART** **I**``.
     """
 
+    base2 = _make_doc("PARTI", TextStyle(bold=True))
     batches = reconcile_batches(
-        _make_doc("PARTI", TextStyle(bold=True)),
+        base2,
         _make_doc("PART I", TextStyle(bold=True)),
     )
+    assert_batches_within_base(base2, batches)
     requests = _collect_requests(batches)
 
     update_reqs = [r for r in requests if r.update_text_style is not None]

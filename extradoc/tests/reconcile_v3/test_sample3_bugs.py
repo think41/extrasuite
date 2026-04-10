@@ -32,6 +32,8 @@ from extradoc.reconcile_v3.api import reconcile_batches
 from extradoc.reconcile_v3.executor import resolve_deferred_placeholders
 from extradoc.serde.markdown import MarkdownSerde
 
+from .helpers import assert_batches_within_base
+
 if TYPE_CHECKING:
     pass
 
@@ -121,6 +123,7 @@ def test_bug64_simple_table_cell_edit_no_row_ops(tmp_path: Path) -> None:
 
     result = _serde.deserialize(folder)
     batches = reconcile_batches(result.base.document, result.desired.document)
+    assert_batches_within_base(result.base.document, batches)
     types = _request_types(batches)
 
     assert "insertTableRow" not in types, (
@@ -170,6 +173,7 @@ def test_bug65_colbreak_preserved_on_columns_text_edit(tmp_path: Path) -> None:
 
     result = _serde.deserialize(folder)
     batches = reconcile_batches(result.base.document, result.desired.document)
+    assert_batches_within_base(result.base.document, batches)
 
     # Apply via mock API and re-serialize to markdown.
     try:

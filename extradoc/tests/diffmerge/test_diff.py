@@ -973,22 +973,28 @@ class TestEndToEnd:
         assert ops == []
 
     def test_lowering_produces_requests_for_ops(self) -> None:
-        """When ops are detected, lower_ops produces request dicts (or empty list
-        when elements lack API index metadata).
+        """When ops are detected, lower_ops produces request dicts.
 
-        Synthetic test documents do not carry startIndex/endIndex, so the
-        lowering skips index-dependent operations rather than crashing.
-        The important invariant: lower_ops no longer raises NotImplementedError
-        for the basic UpdateBodyContentOp case.
+        The base document carries concrete API indices (per the coordinate
+        contract — the base tree is always State A). The desired tree is built
+        via ``apply_ops`` semantics; here we use a fresh desired doc and rely on
+        diff+lower to produce a valid request list.
         """
         from extradoc.reconcile_v3.lower import lower_ops
+        from tests.reconcile_v3.helpers import (
+            reindex_document,
+            simulate_ops_against_base,
+        )
 
-        base = make_document(
-            tabs=[
-                make_tab(
-                    "t1", body_content=[make_para_el("Hello"), make_terminal_para()]
-                )
-            ]
+        base = reindex_document(
+            make_document(
+                tabs=[
+                    make_tab(
+                        "t1",
+                        body_content=[make_para_el("Hello"), make_terminal_para()],
+                    )
+                ]
+            )
         )
         desired = make_document(
             tabs=[
@@ -1000,9 +1006,13 @@ class TestEndToEnd:
         )
         ops = diff(base, desired)
         assert len(ops) > 0
-        # Lowering should succeed (may return empty list for docs without indices)
         result = lower_ops(ops)
         assert isinstance(result, list)
+
+        # Range-validity oracle.
+        base_dict = base.model_dump(by_alias=True, exclude_none=True)
+        req_dicts = [r.model_dump(by_alias=True, exclude_none=True) for r in result]
+        assert simulate_ops_against_base(base_dict, req_dicts) == []
 
     def test_reconcile_api_calls_through(self) -> None:
         """reconcile() calls the diff + lower pipeline end-to-end."""
@@ -1021,20 +1031,25 @@ class TestEndToEnd:
         assert result == []
 
     def test_reconcile_api_produces_list_for_changes(self) -> None:
-        """reconcile() returns a list (possibly empty) when changes need lowering.
+        """reconcile() returns a list of requests for a basic text edit.
 
-        For synthetic docs without API index metadata, the lowering skips
-        index-dependent operations and returns an empty list rather than raising.
-        The key invariant: reconcile() does not raise for a basic text change.
+        The base carries concrete API indices per the coordinate contract.
         """
         from extradoc.reconcile_v3.api import reconcile
+        from tests.reconcile_v3.helpers import (
+            reindex_document,
+            simulate_ops_against_base,
+        )
 
-        base = make_document(
-            tabs=[
-                make_tab(
-                    "t1", body_content=[make_para_el("Hello"), make_terminal_para()]
-                )
-            ]
+        base = reindex_document(
+            make_document(
+                tabs=[
+                    make_tab(
+                        "t1",
+                        body_content=[make_para_el("Hello"), make_terminal_para()],
+                    )
+                ]
+            )
         )
         desired = make_document(
             tabs=[
@@ -1046,6 +1061,10 @@ class TestEndToEnd:
         )
         result = reconcile(base, desired)
         assert isinstance(result, list)
+
+        base_dict = base.model_dump(by_alias=True, exclude_none=True)
+        req_dicts = [r.model_dump(by_alias=True, exclude_none=True) for r in result]
+        assert simulate_ops_against_base(base_dict, req_dicts) == []
 
 
 # ===========================================================================

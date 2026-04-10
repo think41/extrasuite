@@ -237,6 +237,11 @@ def test_xfail_replace_body_with_heading_table_and_bullets() -> None:
     )
 
     batches = reconcile_batches(base, desired)
+    # Note: this file has its own dedicated per-byte simulator
+    # (``_validate_requests_in_bounds``); the generic ``assert_batches_within_base``
+    # guard is intentionally not added here because the synthetic SB-at-0
+    # fixtures emit legal deletes of the section break that the generic
+    # simulator cannot distinguish from real-doc "delete at index 0" bugs.
     violations = _validate_requests_in_bounds(batches, initial_body_len)
     assert violations == [], (
         "Generated batch references stale indices after preceding "
@@ -280,6 +285,11 @@ def test_xfail_insert_before_matched_update() -> None:
     )
 
     batches = reconcile_batches(base, desired)
+    # Note: this file has its own dedicated per-byte simulator
+    # (``_validate_requests_in_bounds``); the generic ``assert_batches_within_base``
+    # guard is intentionally not added here because the synthetic SB-at-0
+    # fixtures emit legal deletes of the section break that the generic
+    # simulator cannot distinguish from real-doc "delete at index 0" bugs.
     violations = _validate_requests_in_bounds(batches, initial_body_len)
     assert violations == [], (
         "Matched-element update used stale index after preceding "
@@ -331,6 +341,11 @@ def test_xfail_insert_after_matched_update_no_overshift() -> None:
     )
 
     batches = reconcile_batches(base, desired)
+    # Note: this file has its own dedicated per-byte simulator
+    # (``_validate_requests_in_bounds``); the generic ``assert_batches_within_base``
+    # guard is intentionally not added here because the synthetic SB-at-0
+    # fixtures emit legal deletes of the section break that the generic
+    # simulator cannot distinguish from real-doc "delete at index 0" bugs.
     violations = _validate_requests_in_bounds(batches, initial_body_len)
     assert violations == [], (
         "Update indices were incorrectly shifted by a later insert:\n  "
@@ -380,6 +395,11 @@ def test_xfail_mixed_delete_insert_update() -> None:
     )
 
     batches = reconcile_batches(base, desired)
+    # Note: this file has its own dedicated per-byte simulator
+    # (``_validate_requests_in_bounds``); the generic ``assert_batches_within_base``
+    # guard is intentionally not added here because the synthetic SB-at-0
+    # fixtures emit legal deletes of the section break that the generic
+    # simulator cannot distinguish from real-doc "delete at index 0" bugs.
     violations = _validate_requests_in_bounds(batches, initial_body_len)
     assert violations == [], (
         "Mixed delete+insert+update emitted stale indices:\n  "
@@ -423,6 +443,11 @@ def test_xfail_multiple_inserts_before_match() -> None:
     )
 
     batches = reconcile_batches(base, desired)
+    # Note: this file has its own dedicated per-byte simulator
+    # (``_validate_requests_in_bounds``); the generic ``assert_batches_within_base``
+    # guard is intentionally not added here because the synthetic SB-at-0
+    # fixtures emit legal deletes of the section break that the generic
+    # simulator cannot distinguish from real-doc "delete at index 0" bugs.
     violations = _validate_requests_in_bounds(batches, initial_body_len)
     assert violations == [], (
         "Multiple-insert shift was not applied to matched update:\n  "
@@ -466,6 +491,11 @@ def test_xfail_replace_single_paragraph_with_longer_text() -> None:
     )
 
     batches = reconcile_batches(base, desired)
+    # Note: this file has its own dedicated per-byte simulator
+    # (``_validate_requests_in_bounds``); the generic ``assert_batches_within_base``
+    # guard is intentionally not added here because the synthetic SB-at-0
+    # fixtures emit legal deletes of the section break that the generic
+    # simulator cannot distinguish from real-doc "delete at index 0" bugs.
     violations = _validate_requests_in_bounds(batches, initial_body_len)
     assert violations == [], (
         "Generated batch references stale indices after preceding "

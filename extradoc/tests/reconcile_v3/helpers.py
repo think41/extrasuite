@@ -264,6 +264,63 @@ def make_indexed_doc(
 
 
 # ---------------------------------------------------------------------------
+# Reindex helper — use the mock's reindex pass to assign concrete indices
+# ---------------------------------------------------------------------------
+
+
+def assert_batches_within_base(base: Document, batches: Any) -> None:
+    """Run the op-validity oracle over the requests in ``batches`` against ``base``.
+
+    ``batches`` may be either a list of ``BatchUpdateDocumentRequest`` (from
+    ``reconcile_batches``) or a list of ``Request`` (from ``lower_ops``). Any
+    violations raise ``AssertionError`` with a descriptive message.
+    """
+    base_dict = base.model_dump(by_alias=True, exclude_none=True)
+    req_dicts: list[dict[str, Any]] = []
+    for item in batches:
+        inner = getattr(item, "requests", None)
+        if inner is not None:
+            for req in inner or []:
+                req_dicts.append(
+                    req.model_dump(by_alias=True, exclude_none=True)
+                    if hasattr(req, "model_dump")
+                    else dict(req)
+                )
+        else:
+            req_dicts.append(
+                item.model_dump(by_alias=True, exclude_none=True)
+                if hasattr(item, "model_dump")
+                else dict(item)
+            )
+    violations = simulate_ops_against_base(base_dict, req_dicts)
+    assert violations == [], f"op-validity violations: {violations}"
+
+
+def reindex_document(doc: Document) -> Document:
+    """Return a copy of ``doc`` with concrete ``startIndex`` / ``endIndex``
+    fields assigned on every content element, matching what a live Google Docs
+    API pull would return.
+
+    Uses the mock's centralized reindex pass (``reindex_and_normalize_all_tabs``)
+    so synthetic fixtures built via model constructors can satisfy the base-tree
+    "always State A" invariant of the coordinate contract.
+    """
+    from extradoc.mock.reindex import reindex_and_normalize_all_tabs
+
+    d = doc.model_dump(by_alias=True, exclude_none=True)
+    # The reindex helper only walks ``doc["tabs"]``. If this is a legacy
+    # single-body doc, wrap it for reindexing and then unwrap.
+    if "tabs" in d:
+        reindex_and_normalize_all_tabs(d)
+    else:
+        wrapper = {"tabs": [{"documentTab": d}]}
+        reindex_and_normalize_all_tabs(wrapper)
+        d = wrapper["tabs"][0]["documentTab"]
+        d["documentId"] = doc.document_id
+    return Document.model_validate(d)
+
+
+# ---------------------------------------------------------------------------
 # batchUpdate op simulator (validity oracle for tests)
 # ---------------------------------------------------------------------------
 
@@ -473,6 +530,11 @@ def simulate_ops_against_base(
 
     violations: list[Violation] = []
     cum_shift = 0
+    # Once a structural table op (insert/deleteTableRow/Column, insertTable)
+    # runs, the body's byte layout changes in ways the simulator does not
+    # model. We stop validating absolute offsets on subsequent ops but still
+    # sanity-check that ranges are internally consistent (non-empty, non-None).
+    structural_mode = False
 
     for idx, req in enumerate(batch_requests):
         if "deleteContentRange" in req:
@@ -484,6 +546,17 @@ def simulate_ops_against_base(
                 violations.append(
                     Violation(idx, "deleteContentRange", "missing range indices")
                 )
+                continue
+            if structural_mode:
+                # Only check internal consistency after structural ops.
+                if raw_e <= raw_s:
+                    violations.append(
+                        Violation(
+                            idx,
+                            "deleteContentRange",
+                            f"empty or inverted range [{raw_s}..{raw_e})",
+                        )
+                    )
                 continue
             # Un-shift back to base coordinates for validation.
             s = raw_s - cum_shift
@@ -555,6 +628,9 @@ def simulate_ops_against_base(
                     Violation(idx, "insertText", "missing location.index")
                 )
                 continue
+            if structural_mode:
+                cum_shift += len(text)
+                continue
             i = raw_i - cum_shift
             if i < body.min_start or i >= body.terminal_end:
                 violations.append(
@@ -580,6 +656,12 @@ def simulate_ops_against_base(
             raw_e = rng.get("endIndex")
             if raw_s is None or raw_e is None:
                 # Some style updates target namedStyleType only — skip.
+                continue
+            if structural_mode:
+                if raw_e < raw_s:
+                    violations.append(
+                        Violation(idx, key, f"inverted range [{raw_s}..{raw_e})")
+                    )
                 continue
             s = raw_s - cum_shift
             e = raw_e - cum_shift
@@ -624,17 +706,31 @@ def simulate_ops_against_base(
                     Violation(idx, key, "missing tableStartLocation.index")
                 )
                 continue
-            i = raw_i - cum_shift
-            if i not in body.table_starts:
-                violations.append(
-                    Violation(
-                        idx,
-                        key,
-                        f"tableStartLocation.index={i} does not refer to a "
-                        f"base table start; known: {sorted(body.table_starts)}",
+            if not structural_mode:
+                # The raw index may refer to a base table start directly
+                # (when the table is AFTER the prior shifting op), or to a
+                # shifted base table start (when the table is BEFORE the
+                # prior op and cum_shift has been applied). Accept either.
+                i_shifted = raw_i - cum_shift
+                if (
+                    raw_i not in body.table_starts
+                    and i_shifted not in body.table_starts
+                ):
+                    violations.append(
+                        Violation(
+                            idx,
+                            key,
+                            f"tableStartLocation.index={raw_i} (unshifted) / "
+                            f"{i_shifted} (shifted) does not refer to a "
+                            f"base table start; known: {sorted(body.table_starts)}",
+                        )
                     )
-                )
-                continue
+                    continue
+            # After this structural op, we can no longer reliably validate
+            # absolute offsets on subsequent ops in the same batch.
+            structural_mode = True
+        elif "insertTable" in req:
+            structural_mode = True
         # Unrecognized request types: skip silently (forward-compat).
 
     return violations

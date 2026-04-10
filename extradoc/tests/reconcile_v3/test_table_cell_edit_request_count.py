@@ -52,6 +52,8 @@ from extradoc.comments._types import DocumentWithComments, FileComments
 from extradoc.reconcile_v3.api import reconcile_batches
 from extradoc.serde.markdown import MarkdownSerde
 
+from .helpers import reindex_document, simulate_ops_against_base
+
 if TYPE_CHECKING:
     from pathlib import Path
 
@@ -184,7 +186,7 @@ def test_single_cell_edit_does_not_corrupt_multiparagraph_cells(tmp_path: Path) 
             _single_para_cell("Short question"),
         ]
     )
-    doc = _make_doc_with_table([header, row1, row2])
+    doc = reindex_document(_make_doc_with_table([header, row1, row2]))
 
     folder = tmp_path / "doc"
     _md_serde.serialize(_bundle(doc), folder)
@@ -237,6 +239,14 @@ def test_single_cell_edit_does_not_corrupt_multiparagraph_cells(tmp_path: Path) 
     _total, by_type = _count_requests(batches)
     _assert_no_structural_row_ops(by_type)
 
+    # Range-validity oracle: every emitted op must lie within the base tree.
+    base_dict = result.base.document.model_dump(by_alias=True, exclude_none=True)
+    all_reqs: list = []
+    for b in batches:
+        for req in b.requests or []:
+            all_reqs.append(req.model_dump(by_alias=True, exclude_none=True))
+    assert simulate_ops_against_base(base_dict, all_reqs) == []
+
 
 # ---------------------------------------------------------------------------
 # Test 2: Tab_1.md-like scenario — edit all Sr cells in a 25-row table
@@ -284,7 +294,7 @@ def test_sr_column_edit_is_bounded(tmp_path: Path) -> None:
                 ]
             )
         )
-    doc = _make_doc_with_table(rows)
+    doc = reindex_document(_make_doc_with_table(rows))
 
     folder = tmp_path / "doc"
     _md_serde.serialize(_bundle(doc), folder)
@@ -324,3 +334,11 @@ def test_sr_column_edit_is_bounded(tmp_path: Path) -> None:
     assert total < 60, (
         f"expected <60 requests for {n_data_rows} cell edits, got {total}: {by_type}"
     )
+
+    # Range-validity oracle.
+    base_dict = result.base.document.model_dump(by_alias=True, exclude_none=True)
+    all_reqs: list = []
+    for b in batches:
+        for req in b.requests or []:
+            all_reqs.append(req.model_dump(by_alias=True, exclude_none=True))
+    assert simulate_ops_against_base(base_dict, all_reqs) == []

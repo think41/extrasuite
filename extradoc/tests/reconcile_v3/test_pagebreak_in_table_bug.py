@@ -26,7 +26,7 @@ from extradoc.api_types._generated import (
 from extradoc.indexer import utf16_len
 from extradoc.reconcile_v3.api import reconcile_batches
 
-from .helpers import make_indexed_terminal
+from .helpers import assert_batches_within_base, make_indexed_terminal
 from .test_lower import make_indexed_doc
 
 
@@ -211,6 +211,7 @@ def test_cell_text_edit_does_not_emit_pagebreakbefore_in_mask() -> None:
     )
 
     batches = reconcile_batches(base, desired)  # type: ignore[arg-type]
+    assert_batches_within_base(base, batches)
     table_start, table_end = _table_span(base)
 
     offenders: list[tuple[int, int, str]] = []
@@ -266,6 +267,7 @@ def test_cell_row_append_does_not_emit_pagebreakbefore_in_mask() -> None:
     )
 
     batches = reconcile_batches(base, desired)  # type: ignore[arg-type]
+    assert_batches_within_base(base, batches)
     # The base table span is what matters — requests run against base indices.
     base_table_start, base_table_end = _table_span(base)
 

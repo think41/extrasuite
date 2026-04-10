@@ -240,8 +240,16 @@ class TestSimpleContentOps:
         ]
         assert starts == sorted(starts, reverse=True)
 
-    def test_elements_without_indices_are_skipped_not_crashed(self) -> None:
-        """Elements without startIndex/endIndex are silently skipped (no crash)."""
+    def test_elements_without_indices_raise_coordinate_error(self) -> None:
+        """Base elements without concrete indices violate the coordinate contract.
+
+        Per ``docs/coordinate_contract.md``, the base tree must always be in
+        State A (concrete indices). Feeding a base tree whose elements carry
+        ``(None, None)`` indices must raise ``CoordinateNotResolvedError``
+        loudly — silent skip is forbidden.
+        """
+        from extradoc.diffmerge import CoordinateNotResolvedError
+
         base = make_document(
             tabs=[
                 make_tab(
@@ -259,9 +267,8 @@ class TestSimpleContentOps:
             ]
         )
         ops = diff(base, desired)
-        # Should not raise
-        result = lower_ops(ops)
-        assert isinstance(result, list)
+        with pytest.raises(CoordinateNotResolvedError):
+            lower_ops(ops)
 
 
 # ===========================================================================

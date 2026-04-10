@@ -32,7 +32,11 @@ from extradoc.api_types._generated import (
 )
 from extradoc.indexer import utf16_len
 from extradoc.reconcile_v3.api import reconcile_batches
-from tests.reconcile_v3.helpers import make_indexed_doc, make_indexed_terminal
+from tests.reconcile_v3.helpers import (
+    assert_batches_within_base,
+    make_indexed_doc,
+    make_indexed_terminal,
+)
 
 
 def _section_break(start: int = 0) -> StructuralElement:
@@ -148,6 +152,7 @@ def test_insert_space_in_front_of_superscript_run_is_surgical() -> None:
     desired = _build_doc("Residential Status", "4")
 
     batches = reconcile_batches(base, desired)
+    assert_batches_within_base(base, batches)
     requests = _collect_requests(batches)
 
     # Assert the total op count is small. Without the fix the pair flows
