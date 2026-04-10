@@ -11,6 +11,7 @@ from extradoc.diffmerge.apply_ops import apply_ops_to_document as apply
 from extradoc.diffmerge.content_align import ContentAlignment
 from extradoc.diffmerge.diff import diff_documents as diff
 from extradoc.diffmerge.errors import (
+    CoordinateNotResolvedError,
     ReconcileV3Error,
     ReconcileV3InvariantError,
     UnsupportedReconcileV3Error,
@@ -54,6 +55,7 @@ from extradoc.diffmerge.model import (
 
 __all__ = [
     "ContentAlignment",
+    "CoordinateNotResolvedError",
     "CreateFooterOp",
     "CreateHeaderOp",
     "DeleteFooterOp",
