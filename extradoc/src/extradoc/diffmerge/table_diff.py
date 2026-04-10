@@ -18,6 +18,7 @@ Design principles:
 
 from __future__ import annotations
 
+from difflib import SequenceMatcher
 from typing import TYPE_CHECKING
 
 if TYPE_CHECKING:
@@ -201,23 +202,52 @@ def _fuzzy_lcs_indices(
     m = len(base_rows)
     n = len(desired_rows)
 
-    base_sets: list[frozenset[str]] = [
-        frozenset(cell_text_hash(c) for c in row.table_cells or []) for row in base_rows
+    base_cells: list[list[str]] = [
+        [cell_text_hash(c) for c in row.table_cells or []] for row in base_rows
     ]
-    desired_sets: list[frozenset[str]] = [
-        frozenset(cell_text_hash(c) for c in row.table_cells or [])
-        for row in desired_rows
+    desired_cells: list[list[str]] = [
+        [cell_text_hash(c) for c in row.table_cells or []] for row in desired_rows
     ]
+    base_sets: list[frozenset[str]] = [frozenset(cs) for cs in base_cells]
+    desired_sets: list[frozenset[str]] = [frozenset(cs) for cs in desired_cells]
 
-    def _recall(b_set: frozenset[str], d_set: frozenset[str]) -> float:
-        """overlap / base_size (how much of the base row is preserved)."""
-        if not b_set:
-            return 1.0
-        return len(b_set & d_set) / len(b_set)
+    def _row_similarity(
+        b_cells: list[str],
+        d_cells: list[str],
+        b_set: frozenset[str],
+        d_set: frozenset[str],
+    ) -> float:
+        """Row similarity with partial credit for edited cells.
 
-    # Precompute similarity matrix
+        Combines two signals:
+        1. Set-recall (overlap / base_size) — handles unchanged cells and
+           column additions.
+        2. Positional per-cell character similarity — gives partial credit
+           when a cell's text was edited in place (e.g. "900" -> "950"),
+           which the set-recall metric would score as 0.
+        The final score is the max of the two so neither signal can drag
+        the other down.
+        """
+        recall = 1.0 if not b_set else len(b_set & d_set) / len(b_set)
+        if not b_cells:
+            return recall
+        k = min(len(b_cells), len(d_cells))
+        if k == 0:
+            return recall
+        pos_total = 0.0
+        for idx in range(k):
+            pos_total += SequenceMatcher(None, b_cells[idx], d_cells[idx]).ratio()
+        pos_avg = pos_total / len(b_cells)
+        return max(recall, pos_avg)
+
     sim: list[list[float]] = [
-        [_recall(base_sets[i], desired_sets[j]) for j in range(n)] for i in range(m)
+        [
+            _row_similarity(
+                base_cells[i], desired_cells[j], base_sets[i], desired_sets[j]
+            )
+            for j in range(n)
+        ]
+        for i in range(m)
     ]
 
     # LCS-style DP: maximize match count, break ties by total similarity
