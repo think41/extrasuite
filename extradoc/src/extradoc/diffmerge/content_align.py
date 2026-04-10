@@ -767,79 +767,11 @@ def align_content(
         prefix_alignment.total_cost
     )  # terminal edit_cost is excluded (terminals are paired by definition)
 
-    result = ContentAlignment(
+    return ContentAlignment(
         matches=all_matches,
         base_deletes=prefix_alignment.base_deletes,
         desired_inserts=prefix_alignment.desired_inserts,
         total_cost=total_cost,
-    )
-
-    # Terminal re-pairing: the forced ``base[-1] ↔ desired[-1]`` pre-match is
-    # wrong when the base has trailing empty paragraphs and the desired
-    # terminal actually corresponds to a content paragraph earlier in ``base``.
-    # In that case the content paragraph ends up unmatched (deleted) and we
-    # emit a whole-paragraph delete+reinsert. Detect this mismatch and swap:
-    # re-pair desired[-1] with the best matchable base element, and demote the
-    # original base terminal to a deletion. This only fires when
-    # ``matchable(base[-1], desired[-1])`` is False — the common case is
-    # unchanged.
-    if not matchable(base[m - 1], desired[n - 1]):
-        result = _repair_terminal_mismatch(result, base, desired)
-
-    return result
-
-
-def _repair_terminal_mismatch(
-    alignment: ContentAlignment,
-    base: list[ContentNode],
-    desired: list[ContentNode],
-) -> ContentAlignment:
-    """Swap the terminal match when ``base[-1]`` is not matchable with ``desired[-1]``.
-
-    Tries to find the best matchable base element (by edit cost) among the
-    currently unmatched base indices and promotes it to the desired terminal.
-    The original base terminal is demoted to a deletion. If no candidate is
-    matchable, the alignment is returned unchanged.
-    """
-    m = len(base)
-    n = len(desired)
-    desired_terminal_idx = n - 1
-    base_terminal_idx = m - 1
-    d_terminal = desired[desired_terminal_idx]
-
-    # Candidates: unmatched base indices that are matchable with desired[-1].
-    best_idx: int | None = None
-    best_cost: float = _INF
-    for bi in alignment.base_deletes:
-        if matchable(base[bi], d_terminal):
-            ec = edit_cost(base[bi], d_terminal)
-            if ec < best_cost:
-                best_cost = ec
-                best_idx = bi
-
-    if best_idx is None:
-        return alignment
-
-    # Build the new match list: replace the terminal_match's base_idx and
-    # demote the original base terminal to a deletion.
-    new_matches: list[ContentMatch] = []
-    for match in alignment.matches:
-        if match.desired_idx == desired_terminal_idx:
-            new_matches.append(
-                ContentMatch(base_idx=best_idx, desired_idx=desired_terminal_idx)
-            )
-        else:
-            new_matches.append(match)
-
-    new_base_deletes = sorted(
-        [i for i in alignment.base_deletes if i != best_idx] + [base_terminal_idx]
-    )
-
-    return ContentAlignment(
-        matches=sorted(new_matches, key=lambda m: (m.base_idx, m.desired_idx)),
-        base_deletes=new_base_deletes,
-        desired_inserts=alignment.desired_inserts,
-        total_cost=alignment.total_cost,
     )
 
 
