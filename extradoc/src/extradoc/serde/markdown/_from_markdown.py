@@ -172,6 +172,31 @@ class _ListSynth:
 # ---------------------------------------------------------------------------
 
 
+def _strip_frontmatter(source: str) -> tuple[dict[str, str], str]:
+    """Strip YAML frontmatter from markdown source.
+
+    Returns:
+        (metadata_dict, content_without_frontmatter)
+        If no frontmatter, returns ({}, source).
+    """
+    if not source.startswith("---"):
+        return {}, source
+    end = source.find("\n---", 3)
+    if end == -1:
+        return {}, source
+    fm_block = source[4:end]  # skip opening "---\n"
+    content = source[end + 4:]  # skip closing "\n---"
+    # Strip the blank line between frontmatter and content
+    content = content.lstrip("\n")
+
+    metadata: dict[str, str] = {}
+    for line in fm_block.splitlines():
+        if ":" in line:
+            key, _, val = line.partition(":")
+            metadata[key.strip()] = val.strip()
+    return metadata, content
+
+
 def markdown_to_document(
     tab_content: dict[str, str],
     document_id: str = "",
@@ -201,10 +226,15 @@ def markdown_to_document(
     h_map = heading_name_to_id or {}
 
     for folder, source in tab_content.items():
-        # Derive tab title from folder name
-        tab_title = folder.replace("_", " ")
-        tab_id = (tab_ids or {}).get(folder, f"t.{folder}")
-        tab = _parse_tab(source, tab_title, folder, tab_id=tab_id, heading_name_to_id=h_map)
+        # Parse frontmatter if present — it is authoritative for id and title
+        fm, content = _strip_frontmatter(source)
+        if fm.get("id"):
+            tab_id = fm["id"]
+        else:
+            tab_id = (tab_ids or {}).get(folder, f"t.{folder}")
+        tab_title = fm["title"] if fm.get("title") else folder.replace("_", " ")
+
+        tab = _parse_tab(content, tab_title, folder, tab_id=tab_id, heading_name_to_id=h_map)
         doc.tabs.append(tab)
 
     return doc

@@ -63,6 +63,7 @@ def document_to_markdown(doc: Document) -> dict[str, dict[str, str]]:
     Returns:
         dict[folder_name → dict[filename → content]]
         Each tab produces at minimum {"document.md": "..."}.
+        Each document.md starts with YAML frontmatter containing tab id and title.
     """
     heading_id_to_name, _ = build_heading_maps(doc)
 
@@ -70,17 +71,20 @@ def document_to_markdown(doc: Document) -> dict[str, dict[str, str]]:
     for tab in doc.tabs or []:
         props = tab.tab_properties
         tab_title = (props.title or "Tab 1") if props else "Tab 1"
+        tab_id = (props.tab_id or "") if props else ""
         folder = sanitize_tab_name(tab_title)
 
         dt = tab.document_tab
         if not dt:
-            result[folder] = {"document.md": ""}
+            frontmatter = f"---\nid: {tab_id}\ntitle: {tab_title}\n---\n\n"
+            result[folder] = {"document.md": frontmatter}
             continue
 
         list_defs = dt.lists or {}
         inline_objs = dt.inline_objects or {}
         content = _serialize_body(dt, list_defs, heading_id_to_name=heading_id_to_name, inline_objects=inline_objs)
-        result[folder] = {"document.md": content}
+        frontmatter = f"---\nid: {tab_id}\ntitle: {tab_title}\n---\n\n"
+        result[folder] = {"document.md": frontmatter + content}
 
     return result
 

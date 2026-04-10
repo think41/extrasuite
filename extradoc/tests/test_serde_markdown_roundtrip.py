@@ -187,14 +187,29 @@ def _cell_texts(doc: Document, tab_idx: int = 0) -> list[list[str]]:
     return result
 
 
+def _tab_md_path(folder: Path, tab_name: str = "Tab_1") -> Path:
+    """Return path to a tab's markdown file (new or legacy layout)."""
+    new_path = folder / "tabs" / f"{tab_name}.md"
+    if new_path.exists():
+        return new_path
+    legacy_path = folder / f"{tab_name}.md"
+    if legacy_path.exists():
+        return legacy_path
+    # Default to new layout for writes
+    tabs_dir = folder / "tabs"
+    if tabs_dir.is_dir():
+        return new_path
+    return legacy_path
+
+
 def _read_md(folder: Path, tab_name: str = "Tab_1") -> str:
     """Read a tab's markdown file."""
-    return (folder / f"{tab_name}.md").read_text(encoding="utf-8")
+    return _tab_md_path(folder, tab_name).read_text(encoding="utf-8")
 
 
 def _write_md(folder: Path, content: str, tab_name: str = "Tab_1") -> None:
     """Overwrite a tab's markdown file."""
-    (folder / f"{tab_name}.md").write_text(content, encoding="utf-8")
+    _tab_md_path(folder, tab_name).write_text(content, encoding="utf-8")
 
 
 # ---------------------------------------------------------------------------
@@ -246,16 +261,17 @@ class TestIndexMdHeadingIds:
         assert "# Overview" in index_md
         assert "## Details" in index_md
 
-    def test_index_md_has_link_usage_hint(self, tmp_path: Path) -> None:
-        """index.md includes name-based heading link instructions."""
+    def test_index_md_has_frontmatter(self, tmp_path: Path) -> None:
+        """index.md includes YAML frontmatter with document_id and title."""
         doc = self._make_doc_with_headings()
         bundle = _make_bundle(doc)
         folder = tmp_path / "doc"
         _md_serde.serialize(bundle, folder)
 
         index_md = (folder / "index.md").read_text()
-        assert "#Heading Name" in index_md
-        assert "#Tab_Name/Heading Name" in index_md
+        assert index_md.startswith("---\n")
+        assert "document_id:" in index_md
+        assert "title:" in index_md
 
     def test_index_md_no_id_column_when_no_heading_ids(self, tmp_path: Path) -> None:
         """index.md has 2-column table when headings have no IDs."""
@@ -277,12 +293,12 @@ class TestIndexMdHeadingIds:
 
 class TestSerializeWritesPristine:
     def test_pristine_zip_created(self, tmp_path: Path) -> None:
-        """serialize() writes .pristine/document.zip for markdown format."""
+        """serialize() writes .extrasuite/pristine.zip for markdown format."""
         doc = _make_doc(["Hello world"])
         bundle = _make_bundle(doc)
         folder = tmp_path / "doc"
         _md_serde.serialize(bundle, folder)
-        assert (folder / ".pristine" / "document.zip").exists()
+        assert (folder / ".extrasuite" / "pristine.zip").exists()
 
     def test_pristine_contains_md_files(self, tmp_path: Path) -> None:
         """The pristine zip contains the markdown files."""
@@ -292,12 +308,12 @@ class TestSerializeWritesPristine:
         bundle = _make_bundle(doc)
         folder = tmp_path / "doc"
         _md_serde.serialize(bundle, folder)
-        zip_path = folder / ".pristine" / "document.zip"
+        zip_path = folder / ".extrasuite" / "pristine.zip"
         with zipfile.ZipFile(zip_path) as zf:
             names = zf.namelist()
-        assert any("Tab_1.md" in n for n in names)
-        # Should NOT contain .pristine/ or .raw/ entries
-        assert not any(".pristine" in n for n in names)
+        assert any("tabs/Tab_1.md" in n for n in names)
+        # Should NOT contain .extrasuite/ entries
+        assert not any(".extrasuite" in n for n in names)
 
     def test_pristine_written_for_xml(self, tmp_path: Path) -> None:
         """serialize() with XML format also writes .pristine/document.zip."""
@@ -720,18 +736,18 @@ class TestMultiTab:
         folder = tmp_path / "doc"
         _md_serde.serialize(base, folder)
 
-        # Add a new tab: create the markdown file and update index.xml
+        # Add a new tab: create the markdown file in tabs/ and update index.xml
         new_tab_md = "# New Tab\n\n- Bullet one\n- Bullet two\n"
-        (folder / "New_Tab.md").write_text(new_tab_md, encoding="utf-8")
+        (folder / "tabs" / "New_Tab.md").write_text(new_tab_md, encoding="utf-8")
 
         # Update index.xml to register the new tab
         from extradoc.serde._models import IndexTab, IndexXml
 
         index = IndexXml.from_xml_string(
-            (folder / "index.xml").read_text(encoding="utf-8")
+            (folder / ".extrasuite" / "index.xml").read_text(encoding="utf-8")
         )
         index.tabs.append(IndexTab(id="t.new", title="New Tab", folder="New_Tab"))
-        (folder / "index.xml").write_text(index.to_xml_string(), encoding="utf-8")
+        (folder / ".extrasuite" / "index.xml").write_text(index.to_xml_string(), encoding="utf-8")
 
         # This should not crash
         desired = _md_serde.deserialize(folder).desired
@@ -858,18 +874,18 @@ class TestEdgeCases:
         assert desired_texts == base_texts
 
     def test_legacy_folder_no_pristine(self, tmp_path: Path) -> None:
-        """When .pristine/document.zip is absent, _parse() still works."""
+        """When .extrasuite/pristine.zip is absent, _parse() still works."""
 
         base_doc = _make_doc(["Hello world"])
         base = _make_bundle(base_doc)
         folder = tmp_path / "doc"
         _md_serde.serialize(base, folder)
 
-        # Remove the pristine zip to simulate a legacy folder
-        pristine_zip = folder / ".pristine" / "document.zip"
+        # Remove the pristine zip
+        pristine_zip = folder / ".extrasuite" / "pristine.zip"
         pristine_zip.unlink()
 
-        # _parse reads the folder without needing pristine/raw
+        # _parse reads the folder without needing pristine
         parsed = _md_serde._parse(folder)
         assert parsed.document is not None
         texts = _body_texts(parsed.document)
@@ -1337,7 +1353,7 @@ class TestImageSerde:
         bundle = _make_bundle(doc)
         _md_serde.serialize(bundle, tmp_path)
 
-        md = (tmp_path / "Tab_1.md").read_text()
+        md = _read_md(tmp_path)
         assert "![A photo](https://lh3.googleusercontent.com/abc123)" in md
         assert "<x-img" not in md
 
@@ -1356,7 +1372,7 @@ class TestImageSerde:
         bundle = _make_bundle(doc)
         _md_serde.serialize(bundle, tmp_path)
 
-        md = (tmp_path / "Tab_1.md").read_text()
+        md = _read_md(tmp_path)
         assert "![](https://lh3.googleusercontent.com/abc123)" in md
         assert "<x-img" not in md
 
@@ -1377,7 +1393,7 @@ class TestImageSerde:
         _md_serde.serialize(bundle, tmp_path)
 
         # Verify the serialized markdown uses ![alt](url) not <x-img>
-        md = (tmp_path / "Tab_1.md").read_text()
+        md = _read_md(tmp_path)
         assert "![A photo](https://lh3.googleusercontent.com/abc123)" in md
         assert "<x-img" not in md
 
@@ -1408,7 +1424,7 @@ class TestImageSerde:
         bundle = _make_bundle(doc)
         _md_serde.serialize(bundle, tmp_path)
 
-        md_path = tmp_path / "Tab_1.md"
+        md_path = _tab_md_path(tmp_path)
         md = md_path.read_text()
         md += "\n![photo](./images/local.png)\n"
         md_path.write_text(md)
@@ -1436,7 +1452,7 @@ class TestImageSerde:
         bundle = _make_bundle(doc)
         _md_serde.serialize(bundle, tmp_path)
 
-        md_path = tmp_path / "Tab_1.md"
+        md_path = _tab_md_path(tmp_path)
         md = md_path.read_text()
         md += "\n![alt](https://example.com/img.png)\n"
         md_path.write_text(md)
@@ -1474,7 +1490,7 @@ class TestImageSerde:
         _md_serde.serialize(bundle, tmp_path)
 
         # Verify serialized as markdown image (not <x-img>)
-        md_path = tmp_path / "Tab_1.md"
+        md_path = _tab_md_path(tmp_path)
         md = md_path.read_text()
         assert "![A photo](https://lh3.googleusercontent.com/abc123)" in md
         assert "<x-img" not in md

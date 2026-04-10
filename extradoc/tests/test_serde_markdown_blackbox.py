@@ -71,11 +71,20 @@ class RoundTrip:
         self.folder = folder
         _serde.serialize(self.bundle, self.folder)
 
+    def _tab_path(self, tab: str) -> Path:
+        new = self.folder / "tabs" / f"{tab}.md"
+        if new.exists():
+            return new
+        legacy = self.folder / f"{tab}.md"
+        if legacy.exists():
+            return legacy
+        return new if (self.folder / "tabs").is_dir() else legacy
+
     def read_md(self, tab: str = "Tab_1") -> str:
-        return (self.folder / f"{tab}.md").read_text(encoding="utf-8")
+        return self._tab_path(tab).read_text(encoding="utf-8")
 
     def write_md(self, content: str, tab: str = "Tab_1") -> None:
-        (self.folder / f"{tab}.md").write_text(content, encoding="utf-8")
+        self._tab_path(tab).write_text(content, encoding="utf-8")
 
     def edit_md(self, *, find: str, replace: str, tab: str = "Tab_1") -> None:
         md = self.read_md(tab)
@@ -846,7 +855,8 @@ class TestMultiTab:
         """Edit tab 1 of a 3-tab doc, tabs 2 and 3 are unchanged."""
         rt = RoundTrip(MULTITAB_GOLDEN_ID, tmp_path / "doc")
         # Find the tab file names
-        md_files = sorted(rt.folder.glob("*.md"))
+        tabs_dir = rt.folder / "tabs" if (rt.folder / "tabs").is_dir() else rt.folder
+        md_files = sorted(tabs_dir.glob("*.md"))
         tab_names = [f.stem for f in md_files if f.stem != "index"]
         assert len(tab_names) >= 2, f"Expected 2+ tabs, got {tab_names}"
 
@@ -994,7 +1004,8 @@ class TestHorizontalRules:
         texts = body_texts(rt.bundle.document, 0)
         # Pick a non-heading text
         target = next(t for t in texts if len(t) > 10)
-        first_tab = sorted(f.stem for f in rt.folder.glob("*.md") if f.stem != "index")[
+        tabs_dir = rt.folder / "tabs" if (rt.folder / "tabs").is_dir() else rt.folder
+        first_tab = sorted(f.stem for f in tabs_dir.glob("*.md") if f.stem != "index")[
             0
         ]
 

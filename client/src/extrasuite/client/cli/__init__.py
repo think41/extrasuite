@@ -17,6 +17,7 @@ Singular aliases (sheet, slide, doc, form) are also accepted.
 
 from __future__ import annotations
 
+import os
 import sys
 from typing import TYPE_CHECKING, Any
 
@@ -52,6 +53,7 @@ from extrasuite.client.cli.doc import (
     cmd_doc_download_raw,
     cmd_doc_pull,
     cmd_doc_pull_md,
+    cmd_doc_pull_xml,
     cmd_doc_push,
     cmd_doc_push_md,
     cmd_doc_share,
@@ -123,10 +125,12 @@ _COMMANDS: dict[tuple[str, str | None], Callable[..., Any]] = {
     ("script", "lint"): cmd_script_lint,
     ("script", "share"): cmd_script_share,
     ("docs", "pull"): cmd_doc_pull,
-    ("docs", "pull-md"): cmd_doc_pull_md,
+    ("docs", "pull-xml"): cmd_doc_pull_xml,
+    ("docs", "pull-md"): cmd_doc_pull_md,  # legacy alias
     ("docs", "diff"): cmd_doc_diff,
     ("docs", "push"): cmd_doc_push,
-    ("docs", "push-md"): cmd_doc_push_md,
+    ("docs", "push-xml"): cmd_doc_push,
+    ("docs", "push-md"): cmd_doc_push_md,  # legacy alias
     ("docs", "create"): cmd_doc_create,
     ("docs", "create-empty"): cmd_doc_create_empty,
     ("docs", "download-raw"): cmd_doc_download_raw,
@@ -625,52 +629,19 @@ def build_parser() -> Any:
 
     sp = doc_sub.add_parser(
         "pull",
-        help="Download a document",
+        help="Download document as markdown",
         parents=[auth_parent],
         description=_load_help("docs", "pull"),
         formatter_class=argparse.RawDescriptionHelpFormatter,
     )
     sp.add_argument("url", help="Document URL or ID")
     sp.add_argument("output_dir", nargs="?", help="Output directory (default: .)")
-    sp = doc_sub.add_parser(
-        "pull-md",
-        help="Download a document as markdown",
-        parents=[auth_parent],
-        description=_load_help("docs", "pull-md"),
-        formatter_class=argparse.RawDescriptionHelpFormatter,
-    )
-    sp.add_argument("url", help="Document URL or ID")
-    sp.add_argument("output_dir", nargs="?", help="Output directory (default: .)")
-    sp = doc_sub.add_parser(
-        "diff",
-        help="Offline debugging tool - show pending changes",
-        description=_load_help("docs", "diff"),
-        formatter_class=argparse.RawDescriptionHelpFormatter,
-    )
-    sp.add_argument("folder", help="Document folder path")
 
     sp = doc_sub.add_parser(
         "push",
-        help="Apply changes",
+        help="Push local changes to Google Docs",
         parents=[auth_parent],
         description=_load_help("docs", "push"),
-        formatter_class=argparse.RawDescriptionHelpFormatter,
-    )
-    sp.add_argument("folder", help="Document folder path")
-    sp.add_argument("-f", "--force", action="store_true", help="Push despite warnings")
-    sp.add_argument("--verify", action="store_true", help="Pull after push to verify")
-    sp.add_argument(
-        "--debug",
-        action="store_true",
-        help="Dump pipeline artifacts to <folder>/.debug/ and, on API failure, "
-        "print a focused analysis of the failing request",
-    )
-
-    sp = doc_sub.add_parser(
-        "push-md",
-        help="Apply changes from a markdown folder",
-        parents=[auth_parent],
-        description=_load_help("docs", "push-md"),
         formatter_class=argparse.RawDescriptionHelpFormatter,
     )
     sp.add_argument("folder", help="Document folder path")
@@ -703,35 +674,6 @@ def build_parser() -> Any:
     )
 
     sp = doc_sub.add_parser(
-        "create-empty",
-        help="Create a blank document without pulling it",
-        parents=[auth_parent],
-        formatter_class=argparse.RawDescriptionHelpFormatter,
-    )
-    sp.add_argument("title", help="Document title")
-
-    sp = doc_sub.add_parser(
-        "download-raw",
-        help="Download raw Docs API JSON",
-        parents=[auth_parent],
-        formatter_class=argparse.RawDescriptionHelpFormatter,
-    )
-    sp.add_argument("url", help="Document URL or ID")
-    sp.add_argument(
-        "output",
-        nargs="?",
-        help=(
-            "Output file or directory. Defaults to <document_id>.json. "
-            "If a directory is provided, writes document.json inside it."
-        ),
-    )
-    sp.add_argument(
-        "--comments",
-        action="store_true",
-        help="Also download Drive comments as a separate JSON file",
-    )
-
-    sp = doc_sub.add_parser(
         "share",
         help="Share a document with trusted contacts",
         parents=[auth_parent],
@@ -749,12 +691,91 @@ def build_parser() -> Any:
         help="Permission role (default: reader)",
     )
 
+    # XML format variants
     sp = doc_sub.add_parser(
-        "verify-table-indices",
-        help="[debug] Verify deterministic table index prediction against the live API",
+        "pull-xml",
+        help="Download document as XML",
         parents=[auth_parent],
+        description=_load_help("docs", "pull-xml"),
+        formatter_class=argparse.RawDescriptionHelpFormatter,
     )
-    sp.add_argument("url", help="Document URL or ID to use as test target")
+    sp.add_argument("url", help="Document URL or ID")
+    sp.add_argument("output_dir", nargs="?", help="Output directory (default: .)")
+
+    sp = doc_sub.add_parser(
+        "push-xml",
+        help="Push XML changes to Google Docs",
+        parents=[auth_parent],
+        description=_load_help("docs", "push"),
+        formatter_class=argparse.RawDescriptionHelpFormatter,
+    )
+    sp.add_argument("folder", help="Document folder path")
+    sp.add_argument("-f", "--force", action="store_true", help="Push despite warnings")
+    sp.add_argument("--verify", action="store_true", help="Pull after push to verify")
+    sp.add_argument(
+        "--debug",
+        action="store_true",
+        help="Dump pipeline artifacts to <folder>/.debug/ and, on API failure, "
+        "print a focused analysis of the failing request",
+    )
+
+    # Debug/dev commands — only registered when EXTRASUITE_DEV=1
+    if os.environ.get("EXTRASUITE_DEV") == "1":
+        sp = doc_sub.add_parser(
+            "diff",
+            help="[debug] Show pending batchUpdate requests",
+            description=_load_help("docs", "diff"),
+            formatter_class=argparse.RawDescriptionHelpFormatter,
+        )
+        sp.add_argument("folder", help="Document folder path")
+
+        sp = doc_sub.add_parser(
+            "create-empty",
+            help="[debug] Create a blank document without pulling it",
+            parents=[auth_parent],
+            formatter_class=argparse.RawDescriptionHelpFormatter,
+        )
+        sp.add_argument("title", help="Document title")
+
+        sp = doc_sub.add_parser(
+            "download-raw",
+            help="[debug] Download raw Docs API JSON",
+            parents=[auth_parent],
+            formatter_class=argparse.RawDescriptionHelpFormatter,
+        )
+        sp.add_argument("url", help="Document URL or ID")
+        sp.add_argument(
+            "output",
+            nargs="?",
+            help=(
+                "Output file or directory. Defaults to <document_id>.json. "
+                "If a directory is provided, writes document.json inside it."
+            ),
+        )
+        sp.add_argument(
+            "--comments",
+            action="store_true",
+            help="Also download Drive comments as a separate JSON file",
+        )
+
+        sp = doc_sub.add_parser(
+            "verify-table-indices",
+            help="[debug] Verify table index prediction against live API",
+            parents=[auth_parent],
+        )
+        sp.add_argument("url", help="Document URL or ID to use as test target")
+
+    # Legacy aliases (hidden from help but still functional)
+    for alias in ("pull-md", "push-md"):
+        sp = doc_sub.add_parser(alias, parents=[auth_parent])
+        if "pull" in alias:
+            sp.add_argument("url", help="Document URL or ID")
+            sp.add_argument("output_dir", nargs="?", help="Output directory")
+        else:
+            sp.add_argument("folder", help="Document folder path")
+            sp.add_argument("-f", "--force", action="store_true")
+            sp.add_argument("--verify", action="store_true")
+            sp.add_argument("--debug", action="store_true")
 
     sp = doc_sub.add_parser(
         "help",

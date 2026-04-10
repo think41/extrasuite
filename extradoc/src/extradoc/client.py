@@ -127,7 +127,10 @@ class DocsClient:
         folder = Path(folder)
         document_id = _read_document_id(folder)
 
-        index_path = folder / "index.xml"
+        # New layout: .extrasuite/index.xml; legacy: index.xml at root
+        index_path = folder / ".extrasuite" / "index.xml"
+        if not index_path.exists():
+            index_path = folder / "index.xml"
         index = IndexXml.from_xml_string(index_path.read_text(encoding="utf-8"))
         serde_impl = self._get_serde(index.format or "xml")
 
@@ -258,8 +261,12 @@ async def _execute_document_batches(
 
 
 def _read_document_id(folder: Path) -> str:
-    """Read the document ID from index.xml."""
-    index_path = folder / "index.xml"
+    """Read the document ID from index.xml (.extrasuite/ or root)."""
+    # New layout: .extrasuite/index.xml
+    index_path = folder / ".extrasuite" / "index.xml"
+    if not index_path.exists():
+        # Legacy layout: index.xml at root
+        index_path = folder / "index.xml"
     if not index_path.exists():
         return folder.name
     index = IndexXml.from_xml_string(index_path.read_text(encoding="utf-8"))

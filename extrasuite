@@ -7,6 +7,9 @@
 # `extrasuite` CLI keeps --debug off by default.
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 
+# Enable dev-only CLI commands (diff, create-empty, download-raw, verify-table-indices)
+export EXTRASUITE_DEV=1
+
 args=("$@")
 
 # Look for `doc push [-md]` (or `docs push[-md]`) in the argument list and
@@ -27,7 +30,7 @@ for a in "$@"; do
 done
 
 if { [ "$_first" = "doc" ] || [ "$_first" = "docs" ]; } \
-    && { [ "$_second" = "push" ] || [ "$_second" = "push-md" ]; }; then
+    && { [ "$_second" = "push" ] || [ "$_second" = "push-md" ] || [ "$_second" = "push-xml" ]; }; then
     _inject_debug=true
     for a in "$@"; do
         if [ "$a" = "--debug" ]; then _inject_debug=false; fi

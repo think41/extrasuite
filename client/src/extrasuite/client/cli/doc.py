@@ -49,7 +49,7 @@ def _assert_safe_to_replace(dest_dir: Path) -> None:
     entries = list(dest_abs.iterdir())
     if not entries:
         return
-    if (dest_abs / "index.md").exists() or (dest_abs / "index.xml").exists():
+    if (dest_abs / "index.md").exists() or (dest_abs / "index.xml").exists() or (dest_abs / "tabs").is_dir():
         return
     raise SystemExit(
         f"Refusing to overwrite {dest_dir} — it is not empty and does not "
@@ -60,13 +60,63 @@ def _assert_safe_to_replace(dest_dir: Path) -> None:
 
 
 def cmd_doc_pull(args: Any) -> None:
-    """Pull a Google Doc."""
+    """Pull a Google Doc in markdown format (default)."""
     from extradoc import DocsClient, GoogleDocsTransport
 
     document_id = _parse_document_id(args.url)
     output_dir_arg = args.output_dir
 
-    reason = _get_reason(args, default="Pulling Google Doc")
+    reason = _get_reason(args, default="Pulling Google Doc as markdown")
+    cred = _get_credential(
+        args,
+        command={"type": "doc.pull", "file_url": args.url, "file_name": ""},
+        reason=reason,
+    )
+
+    tmp_parent = None
+    if output_dir_arg:
+        tmp_parent = Path(tempfile.mkdtemp())
+        dest_dir = Path(output_dir_arg)
+    else:
+        dest_dir = Path() / document_id
+
+    async def _run() -> None:
+        transport = GoogleDocsTransport(cred.token)
+        client = DocsClient(transport)
+        pull_parent = tmp_parent if tmp_parent else Path()
+        try:
+            await client.pull(
+                document_id,
+                pull_parent,
+                save_raw=True,
+                format="markdown",
+            )
+            if tmp_parent is not None:
+                dest_dir.parent.mkdir(parents=True, exist_ok=True)
+                if dest_dir.exists():
+                    _assert_safe_to_replace(dest_dir)
+                    shutil.rmtree(dest_dir)
+                shutil.move(str(tmp_parent / document_id), str(dest_dir))
+        finally:
+            await transport.close()
+
+    try:
+        asyncio.run(_run())
+    finally:
+        if tmp_parent is not None:
+            shutil.rmtree(tmp_parent, ignore_errors=True)
+
+    print(f"Pulled to {dest_dir}/")
+
+
+def cmd_doc_pull_xml(args: Any) -> None:
+    """Pull a Google Doc in XML format."""
+    from extradoc import DocsClient, GoogleDocsTransport
+
+    document_id = _parse_document_id(args.url)
+    output_dir_arg = args.output_dir
+
+    reason = _get_reason(args, default="Pulling Google Doc as XML")
     cred = _get_credential(
         args,
         command={"type": "doc.pull", "file_url": args.url, "file_name": ""},
@@ -176,60 +226,10 @@ def cmd_doc_push(args: Any) -> None:
     asyncio.run(_run())
 
 
-def cmd_doc_pull_md(args: Any) -> None:
-    """Pull a Google Doc in markdown format."""
-    from extradoc import DocsClient, GoogleDocsTransport
 
-    document_id = _parse_document_id(args.url)
-    output_dir_arg = args.output_dir
-
-    reason = _get_reason(args, default="Pulling Google Doc as markdown")
-    cred = _get_credential(
-        args,
-        command={"type": "doc.pull", "file_url": args.url, "file_name": ""},
-        reason=reason,
-    )
-
-    tmp_parent = None
-    if output_dir_arg:
-        tmp_parent = Path(tempfile.mkdtemp())
-        dest_dir = Path(output_dir_arg)
-    else:
-        dest_dir = Path() / document_id
-
-    async def _run() -> None:
-        transport = GoogleDocsTransport(cred.token)
-        client = DocsClient(transport)
-        pull_parent = tmp_parent if tmp_parent else Path()
-        try:
-            await client.pull(
-                document_id,
-                pull_parent,
-                save_raw=True,
-                format="markdown",
-            )
-            if tmp_parent is not None:
-                dest_dir.parent.mkdir(parents=True, exist_ok=True)
-                if dest_dir.exists():
-                    _assert_safe_to_replace(dest_dir)
-                    shutil.rmtree(dest_dir)
-                shutil.move(str(tmp_parent / document_id), str(dest_dir))
-        finally:
-            await transport.close()
-
-    try:
-        asyncio.run(_run())
-    finally:
-        if tmp_parent is not None:
-            shutil.rmtree(tmp_parent, ignore_errors=True)
-
-    print(f"Pulled to {dest_dir}/")
-
-
-def cmd_doc_push_md(args: Any) -> None:
-    """Push changes to a Google Doc (markdown format, auto-detected)."""
-    # Format is auto-detected from index.xml; push logic is identical to XML.
-    cmd_doc_push(args)
+# Legacy aliases for backward compatibility
+cmd_doc_pull_md = cmd_doc_pull
+cmd_doc_push_md = cmd_doc_push
 
 
 def cmd_doc_create(args: Any) -> None:
@@ -258,7 +258,7 @@ def cmd_doc_create(args: Any) -> None:
         client = DocsClient(transport)
         pull_parent = tmp_parent if tmp_parent else Path()
         try:
-            await client.pull(file_id, pull_parent, save_raw=True)
+            await client.pull(file_id, pull_parent, save_raw=True, format="markdown")
             if tmp_parent is not None:
                 dest_dir.parent.mkdir(parents=True, exist_ok=True)
                 shutil.move(str(tmp_parent / file_id), str(dest_dir))

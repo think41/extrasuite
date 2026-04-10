@@ -595,20 +595,20 @@ class TestMarkdownFileCycle:
         )
         _md_serde.serialize(bundle, out)
 
-        # Check files written
-        assert (out / "index.xml").exists()
+        # Check files written (new layout: tabs/, .extrasuite/)
+        assert (out / ".extrasuite" / "index.xml").exists()
         assert (out / "index.md").exists()
-        assert (out / "Tab_1.md").exists()
+        assert (out / "tabs" / "Tab_1.md").exists()
         # styles.xml should NOT be written for markdown format
         assert not (out / "Tab_1" / "styles.xml").exists()
 
         # Check index.xml records format
-        index_text = (out / "index.xml").read_text()
+        index_text = (out / ".extrasuite" / "index.xml").read_text()
         assert 'format="markdown"' in index_text
 
         # Check index.md has heading with line number
         index_md = (out / "index.md").read_text()
-        assert "Tab_1.md" in index_md
+        assert "tabs/Tab_1.md" in index_md
         assert "# Overview" in index_md
 
         # Deserialize
@@ -632,17 +632,21 @@ class TestMarkdownFileCycle:
         assert "Bold text" in (bold_runs[0].content or "")
 
     def test_markdown_string_roundtrip(self) -> None:
-        """Write markdown → Document → write markdown → same string."""
+        """Write markdown → Document → write markdown → same string (ignoring frontmatter)."""
         source = ROUND_TRIP_MD
 
         # Parse to Document
         doc = markdown_to_document({"Tab_1": source}, document_id="x", title="T")
 
-        # Re-serialize
+        # Re-serialize — now includes frontmatter
         per_tab = document_to_markdown(doc)
         result = per_tab["Tab_1"]["document.md"]
 
-        assert result == source
+        # Strip frontmatter for comparison (frontmatter is added by serialize)
+        from extradoc.serde.markdown._from_markdown import _strip_frontmatter
+
+        _, content = _strip_frontmatter(result)
+        assert content == source
 
 
 # ---------------------------------------------------------------------------
@@ -1390,9 +1394,9 @@ class TestDiffRawJsonBase:
 
         inflated_dict = _inflate(raw_dict)
 
-        raw_dir = folder / ".raw"
-        raw_dir.mkdir(exist_ok=True)
-        (raw_dir / "document.json").write_text(
+        internal_dir = folder / ".extrasuite"
+        internal_dir.mkdir(exist_ok=True)
+        (internal_dir / "document.json").write_text(
             json.dumps(inflated_dict), encoding="utf-8"
         )
 
@@ -1407,7 +1411,7 @@ class TestDiffRawJsonBase:
 
             After callout.
             """)
-        (folder / "Tab_1.md").write_text(edited_md, encoding="utf-8")
+        (folder / "tabs" / "Tab_1.md").write_text(edited_md, encoding="utf-8")
 
         # Run diff
         client = DocsClient.__new__(DocsClient)
@@ -1442,9 +1446,7 @@ class TestDiffRawJsonBase:
         edited_md = "# Heading\n\n> [!INFO]\n> Updated info text.\n"
 
         folder = self._setup_markdown_folder(tmp_path, base_md, "test-no-raw")
-        (folder / "Tab_1.md").write_text(edited_md, encoding="utf-8")
-
-        # No .raw/ directory — should use mock reindex fallback
+        (folder / "tabs" / "Tab_1.md").write_text(edited_md, encoding="utf-8")
         client = DocsClient.__new__(DocsClient)
         result = client.diff(str(folder))
 
@@ -1508,16 +1510,16 @@ class TestDiffRawJsonBase:
             title="Test",
             tab_ids={"Tab_1": "t.0"},
         )
-        raw_dir = folder / ".raw"
-        raw_dir.mkdir(exist_ok=True)
-        (raw_dir / "document.json").write_text(
+        internal_dir = folder / ".extrasuite"
+        internal_dir.mkdir(exist_ok=True)
+        (internal_dir / "document.json").write_text(
             json.dumps(
                 _reindex_document(raw_doc).model_dump(by_alias=True, exclude_none=True)
             ),
             encoding="utf-8",
         )
 
-        (folder / "Tab_1.md").write_text(edited_md, encoding="utf-8")
+        (folder / "tabs" / "Tab_1.md").write_text(edited_md, encoding="utf-8")
 
         client = DocsClient.__new__(DocsClient)
         result = client.diff(str(folder))

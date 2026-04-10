@@ -4,7 +4,7 @@ from __future__ import annotations
 
 from argparse import Namespace
 from pathlib import Path
-from typing import TYPE_CHECKING
+from typing import TYPE_CHECKING, Any
 
 from extrasuite.client.cli import build_parser
 from extrasuite.client.cli._common import cmd_module_help
@@ -36,7 +36,8 @@ def test_sheet_formula_help_supports_nested_case_insensitive_paths(
     assert "https://support.google.com/docs/answer/3094222" in out
 
 
-def test_docs_parser_supports_confidence_sprint_raw_commands() -> None:
+def test_docs_parser_supports_confidence_sprint_raw_commands(monkeypatch: Any) -> None:
+    monkeypatch.setenv("EXTRASUITE_DEV", "1")
     parser = build_parser()
 
     create_args = parser.parse_args(["docs", "create-empty", "Spike Doc"])
@@ -62,12 +63,14 @@ def test_docs_help_hides_internal_reconciler_flag() -> None:
         / "help"
         / "doc"
     )
-    for name in ("push.md", "push-md.md", "diff.md"):
-        text = (help_dir / name).read_text(encoding="utf-8")
-        assert "EXTRADOC_RECONCILER" not in text
+    for name in ("push.md", "diff.md"):
+        path = help_dir / name
+        if path.exists():
+            text = path.read_text(encoding="utf-8")
+            assert "EXTRADOC_RECONCILER" not in text
 
 
-def test_docs_help_reflects_current_release_contract() -> None:
+def test_docs_help_reflects_markdown_first_workflow() -> None:
     help_dir = (
         Path(__file__).resolve().parents[1]
         / "src"
@@ -77,9 +80,8 @@ def test_docs_help_reflects_current_release_contract() -> None:
         / "doc"
     )
     readme = (help_dir / "README.md").read_text(encoding="utf-8")
-    pull_md = (help_dir / "pull-md.md").read_text(encoding="utf-8")
+    pull = (help_dir / "pull.md").read_text(encoding="utf-8")
 
-    assert "Footnote creation/editing in body content is supported" in readme
-    assert "New-tab header/footer creation in an existing multi-tab doc is not supported" in readme
-    assert "Footnotes:" in pull_md
-    assert "Horizontal rules pulled from Docs are read-only" in pull_md
+    assert "markdown" in readme.lower()
+    assert "tabs/" in pull
+    assert "frontmatter" in pull

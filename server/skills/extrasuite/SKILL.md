@@ -31,6 +31,8 @@ uvx extrasuite sheet push <basefolder>/<document-id>
 
 The same workflow applies for `slide`, `doc`, `form`, and `script`.
 
+For **Docs**: `pull` creates a folder with one markdown file per tab in `tabs/`. Edit the markdown files and `push` to sync. Run `extrasuite doc --help` for details.
+
 ## Gmail, Calendar, and Contacts
 
 ```bash

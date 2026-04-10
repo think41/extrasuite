@@ -62,11 +62,20 @@ class RoundTrip:
         self.folder = folder
         _serde.serialize(self.bundle, self.folder)
 
+    def _tab_path(self, tab: str) -> Path:
+        new = self.folder / "tabs" / f"{tab}.md"
+        if new.exists():
+            return new
+        legacy = self.folder / f"{tab}.md"
+        if legacy.exists():
+            return legacy
+        return new if (self.folder / "tabs").is_dir() else legacy
+
     def read_md(self, tab: str = "Tab_1") -> str:
-        return (self.folder / f"{tab}.md").read_text(encoding="utf-8")
+        return self._tab_path(tab).read_text(encoding="utf-8")
 
     def write_md(self, content: str, tab: str = "Tab_1") -> None:
-        (self.folder / f"{tab}.md").write_text(content, encoding="utf-8")
+        self._tab_path(tab).write_text(content, encoding="utf-8")
 
     def edit_md(self, *, find: str, replace: str, tab: str = "Tab_1") -> None:
         md = self.read_md(tab)
@@ -88,9 +97,10 @@ def _custom_doc_roundtrip(
     bundle = _make_bundle(doc)
     _serde.serialize(bundle, folder)
     if edit_find and edit_replace:
-        md = (folder / "Tab_1.md").read_text()
+        tab_path = folder / "tabs" / "Tab_1.md" if (folder / "tabs").is_dir() else folder / "Tab_1.md"
+        md = tab_path.read_text()
         md = md.replace(edit_find, edit_replace)
-        (folder / "Tab_1.md").write_text(md)
+        tab_path.write_text(md)
     return _serde.deserialize(folder)
 
 

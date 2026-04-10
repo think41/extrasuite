@@ -89,7 +89,7 @@ def _do_single_word_edit(
     folder = tmp_path / f"edit_{word_idx}"
     _serde.serialize(bundle, folder)
 
-    md_path = folder / "Tab_1.md"
+    md_path = folder / "tabs" / "Tab_1.md" if (folder / "tabs").is_dir() else folder / "Tab_1.md"
     md_text = md_path.read_text(encoding="utf-8")
 
     replaceable = _find_replaceable_words(md_text)
