@@ -182,6 +182,10 @@ def _serialize_content(
     lines: list[str] = []
     in_list = False
     current_list_id: str | None = None
+    # Nesting level of the most recent list item emitted. Used to indent
+    # `<!-- -->` placeholders so they are absorbed as continuation content
+    # of the current list item instead of closing the surrounding list.
+    current_list_nesting = 0
     # Per-nesting-level counters for ordered (decimal/alpha/roman) lists.
     # Reset when we leave a list or when list_id changes; deeper levels are
     # cleared when we pop back to a shallower level so that re-entering a
@@ -226,9 +230,20 @@ def _serialize_content(
             if _is_colored_empty_paragraph(para):
                 # Cannot represent color styling in markdown, but emit a
                 # placeholder so the reconciler does not delete the paragraph.
+                #
+                # When we're inside a list, a bare `<!-- -->` at column 0
+                # closes the list in CommonMark — the next 4-space-indented
+                # sub-item then becomes an indented code block and its
+                # content is silently dropped on re-parse. Indent the
+                # placeholder one level deeper than the current item's
+                # marker so it is absorbed as continuation content instead.
                 if lines:
                     lines.append("")
-                lines.append("<!-- -->")
+                if in_list:
+                    indent = "    " * (current_list_nesting + 1)
+                    lines.append(f"{indent}<!-- -->")
+                else:
+                    lines.append("<!-- -->")
                 continue
 
             if _is_trailing_paragraph(para):
@@ -277,6 +292,7 @@ def _serialize_content(
                         lines.append(line)
                         in_list = True
                         current_list_id = this_list_id
+                        current_list_nesting = nesting
                     continue
                 else:
                     if in_list:
