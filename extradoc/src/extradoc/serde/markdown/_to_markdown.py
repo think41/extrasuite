@@ -182,10 +182,15 @@ def _serialize_content(
     lines: list[str] = []
     in_list = False
     current_list_id: str | None = None
-    # Nesting level of the most recent list item emitted. Used to indent
-    # `<!-- -->` placeholders so they are absorbed as continuation content
-    # of the current list item instead of closing the surrounding list.
-    current_list_nesting = 0
+    # Nesting offset: the API nesting level of the first item emitted in the
+    # current list context. Subsequent items are emitted at
+    # (api_nesting - nesting_offset) so that a list that starts at
+    # nesting_level=1 (no level-0 parent) is emitted starting at column 0
+    # rather than 4-space-indented. Without this, CommonMark parses the
+    # indented block as a BlockCode (indented code block) instead of a list.
+    # The nesting loss is fine: ancestor and mine both apply the same clamping,
+    # so the 3-way merge sees no change and preserves the original API nesting.
+    list_nesting_offset = 0
     # Per-nesting-level counters for ordered (decimal/alpha/roman) lists.
     # Reset when we leave a list or when list_id changes; deeper levels are
     # cleared when we pop back to a shallower level so that re-entering a
@@ -203,6 +208,7 @@ def _serialize_content(
                 in_list = False
                 current_list_id = None
                 list_counters = {}
+                list_nesting_offset = 0
             if lines:
                 lines.append("")
             lines.append("<!-- toc -->")
@@ -213,6 +219,7 @@ def _serialize_content(
                 in_list = False
                 current_list_id = None
                 list_counters = {}
+                list_nesting_offset = 0
             if lines:
                 lines.append("")
             # Check for extradoc:* named range annotation via containment check
@@ -231,19 +238,22 @@ def _serialize_content(
                 # Cannot represent color styling in markdown, but emit a
                 # placeholder so the reconciler does not delete the paragraph.
                 #
-                # When we're inside a list, a bare `<!-- -->` at column 0
-                # closes the list in CommonMark — the next 4-space-indented
-                # sub-item then becomes an indented code block and its
-                # content is silently dropped on re-parse. Indent the
-                # placeholder one level deeper than the current item's
-                # marker so it is absorbed as continuation content instead.
-                if lines:
-                    lines.append("")
+                # Inside a list context, any block-level `<!-- -->` at column 0
+                # terminates the surrounding list in CommonMark. The following
+                # indented list item then gets parsed as an indented code block
+                # (BlockCode) and its content is silently dropped. To avoid this
+                # corruption, skip the placeholder when inside a list — the
+                # colored paragraph is preserved via the 3-way merge (both
+                # ancestor and mine omit it identically, so the diff produces no
+                # DELETE op and the base paragraph survives in desired).
+                #
+                # Outside a list, emit it as a standalone HTMLBlock flanked by
+                # blank lines so mistletoe parses it correctly.
                 if in_list:
-                    indent = "    " * (current_list_nesting + 1)
-                    lines.append(f"{indent}<!-- -->")
-                else:
-                    lines.append("<!-- -->")
+                    continue
+                lines.append("")
+                lines.append("<!-- -->")
+                lines.append("")
                 continue
 
             if _is_trailing_paragraph(para):
@@ -271,33 +281,44 @@ def _serialize_content(
                 bullet = para.bullet
                 if bullet:
                     this_list_id = bullet.list_id
-                    if not in_list or this_list_id != current_list_id:
+                    starting_new_list = not in_list or this_list_id != current_list_id
+                    if starting_new_list:
                         list_counters = {}
                     nesting = _list_item_nesting_level(
                         para, list_defs.get(this_list_id or "")
                     )
-                    # Drop counters at levels deeper than the current one so
-                    # that re-entering a nested level restarts its numbering.
+                    if starting_new_list:
+                        # Record the API nesting of the first item in this list
+                        # context so we can normalize all items in this run.
+                        # This prevents deep-nested-only items from being emitted
+                        # with leading spaces that CommonMark would mis-parse as
+                        # BlockCode (indented code blocks).
+                        list_nesting_offset = nesting
+                    effective_nesting = max(0, nesting - list_nesting_offset)
+                    # Drop counters at levels deeper than the current effective one
+                    # so that re-entering a nested level restarts its numbering.
                     for lvl in list(list_counters.keys()):
-                        if lvl > nesting:
+                        if lvl > effective_nesting:
                             del list_counters[lvl]
-                    ordinal = list_counters.get(nesting, 0) + 1
-                    list_counters[nesting] = ordinal
+                    ordinal = list_counters.get(effective_nesting, 0) + 1
+                    list_counters[effective_nesting] = ordinal
                     line = _serialize_list_item(
-                        para, list_types, list_defs, ordinal=ordinal, heading_id_to_name=h_map, inline_objects=inline_objects
+                        para, list_types, list_defs, ordinal=ordinal,
+                        heading_id_to_name=h_map, inline_objects=inline_objects,
+                        nesting_override=effective_nesting,
                     )
                     if line is not None:
-                        if lines and (not in_list or this_list_id != current_list_id):
+                        if lines and starting_new_list:
                             lines.append("")
                         lines.append(line)
                         in_list = True
                         current_list_id = this_list_id
-                        current_list_nesting = nesting
                     continue
                 else:
                     if in_list:
                         in_list = False
                         current_list_id = None
+                        list_nesting_offset = 0
                     block = _serialize_paragraph(para, heading_id_to_name=h_map, inline_objects=inline_objects)
                     if block is not None:
                         if lines:
@@ -364,6 +385,7 @@ def _serialize_list_item(
     ordinal: int = 1,
     heading_id_to_name: dict[str, str] | None = None,
     inline_objects: dict[str, Any] | None = None,
+    nesting_override: int | None = None,
 ) -> str | None:
     bullet = para.bullet
     if not bullet:
@@ -371,7 +393,10 @@ def _serialize_list_item(
 
     inline = _serialize_inlines(para.elements or [], heading_id_to_name=heading_id_to_name, inline_objects=inline_objects).rstrip()
     list_id = bullet.list_id or ""
-    nesting = _list_item_nesting_level(para, list_defs.get(list_id))
+    if nesting_override is not None:
+        nesting = nesting_override
+    else:
+        nesting = _list_item_nesting_level(para, list_defs.get(list_id))
     list_type = list_types.get(list_id, "bullet")
     # 4 spaces per nesting level: CommonMark requires nested-list indentation
     # to reach the content column of the parent item's marker.  "1. " puts

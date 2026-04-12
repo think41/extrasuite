@@ -25,12 +25,13 @@ Handled:
 from __future__ import annotations
 
 import html as _html
+import logging
 import re
 import urllib.parse
 from html.parser import HTMLParser
 from typing import Any, Literal, cast
 
-from mistletoe.block_token import CodeFence, Heading, HTMLBlock, Quote, ThematicBreak
+from mistletoe.block_token import BlockCode, CodeFence, Heading, HTMLBlock, Quote, ThematicBreak
 from mistletoe.block_token import Document as MdDocument
 from mistletoe.block_token import List as MdList
 from mistletoe.block_token import Paragraph as MdParagraph
@@ -405,6 +406,20 @@ def _parse_body(
 
         elif isinstance(block, ThematicBreak):
             body.append(_make_hr_para())
+
+        elif isinstance(block, BlockCode):
+            # Indented code block — this should not appear in well-formed output
+            # from _to_markdown. It can arise when a `<!-- -->` placeholder was
+            # previously emitted with indentation inside a list context, causing
+            # CommonMark to parse subsequent list items as BlockCode. Log a
+            # warning and skip; the content is intentionally NOT recovered
+            # because the list items will be correctly re-emitted on the next
+            # serialize cycle after the fix.
+            logging.getLogger(__name__).warning(
+                "_from_markdown: dropping unexpected BlockCode block (content starts with %r); "
+                "this may indicate a serialization bug",
+                (block.children[0].content[:40] if block.children else "")
+            )
 
         elif isinstance(block, HTMLBlock):
             raw = block.content.strip()

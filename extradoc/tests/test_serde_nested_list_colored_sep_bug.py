@@ -257,6 +257,96 @@ def _serialize_doc(content: list[dict], tmp_path: Path) -> str:
     return (folder / "tabs" / "Tab_1.md").read_text()
 
 
+def test_edit_nested_list_item_without_l0_parent_reaches_desired(
+    tmp_path: Path,
+) -> None:
+    """Editing a nesting_level=1 list item that has no nesting_level=0 sibling
+    directly above it (only another nesting_level=1 sibling separated by a
+    colored empty paragraph) must be reflected in desired.
+
+    Concrete structure:
+        [colored empty para]        <- serialized as <!-- --> at col 0 (not in list yet)
+        (a) Payment Terms           <- nesting_level=1
+        [colored empty para]        <- serialized as '        <!-- -->' (8 spaces)
+        (b) Taxes; Original Text    <- nesting_level=1 -- EDIT THIS
+
+    The 8-space-indented <!-- --> causes CommonMark to parse the following
+    4-space-indented '    2. Taxes' as a BlockCode, dropping the content.
+    """
+    doc_dict = {
+        "documentId": "testdoc",
+        "title": "Test",
+        "tabs": [
+            {
+                "tabProperties": {"tabId": "t.0", "title": "Tab 1", "index": 0},
+                "documentTab": {
+                    "body": {
+                        "content": [
+                            {"sectionBreak": {"sectionStyle": {}}},
+                            # No nesting_level=0 item — jump straight to level 1.
+                            _list_item("Payment Terms\n", nesting=1),
+                            _colored_empty_para(),
+                            _list_item("Taxes; Original Text\n", nesting=1),
+                        ]
+                    },
+                    "lists": {
+                        "L1": {
+                            "listProperties": {
+                                "nestingLevels": [
+                                    {
+                                        "glyphType": "DECIMAL",
+                                        "indentFirstLine": {
+                                            "magnitude": 18,
+                                            "unit": "PT",
+                                        },
+                                        "indentStart": {
+                                            "magnitude": 36,
+                                            "unit": "PT",
+                                        },
+                                    },
+                                    {
+                                        "glyphType": "DECIMAL",
+                                        "indentFirstLine": {
+                                            "magnitude": 54,
+                                            "unit": "PT",
+                                        },
+                                        "indentStart": {
+                                            "magnitude": 72,
+                                            "unit": "PT",
+                                        },
+                                    },
+                                ]
+                            }
+                        }
+                    },
+                },
+            }
+        ],
+    }
+    doc = Document.model_validate(doc_dict)
+    bundle = DocumentWithComments(
+        document=doc, comments=FileComments(file_id="testdoc")
+    )
+    serde = MarkdownSerde()
+
+    folder = tmp_path / "doc"
+    serde.serialize(bundle, folder)
+
+    tab_path = folder / "tabs" / "Tab_1.md"
+    md = tab_path.read_text()
+    md = md.replace("Taxes; Original Text", "Taxes; Edited Text")
+    tab_path.write_text(md)
+
+    result = serde.deserialize(folder)
+    texts = " ".join(_para_texts(result.desired.document))
+
+    assert "Taxes; Edited Text" in texts, (
+        "Edit inside nesting_level=1 item (no L0 sibling above) was silently "
+        "dropped: 'Taxes; Original Text' → 'Taxes; Edited Text' not found in desired"
+    )
+    assert "Taxes; Original Text" not in texts
+
+
 @pytest.mark.xfail(
     reason=(
         "Adjacent bold runs produce '****' artifact. Serializer should "
