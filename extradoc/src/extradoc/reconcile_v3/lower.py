@@ -255,6 +255,18 @@ def lower_batches(
     # so that batch1 content-attachment requests can reference them.
     batch0_index: dict[str, int] = {}  # key → index in batch0
 
+    # Accumulate footnote-reference deletions (from DeleteFootnoteOp) per tab.
+    # These are body-segment single-char deletes at pristine document positions.
+    # They are NOT added to batch1 immediately; instead they are passed to the
+    # UpdateBodyContentOp handler for the same tab so that all body-segment
+    # deletes (fn-ref + content) are merged and emitted in globally-descending
+    # document order. This prevents ascending fn-ref deletes from shifting the
+    # positions relied upon by the descending UpdateBodyContentOp deletes.
+    # Any fn-ref deletes not consumed by a matching UpdateBodyContentOp are
+    # flushed to batch1 (sorted descending) at the end of the op loop.
+    _fn_ref_deletes: dict[str, list[tuple[int, int]]] = {}  # tab_id → [(start, end)]
+    _fn_ref_consumed: dict[str, bool] = {}  # tab_id → whether consumed
+
     for op in ops:
         match op:
             # ---------------------------------------------------------------- #
@@ -564,14 +576,13 @@ def lower_batches(
                         f"(no footnoteReference with index found in base body). "
                         f"(tab_id={op.tab_id!r}, footnote_id={op.footnote_id!r})"
                     )
-                # footnoteReference occupies exactly 1 character
-                batch1.append(
-                    _make_delete_content_range(
-                        start_index=op.ref_index,
-                        end_index=op.ref_index + 1,
-                        tab_id=op.tab_id,
-                        segment_id=None,
-                    )
+                # Accumulate footnote-reference deletes instead of immediately
+                # appending to batch1.  The UpdateBodyContentOp handler for
+                # the same tab will merge them with body content deletes so
+                # that all body-segment deletes are globally descending.
+                # footnoteReference occupies exactly 1 character.
+                _fn_ref_deletes.setdefault(op.tab_id, []).append(
+                    (op.ref_index, op.ref_index + 1)
                 )
 
             case UpdateFootnoteContentOp():
@@ -615,6 +626,17 @@ def lower_batches(
                     )
                     if shift != 0:
                         content_to_lower = _shift_elements(op.base_content, shift)
+                # Pass any accumulated footnote-reference deletes for this
+                # tab so they are merged with body content deletes in globally-
+                # descending order.  Only applies to the main body story
+                # (story_kind != "table_cell"); table-cell ops already apply
+                # an index shift via _compute_index_shift_for_body_ref and
+                # don't interact with fn-ref deletes at lower pristine indices.
+                _tab_fn_deletes: list[tuple[int, int]] | None = None
+                if op.story_kind != "table_cell":
+                    _tab_fn_deletes = _fn_ref_deletes.pop(op.tab_id, None)
+                    if _tab_fn_deletes is not None:
+                        _fn_ref_consumed[op.tab_id] = True
                 batch1.extend(
                     _lower_story_content_update(
                         op.alignment,
@@ -625,6 +647,7 @@ def lower_batches(
                         desired_lists=_desired_lists_by_tab.get(op.tab_id, {}),
                         base_lists=_base_lists_by_tab.get(op.tab_id, {}),
                         in_unsupported_region=(op.story_kind == "table_cell"),
+                        prior_body_deletes=_tab_fn_deletes,
                     )
                 )
 
@@ -854,11 +877,26 @@ def lower_batches(
                     f"lowering for op type {type(op).__name__!r} not yet implemented"
                 )
 
+    # Flush any footnote-reference deletes that were not consumed by an
+    # UpdateBodyContentOp (e.g. when all body content is unchanged but some
+    # footnotes were deleted).  Sort descending so they are self-consistent.
+    for tab_id, fn_deletes in _fn_ref_deletes.items():
+        for start, end in sorted(fn_deletes, key=lambda x: x[0], reverse=True):
+            batch1.append(
+                _make_delete_content_range(
+                    start_index=start,
+                    end_index=end,
+                    tab_id=tab_id,
+                    segment_id=None,
+                )
+            )
+
     batches: list[list[Request]] = []
     if batch0:
         batches.append(batch0)
     if batch1:
-        batches.append(batch1)
+        for sub in _split_on_insert_tables(batch1):
+            batches.append(sub)
     if batch1b:
         # Resolve the sentinel batch_index on DeferredIDs in batch1b_content
         # now that we know which batch index batch1b will occupy.
@@ -871,6 +909,78 @@ def lower_batches(
     if batch2:
         batches.append(batch2)
     return batches
+
+
+def _split_on_insert_tables(batch: list[Request]) -> list[list[Request]]:
+    """Split a batch into sub-batches so that each ``insertTable`` op and its
+    immediately-following cell-fill requests form their own isolated batch.
+
+    ``insertTable`` injects structural byte overhead (cell/row/table boundary
+    markers) that shifts all subsequent indices.  When multiple ``insertTable``
+    ops appear in the same batch, the structural bytes from each table shift
+    the indices for later tables and later ``insertText`` ops.  By isolating
+    each table (with its cell fills) in its own batch, we guarantee that each
+    batch is self-consistent: the ``insertTable`` runs first, then the
+    cell-fill ``insertText`` ops address positions relative to the freshly
+    created table — with no stale-index hazard from prior tables.
+
+    The split rule: scan the batch left to right.  When an ``insertTable``
+    request is encountered, close the current sub-batch (if non-empty) and
+    start a new one beginning with that ``insertTable``.  All subsequent
+    requests join this new sub-batch until the next ``insertTable`` is
+    encountered or the list is exhausted.
+
+    **Same-index co-location rule**: if the requests immediately preceding
+    the ``insertTable`` in the current sub-batch target the *same* document
+    index as the ``insertTable`` itself, they must stay with the
+    ``insertTable`` in the new sub-batch — not in the closing sub-batch.
+    Concretely, ``lower_batches`` emits a bare ``insertText@N: '\\n'`` as the
+    paragraph-separator that precedes a new table at index N.  If that
+    ``insertText`` lands in sub-batch A while the ``insertTable@N`` starts
+    sub-batch B, sub-batch A inserts a ``\\n`` at N first, which shifts the
+    document so the table opener in sub-batch B lands one position off.  The
+    cell-fill ``insertText`` ops in sub-batch B were computed assuming the
+    ``insertTable`` created the pre-``\\n`` itself (at N+0) — they break when
+    the ``\\n`` was already injected by the prior sub-batch.
+
+    If the batch contains no ``insertTable`` requests, the original batch is
+    returned as-is (wrapped in a single-element list).
+    """
+    if not any(r.insert_table is not None for r in batch):
+        return [batch]
+
+    def _req_index(r: Request) -> int | None:
+        if r.insert_text is not None and r.insert_text.location is not None:
+            idx = r.insert_text.location.index
+            return idx if isinstance(idx, int) else None
+        if r.insert_table is not None and r.insert_table.location is not None:
+            idx = r.insert_table.location.index
+            return idx if isinstance(idx, int) else None
+        return None
+
+    result: list[list[Request]] = []
+    current: list[Request] = []
+
+    for req in batch:
+        if req.insert_table is not None:
+            # Move any trailing same-index requests from current into the new
+            # sub-batch so they stay co-located with the insertTable.
+            table_index = _req_index(req)
+            carry: list[Request] = []
+            if table_index is not None:
+                while current and _req_index(current[-1]) == table_index:
+                    carry.append(current.pop())
+                carry.reverse()
+            if current:
+                result.append(current)
+            current = carry + [req]
+        else:
+            current.append(req)
+
+    if current:
+        result.append(current)
+
+    return result
 
 
 def _fix_deferred_batch_index(req: Request, target_batch_index: int) -> None:
@@ -1027,6 +1137,7 @@ def _lower_story_content_update(
     desired_lists: dict[str, DocList] | None = None,
     base_lists: dict[str, DocList] | None = None,
     in_unsupported_region: bool = False,
+    prior_body_deletes: list[tuple[int, int]] | None = None,
 ) -> list[Request]:
     """Lower a ContentAlignment into delete/insert/update Request objects.
 
@@ -1055,14 +1166,87 @@ def _lower_story_content_update(
     The terminal paragraph (last element) is never deleted — it is always
     matched.  Insertions before the terminal are handled by inserting before
     the terminal's startIndex.
+
+    ``prior_body_deletes`` is an optional list of ``(start, end)`` pristine
+    position pairs for body-segment deletes from other ops (e.g.
+    ``DeleteFootnoteOp`` footnote-reference deletions) that will run in the
+    same batch.  When provided:
+
+    - The corresponding ``deleteContentRange`` requests are merged with this
+      op's own deletes, sorted globally in descending document order so that
+      no delete invalidates a later delete's index.
+    - Insert and match-update positions are adjusted to account for ALL
+      body-segment deletes (not just this op's own) at positions below the
+      target.
+
+    Only meaningful when ``segment_id is None`` (body segment).
     """
     requests: list[Request] = []
 
-    # Sort deletes in descending base_idx order so each delete does not
-    # invalidate indices for subsequent deletes.
-    sorted_deletes = sorted(alignment.base_deletes, reverse=True)
+    # Compute own-delete ranges (pristine positions) for use in the
+    # prior-delete filter below.  Apply the same SB-adjacent truncation that
+    # the actual delete-request generation uses so the containment check
+    # matches what actually gets emitted.
+    own_delete_ranges: list[tuple[int, int]] = []
+    for base_idx in alignment.base_deletes:
+        el = base_content[base_idx]
+        # Base-tree read: contract guarantees concrete indices.
+        # See docs/coordinate_contract.md §who-reads-what.
+        start, end = _require_concrete(
+            el,
+            context=(
+                f"_lower_story_content_update own_delete_ranges base_idx={base_idx}"
+            ),
+        )
+        next_el = (
+            base_content[base_idx + 1] if base_idx + 1 < len(base_content) else None
+        )
+        if (
+            next_el is not None
+            and next_el.section_break is not None
+            and end - start > 1
+        ):
+            end = end - 1
+        if end > start:
+            own_delete_ranges.append((start, end))
 
-    for base_idx in sorted_deletes:
+    # Build prior-delete requests (from e.g. DeleteFootnoteOp) so we can
+    # merge them with this op's own deletes in globally-descending order.
+    # Filter out any prior delete whose range is entirely contained within an
+    # own-delete range: the enclosing paragraph delete will remove that content
+    # anyway, and emitting the prior delete first (due to higher index) would
+    # shrink the paragraph range and make the own-delete range invalid.
+    prior_reqs_with_start: list[tuple[int, Request]] = []
+    # Also track which prior_body_deletes are actually emitted (vs. subsumed),
+    # so the insert-offset calculation only counts the ones that will run.
+    effective_prior_deletes: list[tuple[int, int]] = []
+    if prior_body_deletes and segment_id is None:
+        for pr_start, pr_end in prior_body_deletes:
+            subsumed = any(
+                own_start <= pr_start and pr_end <= own_end
+                for own_start, own_end in own_delete_ranges
+            )
+            if subsumed:
+                # This fn-ref is inside a paragraph that will be deleted
+                # wholesale; skip it to avoid shrinking that paragraph range.
+                continue
+            effective_prior_deletes.append((pr_start, pr_end))
+            prior_reqs_with_start.append(
+                (
+                    pr_start,
+                    _make_delete_content_range(
+                        start_index=pr_start,
+                        end_index=pr_end,
+                        tab_id=tab_id,
+                        segment_id=None,
+                    ),
+                )
+            )
+
+    # Sort own deletes in descending document position order so each delete
+    # does not invalidate indices for subsequent deletes.
+    own_deletes_with_start: list[tuple[int, int, Request]] = []
+    for base_idx in alignment.base_deletes:
         el = base_content[base_idx]
         # Base-tree read: contract guarantees concrete indices. A None here
         # is an invariant violation (see docs/coordinate_contract.md §who-reads-what).
@@ -1070,14 +1254,44 @@ def _lower_story_content_update(
             el,
             context=(f"_lower_story_content_update base_delete base_idx={base_idx}"),
         )
-        requests.append(
-            _make_delete_content_range(
-                start_index=start,
-                end_index=end,
-                tab_id=tab_id,
-                segment_id=segment_id,
+        # The Google Docs API forbids deleting the ``\n`` immediately preceding
+        # a SectionBreak.  When the element to delete ends exactly where a
+        # SectionBreak begins (its ``\n`` is that preceding newline), truncate
+        # the delete range to ``[start, end-1)`` so the ``\n`` survives and the
+        # API request is accepted.  The leftover empty paragraph is harmless
+        # structurally (it is the required separator before the section break).
+        next_el = base_content[base_idx + 1] if base_idx + 1 < len(base_content) else None
+        if (
+            next_el is not None
+            and next_el.section_break is not None
+            and end - start > 1  # only truncate when content exists besides the \n
+        ):
+            end = end - 1  # exclude the \n immediately before the SB
+        if start >= end:
+            # Nothing to delete (paragraph was only the \n before a SB).
+            continue
+        own_deletes_with_start.append(
+            (
+                start,
+                end,
+                _make_delete_content_range(
+                    start_index=start,
+                    end_index=end,
+                    tab_id=tab_id,
+                    segment_id=segment_id,
+                ),
             )
         )
+
+    # Merge prior and own deletes, emitting them globally descending by start.
+    # prior_reqs_with_start contains (start, req) for external deletes;
+    # own_deletes_with_start contains (start, end, req) for this op's deletes.
+    all_delete_reqs: list[tuple[int, Request]] = [
+        (s, r) for s, _e, r in own_deletes_with_start
+    ] + prior_reqs_with_start
+    all_delete_reqs.sort(key=lambda x: x[0], reverse=True)
+    for _start, req in all_delete_reqs:
+        requests.append(req)
 
     # Insertions: we need to find where to insert each desired element.
     # Strategy: for each desired_insert index, find the closest preceding
@@ -1111,6 +1325,7 @@ def _lower_story_content_update(
             segment_id=segment_id,
             desired_lists=desired_lists or {},
             in_unsupported_region=in_unsupported_region,
+            prior_delete_ranges=effective_prior_deletes or None,
         )
         requests.extend(insert_requests)
 
@@ -1128,7 +1343,18 @@ def _lower_story_content_update(
             el,
             context=(f"_lower_story_content_update deleted_sizes base_idx={base_idx}"),
         )
-        deleted_sizes[base_idx] = end - start
+        # Apply the same SB-adjacent truncation used when emitting the actual
+        # delete request so that shift calculations reflect the real deletion.
+        next_el_for_ds = (
+            base_content[base_idx + 1] if base_idx + 1 < len(base_content) else None
+        )
+        if (
+            next_el_for_ds is not None
+            and next_el_for_ds.section_break is not None
+            and end - start > 1
+        ):
+            end = end - 1
+        deleted_sizes[base_idx] = max(0, end - start)
 
     # Process matched element updates in DESCENDING start-index order.
     # Each in-place paragraph update may grow or shrink the paragraph.  If we
@@ -1171,6 +1397,7 @@ def _lower_story_content_update(
             deleted_sizes=deleted_sizes,
             base_content=base_content,
             before_pos=b_el_start,
+            prior_delete_ranges=effective_prior_deletes or None,
         )
         post_insert_shift = _inserted_chars_before_or_at(
             insert_metadata=insert_metadata,
@@ -1201,6 +1428,7 @@ def _plan_insertions(
     segment_id: str | None,
     desired_lists: dict[str, DocList] | None = None,
     in_unsupported_region: bool = False,
+    prior_delete_ranges: list[tuple[int, int]] | None = None,
 ) -> tuple[list[Request], list[tuple[int, int]]]:
     """Plan insertion requests for desired_inserts.
 
@@ -1233,7 +1461,10 @@ def _plan_insertions(
     # Build sorted list of matched (base_idx, desired_idx) pairs
     matches_sorted = sorted(alignment.matches, key=lambda m: m.desired_idx)
 
-    # Precompute sizes of deleted elements (for offset adjustment)
+    # Precompute sizes of deleted elements (for offset adjustment).
+    # Apply the same SB-adjacent truncation used when emitting delete requests:
+    # when an element's trailing \n is immediately before a SectionBreak, the
+    # actual delete omits that \n, so the effective deleted size is one less.
     deleted_sizes: dict[int, int] = {}
     for base_idx in alignment.base_deletes:
         el = base_content[base_idx]
@@ -1243,7 +1474,16 @@ def _plan_insertions(
             el,
             context=f"_plan_insertions deleted_sizes base_idx={base_idx}",
         )
-        deleted_sizes[base_idx] = end - start
+        next_el = (
+            base_content[base_idx + 1] if base_idx + 1 < len(base_content) else None
+        )
+        if (
+            next_el is not None
+            and next_el.section_break is not None
+            and end - start > 1
+        ):
+            end = end - 1
+        deleted_sizes[base_idx] = max(0, end - start)
 
     # Phase 1: Compute (insert_pos, desired_idx, element_requests) for each insert.
     # We collect them first so we can reorder within same-position groups.
@@ -1282,11 +1522,15 @@ def _plan_insertions(
                 context=(f"_plan_insertions terminal anchor desired_idx={desired_idx}"),
             )
 
-        # Adjust for characters deleted before this insertion point
+        # Adjust for characters deleted before this insertion point.
+        # Include both this op's own deletes and any prior body-segment deletes
+        # (e.g. footnote-reference deletes from DeleteFootnoteOp) that will run
+        # in the same batch before this insert.
         offset = _deleted_chars_before(
             deleted_sizes=deleted_sizes,
             base_content=base_content,
             before_pos=raw_insert_pos,
+            prior_delete_ranges=prior_delete_ranges,
         )
         insert_pos = raw_insert_pos - offset
 
@@ -1728,8 +1972,17 @@ def _deleted_chars_before(
     deleted_sizes: dict[int, int],
     base_content: list[StructuralElement],
     before_pos: int,
+    prior_delete_ranges: list[tuple[int, int]] | None = None,
 ) -> int:
-    """Return total character count deleted from positions < before_pos."""
+    """Return total character count deleted from positions < before_pos.
+
+    ``prior_delete_ranges`` is an optional list of ``(start, end)`` pristine
+    position pairs representing additional body-segment deletes (e.g. from
+    ``DeleteFootnoteOp``) that will run in the same batch before any inserts.
+    Their contribution is included in the offset so that insert positions
+    computed by ``_plan_insertions`` are correct when all deletes are sorted
+    globally descending.
+    """
     total = 0
     for bidx, size in deleted_sizes.items():
         # Base-tree read: contract guarantees concrete indices.
@@ -1740,6 +1993,10 @@ def _deleted_chars_before(
         )
         if el_start < before_pos:
             total += size
+    if prior_delete_ranges:
+        for start, end in prior_delete_ranges:
+            if start < before_pos:
+                total += end - start
     return total
 
 
@@ -2988,25 +3245,40 @@ def _lower_table_insert(
             # real API pull produces [content_para, terminal_para].  Both cases
             # must work correctly.
             insertable = [e for e in cell_content if not _is_cell_terminal(e)]
-            inserted_chars = sum(_element_size(e) for e in insertable)
 
-            if inserted_chars > 0:
+            # Compute estimated char count using element sizes to decide
+            # whether there is anything to insert (same guard as before).
+            estimated_inserted_chars = sum(_element_size(e) for e in insertable)
+
+            # Emit insert requests for this cell and track the ACTUAL number
+            # of characters inserted.  We cannot use _element_size() alone
+            # here because it counts all paragraph elements including
+            # non-textRun inline objects (footnote references, inline
+            # images, …).  _lower_element_insert / _lower_paragraph_insert
+            # only emits insertText for the text-run content, so non-textRun
+            # elements contribute 0 inserted characters.  Using
+            # _element_size() to advance ``running`` would over-count and
+            # shift all subsequent cell positions by the number of such
+            # opaque elements in the cell.
+            actual_inserted_chars = 0
+            if estimated_inserted_chars > 0:
                 running = content_start
                 for e in insertable:
-                    requests.extend(
-                        _lower_element_insert(
-                            el=e,
-                            index=running,
-                            tab_id=tab_id,
-                            segment_id=segment_id,
-                            in_unsupported_region=True,
-                        )
+                    el_reqs = _lower_element_insert(
+                        el=e,
+                        index=running,
+                        tab_id=tab_id,
+                        segment_id=segment_id,
+                        in_unsupported_region=True,
                     )
-                    running += _element_size(e)
+                    requests.extend(el_reqs)
+                    el_actual = _batch_insert_size_from_reqs(el_reqs)
+                    running += el_actual
+                    actual_inserted_chars += el_actual
 
             # Advance past this cell:
-            # originally 2 chars (opener + terminal \n), now 2 + inserted_chars.
-            table_pos += inserted_chars + 2
+            # originally 2 chars (opener + terminal \n), now 2 + actual chars.
+            table_pos += actual_inserted_chars + 2
 
     return requests
 
@@ -3835,6 +4107,17 @@ def _compute_index_shift_for_body_ref(
     boundary — content AT the boundary stays at the boundary, content
     strictly after moves forward).
 
+    ``insertTable`` requests also inject structural overhead bytes that are
+    NOT captured by the cell-fill ``insertText`` requests.  After
+    ``insertTable`` creates an empty R×C skeleton at position L, the document
+    grows by::
+
+        structural_bytes = 2 + R × (1 + 2 × C)
+
+    (1 pre-table ``\\n`` + 1 table-opener + R row-openers + R×C×2 empty-cell
+    bytes).  These bytes ARE at position L (≤ any subsequent body reference
+    above L) and therefore contribute to the shift just like an insertText.
+
     Only body-segment requests (``segment_id=None``, matching ``tab_id``)
     contribute; header/footer/footnote ops live in distinct coordinate spaces.
     """
@@ -3848,6 +4131,19 @@ def _compute_index_shift_for_body_ref(
                         continue
                     if ev_index < current:
                         current += ev_delta
+        # Handle insertTable structural overhead (skeleton bytes not tracked
+        # by the cell-fill insertText requests already in the batch).
+        ins_table = req.insert_table
+        if ins_table is not None:
+            loc = ins_table.location
+            if loc is not None and loc.segment_id is None and loc.tab_id == tab_id:
+                idx = loc.index
+                if isinstance(idx, int) and idx <= current:
+                    r = ins_table.rows or 0
+                    c = ins_table.columns or 0
+                    structural_bytes = 2 + r * (1 + 2 * c)
+                    current += structural_bytes
+            continue
         it = req.insert_text
         dcr = req.delete_content_range
         if it is not None:

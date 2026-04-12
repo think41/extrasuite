@@ -1090,8 +1090,11 @@ class TestTableCellContentLowering:
             ]
         )
         batches = reconcile_batches(base, desired)
-        # Cell edit only → single content batch
-        assert len(batches) == 1
+        # Cell edit only → no structural-create (batch 0) batch; content
+        # batches may be split on insertTable boundaries to prevent index drift.
+        assert len(batches) >= 1
+        flat = [r for b in batches for r in (b.requests or [])]
+        assert any(r.insert_text is not None for r in flat)
 
     def test_cell_text_change_correct_delete_range(self) -> None:
         """Delete range starts at the cell paragraph's flat document startIndex."""

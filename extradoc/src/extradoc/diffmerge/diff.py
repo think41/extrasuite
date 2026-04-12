@@ -1107,6 +1107,27 @@ def _diff_paragraph_inline_images(
     return ops
 
 
+def _cell_is_terminal_paragraph(el: StructuralElement) -> bool:
+    """Return True if ``el`` is the implicit terminal paragraph of a table cell.
+
+    A real Google Docs API pull always ends each table cell's content list with
+    a bare ``\\n`` paragraph (the mandatory cell terminal).  This element is
+    structurally implicit — it is automatically managed by the API and should
+    not participate in content alignment with desired content from the
+    markdown/XML deserialisers.
+
+    A terminal paragraph has exactly one element (a ``textRun`` containing only
+    ``"\\n"``) and no other structural content.
+    """
+    if el.paragraph is None:
+        return False
+    elems = el.paragraph.elements or []
+    if len(elems) != 1:
+        return False
+    tr = elems[0].text_run
+    return tr is not None and tr.content == "\n"
+
+
 def _fields_mask_for_changed(
     base: dict[str, object],
     desired: dict[str, object],
@@ -1168,6 +1189,31 @@ def _diff_table(
         for col_idx, (b_cell, d_cell) in enumerate(zip(b_cells, d_cells, strict=False)):
             b_content: list[StructuralElement] = b_cell.content or []
             d_content: list[StructuralElement] = d_cell.content or []
+            # Strip the implicit terminal paragraph from cell content before
+            # alignment.  A real Google Docs API pull always appends a bare-
+            # ``\n`` paragraph at the end of every table cell (the mandatory
+            # cell terminal).  The markdown/XML deserialisers may or may not
+            # emit this terminal.  If we include it in the alignment the
+            # content-alignment DP pre-matches the terminal to ``desired[-1]``
+            # (the real content paragraph), then deletes all actual content
+            # paragraphs — producing spurious delete+insert pairs instead of
+            # the correct ``updateTextStyle``, and generating deletes that can
+            # cross the cell boundary.
+            # Stripping the terminal from BOTH sides makes base and desired
+            # structurally comparable before alignment and avoids the problem
+            # regardless of which source produced the content.
+            if (
+                b_content
+                and b_content[-1].paragraph is not None
+                and _cell_is_terminal_paragraph(b_content[-1])
+            ):
+                b_content = b_content[:-1]
+            if (
+                d_content
+                and d_content[-1].paragraph is not None
+                and _cell_is_terminal_paragraph(d_content[-1])
+            ):
+                d_content = d_content[:-1]
             if b_content != d_content:
                 cell_label = f"{table_label}:r{base_row_idx}:c{col_idx}"
                 alignment = _align_content_sequence(b_content, d_content)
