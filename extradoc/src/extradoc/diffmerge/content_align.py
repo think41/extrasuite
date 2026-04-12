@@ -678,6 +678,201 @@ class ContentAlignment:
 _INF = math.inf
 
 
+# ---------------------------------------------------------------------------
+# API-uncreatable element kinds
+# ---------------------------------------------------------------------------
+
+#: Element kinds that cannot be created via the Google Docs batchUpdate API.
+#: If such an element exists in base, it must never appear in base_deletes —
+#: the user could not have removed and re-added it.
+_UNCREATABLE_KINDS: frozenset[str] = frozenset(
+    [NodeKind.TOC, NodeKind.OPAQUE, NodeKind.SECTION_BREAK]
+)
+
+
+def _pre_pin_stable_anchors(
+    base: list[ContentNode],
+    desired: list[ContentNode],
+) -> list[tuple[int, int]]:
+    """Collect stable anchors to establish before running the DP.
+
+    Returns a sorted, non-conflicting list of ``(base_idx, desired_idx)``
+    anchor pairs. Two sources are used:
+
+    1. **Exact-text matches** — paragraphs/lists whose text content appears
+       exactly once in base AND exactly once in desired (unambiguous).
+       Paragraphs must also share the same kind.
+
+    2. **API-uncreatable elements** — ``TOC``, ``OPAQUE``, and
+       ``SectionBreak`` nodes that appear in both base and desired in
+       positional order.  If a TOC exists in base but NOT in desired it is
+       intentionally omitted from the anchor list (it will be handled as a
+       forced carry-through by the caller, not a deletion).
+
+    The returned list is sorted by ``base_idx`` and is guaranteed to be
+    monotonic in ``desired_idx`` as well (no conflicts).
+    """
+    # -----------------------------------------------------------------------
+    # Source 1: Exact-text matches (unambiguous — appears exactly once each
+    # side).  Only text-bearing kinds (PARAGRAPH, LIST) participate.
+    # -----------------------------------------------------------------------
+    base_text_counts: dict[str, int] = {}
+    desired_text_counts: dict[str, int] = {}
+
+    for node in base:
+        if node.kind in (NodeKind.PARAGRAPH, NodeKind.LIST) and node.text.strip():
+            key = f"{node.kind}:{node.text}"
+            base_text_counts[key] = base_text_counts.get(key, 0) + 1
+
+    for node in desired:
+        if node.kind in (NodeKind.PARAGRAPH, NodeKind.LIST) and node.text.strip():
+            key = f"{node.kind}:{node.text}"
+            desired_text_counts[key] = desired_text_counts.get(key, 0) + 1
+
+    # Index of each unambiguous text in base and desired.
+    base_text_to_idx: dict[str, int] = {}
+    for i, node in enumerate(base):
+        if node.kind in (NodeKind.PARAGRAPH, NodeKind.LIST) and node.text.strip():
+            key = f"{node.kind}:{node.text}"
+            if base_text_counts.get(key, 0) == 1 and desired_text_counts.get(key, 0) == 1:
+                base_text_to_idx[key] = i
+
+    desired_text_to_idx: dict[str, int] = {}
+    for j, node in enumerate(desired):
+        if node.kind in (NodeKind.PARAGRAPH, NodeKind.LIST) and node.text.strip():
+            key = f"{node.kind}:{node.text}"
+            if base_text_counts.get(key, 0) == 1 and desired_text_counts.get(key, 0) == 1:
+                desired_text_to_idx[key] = j
+
+    exact_anchors: list[tuple[int, int]] = []
+    for key, bi in base_text_to_idx.items():
+        di = desired_text_to_idx.get(key)
+        if di is not None:
+            exact_anchors.append((bi, di))
+
+    # -----------------------------------------------------------------------
+    # Source 2: API-uncreatable elements — match them in positional order
+    # (first TOC in base ↔ first TOC in desired, etc.).
+    # -----------------------------------------------------------------------
+    uncreatable_anchors: list[tuple[int, int]] = []
+
+    for kind in _UNCREATABLE_KINDS:
+        base_indices = [i for i, n in enumerate(base) if n.kind == kind]
+        desired_indices = [j for j, n in enumerate(desired) if n.kind == kind]
+        # Match positionally; extras on either side are left unmatched.
+        for bi, di in zip(base_indices, desired_indices, strict=False):
+            uncreatable_anchors.append((bi, di))
+
+    # -----------------------------------------------------------------------
+    # Merge and de-conflict: keep only anchors that form a strictly monotonic
+    # sequence in both indices (no two anchors share a base_idx or desired_idx,
+    # and sorted by base_idx is also sorted by desired_idx).
+    # -----------------------------------------------------------------------
+    all_candidates = sorted(
+        set(exact_anchors + uncreatable_anchors), key=lambda p: (p[0], p[1])
+    )
+
+    # Greedy monotonic-subsequence filter (patience-sort variant): keep the
+    # longest prefix that is strictly increasing in both axes.
+    # Simple O(n²) approach — anchor lists are tiny in practice.
+    result: list[tuple[int, int]] = []
+    used_base: set[int] = set()
+    used_desired: set[int] = set()
+
+    for bi, di in all_candidates:
+        if bi in used_base or di in used_desired:
+            continue
+        # Ensure monotonicity: new anchor must be > all current anchors in
+        # BOTH dimensions.
+        if result:
+            last_bi, last_di = result[-1]
+            if bi <= last_bi or di <= last_di:
+                # Conflict with last anchor — skip this candidate.
+                continue
+        result.append((bi, di))
+        used_base.add(bi)
+        used_desired.add(di)
+
+    return result
+
+
+def _apply_anchors_to_alignment(
+    anchors: list[tuple[int, int]],
+    base: list[ContentNode],
+    desired: list[ContentNode],
+) -> ContentAlignment:
+    """Run the DP within each gap defined by the given anchors and merge.
+
+    This is the same gap-based approach used by ``_pin_table_flanks``.
+
+    Parameters
+    ----------
+    anchors:
+        Sorted, monotonic ``(base_idx, desired_idx)`` pairs to use as fixed
+        match points.  Must be strictly increasing in both dimensions.
+    base, desired:
+        The prefix sequences (terminals already stripped by the caller).
+    """
+    m = len(base)
+    n = len(desired)
+
+    # Boundaries: (-1,-1), anchors..., (m, n)
+    boundaries: list[tuple[int, int]] = [(-1, -1), *anchors, (m, n)]
+
+    final_matches: list[ContentMatch] = []
+    total_cost = 0.0
+
+    # Add anchor matches themselves.
+    for bi, di in anchors:
+        final_matches.append(ContentMatch(base_idx=bi, desired_idx=di))
+        total_cost += edit_cost(base[bi], desired[di])
+
+    anchor_base_set = {bi for bi, _ in anchors}
+    anchor_desired_set = {di for _, di in anchors}
+
+    for k in range(len(boundaries) - 1):
+        b_lo, d_lo = boundaries[k]
+        b_hi, d_hi = boundaries[k + 1]
+
+        gap_base_indices = [i for i in range(b_lo + 1, b_hi) if i not in anchor_base_set]
+        gap_desired_indices = [j for j in range(d_lo + 1, d_hi) if j not in anchor_desired_set]
+
+        if not gap_base_indices and not gap_desired_indices:
+            continue
+
+        sub_base = [base[i] for i in gap_base_indices]
+        sub_desired = [desired[j] for j in gap_desired_indices]
+        sub_alignment = _dp_align(sub_base, sub_desired)
+
+        for sub_m in sub_alignment.matches:
+            final_matches.append(
+                ContentMatch(
+                    base_idx=gap_base_indices[sub_m.base_idx],
+                    desired_idx=gap_desired_indices[sub_m.desired_idx],
+                )
+            )
+        total_cost += sub_alignment.total_cost
+
+    final_matches.sort(key=lambda m: (m.base_idx, m.desired_idx))
+    matched_base = {m.base_idx for m in final_matches}
+    matched_desired = {m.desired_idx for m in final_matches}
+    base_deletes = sorted(i for i in range(m) if i not in matched_base)
+    desired_inserts = sorted(j for j in range(n) if j not in matched_desired)
+
+    # Add delete/insert penalties to cost.
+    for i in base_deletes:
+        total_cost += delete_penalty(base[i])
+    for j in desired_inserts:
+        total_cost += insert_penalty(desired[j])
+
+    return ContentAlignment(
+        matches=final_matches,
+        base_deletes=base_deletes,
+        desired_inserts=desired_inserts,
+        total_cost=total_cost,
+    )
+
+
 def align_content(
     base: list[ContentNode],
     desired: list[ContentNode],
@@ -750,7 +945,16 @@ def align_content(
     prefix_base = base[: m - 1]
     prefix_desired = desired[: n - 1]
 
-    prefix_alignment = _dp_align(prefix_base, prefix_desired)
+    # Pre-pin stable anchors before the DP: exact-text matches and
+    # API-uncreatable elements (TOC, OPAQUE, SectionBreak).
+    pre_pins = _pre_pin_stable_anchors(prefix_base, prefix_desired)
+
+    if pre_pins:
+        prefix_alignment = _apply_anchors_to_alignment(
+            pre_pins, prefix_base, prefix_desired
+        )
+    else:
+        prefix_alignment = _dp_align(prefix_base, prefix_desired)
 
     # Table-flank pinning: force the paragraphs immediately adjacent to each
     # matched table pair to be matched (see module docstring).
@@ -761,15 +965,28 @@ def align_content(
         prefix_alignment, prefix_base, prefix_desired
     )
 
+    # Remove API-uncreatable elements from base_deletes.  They cannot be
+    # re-created by the reconciler so they must never be scheduled for
+    # deletion — the caller (apply_ops / reconciler) will carry them through.
+    filtered_base_deletes = [
+        i
+        for i in prefix_alignment.base_deletes
+        if prefix_base[i].kind not in _UNCREATABLE_KINDS
+    ]
+    filtered_cost = prefix_alignment.total_cost
+    if len(filtered_base_deletes) < len(prefix_alignment.base_deletes):
+        # Subtract the delete penalties that we're dropping.
+        removed = set(prefix_alignment.base_deletes) - set(filtered_base_deletes)
+        for i in removed:
+            filtered_cost -= delete_penalty(prefix_base[i])
+
     # Combine prefix result with terminal match.
     all_matches = [*prefix_alignment.matches, terminal_match]
-    total_cost = (
-        prefix_alignment.total_cost
-    )  # terminal edit_cost is excluded (terminals are paired by definition)
+    total_cost = filtered_cost  # terminal edit_cost excluded (always paired)
 
     return ContentAlignment(
         matches=all_matches,
-        base_deletes=prefix_alignment.base_deletes,
+        base_deletes=filtered_base_deletes,
         desired_inserts=prefix_alignment.desired_inserts,
         total_cost=total_cost,
     )
