@@ -22,5 +22,4 @@ Make all changes locally and push once when done. Always re-pull before making f
 
 ## Discovery
 
-  extrasuite <module> --help           Module overview: workflow, files, key rules
-  extrasuite <module> <cmd> --help     Command flags and format reference (self-contained, no need to read module --help first)
+  extrasuite <module> --help    Workflow, file format, and editing rules for that module
