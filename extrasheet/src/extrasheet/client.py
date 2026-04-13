@@ -86,7 +86,7 @@ class SheetsClient:
         spreadsheet_id: str,
         output_path: str | Path,
         *,
-        max_rows: int = 100,
+        max_rows: int = 1000,
         save_raw: bool = True,
     ) -> list[Path]:
         """Pull a spreadsheet and write to file representation.

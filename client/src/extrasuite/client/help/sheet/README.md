@@ -1,19 +1,25 @@
 Google Sheets - edit spreadsheets via local TSV and JSON files.
 
-## Workflow
-
   extrasuite sheets pull <url> [output_dir]   Download spreadsheet
   # Edit files in <output_dir>/
-  extrasuite sheets diff <folder>             Preview changes (no API calls)
   extrasuite sheets push <folder>             Apply changes to Google Sheets
   extrasuite sheets create <title>            Create a new spreadsheet
+  extrasuite sheets share <url> <emails>      Share with contacts
 
-See `extrasuite sheet pull --help` for directory layout, flags, and key rules (self-contained).
+Open spreadsheet.json first — it lists every sheet with its row count, tab
+color, and any truncation status, so you know what you're working with before
+touching data files. Sheets with more than 1000 rows are truncated by default;
+each sheet's truncation.hint tells you the exact re-pull command to fetch all
+rows. Data lives in <sheet_name>/data.tsv (raw values, tab-separated). Formula
+cells must stay blank in data.tsv — define them in formula.json instead. Write
+raw values: 8000 not $8,000; 0.72 not 72%. Edit data.tsv, formula.json,
+format.json, etc. in place, then push to apply. Always re-pull after push —
+.pristine/ is not auto-updated.
 
 ## Editable Surface
 
   spreadsheet.json   Spreadsheet title; sheet title, hidden, right-to-left, tab color, frozen rows/cols
-  data.tsv           Cell values, insert/delete rows and columns
+  data.tsv           Cell values — insert/delete rows and columns
   formula.json       Add, modify, or delete formulas
   format.json        Formats, conditional formats, merges, notes, rich text runs
   dimension.json     Row/column sizes and hidden state
@@ -42,8 +48,7 @@ Currently informational only on push:
 
 ## Commands
 
-  extrasuite sheets pull --help        Pull flags, folder layout, and key rules
-  extrasuite sheets diff --help        Preview requests and comment ops
+  extrasuite sheets pull --help        Pull flags and output layout
   extrasuite sheets push --help        Apply local changes
   extrasuite sheets create --help      Create a new spreadsheet
   extrasuite sheets share --help       Share with trusted contacts

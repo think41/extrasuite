@@ -187,7 +187,14 @@ class SpreadsheetTransformer:
 
             # Add truncation info if this sheet was truncated
             if sheet_id in self.truncation_info:
-                sheet_entry["truncation"] = self.truncation_info[sheet_id]
+                trunc = dict(self.truncation_info[sheet_id])
+                total = trunc.get("totalRows", 0)
+                fetched = trunc.get("fetchedRows", 0)
+                trunc["hint"] = (
+                    f"Fetched {fetched} of {total} rows. "
+                    f"Re-pull with --max-rows {total} or --no-limit to get all rows."
+                )
+                sheet_entry["truncation"] = trunc
 
             # Add preview if available
             if sheet_id in sheet_previews:
@@ -205,7 +212,8 @@ class SpreadsheetTransformer:
         # Add top-level truncation warning if any sheets were truncated
         if self.truncation_info:
             result["_truncationWarning"] = (
-                "Some sheets have partial data. Check each sheet's 'truncation' field for details."
+                "Some sheets are truncated. Each sheet's 'truncation' field shows total rows "
+                "and a re-pull command. Use --max-rows N or --no-limit on pull to fetch more."
             )
 
         return result

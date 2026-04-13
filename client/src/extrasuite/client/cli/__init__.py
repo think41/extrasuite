@@ -2,7 +2,7 @@
 
 Usage:
     extrasuite drive    ls|search
-    extrasuite sheets   pull|diff|push|create|batchUpdate|share
+    extrasuite sheets   pull|push|create|share|batchUpdate
     extrasuite slides   pull|diff|push|create|share
     extrasuite docs     pull|diff|push|create|share
     extrasuite forms    pull|diff|push|create|share
@@ -283,7 +283,7 @@ def build_parser() -> Any:
     sp.add_argument("url", help="Spreadsheet URL or ID")
     sp.add_argument("output_dir", nargs="?", help="Output directory (default: .)")
     sp.add_argument(
-        "--max-rows", type=int, default=100, help="Max rows per sheet (default: 100)"
+        "--max-rows", type=int, default=1000, help="Max rows per sheet (default: 1000)"
     )
     sp.add_argument("--no-limit", action="store_true", help="Fetch all rows")
     sp.add_argument(
@@ -292,7 +292,7 @@ def build_parser() -> Any:
 
     sp = sheet_sub.add_parser(
         "diff",
-        help="Offline debugging tool - show pending changes",
+        help=argparse.SUPPRESS,
         description=_load_help("sheets", "diff"),
         formatter_class=argparse.RawDescriptionHelpFormatter,
     )
@@ -362,6 +362,13 @@ def build_parser() -> Any:
         formatter_class=argparse.RawDescriptionHelpFormatter,
     )
     sp.add_argument("topic_parts", nargs="*", help="Topic path (omit to list all)")
+
+    # Python 3.13 always appends to _choices_actions even for SUPPRESS; prune manually.
+    _HIDDEN_SHEET_CMDS = frozenset({"diff"})
+    sheet_sub._choices_actions = [
+        a for a in sheet_sub._choices_actions if a.dest not in _HIDDEN_SHEET_CMDS
+    ]
+    sheet_sub.metavar = "{" + ",".join(a.dest for a in sheet_sub._choices_actions) + "}"
 
     # --- slides ---
     slide_parser = subparsers.add_parser(
