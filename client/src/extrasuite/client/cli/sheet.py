@@ -68,9 +68,7 @@ def cmd_sheet_pull(args: Any) -> None:
             shutil.rmtree(tmp_parent, ignore_errors=True)
 
     sheet_count = sheet_count_holder[0] if sheet_count_holder else 0
-    print(
-        f"Pulled {sheet_count} sheet{'s' if sheet_count != 1 else ''} to {dest_dir}/"
-    )
+    print(f"Pulled {sheet_count} sheet{'s' if sheet_count != 1 else ''} to {dest_dir}/")
 
 
 def cmd_sheet_diff(args: Any) -> None:
@@ -233,9 +231,7 @@ def cmd_sheet_create(args: Any) -> None:
             shutil.rmtree(tmp_parent, ignore_errors=True)
 
     sheet_count = sheet_count_holder[0] if sheet_count_holder else 0
-    print(
-        f"Pulled {sheet_count} sheet{'s' if sheet_count != 1 else ''} to {dest_dir}/"
-    )
+    print(f"Pulled {sheet_count} sheet{'s' if sheet_count != 1 else ''} to {dest_dir}/")
 
 
 def cmd_sheet_share(args: Any) -> None:

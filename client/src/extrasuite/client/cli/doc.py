@@ -49,7 +49,11 @@ def _assert_safe_to_replace(dest_dir: Path) -> None:
     entries = list(dest_abs.iterdir())
     if not entries:
         return
-    if (dest_abs / "index.md").exists() or (dest_abs / "index.xml").exists() or (dest_abs / "tabs").is_dir():
+    if (
+        (dest_abs / "index.md").exists()
+        or (dest_abs / "index.xml").exists()
+        or (dest_abs / "tabs").is_dir()
+    ):
         return
     raise SystemExit(
         f"Refusing to overwrite {dest_dir} — it is not empty and does not "
@@ -224,7 +228,6 @@ def cmd_doc_push(args: Any) -> None:
             await transport.close()
 
     asyncio.run(_run())
-
 
 
 # Legacy aliases for backward compatibility

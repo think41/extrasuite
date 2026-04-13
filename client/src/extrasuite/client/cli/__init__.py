@@ -1155,7 +1155,7 @@ def main() -> None:
         "form": "forms",
     }
     if len(sys.argv) > 1 and sys.argv[1] in _SINGULAR_TO_PLURAL:
-        sys.argv = [sys.argv[0], _SINGULAR_TO_PLURAL[sys.argv[1]]] + sys.argv[2:]
+        sys.argv = [sys.argv[0], _SINGULAR_TO_PLURAL[sys.argv[1]], *sys.argv[2:]]
 
     parser = build_parser()
     args = parser.parse_args()

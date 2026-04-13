@@ -348,7 +348,10 @@ class TestGetCredentialExtraSuite:
             mock_urlopen.return_value = mock_resp
 
             result = manager.get_credential(
-                command={"type": "sheet.pull", "file_url": "https://docs.google.com/..."},
+                command={
+                    "type": "sheet.pull",
+                    "file_url": "https://docs.google.com/...",
+                },
                 reason="Pull sheet for analysis",
             )
 
@@ -665,7 +668,10 @@ class TestV2SessionFlow:
             mock_urlopen.return_value = mock_resp
 
             result = manager.get_credential(
-                command={"type": "sheet.pull", "file_url": "https://docs.google.com/..."},
+                command={
+                    "type": "sheet.pull",
+                    "file_url": "https://docs.google.com/...",
+                },
                 reason="Test: pull sheet",
             )
 
@@ -687,7 +693,11 @@ class TestV2SessionFlow:
             mock_urlopen.return_value = mock_resp
 
             result = manager.get_credential(
-                command={"type": "gmail.compose", "subject": "Hello", "recipients": ["a@b.com"]},
+                command={
+                    "type": "gmail.compose",
+                    "subject": "Hello",
+                    "recipients": ["a@b.com"],
+                },
                 reason="Test: send email",
             )
 
@@ -750,7 +760,11 @@ class TestV2SessionFlow:
 
         with (
             mock.patch.object(manager, "_revoke_server_side") as mock_revoke,
-            mock.patch.object(manager, "_load_profiles", return_value={"profiles": {"default": "u@e.com"}, "active": "default"}),
+            mock.patch.object(
+                manager,
+                "_load_profiles",
+                return_value={"profiles": {"default": "u@e.com"}, "active": "default"},
+            ),
             mock.patch.object(manager, "_save_profiles"),
         ):
             manager.logout()
@@ -763,7 +777,9 @@ class TestV2SessionFlow:
 
         with (
             mock.patch.object(manager, "_revoke_server_side") as mock_revoke,
-            mock.patch.object(manager, "_load_profiles", return_value={"profiles": {}, "active": None}),
+            mock.patch.object(
+                manager, "_load_profiles", return_value={"profiles": {}, "active": None}
+            ),
             mock.patch.object(manager, "_save_profiles"),
         ):
             manager.logout()  # should not raise
@@ -772,7 +788,9 @@ class TestV2SessionFlow:
 
     def test_status_returns_active_profiles(self) -> None:
         store = InMemorySessionStore()
-        session = _valid_session(email="user@example.com", expires_at=time.time() + 86400 * 5)
+        session = _valid_session(
+            email="user@example.com", expires_at=time.time() + 86400 * 5
+        )
         store.save("work", session)
         manager = _make_manager(store=store)
 
@@ -800,7 +818,10 @@ class TestV2SessionFlow:
 
     def test_activate_sets_active_profile(self) -> None:
         manager = _make_manager()
-        profiles_data = {"profiles": {"work": "u@e.com", "personal": "u2@e.com"}, "active": "work"}
+        profiles_data = {
+            "profiles": {"work": "u@e.com", "personal": "u2@e.com"},
+            "active": "work",
+        }
 
         with (
             mock.patch.object(manager, "_load_profiles", return_value=profiles_data),

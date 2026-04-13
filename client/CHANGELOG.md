@@ -2,6 +2,26 @@
 
 All notable changes to the extrasuite client library will be documented in this file.
 
+## [0.9.0] - 2026-04-13
+
+### Added
+
+- **Markdown-first Google Docs workflow** — `extrasuite doc pull` now defaults to the markdown format (tabs/ layout). The XML workflow is preserved as `pull-xml` / `push-xml`.
+- **`tabs/` folder layout** — each tab in a pulled document is a separate `tabs/<tab-name>.md` file. `index.md` at the root provides the document outline with line numbers and authoring hints.
+- **YAML frontmatter** — each tab file carries `id` and `title` frontmatter so the push step has unambiguous tab identity without requiring a separate index.
+- **Safety guard on pull overwrite** — `doc pull` now refuses to delete the output directory unless it is empty or was previously created by `extrasuite` (detected by an `index.md` or `index.xml` marker). Prevents accidental data loss when the output dir is `.` or a parent directory.
+
+### Fixed
+
+- `doc pull` re-pull no longer overwrites the existing folder wholesale; uses a safe atomic swap.
+- 3-way markdown merge now used for `diff`; fixes a class of spurious edit detections on re-pull.
+- Same-position insertion group ordering when a table is mixed with surrounding paragraphs.
+
+### Changed
+
+- `extradoc` dependency bumped to `>=0.4.2`.
+- Debug commands (`diff`, `create-empty`, `download-raw`, `verify-table-indices`) are now hidden behind `EXTRASUITE_DEV=1`.
+
 ## [0.8.1] - 2026-03-27
 
 ### Added

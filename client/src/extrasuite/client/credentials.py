@@ -49,8 +49,8 @@ _DEFAULT_PROFILE = "default"
 _GOOGLE_SCOPE_PREFIX = "https://www.googleapis.com/auth/"
 
 # Client-side caps on returned token lifetimes
-_SA_TOKEN_CAP_SECONDS = 3600   # 60 min for service account tokens
-_DWD_TOKEN_CAP_SECONDS = 600   # 10 min for domain-wide delegation tokens
+_SA_TOKEN_CAP_SECONDS = 3600  # 60 min for service account tokens
+_DWD_TOKEN_CAP_SECONDS = 600  # 10 min for domain-wide delegation tokens
 
 
 @dataclass
@@ -209,7 +209,9 @@ class KeyringSessionStore:
             return None
 
     def save(self, profile_name: str, token: SessionToken) -> None:
-        _keyring.set_password(_KEYRING_SERVICE, profile_name, json.dumps(token.to_dict()))
+        _keyring.set_password(
+            _KEYRING_SERVICE, profile_name, json.dumps(token.to_dict())
+        )
 
     def delete(self, profile_name: str) -> None:
         with contextlib.suppress(Exception):
@@ -421,7 +423,9 @@ class CredentialsManager:
     # Session Token Methods (keyring-backed)
     # =========================================================================
 
-    def _load_session_token(self, profile_name: str | None = None) -> SessionToken | None:
+    def _load_session_token(
+        self, profile_name: str | None = None
+    ) -> SessionToken | None:
         """Load session token for the given profile."""
         name = profile_name if profile_name is not None else self._resolve_profile()
         return self._session_store.load(name)
@@ -503,7 +507,9 @@ class CredentialsManager:
             if existing:
                 self._revoke_server_side(existing.raw_token)
             self._delete_session_token(profile_name)
-        session = self._get_or_create_session_token(force=force, profile_name=profile_name)
+        session = self._get_or_create_session_token(
+            force=force, profile_name=profile_name
+        )
         # Set this profile as active
         data = self._load_profiles()
         data["active"] = profile_name

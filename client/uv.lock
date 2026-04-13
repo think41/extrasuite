@@ -295,7 +295,7 @@ wheels = [
 
 [[package]]
 name = "extradoc"
-version = "0.4.1"
+version = "0.4.2"
 source = { editable = "../extradoc" }
 dependencies = [
     { name = "certifi" },
@@ -411,7 +411,7 @@ provides-extras = ["dev"]
 
 [[package]]
 name = "extrasuite"
-version = "0.8.1"
+version = "0.9.0"
 source = { editable = "." }
 dependencies = [
     { name = "extradoc" },

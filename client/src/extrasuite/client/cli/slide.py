@@ -50,9 +50,7 @@ def cmd_slide_pull(args: Any) -> None:
                 pull_parent,
                 save_raw=not args.no_raw,
             )
-            slide_count_holder.append(
-                sum(1 for f in files if f.name == "content.sml")
-            )
+            slide_count_holder.append(sum(1 for f in files if f.name == "content.sml"))
             if tmp_parent is not None:
                 dest_dir.parent.mkdir(parents=True, exist_ok=True)
                 shutil.move(str(tmp_parent / presentation_id), str(dest_dir))
@@ -66,9 +64,7 @@ def cmd_slide_pull(args: Any) -> None:
             shutil.rmtree(tmp_parent, ignore_errors=True)
 
     slide_count = slide_count_holder[0] if slide_count_holder else 0
-    print(
-        f"Pulled {slide_count} slide{'s' if slide_count != 1 else ''} to {dest_dir}/"
-    )
+    print(f"Pulled {slide_count} slide{'s' if slide_count != 1 else ''} to {dest_dir}/")
 
 
 def cmd_slide_diff(args: Any) -> None:
@@ -124,7 +120,9 @@ def cmd_slide_create(args: Any) -> None:
     else:
         dest_dir = Path() / file_id
 
-    reason = _get_reason(args, default="Pulling newly created Google Slides presentation")
+    reason = _get_reason(
+        args, default="Pulling newly created Google Slides presentation"
+    )
     cred = _get_credential(
         args,
         command={"type": "slide.pull", "file_url": url, "file_name": args.title},
@@ -139,9 +137,7 @@ def cmd_slide_create(args: Any) -> None:
         pull_parent = tmp_parent if tmp_parent else Path()
         try:
             files = await client.pull(file_id, pull_parent, save_raw=True)
-            slide_count_holder.append(
-                sum(1 for f in files if f.name == "content.sml")
-            )
+            slide_count_holder.append(sum(1 for f in files if f.name == "content.sml"))
             if tmp_parent is not None:
                 dest_dir.parent.mkdir(parents=True, exist_ok=True)
                 shutil.move(str(tmp_parent / file_id), str(dest_dir))
@@ -155,9 +151,7 @@ def cmd_slide_create(args: Any) -> None:
             shutil.rmtree(tmp_parent, ignore_errors=True)
 
     slide_count = slide_count_holder[0] if slide_count_holder else 0
-    print(
-        f"Pulled {slide_count} slide{'s' if slide_count != 1 else ''} to {dest_dir}/"
-    )
+    print(f"Pulled {slide_count} slide{'s' if slide_count != 1 else ''} to {dest_dir}/")
 
 
 def cmd_slide_share(args: Any) -> None:
