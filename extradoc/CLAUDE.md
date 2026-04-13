@@ -1,7 +1,7 @@
 ## Overview
 
 Python library that declaratively edits a Google Doc. The workflow is:
-pull the doc → convert to markdown/XML → LLM edits files → convert back → push
+pull the doc → convert to markdown → LLM edits files → convert back → push
 changes to Google Docs. The conversion is lossy (markdown can't represent every
 Google Docs property), but a 3-way merge ensures anything the format can't
 represent passes through untouched. Orchestrated by `DocsClient`
@@ -12,11 +12,12 @@ represent passes through untouched. Orchestrated by `DocsClient`
 **Pull** fetches the document from Google Docs API and represents it in memory
 as `base` `DocumentWithComments` (`src/extradoc/comments/_types.py`).
 
-**Serialize** converts `base` into a folder of markdown or XML files that an
+**Serialize** converts `base` into a folder of markdown files that an
 LLM can read and edit.
 
 - Public interface: `Serde` protocol — `src/extradoc/serde/__init__.py`
-- Implementations: `MarkdownSerde` (`serde/markdown/`), `XmlSerde` (`serde/xml/`)
+- Implementation: `MarkdownSerde` (`serde/markdown/`) — canonical format
+- `XmlSerde` (`serde/xml/`) exists but is broken and not maintained
 - Style handling: `src/extradoc/serde/_styles.py`
 
 **LLM edits** the files on disk.

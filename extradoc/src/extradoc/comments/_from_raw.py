@@ -36,6 +36,9 @@ def _parse_comment(comment_dict: dict[str, Any]) -> Comment:
     """Parse a single Drive API comment dict into a Comment."""
     author = _parse_author(comment_dict.get("author", {}))
     replies = [_parse_reply(r) for r in comment_dict.get("replies", [])]
+    quoted_text = str(
+        comment_dict.get("quotedFileContent", {}).get("value", "") or ""
+    )
     return Comment(
         id=comment_dict.get("id", ""),
         author=author,
@@ -45,6 +48,7 @@ def _parse_comment(comment_dict: dict[str, Any]) -> Comment:
         resolved=bool(comment_dict.get("resolved", False)),
         deleted=bool(comment_dict.get("deleted", False)),
         replies=replies,
+        quoted_text=quoted_text,
     )
 
 

@@ -13,8 +13,7 @@ the folder structure, file names, and grammar.
 |--------|---------|
 | `Serde` (Protocol) | Interface with `serialize()` and `deserialize()` |
 | `DeserializeResult` | Dataclass holding `base` and `desired` DocumentWithComments |
-| `XmlSerde` | `serde.xml.XmlSerde` — XML implementation |
-| `MarkdownSerde` | `serde.markdown.MarkdownSerde` — Markdown implementation |
+| `MarkdownSerde` | `serde.markdown.MarkdownSerde` — canonical implementation |
 
 **`serialize(bundle, folder)`** — writes a `DocumentWithComments` to a folder of
 human/LLM-readable files, plus a `.pristine/` snapshot and `.raw/document.json`
@@ -79,7 +78,6 @@ is used directly.
 | `_index.py` | Builds `index.xml` / `index.md` heading outline |
 | `_utils.py` | Shared utilities (color conversion, dimension parsing, `serialize_text_run`) |
 | `markdown/` | `MarkdownSerde`, `_to_markdown.py`, `_from_markdown.py`, `_special_elements.py` |
-| `xml/` | `XmlSerde`, `_to_xml.py`, `_from_xml.py` |
 
 ## What the Conversion Handles Automatically
 
@@ -114,7 +112,6 @@ Tests validate the core promise at the public interface boundary:
 | `tests/test_serde_markdown_blackbox.py` | Black-box tests using real golden API responses. Serialize → edit → deserialize → assert changed + assert preserved. |
 | `tests/test_serde_markdown_roundtrip.py` | Same pattern with hand-crafted documents for targeted scenarios. |
 | `tests/test_serde_markdown_bugs.py` | Regression guards for specific bugs (mostly 3-way merge preservation failures). |
-| `tests/test_serde_xml_roundtrip.py` | XML serde round-trip tests. |
 | `tests/test_serde_golden.py` | Golden file snapshot tests. |
 
 Every test asserts both **(a)** what changed is correct and **(b)** nothing else

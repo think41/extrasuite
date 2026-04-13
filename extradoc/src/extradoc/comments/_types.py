@@ -37,6 +37,7 @@ class Comment:
     resolved: bool
     deleted: bool
     replies: list[Reply] = field(default_factory=list)
+    quoted_text: str = ""  # highlighted text the comment is anchored to
 
 
 @dataclass

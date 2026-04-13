@@ -132,9 +132,12 @@ class MarkdownSerde:
         index_path = internal_dir / "index.xml"
         index_path.write_text(index.to_xml_string(), encoding="utf-8")
 
-        # comments.xml at root
+        # comments.xml at root — only written when there are active comments
         comments_path = folder / "comments.xml"
-        comments_path.write_text(comments_to_xml(bundle.comments), encoding="utf-8")
+        if bundle.comments.active_comments:
+            comments_path.write_text(comments_to_xml(bundle.comments), encoding="utf-8")
+        elif comments_path.exists():
+            comments_path.unlink()
 
         # .extrasuite/document.json — transport-accurate base for reconciliation
         raw_doc_path = internal_dir / "document.json"

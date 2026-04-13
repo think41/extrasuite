@@ -49,6 +49,8 @@ def to_xml(fc: FileComments) -> str:
         c_elem.set("created", comment.created_time)
         c_elem.set("resolved", "true" if comment.resolved else "false")
         c_elem.set("anchor", comment.anchor)
+        if comment.quoted_text:
+            c_elem.set("quoted-text", comment.quoted_text)
 
         content_elem = ET.SubElement(c_elem, "content")
         content_elem.text = comment.content
@@ -79,6 +81,7 @@ def from_xml(xml_content: str) -> FileComments:
         created_time = c_elem.get("created", "")
         resolved = c_elem.get("resolved", "false") == "true"
         anchor = c_elem.get("anchor", "")
+        quoted_text = c_elem.get("quoted-text", "")
 
         content_elem = c_elem.find("content")
         content = content_elem.text or "" if content_elem is not None else ""
@@ -113,6 +116,7 @@ def from_xml(xml_content: str) -> FileComments:
                 resolved=resolved,
                 deleted=False,
                 replies=replies,
+                quoted_text=quoted_text,
             )
         )
 

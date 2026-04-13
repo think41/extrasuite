@@ -26,7 +26,7 @@ The unified CLI supports all file types via subcommands:
 The core workflow for editing Google files:
 
 1. **pull** - Fetches the Google file via API, converts it into a local folder structure. The folder contains:
-   - Human/LLM-readable files (TSV for sheets, SML/XML for slides, XML for docs etc.)
+   - Human/LLM-readable files (TSV for sheets, SML/XML for slides, markdown for docs etc.)
    - A `.pristine/` directory containing the original state as a zip file
 
 2. **edit** - Agent modifies files in place according to user instructions and inline help documentation via --help flag.
