@@ -2450,7 +2450,9 @@ def _diff_paragraph_runs(
             for _pos, dreqs in replace_del_ops:
                 flat_del_reqs.extend(dreqs)
 
-            # Insertion at the same position (after deletion, index is abs_start)
+            # Insertion at the same position (after deletion, index is abs_start).
+            # Pass delete_end=i2 so the inherited-style calculation skips the
+            # deleted characters when looking for the right-neighbour style.
             insert_reqs = _insert_ops_for_span(
                 desired_spans=desired_spans,
                 desired_start=j1,
@@ -2464,6 +2466,7 @@ def _diff_paragraph_runs(
                     base_spans=base_spans,
                     base_body=base_body,
                     base_pos=i1,
+                    delete_end=i2,
                 ),
             )
             # Delete and insert at the same logical position.
@@ -2602,6 +2605,7 @@ def _inherited_insert_style(
     base_spans: list[tuple[int, int, str, TextStyle]],
     base_body: str,
     base_pos: int,
+    delete_end: int | None = None,
 ) -> TextStyle:
     """Return the TextStyle that ``insertText`` at ``base_pos`` will inherit.
 
@@ -2615,6 +2619,11 @@ def _inherited_insert_style(
     Opaque placeholder chars (non-textRun elements) are skipped — they are
     not real runs and their sentinel style must not be mistaken for
     inherited formatting.
+
+    ``delete_end`` is set for the replace case: the range ``[base_pos,
+    delete_end)`` is being deleted at the same time as the insert.  By the
+    time the insert executes those characters are gone, so the right
+    neighbour is at ``delete_end``, not ``base_pos``.
     """
     # Prefer the left neighbour (classic Docs insert-inherit semantics).
     i = base_pos - 1
@@ -2624,8 +2633,10 @@ def _inherited_insert_style(
         style = _style_at_offset(base_spans, i)
         if not _is_opaque_style(style):
             return style
-    # Fall back to the right neighbour.
-    j = base_pos
+    # Fall back to the right neighbour.  For the replace case, the chars in
+    # [base_pos, delete_end) are deleted before the insert, so the effective
+    # right neighbour is the first non-opaque char at or after delete_end.
+    j = delete_end if delete_end is not None else base_pos
     while j < len(base_body) and base_body[j] == _OPAQUE_ELEMENT_CHAR:
         j += 1
     if j < len(base_body):

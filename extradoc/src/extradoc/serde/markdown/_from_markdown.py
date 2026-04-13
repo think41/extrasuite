@@ -371,14 +371,22 @@ def _parse_body(
     for m in _FN_DEF_RE.finditer(source):
         fn_defs[m.group(1)] = m.group(2).strip()
 
+    # Strip footnote definitions before handing to mistletoe.
+    # Mistletoe (GFM mode) treats ``[^id]: text`` as a link-reference definition,
+    # so any inline ``[^id]`` reference would be parsed as a Link token with the
+    # footnote body as its URL instead of being left as raw text for
+    # ``_raw_text_with_footnote_refs`` to handle.  We have already extracted all
+    # fn_defs above, so stripping them here is safe.
+    source_for_parsing = _FN_DEF_RE.sub("", source)
+
     # Parse with mistletoe
     with HtmlRenderer():  # type: ignore[no-untyped-call]
-        md_doc = MdDocument(source)
+        md_doc = MdDocument(source_for_parsing)
 
     # Pre-split source into lines so we can recover leading whitespace that
     # mistletoe strips from block content.  mistletoe sets ``line_number`` on
     # each block (1-based, pointing to the first source line).
-    source_lines = source.splitlines()
+    source_lines = source_for_parsing.splitlines()
 
     body: list[StructuralElement] = []
     special_positions: list[tuple[int, str]] = []

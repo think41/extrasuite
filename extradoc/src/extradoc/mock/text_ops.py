@@ -264,6 +264,28 @@ def _insert_into_paragraph(paragraph: dict[str, Any], index: int, text: str) -> 
                 text_run["content"] = new_content
             return
 
+    # Fallback: no textRun spans ``index``.  This happens when the insert point
+    # falls exactly on a non-textRun element (e.g. a footnoteReference at [2,3)
+    # after adjacent text was deleted).  Insert a new textRun immediately before
+    # the first element whose startIndex >= index, inheriting the style of the
+    # nearest preceding textRun.
+    for pe_idx, para_elem in enumerate(para_elements):
+        if para_elem.get("startIndex", 0) >= index:
+            inherited: dict[str, Any] = {}
+            for prev in reversed(para_elements[:pe_idx]):
+                if "textRun" in prev:
+                    inherited = copy.deepcopy(prev["textRun"].get("textStyle", {}))
+                    break
+            para_elements.insert(
+                pe_idx,
+                {
+                    "startIndex": 0,
+                    "endIndex": 0,
+                    "textRun": {"content": text, "textStyle": inherited},
+                },
+            )
+            return
+
     raise ValidationError(f"Could not find text run to insert at index {index}")
 
 
@@ -1011,8 +1033,16 @@ def _delete_content_from_segment(
     if not affected_indices:
         return
 
-    # Collect surviving runs (skip table elements — they're just removed)
-    surviving_runs: list[tuple[str, dict[str, Any], dict[str, Any], bool]] = []
+    # Collect surviving runs (skip table elements — they're just removed).
+    # Each entry is a 5-tuple:
+    #   (content, style, para_props, modified, raw_pe)
+    #   - textRun element:     (content_str, style_dict, para_props, modified_flag, None)
+    #   - non-textRun element: (None, None, para_props, False, pe_copy)
+    # Non-textRun elements (footnoteReference, inlineObjectElement, …) that fall
+    # outside the delete range are preserved so they are not silently dropped.
+    surviving_runs: list[
+        tuple[str | None, dict[str, Any] | None, dict[str, Any], bool, dict[str, Any] | None]
+    ] = []
 
     for idx in affected_indices:
         element = content[idx]
@@ -1023,6 +1053,11 @@ def _delete_content_from_segment(
 
         for pe in paragraph.get("elements", []):
             if "textRun" not in pe:
+                run_start = pe.get("startIndex", 0)
+                run_end = pe.get("endIndex", 0)
+                # Preserve non-textRun elements that lie outside the delete range.
+                if run_end <= start_index or run_start >= end_index:
+                    surviving_runs.append((None, None, para_props, False, copy.deepcopy(pe)))
                 continue
             run_start = pe.get("startIndex", 0)
             run_end = pe.get("endIndex", 0)
@@ -1031,7 +1066,7 @@ def _delete_content_from_segment(
 
             if run_end <= start_index or run_start >= end_index:
                 surviving_runs.append(
-                    (run_content, copy.deepcopy(run_style), para_props, False)
+                    (run_content, copy.deepcopy(run_style), para_props, False, None)
                 )
             elif run_start >= start_index and run_end <= end_index:
                 continue
@@ -1043,42 +1078,60 @@ def _delete_content_from_segment(
                 remaining = run_content[:str_from] + run_content[str_to:]
                 if remaining:
                     surviving_runs.append(
-                        (remaining, copy.deepcopy(run_style), para_props, True)
+                        (remaining, copy.deepcopy(run_style), para_props, True, None)
                     )
 
     # Consolidate same-style runs only across paragraph boundaries (merge scenario).
     # When a \n is deleted, runs from different paragraphs get merged.
     # The real API consolidates those, but keeps within-paragraph runs separate.
-    consolidated: list[tuple[str, dict[str, Any], dict[str, Any], bool]] = []
+    # Non-textRun elements cannot be consolidated — pass them through as-is.
+    consolidated: list[
+        tuple[str | None, dict[str, Any] | None, dict[str, Any], bool, dict[str, Any] | None]
+    ] = []
     for run in surviving_runs:
+        content_item, style_item, props, modified, raw_pe = run
+        if raw_pe is not None or content_item is None:
+            # Non-textRun element: no consolidation possible
+            consolidated.append(run)
+            continue
         if (
             consolidated
-            and styles_equal_ignoring_explicit(consolidated[-1][1], run[1])
+            and consolidated[-1][4] is None  # previous is also a textRun
+            and consolidated[-1][0] is not None  # safety: previous has content
+            and styles_equal_ignoring_explicit(consolidated[-1][1], style_item)
             and "\n" not in consolidated[-1][0]
             # Only consolidate across paragraph boundaries
-            and consolidated[-1][2] is not run[2]
+            and consolidated[-1][2] is not props
         ):
             prev = consolidated[-1]
             merged_style = copy.deepcopy(prev[1])
-            merge_explicit_keys(merged_style, run[1])
+            merge_explicit_keys(merged_style, style_item)
             consolidated[-1] = (
-                prev[0] + run[0],
+                prev[0] + content_item,
                 merged_style,
                 prev[2],
-                prev[3] or run[3],
+                prev[3] or modified,
+                None,
             )
         else:
             consolidated.append(run)
     surviving_runs = consolidated
 
-    # Re-split into paragraphs based on \n boundaries
-    para_groups: list[tuple[list[tuple[str, dict[str, Any]]], dict[str, Any]]] = []
-    current_group: list[tuple[str, dict[str, Any]]] = []
+    # Re-split into paragraphs based on \n boundaries.
+    # Group items: (str, style_dict) for textRun, (None, pe_dict) for non-textRun.
+    para_groups: list[tuple[list[tuple[str | None, dict[str, Any]]], dict[str, Any]]] = []
+    current_group: list[tuple[str | None, dict[str, Any]]] = []
     first_props_in_group: dict[str, Any] | None = None
 
-    for content_str, style, props, _modified in surviving_runs:
+    for content_str, style, props, _modified, raw_pe in surviving_runs:
         if first_props_in_group is None:
             first_props_in_group = props
+        if raw_pe is not None:
+            # Non-textRun element: no \n splitting, keep in current group
+            current_group.append((None, raw_pe))
+            continue
+        assert content_str is not None
+        assert style is not None
         while "\n" in content_str:
             nl_idx = content_str.index("\n")
             before = content_str[: nl_idx + 1]
@@ -1107,14 +1160,26 @@ def _delete_content_from_segment(
         if not group:
             continue
         elements: list[dict[str, Any]] = []
-        for text_content, style in group:
-            elements.append(
-                {
-                    "startIndex": 0,
-                    "endIndex": 0,
-                    "textRun": {"content": text_content, "textStyle": style},
+        for item_content, item_data in group:
+            if item_content is None:
+                # Non-textRun element: preserve the original element dict, reset indices
+                raw_pe_dict: dict[str, Any] = item_data
+                pe_copy = {
+                    k: v
+                    for k, v in raw_pe_dict.items()
+                    if k not in ("startIndex", "endIndex")
                 }
-            )
+                pe_copy["startIndex"] = 0
+                pe_copy["endIndex"] = 0
+                elements.append(pe_copy)
+            else:
+                elements.append(
+                    {
+                        "startIndex": 0,
+                        "endIndex": 0,
+                        "textRun": {"content": item_content, "textStyle": item_data},
+                    }
+                )
         para_dict: dict[str, Any] = copy.deepcopy(props)
         para_dict["elements"] = elements
         new_elements.append(
