@@ -1,204 +1,100 @@
 # ExtraSuite
 
-**AI agents that safely read and edit your Google Workspace files — with a full audit trail.**
+**ExtraSuite gives AI agents a local-file interface to Google Workspace. Pull a spreadsheet — get TSV files. Pull a document — get markdown. Edit locally, push back.**
 
-ExtraSuite is terraform for google drive files. You can `pull` a google drive file (sheets/docs/forms/app scripts/slide), edit the files locally and `push` it back. Extrasuite will figure out what you changed, then create the right API calls to update the google drive file.
+On pull, ExtraSuite breaks down the document into individual chunks so the agent gets an overall picture and can quickly navigate to the right content. An index document provides the overall structure of the sheet or document at a glance — interconnecting all tabs and sheets so the agent can jump directly to what it needs.
 
-ExtraSuite gives agents its own identity that is distinct from the users. For each user, we create a 1:1 service account. The service acount has a unique "email like" identity. Users explicitly share the file or folder with this service account. This has two unique advantages:
-- the agent can only read/comment/edit the files you explicitly share with it
-- any changes made by the agent show up in version history as "Edited by Alice's agent" instead of "Edited by Alice"
+On push, ExtraSuite figures out the exact changes necessary — respecting original formatting, guaranteeing it doesn't mess up anything it doesn't understand, and doing so in a token-efficient manner.
 
-ExtraSuite is built for small and mid-sized teams who rely on Google Workspace and want AI to help — without handing an agent the keys to your entire Drive. Individual users can also use it, but primary workflow is designed for teams.
+Like pull request comments, you can leave comments directly on the Google Doc or Sheet. The agent can then read and act on them.
 
 ---
+
+## Why ExtraSuite?
+
+Tools like [gws](https://github.com/nicholasgasior/gws) and [gogcli](https://github.com/Google/google-office-operations-mcp) are great for reading files, navigating Drive, sending email, and managing calendar. Where they fall short is **editing** — particularly moderately complex documents or spreadsheets.
+
+The standard approach — "give the agent API access and let it issue batchUpdate calls" — works for trivial edits but breaks down quickly:
+
+- The agent must reason about the API's internal structure (paragraph indices, cell references, range coordinates) rather than content.
+- Every edit requires reading back the current state to compute correct offsets and IDs.
+- Token usage balloons: raw API responses for a 20-page doc or a 500-row sheet are enormous.
+- There's no clean way to review or test what the agent will change before it changes it.
+
+ExtraSuite is designed to complement gws and gogcli — use them for discovery, navigation, email, and calendar; use ExtraSuite when the agent needs to make substantial edits.
+
+---
+
 ## The Pull → Edit → Push Workflow
 
-This is the core of ExtraSuite. It works like Git for Google Workspace files.
-
 ```bash
-uvx extrasuite sheet pull https://docs.google.com/spreadsheets/d/...
-# Edit the local files
-uvx extrasuite sheet push ./spreadsheet_id/
+uvx extrasuite docs pull https://docs.google.com/document/d/...
+# Edit the local markdown files
+uvx extrasuite docs push ./document_id/
 ```
 
-### Why Declarative Beats Imperative
+```bash
+uvx extrasuite sheets pull https://docs.google.com/spreadsheets/d/...
+# Edit the local TSV files
+uvx extrasuite sheets push ./spreadsheet_id/
+```
 
-Most AI-driven automation is **imperative**: "call the Sheets API to set cell A1 to X, then call it again to set B2 to Y". This is fragile, hard to review, and impossible to sandbox meaningfully.
+### What the Agent Sees After `pull`
 
-ExtraSuite is **declarative**: the agent edits local files to express the *desired state*, and `push` figures out what changed and translates it into the correct API calls.
+**Google Docs** → a folder of GitHub-flavored markdown files, one per tab, plus an `index.md`:
 
-| | Imperative API calls | ExtraSuite pull/push |
-|---|---|---|
-| Reviewability | Hard — sequence of API calls | Easy — `diff` shows exactly what changes |
-| Sandboxability | Hard — agent needs live API access throughout | Simple — agent only touches local files |
-| Recoverability | Manual | Re-pull to get back to last-pushed state |
-| Token efficiency | High — agent must read/write raw API structures | Low — agent works in human-readable formats |
-| Audit trail | Depends on logging | Built-in via Google Drive version history |
+`index.md` lists every heading in every tab with its line number — the agent opens this first to orient, then jumps directly to the right file and line.
 
-### What `pull` Produces
-
-Each file type is converted into a folder of human- and LLM-readable files:
-
-- **Sheets** → `data.tsv`, `formula.json`, `format.json` (factored CSS-like styles)
-- **Slides** → `content.sml` per slide (SML: an HTML-inspired markup language)
-- **Docs** → `document.xml` (semantic HTML-like XML), `comments.xml`
-- **Forms** → a single `form.json` with all questions and settings
-- **Scripts** → `.js` and `.html` files, one per script file
-
-A `.pristine/` directory captures the original state. `diff` compares current files against pristine and shows the pending batchUpdate request — no API calls needed. `push` applies it.
-
+```markdown
+---
+id: t.0
+title: Q3 Planning
 ---
 
-## The Problem with "Give the AI Access to Google Drive"
+## Goals
 
-Most AI tools request broad OAuth permissions. The agent can read any file, write any file, send email on your behalf — all at once, for as long as the token lives. You have no visibility into what changed, and if something goes wrong, you're left hunting through version history manually.
+This quarter we are focused on **reliability** and **developer experience**.
 
-This is [the lethal trifecta](https://simonwillison.net/2025/Jun/16/the-lethal-trifecta/): an agent that can read sensitive data, take consequential actions, and communicate externally — all in a single compromised session. ExtraSuite eliminates this by design.
+- Reduce p99 latency below 200ms
+- Improve onboarding time for new engineers
 
----
+## Key Metrics
 
-## How ExtraSuite Works
+| Metric         | Current | Target |
+|----------------|---------|--------|
+| p99 latency    | 340ms   | 200ms  |
+| Onboarding     | 2 weeks | 3 days |
+```
 
-### A Dedicated Identity Per Employee
+Standard GFM — headings, bold/italic, tables, lists, code blocks, callouts — all round-trip cleanly.
 
-Every employee's agent gets its own Google service account (e.g. `alice-agent@your-project.iam.gserviceaccount.com`). The agent can only access files that have been **explicitly shared with that service account** — nothing else in your Drive is visible. All edits made by the agent appear in Google Drive version history attributed to "Alice's agent", not anonymously, not as Alice herself.
+**Google Sheets** → a `data.tsv` per sheet tab, plus JSON files for formulas, formatting, charts, and more. A `spreadsheet.json` at the top level lists every sheet with its row count — the agent opens this first.
 
-### Typed Commands, Minimal Scope
+```tsv
+Name	Age	City
+Alice	30	NYC
+Bob	25	LA
+```
 
-The client sends a **typed command** to the ExtraSuite server along with the agent's stated reason for the operation. The server uses the command type to determine the minimum required credentials:
+To update a cell, the agent just edits the TSV. No cell references, no range coordinates.
 
-- **Pull/push operations** (Sheets, Docs, Slides, Forms, Drive) → a short-lived service account token, valid for 1 hour
-- **User-impersonating operations** (Gmail, Calendar, Apps Script, Contacts) → a short-lived delegated access token scoped to exactly the required OAuth scope(s), valid for 1 hour
+### Full File Type Coverage
 
-The client stores a session token locally (valid 30 days) to authenticate these requests without re-opening a browser. The session token never touches the Google API — it only authenticates against the ExtraSuite server. Short-lived Google access tokens are fetched on demand and never stored.
+| File type | Pull format | Key files |
+|-----------|-------------|-----------|
+| Sheets | TSV + JSON | `<sheet>/data.tsv`, `formula.json`, `format.json`, `spreadsheet.json` |
+| Docs | Markdown | `tabs/<tab>.md`, `index.md` (heading outline) |
+| Slides | SML markup | `<slide>.sml` per slide |
+| Forms | JSON | `form.json` |
+| Apps Script | JavaScript | `.js` and `.html` files, one per script file |
 
-The command type, context fields, and the agent's reason are all logged server-side before any token is issued. The server can reject operations that fall outside the configured scope allowlist.
-
-### Local-Only Editing — No Arbitrary Code Execution
-
-The agent's job is simple: edit files on disk and call `pull`/`push`. It does not execute arbitrary code against the Google API. This means you can configure your agent sandbox to:
-
-- Whitelist only `extrasuite pull` and `extrasuite push` as allowed commands
-- Allow outbound connections only to Google API endpoints and the ExtraSuite server
-
-That eliminates the external communication leg of the lethal trifecta entirely.
-
----
-
-
-## What You Can Actually Do
-
-### Document Collaboration, Not Just Creation
-
-Creating a document is easy. The hard part is everything after: multiple stakeholders, rounds of edits, comments that need responses, priorities that shift between drafts.
-
-ExtraSuite lets agents participate in that ongoing collaboration:
-
-- Read comments left by colleagues in a Doc and draft replies
-- Incorporate reviewer feedback by editing the local `document.xml` and pushing
-- Track which version introduced which change (it's in Drive's version history)
-- Pull the latest state before each editing session so the agent always works from current content
-
-### Mini-Applications with Apps Script
-
-Google Sheets + Forms + Apps Script is the de facto low-code platform for many business teams — expense approvals, onboarding checklists, inventory tracking. ExtraSuite lets agents build and maintain these:
-
-- Pull a script project, add or modify trigger functions, push it back
-- Wire a Form submission to an Apps Script that sends a confirmation email
-- Update a Sheet with data from an external system and trigger a workflow
-- Build the whole thing with an agent, or have an agent maintain an existing one
-
-### Bring in Context from Your Other Systems
-
-Documents and spreadsheets don't exist in a vacuum. Your CRM, your ticketing system, your product database — that's where the real data lives. ExtraSuite handles the Google Workspace side so your agent can:
-
-- Pull a sales pipeline sheet, update it with data from your CRM, push the changes
-- Draft a status report doc using data from your project tracker
-- Create a Form for collecting information and link it to a Sheet via Apps Script
-
-### Gmail Drafts and Calendar
-
-For Gmail, the agent composes a draft (you review and send). For Calendar, the agent can view availability, create events, and RSVP — useful for scheduling workflows.
-
----
-
-## CLI Reference
-
-The CLI is self-documenting. Every command has a `--help` flag that serves as the live reference. Run `extrasuite <module> --help` for workflow overview, and `extrasuite <module> <command> --help` for flags.
-
-### Modules
-
-Each module has a `--help` page with workflow overview, directory structure, and key rules. The source for all help text lives in [`client/src/extrasuite/client/help/`](client/src/extrasuite/client/help/).
-
-| Module | Description |
-|--------|-------------|
-| [`sheet`](client/src/extrasuite/client/help/sheet/README.md) | Google Sheets — pull/edit/push spreadsheets via TSV and JSON |
-| [`doc`](client/src/extrasuite/client/help/doc/README.md) | Google Docs — pull/edit/push documents via semantic XML |
-| [`slide`](client/src/extrasuite/client/help/slide/README.md) | Google Slides — pull/edit/push presentations via SML markup |
-| [`form`](client/src/extrasuite/client/help/form/README.md) | Google Forms — pull/edit/push surveys and quizzes via JSON |
-| [`script`](client/src/extrasuite/client/help/script/README.md) | Google Apps Script — pull/edit/push standalone and bound scripts |
-| [`gmail`](client/src/extrasuite/client/help/gmail/README.md) | Gmail — compose drafts from markdown files |
-| [`calendar`](client/src/extrasuite/client/help/calendar/README.md) | Google Calendar — view, create, update, delete events |
-| [`drive`](client/src/extrasuite/client/help/drive/README.md) | Google Drive — list and search files visible to your service account |
-| `contacts` | Google Contacts — sync, search, and manage contacts |
-| `auth` | Authentication management |
-
-### Core Commands (sheet / doc / slide / form / script)
-
-Each of these commands exists on all five modules. The links below go to the `sheet` reference; the other modules follow the same structure.
-
-| Command | Description | Reference |
-|---------|-------------|-----------|
-| `pull <url>` | Download the file to a local folder | [sheet](client/src/extrasuite/client/help/sheet/pull.md) · [doc](client/src/extrasuite/client/help/doc/pull.md) · [slide](client/src/extrasuite/client/help/slide/pull.md) · [form](client/src/extrasuite/client/help/form/pull.md) · [script](client/src/extrasuite/client/help/script/pull.md) |
-| `diff <folder>` | Preview pending changes as a batchUpdate request (offline, no API calls) | [sheet](client/src/extrasuite/client/help/sheet/diff.md) · [doc](client/src/extrasuite/client/help/doc/diff.md) · [slide](client/src/extrasuite/client/help/slide/diff.md) · [form](client/src/extrasuite/client/help/form/diff.md) · [script](client/src/extrasuite/client/help/script/diff.md) |
-| `push <folder>` | Apply changes to Google | [sheet](client/src/extrasuite/client/help/sheet/push.md) · [doc](client/src/extrasuite/client/help/doc/push.md) · [slide](client/src/extrasuite/client/help/slide/push.md) · [form](client/src/extrasuite/client/help/form/push.md) · [script](client/src/extrasuite/client/help/script/push.md) |
-| `create <title>` | Create a new file | [sheet](client/src/extrasuite/client/help/sheet/create.md) · [doc](client/src/extrasuite/client/help/doc/create.md) · [slide](client/src/extrasuite/client/help/slide/create.md) · [form](client/src/extrasuite/client/help/form/create.md) · [script](client/src/extrasuite/client/help/script/create.md) |
-| `share <folder>` | Share the file with trusted contacts | [sheet](client/src/extrasuite/client/help/sheet/share.md) |
-| `help [topic ...]` | Show reference documentation for the module | [sheet topics](client/src/extrasuite/client/help/sheet/README.md) · [doc topics](client/src/extrasuite/client/help/doc/README.md) |
-
-For Sheets formula help, use `extrasuite sheet help formulas` to list all supported formulas by category, or `extrasuite sheet help formulas <formula-name>` for the syntax and reference link for a specific formula.
-
-### Gmail Commands
-
-| Command | Description |
-|---------|-------------|
-| [`compose <file>`](client/src/extrasuite/client/help/gmail/compose.md) | Save an email draft from a markdown file |
-| [`edit-draft <id> <file>`](client/src/extrasuite/client/help/gmail/edit-draft.md) | Update an existing Gmail draft |
-| [`reply <thread_id> <file>`](client/src/extrasuite/client/help/gmail/reply.md) | Create a reply draft in an existing thread |
-| [`list`](client/src/extrasuite/client/help/gmail/list.md) | Search and list Gmail messages |
-| [`read <id>`](client/src/extrasuite/client/help/gmail/read.md) | Read a Gmail message |
-
-### Calendar Commands
-
-| Command | Description |
-|---------|-------------|
-| [`view`](client/src/extrasuite/client/help/calendar/view.md) | View events for a time range |
-| [`list`](client/src/extrasuite/client/help/calendar/list.md) | List all calendars |
-| [`search`](client/src/extrasuite/client/help/calendar/search.md) | Search events by title or attendee |
-| [`freebusy`](client/src/extrasuite/client/help/calendar/freebusy.md) | Check when a group of people are free |
-| [`create <file>`](client/src/extrasuite/client/help/calendar/create.md) | Create an event from a JSON file |
-| [`update <id>`](client/src/extrasuite/client/help/calendar/update.md) | Update an existing event |
-| [`delete <id>`](client/src/extrasuite/client/help/calendar/delete.md) | Cancel or delete an event |
-| [`rsvp <id>`](client/src/extrasuite/client/help/calendar/rsvp.md) | Accept, decline, or mark tentative |
-
-### Drive Commands
-
-| Command | Description |
-|---------|-------------|
-| [`ls`](client/src/extrasuite/client/help/drive/ls.md) | List files shared with your service account |
-| [`search <query>`](client/src/extrasuite/client/help/drive/search.md) | Search files using a Drive query string |
+A `.pristine/` directory captures the state at pull time. `push` compares current files against pristine to generate only the necessary changes.
 
 ---
 
 ## Getting Started
 
-### Prerequisites
-
-1. Google Workspace that allows collaboration with external users
-2. A Google Cloud project with editor access (does not need to be your organization's project)
-3. ExtraSuite server deployed (see below)
-
-### Install the Client
+### Install
 
 ```bash
 uvx extrasuite --help
@@ -210,9 +106,70 @@ Or install persistently:
 uv tool install extrasuite
 ```
 
-### Deploy the Server
+The `--help` flag on any command is the authoritative reference. Run `extrasuite <module> --help` for a workflow overview, and `extrasuite <module> <command> --help` for full flag documentation.
 
-The ExtraSuite server manages service account creation and token issuance. Deploy it once for your whole team:
+### Authentication
+
+ExtraSuite piggybacks on credentials from other Google CLI tools you may already have configured.
+
+**If you use [gws](https://github.com/nicholasgasior/gws):** ExtraSuite auto-detects your gws credentials (`~/.config/gws/client_secret.json`) and reuses them. No additional setup.
+
+**If you use [gogcli](https://github.com/Google/google-office-operations-mcp):** ExtraSuite auto-detects your gogcli credentials and reuses them. No additional setup.
+
+**From scratch:** Set up OAuth client credentials using either [gws's setup guide](https://github.com/nicholasgasior/gws) or [gogcli's setup guide](https://github.com/Google/google-office-operations-mcp), then use ExtraSuite alongside them.
+
+> In all the above modes, edits appear in Google Drive under your own Google account.
+
+**ExtraSuite gateway server (teams):** For a distinct agent identity and audit trail, deploy the ExtraSuite server. See the [deployment documentation](https://extrasuite.think41.com/deployment/) for setup.
+
+### Quick Start
+
+Once authenticated:
+
+```bash
+# Pull a sheet, edit it, push it back
+uvx extrasuite sheets pull https://docs.google.com/spreadsheets/d/YOUR_ID
+# edit ./YOUR_ID/Sheet1/data.tsv
+uvx extrasuite sheets push ./YOUR_ID/
+
+# Pull a doc, edit it, push it back
+uvx extrasuite docs pull https://docs.google.com/document/d/YOUR_ID
+# edit ./YOUR_ID/tabs/Tab_1.md
+uvx extrasuite docs push ./YOUR_ID/
+```
+
+---
+
+## Agent Identity and Security (ExtraSuite Gateway Mode)
+
+The features below require deploying the ExtraSuite server. This is suitable for teams and small organizations who want tighter control over what agents can access and do.
+
+### A Dedicated Identity Per Employee
+
+Every employee's agent gets its own Google service account (e.g. `alice-agent@your-project.iam.gserviceaccount.com`). The agent can only access files that have been **explicitly shared with that service account** — nothing else in Drive is visible. All edits appear in Google Drive version history as "Edited by Alice's agent", not as Alice herself.
+
+### Typed Commands and Minimal Scope
+
+The client sends a **typed command** to the ExtraSuite server along with the agent's stated reason. The server determines the minimum required credentials:
+
+- **Pull/push operations** (Sheets, Docs, Slides, Forms, Drive) → short-lived service account token, valid 1 hour
+- **User-impersonating operations** (Gmail, Calendar, Apps Script, Contacts) → short-lived delegated token scoped to exactly the required OAuth scope, valid 1 hour
+
+The command type, context, and reason are logged server-side before any token is issued.
+
+### Security Properties
+
+| Property | How ExtraSuite Achieves It |
+|----------|---------------------------|
+| Scoped access | Each agent has a dedicated service account; only sees explicitly shared files |
+| Short-lived tokens | Google access tokens expire after ~1 hour; generated on demand, never stored |
+| Typed commands | Server issues the minimum token type and scope for the declared operation |
+| Agent intent logging | Reason logged alongside command type before any token is issued |
+| Audit trail | All agent edits appear in Google Drive version history attributed to the agent |
+| Sandboxable | Agent only edits local files and calls `pull`/`push`; no arbitrary API access |
+| Minimal OAuth scope | Only the scopes needed for the specific operation are requested |
+
+### Deploy the Server
 
 ```bash
 gcloud run deploy extrasuite-server \
@@ -226,7 +183,7 @@ gcloud run deploy extrasuite-server \
 
 See the [deployment documentation](https://extrasuite.think41.com/deployment/) for full setup instructions.
 
-### Employee Onboarding
+### Employee Onboarding (gateway mode)
 
 1. Employee logs into the ExtraSuite server and notes their agent's service account email
 2. Runs `extrasuite auth install-skill` to give the agent its instructions
@@ -235,32 +192,67 @@ See the [deployment documentation](https://extrasuite.think41.com/deployment/) f
 
 ---
 
-## Security Summary
+## CLI Reference
 
-| Property | How ExtraSuite Achieves It |
-|----------|---------------------------|
-| Scoped access | Each employee's agent has a dedicated service account; only sees explicitly shared files |
-| Short-lived Google tokens | Access tokens expire after ~1 hour; generated on demand, never stored |
-| Session token | A 30-day session token stored locally authenticates against the ExtraSuite server only — not against Google APIs |
-| Typed commands | Client declares what operation it intends to perform; server issues the minimum required token type and scope |
-| Agent intent logging | The agent's stated reason is logged alongside command type and context before any token is issued |
-| Audit trail | All agent edits appear in Google Drive version history attributed to the agent |
-| Sandboxable | Agent only edits local files and calls `pull`/`push`; no arbitrary API access |
-| No external exfiltration | Outbound connections can be restricted to Google API endpoints and the ExtraSuite server |
-| Minimal OAuth scope | Only the scopes needed for the specific operation are requested; administrators control the scope allowlist |
+### Modules
+
+| Module | Description |
+|--------|-------------|
+| `sheets` | Google Sheets — pull/edit/push spreadsheets via TSV and JSON |
+| `docs` | Google Docs — pull/edit/push documents via markdown |
+| `slides` | Google Slides — pull/edit/push presentations via SML markup |
+| `forms` | Google Forms — pull/edit/push surveys and quizzes via JSON |
+| `script` | Google Apps Script — pull/edit/push standalone and bound scripts |
+| `gmail` | Gmail — compose drafts, read and reply to emails |
+| `calendar` | Google Calendar — view, create, update, delete events |
+| `drive` | Google Drive — list and search files |
+| `contacts` | Google Contacts — sync, search, and manage contacts |
+| `auth` | Authentication management |
+
+### Core Commands (sheets / docs / slides / forms / script)
+
+| Command | Description |
+|---------|-------------|
+| `pull <url>` | Download the file to a local folder |
+| `push <folder>` | Apply changes to Google |
+| `create <title>` | Create a new file |
+| `share <url> <emails>` | Share the file with trusted contacts |
+
+### Gmail Commands
+
+| Command | Description |
+|---------|-------------|
+| `compose <file>` | Save an email draft from a markdown file |
+| `edit-draft <id> <file>` | Update an existing Gmail draft |
+| `reply <thread_id> <file>` | Create a reply draft in an existing thread |
+| `list` | Search and list Gmail messages |
+| `read <id>` | Read a Gmail message |
+
+### Calendar Commands
+
+| Command | Description |
+|---------|-------------|
+| `view` | View events for a time range |
+| `list` | List all calendars |
+| `search` | Search events by title or attendee |
+| `freebusy` | Check when a group of people are free |
+| `create <file>` | Create an event from a JSON file |
+| `update <id>` | Update an existing event |
+| `delete <id>` | Cancel or delete an event |
+| `rsvp <id>` | Accept, decline, or mark tentative |
 
 ---
 
 ## Development
 
 ```bash
-# Server
-cd server && uv sync
-uv run uvicorn extrasuite.server.main:app --reload --port 8001
-
 # Client
 cd client && uv sync
 uv run pytest tests/ -v
+
+# Server
+cd server && uv sync
+uv run uvicorn extrasuite.server.main:app --reload --port 8001
 
 # Tests and linting
 cd server && uv run pytest tests/ -v && uv run ruff check .
