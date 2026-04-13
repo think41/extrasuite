@@ -33,6 +33,9 @@ _HELP_COMMAND_FILES = frozenset(
         "create.md",
         "batchupdate.md",
         "lint.md",
+        "troubleshooting.md",  # stale XML-era content; hidden until rewritten
+        "pull-xml.md",          # XML workflow reference; not advertised for markdown path
+        "style-reference.md",   # XML-only (styles.xml / document.xml); hidden for markdown path
     }
 )
 
