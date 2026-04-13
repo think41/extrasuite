@@ -142,9 +142,20 @@ The responses are structurally identical, yet only the UI-created comment works.
 
 ## Impact on ExtraSuite
 
-- **Pull (reading):** Works correctly. UI-created comments are read via `quotedFileContent` text search; API-created comments are read via JSON anchor offset parsing. Both produce correct `<comment-ref>` tags in `document.xml`.
-- **Push (creating):** Comments are created and appear in the sidebar, but show "Original content deleted" instead of highlighting the referenced text. The comment content and position metadata are preserved, but the visual anchoring is broken.
+- **Pull (reading):** Works correctly. Comments are fetched from the Drive API
+  and written to `comments.xml` at the folder root. Each comment carries the
+  raw `anchor` string and the `quoted-text` (from `quotedFileContent.value`) as
+  the best available location hint. `XmlSerde` additionally injects
+  `<comment-ref>` wrapper elements into `document.xml` for comments with
+  parseable JSON anchors; `MarkdownSerde` (the canonical path) does not — it
+  uses the pure-sidecar approach.
+- **Push (creating):** New top-level comments are not supported. Agents can add
+  replies, resolve comments, or edit comment content via `comments.xml`, but
+  creating anchored comments via the Drive API always results in "Original
+  content deleted" in the UI.
 
 ## Current Behavior
 
-ExtraSuite creates comments with both `anchor` (JSON offset/length format) and `quotedFileContent`. The comment is created successfully and appears in the document's comment sidebar, but without visual text anchoring.
+ExtraSuite does not attempt to create new top-level comments. The push executor
+supports only the operations that work reliably: adding replies, resolving
+comments, and editing comment/reply content.

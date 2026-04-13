@@ -141,6 +141,88 @@ Typed Python models generated from the API schema live in
 `src/extradoc/api_types/`.
 
 
+## Comments
+
+Google Docs comments are fetched from the Drive API and stored in `comments.xml`
+at the folder root, parallel to `index.xml`.
+
+### On-disk format
+
+```xml
+<comments file-id="<documentId>">
+  <comment id="..." author="..." created="..." resolved="false"
+           anchor="..." quoted-text="highlighted text here">
+    <content>Comment text</content>
+    <replies>
+      <reply id="..." author="..." created="...">
+        <content>Reply text</content>
+      </reply>
+    </replies>
+  </comment>
+</comments>
+```
+
+`comments.xml` is written only when there are active (non-deleted, non-resolved)
+comments. If all comments are deleted or resolved the file is suppressed
+entirely.
+
+**Attributes:**
+- `anchor` — raw Drive API anchor string, preserved verbatim. Never interpret
+  or rewrite this value.
+- `quoted-text` — the highlighted text from `quotedFileContent.value` in the
+  Drive API response. This is the best available location hint; see "Why
+  quoted-text only" below.
+- `id`, `author`, `created`, `resolved` — read-only on the comment element.
+
+### What agents can edit
+
+| Operation | How |
+|-----------|-----|
+| Edit comment text | Change `<content>` inside `<comment>` |
+| Edit reply text | Change `<content>` inside `<reply>` |
+| Add a reply | Add a `<reply>` element with empty/no `id` under `<replies>` |
+| Resolve a comment | Set `resolved="true"` on the `<comment>` element |
+| Delete a comment | Delete the entire `<comment>` element |
+
+**Not supported:** Creating new top-level `<comment>` elements. The Google Drive
+API cannot anchor new comments to specific text in Google Docs — they always
+appear as "Original content deleted" regardless of the anchor format used. This
+is a confirmed Google API limitation; see `docs/comment-anchoring-limitation.md`
+for the full investigation.
+
+### Why sidecar-only (no inline annotation in tab files)
+
+Comments are a **pure sidecar**: the tab `.md` (or `.xml`) files contain no
+inline comment markers. Two independent reasons:
+
+1. **API anchor opacity.** UI-created comments return opaque `kix.xxx` anchor
+   strings that do not appear anywhere in the Docs API document JSON. They
+   cannot be resolved to character offsets. Only API-created comments use a
+   parseable JSON anchor format (`{"r":"head","a":[{"txt":{"o":N,"l":N}}]}`),
+   and those are rare in practice. `quoted-text` (the highlighted text) is
+   therefore the best location clue available.
+
+2. **GFM has no clean sub-span annotation primitive.** Every option — HTML
+   `<mark>` tags, custom `{...}` syntax, footnote refs — either breaks standard
+   agent editing flows, is non-standard GFM, or loses precision for multi-word
+   spans. A sidecar with `quoted-text` is more machine-readable for agents than
+   any inline marker scheme.
+
+### Key files in `comments/`
+
+| File | Purpose |
+|------|---------|
+| `_types.py` | `Comment`, `Reply`, `FileComments`, `DocumentWithComments`, and operation types (`NewReply`, `Resolve`, `EditComment`, `EditReply`, `DeleteComment`, `CommentOperations`) |
+| `_from_raw.py` | Parses Drive API v3 comment response into `FileComments` |
+| `_xml.py` | `to_xml()` / `from_xml()` — serializes `FileComments` to/from `comments.xml` |
+| `_diff.py` | `diff_comments(base, desired)` — produces `CommentOperations` from two `FileComments` |
+| `_inject.py` | Injects/strips `<comment-ref>` wrappers in serde `document.xml` — **XmlSerde only, not used by MarkdownSerde** |
+| `_snap.py` | Snap-fits API anchor offsets to serde XML element boundaries — **XmlSerde only, not used by MarkdownSerde** |
+
+`MarkdownSerde` uses only `_types.py`, `_from_raw.py`, `_xml.py`, and
+`_diff.py`. The `_inject.py` / `_snap.py` files are used by `XmlSerde`, which
+is broken and not maintained.
+
 ## Development
 
 ```bash

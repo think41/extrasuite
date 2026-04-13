@@ -1,11 +1,20 @@
 """Snap-fit comment anchor offsets to serde XML element boundaries.
 
+NOTE: This module is used by XmlSerde only (via _inject.py). MarkdownSerde
+(the canonical implementation) does not use snap-fit anchor resolution — it
+stores comments as a pure sidecar in comments.xml.
+
 Computes character offsets for each block element in a serde document.xml
 <body> and maps anchor (start, end) ranges to the set of elements that
 overlap with that range.
 
 The snap-fit expands the range to whole element boundaries — a comment
 anchored to 2 words in a paragraph expands to cover the whole paragraph.
+
+Only API-created comments use the parseable JSON anchor format
+{"r":"head","a":[{"txt":{"o":<offset>,"l":<length>}}]}. UI-created comments
+return opaque kix.xxx anchors that cannot be resolved to character offsets.
+parse_anchor_range() returns None for those and they are skipped by the caller.
 """
 
 from __future__ import annotations

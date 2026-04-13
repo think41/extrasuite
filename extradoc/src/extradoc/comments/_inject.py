@@ -1,11 +1,20 @@
 """Inject and strip <comment-ref> tags in serde document.xml strings.
 
-inject_comment_refs(xml_str, comments) is called after serde writes a tab's
+NOTE: This module is used by XmlSerde only. MarkdownSerde (the canonical
+implementation) does not call inject_comment_refs / strip_comment_refs — it
+stores comments as a pure sidecar in comments.xml without inline markers.
+
+inject_comment_refs(xml_str, comments) is called after XmlSerde writes a tab's
 document.xml. It inserts <comment-ref> wrapper elements around the block
 elements that correspond to each comment's anchor range.
 
-strip_comment_refs(xml_str) is called during deserialization to remove
+strip_comment_refs(xml_str) is called during XmlSerde deserialization to remove
 <comment-ref> wrappers and let the inner elements flow normally.
+
+Only comments with a parseable JSON anchor (API-created, format:
+{"r":"head","a":[{"txt":{"o":<offset>,"l":<length>}}]}) produce comment-ref
+wrappers. UI-created comments with opaque kix.xxx anchors are silently skipped
+because their offsets cannot be resolved.
 """
 
 from __future__ import annotations

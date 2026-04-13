@@ -24,7 +24,7 @@ Formal specification for the folder structure produced by `serde.serialize()` an
     namedranges.xml       # READ-ONLY: NamedRanges
 ```
 
-`comments.xml` is always written at the document root, even when there are no comments yet.
+`comments.xml` is written at the document root only when there are active (non-deleted, non-resolved) comments. It is suppressed entirely when the document has no active comments.
 Optional tab files (`docstyle.xml`, `namedstyles.xml`, `objects.xml`, `positionedObjects.xml`, `namedranges.xml`) are written only when the tab has data for them. `document.xml` is always present. `styles.xml` is always written by `serialize()`, and `deserialize()` also accepts a missing `styles.xml` and treats it as empty `<styles />`.
 
 ### Editable vs Read-Only
