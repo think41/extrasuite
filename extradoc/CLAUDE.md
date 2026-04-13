@@ -101,6 +101,28 @@ desired-tree indices; `reconcile_v3/lower.py` is the **sole consumer**. Before
 changing anything in `diffmerge/apply_ops.py` or `reconcile_v3/lower.py`, read
 [`docs/coordinate_contract.md`](docs/coordinate_contract.md).
 
+### Run fragmentation pitfall
+
+The Google Docs API creates a new text run whenever `updateTextStyle` is called
+on a sub-range, even if the style is identical to an adjacent run.  Fragmented
+runs survive subsequent pulls and cause the serializer to emit markers like
+`**PART** **I**` instead of `**PART I**`, which then look like spurious edits.
+
+Three places defend against this:
+
+1. **`diffmerge/apply_ops.py` — `_merge_adjacent_same_style_runs()`**: called at
+   the end of `_merge_changed_paragraph`.  Consolidates sub-runs with equal
+   merged styles before the desired tree reaches the reconciler.
+2. **`reconcile_v3/lower.py` — `_insert_ops_for_span()`**: coalesces consecutive
+   desired spans with equal style into a single `updateTextStyle` request (the
+   "pending group" pattern).  Does not coalesce across opaque-element barriers.
+3. **`serde/markdown/_to_markdown.py` — `_merge_adjacent_text_runs()`**: merges
+   fragmented runs before serialization so pre-existing fragmentation in `base`
+   does not produce separate bold/italic markers.
+
+If a change causes `**X** **Y**` to appear in a round-trip, check all three
+layers before looking elsewhere.
+
 ### Testing
 
 Follow TDD / red -> green tests. Test against public interface of the respective module. Don't import module internals in your test.

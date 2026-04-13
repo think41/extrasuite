@@ -455,13 +455,73 @@ def _list_item_nesting_level(para: Paragraph, list_def: Any) -> int:
 # ---------------------------------------------------------------------------
 
 
+def _merge_adjacent_text_runs(
+    elements: list[ParagraphElement],
+) -> list[ParagraphElement]:
+    """Merge adjacent textRun elements that have identical textStyle.
+
+    Fragmented runs (e.g. ``**ASHA** **FOUNDATION**`` from two consecutive
+    bold runs) round-trip as separate spans in markdown.  Merging them before
+    serialization produces a single ``**ASHA FOUNDATION**`` span, which
+    reduces spurious ``updateTextStyle`` requests on the next push.
+
+    Non-textRun elements (inline objects, footnote refs, etc.) act as merge
+    barriers — they are left in place unchanged.
+    """
+    if len(elements) < 2:
+        return elements
+
+    from extradoc.api_types._generated import ParagraphElement, TextRun
+
+    merged: list[ParagraphElement] = []
+    for pe in elements:
+        tr = pe.text_run
+        if tr is None:
+            merged.append(pe)
+            continue
+        # Try to merge with the last element in ``merged``.
+        if merged:
+            prev = merged[-1]
+            prev_tr = prev.text_run
+            if prev_tr is not None:
+                # Compare styles by their serialized dict (None == missing == {}).
+                prev_style = prev_tr.text_style
+                cur_style = tr.text_style
+                prev_dict = (
+                    prev_style.model_dump(by_alias=True, exclude_none=True)
+                    if prev_style is not None
+                    else {}
+                )
+                cur_dict = (
+                    cur_style.model_dump(by_alias=True, exclude_none=True)
+                    if cur_style is not None
+                    else {}
+                )
+                if prev_dict == cur_dict:
+                    # Same style — concatenate into the previous run.
+                    merged_content = (prev_tr.content or "") + (tr.content or "")
+                    merged[-1] = ParagraphElement(
+                        textRun=TextRun(
+                            content=merged_content,
+                            textStyle=prev_tr.text_style,
+                        )
+                    )
+                    continue
+        merged.append(pe)
+    return merged
+
+
 def _serialize_inlines(
     elements: list[ParagraphElement],
     *,
     heading_id_to_name: dict[str, str] | None = None,
     inline_objects: dict[str, Any] | None = None,
 ) -> str:
-    return "".join(_serialize_inline_elem(pe, heading_id_to_name=heading_id_to_name, inline_objects=inline_objects) for pe in elements)
+    # Merge adjacent same-style textRuns before serializing so that
+    # pre-existing run fragmentation in the base document does not produce
+    # separate bold/italic markers for what is semantically one span.
+    merged = _merge_adjacent_text_runs(elements)
+    return "".join(_serialize_inline_elem(pe, heading_id_to_name=heading_id_to_name, inline_objects=inline_objects) for pe in merged)
 
 
 def _serialize_inline_elem(

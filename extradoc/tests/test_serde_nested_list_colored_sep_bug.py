@@ -347,13 +347,6 @@ def test_edit_nested_list_item_without_l0_parent_reaches_desired(
     assert "Taxes; Original Text" not in texts
 
 
-@pytest.mark.xfail(
-    reason=(
-        "Adjacent bold runs produce '****' artifact. Serializer should "
-        "consolidate same-style runs before emitting delimiters."
-    ),
-    strict=True,
-)
 def test_adjacent_bold_runs_consolidate(tmp_path: Path) -> None:
     """Two adjacent bold runs should serialize as a single **...** span."""
     bold = {"bold": True}
@@ -364,13 +357,6 @@ def test_adjacent_bold_runs_consolidate(tmp_path: Path) -> None:
     assert "**AGREEMENT TERM.**" in md
 
 
-@pytest.mark.xfail(
-    reason=(
-        "Adjacent underline runs produce '</u><u>' artifact. Serializer "
-        "should consolidate same-style runs before emitting delimiters."
-    ),
-    strict=True,
-)
 def test_adjacent_underline_runs_consolidate(tmp_path: Path) -> None:
     """Two adjacent underlined runs should serialize as a single <u>...</u>."""
     underline = {"underline": True}

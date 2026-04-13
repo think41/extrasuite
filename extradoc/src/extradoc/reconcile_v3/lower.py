@@ -2698,8 +2698,33 @@ def _insert_ops_for_span(
     # cursor tracks the absolute UTF-16 position within the newly inserted
     # text.  span_len is in code-point space, so we compute the UTF-16
     # length of each text chunk for cursor advancement.
+    #
+    # To avoid fragmenting runs on the real Google Docs API, we coalesce
+    # consecutive spans that have the same changed-fields mask AND the same
+    # TextStyle values into a single updateTextStyle request.
     cursor = abs_insert
     i = desired_start
+    base_ref = inherited_style if inherited_style is not None else _EMPTY_TEXT_STYLE
+
+    # Pending group state for coalescing same-style adjacent spans.
+    pending_start: int | None = None
+    pending_end: int = cursor
+    pending_fields: list[str] = []
+    pending_style: TextStyle | None = None
+
+    def _flush_pending() -> None:
+        if pending_start is not None and pending_fields and pending_style is not None:
+            reqs.append(
+                _make_update_text_style(
+                    start_index=pending_start,
+                    end_index=pending_end,
+                    tab_id=tab_id,
+                    segment_id=segment_id,
+                    text_style=pending_style,
+                    fields=pending_fields,
+                )
+            )
+
     while i < desired_end:
         style = _style_at_offset(desired_spans, i)
         end_of_span = _next_span_boundary(desired_spans, i, desired_end)
@@ -2713,8 +2738,14 @@ def _insert_ops_for_span(
                 span_text = s_text[offset_in : offset_in + span_cp_len]
                 break
         span_utf16_len = utf16_len(span_text) if span_text else span_cp_len
-        # Skip opaque spans (non-textRun elements)
+        # Skip opaque spans (non-textRun elements).
+        # Opaque chars are NOT included in full_text, so cursor must not advance.
+        # Flush any pending style group — do not coalesce across opaque barriers.
         if _is_opaque_style(style):
+            _flush_pending()
+            pending_start = None
+            pending_fields = []
+            pending_style = None
             i = end_of_span
             continue
         # Compare the desired style against the style that the inserted
@@ -2723,21 +2754,36 @@ def _insert_ops_for_span(
         # Emitting a redundant updateTextStyle — even with identical values
         # — fragments the run on the real Google Docs API and causes edits
         # like ``PARTI`` → ``PART I`` to round-trip as ``**PART** **I**``.
-        base_ref = inherited_style if inherited_style is not None else _EMPTY_TEXT_STYLE
         fields = _text_style_changed_fields(base_ref, style)
         if fields:
-            reqs.append(
-                _make_update_text_style(
-                    start_index=cursor,
-                    end_index=cursor + span_utf16_len,
-                    tab_id=tab_id,
-                    segment_id=segment_id,
-                    text_style=style,
-                    fields=fields,
-                )
-            )
+            # Check whether this span can be merged into the pending group:
+            # same fields mask AND same style values.
+            if (
+                pending_start is not None
+                and pending_fields == fields
+                and pending_style is not None
+                and _styles_equal(pending_style, style)
+            ):
+                # Extend the pending group to cover this span.
+                pending_end = cursor + span_utf16_len
+            else:
+                # Flush the previous pending group (if any) and start a new one.
+                _flush_pending()
+                pending_start = cursor
+                pending_end = cursor + span_utf16_len
+                pending_fields = fields
+                pending_style = style
+        else:
+            # This span needs no updateTextStyle — flush any pending group.
+            _flush_pending()
+            pending_start = None
+            pending_fields = []
+            pending_style = None
         cursor += span_utf16_len
         i = end_of_span
+
+    # Flush any remaining pending group.
+    _flush_pending()
 
     return reqs
 

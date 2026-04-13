@@ -1307,6 +1307,14 @@ def _merge_changed_paragraph(
     # original doc would produce a spurious deleteContentRange request.
     _restore_trailing_whitespace(new_elements, base_elements)
 
+    # Merge adjacent textRun elements that have equal textStyle dicts.
+    # _merge_changed_paragraph splits desired runs at base-run boundaries so
+    # that non-representable styles can be inherited from each base run.  When
+    # adjacent sub-runs end up with equal merged styles, keeping them separate
+    # is wasteful and causes the reconciler to emit multiple updateTextStyle
+    # requests for contiguous same-style regions, fragmenting runs in the API.
+    new_elements = _merge_adjacent_same_style_runs(new_elements)
+
     para["elements"] = new_elements
     # Mutation: this paragraph's byte length may have changed (text edits,
     # run splitting). Null all indices on this structural element — the
@@ -1315,6 +1323,46 @@ def _merge_changed_paragraph(
     # in the same region.
     _null_indices_recursive(result)
     return result
+
+
+def _merge_adjacent_same_style_runs(
+    elements: list[dict[str, Any]],
+) -> list[dict[str, Any]]:
+    """Merge adjacent textRun elements that have identical textStyle dicts.
+
+    When ``_merge_changed_paragraph`` splits a desired run at base-run
+    boundaries, adjacent sub-runs may end up with equal merged styles.
+    Keeping them separate causes the reconciler to emit multiple
+    ``updateTextStyle`` requests for contiguous same-style regions, which
+    fragments runs on the Google Docs API.  This pass consolidates them
+    before the result reaches the reconciler.
+
+    Non-textRun elements (inlineObjectElement, footnoteReference, etc.) are
+    left in place and act as merge barriers.
+    """
+    if len(elements) < 2:
+        return elements
+    merged: list[dict[str, Any]] = []
+    for elem in elements:
+        tr = elem.get("textRun")
+        if tr is None:
+            merged.append(elem)
+            continue
+        # Try to merge with the last element in ``merged``.
+        if merged:
+            prev = merged[-1]
+            prev_tr = prev.get("textRun")
+            if prev_tr is not None:
+                prev_style = prev_tr.get("textStyle") or {}
+                cur_style = tr.get("textStyle") or {}
+                if prev_style == cur_style:
+                    # Same style — concatenate text into the previous run.
+                    prev_tr["content"] = prev_tr.get("content", "") + tr.get(
+                        "content", ""
+                    )
+                    continue
+        merged.append(elem)
+    return merged
 
 
 def _restore_trailing_whitespace(
