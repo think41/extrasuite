@@ -973,7 +973,7 @@ def _split_on_insert_tables(batch: list[Request]) -> list[list[Request]]:
                 carry.reverse()
             if current:
                 result.append(current)
-            current = carry + [req]
+            current = [*carry, req]
         else:
             current.append(req)
 
@@ -1260,7 +1260,9 @@ def _lower_story_content_update(
         # the delete range to ``[start, end-1)`` so the ``\n`` survives and the
         # API request is accepted.  The leftover empty paragraph is harmless
         # structurally (it is the required separator before the section break).
-        next_el = base_content[base_idx + 1] if base_idx + 1 < len(base_content) else None
+        next_el = (
+            base_content[base_idx + 1] if base_idx + 1 < len(base_content) else None
+        )
         if (
             next_el is not None
             and next_el.section_break is not None
@@ -4155,12 +4157,12 @@ def _compute_index_shift_for_body_ref(
 
     ``insertTable`` requests also inject structural overhead bytes that are
     NOT captured by the cell-fill ``insertText`` requests.  After
-    ``insertTable`` creates an empty R×C skeleton at position L, the document
+    ``insertTable`` creates an empty RxC skeleton at position L, the document
     grows by::
 
-        structural_bytes = 2 + R × (1 + 2 × C)
+        structural_bytes = 2 + R x (1 + 2 x C)
 
-    (1 pre-table ``\\n`` + 1 table-opener + R row-openers + R×C×2 empty-cell
+    (1 pre-table ``\\n`` + 1 table-opener + R row-openers + RxCx2 empty-cell
     bytes).  These bytes ARE at position L (≤ any subsequent body reference
     above L) and therefore contribute to the shift just like an insertText.
 

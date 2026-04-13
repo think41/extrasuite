@@ -89,7 +89,9 @@ class MarkdownSerde:
             api_iter = iter(api_headings)
             for lineno, heading_line, _ in toc_entries:
                 api_h = next(api_iter, None)
-                enriched.append((lineno, heading_line, api_h.heading_id if api_h else None))
+                enriched.append(
+                    (lineno, heading_line, api_h.heading_id if api_h else None)
+                )
             tab_toc[folder_name] = enriched
 
         # Write index.md with frontmatter and TOC
@@ -178,7 +180,10 @@ class MarkdownSerde:
         return DocumentWithComments(document=doc, comments=pristine_bundle.comments)
 
     def _load_pristine(
-        self, folder: Path, *, heading_name_to_id: dict[str, tuple[str, str | None]] | None = None
+        self,
+        folder: Path,
+        *,
+        heading_name_to_id: dict[str, tuple[str, str | None]] | None = None,
     ) -> DocumentWithComments:
         """Extract and parse .extrasuite/pristine.zip or legacy .pristine/document.zip."""
         new_layout = _is_new_layout(folder)
@@ -191,12 +196,19 @@ class MarkdownSerde:
                 zf.extractall(tmp)
             pristine_folder = Path(tmp)
             pristine_index = IndexXml.from_xml_string(
-                (pristine_folder / _index_xml_path_in_folder(pristine_folder)).read_text(encoding="utf-8")
+                (
+                    pristine_folder / _index_xml_path_in_folder(pristine_folder)
+                ).read_text(encoding="utf-8")
             )
-            return _parse_markdown(pristine_folder, pristine_index, heading_name_to_id=heading_name_to_id)
+            return _parse_markdown(
+                pristine_folder, pristine_index, heading_name_to_id=heading_name_to_id
+            )
 
     def _parse(
-        self, folder: Path, *, heading_name_to_id: dict[str, tuple[str, str | None]] | None = None
+        self,
+        folder: Path,
+        *,
+        heading_name_to_id: dict[str, tuple[str, str | None]] | None = None,
     ) -> DocumentWithComments:
         """Read a markdown-format folder into a DocumentWithComments."""
         index_xml_path = folder / _index_xml_path_in_folder(folder)
@@ -308,7 +320,9 @@ def _three_way_merge(
     desired_document = base.document.__class__.model_validate(desired_dict)
 
     # Merge inline_objects from mine into desired.
-    for d_tab, m_tab in zip(desired_document.tabs or [], mine.document.tabs or [], strict=False):
+    for d_tab, m_tab in zip(
+        desired_document.tabs or [], mine.document.tabs or [], strict=False
+    ):
         m_dt = m_tab.document_tab
         d_dt = d_tab.document_tab
         if m_dt and m_dt.inline_objects and d_dt:

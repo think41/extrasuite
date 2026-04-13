@@ -21,7 +21,7 @@ from __future__ import annotations
 
 import json
 from pathlib import Path
-from typing import TYPE_CHECKING, Any
+from typing import Any
 
 import pytest
 
@@ -33,9 +33,6 @@ from extradoc.reconcile_v3.executor import resolve_deferred_placeholders
 from extradoc.serde.markdown import MarkdownSerde
 
 from .helpers import assert_batches_within_base
-
-if TYPE_CHECKING:
-    pass
 
 GOLDEN_DIR = Path(__file__).parent.parent / "golden"
 SAMPLE3_ID = "1YKyqqH8wZa3kSnoBEdlwAumI94gRivSsZB1qvc9y4CA"
@@ -176,7 +173,7 @@ def test_bug65_colbreak_preserved_on_columns_text_edit(tmp_path: Path) -> None:
     # Apply via mock API and re-serialize to markdown.
     try:
         after_doc = _apply_batches_via_mock(result.base.document, batches)
-    except Exception as exc:  # noqa: BLE001 — mock rejection is itself the bug
+    except Exception as exc:
         pytest.fail(
             f"mock API rejected reconcile output for a simple paragraph edit: {exc!r}"
         )

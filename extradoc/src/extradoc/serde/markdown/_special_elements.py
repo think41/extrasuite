@@ -261,7 +261,7 @@ class CodeBlock(SpecialElement):
             return f"extradoc:codeblock:{self.language}"
         return "extradoc:codeblock"
 
-    def to_markdown(self, *, heading_id_to_name: dict[str, str] | None = None) -> str:
+    def to_markdown(self, *, heading_id_to_name: dict[str, str] | None = None) -> str:  # noqa: ARG002
         fence = f"```{self.language}" if self.language else "```"
         return fence + "\n" + "\n".join(self.lines) + "\n```"
 
@@ -378,7 +378,7 @@ class Blockquote(SpecialElement):
         )
 
     @classmethod
-    def from_table(cls, table: Table, named_range_name: str) -> Blockquote:
+    def from_table(cls, table: Table, named_range_name: str) -> Blockquote:  # noqa: ARG003
         paragraphs = _extract_cell_paragraphs(table)
         return cls(paragraphs=paragraphs)
 

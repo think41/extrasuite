@@ -24,24 +24,17 @@ broken behaviour and will be promoted to passing tests once the bugs are fixed.
 
 from __future__ import annotations
 
-from pathlib import Path
-from typing import Any
+from typing import TYPE_CHECKING, Any
 
-import pytest
+if TYPE_CHECKING:
+    from pathlib import Path
 
 from extradoc.api_types._generated import (
     Document,
-    Paragraph,
-    ParagraphElement,
-    ParagraphStyle,
-    StructuralElement,
-    TextRun,
-    TextStyle,
 )
 from extradoc.comments._types import DocumentWithComments, FileComments
 from extradoc.reconcile_v3.api import reconcile_batches
 from extradoc.serde.markdown import MarkdownSerde
-
 
 # ---------------------------------------------------------------------------
 # Shared helpers
@@ -59,8 +52,10 @@ def _make_doc(content: list[dict[str, Any]]) -> Document:
                     "tabProperties": {"tabId": "t.0", "title": "Tab 1", "index": 0},
                     "documentTab": {
                         "body": {
-                            "content": [{"sectionBreak": {"sectionStyle": {}}}]
-                            + content
+                            "content": [
+                                {"sectionBreak": {"sectionStyle": {}}},
+                                *content,
+                            ]
                         }
                     },
                 }
@@ -89,7 +84,7 @@ def _make_para(runs: list[dict[str, Any]]) -> dict[str, Any]:
     """Build a paragraph dict from a list of textRun element dicts."""
     return {
         "paragraph": {
-            "elements": runs + [_make_run("\n")],
+            "elements": [*runs, _make_run("\n")],
             "paragraphStyle": {"namedStyleType": "NORMAL_TEXT"},
         }
     }

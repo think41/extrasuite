@@ -309,7 +309,9 @@ def serialize_text_run(
             raw_url = link.url or "#"
             # Resolve #heading-ref: placeholders back to name-based links
             if raw_url.startswith("#heading-ref:"):
-                raw_url = "#" + urllib.parse.quote(raw_url[len("#heading-ref:"):], safe="/")
+                raw_url = "#" + urllib.parse.quote(
+                    raw_url[len("#heading-ref:") :], safe="/"
+                )
         url = _normalize_url(raw_url)
         # Underline is implied by markdown link syntax — skip it inside links
         inner = _apply_formatting(content, style, skip_underline=True)
@@ -341,9 +343,14 @@ def build_heading_maps(
     name_to_info: dict[str, tuple[str, str | None]] = {}
 
     _HEADING_STYLES = {
-        "TITLE", "SUBTITLE",
-        "HEADING_1", "HEADING_2", "HEADING_3",
-        "HEADING_4", "HEADING_5", "HEADING_6",
+        "TITLE",
+        "SUBTITLE",
+        "HEADING_1",
+        "HEADING_2",
+        "HEADING_3",
+        "HEADING_4",
+        "HEADING_5",
+        "HEADING_6",
     }
 
     for tab in doc.tabs or []:

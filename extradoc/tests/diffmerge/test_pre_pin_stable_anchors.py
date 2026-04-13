@@ -10,15 +10,12 @@ synergistically with _positional_fallback.
 
 from __future__ import annotations
 
-import pytest
-
 from extradoc.api_types._generated import (
     StructuralElement,
     TableOfContents,
 )
 from extradoc.diffmerge.content_align import (
     ContentNode,
-    NodeKind,
     align_content,
     content_node_from_element,
 )
@@ -27,7 +24,6 @@ from tests.diffmerge.helpers import (
     make_table_el,
     make_terminal_para,
 )
-
 
 # ---------------------------------------------------------------------------
 # Utilities

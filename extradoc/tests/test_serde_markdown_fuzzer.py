@@ -63,15 +63,18 @@ def _find_replaceable_words(md_text: str) -> list[tuple[str, int]]:
     """
     words = []
     # Find words that are plain text (not in URLs, tags, etc.)
-    for m in re.finditer(r'(?<![<\[(=/])([A-Za-z]{4,})', md_text):
+    for m in re.finditer(r"(?<![<\[(=/])([A-Za-z]{4,})", md_text):
         word = m.group(1)
         pos = m.start(1)
         # Skip if inside a URL or HTML tag
-        line_start = md_text.rfind('\n', 0, pos)
-        line = md_text[line_start:md_text.find('\n', pos)]
-        if 'http' in line and pos > line.find('http') + line_start:
+        line_start = md_text.rfind("\n", 0, pos)
+        line = md_text[line_start : md_text.find("\n", pos)]
+        if "http" in line and pos > line.find("http") + line_start:
             continue
-        if '<' in md_text[max(0, pos - 50):pos] and '>' not in md_text[max(0, pos - 50):pos]:
+        if (
+            "<" in md_text[max(0, pos - 50) : pos]
+            and ">" not in md_text[max(0, pos - 50) : pos]
+        ):
             continue
         words.append((word, pos))
     return words
@@ -89,7 +92,11 @@ def _do_single_word_edit(
     folder = tmp_path / f"edit_{word_idx}"
     _serde.serialize(bundle, folder)
 
-    md_path = folder / "tabs" / "Tab_1.md" if (folder / "tabs").is_dir() else folder / "Tab_1.md"
+    md_path = (
+        folder / "tabs" / "Tab_1.md"
+        if (folder / "tabs").is_dir()
+        else folder / "Tab_1.md"
+    )
     md_text = md_path.read_text(encoding="utf-8")
 
     replaceable = _find_replaceable_words(md_text)
@@ -100,7 +107,7 @@ def _do_single_word_edit(
     replacement = f"FUZZ{rng.randint(1000, 9999)}"
 
     # Replace only the specific occurrence at this position
-    new_text = md_text[:pos] + replacement + md_text[pos + len(orig_word):]
+    new_text = md_text[:pos] + replacement + md_text[pos + len(orig_word) :]
     md_path.write_text(new_text, encoding="utf-8")
 
     result = _serde.deserialize(folder)

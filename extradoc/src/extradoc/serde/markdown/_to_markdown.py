@@ -25,6 +25,8 @@ from __future__ import annotations
 import html as _html
 from typing import TYPE_CHECKING, Any
 
+from extradoc.api_types._generated import ParagraphElement, TextRun
+
 from .._utils import (
     _style_has_attrs,
     build_heading_maps,
@@ -39,7 +41,6 @@ if TYPE_CHECKING:
         Document,
         DocumentTab,
         Paragraph,
-        ParagraphElement,
         StructuralElement,
         Table,
     )
@@ -82,7 +83,12 @@ def document_to_markdown(doc: Document) -> dict[str, dict[str, str]]:
 
         list_defs = dt.lists or {}
         inline_objs = dt.inline_objects or {}
-        content = _serialize_body(dt, list_defs, heading_id_to_name=heading_id_to_name, inline_objects=inline_objs)
+        content = _serialize_body(
+            dt,
+            list_defs,
+            heading_id_to_name=heading_id_to_name,
+            inline_objects=inline_objs,
+        )
         frontmatter = f"---\nid: {tab_id}\ntitle: {tab_title}\n---\n\n"
         result[folder] = {"document.md": frontmatter + content}
 
@@ -154,11 +160,24 @@ def _serialize_body(
         parts: list[str] = []
         for se in fn.content or []:
             if se.paragraph:
-                parts.append(_serialize_inlines(se.paragraph.elements or [], heading_id_to_name=h_map, inline_objects=inline_objects))
+                parts.append(
+                    _serialize_inlines(
+                        se.paragraph.elements or [],
+                        heading_id_to_name=h_map,
+                        inline_objects=inline_objects,
+                    )
+                )
         footnote_defs[fn_id] = " ".join(p for p in parts if p)
 
     body_content = (doc_tab.body.content or []) if doc_tab.body else []
-    blocks = _serialize_content(body_content, list_types, list_defs, nr_spans, heading_id_to_name=h_map, inline_objects=inline_objects)
+    blocks = _serialize_content(
+        body_content,
+        list_types,
+        list_defs,
+        nr_spans,
+        heading_id_to_name=h_map,
+        inline_objects=inline_objects,
+    )
 
     # Append footnote definitions
     if footnote_defs:
@@ -228,7 +247,13 @@ def _serialize_content(
                 elem = special_element_from_named_range(se.table, annotation)
                 lines.append(elem.to_markdown(heading_id_to_name=h_map))
             else:
-                lines.append(_serialize_table(se.table, heading_id_to_name=h_map, inline_objects=inline_objects))
+                lines.append(
+                    _serialize_table(
+                        se.table,
+                        heading_id_to_name=h_map,
+                        inline_objects=inline_objects,
+                    )
+                )
             continue
 
         if se.paragraph is not None:
@@ -303,8 +328,12 @@ def _serialize_content(
                     ordinal = list_counters.get(effective_nesting, 0) + 1
                     list_counters[effective_nesting] = ordinal
                     line = _serialize_list_item(
-                        para, list_types, list_defs, ordinal=ordinal,
-                        heading_id_to_name=h_map, inline_objects=inline_objects,
+                        para,
+                        list_types,
+                        list_defs,
+                        ordinal=ordinal,
+                        heading_id_to_name=h_map,
+                        inline_objects=inline_objects,
                         nesting_override=effective_nesting,
                     )
                     if line is not None:
@@ -319,7 +348,9 @@ def _serialize_content(
                         in_list = False
                         current_list_id = None
                         list_nesting_offset = 0
-                    block = _serialize_paragraph(para, heading_id_to_name=h_map, inline_objects=inline_objects)
+                    block = _serialize_paragraph(
+                        para, heading_id_to_name=h_map, inline_objects=inline_objects
+                    )
                     if block is not None:
                         if lines:
                             lines.append("")
@@ -364,9 +395,16 @@ def _is_colored_empty_paragraph(para: Paragraph) -> bool:
 
 
 def _serialize_paragraph(
-    para: Paragraph, *, heading_id_to_name: dict[str, str] | None = None, inline_objects: dict[str, Any] | None = None
+    para: Paragraph,
+    *,
+    heading_id_to_name: dict[str, str] | None = None,
+    inline_objects: dict[str, Any] | None = None,
 ) -> str | None:
-    inline = _serialize_inlines(para.elements or [], heading_id_to_name=heading_id_to_name, inline_objects=inline_objects).rstrip()
+    inline = _serialize_inlines(
+        para.elements or [],
+        heading_id_to_name=heading_id_to_name,
+        inline_objects=inline_objects,
+    ).rstrip()
     if not inline:
         return None
 
@@ -391,7 +429,11 @@ def _serialize_list_item(
     if not bullet:
         return None
 
-    inline = _serialize_inlines(para.elements or [], heading_id_to_name=heading_id_to_name, inline_objects=inline_objects).rstrip()
+    inline = _serialize_inlines(
+        para.elements or [],
+        heading_id_to_name=heading_id_to_name,
+        inline_objects=inline_objects,
+    ).rstrip()
     list_id = bullet.list_id or ""
     if nesting_override is not None:
         nesting = nesting_override
@@ -471,8 +513,6 @@ def _merge_adjacent_text_runs(
     if len(elements) < 2:
         return elements
 
-    from extradoc.api_types._generated import ParagraphElement, TextRun
-
     merged: list[ParagraphElement] = []
     for pe in elements:
         tr = pe.text_run
@@ -521,11 +561,19 @@ def _serialize_inlines(
     # pre-existing run fragmentation in the base document does not produce
     # separate bold/italic markers for what is semantically one span.
     merged = _merge_adjacent_text_runs(elements)
-    return "".join(_serialize_inline_elem(pe, heading_id_to_name=heading_id_to_name, inline_objects=inline_objects) for pe in merged)
+    return "".join(
+        _serialize_inline_elem(
+            pe, heading_id_to_name=heading_id_to_name, inline_objects=inline_objects
+        )
+        for pe in merged
+    )
 
 
 def _serialize_inline_elem(
-    pe: ParagraphElement, *, heading_id_to_name: dict[str, str] | None = None, inline_objects: dict[str, Any] | None = None
+    pe: ParagraphElement,
+    *,
+    heading_id_to_name: dict[str, str] | None = None,
+    inline_objects: dict[str, Any] | None = None,
 ) -> str:
     if pe.text_run is not None:
         return serialize_text_run(pe.text_run, heading_id_to_name=heading_id_to_name)
@@ -541,12 +589,18 @@ def _serialize_inline_elem(
             if props is None and isinstance(obj, dict):
                 props_d = obj.get("inlineObjectProperties", {})
                 eo_d = props_d.get("embeddedObject", {}) if props_d else {}
-                uri = (eo_d.get("imageProperties", {}) or {}).get("contentUri", "") or ""
+                uri = (eo_d.get("imageProperties", {}) or {}).get(
+                    "contentUri", ""
+                ) or ""
                 alt = eo_d.get("description", "") or ""
             elif props is not None:
                 eo = props.embedded_object
                 if eo is not None:
-                    uri = (eo.image_properties.content_uri or "") if eo.image_properties else ""
+                    uri = (
+                        (eo.image_properties.content_uri or "")
+                        if eo.image_properties
+                        else ""
+                    )
                     alt = eo.description or ""
         safe_alt = alt.replace("\\", "\\\\").replace("]", "\\]")
         safe_uri = uri.replace("\\", "\\\\").replace(")", "\\)")
@@ -594,10 +648,19 @@ def _serialize_inline_elem(
 # ---------------------------------------------------------------------------
 
 
-def _serialize_table(table: Table, *, heading_id_to_name: dict[str, str] | None = None, inline_objects: dict[str, Any] | None = None) -> str:
+def _serialize_table(
+    table: Table,
+    *,
+    heading_id_to_name: dict[str, str] | None = None,
+    inline_objects: dict[str, Any] | None = None,
+) -> str:
     if _needs_html_table(table):
-        return _serialize_html_table(table, heading_id_to_name=heading_id_to_name, inline_objects=inline_objects)
-    return _serialize_gfm_table(table, heading_id_to_name=heading_id_to_name, inline_objects=inline_objects)
+        return _serialize_html_table(
+            table, heading_id_to_name=heading_id_to_name, inline_objects=inline_objects
+        )
+    return _serialize_gfm_table(
+        table, heading_id_to_name=heading_id_to_name, inline_objects=inline_objects
+    )
 
 
 def _needs_html_table(table: Table) -> bool:
@@ -615,22 +678,44 @@ def _needs_html_table(table: Table) -> bool:
     return False
 
 
-def _cell_text(cell: Any, *, heading_id_to_name: dict[str, str] | None = None, inline_objects: dict[str, Any] | None = None) -> str:
+def _cell_text(
+    cell: Any,
+    *,
+    heading_id_to_name: dict[str, str] | None = None,
+    inline_objects: dict[str, Any] | None = None,
+) -> str:
     parts: list[str] = []
     for se in cell.content or []:
         if se.paragraph:
-            t = _serialize_inlines(se.paragraph.elements or [], heading_id_to_name=heading_id_to_name, inline_objects=inline_objects)
+            t = _serialize_inlines(
+                se.paragraph.elements or [],
+                heading_id_to_name=heading_id_to_name,
+                inline_objects=inline_objects,
+            )
             if t:
                 parts.append(t)
     return " ".join(parts).replace("|", "\\|")
 
 
-def _serialize_gfm_table(table: Table, *, heading_id_to_name: dict[str, str] | None = None, inline_objects: dict[str, Any] | None = None) -> str:
+def _serialize_gfm_table(
+    table: Table,
+    *,
+    heading_id_to_name: dict[str, str] | None = None,
+    inline_objects: dict[str, Any] | None = None,
+) -> str:
     rows = table.table_rows or []
     if not rows:
         return ""
 
-    cells = [[_cell_text(c, heading_id_to_name=heading_id_to_name, inline_objects=inline_objects) for c in row.table_cells or []] for row in rows]
+    cells = [
+        [
+            _cell_text(
+                c, heading_id_to_name=heading_id_to_name, inline_objects=inline_objects
+            )
+            for c in row.table_cells or []
+        ]
+        for row in rows
+    ]
     n_cols = max((len(r) for r in cells), default=0)
     for row in cells:
         while len(row) < n_cols:
@@ -642,7 +727,12 @@ def _serialize_gfm_table(table: Table, *, heading_id_to_name: dict[str, str] | N
     return "\n".join([header, sep, *data])
 
 
-def _serialize_html_table(table: Table, *, heading_id_to_name: dict[str, str] | None = None, inline_objects: dict[str, Any] | None = None) -> str:
+def _serialize_html_table(
+    table: Table,
+    *,
+    heading_id_to_name: dict[str, str] | None = None,
+    inline_objects: dict[str, Any] | None = None,
+) -> str:
     lines = ["<table>"]
     for i, row in enumerate(table.table_rows or []):
         lines.append("  <tr>")
@@ -659,7 +749,11 @@ def _serialize_html_table(table: Table, *, heading_id_to_name: dict[str, str] | 
                     color = optional_color_to_hex(s.background_color)
                     if color:
                         attrs += f' style="background-color:{color}"'
-            text = _cell_text(cell, heading_id_to_name=heading_id_to_name, inline_objects=inline_objects)
+            text = _cell_text(
+                cell,
+                heading_id_to_name=heading_id_to_name,
+                inline_objects=inline_objects,
+            )
             lines.append(f"    <{tag}{attrs}>{text}</{tag}>")
         lines.append("  </tr>")
     lines.append("</table>")

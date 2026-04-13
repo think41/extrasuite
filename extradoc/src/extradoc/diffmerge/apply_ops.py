@@ -1700,7 +1700,7 @@ def _merge_table_cell(
         # New paragraphs added — append from desired
         for d_cse in d_cell_content[len(raw_cell_content) :]:
             raw_cell_content.append(d_cse.model_dump(by_alias=True, exclude_none=True))
-    elif len(d_cell_content) < len(raw_cell_content):
+    elif len(d_cell_content) < len(raw_cell_content):  # noqa: SIM102
         # The desired content has fewer paragraphs than the raw base cell.
         # Two distinct cases must be distinguished:
         #

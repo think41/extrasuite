@@ -4,6 +4,8 @@ from __future__ import annotations
 
 from typing import TYPE_CHECKING, Any
 
+from extradoc.api_types._generated import ParagraphStyleNamedStyleType
+
 from ._models import IndexHeading, IndexTab, IndexXml, ParagraphXml
 from ._utils import sanitize_tab_name
 
@@ -68,7 +70,11 @@ def _build_index_tab(
         folder = sanitize_tab_name(tab_title)
 
     tab_xml = tab_xml_map.get(tab_id)
-    headings = _extract_outline(tab_xml) if tab_xml is not None else _extract_outline_from_tab(tab)
+    headings = (
+        _extract_outline(tab_xml)
+        if tab_xml is not None
+        else _extract_outline_from_tab(tab)
+    )
 
     parent_tab_id = tab_props.parent_tab_id if tab_props else None
     nesting_level = tab_props.nesting_level if tab_props else None
@@ -125,8 +131,6 @@ def _extract_outline_from_tab(tab: Tab) -> list[IndexHeading]:
     Returns headings in document order with their heading_ids (stable opaque IDs
     assigned by Google Docs, invariant across heading text renames).
     """
-    from extradoc.api_types._generated import ParagraphStyleNamedStyleType
-
     _style_to_tag: dict[str, str] = {
         "TITLE": "title",
         "SUBTITLE": "subtitle",
@@ -146,9 +150,15 @@ def _extract_outline_from_tab(tab: Tab) -> list[IndexHeading]:
         ps = para.paragraph_style
         if not ps:
             continue
-        style_name = (ps.named_style_type.value if isinstance(
-            ps.named_style_type, ParagraphStyleNamedStyleType
-        ) else (ps.named_style_type or "")) if ps.named_style_type else ""
+        style_name = (
+            (
+                ps.named_style_type.value
+                if isinstance(ps.named_style_type, ParagraphStyleNamedStyleType)
+                else (ps.named_style_type or "")
+            )
+            if ps.named_style_type
+            else ""
+        )
         tag = _style_to_tag.get(style_name)
         if not tag:
             continue

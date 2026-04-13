@@ -816,9 +816,7 @@ class TestBulletPresetInference:
 class TestNumberedListTextEditNoFragmentation:
     """Editing only the text of one item in a numbered list must not touch bullets."""
 
-    def test_edit_item4_text_only_emits_no_bullet_requests(
-        self, tmp_path
-    ) -> None:
+    def test_edit_item4_text_only_emits_no_bullet_requests(self, tmp_path) -> None:
         """Simulates the real pull->edit->push pipeline via MarkdownSerde.
 
         Build a document with a numbered list, serialize to markdown, edit a
@@ -884,9 +882,7 @@ class TestNumberedListTextEditNoFragmentation:
 
         # Strengthening: the only non-trivial requests should be text edits.
         non_text_reqs = [
-            r
-            for r in reqs
-            if r.insert_text is None and r.delete_content_range is None
+            r for r in reqs if r.insert_text is None and r.delete_content_range is None
         ]
         assert non_text_reqs == [], (
             f"Expected only insertText/deleteContentRange requests, got extras: "

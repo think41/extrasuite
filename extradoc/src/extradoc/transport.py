@@ -14,7 +14,7 @@ from dataclasses import dataclass
 from typing import TYPE_CHECKING, Any
 
 from extradoc.api_types._generated import (
-    BatchUpdateDocumentRequest,  # noqa: TC001 – used at runtime in batch_update()
+    BatchUpdateDocumentRequest,  # noqa: TC001 - used at runtime in batch_update()
 )
 
 if TYPE_CHECKING:

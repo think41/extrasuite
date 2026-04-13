@@ -7,9 +7,11 @@ common editing scenarios produce correct batchUpdate operations.
 from __future__ import annotations
 
 import json
-import shutil
 from pathlib import Path
-from typing import Any
+from typing import TYPE_CHECKING, Any
+
+if TYPE_CHECKING:
+    from collections.abc import Callable
 
 from extradoc.api_types._generated import Document
 from extradoc.comments._types import DocumentWithComments, FileComments
@@ -45,7 +47,7 @@ def _flatten_requests(batches: list[Any]) -> list[dict[str, Any]]:
 def _serialize_and_edit(
     base_doc: Document,
     tmp_path: Path,
-    edit_fn: "Callable[[str], str]",
+    edit_fn: Callable[[str], str],
 ) -> tuple[Document, Document]:
     """Serialize base_doc, apply edit_fn to the tab markdown, deserialize."""
     folder = tmp_path / "doc"
@@ -91,8 +93,6 @@ def test_scenario_a_title_rewrite_no_delete_insert_pair(tmp_path: Path) -> None:
 
     # Collect deleteContentRange ops and their ranges
     deletes = [r for r in reqs if "deleteContentRange" in r]
-    inserts = [r for r in reqs if "insertText" in r]
-
     # Find the title's start index in base doc — it's the 2nd paragraph
     # (after inline image). We verify no delete spans more than the paragraph.
     # The title is at roughly startIndex=1 and has ~40 chars.
@@ -100,13 +100,15 @@ def test_scenario_a_title_rewrite_no_delete_insert_pair(tmp_path: Path) -> None:
     title_region_end = 200  # generous upper bound for title paragraph
 
     large_title_deletes = [
-        r for r in deletes
+        r
+        for r in deletes
         if (
             r["deleteContentRange"]["range"].get("startIndex", 9999) < title_region_end
             and (
                 r["deleteContentRange"]["range"].get("endIndex", 0)
                 - r["deleteContentRange"]["range"].get("startIndex", 0)
-            ) > 30
+            )
+            > 30
         )
     ]
 
@@ -343,13 +345,19 @@ def test_scenario_e_append_to_para_with_footnote_preserves_footnote(
     # No delete should start at or near shared_staff_start and span the whole para
     para_len = 20  # "[Shared Staff]\n" + footnote ref ≈ 16-20 chars
     full_para_deletes = [
-        r for r in reqs
+        r
+        for r in reqs
         if "deleteContentRange" in r
-        and abs(r["deleteContentRange"]["range"].get("startIndex", -999) - shared_staff_start) <= 2
+        and abs(
+            r["deleteContentRange"]["range"].get("startIndex", -999)
+            - shared_staff_start
+        )
+        <= 2
         and (
             r["deleteContentRange"]["range"].get("endIndex", 0)
             - r["deleteContentRange"]["range"].get("startIndex", 0)
-        ) >= para_len
+        )
+        >= para_len
     ]
     assert full_para_deletes == [], (
         f"Expected no full-paragraph delete for '[Shared Staff]' para, "

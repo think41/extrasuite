@@ -97,7 +97,11 @@ def _custom_doc_roundtrip(
     bundle = _make_bundle(doc)
     _serde.serialize(bundle, folder)
     if edit_find and edit_replace:
-        tab_path = folder / "tabs" / "Tab_1.md" if (folder / "tabs").is_dir() else folder / "Tab_1.md"
+        tab_path = (
+            folder / "tabs" / "Tab_1.md"
+            if (folder / "tabs").is_dir()
+            else folder / "Tab_1.md"
+        )
         md = tab_path.read_text()
         md = md.replace(edit_find, edit_replace)
         tab_path.write_text(md)

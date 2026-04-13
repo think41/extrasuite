@@ -2,6 +2,26 @@
 
 All notable changes to the extradoc library will be documented in this file.
 
+## [0.4.2] - 2026-04-13
+
+### Fixed
+
+- **Text run fragmentation on push**: three-layer defence prevents the API's `updateTextStyle` splitting runs into `**PART** **I**` spans. Fixes `diffmerge/apply_ops.py` (merge adjacent same-style runs after merge), `reconcile_v3/lower.py` (coalesce consecutive equal-style spans into one request), and `serde/markdown/_to_markdown.py` (merge fragmented runs before serialisation).
+- **Nested list colored-separator bug**: edits inside nested lists with colored separator paragraphs were silently dropped on push due to incorrect ancestor matching in the 3-way merge.
+- **Table-cell terminal strip and lower.py structural correctness**: terminal paragraph stripping in table cells and structural ordering in `lower.py` could produce invalid request sequences.
+- **Phantom paragraph duplication in flattened table cells**: GFM-flattened cells could produce phantom duplicate paragraphs in the desired document.
+- **LCS alignment quality**: pre-pin stable anchors before the content-alignment DP to improve paragraph match quality on large documents with shared headings.
+- **Near-identical paragraph matching**: `content_align` now matches paragraphs that differ by only one span, reducing spurious delete+insert pairs.
+- **Leading whitespace preservation in markdown deserialise**: leading spaces in paragraph text were stripped on round-trip.
+- **Redundant `updateTextStyle` on whitespace inserts**: `lower.py` no longer emits style requests for whitespace-only spans that inherit the paragraph default.
+- **Simple-table row match on multi-cell edits**: row alignment now handles edits spanning multiple cells in a single row.
+- **Inline `x-colbreak` preservation on paragraph text edit**: column-break markers were dropped when the surrounding paragraph text was edited.
+- **Base `listId` preservation when merging bullet paragraphs**: the 3-way merge now propagates the base list ID into merged bullet paragraphs instead of synthesising a new one.
+
+### Changed
+
+- **Coordinate contract refactor (Direction A)**: `diffmerge/apply_ops.py` and `reconcile_v3/lower.py` now enforce the three-state index invariant (concrete / `None` / mixed-forbidden) as a documented contract, improving correctness guarantees for future changes.
+
 ## [0.4.1] - 2026-03-27
 
 ### Changed

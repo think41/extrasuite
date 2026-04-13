@@ -22,23 +22,22 @@ from extradoc.api_types._generated import (
     Document,
     DocumentStyle,
     DocumentTab,
+    EmbeddedObject,
     Footer,
     Footnote,
     Header,
     HeadingLink,
+    ImageProperties,
     InlineObject,
     InlineObjectElement,
     InlineObjectProperties,
-    EmbeddedObject,
-    ImageProperties,
-    Size,
-    Link as DocLink,
     NamedStyle,
     NamedStyles,
     Paragraph,
     ParagraphElement,
     ParagraphStyle,
     ParagraphStyleNamedStyleType,
+    Size,
     StructuralElement,
     Tab,
     Table,
@@ -47,6 +46,9 @@ from extradoc.api_types._generated import (
     TabProperties,
     TextRun,
     TextStyle,
+)
+from extradoc.api_types._generated import (
+    Link as DocLink,
 )
 from extradoc.api_types._generated import (
     List as DocList,
@@ -229,12 +231,20 @@ class TestIndexMdHeadingIds:
             heading_id: str,
         ) -> StructuralElement:
             ps = ParagraphStyle(named_style_type=style, heading_id=heading_id)
-            el = ParagraphElement(text_run=TextRun(content=text + "\n", text_style=TextStyle()))
-            return StructuralElement(paragraph=Paragraph(elements=[el], paragraph_style=ps))
+            el = ParagraphElement(
+                text_run=TextRun(content=text + "\n", text_style=TextStyle())
+            )
+            return StructuralElement(
+                paragraph=Paragraph(elements=[el], paragraph_style=ps)
+            )
 
         intro = _make_text_para("Some intro text.")
-        h1 = _heading_se("Overview", ParagraphStyleNamedStyleType.HEADING_1, "h.overview1")
-        h2 = _heading_se("Details", ParagraphStyleNamedStyleType.HEADING_2, "h.details2")
+        h1 = _heading_se(
+            "Overview", ParagraphStyleNamedStyleType.HEADING_1, "h.overview1"
+        )
+        h2 = _heading_se(
+            "Details", ParagraphStyleNamedStyleType.HEADING_2, "h.details2"
+        )
         doc_tab = DocumentTab(body=Body(content=[intro, h1, h2]))
         return Document(
             document_id="test-doc",
@@ -279,7 +289,9 @@ class TestIndexMdHeadingIds:
         ps = ParagraphStyle(
             named_style_type=ParagraphStyleNamedStyleType.HEADING_1, heading_id=None
         )
-        el = ParagraphElement(text_run=TextRun(content="Overview\n", text_style=TextStyle()))
+        el = ParagraphElement(
+            text_run=TextRun(content="Overview\n", text_style=TextStyle())
+        )
         se = StructuralElement(paragraph=Paragraph(elements=[el], paragraph_style=ps))
         doc = _make_doc(["intro"], extra_content=[se])
         bundle = _make_bundle(doc)
@@ -747,7 +759,9 @@ class TestMultiTab:
             (folder / ".extrasuite" / "index.xml").read_text(encoding="utf-8")
         )
         index.tabs.append(IndexTab(id="t.new", title="New Tab", folder="New_Tab"))
-        (folder / ".extrasuite" / "index.xml").write_text(index.to_xml_string(), encoding="utf-8")
+        (folder / ".extrasuite" / "index.xml").write_text(
+            index.to_xml_string(), encoding="utf-8"
+        )
 
         # This should not crash
         desired = _md_serde.deserialize(folder).desired
@@ -916,7 +930,9 @@ def _make_linked_para(display_text: str, link: DocLink) -> StructuralElement:
     linked_run = ParagraphElement(
         text_run=TextRun(content=display_text, text_style=TextStyle(link=link))
     )
-    newline_run = ParagraphElement(text_run=TextRun(content="\n", text_style=TextStyle()))
+    newline_run = ParagraphElement(
+        text_run=TextRun(content="\n", text_style=TextStyle())
+    )
     ps = ParagraphStyle(named_style_type=ParagraphStyleNamedStyleType.NORMAL_TEXT)
     return StructuralElement(
         paragraph=Paragraph(elements=[linked_run, newline_run], paragraph_style=ps)
@@ -932,7 +948,11 @@ def _get_link_from_desired(result_doc: Document, tab_idx: int = 0) -> DocLink | 
     for se in dt.body.content or []:
         if se.paragraph:
             for pe in se.paragraph.elements or []:
-                if pe.text_run and pe.text_run.text_style and pe.text_run.text_style.link:
+                if (
+                    pe.text_run
+                    and pe.text_run.text_style
+                    and pe.text_run.text_style.link
+                ):
                     return pe.text_run.text_style.link
     return None
 
@@ -943,7 +963,9 @@ class TestHyperlinkSerde:
     def test_external_url_round_trip(self, tmp_path: Path) -> None:
         """External URL links serialize to [text](url) and round-trip correctly."""
         link = DocLink(url="https://example.com/path?q=1")
-        doc = _make_doc(["intro"], extra_content=[_make_linked_para("click here", link)])
+        doc = _make_doc(
+            ["intro"], extra_content=[_make_linked_para("click here", link)]
+        )
         bundle = _make_bundle(doc)
         folder = tmp_path / "doc"
         _md_serde.serialize(bundle, folder)
@@ -959,7 +981,9 @@ class TestHyperlinkSerde:
     def test_heading_link_legacy_format_round_trip(self, tmp_path: Path) -> None:
         """Legacy headingId links (#heading:{id}) round-trip correctly."""
         link = DocLink(heading_id="h.abc123")
-        doc = _make_doc(["intro"], extra_content=[_make_linked_para("see section", link)])
+        doc = _make_doc(
+            ["intro"], extra_content=[_make_linked_para("see section", link)]
+        )
         bundle = _make_bundle(doc)
         folder = tmp_path / "doc"
         _md_serde.serialize(bundle, folder)
@@ -978,7 +1002,9 @@ class TestHyperlinkSerde:
         the desired document keeps the original HeadingLink struct.
         """
         link = DocLink(heading=HeadingLink(id="h.abc123", tab_id=None))
-        doc = _make_doc(["intro"], extra_content=[_make_linked_para("see section", link)])
+        doc = _make_doc(
+            ["intro"], extra_content=[_make_linked_para("see section", link)]
+        )
         bundle = _make_bundle(doc)
         folder = tmp_path / "doc"
         _md_serde.serialize(bundle, folder)
@@ -997,7 +1023,9 @@ class TestHyperlinkSerde:
     def test_heading_link_new_format_cross_tab(self, tmp_path: Path) -> None:
         """Cross-tab HeadingLink serializes as #heading:{tab_id}/{heading_id}."""
         link = DocLink(heading=HeadingLink(id="h.xyz789", tab_id="t.fr18r141n5si"))
-        doc = _make_doc(["intro"], extra_content=[_make_linked_para("see other tab", link)])
+        doc = _make_doc(
+            ["intro"], extra_content=[_make_linked_para("see other tab", link)]
+        )
         bundle = _make_bundle(doc)
         folder = tmp_path / "doc"
         _md_serde.serialize(bundle, folder)
@@ -1015,7 +1043,9 @@ class TestHyperlinkSerde:
     def test_bookmark_link_legacy_format_round_trip(self, tmp_path: Path) -> None:
         """Legacy bookmarkId links (#bookmark:{id}) round-trip correctly."""
         link = DocLink(bookmark_id="bm.def456")
-        doc = _make_doc(["intro"], extra_content=[_make_linked_para("see bookmark", link)])
+        doc = _make_doc(
+            ["intro"], extra_content=[_make_linked_para("see bookmark", link)]
+        )
         bundle = _make_bundle(doc)
         folder = tmp_path / "doc"
         _md_serde.serialize(bundle, folder)
@@ -1034,7 +1064,9 @@ class TestHyperlinkSerde:
         the desired document keeps the original BookmarkLink struct.
         """
         link = DocLink(bookmark=BookmarkLink(id="bm.def456", tab_id=None))
-        doc = _make_doc(["intro"], extra_content=[_make_linked_para("see bookmark", link)])
+        doc = _make_doc(
+            ["intro"], extra_content=[_make_linked_para("see bookmark", link)]
+        )
         bundle = _make_bundle(doc)
         folder = tmp_path / "doc"
         _md_serde.serialize(bundle, folder)
@@ -1053,7 +1085,9 @@ class TestHyperlinkSerde:
     def test_bookmark_link_new_format_cross_tab(self, tmp_path: Path) -> None:
         """Cross-tab BookmarkLink serializes as #bookmark:{tab_id}/{bookmark_id}."""
         link = DocLink(bookmark=BookmarkLink(id="bm.xyz789", tab_id="t.de9mg0cq7w3r"))
-        doc = _make_doc(["intro"], extra_content=[_make_linked_para("see other tab", link)])
+        doc = _make_doc(
+            ["intro"], extra_content=[_make_linked_para("see other tab", link)]
+        )
         bundle = _make_bundle(doc)
         folder = tmp_path / "doc"
         _md_serde.serialize(bundle, folder)
@@ -1071,7 +1105,9 @@ class TestHyperlinkSerde:
     def test_tab_link_round_trip(self, tmp_path: Path) -> None:
         """Direct tab links (#tab:{tab_id}) round-trip correctly."""
         link = DocLink(tab_id="t.fr18r141n5si")
-        doc = _make_doc(["intro"], extra_content=[_make_linked_para("go to tab 2", link)])
+        doc = _make_doc(
+            ["intro"], extra_content=[_make_linked_para("go to tab 2", link)]
+        )
         bundle = _make_bundle(doc)
         folder = tmp_path / "doc"
         _md_serde.serialize(bundle, folder)
@@ -1087,7 +1123,9 @@ class TestHyperlinkSerde:
     def test_heading_link_is_preserved_on_noop(self, tmp_path: Path) -> None:
         """A new-format HeadingLink survives a no-op serialize → deserialize."""
         link = DocLink(heading=HeadingLink(id="h.abc123", tab_id="t.0"))
-        doc = _make_doc(["intro"], extra_content=[_make_linked_para("same tab link", link)])
+        doc = _make_doc(
+            ["intro"], extra_content=[_make_linked_para("same tab link", link)]
+        )
         bundle = _make_bundle(doc)
         folder = tmp_path / "doc"
         _md_serde.serialize(bundle, folder)
@@ -1108,8 +1146,6 @@ class TestHyperlinkSerde:
 # Group 9: Heading links by name
 # ---------------------------------------------------------------------------
 
-import pytest
-
 
 def _make_heading_se(
     text: str,
@@ -1127,7 +1163,9 @@ class TestHeadingLinksByName:
 
     def test_existing_heading_resolves_by_name(self, tmp_path: Path) -> None:
         """Link [see here](#Overview) resolves to a heading link when 'Overview' exists."""
-        h1 = _make_heading_se("Overview", ParagraphStyleNamedStyleType.HEADING_1, "h.abc123")
+        h1 = _make_heading_se(
+            "Overview", ParagraphStyleNamedStyleType.HEADING_1, "h.abc123"
+        )
         doc = _make_doc(["intro"], extra_content=[h1])
         bundle = _make_bundle(doc)
         folder = tmp_path / "doc"
@@ -1147,8 +1185,12 @@ class TestHeadingLinksByName:
 
     def test_cross_tab_heading_resolves_by_name(self, tmp_path: Path) -> None:
         """Link [see](#Tab_2/Details) resolves to a heading link in the other tab."""
-        h1_tab1 = _make_heading_se("Intro", ParagraphStyleNamedStyleType.HEADING_1, "h.t1intro")
-        h1_tab2 = _make_heading_se("Details", ParagraphStyleNamedStyleType.HEADING_1, "h.t2details")
+        h1_tab1 = _make_heading_se(
+            "Intro", ParagraphStyleNamedStyleType.HEADING_1, "h.t1intro"
+        )
+        h1_tab2 = _make_heading_se(
+            "Details", ParagraphStyleNamedStyleType.HEADING_1, "h.t2details"
+        )
 
         tab1_content = [_make_text_para("intro"), h1_tab1]
         tab2_content = [h1_tab2, _make_text_para("Some detail text")]
@@ -1185,8 +1227,12 @@ class TestHeadingLinksByName:
 
     def test_duplicate_headings_first_wins(self, tmp_path: Path) -> None:
         """Two headings named 'Details' — link resolves to the first one."""
-        h1 = _make_heading_se("Details", ParagraphStyleNamedStyleType.HEADING_2, "h.first")
-        h2 = _make_heading_se("Details", ParagraphStyleNamedStyleType.HEADING_2, "h.second")
+        h1 = _make_heading_se(
+            "Details", ParagraphStyleNamedStyleType.HEADING_2, "h.first"
+        )
+        h2 = _make_heading_se(
+            "Details", ParagraphStyleNamedStyleType.HEADING_2, "h.second"
+        )
         doc = _make_doc(["intro"], extra_content=[h1, h2])
         bundle = _make_bundle(doc)
         folder = tmp_path / "doc"
@@ -1217,12 +1263,16 @@ class TestHeadingLinksByName:
         found = _get_link_from_desired(result.desired.document)
         assert found is not None, "Expected a link in the desired document"
         assert found.url is not None, "Expected a URL-based placeholder link"
-        assert found.url.startswith("#heading-ref:"), f"Expected placeholder, got: {found.url}"
+        assert found.url.startswith("#heading-ref:"), (
+            f"Expected placeholder, got: {found.url}"
+        )
         assert "NewSection" in found.url
 
     def test_serialize_heading_link_as_name(self, tmp_path: Path) -> None:
         """Heading link with heading_id serializes as [text](#Heading Name)."""
-        h1 = _make_heading_se("Overview", ParagraphStyleNamedStyleType.HEADING_1, "h.abc123")
+        h1 = _make_heading_se(
+            "Overview", ParagraphStyleNamedStyleType.HEADING_1, "h.abc123"
+        )
         link = DocLink(heading_id="h.abc123")
         linked_para = _make_linked_para("click here", link)
         doc = _make_doc([], extra_content=[h1, linked_para])
@@ -1271,7 +1321,9 @@ class TestHeadingLinksByName:
 
         # --- Cycle 2: base now has the heading + the placeholder link ---
         # Build a new base that has the heading AND the placeholder link from cycle 1
-        h1 = _make_heading_se("NewSection", ParagraphStyleNamedStyleType.HEADING_1, "h.newsec")
+        h1 = _make_heading_se(
+            "NewSection", ParagraphStyleNamedStyleType.HEADING_1, "h.newsec"
+        )
         placeholder_link = DocLink(url="#heading-ref:NewSection")
         linked_para = _make_linked_para("see", placeholder_link)
         doc2 = _make_doc([], extra_content=[h1, linked_para])
@@ -1313,9 +1365,7 @@ def _make_inline_object(
     )
 
 
-def _make_para_with_image(
-    text: str, inline_object_id: str
-) -> StructuralElement:
+def _make_para_with_image(text: str, inline_object_id: str) -> StructuralElement:
     return StructuralElement(
         paragraph=Paragraph(
             elements=[
@@ -1337,7 +1387,7 @@ def _make_para_with_image(
 class TestImageSerde:
     """Tests for inline image markdown serialization/deserialization."""
 
-    def test_serialize_image_with_description(self, tmp_path: "Path") -> None:
+    def test_serialize_image_with_description(self, tmp_path: Path) -> None:
         """An image with description serializes as ![alt](url)."""
         img = _make_inline_object(
             "kix.abc123",
@@ -1357,7 +1407,7 @@ class TestImageSerde:
         assert "![A photo](https://lh3.googleusercontent.com/abc123)" in md
         assert "<x-img" not in md
 
-    def test_serialize_image_no_description(self, tmp_path: "Path") -> None:
+    def test_serialize_image_no_description(self, tmp_path: Path) -> None:
         """An image with no description serializes with empty alt text."""
         img = _make_inline_object(
             "kix.abc123",
@@ -1376,7 +1426,7 @@ class TestImageSerde:
         assert "![](https://lh3.googleusercontent.com/abc123)" in md
         assert "<x-img" not in md
 
-    def test_deserialize_existing_image_roundtrip(self, tmp_path: "Path") -> None:
+    def test_deserialize_existing_image_roundtrip(self, tmp_path: Path) -> None:
         """Deserializing a doc with an image produces same inlineObjectElement."""
         img = _make_inline_object(
             "kix.abc123",
@@ -1418,7 +1468,7 @@ class TestImageSerde:
                         found = True
         assert found, "InlineObjectElement should be preserved in round-trip"
 
-    def test_deserialize_new_local_image(self, tmp_path: "Path") -> None:
+    def test_deserialize_new_local_image(self, tmp_path: Path) -> None:
         """Adding ![photo](./images/local.png) creates a new InlineObjectElement."""
         doc = _make_doc(["Hello world"])
         bundle = _make_bundle(doc)
@@ -1446,7 +1496,7 @@ class TestImageSerde:
                     found_uri = True
         assert found_uri, "Expected inline object with contentUri='./images/local.png'"
 
-    def test_deserialize_new_external_image(self, tmp_path: "Path") -> None:
+    def test_deserialize_new_external_image(self, tmp_path: Path) -> None:
         """Adding ![alt](https://example.com/img.png) creates a new InlineObjectElement."""
         doc = _make_doc(["Hello world"])
         bundle = _make_bundle(doc)
@@ -1471,9 +1521,11 @@ class TestImageSerde:
                 uri = props.embedded_object.image_properties
                 if uri and uri.content_uri == "https://example.com/img.png":
                     found_uri = True
-        assert found_uri, "Expected inline object with contentUri='https://example.com/img.png'"
+        assert found_uri, (
+            "Expected inline object with contentUri='https://example.com/img.png'"
+        )
 
-    def test_delete_image(self, tmp_path: "Path") -> None:
+    def test_delete_image(self, tmp_path: Path) -> None:
         """Removing ![alt](url) from markdown removes the InlineObjectElement."""
         img = _make_inline_object(
             "kix.abc123",
@@ -1507,7 +1559,7 @@ class TestImageSerde:
 
         # The inline object element should be gone from body
         found = False
-        for se in (dt.body.content or []):
+        for se in dt.body.content or []:
             if se.paragraph:
                 for el in se.paragraph.elements or []:
                     if (
@@ -1515,4 +1567,6 @@ class TestImageSerde:
                         and el.inline_object_element.inline_object_id == "kix.abc123"
                     ):
                         found = True
-        assert not found, "InlineObjectElement should be removed after deleting image from markdown"
+        assert not found, (
+            "InlineObjectElement should be removed after deleting image from markdown"
+        )

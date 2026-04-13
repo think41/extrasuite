@@ -422,7 +422,9 @@ def _insert_text_with_newlines_in_content(
                             },
                         }
                     )
-                    group_has_original_content = group_has_original_content or is_original
+                    group_has_original_content = (
+                        group_has_original_content or is_original
+                    )
 
                 para_dict: dict[str, Any] = {
                     "elements": elements,

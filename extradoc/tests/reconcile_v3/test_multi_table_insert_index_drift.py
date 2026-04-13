@@ -85,8 +85,6 @@ import shutil
 from pathlib import Path
 from typing import Any
 
-import pytest
-
 from extradoc.api_types._generated import Document
 from extradoc.comments._types import DocumentWithComments, FileComments
 from extradoc.reconcile_v3.api import reconcile_batches

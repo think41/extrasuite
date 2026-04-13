@@ -21,9 +21,10 @@ nested sub-items separated by colored empty paragraphs).
 
 from __future__ import annotations
 
-from pathlib import Path
+from typing import TYPE_CHECKING
 
-import pytest
+if TYPE_CHECKING:
+    from pathlib import Path
 
 from extradoc.api_types._generated import Document
 from extradoc.comments._types import DocumentWithComments, FileComments
@@ -217,8 +218,7 @@ def test_edit_inside_nested_list_sub_item_reaches_desired(tmp_path: Path) -> Non
 def _make_para_with_runs(runs: list[tuple[str, dict]]) -> dict:
     """Build a paragraph dict with the given (text, textStyle) runs."""
     elements = [
-        {"textRun": {"content": content, "textStyle": style}}
-        for content, style in runs
+        {"textRun": {"content": content, "textStyle": style}} for content, style in runs
     ]
     elements.append({"textRun": {"content": "\n", "textStyle": {}}})
     return {
@@ -243,8 +243,10 @@ def _serialize_doc(content: list[dict], tmp_path: Path) -> str:
                     },
                     "documentTab": {
                         "body": {
-                            "content": [{"sectionBreak": {"sectionStyle": {}}}]
-                            + content
+                            "content": [
+                                {"sectionBreak": {"sectionStyle": {}}},
+                                *content,
+                            ]
                         }
                     },
                 }

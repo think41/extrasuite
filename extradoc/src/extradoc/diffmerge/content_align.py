@@ -734,14 +734,20 @@ def _pre_pin_stable_anchors(
     for i, node in enumerate(base):
         if node.kind in (NodeKind.PARAGRAPH, NodeKind.LIST) and node.text.strip():
             key = f"{node.kind}:{node.text}"
-            if base_text_counts.get(key, 0) == 1 and desired_text_counts.get(key, 0) == 1:
+            if (
+                base_text_counts.get(key, 0) == 1
+                and desired_text_counts.get(key, 0) == 1
+            ):
                 base_text_to_idx[key] = i
 
     desired_text_to_idx: dict[str, int] = {}
     for j, node in enumerate(desired):
         if node.kind in (NodeKind.PARAGRAPH, NodeKind.LIST) and node.text.strip():
             key = f"{node.kind}:{node.text}"
-            if base_text_counts.get(key, 0) == 1 and desired_text_counts.get(key, 0) == 1:
+            if (
+                base_text_counts.get(key, 0) == 1
+                and desired_text_counts.get(key, 0) == 1
+            ):
                 desired_text_to_idx[key] = j
 
     exact_anchors: list[tuple[int, int]] = []
@@ -834,8 +840,12 @@ def _apply_anchors_to_alignment(
         b_lo, d_lo = boundaries[k]
         b_hi, d_hi = boundaries[k + 1]
 
-        gap_base_indices = [i for i in range(b_lo + 1, b_hi) if i not in anchor_base_set]
-        gap_desired_indices = [j for j in range(d_lo + 1, d_hi) if j not in anchor_desired_set]
+        gap_base_indices = [
+            i for i in range(b_lo + 1, b_hi) if i not in anchor_base_set
+        ]
+        gap_desired_indices = [
+            j for j in range(d_lo + 1, d_hi) if j not in anchor_desired_set
+        ]
 
         if not gap_base_indices and not gap_desired_indices:
             continue

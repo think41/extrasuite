@@ -52,12 +52,7 @@ def test_leading_whitespace_plain_paragraph_is_preserved() -> None:
 
 def test_leading_whitespace_html_table_cell_is_preserved() -> None:
     """HTML ``<td>`` with leading space must not be stripped."""
-    src = (
-        "<table><tr>"
-        "<td colspan=\"2\"> INTEREST</td>"
-        "<td>other</td>"
-        "</tr></table>\n"
-    )
+    src = '<table><tr><td colspan="2"> INTEREST</td><td>other</td></tr></table>\n'
     doc = markdown_to_document({"Tab1": src})
     tab = doc.tabs[0]
     body = tab.document_tab.body
