@@ -2,7 +2,7 @@ Push local changes to Google Docs.
 
 ## Usage
 
-  extrasuite doc push <folder>
+  extrasuite docs push <folder>
 
 ## Arguments
 
@@ -11,12 +11,13 @@ Push local changes to Google Docs.
 ## Flags
 
   -f, --force    Push despite validation warnings
-  --verify       Re-pull after push to verify changes were applied correctly
+  --verify       Re-pull after push and confirm changes were applied correctly
 
 ## Important
 
-Always re-pull before making more changes. The internal snapshot is not
-auto-updated, so subsequent pushes without re-pulling generate incorrect diffs.
+Always re-pull before making more changes. Push compares current files against
+.extrasuite/pristine.zip — this snapshot is not updated after push, so a second
+push without re-pulling will generate an incorrect diff.
 
-  extrasuite doc push ./my-doc
-  extrasuite doc pull <url> ./my-doc
+  extrasuite docs push ./my-doc
+  extrasuite docs pull <url> ./my-doc   # always re-pull before editing further
