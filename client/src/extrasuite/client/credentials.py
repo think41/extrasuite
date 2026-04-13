@@ -52,6 +52,174 @@ _GOOGLE_SCOPE_PREFIX = "https://www.googleapis.com/auth/"
 _SA_TOKEN_CAP_SECONDS = 3600  # 60 min for service account tokens
 _DWD_TOKEN_CAP_SECONDS = 600  # 10 min for domain-wide delegation tokens
 
+_OAUTH_USER_SCOPES = [
+    "https://www.googleapis.com/auth/spreadsheets",
+    "https://www.googleapis.com/auth/documents",
+    "https://www.googleapis.com/auth/presentations",
+    "https://www.googleapis.com/auth/drive.file",
+    "https://www.googleapis.com/auth/forms.body",
+    "openid",
+    "email",
+]
+
+_NO_AUTH_MESSAGE = """\
+No authentication method found.
+
+extrasuite checks for credentials in this order:
+
+  1. ExtraSuite gateway
+       EXTRASUITE_SERVER_URL env var
+       --gateway /path/to/gateway.json
+       ~/.config/extrasuite/gateway.json
+
+  2. Service account file
+       --service-account /path/to/sa.json
+       SERVICE_ACCOUNT_PATH env var
+
+  3. gws (pre-obtained token)
+       GOOGLE_WORKSPACE_CLI_TOKEN env var
+
+  4. gws (OAuth client)
+       GOOGLE_WORKSPACE_CLI_CLIENT_ID + GOOGLE_WORKSPACE_CLI_CLIENT_SECRET env vars
+       GOOGLE_WORKSPACE_CLI_CREDENTIALS_FILE env var
+       ~/.config/gws/client_secret.json
+
+  5. gogcli (pre-obtained token)
+       GOG_ACCESS_TOKEN env var
+
+  6. gogcli (OAuth client)
+       ~/.config/gogcli/credentials.json
+       (~/Library/Application Support/gogcli/ on macOS)
+
+Quick start options:
+  Already use gws?    Run: gws auth setup   (then re-run your extrasuite command)
+  Already use gogcli? Run: gog auth credentials <path/to/client_secret.json>
+  Team deployment?    Run: extrasuite auth login   (requires gateway server)\
+"""
+
+
+@dataclass
+class OAuthClientCredentials:
+    """Client ID + secret borrowed from a gws or gogcli installation."""
+
+    client_id: str
+    client_secret: str
+    source: str  # "gws" | "gogcli" — used only in log/error messages
+
+
+def _parse_oauth_client_json(data: dict[str, Any]) -> tuple[str, str] | None:
+    """Extract (client_id, client_secret) from a Google OAuth client JSON dict.
+
+    Handles three formats:
+      - Desktop app: {"installed": {"client_id": ..., "client_secret": ...}}
+      - Web app:     {"web":       {"client_id": ..., "client_secret": ...}}
+      - Flat:        {"client_id": ..., "client_secret": ...}  (gogcli format)
+
+    Returns None for service account JSONs or files missing the required keys.
+    """
+    if data.get("type") == "service_account":
+        return None
+    for key in ("installed", "web"):
+        if key in data:
+            inner = data[key]
+            cid = inner.get("client_id", "")
+            csec = inner.get("client_secret", "")
+            if cid and csec:
+                return cid, csec
+    cid = data.get("client_id", "")
+    csec = data.get("client_secret", "")
+    if cid and csec:
+        return str(cid), str(csec)
+    return None
+
+
+def _find_gws_client_credentials() -> OAuthClientCredentials | None:
+    """Discover gws OAuth client credentials without any side effects.
+
+    Checks in order:
+      1. GOOGLE_WORKSPACE_CLI_CLIENT_ID + GOOGLE_WORKSPACE_CLI_CLIENT_SECRET env vars
+      2. GOOGLE_WORKSPACE_CLI_CREDENTIALS_FILE env var (reads the JSON file)
+      3. ~/.config/gws/client_secret.json
+    """
+    cid = os.environ.get("GOOGLE_WORKSPACE_CLI_CLIENT_ID", "")
+    csec = os.environ.get("GOOGLE_WORKSPACE_CLI_CLIENT_SECRET", "")
+    if cid and csec:
+        return OAuthClientCredentials(client_id=cid, client_secret=csec, source="gws")
+
+    creds_file = os.environ.get("GOOGLE_WORKSPACE_CLI_CREDENTIALS_FILE", "")
+    candidates = [Path(creds_file)] if creds_file else []
+    candidates.append(Path.home() / ".config" / "gws" / "client_secret.json")
+
+    for path in candidates:
+        try:
+            data = json.loads(path.read_text())
+        except (OSError, json.JSONDecodeError):
+            continue
+        parsed = _parse_oauth_client_json(data)
+        if parsed:
+            return OAuthClientCredentials(
+                client_id=parsed[0], client_secret=parsed[1], source="gws"
+            )
+
+    return None
+
+
+def _find_gogcli_client_credentials() -> OAuthClientCredentials | None:
+    """Discover gogcli OAuth client credentials without any side effects.
+
+    Checks the platform-appropriate config directory for credentials.json.
+    """
+    system = platform.system()
+    if system == "Darwin":
+        base = Path.home() / "Library" / "Application Support"
+    elif system == "Windows":
+        appdata = os.environ.get("APPDATA", "")
+        base = Path(appdata) if appdata else Path.home() / "AppData" / "Roaming"
+    else:
+        xdg = os.environ.get("XDG_CONFIG_HOME", "")
+        base = Path(xdg) if xdg else Path.home() / ".config"
+
+    path = base / "gogcli" / "credentials.json"
+    try:
+        data = json.loads(path.read_text())
+    except (OSError, json.JSONDecodeError):
+        return None
+
+    parsed = _parse_oauth_client_json(data)
+    if parsed:
+        return OAuthClientCredentials(
+            client_id=parsed[0], client_secret=parsed[1], source="gogcli"
+        )
+    return None
+
+
+def _exchange_refresh_token(
+    client_id: str, client_secret: str, refresh_token: str
+) -> tuple[str, float]:
+    """Exchange a refresh token for a new access token via Google's token endpoint.
+
+    Returns (access_token, expires_at_unix_timestamp).
+    Raises on HTTP error (e.g. 400 if the refresh token has been revoked).
+    """
+    body = urllib.parse.urlencode(
+        {
+            "client_id": client_id,
+            "client_secret": client_secret,
+            "refresh_token": refresh_token,
+            "grant_type": "refresh_token",
+        }
+    ).encode("utf-8")
+    req = urllib.request.Request(
+        "https://oauth2.googleapis.com/token",
+        data=body,
+        headers={"Content-Type": "application/x-www-form-urlencoded"},
+        method="POST",
+    )
+    with urllib.request.urlopen(req, timeout=30, context=SSL_CONTEXT) as response:
+        result = json.loads(response.read().decode("utf-8"))
+    expires_at = time.time() + int(result.get("expires_in", 3600))
+    return result["access_token"], expires_at
+
 
 @dataclass
 class Credential:
@@ -310,25 +478,36 @@ class CredentialsManager:
         sa_path = service_account_path or os.environ.get("SERVICE_ACCOUNT_PATH")
         self._sa_path = Path(sa_path) if sa_path else None
 
-        # Validate that at least one auth method is configured
-        has_extrasuite = bool(self._server_base_url)
-        if not has_extrasuite and not self._sa_path:
-            raise ValueError(
-                "No authentication method configured.\n\n"
-                "Fix with ONE of these options:\n"
-                "  1. Pass --gateway /path/to/gateway.json (contains EXTRASUITE_SERVER_URL)\n"
-                "  2. Pass --service-account /path/to/sa.json (direct Google credentials)\n"
-                "  3. Set EXTRASUITE_SERVER_URL environment variable\n"
-                "  4. Create ~/.config/extrasuite/gateway.json with:\n"
-                '     {"EXTRASUITE_SERVER_URL": "https://your-server.example.com"}'
-            )
+        # Determine auth mode (checked in precedence order)
+        self._bare_token: str | None = None
+        self._oauth_client_creds: OAuthClientCredentials | None = None
 
-        # ExtraSuite protocol takes precedence if both are configured
-        self._use_extrasuite = has_extrasuite
+        if self._server_base_url:
+            self._auth_mode = "extrasuite"
+        elif self._sa_path:
+            self._auth_mode = "service_account"
+        else:
+            # Layer 3: bare access token from env var
+            bare = os.environ.get("GOOGLE_WORKSPACE_CLI_TOKEN") or os.environ.get(
+                "GOG_ACCESS_TOKEN"
+            )
+            if bare:
+                self._auth_mode = "bare_token"
+                self._bare_token = bare
+            else:
+                # Layer 4: gws OAuth client, then Layer 5: gogcli OAuth client
+                oauth_creds = _find_gws_client_credentials()
+                if oauth_creds is None:
+                    oauth_creds = _find_gogcli_client_credentials()
+                if oauth_creds is not None:
+                    self._auth_mode = "oauth_client"
+                    self._oauth_client_creds = oauth_creds
+                else:
+                    raise ValueError(_NO_AUTH_MESSAGE)
 
         if session_store is not None:
             self._session_store: SessionStore = session_store
-        elif self._use_extrasuite:
+        elif self._auth_mode in ("extrasuite", "oauth_client"):
             if not _KEYRING_AVAILABLE:
                 raise RuntimeError(
                     "keyring package is required but is not installed.\n"
@@ -343,8 +522,11 @@ class CredentialsManager:
 
     @property
     def auth_mode(self) -> str:
-        """Return the active authentication mode."""
-        return "extrasuite" if self._use_extrasuite else "service_account"
+        """Return the active authentication mode.
+
+        One of: "extrasuite", "service_account", "bare_token", "oauth_client".
+        """
+        return self._auth_mode
 
     def get_credential(
         self,
@@ -381,14 +563,28 @@ class CredentialsManager:
         """
         cmd_type = command.get("type", "")
 
-        if self._use_extrasuite:
+        if self._auth_mode == "extrasuite":
             return self._get_extrasuite_credential(
                 command=command,
                 cmd_type=cmd_type,
                 reason=reason,
             )
-        else:
+        elif self._auth_mode == "service_account":
             return self._get_service_account_credential()
+        elif self._auth_mode == "bare_token":
+            assert self._bare_token is not None
+            return Credential(
+                provider="google",
+                kind="bearer_oauth_user",
+                token=self._bare_token,
+                expires_at=time.time() + 3500,  # ~1 h; no way to know exact expiry
+                scopes=[],
+                metadata={},
+            )
+        elif self._auth_mode == "oauth_client":
+            return self._get_oauth_client_credential()
+        else:
+            raise RuntimeError(f"Unknown auth mode: {self._auth_mode!r}")
 
     # =========================================================================
     # Profile helpers
@@ -519,9 +715,19 @@ class CredentialsManager:
     def logout(self, *, profile: str | None = None) -> None:
         """Revoke the session server-side and remove it from the OS keyring.
 
+        In oauth_client mode, clears the cached refresh token for the active
+        gws/gogcli source (ignores the profile argument — there is only one
+        token per source).
+
         Args:
             profile: Profile to log out.  Defaults to the active profile.
+                     Ignored in oauth_client mode.
         """
+        if self._auth_mode == "oauth_client":
+            assert self._oauth_client_creds is not None
+            self._delete_session_token(f"{self._oauth_client_creds.source}-default")
+            return
+
         profile_name = profile if profile is not None else self._resolve_profile()
         session = self._load_session_token(profile_name)
         if session:
@@ -560,8 +766,8 @@ class CredentialsManager:
               days_remaining} or {email, active=False, expired=True}
             - active: name of the active profile, or None
         """
-        if not self._use_extrasuite:
-            return {"profiles": {}, "active": None}
+        if self._auth_mode != "extrasuite":
+            return {"profiles": {}, "active": None, "auth_mode": self._auth_mode}
 
         data = self._load_profiles()
         profiles: dict[str, Any] = data.get("profiles", {})
@@ -644,6 +850,124 @@ class CredentialsManager:
             expires_at=credentials.expiry.timestamp() if credentials.expiry else 0,
             scopes=[],
             metadata={"service_account_email": credentials.service_account_email},
+        )
+
+    def _run_oauth_browser_flow(
+        self, client_id: str, client_secret: str
+    ) -> tuple[str, str]:
+        """Run an OAuth 2.0 authorization code flow with PKCE directly against Google.
+
+        Opens a browser (or prints the URL for headless mode), starts a localhost
+        callback server, and exchanges the returned code for tokens.
+
+        Returns (access_token, refresh_token).
+        """
+        import base64
+
+        code_verifier = base64.urlsafe_b64encode(os.urandom(32)).rstrip(b"=").decode()
+        digest = hashlib.sha256(code_verifier.encode()).digest()
+        code_challenge = base64.urlsafe_b64encode(digest).rstrip(b"=").decode()
+
+        port = self._find_free_port()
+        redirect_uri = f"http://127.0.0.1:{port}"
+
+        params = urllib.parse.urlencode(
+            {
+                "client_id": client_id,
+                "redirect_uri": redirect_uri,
+                "response_type": "code",
+                "scope": " ".join(_OAUTH_USER_SCOPES),
+                "code_challenge": code_challenge,
+                "code_challenge_method": "S256",
+                "access_type": "offline",
+                "prompt": "consent",  # always return a refresh_token
+            }
+        )
+        auth_url = f"https://accounts.google.com/o/oauth2/v2/auth?{params}"
+
+        code = self._run_browser_flow(port, auth_url, "Sign in with Google:")
+
+        body = urllib.parse.urlencode(
+            {
+                "client_id": client_id,
+                "client_secret": client_secret,
+                "code": code,
+                "code_verifier": code_verifier,
+                "grant_type": "authorization_code",
+                "redirect_uri": redirect_uri,
+            }
+        ).encode("utf-8")
+        req = urllib.request.Request(
+            "https://oauth2.googleapis.com/token",
+            data=body,
+            headers={"Content-Type": "application/x-www-form-urlencoded"},
+            method="POST",
+        )
+        try:
+            with urllib.request.urlopen(req, timeout=30, context=SSL_CONTEXT) as resp:
+                result = json.loads(resp.read().decode("utf-8"))
+        except urllib.error.HTTPError as e:
+            error_body = e.read().decode("utf-8") if e.fp else str(e)
+            raise Exception(f"Google token exchange failed: {error_body}") from e
+
+        if "refresh_token" not in result:
+            raise RuntimeError(
+                "Google did not return a refresh token. "
+                "This can happen if you have already authorized this app. "
+                "Visit https://myaccount.google.com/permissions to revoke access, "
+                "then try again."
+            )
+        return result["access_token"], result["refresh_token"]
+
+    def _get_oauth_client_credential(self) -> Credential:
+        """Get a credential using a borrowed OAuth client from gws or gogcli.
+
+        On first call: runs a browser flow and stores the refresh token in the
+        OS keyring.  On subsequent calls: exchanges the stored refresh token for
+        a fresh access token without browser interaction.
+        """
+        creds = self._oauth_client_creds
+        assert (
+            creds is not None
+        )  # invariant: always set when _auth_mode == "oauth_client"
+        profile = f"{creds.source}-default"
+
+        stored = self._load_session_token(profile)
+        if stored:
+            try:
+                access_token, expires_at = _exchange_refresh_token(
+                    creds.client_id, creds.client_secret, stored.raw_token
+                )
+                return Credential(
+                    provider="google",
+                    kind="bearer_oauth_user",
+                    token=access_token,
+                    expires_at=expires_at,
+                    scopes=[],
+                    metadata={},
+                )
+            except Exception:
+                # Refresh token revoked or expired — fall through to re-auth
+                self._delete_session_token(profile)
+
+        access_token, refresh_token = self._run_oauth_browser_flow(
+            creds.client_id, creds.client_secret
+        )
+        self._save_session_token(
+            SessionToken(
+                raw_token=refresh_token,
+                email="",  # not available from OAuth response; status() doesn't display oauth_client profiles
+                expires_at=time.time() + 30 * 86400,
+            ),
+            profile,
+        )
+        return Credential(
+            provider="google",
+            kind="bearer_oauth_user",
+            token=access_token,
+            expires_at=time.time() + 3500,
+            scopes=[],
+            metadata={},
         )
 
     def _load_gateway_config(self) -> dict[str, str] | None:

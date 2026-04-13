@@ -173,7 +173,7 @@ class TestCredentialsManagerInit:
     def test_init_with_server_url_param(self) -> None:
         manager = _make_manager(server_url="https://auth.example.com")
         assert manager._server_base_url == "https://auth.example.com"
-        assert manager._use_extrasuite is True
+        assert manager._auth_mode == "extrasuite"
         assert manager.auth_mode == "extrasuite"
 
     def test_init_with_service_account_path_param(self) -> None:
@@ -182,7 +182,7 @@ class TestCredentialsManagerInit:
         ):
             manager = CredentialsManager(service_account_path="/path/to/sa.json")
         assert manager._sa_path == Path("/path/to/sa.json")
-        assert manager._use_extrasuite is False
+        assert manager._auth_mode == "service_account"
         assert manager.auth_mode == "service_account"
 
     def test_init_with_env_vars(self) -> None:
@@ -201,7 +201,7 @@ class TestCredentialsManagerInit:
         ):
             manager = CredentialsManager()
         assert manager._sa_path == Path("/path/to/sa.json")
-        assert manager._use_extrasuite is False
+        assert manager._auth_mode == "service_account"
 
     def test_init_param_overrides_env_var(self) -> None:
         env = {"EXTRASUITE_SERVER_URL": "https://env.example.com"}
@@ -213,15 +213,23 @@ class TestCredentialsManagerInit:
         manager = _make_manager(
             server_url="https://auth.example.com",
         )
-        assert manager._use_extrasuite is True
+        assert manager._auth_mode == "extrasuite"
 
     def test_init_no_config_raises_error(self) -> None:
+        from extrasuite.client import credentials as creds_mod
+
         with (
             mock.patch.dict(os.environ, {}, clear=True),
             mock.patch.object(
                 CredentialsManager, "GATEWAY_CONFIG_PATH", Path("/nonexistent")
             ),
-            pytest.raises(ValueError, match="No authentication method configured"),
+            mock.patch.object(
+                creds_mod, "_find_gws_client_credentials", return_value=None
+            ),
+            mock.patch.object(
+                creds_mod, "_find_gogcli_client_credentials", return_value=None
+            ),
+            pytest.raises(ValueError, match="No authentication method found"),
         ):
             CredentialsManager()
 
@@ -846,3 +854,485 @@ class TestV2SessionFlow:
         port = CredentialsManager._find_free_port()
         assert isinstance(port, int)
         assert 1024 <= port <= 65535
+
+
+# ---------------------------------------------------------------------------
+# TestParseOAuthClientJson
+# ---------------------------------------------------------------------------
+
+
+class TestParseOAuthClientJson:
+    """Tests for _parse_oauth_client_json()."""
+
+    from extrasuite.client.credentials import _parse_oauth_client_json
+
+    def test_installed_format(self) -> None:
+        from extrasuite.client.credentials import _parse_oauth_client_json
+
+        data = {"installed": {"client_id": "cid", "client_secret": "csec"}}
+        assert _parse_oauth_client_json(data) == ("cid", "csec")
+
+    def test_web_format(self) -> None:
+        from extrasuite.client.credentials import _parse_oauth_client_json
+
+        data = {"web": {"client_id": "web-cid", "client_secret": "web-csec"}}
+        assert _parse_oauth_client_json(data) == ("web-cid", "web-csec")
+
+    def test_flat_format(self) -> None:
+        from extrasuite.client.credentials import _parse_oauth_client_json
+
+        data = {"client_id": "flat-cid", "client_secret": "flat-csec"}
+        assert _parse_oauth_client_json(data) == ("flat-cid", "flat-csec")
+
+    def test_service_account_rejected(self) -> None:
+        from extrasuite.client.credentials import _parse_oauth_client_json
+
+        data = {
+            "type": "service_account",
+            "client_id": "cid",
+            "client_secret": "csec",
+        }
+        assert _parse_oauth_client_json(data) is None
+
+    def test_missing_secret_returns_none(self) -> None:
+        from extrasuite.client.credentials import _parse_oauth_client_json
+
+        assert _parse_oauth_client_json({"installed": {"client_id": "cid"}}) is None
+
+    def test_empty_dict_returns_none(self) -> None:
+        from extrasuite.client.credentials import _parse_oauth_client_json
+
+        assert _parse_oauth_client_json({}) is None
+
+
+# ---------------------------------------------------------------------------
+# TestFindGwsClientCredentials
+# ---------------------------------------------------------------------------
+
+
+class TestFindGwsClientCredentials:
+    """Tests for _find_gws_client_credentials()."""
+
+    def test_env_vars_take_precedence(self) -> None:
+        from extrasuite.client.credentials import _find_gws_client_credentials
+
+        env = {
+            "GOOGLE_WORKSPACE_CLI_CLIENT_ID": "env-cid",
+            "GOOGLE_WORKSPACE_CLI_CLIENT_SECRET": "env-csec",
+        }
+        with mock.patch.dict(os.environ, env, clear=True):
+            result = _find_gws_client_credentials()
+        assert result is not None
+        assert result.client_id == "env-cid"
+        assert result.client_secret == "env-csec"
+        assert result.source == "gws"
+
+    def test_credentials_file_env_var(self, tmp_path: Path) -> None:
+        from extrasuite.client.credentials import _find_gws_client_credentials
+
+        creds_file = tmp_path / "client_secret.json"
+        creds_file.write_text(
+            json.dumps(
+                {"installed": {"client_id": "file-cid", "client_secret": "file-csec"}}
+            )
+        )
+        env = {"GOOGLE_WORKSPACE_CLI_CREDENTIALS_FILE": str(creds_file)}
+        with mock.patch.dict(os.environ, env, clear=True):
+            result = _find_gws_client_credentials()
+        assert result is not None
+        assert result.client_id == "file-cid"
+        assert result.source == "gws"
+
+    def test_credentials_file_service_account_skipped(self, tmp_path: Path) -> None:
+        from extrasuite.client.credentials import _find_gws_client_credentials
+
+        sa_file = tmp_path / "sa.json"
+        sa_file.write_text(
+            json.dumps({"type": "service_account", "client_id": "sa-cid"})
+        )
+        env = {"GOOGLE_WORKSPACE_CLI_CREDENTIALS_FILE": str(sa_file)}
+        with (
+            mock.patch.dict(os.environ, env, clear=True),
+            # Falls through to default path which doesn't exist → None
+            mock.patch("pathlib.Path.read_text", side_effect=OSError),
+        ):
+            result = _find_gws_client_credentials()
+        assert result is None
+
+    def test_default_file_path(self, tmp_path: Path) -> None:
+        from extrasuite.client.credentials import _find_gws_client_credentials
+
+        # Write a real file in a temp home dir so the default path resolves
+        gws_dir = tmp_path / ".config" / "gws"
+        gws_dir.mkdir(parents=True)
+        (gws_dir / "client_secret.json").write_text(
+            json.dumps(
+                {"installed": {"client_id": "path-cid", "client_secret": "path-csec"}}
+            )
+        )
+        with (
+            mock.patch.dict(os.environ, {}, clear=True),
+            mock.patch("pathlib.Path.home", return_value=tmp_path),
+        ):
+            result = _find_gws_client_credentials()
+        assert result is not None
+        assert result.client_id == "path-cid"
+
+    def test_no_credentials_returns_none(self) -> None:
+        from extrasuite.client.credentials import _find_gws_client_credentials
+
+        with (
+            mock.patch.dict(os.environ, {}, clear=True),
+            mock.patch("pathlib.Path.read_text", side_effect=OSError),
+        ):
+            result = _find_gws_client_credentials()
+        assert result is None
+
+
+# ---------------------------------------------------------------------------
+# TestFindGogcliClientCredentials
+# ---------------------------------------------------------------------------
+
+
+class TestFindGogcliClientCredentials:
+    """Tests for _find_gogcli_client_credentials()."""
+
+    def _gogcli_json(self) -> str:
+        return json.dumps({"client_id": "gogcli-cid", "client_secret": "gogcli-csec"})
+
+    def test_macos_path(self) -> None:
+        from extrasuite.client.credentials import _find_gogcli_client_credentials
+
+        with (
+            mock.patch("platform.system", return_value="Darwin"),
+            mock.patch("pathlib.Path.read_text", return_value=self._gogcli_json()),
+        ):
+            result = _find_gogcli_client_credentials()
+        assert result is not None
+        assert result.client_id == "gogcli-cid"
+        assert result.source == "gogcli"
+
+    def test_linux_path(self) -> None:
+        from extrasuite.client.credentials import _find_gogcli_client_credentials
+
+        with (
+            mock.patch("platform.system", return_value="Linux"),
+            mock.patch.dict(os.environ, {}, clear=True),
+            mock.patch("pathlib.Path.read_text", return_value=self._gogcli_json()),
+        ):
+            result = _find_gogcli_client_credentials()
+        assert result is not None
+        assert result.source == "gogcli"
+
+    def test_linux_respects_xdg_config_home(self, tmp_path: Path) -> None:
+        from extrasuite.client.credentials import _find_gogcli_client_credentials
+
+        gogcli_dir = tmp_path / "gogcli"
+        gogcli_dir.mkdir()
+        (gogcli_dir / "credentials.json").write_text(self._gogcli_json())
+
+        with (
+            mock.patch("platform.system", return_value="Linux"),
+            mock.patch.dict(os.environ, {"XDG_CONFIG_HOME": str(tmp_path)}, clear=True),
+        ):
+            result = _find_gogcli_client_credentials()
+        assert result is not None
+        assert result.client_id == "gogcli-cid"
+
+    def test_file_not_found_returns_none(self) -> None:
+        from extrasuite.client.credentials import _find_gogcli_client_credentials
+
+        with (
+            mock.patch("platform.system", return_value="Darwin"),
+            mock.patch("pathlib.Path.read_text", side_effect=OSError),
+        ):
+            result = _find_gogcli_client_credentials()
+        assert result is None
+
+    def test_malformed_json_returns_none(self) -> None:
+        from extrasuite.client.credentials import _find_gogcli_client_credentials
+
+        with (
+            mock.patch("platform.system", return_value="Darwin"),
+            mock.patch("pathlib.Path.read_text", return_value="not-json{{{"),
+        ):
+            result = _find_gogcli_client_credentials()
+        assert result is None
+
+
+# ---------------------------------------------------------------------------
+# TestExchangeRefreshToken
+# ---------------------------------------------------------------------------
+
+
+class TestExchangeRefreshToken:
+    """Tests for _exchange_refresh_token()."""
+
+    def _mock_token_response(
+        self, access_token: str = "new-access", expires_in: int = 3600
+    ) -> mock.MagicMock:
+        resp = mock.MagicMock()
+        resp.read.return_value = json.dumps(
+            {
+                "access_token": access_token,
+                "token_type": "Bearer",
+                "expires_in": expires_in,
+            }
+        ).encode()
+        resp.__enter__ = mock.MagicMock(return_value=resp)
+        resp.__exit__ = mock.MagicMock(return_value=False)
+        return resp
+
+    def test_success_returns_access_token_and_expiry(self) -> None:
+        from extrasuite.client.credentials import _exchange_refresh_token
+
+        with mock.patch(
+            "urllib.request.urlopen", return_value=self._mock_token_response()
+        ) as mock_open:
+            access_token, expires_at = _exchange_refresh_token(
+                "cid", "csec", "refresh-tok"
+            )
+
+        assert access_token == "new-access"
+        assert expires_at > time.time() + 3590
+        assert expires_at < time.time() + 3610
+
+        # Check correct parameters were sent
+        call_args = mock_open.call_args
+        req = call_args[0][0]
+        import urllib.parse
+
+        body = urllib.parse.parse_qs(req.data.decode())
+        assert body["grant_type"] == ["refresh_token"]
+        assert body["refresh_token"] == ["refresh-tok"]
+        assert body["client_id"] == ["cid"]
+
+    def test_http_error_propagates(self) -> None:
+        from extrasuite.client.credentials import _exchange_refresh_token
+
+        error = urllib.error.HTTPError(
+            url="https://oauth2.googleapis.com/token",
+            code=400,
+            msg="Bad Request",
+            hdrs={},
+            fp=mock.MagicMock(read=lambda: b'{"error":"invalid_grant"}'),
+        )
+        with (
+            mock.patch("urllib.request.urlopen", side_effect=error),
+            pytest.raises(urllib.error.HTTPError),
+        ):
+            _exchange_refresh_token("cid", "csec", "revoked-refresh-tok")
+
+
+# ---------------------------------------------------------------------------
+# TestBareTokenMode
+# ---------------------------------------------------------------------------
+
+
+class TestBareTokenMode:
+    """Tests for bare_token auth mode (layers 3)."""
+
+    def _make_bare_token_manager(
+        self, token: str, env_var: str = "GOOGLE_WORKSPACE_CLI_TOKEN"
+    ) -> CredentialsManager:
+        env = {env_var: token}
+        with (
+            mock.patch.dict(os.environ, env, clear=True),
+            mock.patch.object(
+                CredentialsManager, "GATEWAY_CONFIG_PATH", Path("/nonexistent")
+            ),
+            mock.patch(
+                "extrasuite.client.credentials._find_gws_client_credentials",
+                return_value=None,
+            ),
+            mock.patch(
+                "extrasuite.client.credentials._find_gogcli_client_credentials",
+                return_value=None,
+            ),
+        ):
+            return CredentialsManager(session_store=InMemorySessionStore())
+
+    def test_init_gws_token_env_var(self) -> None:
+        manager = self._make_bare_token_manager("gws-tok", "GOOGLE_WORKSPACE_CLI_TOKEN")
+        assert manager.auth_mode == "bare_token"
+
+    def test_init_gogcli_token_env_var(self) -> None:
+        manager = self._make_bare_token_manager("gog-tok", "GOG_ACCESS_TOKEN")
+        assert manager.auth_mode == "bare_token"
+
+    def test_get_credential_returns_bearer_oauth_user(self) -> None:
+        manager = self._make_bare_token_manager("my-raw-token")
+        cred = manager.get_credential(command={"type": "sheet.pull"}, reason="test")
+        assert cred.kind == "bearer_oauth_user"
+        assert cred.token == "my-raw-token"
+        assert cred.provider == "google"
+        assert cred.scopes == []
+        assert cred.metadata == {}
+
+    def test_get_credential_expiry_is_roughly_one_hour(self) -> None:
+        manager = self._make_bare_token_manager("tok")
+        cred = manager.get_credential(command={"type": "sheet.pull"}, reason="test")
+        assert cred.expires_at > time.time() + 3400
+        assert cred.expires_at < time.time() + 3600
+
+    def test_gws_token_takes_precedence_over_gogcli(self) -> None:
+        env = {
+            "GOOGLE_WORKSPACE_CLI_TOKEN": "gws-wins",
+            "GOG_ACCESS_TOKEN": "gog-loses",
+        }
+        with (
+            mock.patch.dict(os.environ, env, clear=True),
+            mock.patch.object(
+                CredentialsManager, "GATEWAY_CONFIG_PATH", Path("/nonexistent")
+            ),
+        ):
+            manager = CredentialsManager(session_store=InMemorySessionStore())
+        cred = manager.get_credential(command={"type": "sheet.pull"}, reason="test")
+        assert cred.token == "gws-wins"
+
+
+# ---------------------------------------------------------------------------
+# TestOAuthClientMode
+# ---------------------------------------------------------------------------
+
+
+class TestOAuthClientMode:
+    """Tests for oauth_client auth mode (layers 4/5)."""
+
+    def _make_oauth_manager(self, source: str = "gws") -> CredentialsManager:
+        from extrasuite.client.credentials import OAuthClientCredentials
+
+        creds = OAuthClientCredentials(
+            client_id="test-cid", client_secret="test-csec", source=source
+        )
+        env: dict[str, str] = {}
+        with (
+            mock.patch.dict(os.environ, env, clear=True),
+            mock.patch.object(
+                CredentialsManager, "GATEWAY_CONFIG_PATH", Path("/nonexistent")
+            ),
+            mock.patch(
+                "extrasuite.client.credentials._find_gws_client_credentials",
+                return_value=creds if source == "gws" else None,
+            ),
+            mock.patch(
+                "extrasuite.client.credentials._find_gogcli_client_credentials",
+                return_value=creds if source == "gogcli" else None,
+            ),
+        ):
+            return CredentialsManager(session_store=InMemorySessionStore())
+
+    def test_init_gws_oauth_client(self) -> None:
+        manager = self._make_oauth_manager("gws")
+        assert manager.auth_mode == "oauth_client"
+        assert manager._oauth_client_creds is not None
+        assert manager._oauth_client_creds.source == "gws"
+
+    def test_init_gogcli_oauth_client(self) -> None:
+        manager = self._make_oauth_manager("gogcli")
+        assert manager.auth_mode == "oauth_client"
+        assert manager._oauth_client_creds is not None
+        assert manager._oauth_client_creds.source == "gogcli"
+
+    def test_get_credential_uses_cached_refresh_token(self) -> None:
+        manager = self._make_oauth_manager("gws")
+        # Pre-load a refresh token in the store
+        manager._session_store.save(
+            "gws-default",
+            SessionToken(
+                raw_token="stored-refresh-tok",
+                email="",
+                expires_at=time.time() + 86400,
+            ),
+        )
+
+        mock_token_resp = mock.MagicMock()
+        mock_token_resp.read.return_value = json.dumps(
+            {"access_token": "fresh-access", "expires_in": 3600}
+        ).encode()
+        mock_token_resp.__enter__ = mock.MagicMock(return_value=mock_token_resp)
+        mock_token_resp.__exit__ = mock.MagicMock(return_value=False)
+
+        with mock.patch("urllib.request.urlopen", return_value=mock_token_resp):
+            cred = manager.get_credential(command={"type": "sheet.pull"}, reason="test")
+
+        assert cred.kind == "bearer_oauth_user"
+        assert cred.token == "fresh-access"
+
+    def test_get_credential_revoked_token_triggers_browser_flow(self) -> None:
+        manager = self._make_oauth_manager("gws")
+        # Pre-load a refresh token
+        manager._session_store.save(
+            "gws-default",
+            SessionToken(
+                raw_token="revoked-tok", email="", expires_at=time.time() + 86400
+            ),
+        )
+
+        revoke_error = urllib.error.HTTPError(
+            url="https://oauth2.googleapis.com/token",
+            code=400,
+            msg="invalid_grant",
+            hdrs={},
+            fp=mock.MagicMock(read=lambda: b'{"error":"invalid_grant"}'),
+        )
+
+        with (
+            mock.patch("urllib.request.urlopen", side_effect=revoke_error),
+            mock.patch.object(
+                manager,
+                "_run_oauth_browser_flow",
+                return_value=("browser-access", "new-refresh"),
+            ) as mock_browser,
+        ):
+            cred = manager.get_credential(command={"type": "sheet.pull"}, reason="test")
+
+        mock_browser.assert_called_once()
+        assert cred.token == "browser-access"
+        # Old token was deleted; new one stored
+        stored = manager._session_store.load("gws-default")
+        assert stored is not None
+        assert stored.raw_token == "new-refresh"
+
+    def test_get_credential_no_cached_token_runs_browser_flow(self) -> None:
+        manager = self._make_oauth_manager("gws")
+
+        with mock.patch.object(
+            manager,
+            "_run_oauth_browser_flow",
+            return_value=("first-access", "first-refresh"),
+        ) as mock_browser:
+            cred = manager.get_credential(command={"type": "sheet.pull"}, reason="test")
+
+        mock_browser.assert_called_once_with("test-cid", "test-csec")
+        assert cred.token == "first-access"
+        stored = manager._session_store.load("gws-default")
+        assert stored is not None
+        assert stored.raw_token == "first-refresh"
+
+    def test_logout_deletes_correct_keyring_entry(self) -> None:
+        manager = self._make_oauth_manager("gws")
+        manager._session_store.save(
+            "gws-default",
+            SessionToken(
+                raw_token="refresh-to-clear", email="", expires_at=time.time() + 86400
+            ),
+        )
+        assert manager._session_store.load("gws-default") is not None
+
+        manager.logout()
+
+        assert manager._session_store.load("gws-default") is None
+
+    def test_logout_gogcli_deletes_correct_entry(self) -> None:
+        manager = self._make_oauth_manager("gogcli")
+        manager._session_store.save(
+            "gogcli-default",
+            SessionToken(
+                raw_token="gogcli-refresh", email="", expires_at=time.time() + 86400
+            ),
+        )
+
+        manager.logout()
+
+        assert manager._session_store.load("gogcli-default") is None

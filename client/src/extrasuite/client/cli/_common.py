@@ -34,8 +34,8 @@ _HELP_COMMAND_FILES = frozenset(
         "batchupdate.md",
         "lint.md",
         "troubleshooting.md",  # stale XML-era content; hidden until rewritten
-        "pull-xml.md",          # XML workflow reference; not advertised for markdown path
-        "style-reference.md",   # XML-only (styles.xml / document.xml); hidden for markdown path
+        "pull-xml.md",  # XML workflow reference; not advertised for markdown path
+        "style-reference.md",  # XML-only (styles.xml / document.xml); hidden for markdown path
     }
 )
 
@@ -344,11 +344,6 @@ def _cmd_create(file_type: str, args: Any) -> tuple[str, str]:
     )
     oauth_token_access = cred.token
     sa_email = cred.service_account_email
-    if not sa_email:
-        raise RuntimeError(
-            "Could not determine service account email. Cannot share file."
-        )
-
     copy_from = getattr(args, "copy_from", None)
 
     if copy_from:
@@ -363,11 +358,18 @@ def _cmd_create(file_type: str, args: Any) -> tuple[str, str]:
 
     file_id = result["id"]
 
-    # Share with service account
-    share_file(oauth_token_access, file_id, sa_email)
-
     url = _FILE_URL_PATTERNS[file_type].format(id=file_id)
     print(f"\nCreated {file_type}: {args.title}")
     print(f"URL: {url}")
-    print(f"Shared with: {sa_email}")
+
+    if cred.kind != "bearer_oauth_user":
+        if not sa_email:
+            raise RuntimeError(
+                "Could not determine service account email. Cannot share file."
+            )
+        share_file(oauth_token_access, file_id, sa_email)
+        print(f"Shared with: {sa_email}")
+    else:
+        print("(File owned by your Google account — no sharing needed)")
+
     return file_id, url

@@ -145,10 +145,39 @@ Note: `SERVICE_ACCOUNT_PATH` mode bypasses the session flow entirely and calls G
 
 ## Configuration precedence
 
-1. Constructor parameters (`server_url`, `gateway_config_path`, `service_account_path`)
-2. Environment variables (`EXTRASUITE_SERVER_URL`)
-3. `~/.config/extrasuite/gateway.json`
-4. `SERVICE_ACCOUNT_PATH` env var (fallback, no server needed)
+`CredentialsManager` resolves auth by checking these sources in order, stopping at the first match:
+
+| # | Source | How to configure |
+|---|--------|-----------------|
+| 1 | ExtraSuite gateway server | `EXTRASUITE_SERVER_URL` env var, `--gateway` flag, or `~/.config/extrasuite/gateway.json` |
+| 2 | Service account JSON | `SERVICE_ACCOUNT_PATH` env var or `--service-account` flag |
+| 3 | gws pre-obtained token | `GOOGLE_WORKSPACE_CLI_TOKEN` env var |
+| 4 | gws OAuth client | `GOOGLE_WORKSPACE_CLI_CLIENT_ID/SECRET` env vars, `GOOGLE_WORKSPACE_CLI_CREDENTIALS_FILE`, or `~/.config/gws/client_secret.json` |
+| 5 | gogcli pre-obtained token | `GOG_ACCESS_TOKEN` env var |
+| 6 | gogcli OAuth client | `~/Library/Application Support/gogcli/credentials.json` (macOS), `~/.config/gogcli/credentials.json` (Linux) |
+
+Modes 3–6 are **zero-config**: if you already have `gws` or `gogcli` installed and configured, `extrasuite` will detect and use their credentials automatically.
+
+### Auth mode behaviour
+
+**`extrasuite` mode (1):** Session token (30 days) stored in OS keyring. `extrasuite auth login` pre-populates it; all other commands obtain it lazily on first use.
+
+**`service_account` mode (2):** Stateless. Reads the SA JSON and generates a token on every call.
+
+**`bare_token` mode (3, 5):** Stateless. Uses the env var token as-is. No refresh — re-export from your tool when it expires.
+
+**`oauth_client` mode (4, 6):** On first use, opens a browser for a one-time Google OAuth consent. The resulting refresh token is stored in the OS keyring under `gws-default` or `gogcli-default`. Subsequent calls silently exchange the refresh token for a new access token — no browser needed.
+
+> **Note:** In `oauth_client` mode, edits appear in Google Drive under your own Google account, not a named agent identity. Use ExtraSuite gateway mode (1) if you need a distinct agent identity and full audit trail.
+
+### `auth` CLI commands and mode compatibility
+
+| Command | `extrasuite` | `service_account` | `bare_token` | `oauth_client` |
+|---------|:---:|:---:|:---:|:---:|
+| `auth login` | ✓ | — | — | — |
+| `auth logout` | ✓ (revokes session) | — | — | ✓ (clears refresh token) |
+| `auth status` | ✓ | ✓ | ✓ | ✓ |
+| `auth activate` | ✓ | — | — | — |
 
 ## gateway.json format
 

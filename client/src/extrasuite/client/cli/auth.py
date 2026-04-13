@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import os
 import sys
 from typing import Any
 
@@ -17,6 +18,16 @@ def cmd_auth_login(args: Any) -> None:
     headless = getattr(args, "headless", False)
     profile = getattr(args, "profile", None)
     manager = CredentialsManager(**_auth_kwargs(args), headless=headless)
+
+    if manager.auth_mode != "extrasuite":
+        print(
+            f"Auth is handled automatically in '{manager.auth_mode}' mode — "
+            f"no login step needed.\n"
+            f"Run any extrasuite command and credentials will be obtained on demand.\n"
+            f"Run 'extrasuite auth status' to see the active configuration.",
+            file=sys.stderr,
+        )
+        return
 
     # Check if a valid session already exists for the target profile.
     info = manager.status()
@@ -65,8 +76,28 @@ def cmd_auth_status(args: Any) -> None:
     manager = CredentialsManager(**_auth_kwargs(args))
     info = manager.status()
 
+    auth_mode = info.get("auth_mode", "extrasuite")
     profiles = info.get("profiles", {})
     active = info.get("active")
+
+    if auth_mode == "bare_token":
+        token_source = (
+            "GOOGLE_WORKSPACE_CLI_TOKEN"
+            if os.environ.get("GOOGLE_WORKSPACE_CLI_TOKEN")
+            else "GOG_ACCESS_TOKEN"
+        )
+        print(f"Active auth mode: bare_token ({token_source})")
+        print("  Token is not auto-refreshed. Re-export from your tool to renew.")
+        return
+
+    if auth_mode == "oauth_client":
+        # oauth_client_creds source is embedded in the keyring profile name
+        creds = manager._oauth_client_creds
+        source = creds.source if creds else "unknown"
+        print(f"Active auth mode: oauth_client ({source})")
+        print(f"  Refresh token stored under keyring profile: {source}-default")
+        print("  Run 'extrasuite auth login' to switch to ExtraSuite server mode.")
+        return
 
     if not profiles:
         print("No profiles found. Run: extrasuite auth login")
