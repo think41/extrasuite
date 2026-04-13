@@ -691,10 +691,10 @@ def build_parser() -> Any:
         help="Permission role (default: reader)",
     )
 
-    # XML format variants
+    # XML format variants — hidden from help, still functional
     sp = doc_sub.add_parser(
         "pull-xml",
-        help="Download document as XML",
+        help=argparse.SUPPRESS,
         parents=[auth_parent],
         description=_load_help("docs", "pull-xml"),
         formatter_class=argparse.RawDescriptionHelpFormatter,
@@ -704,7 +704,7 @@ def build_parser() -> Any:
 
     sp = doc_sub.add_parser(
         "push-xml",
-        help="Push XML changes to Google Docs",
+        help=argparse.SUPPRESS,
         parents=[auth_parent],
         description=_load_help("docs", "push"),
         formatter_class=argparse.RawDescriptionHelpFormatter,
@@ -767,7 +767,7 @@ def build_parser() -> Any:
 
     # Legacy aliases (hidden from help but still functional)
     for alias in ("pull-md", "push-md"):
-        sp = doc_sub.add_parser(alias, parents=[auth_parent])
+        sp = doc_sub.add_parser(alias, help=argparse.SUPPRESS, parents=[auth_parent])
         if "pull" in alias:
             sp.add_argument("url", help="Document URL or ID")
             sp.add_argument("output_dir", nargs="?", help="Output directory")
@@ -783,6 +783,14 @@ def build_parser() -> Any:
         formatter_class=argparse.RawDescriptionHelpFormatter,
     )
     sp.add_argument("topic_parts", nargs="*", help="Topic path (omit to list all)")
+
+    # Python 3.13 always appends to _choices_actions even for SUPPRESS; prune manually.
+    # Also set metavar so the usage line only shows visible commands.
+    _HIDDEN_DOC_CMDS = frozenset({"pull-xml", "push-xml", "pull-md", "push-md"})
+    doc_sub._choices_actions = [
+        a for a in doc_sub._choices_actions if a.dest not in _HIDDEN_DOC_CMDS
+    ]
+    doc_sub.metavar = "{" + ",".join(a.dest for a in doc_sub._choices_actions) + "}"
 
     # --- gmail ---
     gmail_parser = subparsers.add_parser(

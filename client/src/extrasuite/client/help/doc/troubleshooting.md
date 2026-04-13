@@ -7,82 +7,62 @@ Common issues and fixes for extradoc push.
 ### "Changes not applied after push"
 
 Always re-pull after push before making more edits:
-  extrasuite doc push <folder>
-  extrasuite doc pull <url> <folder>
+  extrasuite docs push <folder>
+  extrasuite docs pull <url> <folder>
 
 ### Push produces unexpected results
 
-The .pristine/ state is stale. Re-pull to get a fresh copy:
-  extrasuite doc pull <url> <folder>
+The .extrasuite/pristine.zip snapshot is stale. Re-pull to get a fresh copy:
+  extrasuite docs pull <url> <folder>
   # Make your edits again on the fresh copy
-  extrasuite doc push <folder>
-
-### "Horizontal rule count changed" error
-
-You added or removed an <hr/> element. The Google Docs API cannot add or
-remove horizontal rules. Revert any <hr/> changes.
-
-### Push fails on table changes
-
-Most common causes:
-- Missing <p> inside a <td>: every cell needs at least one <p>, even if empty
-- Removed a physical <td> for a merged cell: colspan/rowspan are visual metadata
-  only - all physical <td> elements must remain in the XML
+  extrasuite docs push <folder>
 
 ### Heading after a list becomes a list item
 
 If you place a heading directly after a list with no separator, Google Docs
 absorbs the heading into the list and strips its heading style:
 
-```xml
-<!-- Wrong: heading is absorbed as a numbered list item -->
-<li type="decimal" level="0">Last item</li>
-<h2>Next Section</h2>
+```markdown
+<!-- Wrong -->
+- Last item
+## Next Section
 
-<!-- Correct: empty paragraph breaks the list context -->
-<li type="decimal" level="0">Last item</li>
-<p></p>
-<h2>Next Section</h2>
+<!-- Correct: blank line creates a paragraph break -->
+- Last item
+
+## Next Section
 ```
 
-This applies after both bullet and numbered lists. The push succeeds silently —
+This applies after both bullet and numbered lists. Push succeeds silently —
 re-pull to verify headings rendered correctly.
 
-### Style changes not applying
+### Horizontal rule cannot be added or removed
 
-1. Verify the class ID in document.xml matches an id in styles.xml
-2. Verify the style has the correct properties defined
-3. For new styles: add the <style> element to styles.xml first
+The Google Docs API does not support inserting or deleting horizontal rules.
+Revert any `---` additions or removals.
+
+### New tab header/footer not appearing
+
+Creating a header/footer for a new tab in an existing multi-tab doc is not
+supported in the same push. Create the tab first, re-pull, then add the
+header/footer.
 
 ---
 
 ## API Limitations
 
-Cannot add or remove: <hr/>, <image/>, <autotext/>, <columnbreak/>
+Cannot add or remove via push:
+- Horizontal rules (`---`)
+- Images
+- Auto-text fields (page numbers, date, etc.)
+- Column breaks
 
-Also note:
-- <sectionbreak/> is required and read-only
-- TOC / opaque pulled-only blocks are read-only
-- New-tab header/footer creation in an existing multi-tab doc is not supported;
-  create the tab first, re-pull, then add header/footer
+Also read-only:
+- Section breaks
+- Table of contents blocks
+- Opaque "pulled-only" blocks
 
-Everything else in the supported tags list is editable.
-
----
-
-## Table Cell Structure
-
-Each row must have the same number of <td> elements regardless of merging.
-colspan/rowspan are visual-only - merged cells still exist as physical <td> elements.
-
-Example: 3-column table where first cell spans 2 columns:
-```xml
-<tr id="row1">
-  <td id="c1" colspan="2"><p>Merged cell (columns 1-2)</p></td>
-  <td id="c2"><p></p></td>    <!-- Physical cell covered by merge - required -->
-  <td id="c3"><p>Column 3</p></td>
-</tr>
-```
+Everything else in the supported markdown and frontmatter is editable.
 
 ---
 
@@ -90,19 +70,8 @@ Example: 3-column table where first cell spans 2 columns:
 
 When push doesn't work as expected:
 
-1. Did you re-pull before editing? (stale pristine is the #1 cause)
-2. Is the XML valid? Check for unescaped & < > " characters
-3. Does every <td> contain a <p>? (even empty cells)
-4. Are all physical table cells present? (even merged ones)
-5. Did you add/remove an <hr/>? (not supported)
-6. Does your class reference a style defined in styles.xml?
-7. Run diff to preview what will be pushed: extrasuite doc diff <folder>
-
----
-
-## XML Escaping
-
-  & → &amp;
-  < → &lt;
-  > → &gt;  (optional but recommended)
-  " → &quot; (only in attributes)
+1. Did you re-pull before editing? (stale .extrasuite/pristine.zip is the #1 cause)
+2. Does every table cell have content? (empty cells need at least a blank line)
+3. Did you add or remove a horizontal rule `---`? (not supported)
+4. Did you modify YAML frontmatter in a tab file? (id and title fields are read-only)
+5. Use --verify to auto-confirm: extrasuite docs push --verify <folder>
