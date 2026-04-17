@@ -1,94 +1,49 @@
 # ExtraSuite
 
-**ExtraSuite gives AI agents a local-file interface to Google Workspace. Pull a spreadsheet — get TSV files. Pull a document — get markdown. Edit locally, push back.**
+ExtraSuite is a library to create and edit google docs/sheets etc using simple formats like markdown / json / tsv. It is meant for AI agents like claude / codex, and is designed to be token efficient. 
 
-On pull, ExtraSuite breaks down the document into individual chunks so the agent gets an overall picture and can quickly navigate to the right content. An index document provides the overall structure of the sheet or document at a glance — interconnecting all tabs and sheets so the agent can jump directly to what it needs.
+Lets assume you want to edit a large google document:
 
-On push, ExtraSuite figures out the exact changes necessary — respecting original formatting, guaranteeing it doesn't mess up anything it doesn't understand, and doing so in a token-efficient manner.
+1. You `pull` the google document. This creates a local folder with 1 markdown file per tab, and an index.md with the headings from each tab.
+2. You edit the markdown files. No special rules - its simple markdown
+3. You `push` the folder. This command understands your changes and applies them to the google document.
 
-Like pull request comments, you can leave comments directly on the Google Doc or Sheet. The agent can then read and act on them.
+The push command does a lot of heavy lifting. 
 
----
+1. It first diffs the markdown to find exactly what you changed. 
+2. Then it finds out what [batchUpdate](https://developers.google.com/workspace/docs/api/reference/rest/v1/documents/batchUpdate) requests are needed to reconcile the document
+3. If tracks index drifts and ensures subsequent operations use the correct index
+4. It tracks dependencies across batchUpdate calls. For example, if you create a new markdown file for a tab - then it will first create the tab in one request, then use the id to create the contents inside that tab.
 
-## Why ExtraSuite?
+Net result:  A single `pull` command can make complex changes across the entire google document. 
 
-Tools like [gws](https://github.com/nicholasgasior/gws) and [gogcli](https://github.com/Google/google-office-operations-mcp) are great for reading files, navigating Drive, sending email, and managing calendar. Where they fall short is **editing** — particularly moderately complex documents or spreadsheets.
+The push command makes a few promises:
 
-The standard approach — "give the agent API access and let it issue batchUpdate calls" — works for trivial edits but breaks down quickly:
+1. It won't change anything it doesn't understand. So if you have complex formatting, fonts, styles - it won't modify or make changes to it. You can still edit the content without messing with the styles.
+2. It will make the smallest operation to reconcile the document. In other words - "Delete and re-insert" is a bug.
+
+The push command also supports comments. This lets you provide feedback to the agent via comments, and then ask the agent to address them. 
+
+Similar principles apply to google sheets:
+* A google sheet is a folder with a spreadsheet.json. The spreadsheet.json shows the shape of every worksheet (top 5 rows per worksheet)
+* Each worksheet is a folder. It has a data.tsv, formula.json and other feature specific files
+* Formulas and formatting details are compressed and applied to a range rather than to a cell. The agent sees 'Okay, this column has sum applied' or 'Okay - that row is bold'. 
+* Reference documents are provided - for example, the list of formulas provided by google sheets.
+
+--- 
+
+## Why ExtraSuite when gws / goglcli exist?
+
+[gws](https://github.com/nicholasgasior/gws) and [gogcli](https://github.com/Google/google-office-operations-mcp) cover a breadth of use cases in the google workspace ecosystem, but fail short when it comes to editing files. They can edit small things here are and there, but struggle when you want to make changes in a meaningful manner. You want to take to your agent in your domain - "Modify this SOW based on the pricing from this spreadsheet". For a task like that, gws/gogcli will struggle. 
+
+Google Docs (and spreadsheets to a lesser extent) have a complex representation. 
 
 - The agent must reason about the API's internal structure (paragraph indices, cell references, range coordinates) rather than content.
 - Every edit requires reading back the current state to compute correct offsets and IDs.
 - Token usage balloons: raw API responses for a 20-page doc or a 500-row sheet are enormous.
 - There's no clean way to review or test what the agent will change before it changes it.
 
-ExtraSuite is designed to complement gws and gogcli — use them for discovery, navigation, email, and calendar; use ExtraSuite when the agent needs to make substantial edits.
-
----
-
-## The Pull → Edit → Push Workflow
-
-```bash
-uvx extrasuite docs pull https://docs.google.com/document/d/...
-# Edit the local markdown files
-uvx extrasuite docs push ./document_id/
-```
-
-```bash
-uvx extrasuite sheets pull https://docs.google.com/spreadsheets/d/...
-# Edit the local TSV files
-uvx extrasuite sheets push ./spreadsheet_id/
-```
-
-### What the Agent Sees After `pull`
-
-**Google Docs** → a folder of GitHub-flavored markdown files, one per tab, plus an `index.md`:
-
-`index.md` lists every heading in every tab with its line number — the agent opens this first to orient, then jumps directly to the right file and line.
-
-```markdown
----
-id: t.0
-title: Q3 Planning
----
-
-## Goals
-
-This quarter we are focused on **reliability** and **developer experience**.
-
-- Reduce p99 latency below 200ms
-- Improve onboarding time for new engineers
-
-## Key Metrics
-
-| Metric         | Current | Target |
-|----------------|---------|--------|
-| p99 latency    | 340ms   | 200ms  |
-| Onboarding     | 2 weeks | 3 days |
-```
-
-Standard GFM — headings, bold/italic, tables, lists, code blocks, callouts — all round-trip cleanly.
-
-**Google Sheets** → a `data.tsv` per sheet tab, plus JSON files for formulas, formatting, charts, and more. A `spreadsheet.json` at the top level lists every sheet with its row count — the agent opens this first.
-
-```tsv
-Name	Age	City
-Alice	30	NYC
-Bob	25	LA
-```
-
-To update a cell, the agent just edits the TSV. No cell references, no range coordinates.
-
-### Full File Type Coverage
-
-| File type | Pull format | Key files |
-|-----------|-------------|-----------|
-| Sheets | TSV + JSON | `<sheet>/data.tsv`, `formula.json`, `format.json`, `spreadsheet.json` |
-| Docs | Markdown | `tabs/<tab>.md`, `index.md` (heading outline) |
-| Slides | SML markup | `<slide>.sml` per slide |
-| Forms | JSON | `form.json` |
-| Apps Script | JavaScript | `.js` and `.html` files, one per script file |
-
-A `.pristine/` directory captures the state at pull time. `push` compares current files against pristine to generate only the necessary changes.
+ExtraSuite complements gws and gogcli — if you have either of these tools installed, you can directly run 
 
 ---
 
@@ -128,14 +83,14 @@ Once authenticated:
 
 ```bash
 # Pull a sheet, edit it, push it back
-uvx extrasuite sheets pull https://docs.google.com/spreadsheets/d/YOUR_ID
-# edit ./YOUR_ID/Sheet1/data.tsv
-uvx extrasuite sheets push ./YOUR_ID/
+uvx extrasuite sheets pull "https://docs.google.com/spreadsheets/d/..." <folder>
+# edit files in <folder>
+uvx extrasuite sheets push <folder>
 
 # Pull a doc, edit it, push it back
-uvx extrasuite docs pull https://docs.google.com/document/d/YOUR_ID
-# edit ./YOUR_ID/tabs/Tab_1.md
-uvx extrasuite docs push ./YOUR_ID/
+uvx extrasuite docs pull "https://docs.google.com/document/d/..." <folder>
+# edit files in <foldeR>
+uvx extrasuite docs push <folder>
 ```
 
 ---
